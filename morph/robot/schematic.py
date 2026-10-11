@@ -526,70 +526,39 @@ def render(circuit: Circuit, rev: str = "", date: str = "", company: str = "Morp
             target = content_w * min(frac * (1.3 if key in ("mcu", "ctrl", "power") else 1.0), 0.95)
             placed, bw, bh = _block_layout(comps, target)
             laid.append((key, title, placed, bw + 2 * pad, bh + 2 * pad + title_h))
-        # pack blocks into rows across the sheet
-        rows, x, y, row_h, ok = [], 0.0, 0.0, 0.0, True
-        pos = []
-        for key, title, placed, bw, bh in laid:
-            if x > 0 and x + bw > content_w:
-                x, y = 0.0, y + row_h + 5.0
-                row_h = 0.0
-            pos.append((key, title, placed, x, y, bw, bh))
-            x += bw + 5.0
-            row_h = max(row_h, bh)
-        total_h = y + row_h
+        pos = _skyline(laid, content_w)
+        total_h = max((b[4] + b[6] for b in pos), default=0.0)
         tb_h = 32.0
         notes_h = 3.2 * (len(circuit.notes) + 1) if circuit.notes else 0
-        if total_h + max(tb_h, notes_h) + 8 <= inner[1] and all(b[5] <= content_w for b in pos):
-            fill = total_h / (inner[1] - max(tb_h, notes_h) - 8)
-            if fits is None or abs(fill - 0.85) < abs(fits[6] - 0.85):
+        avail = inner[1] - 8.0 - max(tb_h, notes_h) - 4.0
+        if total_h <= avail and all(b[5] <= content_w for b in pos):
+            fill = total_h / avail
+            if fits is None or fill > fits[6]:
                 fits = (sheet_name, SW, SH, inner, content_w, pos, fill)
       if fits:
         break
     sheet_name, SW, SH, inner, content_w, pos = (fits or (sheet_name, SW, SH, inner, content_w, pos, 1.0))[:6]
-    # stretch rows so the frames use the sheet height (title block / notes strip stays clear)
-    row_keys = sorted({round(b[4], 3) for b in pos})
-    row_h = {ry: max(b[6] for b in pos if round(b[4], 3) == ry) for ry in row_keys}
-    used = sum(row_h.values()) + 5.0 * (len(row_keys) - 1)
-    avail = inner[1] - 8.0 - max(32.0, 3.2 * (len(circuit.notes) + 1) if circuit.notes else 0) - 6.0
-    grow = max(0.0, (avail - used) / max(len(row_keys), 1))
-    new_pos, yacc = [], 0.0
-    for ry in row_keys:
-        for b in pos:
-            if round(b[4], 3) == ry:
-                new_pos.append((b[0], b[1], b[2], b[3], yacc, b[5], row_h[ry] + grow))
-        yacc += row_h[ry] + grow + 5.0
-    pos = new_pos
-    # stretch rows to full width for a tidy grid: distribute row widths
+    avail = inner[1] - 8.0 - max(32.0, 3.2 * (len(circuit.notes) + 1) if circuit.notes else 0) - 4.0
+    pos = _mosaic(pos, content_w, max(avail, max(b[4] + b[6] for b in pos)))
     ox, oy = 10.0 + 4.0, 10.0 + 4.0
     svg = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SW} {SH}" width="{SW * 4:.0f}" height="{SH * 4:.0f}" '
            f'font-family="{FONT}">', f'<rect x="0" y="0" width="{SW}" height="{SH}" fill="{C["paper"]}"/>']
     svg.append(_frame(SW, SH))
     layout = {"sheet": sheet_name, "size_mm": [SW, SH], "blocks": [], "symbols": []}
-    # row-wise stretch: compute per-row max x extent and scale block widths so frames align to the right margin
-    rows_by_y: dict = {}
-    for b in pos:
-        rows_by_y.setdefault(round(b[4], 3), []).append(b)
-    for ry, row in rows_by_y.items():
-        used = sum(b[5] for b in row) + 5.0 * (len(row) - 1)
-        extra = (content_w - used) / len(row) if used < content_w else 0.0
-        rh = max(b[6] for b in row)
-        x = 0.0
-        for key, title, placed, bx, by, bw, bh in row:
-            bw2 = bw + extra
-            X, Y = ox + x, oy + by
-            svg.append(f'<rect x="{X:.3f}" y="{Y:.3f}" width="{bw2:.3f}" height="{rh:.3f}" rx="1.2" fill="{C["blockfill"]}" '
-                       f'fill-opacity="0.55" stroke="{C["block"]}" stroke-width="0.25" stroke-dasharray="2.0 1.0"/>')
-            svg.append(f'<rect x="{X:.3f}" y="{Y:.3f}" width="{min(_tw(title, 1.6) * 1.14 + 4.5, bw2):.3f}" height="4.0" rx="1.2" fill="{C["block"]}"/>')
-            svg.append(_t(X + 2.0, Y + 2.85, title, 1.6, "#ffffff", weight="700", extra=' letter-spacing="0.12"'))
-            inner_w = max(e.w + ex for e, ex, ey in placed) if placed else 0
-            cx_off = (bw2 - 2 * pad - inner_w) / 2 if extra > 0 else 0.0
-            for el, ex, ey in placed:
-                gx, gy = X + pad + ex + max(cx_off, 0), Y + pad + title_h + ey
-                svg.append(f'<g transform="translate({gx:.3f} {gy:.3f})" data-ref="{_e(el.ref)}">{el.svg}</g>')
-                layout["symbols"].append({"ref": el.ref, "x": round(gx, 2), "y": round(gy, 2), "w": round(el.w, 2), "h": round(el.h, 2),
-                                          "pins": {k: [round(gx + px, 2), round(gy + py, 2)] for k, (px, py) in el.pins.items()}})
-            layout["blocks"].append({"key": key, "title": title, "x": round(X, 2), "y": round(Y, 2), "w": round(bw2, 2), "h": round(rh, 2)})
-            x += bw2 + 5.0
+    for key, title, placed, bx, by, bw2, rh, nat_w, nat_h in pos:
+        X, Y = ox + bx, oy + by
+        svg.append(f'<rect x="{X:.3f}" y="{Y:.3f}" width="{bw2:.3f}" height="{rh:.3f}" rx="1.2" fill="{C["blockfill"]}" '
+                   f'fill-opacity="0.55" stroke="{C["block"]}" stroke-width="0.25" stroke-dasharray="2.0 1.0"/>')
+        svg.append(f'<rect x="{X:.3f}" y="{Y:.3f}" width="{min(_tw(title, 1.6) * 1.14 + 4.5, bw2):.3f}" height="4.0" rx="1.2" fill="{C["block"]}"/>')
+        svg.append(_t(X + 2.0, Y + 2.85, title, 1.6, "#ffffff", weight="700", extra=' letter-spacing="0.12"'))
+        cx_off = max((bw2 - nat_w) / 2, 0.0)
+        cy_off = max(min((rh - nat_h) / 2, 12.0), 0.0)
+        for el, ex, ey in placed:
+            gx, gy = X + pad + ex + cx_off, Y + pad + title_h + ey + cy_off
+            svg.append(f'<g transform="translate({gx:.3f} {gy:.3f})" data-ref="{_e(el.ref)}">{el.svg}</g>')
+            layout["symbols"].append({"ref": el.ref, "x": round(gx, 2), "y": round(gy, 2), "w": round(el.w, 2), "h": round(el.h, 2),
+                                      "pins": {k: [round(gx + px, 2), round(gy + py, 2)] for k, (px, py) in el.pins.items()}})
+        layout["blocks"].append({"key": key, "title": title, "x": round(X, 2), "y": round(Y, 2), "w": round(bw2, 2), "h": round(rh, 2)})
     # notes + title block
     tbw, tbh = 180.0, 32.0
     tbx, tby = SW - 10.0 - tbw, SH - 10.0 - tbh
