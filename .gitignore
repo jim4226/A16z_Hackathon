@@ -1,0 +1,5 @@
+projects/
+__pycache__/
+*.egg-info/
+.venv/
+.snap_*/

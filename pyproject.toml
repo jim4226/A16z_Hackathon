@@ -1,0 +1,22 @@
+[project]
+name = "morph"
+version = "0.1.0"
+description = "Describe a need -> CAD -> simulate -> compare -> fabricate -> measure (robot gripper fingers slice)"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy", "shapely>=2", "manifold3d", "trimesh", "mujoco>=3", "pydantic>=2", "anthropic", "pillow",
+]
+
+[project.optional-dependencies]
+machines = ["pyserial", "requests"]
+dev = ["pytest"]
+
+[project.scripts]
+morph = "morph.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["morph"]

@@ -1,0 +1,16 @@
+{
+  "status": "PLACEHOLDER until the cited research lands; do not present these numbers",
+  "iteration_fraction": 0.35,
+  "steps": [
+    {"key": "spec_requirements", "label": "Requirements + concept", "low_min": 60, "typical_min": 120, "high_min": 240, "citations": []},
+    {"key": "cad_arm_and_gripper", "label": "CAD: arm + gripper", "low_min": 960, "typical_min": 1920, "high_min": 4800, "citations": []},
+    {"key": "simulation_setup_and_runs", "label": "Simulation setup + runs", "low_min": 480, "typical_min": 960, "high_min": 2400, "citations": []},
+    {"key": "electronics_schematic_pcb", "label": "Electronics: parts, schematic, PCB", "low_min": 480, "typical_min": 1440, "high_min": 2880, "citations": []},
+    {"key": "firmware", "label": "Firmware", "low_min": 240, "typical_min": 960, "high_min": 2400, "citations": []},
+    {"key": "bom_sourcing", "label": "BOM + sourcing", "low_min": 120, "typical_min": 360, "high_min": 960, "citations": []},
+    {"key": "manufacturing_prep_quotes", "label": "Manufacturing prep + quotes", "low_min": 240, "typical_min": 720, "high_min": 2400, "citations": []},
+    {"key": "assembly_manual", "label": "Assembly instructions", "low_min": 120, "typical_min": 480, "high_min": 960, "citations": []}
+  ],
+  "headlines": [],
+  "caveats": "placeholder"
+}
