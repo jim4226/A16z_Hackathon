@@ -77,6 +77,13 @@ def rev_payload(p: RobotProject, rev: str) -> dict:
         man["json"] = _url(f"{base}/manual", man.get("json"))
         man["html"] = _url(f"{base}/manual", man.get("html"))
     grip = res.get("gripper") or {}
+    try:
+        from ..robot import timestudy2
+        base = timestudy2.load_baseline()
+        time_card = {"revision": timestudy2.revision(res, base), "project": timestudy2.project(p, base),
+                     "placeholder": "PLACEHOLDER" in str(base.get("status", ""))}
+    except Exception as exc:  # the time card must never break the payload
+        time_card = {"error": str(exc)}
     return {
         "rev": rev, "label": res.get("label"), "parent": res.get("parent"), "changes": res.get("changes") or {},
         "provenance": res.get("provenance") or {}, "timings": res.get("timings_s") or {},
@@ -87,6 +94,7 @@ def rev_payload(p: RobotProject, rev: str) -> dict:
         "cad": cad, "sizing": res.get("sizing"), "sims": sims, "electronics": el or None,
         "manufacturing": mfg or None, "bom": res.get("bom"), "manual": man or None,
         "gripper": {"analysis": grip.get("analysis"), "sim": grip.get("sim"), "force": grip.get("force")},
+        "time_study": time_card,
     }
 
 
