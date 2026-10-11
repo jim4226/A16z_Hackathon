@@ -281,7 +281,7 @@ def cmd_darwin(a):
 
 def cmd_ask(a):
     rows = keewano.query(a.sql)
-    print("Keewano not configured (KEEWANO_PAT, KEEWANO_EMAIL, KEEWANO_PROJECT_ID)" if rows is None
+    print("Keewano not configured (KEEWANO_PAT, KEEWANO_PROJECT_ID)" if rows is None
           else json.dumps(rows, indent=2, default=str))
 
 

@@ -115,7 +115,7 @@ scales the target by that ratio. Remove Keewano and the firmware ships the uncal
 
 ```bash
 export KEEWANO_API_KEY=...                       # send (Settings -> Project -> API Keys)
-export KEEWANO_PAT=kwpat-... KEEWANO_EMAIL=you@x.com KEEWANO_PROJECT_ID=<uuid>   # query
+export KEEWANO_PAT=kwpat-... KEEWANO_PROJECT_ID=<uuid>   # query (Settings -> Personal -> Security)
 python tools/keewano_backfill.py --send          # 2 weeks of synthetic-* builds, labelled
 morph ask 'SELECT "PadStyle", avg("HoldForceRatioPct") FROM events GROUP BY "PadStyle"'
 ```

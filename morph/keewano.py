@@ -5,11 +5,11 @@ entity (UUID v5 of its name), so its revisions, measurements, human minutes and 
 sourcing calls land in one ordered timeline. Design context (servo, pad, ...) is sent before
 a measurement, so every measured value carries the design it was measured on, no join needed.
 
-Query side (Keewano speaks the Postgres wire protocol): hold_ratio(pad, material) returns how
+Query side (SQL through Keewano's MCP run_sql_query tool): hold_ratio(pad, material) returns how
 much more (or less) holding force real builds needed than the simulation predicted.
 electronics.plan() scales the simulated holding force by it before setting the target.
 
-Env: KEEWANO_API_KEY (send), KEEWANO_PAT + KEEWANO_EMAIL + KEEWANO_PROJECT_ID (query).
+Env: KEEWANO_API_KEY (send), KEEWANO_PAT + KEEWANO_PROJECT_ID (query).
 With none set, everything here is a no-op and Morph runs offline as before.
 """
 
@@ -24,6 +24,7 @@ import zlib
 from urllib.request import Request, urlopen
 
 API = "https://api.keewano.com/event/ingress/v1/json"
+MCP = "https://api.keewano.com/mcp"
 
 # Append-only: Keewano never lets a registered id change type. Add new events at the end.
 CUSTOM_EVENTS = [
@@ -156,20 +157,28 @@ def _lit(v: str) -> str:
     return "'" + str(v).replace("'", "''") + "'"
 
 
-def query(sql: str) -> list | None:
-    """Run read-only SQL against the project's events table. None when not configured/unreachable."""
-    pat, email, project = (os.environ.get(k) for k in ("KEEWANO_PAT", "KEEWANO_EMAIL", "KEEWANO_PROJECT_ID"))
-    if not (pat and email and project):
+def query(sql: str, max_rows: int = 100) -> list | None:
+    """Run read-only SQL against the project's events via Keewano's MCP run_sql_query tool.
+
+    Only the personal access token and project id are needed. None when not configured or
+    unreachable, so a design run never waits on it.
+    """
+    pat, project = os.environ.get("KEEWANO_PAT"), os.environ.get("KEEWANO_PROJECT_ID")
+    if not (pat and project):
         return None
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "run_sql_query",
+                       "arguments": {"projectId": project, "sqlQuery": sql, "maxRows": max_rows}}}
     try:
-        import ssl
-        import pg8000.native
-        con = pg8000.native.Connection(email, password=pat, host="pgsql.keewano.com", port=27543,
-                                       database=project, ssl_context=ssl.create_default_context(), timeout=20)
-        try:
-            return con.run(sql)  # plain query: an analytics engine on the PG wire may not do binds
-        finally:
-            con.close()
+        req = Request(MCP, data=json.dumps(body).encode(),
+                      headers={"k-token": pat, "Content-Type": "application/json",
+                               "Accept": "application/json, text/event-stream"})
+        with urlopen(req, timeout=30) as resp:
+            out = json.load(resp)
+        res = out.get("result") or {}
+        if res.get("isError") or "structuredContent" not in res:
+            raise RuntimeError((res.get("content") or [{}])[0].get("text") or out.get("error"))
+        return res["structuredContent"]["rows"]
     except Exception as exc:
         print(f"keewano: query failed ({exc})", file=sys.stderr)
         return None

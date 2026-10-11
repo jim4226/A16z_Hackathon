@@ -44,7 +44,7 @@ def test_every_event_is_registered():
 
 
 def test_offline_is_a_no_op(monkeypatch):
-    for k in ("KEEWANO_API_KEY", "KEEWANO_PAT", "KEEWANO_EMAIL", "KEEWANO_PROJECT_ID"):
+    for k in ("KEEWANO_API_KEY", "KEEWANO_PAT", "KEEWANO_PROJECT_ID"):
         monkeypatch.delenv(k, raising=False)
     assert keewano.send("p", [("Revision", "r001")]) is False
     assert keewano.query("SELECT 1") is None
