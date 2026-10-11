@@ -437,7 +437,7 @@ def _jg(name, key, count=1) -> _JG:
                 conn.append(_canon_box(Tc, A.bounds[s]))
     return _JG(name=name, key=key, count=count, A=A, T_acts=T_acts, y_h=y_h, y_i=y_i, D2=D2, case_y=case_y, r_ch=r_ch,
                r_cut=r_cut, z_b=z_b, hw=hw, z_floor=z_low - FLOOR, z_body=(zb0, zb1), z_fing=z_fing,
-               neck=max(r_ch - 1.0, hw - 2.0), tongue=tongue, ear=ear, conn_box=conn)
+               neck=max(A.W / 2 - 1.5, A.horn_d / 2 + 0.5, 8.0), tongue=tongue, ear=ear, conn_box=conn)
 
 
 # ------------------------------------------------------------------ gripper (rack and pinion) plan
@@ -512,7 +512,9 @@ def _grip_plan(design, gkey: str) -> dict:
         z_hf = z_rack[1] + 0.1
     z_case_top = z_hf - A.zt
     servo_frame = z_case_top > z_plate[1] + 0.05          # needs a housing behind the plate (hobby servos)
-    px = max(cv + T + 4.0, A.so + A.L / 2 + 5.0, A.L / 2 - A.so + 5.0)
+    px = max(abs(b1) + 7.0, abs(b2) + 7.0, A.so + A.L / 2 + 4.0, A.L / 2 - A.so + 4.0)
+    if A.hobby and "ears" in A.bounds:
+        px = max(px, -float(A.bounds["ears"][0][0]) + 3.0, float(A.bounds["ears"][1][0]) + 3.0)
     y_top = max(yA_top + 1.5, y_p + A.W / 2 + 3.0) + T_FLANGE
     if A.hobby and "ears" in A.bounds:
         eb = A.bounds["ears"]
@@ -643,7 +645,7 @@ def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None, 
     foot, floor = 2.5, 3.5
     bay_h = _bay_height(design, eplan)
     B = float(catalog.BEARINGS["lazy_susan_100"]["B"])
-    z_j1_min = foot + floor + 6.0 + A1.overall
+    z_j1_min = foot + floor + 1.5 + A1.overall
     z_deck = max(38.0, z_j1_min - B, foot + floor + 8.0 + bay_h + 4.0)
     z_j1 = z_deck + B
     # shoulder: vertical body if the turret is tall enough, else laid back (body towards -x)
@@ -905,7 +907,8 @@ LOOK = {
         "sheet": ("PETG", C_CHAR, "fdm_print", PRINT_OPTS),
         "cover": ("PETG", C_CHAR, "fdm_print", PRINT_OPTS),
         "finger": ("PETG", C_CHAR, "fdm_print", ("fdm_print", "sla_print", "cnc_mill")),
-        "gear": ("PETG", C_WHITE, "fdm_print", ("fdm_print", "sla_print", "mjf_print")),
+        "gear": ("PETG", C_CHAR, "fdm_print", ("fdm_print", "sla_print", "mjf_print")),
+        "pinion": ("PETG", C_ORANGE, "fdm_print", ("fdm_print", "sla_print", "mjf_print")),
         "pad": ("TPU", C_ORANGE, "fdm_print", ("fdm_print", "injection_mold")),
     },
     "pilot": {
@@ -916,7 +919,8 @@ LOOK = {
         "sheet": ("Al5052", C_SHEET, "sheet_metal", ("sheet_metal",)),
         "cover": ("PA12", C_MJF, "mjf_print", ("mjf_print", "sla_print")),
         "finger": ("Al6061", C_ANOD_DK, "cnc_mill", ("cnc_mill", "fdm_print")),
-        "gear": ("Delrin", "#f2efe6", "cnc_mill", ("cnc_mill", "sla_print")),
+        "gear": ("Delrin", "#2a2b2e", "cnc_mill", ("cnc_mill", "sla_print")),
+        "pinion": ("Delrin", "#f2efe6", "cnc_mill", ("cnc_mill", "sla_print")),
         "pad": ("TPU", C_ORANGE, "injection_mold", ("injection_mold", "fdm_print")),
     },
     "production": {
@@ -927,7 +931,8 @@ LOOK = {
         "sheet": ("Al5052", C_SHEET_RAW, "sheet_metal", ("sheet_metal",)),
         "cover": ("PC", C_PC_DK, "injection_mold", ("injection_mold",)),
         "finger": ("PC", C_PC_DK, "injection_mold", ("injection_mold", "cnc_mill")),
-        "gear": ("Delrin", "#f2efe6", "injection_mold", ("injection_mold",)),
+        "gear": ("Delrin", "#2a2b2e", "injection_mold", ("injection_mold",)),
+        "pinion": ("Delrin", "#f2efe6", "injection_mold", ("injection_mold",)),
         "pad": ("TPU", C_ORANGE, "injection_mold", ("injection_mold",)),
     },
 }
@@ -1084,6 +1089,9 @@ class _Builder:
             self.T["roll_par"] = trans((0, 0, L.wl5)) @ rot((0, 0, 1), math.pi / 2)  # wrist_yaw
         elif L.dof == 5:
             self.T["roll_par"] = trans((0, 0, L.wl)) @ rot((0, 0, 1), math.pi / 2)  # wrist
+        g = L.grip
+        self.M = _mech_to_gb(g["tcp_z"])
+        self.pinion_origin = _pt(self.M, (0, g["y_p"], (g["z_rack"][0] + g["z_rack"][1]) / 2))
         self.T["yaw_child"] = rot((0, 0, 1), -math.pi / 2)
         self.T["roll_child"] = rot((0, 0, 1), math.pi / 2)
         chain = ["base", "turret", "upper_arm", "forearm", "wrist"] + (["wrist_yaw"] if L.dof == 6 else []) + \
@@ -1104,6 +1112,7 @@ class _Builder:
             ex_dir = _vec(Tp @ Ta, (0, 0, 1)) * 0.0 + _vec(Tp, (0, 0, -1))
             self.comp(comp, f"{prefix}_servo{sfx}", par, Tp @ Ta, step_par, explode=ex_dir * 30.0,
                       kind="actuator", skip=("wire_",), meta={"drives": j.name, "servo_index": i})
+            self.servos.append(dict(joint=j.name, link=par, T=Tp @ Ta, A=A))
             hc = components.horn(j.key)
             Th = Tc @ Ta @ trans((0, 0, -A.ht))
             hdir = _vec(Tc @ Ta, (0, 0, 1))
@@ -1196,6 +1205,16 @@ class _Builder:
     def cup_cuts(self, j: _JG):
         A = j.A
         cuts = []
+        # chamfer the cradle lip so the child clevis can fold further
+        x0 = A.W / 2 + 0.6
+        wedge = Polygon([(x0, j.z_cup + 0.02), (j.hw + 6, j.z_cup + 0.02), (j.hw + 6, j.z_cup - (j.hw + 6 - x0) * 0.8)])
+        cuts.append(_xz_ext(wedge, -j.D2 - 2, j.D2 + 2))
+        wneg = affinity.scale(wedge, xfact=-1, origin=(0, 0))
+        if A.hobby or j.count == 2:
+            cuts.append(_xz_ext(wneg, -j.D2 - 2, j.D2 + 2))
+        else:
+            cuts.append(_xz_ext(wneg, -j.D2 - 2, j.case_y[0] + 0.5))
+            cuts.append(_xz_ext(wneg, j.case_y[1] - 0.5, j.D2 + 2))
         for Ta in j.T_acts:
             bx0 = -A.so - A.L / 2 - 0.3
             pk = _xf(_box2(bx0, 200, -A.W / 2 - 0.3, A.W / 2 + 0.3, A.zb - 0.3, A.zt + 0.3), Ta)
@@ -1301,6 +1320,7 @@ class _Builder:
         comp = components.actuator(A.key, horn=False)
         self.comp(comp, f"{prefix}_servo", par, Tp, step_par, explode=_vec(Tp, (0, 0, 1)) * 26.0, kind="actuator",
                   skip=("wire_",), meta={"drives": "roll"})
+        self.servos.append(dict(joint="roll", link=par, T=Tp, A=A))
         hc = components.horn(A.key)
         self.comp(hc, f"{prefix}_horn", child, Tc @ trans((0, 0, -A.ht)), step_child, explode=(0, 0, -14.0), kind="horn")
         fr = []
@@ -1330,9 +1350,12 @@ class _Builder:
         hull_parts, adds, cuts = [], [], []
         sil = []
         info = {"z0": None, "z1": None}
+        neck = None
         if prox:
             jp, Tp = prox
-            hull_parts.append(self.clevis_hull(jp, Tp))
+            neck = _xf(_rbox2(-jp.neck, jp.neck, -jp.D2, jp.D2, jp.z_b - 2.0, jp.z_b + T_BR + 3.0, r=3.0, f=1.4), Tp)
+            hull_parts.append(neck)
+            adds.append(_hull(self.clevis_hull(jp, Tp), neck))
             adds += self.clevis_adds(jp, Tp)
             cuts += [_xf(c, Tp) for c in self.clevis_cuts(jp)]
             info["z0"] = _pt(Tp, (0, 0, jp.z_b + T_BR))[2]
@@ -1385,16 +1408,11 @@ class _Builder:
         return MultiPoint(V[:, [0, 2]]).convex_hull
 
     # ------------------------------------------------------------ joints + links (all configs)
-    def arm(self):
+    def joints(self):
         L = self.lay
-        cfg = self.cfg
-        T = self.T
         acts = L.keys
         dof = L.dof
         roll = next((n for n in L.names if n.endswith("roll")), None)
-        js, je, jw = L.jg["j2_shoulder"], L.jg["j3_elbow"], L.jg["j4_wrist_pitch"]
-        jy = L.jg.get("j5_wrist_yaw")
-        I4 = np.eye(4)
         # ---- joints (kinematic contract)
         lim = self.limits()
         a = self.asm
@@ -1422,6 +1440,18 @@ class _Builder:
               acts[roll])
         else:
             a.add_joint(Joint("wrist_fixed", "fixed", last, "gripper_base", trans((0, 0, L.wl))))
+        self.gripper_joints()
+
+    def arm_parts(self):
+        L = self.lay
+        cfg = self.cfg
+        T = self.T
+        dof = L.dof
+        roll = next((n for n in L.names if n.endswith("roll")), None)
+        js, je, jw = L.jg["j2_shoulder"], L.jg["j3_elbow"], L.jg["j4_wrist_pitch"]
+        jy = L.jg.get("j5_wrist_yaw")
+        I4 = np.eye(4)
+        last = "wrist_yaw" if dof == 6 else "wrist"
         # ---- hardware at each joint
         self.joint_hw(js, "turret", T["j2_par"], "upper_arm", I4, "j2", "shoulder", "upper_arm")
         self.joint_hw(je, "upper_arm", T["j3_par"], "forearm", I4, "j3", "elbow", "forearm")
@@ -1765,25 +1795,35 @@ class _Builder:
         def disc_pts(T, r, n=20):
             return [_pt(T, (r * math.cos(a), 0, r * math.sin(a))) for a in np.linspace(0, 2 * math.pi, n, endpoint=False)]
 
-        hand = lambda T, z0: box_pts(T, -g["px"], g["px"], -15, 15, z0, z0 + g["tcp_z"] + g["tip"])  # noqa: E731
+        def hand(T, z0):
+            return sil_pts(box_pts(T, -g["px"], g["px"], -15, 15, z0 + T_FLANGE, z0 + g["tcp_z"] - g["u_c"] - g["mount_h"])) \
+                .union(sil_pts(box_pts(T, -g["cv"] - 6, g["cv"] + 6, -15, 15, z0, z0 + g["tcp_z"] + g["tip"])))
         js, je, jw = L.jg["j2_shoulder"], L.jg["j3_elbow"], L.jg["j4_wrist_pitch"]
         T3, T4 = trans((0, 0, L.L1)), trans((0, 0, L.L2))
         # children (in the joint's canonical frame)
-        ua = sil_pts(disc_pts(np.eye(4), js.r_ch) + box_pts(T3, -je.hw, je.hw, -1, 1, je.z_floor, je.z_cup)
-                     + box_pts(T3, -je.A.W / 2, je.A.W / 2, -1, 1, je.z_body[0], je.z_body[1]))
-        fa = sil_pts(disc_pts(np.eye(4), je.r_ch) + box_pts(T4, -jw.hw, jw.hw, -1, 1, jw.z_floor, jw.z_cup)
-                     + box_pts(T4, -jw.A.W / 2, jw.A.W / 2, -1, 1, jw.z_body[0], jw.z_body[1]))
+        def neck_pts(j, T=np.eye(4)):
+            return box_pts(T, -j.neck, j.neck, -1, 1, j.z_b - 2.0, j.z_b + T_BR + 3.0)
+
+        def link_sil(j, pts, T=np.eye(4)):
+            return sil_pts(disc_pts(T, j.r_ch) + neck_pts(j, T)).union(sil_pts(neck_pts(j, T) + pts))
+
+        ua = link_sil(js, box_pts(T3, -je.hw, je.hw, -1, 1, je.z_floor, je.z_cup)
+                      + box_pts(T3, -je.A.W / 2, je.A.W / 2, -1, 1, je.z_body[0], je.z_body[1]))
+        fa = link_sil(je, box_pts(T4, -jw.hw, jw.hw, -1, 1, jw.z_floor, jw.z_cup)
+                      + box_pts(T4, -jw.A.W / 2, jw.A.W / 2, -1, 1, jw.z_body[0], jw.z_body[1]))
         if L.dof == 6:
             jy = L.jg["j5_wrist_yaw"]
-            wr_pts = disc_pts(np.eye(4), jw.r_ch) + box_pts(self.T["j5_par"], -jy.hw, jy.hw, -jy.D2, jy.D2, jy.z_floor, jy.z_cup) \
-                + hand(np.eye(4), L.d45 + L.wl5)
+            wr = link_sil(jw, box_pts(self.T["j5_par"], -jy.hw, jy.hw, -jy.D2, jy.D2, jy.z_floor,
+                                      jy.z_cup)).union(hand(np.eye(4), L.d45 + L.wl5))
         else:
             Ar = L.Ar
-            wr_pts = disc_pts(np.eye(4), jw.r_ch) + hand(np.eye(4), L.wl)
+            wr_pts = []
             if Ar is not None:
                 wr_pts += box_pts(self.T["roll_par"], -Ar.so - Ar.L / 2 - WALL, -Ar.so + Ar.L / 2 + WALL, -Ar.W / 2 - WALL,
                                   Ar.W / 2 + WALL, min(Ar.zb, Ar.zi) - FLOOR, 0)
-        wr = sil_pts(wr_pts)
+            else:
+                wr_pts += box_pts(np.eye(4), -21, 21, -21, 21, L.wl - 5, L.wl)
+            wr = link_sil(jw, wr_pts).union(hand(np.eye(4), L.wl))
         # parents
         R_t = 54.0
         Rphi = affinity.rotate
@@ -1803,8 +1843,8 @@ class _Builder:
         if L.dof == 6:
             jy = L.jg["j5_wrist_yaw"]
             pi_y, po_y = _jg_parent_regions(jy, jw.r_ch, L.d45 + jy.z_floor)
-            wy = sil_pts(disc_pts(np.eye(4), jy.r_ch) + hand(np.eye(4), L.wl5)
-                         + box_pts(np.eye(4), -L.Ar.W / 2 - WALL, L.Ar.W / 2 + WALL, -40, 15, L.wl5 - L.Ar.overall - FLOOR, L.wl5))
+            wy = link_sil(jy, box_pts(np.eye(4), -L.Ar.W / 2 - WALL, L.Ar.W / 2 + WALL, -40, 15,
+                                      L.wl5 - L.Ar.overall - FLOOR, L.wl5)).union(hand(np.eye(4), L.wl5))
             ci, co = _child_regions(jy, wy)
             out["j5_wrist_yaw"] = _limits(pi_y, po_y, ci, co, hi_cap=1.7, lo_cap=-1.7)
         out = {k: (round(lo, 3), round(hi, 3)) for k, (lo, hi) in out.items()}
@@ -1823,6 +1863,7 @@ class _Builder:
         # base yaw actuator (in the base), its horn on the turret underside
         self.comp(components.actuator(A1.key, horn=False), "j1_servo", "base", self.T["j1_act"], "base",
                   explode=(0, 0, -40), kind="actuator", skip=("wire_",), meta={"drives": "j1_base_yaw"})
+        self.servos.append(dict(joint="j1_base_yaw", link="base", T=self.T["j1_act"], A=A1))
         self.comp(components.horn(A1.key), "j1_horn", "turret", trans((0, 0, -A1.ht)), "turret", explode=(0, 0, -16),
                   kind="horn")
         hd = A1.horn_holes[0][2] if A1.horn_holes else 2.0
@@ -2012,6 +2053,13 @@ class _Builder:
             self.base_pilot(fp, bay, zd, deck_t, foot, z_fl, x_back, R_f, lh, clamps)
         else:
             body = _mv(_plate(fp, zd - foot, fillet=3.0), 0, 0, foot)
+            hmax = max([pl["h"] for pl in place] + [10.0])
+            z_rim = min(zd - 6.0, z_fl + 6.0 + hmax + 6.0)
+            self.z_rim = z_rim
+            fr_ = 4.0
+            step = box(x_back - 40, z_rim, x_bay, zd + 20).union(
+                box(x_bay - 0.01, zd - fr_, x_bay + fr_, zd + 20).difference(Point(x_bay + fr_, zd - fr_).buffer(fr_, quad_segs=12)))
+            body = _D(body, _xz_ext(step, -R_f - 20, R_f + 20))
             cav = _ext(inner, z_fl, zd - deck_t)
             opening = _ext(bay.buffer(-0.01), z_fl, zd + 5)
             cuts = [cav, opening, _cyl(28.0, deck_t + 4, zd - deck_t - 2, segs=72)]
@@ -2027,7 +2075,8 @@ class _Builder:
                     xx = x_bay - 14 - k * 9.0
                     if xx < x_back + 20:
                         break
-                    sl = _xf(_rbox(3.2, 20.0, 12.0, (0, 0, 0), r=1.5, f=0.0), trans((xx, sy * (R_f - 1.0), (z_fl + zd) / 2 + 2)))
+                    hv = max(min(12.0, z_rim - z_fl - 9.0), 5.0)
+                    sl = _xf(_rbox(3.2, 20.0, hv, (0, 0, 0), r=1.5, f=0.0), trans((xx, sy * (R_f - 1.0), z_fl + 3.0 + hv / 2)))
                     cuts.append(sl)
             body = _D(_U(body, bosses), cuts)
             body = _D(body, [_cyl(3.3, zd + 5, -1, xy=c, segs=20) for c in clamps] +
@@ -2047,6 +2096,10 @@ class _Builder:
                             label="electronics bay lid (moulded, vented)")
             else:
                 self.struct("base_shell", "base", body, "base", (0, 0, 0), role="shell", label="base (printed)")
+        if cfg != "pilot":
+            liner = _ext(bay.buffer(-0.6, join_style=2), z_fl - 0.01, z_fl + 1.2)
+            self.struct("bay_liner", "base", liner, "electronics", (0, 0, 30), role="dark", kind="cover",
+                        label="electronics bay liner")
         # rubber feet
         feet = []
         for p in [np.array([R_f * 0.62, sy * R_f * 0.62]) for sy in (-1, 1)] + \
@@ -2266,3 +2319,843 @@ class _Builder:
             self.comp(comp, "estop", "base", T, "electronics", explode=(0, -40, 0), kind="electronics",
                       meta={"ref": "S1"})
             self.mod_frames["S1"] = {k: T @ np.asarray(F) for k, F in comp.frames.items()}
+
+    # ------------------------------------------------------------ gripper: hand, racks, pinion, fingers
+    def hand(self):
+        L = self.lay
+        g = L.grip
+        A = g["A"]
+        cfg = self.cfg
+        tcp = g["tcp_z"]
+        M = _mech_to_gb(tcp)
+        self.M = M
+        px, y_top, py0 = g["px"], g["y_top"], g["py0"]
+        zp0, zp1 = g["z_plate"]
+        zr0, zr1 = g["z_rack"]
+        zb0, zb1 = g["z_boss"]
+        zf = g["w"] / 2
+        zg = lambda y_m: tcp - y_m  # noqa: E731  mechanism height -> gripper_base z
+        r_mount = (L.Ar.horn_d / 2 + 5.0) if L.Ar is not None else 24.0
+        y_front = -(r_mount + 3.0)
+        y_back = zp1 + 13.0
+        z_pb = zg(py0)                          # plate bottom (gb z)
+        # ---- servo (laid flat behind the plate, output towards the pinion)
+        Ts = M @ trans((0, g["y_p"], g["z_hf"])) @ np.diag([1.0, -1.0, -1.0, 1.0])
+        self.comp(components.actuator(A.key, horn=False), "grip_servo", "gripper_base", Ts, "gripper",
+                  explode=(0, 40, 0), kind="actuator", skip=("wire_",), meta={"drives": "gripper"})
+        self.servos.append(dict(joint="gripper", link="gripper_base", T=Ts, A=A))
+        # ---- frame: flange + back plate + side walls + gussets (+ servo housing for ear-mounted servos)
+        fl_poly = unary_union([Point(0, 0).buffer(r_mount + 3.0, quad_segs=32),
+                               Polygon(_rr_pts(2 * px, y_back - zp0 + 2.0, 6.0, 6) + np.array([0, (y_back + zp0 - 2.0) / 2]))]).convex_hull
+        flange = _plate(fl_poly, T_FLANGE, fillet=1.4)
+        plate_poly = Polygon(_rr_pts(2 * px, z_pb - T_FLANGE + 2.0, 4.0, 6) + np.array([0, (z_pb + T_FLANGE - 2.0) / 2]))
+        hole_r = A.horn_d / 2 + 1.4
+        plate_poly = plate_poly.difference(Point(0, zg(g["y_p"])).buffer(hole_r, quad_segs=32))
+        guides = [(g["b1"], g["yA_mid"]), (g["b2"], g["yA_mid"]), (-g["b1"], g["yB_mid"]), (-g["b2"], g["yB_mid"])]
+        for bx, by in guides:
+            plate_poly = plate_poly.difference(Point(bx, zg(by)).buffer(1.7, quad_segs=10))
+        plate = _xf(_plate(plate_poly, zp1 - zp0, chamfer=0.6), _xz_frame(zp1))
+        walls = []
+        gus = []
+        tri = Polygon([(zp1 - 0.5, T_FLANGE - 0.5), (y_back - 1.0, T_FLANGE - 0.5), (zp1 - 0.5, min(T_FLANGE + 22, z_pb))])
+        for sx in (-1, 1):
+            xg = sx * (px - 7.0)
+            gus.append(_xf(_ext(tri, 0, 3.0), np.array([[0, 0, 1, xg - 1.5], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1.0]])))
+        parts = [flange, plate] + walls + gus
+        cuts = []
+        if g["servo_frame"] and "ears" in A.bounds:
+            eb = A.bounds["ears"]
+            z_ear = g["z_hf"] - (float(A.frames["mount_ears"][2, 3]) + float(A.spec["dims"].get("ear_t", 2.5)))
+            hb = _rbox2(eb[0][0] - 1.0, eb[1][0] + 1.0, zp1 - 0.5, z_ear, zg(g["y_p"] + A.W / 2 + 3.0),
+                        zg(g["y_p"] - A.W / 2 - 3.0), r=2.0, f=0.8)
+            parts.append(hb)
+            body = _box2(-A.so - A.L / 2 - 0.4, -A.so + A.L / 2 + 0.4, zp1 - 1, z_ear + 30, zg(g["y_p"] + A.W / 2 + 0.4),
+                         zg(g["y_p"] - A.W / 2 - 0.4))
+            cuts.append(body)
+        else:
+            # countersunk screws through the plate into the servo's top face
+            top = [h for h in (A.holes.get("top") or [])][:4]
+            fr = []
+            for hx, hy, hz in top:
+                p = _pt(Ts, (hx, hy, 0.0))
+                p[1] = zp0
+                fr.append(_seat(p, (0, -1, 0)))
+                cuts.append(_xf(_U(_cyl(1.45, 8, -6, segs=14), _cyl(1.45, 1.6, -1.6, segs=18, r2=2.75)), _seat(p, (0, -1, 0))))
+            if fr:
+                self.bolts("grip_servo_screws", "gripper_base", "M2.5x8", "fhcs", fr, "gripper", explode_len=-30)
+        # roll horn / wrist flange interface
+        if L.Ar is not None:
+            Tr = self.T["roll_child"]
+            for hx, hy, hd in L.Ar.horn_holes:
+                p = _pt(Tr, (hx, hy, 0.0))
+                cuts.append(_cyl(hd / 2 + 0.25, 30, -5, xy=(p[0], p[1]), segs=14))
+                cuts.append(_cyl(hd / 2 + 1.6, 10, T_FLANGE - 1.4, xy=(p[0], p[1]), segs=18))
+            cuts.append(_cyl(4.2, 20, -5, segs=24))
+        else:
+            for k in range(4):
+                a = math.pi / 4 + k * math.pi / 2
+                cuts.append(_cyl(1.7, 30, -5, xy=(15 * math.cos(a), 15 * math.sin(a)), segs=14))
+                cuts.append(_cyl(2.9, 10, T_FLANGE - 1.8, xy=(15 * math.cos(a), 15 * math.sin(a)), segs=18))
+            fr = [_seat((15 * math.cos(a), 15 * math.sin(a), T_FLANGE - 1.8), (0, 0, 1)) for a in
+                  (math.pi / 4 + k * math.pi / 2 for k in range(4))]
+            self.bolts("hand_flange_screws", "gripper_base", "M3x10", "shcs", fr, "hand_mount", explode_len=26)
+        self.cable_pass = (0.0, min(r_mount + 7.0, y_back - 6.0))
+        cuts.append(_rbox2(-6, 6, self.cable_pass[1] - 4.0, self.cable_pass[1] + 4.0, -5, 10, r=3.5, f=0.0))
+        frame = _D(_U(parts), cuts)
+        if cfg == "pilot":
+            # CNC back plate + sheet-metal flange bracket + MJF servo housing
+            prof = plate_poly.buffer(0)
+            self.add("hand_plate", "gripper_base", _D(plate, cuts), "structural", "gripper", (0, 18, 0), material="Al6061",
+                     color=C_ANOD, process="cnc_mill", process_options=("cnc_mill", "laser_cut"), profile=prof,
+                     profile_frame=_xz_frame(zp1), thickness=zp1 - zp0, label="gripper back plate (6061)")
+            br = _D(_U(flange, gus, walls), cuts)
+            self.add("hand_bracket", "gripper_base", br, "structural", "gripper", (0, 0, -18), material="Al5052",
+                     color=C_SHEET, process="sheet_metal", process_options=("sheet_metal",),
+                     profile=box(0, 0, 2 * px, (y_back - y_front) + (z_pb - T_FLANGE)), profile_frame=np.eye(4),
+                     thickness=SHEET_T, sheet={"thickness": SHEET_T, "k_factor": 0.44,
+                                               "bends": [{"line": [[0, y_back - y_front], [2 * px, y_back - y_front]],
+                                                          "angle_deg": 90.0, "radius": 1.2}]},
+                     label="hand bracket (folded 5052)")
+            if len(parts) > 2 + len(walls) + len(gus):
+                self.struct("hand_servo_housing", "gripper_base", _D(parts[-1], cuts), "gripper", (0, 25, 0), role="cover",
+                            label="servo housing (MJF)")
+        else:
+            self.struct("hand_frame", "gripper_base", frame, "gripper", (0, 0, -10), role="shell" if cfg == "prototype" else "dark",
+                        label="gripper frame")
+            if cfg == "production":
+                cov = _rbox2(-(g["cv"] - g["mount_w"] - 4.0), g["cv"] - g["mount_w"] - 4.0, zb0 + 0.3, zr0 - 0.3,
+                             zg(g["yA_top"] + 0.5), zg(g["yB_bot"] + 6.0), r=3.0, f=0.6)
+                cov = _D(cov, _ycyl(5.0, zb0 - 1, zr0 + 1, f=0.0, z=zg(g["y_p"])))
+                self.struct("gear_cover", "gripper_base", cov, "gripper", (0, -20, 0), role="dark", kind="cover",
+                            label="gear cover (moulded)")
+        # ---- guide bolts (heads + washers on the rack fronts, nuts behind the plate)
+        fr_b = [_seat(_pt(M, (bx, by, zr0 - 0.5)), (0, -1, 0)) for bx, by in guides]
+        self.bolts("grip_guide_bolts", "gripper_base", "M3x16", "shcs", fr_b, "gripper", explode_len=-34)
+        self.bolts("grip_guide_washers", "gripper_base", "M3", "washer",
+                   [_seat(_pt(M, (bx, by, zr0)), (0, 1, 0)) for bx, by in guides], "gripper", explode_len=-26)
+        self.bolts("grip_guide_nuts", "gripper_base", "M3", "nut",
+                   [_seat(_pt(M, (bx, by, zp1)), (0, -1, 0)) for bx, by in guides], "gripper", explode_len=22)
+        # ---- pinion (+ hub up to the horn) on its own link, with the servo horn
+        P0 = self.pinion_origin
+        Tpin_inv = trans(-P0)
+        pin = _plate(g["pinion"], zr1 - zr0, chamfer=0.35)
+        pin = _xf(pin, M @ trans((0, g["y_p"], zr0)))
+        if g["z_hf"] > zr1 + 0.15:
+            hub = _xf(_D(_cyl(g["hub_r"], g["z_hf"] - zr1 + 0.05, zr1 - 0.02, segs=40),
+                         [_cyl(1.7, 30, -10, segs=12)]), M @ trans((0, g["y_p"], 0)))
+            pin = _U(pin, hub)
+        for hx, hy, hd in A.horn_holes:
+            if math.hypot(hx, hy) + hd / 2 + 0.8 < g["r"] - 1.25 * _mech.MODULE:
+                pin = _D(pin, _xf(_cyl(hd / 2 + 0.15, 40, -20, segs=12), Ts @ trans((hx, hy, 0))))
+        self.struct("pinion_gear", "pinion", _xf(pin, Tpin_inv), "gripper", (0, -16, 0), role="pinion",
+                    label=f"pinion, {g['n']} teeth, module {_mech.MODULE}", profile=g["pinion"],
+                    profile_frame=Tpin_inv @ M @ trans((0, g["y_p"], zr0)), thickness=zr1 - zr0)
+        self.comp(components.horn(A.key), "grip_horn", "pinion", Tpin_inv @ Ts @ trans((0, 0, -A.ht)), "gripper",
+                  explode=(0, 10, 0), kind="horn")
+        fr = []
+        for hx, hy, hd in A.horn_holes:
+            if math.hypot(hx, hy) + hd / 2 + 0.8 < g["r"] - 1.25 * _mech.MODULE:
+                p = _pt(Ts, (hx, hy, 0.0))
+                p = _pt(M, (_pt(np.linalg.inv(M), p)[0], _pt(np.linalg.inv(M), p)[1], zr0))
+                fr.append(Tpin_inv @ _seat(p, (0, -1, 0)))
+        if fr:
+            hd = A.horn_holes[0][2]
+            self.bolts("pinion_screws", "pinion", f"{_screw_size(hd)}x{_std_len(g['z_hf'] - zr0 + 2.0)}", "shcs",
+                       fr[:4], "gripper", explode_len=-20)
+        # ---- racks + bosses on the jaws
+        for side, rk, bs in (("left", g["rack_A"], g["boss_A"]), ("right", g["rack_B"], g["boss_B"])):
+            link = f"jaw_{side}"
+            rack = _xf(_plate(rk, zr1 - zr0, chamfer=0.3), M @ trans((0, 0, zr0)))
+            self.struct(f"rack_{side}", link, rack, "gripper", (0, -10, 0), role="gear", label=f"rack ({side} jaw)",
+                        profile=rk, profile_frame=M @ trans((0, 0, zr0)), thickness=zr1 - zr0)
+            boss = _xf(_plate(bs, zb1 - zb0, chamfer=0.3), M @ trans((0, 0, zb0)))
+            self.struct(f"boss_{side}", link, boss, "fingers", (0, -14, 0), role="gear", label=f"finger spacer ({side})",
+                        profile=bs, profile_frame=M @ trans((0, 0, zb0)), thickness=zb1 - zb0)
+        self.fingers()
+
+    def fingers(self):
+        L = self.lay
+        g = L.grip
+        geom = g["geom"]
+        M = self.M
+        w, cv, u_c = g["w"], g["cv"], g["u_c"]
+        f = self.d.finger
+        mount_h, mount_w = g["mount_h"], g["mount_w"]
+        sensor = geom.sensor
+        for side, sg in (("left", -1), ("right", 1)):
+            link = f"jaw_{side}"
+            if sg < 0:
+                Tf = np.array([[0, 1, 0, -cv], [-1, 0, 0, u_c], [0, 0, 1, -w / 2], [0, 0, 0, 1.0]])
+            else:
+                Tf = np.array([[0, -1, 0, cv], [-1, 0, 0, u_c], [0, 0, -1, w / 2], [0, 0, 0, 1.0]])
+            Tgb = M @ Tf
+            for pname, poly in geom.part_polys().items():
+                role = "pad" if pname == "pad" else "finger"
+                m = components.trimesh_from_profile(poly, w, chamfer=0.5 if pname != "pad" else 0.35)
+                m.apply_transform(Tgb)
+                self.struct(f"finger_{side}_{pname}", link, m, "fingers",
+                            ((0, 0, 30) if pname == "pad" else (sg * 18.0, 0, 0)), role=role,
+                            kind="pad" if pname == "pad" else "structural", group=f"finger_{pname}",
+                            profile=poly, profile_frame=Tgb, thickness=w,
+                            label="TPU contact pad (dovetail)" if pname == "pad" else "finger")
+            if sensor in FSR:
+                fsr = FSR[sensor]
+                v_floor = f.thickness_mm + 1.5
+                Tfsr = Tgb @ np.array([[0, -1, 0, u_c], [0, 0, 1, v_floor], [-1, 0, 0, w / 2], [0, 0, 0, 1.0]])
+                comp = components.module("fsr402")
+                self.comp(comp, f"fsr_{side}", link, Tfsr, "fingers", explode=(0, -40, 20), kind="sensor",
+                          meta={"ref": f"FSR_{side[0].upper()}"})
+                self.fsr_end[side] = (link, _pt(Tfsr, np.asarray(comp.frames["connector_a"])[:3, 3]))
+            # finger bolts into heat-set inserts in the rack ear
+            fr, fi = [], []
+            for s in (-1, 1):
+                p_m = (sg * (cv - mount_w / 2), u_c + mount_h / 2 + s * f.mount_hole_spacing_mm / 2, -w / 2)
+                fr.append(_seat(_pt(M, p_m), (0, -1, 0)))
+                fi.append(_seat(_pt(M, (p_m[0], p_m[1], g["z_rack"][0])), (0, -1, 0)))
+            Lb = _std_len(w + _mech.BOSS_T + _mech.RACK_T - 1.5)
+            self.bolts(f"finger_{side}_screws", link, f"M3x{Lb}", "shcs", fr, "fingers", explode_len=-30)
+            self.bolts(f"rack_{side}_inserts", link, "M3x5.7", "insert", fi, "gripper", explode_len=12)
+
+    def gripper_joints(self):
+        L = self.lay
+        g = L.grip
+        a = self.asm
+        A = g["A"]
+        T, ot, r = g["T"], g["overtravel"], g["r"]
+        a.add_joint(Joint("gripper", "prismatic", "gripper_base", "jaw_left", np.eye(4), (-1, 0, 0), -ot, round(T, 2),
+                          actuator=A.key, effort=float(self.d.gripper.force_n),
+                          velocity=round(float(A.spec.get("speed_rad_s", 4.0)) * r * 0.8, 1),
+                          meta={"pitch_radius_mm": r, "teeth": g["n"], "module": _mech.MODULE,
+                                "stall_force_n": round(A.torque * 0.8 / (r / 1000.0), 1)}))
+        a.add_joint(Joint("gripper_right", "prismatic", "gripper_base", "jaw_right", np.eye(4), (1, 0, 0), -ot, round(T, 2),
+                          mimic={"joint": "gripper", "multiplier": 1.0}))
+        a.add_joint(Joint("gripper_pinion", "revolute", "gripper_base", "pinion", trans(self.pinion_origin), (0, 1, 0),
+                          -(ot + 0.5) / r, (T + 0.5) / r, mimic={"joint": "gripper", "multiplier": round(1.0 / r, 6)}))
+        a.add_joint(Joint("tcp_fixed", "fixed", "gripper_base", "tcp", trans((0, 0, g["tcp_z"]))))
+
+    def camera(self):
+        if "wrist_camera" not in self.extras:
+            return
+        L = self.lay
+        g = L.grip
+        comp = components.module("wrist_camera")
+        r_mount = (L.Ar.horn_d / 2 + 5.0) if L.Ar is not None else 24.0
+        yc = -(r_mount + 3.0) - 18.0
+        zc = T_FLANGE + 3.0
+        tilt = math.atan2(-yc, g["tcp_z"] - zc - 18.0)
+        Tc = trans((0, yc, zc)) @ rot((1, 0, 0), -tilt)
+        self.comp(comp, "wrist_camera", "gripper_base", Tc, "gripper", explode=(0, -30, 0), kind="sensor", meta={"ref": "CAM1"})
+        self.cam_conn = ("gripper_base", _pt(Tc, np.asarray(comp.frames["connector_a"])[:3, 3]))
+        br = _hull(_rbox2(-14, 14, -(r_mount + 3.0) - 1.0, -(r_mount + 3.0) + 4.0, 0.0, T_FLANGE, r=2.0, f=0.6),
+                   _xf(_rbox2(-14, 14, 13.0, 16.5, -2.0, 0.0, r=2.0, f=0.4), Tc))
+        br = _U(_xf(_rbox2(-15, 15, -16.5, 16.5, -2.4, 0.01, r=3.0, f=0.6), Tc), br)
+        br = _D(br, _xf(_cyl(9.0, 10, -5, segs=32), Tc))
+        self.struct("camera_mount", "gripper_base", br, "gripper", (0, -24, 0), role="dark", label="wrist camera mount")
+        fr = [Tc @ _seat((sx * 14.0, sy * 14.0, 1.6), (0, 0, 1)) for sx in (-1, 1) for sy in (-1, 1)]
+        self.bolts("camera_screws", "gripper_base", "M2x5", "bhcs", fr, "gripper")
+
+    def imu(self):
+        if "imu" not in self.extras:
+            return
+        g = self.lay.grip
+        comp = components.module("imu")
+        T = trans((g["px"] - 16.0, g["z_plate"][1] + 6.5, T_FLANGE)) @ rot((1, 0, 0), math.pi) @ rot((0, 0, 1), math.pi / 2)
+        self.comp(comp, "imu", "gripper_base", T, "gripper", explode=(0, 20, 20), kind="sensor", meta={"ref": "IMU1"})
+        self.imu_conn = ("gripper_base", _pt(T, np.asarray(comp.frames["connector_a"])[:3, 3]))
+
+
+def _tube(p0, p1, r, segs=24):
+    """Cylinder between two points."""
+    p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
+    d = p1 - p0
+    Ln = float(np.linalg.norm(d))
+    F = _frame(p0, d / Ln, np.cross(d / Ln, (0, 0, 1)) if abs(d[2] / Ln) < 0.95 else (1, 0, 0))
+    return _xf(_cyl(r, Ln, 0, segs=segs), F)
+
+
+def _default_eplan(design):
+    fam = design.arm.actuator_family
+    mcu = design.electronics.mcu if design.electronics.mcu in catalog.MODULES else "esp32_devkit"
+    if fam == "hobby_pwm":
+        mods = [("U1", mcu, "controller"), ("U2", "pca9685_board", "servo_driver"), ("U3", "buck_servo", "power"),
+                ("U4", "buck_5v", "power")]
+        bus = "pwm"
+    elif fam == "dynamixel":
+        mods = [("U1", mcu, "controller"), ("U2", "u2d2", "servo_driver"), ("U3", "buck_5v", "power")]
+        bus = "ttl_half_duplex"
+    else:
+        mods = [("U1", mcu, "controller"), ("U2", "bus_servo_adapter", "servo_driver"), ("U3", "buck_5v", "power")]
+        bus = "ttl_half_duplex"
+    cfg = design.electronics.config
+    return {"config": cfg, "bus": bus, "modules": [{"ref": r, "key": k, "role": ro} for r, k, ro in mods],
+            "custom_pcb": {"name": "Morph arm controller", "size_mm": [72, 52]} if cfg == "custom_pcb" else None}
+
+
+# ================================================================== cables
+def _fpt(frames, names):
+    for n in names:
+        if n in frames:
+            return np.asarray(frames[n])[:3, 3].copy()
+    return None
+
+
+def _servo_conn(sv):
+    A, T = sv["A"], sv["T"]
+    fr = A.frames
+    a = _pt(T, np.asarray(fr["connector"])[:3, 3])
+    b = _pt(T, np.asarray(fr["connector_b"])[:3, 3]) if "connector_b" in fr else a + _vec(T, (0, 1.5, 0))
+    out_a = _vec(T, np.asarray(fr["connector"])[:3, 2])
+    return a, b, out_a
+
+
+def _cables(b):
+    L = b.lay
+    T = b.T
+    asm = b.asm
+    fam_pwm = all(_act(k).hobby for k in L.keys.values())
+    zfl = 6.0
+    # ---------------- trunk: base -> ... -> gripper_base (link, xyz, kind)
+    trunk = []
+
+    def run(link, p):
+        trunk.append((link, np.asarray(p, float), "run"))
+
+    def cross(link, p):
+        trunk.append((link, np.asarray(p, float), "cross"))
+
+    x_bay = -(50.0 + 6.0)
+    run("base", (x_bay + 4.0, 26.0, zfl + 16.0))
+    run("base", (-16.0, 24.0, L.z_j1 - 16.0))
+    cross("base", (-12.0, 20.0, L.z_j1 - 4.0))
+    cross("turret", (-12.0, 18.0, -1.0))
+    js = L.jg["j2_shoulder"]
+    run("turret", (-12.0, 18.0, 8.0))
+    ex = _pt(T["j2_par"], (-2.0, js.D2 + 2.0, js.z_cup - 9.0))
+    run("turret", ex + np.array([0.0, 4.0, 2.0]))
+    Tj2 = trans((0, 0, L.h_s))
+
+    def pitch_cross(jg, Tpar, plink, clink, Tch=np.eye(4)):
+        cross(plink, _pt(Tpar, (-4.0, jg.D2 + 4.5, -3.0)))
+        cross(clink, _pt(Tch, (-4.0, jg.D2 + 4.5, 3.0)))
+
+    def side_run(link, jp, Tp, z_end, D2d=None, z_conn=None, Td=None):
+        Dy = max(jp.D2, D2d or 0.0) + 3.4
+        z0 = jp.z_b + T_BR + 8.0
+        if z_end - z0 > 12:
+            for zz in np.linspace(z0, z_end, 3):
+                run(link, _pt(Tp, (0.0, Dy, zz)))
+        else:
+            run(link, _pt(Tp, (0.0, Dy, z0)))
+        if z_conn is not None and Td is not None:
+            run(link, _pt(Td, (2.0, (D2d or jp.D2) + 3.4, z_conn)))
+
+    pitch_cross(js, Tj2, "turret", "upper_arm")
+    je, jw = L.jg["j3_elbow"], L.jg["j4_wrist_pitch"]
+
+    def zc(j):
+        if j.conn_box:
+            return float(np.mean([bb[:, 2].mean() for bb in j.conn_box]))
+        return j.z_cup - 4.0
+
+    side_run("upper_arm", js, np.eye(4), L.L1 + je.z_floor + 4.0, je.D2, zc(je), T["j3_par"])
+    pitch_cross(je, T["j3_par"], "upper_arm", "forearm")
+    side_run("forearm", je, np.eye(4), L.L2 + jw.z_floor + 4.0, jw.D2, zc(jw), T["j4_par"])
+    pitch_cross(jw, T["j4_par"], "forearm", "wrist")
+    cp = b.cable_pass if hasattr(b, "cable_pass") else (0.0, 22.0)
+    if L.dof == 6:
+        jy = L.jg["j5_wrist_yaw"]
+        run("wrist", _pt(np.eye(4), (0.0, jw.D2 + 3.4, jw.z_b + T_BR + 6.0)))
+        pitch_cross(jy, T["j5_par"], "wrist", "wrist_yaw", T["yaw_child"])
+        run("wrist_yaw", _pt(T["yaw_child"], (0.0, jy.D2 + 3.4, jy.z_b + T_BR + 8.0)))
+        run("wrist_yaw", (0.0, cp[1] + 2.0, L.wl5 - 14.0))
+        cross("wrist_yaw", (0.0, cp[1], L.wl5 - 3.0))
+    elif L.dof == 5:
+        run("wrist", (0.0, jw.D2 + 3.4, jw.z_b + T_BR + 8.0))
+        run("wrist", (0.0, cp[1] + 2.0, L.wl - 14.0))
+        cross("wrist", (0.0, cp[1], L.wl - 3.0))
+    else:
+        run("wrist", (0.0, jw.D2 + 3.4, jw.z_b + T_BR + 4.0))
+        cross("wrist", (0.0, cp[1], L.wl - 3.0))
+    cross("gripper_base", (0.0, cp[1], 2.0))
+    g = L.grip
+    run("gripper_base", (0.0, cp[1], T_FLANGE + 7.0))
+    gsv = next(sv for sv in b.servos if sv["joint"] == "gripper")
+    ga, gb_, gout = _servo_conn(gsv)
+    run("gripper_base", ga + gout * 10.0 + np.array([0, 0, -6.0]))
+
+    def attach(link):
+        idx = [i for i, (l, _, k) in enumerate(trunk) if l == link and k == "run"]
+        return idx[-1] if idx else max(i for i, (l, _, _) in enumerate(trunk) if l == link)
+
+    # ---------------- endpoints in the base
+    mf = getattr(b, "mod_frames", {})
+    ep = b.eplan or {}
+    roles = {m.get("ref", "").upper(): (catalog.MODULES.get(m.get("key"), {}).get("role")) for m in ep.get("modules") or []}
+    drv = next((r for r, ro in roles.items() if ro == "servo_driver" and r in mf), None)
+    ctl = next((r for r, ro in roles.items() if ro == "controller" and r in mf), None)
+    if "PCB" in mf:
+        drv = drv if drv in mf else "PCB"
+        ctl = "PCB"
+    drv = drv or ctl or next(iter(mf), None)
+    ctl = ctl or drv
+    p_drv = _fpt(mf.get(drv, {}), ("connector_servo_a", "connector_ttl", "connector_servo_0", "connector_a")) if drv else None
+    p_ctl = _fpt(mf.get(ctl, {}), ("connector_uart", "connector_gpio", "connector_a", "connector_usb")) if ctl else None
+    if p_drv is None:
+        p_drv = np.array([x_bay - 20.0, 0.0, zfl + 12.0])
+    if p_ctl is None:
+        p_ctl = p_drv + np.array([-10.0, 10.0, 0.0])
+    servos = sorted(b.servos, key=lambda sv: ["j1_base_yaw", "j2_shoulder", "j3_elbow", "j4_wrist_pitch", "j5_wrist_yaw",
+                                               "roll", "gripper"].index(sv["joint"]))
+    ids = {}
+    for i, sv in enumerate(servos):
+        ids[(sv["joint"], id(sv))] = i + 1
+    b.servo_ids = [(sv["joint"], i + 1) for i, sv in enumerate(servos)]
+    bus_col, pwm_col = "#1d1f22", "#3b2f2b"
+
+    def pts_of(i0, i1, off=0.0):
+        out = []
+        for l, p, _ in trunk[i0:i1 + 1]:
+            out.append((l, tuple(np.round(p + np.array([off, 0.0, 0.0]), 2))))
+        return out
+
+    if not fam_pwm:
+        prev = None
+        for i, sv in enumerate(servos):
+            a, bb, out = _servo_conn(sv)
+            if prev is None:
+                pts = [("base", tuple(np.round(p_drv, 2))), ("base", tuple(np.round(p_drv + np.array([8, 0, 6.0]), 2)))]
+                pts += pts_of(0, attach("base") - 0 if sv["link"] != "base" else 0)[:-1] if sv["link"] != "base" else \
+                    pts_of(0, 0)
+                pts.append((sv["link"], tuple(np.round(a + out * 8.0, 2))))
+                pts.append((sv["link"], tuple(np.round(a, 2))))
+                src = f"{drv}.bus" if drv else "U2.bus"
+            else:
+                pa, pb2, pout = _servo_conn(prev)
+                i0, i1 = attach(prev["link"]), attach(sv["link"])
+                pts = [(prev["link"], tuple(np.round(pb2, 2))), (prev["link"], tuple(np.round(pb2 + pout * 8.0, 2)))]
+                if sv["link"] == prev["link"]:
+                    mid = (pb2 + a) / 2 + pout * 12.0
+                    pts.append((sv["link"], tuple(np.round(mid, 2))))
+                else:
+                    pts += pts_of(i0 + 1, i1)
+                pts.append((sv["link"], tuple(np.round(a + out * 8.0, 2))))
+                pts.append((sv["link"], tuple(np.round(a, 2))))
+                src = f"ID{i}.bus"
+            asm.cables.append(Cable(f"bus_{i}", pts, diameter=3.0, color=bus_col, src=src, dst=f"ID{i + 1}.bus",
+                                    conductors=3, meta={"kind": "servo_bus", "to_joint": sv["joint"], "servo_id": i + 1}))
+            prev = sv
+    else:
+        n = len(servos)
+        for i, sv in enumerate(servos):
+            a, bb, out = _servo_conn(sv)
+            off = (i - (n - 1) / 2) * 2.6
+            pts = [("base", tuple(np.round(p_drv + np.array([0.0, i * 2.54, 0.0]), 2))),
+                   ("base", tuple(np.round(p_drv + np.array([8.0, i * 2.54, 8.0]), 2)))]
+            ia = attach(sv["link"])
+            if sv["link"] != "base":
+                pts += pts_of(0, ia, off)
+            pts.append((sv["link"], tuple(np.round(a + out * 8.0, 2))))
+            pts.append((sv["link"], tuple(np.round(a, 2))))
+            asm.cables.append(Cable(f"pwm_{i}", pts, diameter=2.4, color=pwm_col, src=f"{drv}.CH{i}", dst=f"{sv['joint']}.servo",
+                                    conductors=3, meta={"kind": "pwm", "to_joint": sv["joint"], "channel": i}))
+    # FSR leads: jaw -> gripper base -> trunk -> controller ADC
+    ig = attach("gripper_base")
+    igc = max(i for i, (l, _, k) in enumerate(trunk) if l == "gripper_base" and k == "cross")
+    for side, (link, p) in sorted(getattr(b, "fsr_end", {}).items()):
+        p = np.asarray(p, float)
+        sg = -1 if side == "left" else 1
+        x_out = sg * (g["cv"] + 3.0)
+        z_ft = g["tcp_z"] - g["u_c"] - g["mount_h"]
+        zp0, zp1 = g["z_plate"]
+        pts = [(link, tuple(np.round(p, 2))), (link, tuple(np.round(p + np.array([sg * 4.0, -4.0, -3.0]), 2))),
+               (link, (round(x_out, 2), round(p[1] - 2.0, 2), round(p[2] - 12.0, 2))),
+               (link, (round(x_out, 2), round(-(g["w"] / 2) - 2.0, 2), round(z_ft + 4.0, 2))),
+               ("gripper_base", (round(sg * (g["px"] + 4.0), 2), round(zp0, 2), round(z_ft - 8.0, 2))),
+               ("gripper_base", (round(sg * (g["px"] - 4.0), 2), round(zp1 + 6.0, 2), round(T_FLANGE + 12.0, 2))),
+               ("gripper_base", (round(sg * 8.0, 2), round(cp[1] + 2.0, 2), round(T_FLANGE + 6.0, 2)))]
+        rev = [(l, tuple(np.round(q + np.array([sg * 2.2, 0, 0]), 2))) for l, q, _ in reversed(trunk[:igc + 1])]
+        pts += rev
+        pts.append(("base", tuple(np.round(p_ctl, 2))))
+        asm.cables.append(Cable(f"fsr_{side}", pts, diameter=1.8, color="#b23a2c", src=f"FSR_{side[0].upper()}",
+                                dst=f"{ctl}.ADC", conductors=2, meta={"kind": "sensor"}))
+    cam = getattr(b, "cam_conn", None)
+    if cam:
+        link, p = cam
+        pts = [(link, tuple(np.round(p, 2))), (link, tuple(np.round(np.asarray(p) + np.array([0, 6.0, -8.0]), 2)))]
+        pts += [(l, tuple(np.round(q + np.array([-2.4, 0, 0]), 2))) for l, q, _ in reversed(trunk[:igc + 1])]
+        usb = _fpt(mf.get("J_USB", {}), ("connector_a",))
+        pts.append(("base", tuple(np.round(usb if usb is not None else p_ctl, 2))))
+        asm.cables.append(Cable("camera_usb", pts, diameter=3.6, color="#2f343b", src="CAM1.usb", dst="J_USB / host",
+                                conductors=4, meta={"kind": "usb"}))
+    imu = getattr(b, "imu_conn", None)
+    if imu:
+        link, p = imu
+        pts = [(link, tuple(np.round(p, 2)))]
+        pts += [(l, tuple(np.round(q + np.array([2.4, 1.0, 0]), 2))) for l, q, _ in reversed(trunk[:igc + 1])]
+        pts.append(("base", tuple(np.round(p_ctl, 2))))
+        asm.cables.append(Cable("imu_i2c", pts, diameter=2.2, color="#2a3a6a", src="IMU1.qt", dst=f"{ctl}.I2C",
+                                conductors=4, meta={"kind": "i2c"}))
+    # power: DC inlet -> servo driver / buck
+    pw = _fpt(mf.get("J_PWR", {}), ("connector_a",))
+    pwr_ref = next((r for r, ro in roles.items() if ro == "power" and r in mf), None)
+    dst = _fpt(mf.get(pwr_ref, {}), ("connector_in", "connector_power", "connector_a")) if pwr_ref else None
+    if dst is None:
+        dst = _fpt(mf.get(drv, {}), ("connector_power", "connector_a")) if drv else None
+    if pw is not None and dst is not None:
+        mid = (pw + dst) / 2 + np.array([0, 0, 10.0])
+        asm.cables.append(Cable("power_in", [("base", tuple(np.round(pw, 2))), ("base", tuple(np.round(mid, 2))),
+                                             ("base", tuple(np.round(dst, 2)))], diameter=3.4, color="#a3231c",
+                                src="J_PWR", dst=f"{pwr_ref or drv}.VIN", conductors=2, meta={"kind": "power"}))
+    usb = _fpt(mf.get("J_USB", {}), ("connector_a",))
+    cu = _fpt(mf.get(ctl, {}), ("connector_usb", "connector_a")) if ctl else None
+    if usb is not None and cu is not None:
+        mid = (usb + cu) / 2 + np.array([0, 0, 12.0])
+        asm.cables.append(Cable("usb_host", [("base", tuple(np.round(usb, 2))), ("base", tuple(np.round(mid, 2))),
+                                             ("base", tuple(np.round(cu, 2)))], diameter=3.8, color="#2f343b",
+                                src="J_USB", dst=f"{ctl}.USB", conductors=4, meta={"kind": "usb"}))
+    if "S1" in mf:
+        es = _fpt(mf["S1"], ("connector_a",))
+        if es is not None:
+            pts = [("base", tuple(np.round(es, 2))), ("base", tuple(np.round(es + np.array([0, 20.0, -2.0]), 2))),
+                   ("base", tuple(np.round(np.array([b.base_dims["x_back"] + 30.0, -50.0, 3.0]), 2))),
+                   ("base", tuple(np.round(p_ctl, 2)))]
+            asm.cables.append(Cable("estop", pts, diameter=3.6, color="#20232a", src="S1", dst=f"{ctl}.ESTOP / servo power",
+                                    conductors=2, meta={"kind": "safety"}))
+    b.trunk = trunk
+
+
+# ================================================================== assembly sequence
+_HEX = {("shcs", "M2"): "1.5 mm hex key", ("shcs", "M2.5"): "2 mm hex key", ("shcs", "M3"): "2.5 mm hex key",
+        ("shcs", "M4"): "3 mm hex key", ("bhcs", "M2"): "1.3 mm hex key", ("bhcs", "M2.5"): "1.5 mm hex key",
+        ("bhcs", "M3"): "2 mm hex key", ("bhcs", "M4"): "2.5 mm hex key", ("fhcs", "M2.5"): "1.5 mm hex key",
+        ("fhcs", "M3"): "2 mm hex key", ("nut", "M3"): "5.5 mm nut driver", ("insert", "M3"): "soldering iron + M3 insert tip"}
+
+
+def _steps(b):
+    L = b.lay
+    d = b.d
+    a = b.asm
+    cfg = b.cfg
+    fam = d.arm.actuator_family
+    ids = dict(getattr(b, "servo_ids", []))
+    sid = {}
+    for jn, i in getattr(b, "servo_ids", []):
+        sid.setdefault(jn, []).append(i)
+    idt = lambda jn: "/".join(f"ID {i}" for i in sid.get(jn, [])) or "—"  # noqa: E731
+    pwm = fam == "hobby_pwm"
+    center = "set it to its mid position (2048 ticks)" if not pwm else "centre it with the servo tester (1500 µs)"
+    key = lambda jn: L.keys.get(jn, "")  # noqa: E731
+    roll = next((n for n in L.names if n.endswith("roll")), None)
+    proc = {"prototype": "printed", "pilot": "machined", "production": "moulded"}[cfg]
+    g = L.grip
+    dual = lambda jn: L.counts.get(jn, 1) > 1  # noqa: E731
+    sens = b.d.finger.sensor in FSR
+    spec = [
+        ("base", "Base, turntable and base-yaw servo", "base",
+         f"Press the four rubber feet into the corners of the {proc} base. Screw the base-yaw servo ({key('j1_base_yaw')}, "
+         f"{idt('j1_base_yaw')}) into its mount, output up and connector towards the electronics bay, then fix the mount to "
+         f"the floor. Lay the turntable bearing on the deck, align its four holes and bolt the lower ring down; the servo "
+         f"spline must sit in the middle of the bearing bore.",
+         ["Clamp the base to the bench through the four counterbored holes before mounting the arm."]),
+        ("electronics", "Electronics bay", "base",
+         ("Thread the brass standoffs into the bay floor and mount " +
+          (", ".join(sorted({p.meta.get('ref', '') for p in a.parts if p.meta.get('step_key') == 'electronics' and p.meta.get('ref')}))
+           or "the boards") +
+          ". Fit the USB-C and power inlet from inside the back wall (USB-C flange inside, jack nut outside). "
+          "Before plugging in the controller, power the board from the inlet and check the logic rail is 5.0 V ± 0.1 V."),
+         ["Disconnect the supply while working in the bay."]),
+        ("turret", "Turret on the turntable", "turret",
+         f"With the base servo {center}, place the turret on the bearing so the shoulder points forward (+x). Screw the horn "
+         f"to the turret floor through the four counterbores, then fix the bearing's upper ring from below.",
+         ["Do not rotate the base servo by hand against its gears."]),
+        ("shoulder", "Shoulder servo" + ("s (dual, back to back)" if dual("j2_shoulder") else ""), "turret",
+         f"Slide the shoulder servo{'s' if dual('j2_shoulder') else ''} ({key('j2_shoulder')}, {idt('j2_shoulder')}) into the "
+         f"turret cradle, horn side to the robot's right (−y), label facing forward. Secure with the side screws. "
+         f"{'Both servos must be set to the same mid position before the upper arm goes on; they drive one joint and are paired in firmware (one inverted). ' if dual('j2_shoulder') else ''}"
+         f"Fit the horn on the spline at mid position.",
+         ["Route the bus cable out through the notch on the idler side before tightening."]),
+        ("upper_arm", "Upper arm on the shoulder", "upper_arm",
+         "Hold the upper arm vertical and slide its clevis over the shoulder: the horn cheek over the horn, the idler cheek "
+         "over the idler" + (" bearing pin" if _act(key('j2_shoulder')).hobby else "") + ". Bolt the horn cheek to the horn "
+         "and the idler cheek to the idler, alternating diagonally, then snap the joint cap on.",
+         ["The arm must point straight up at the servo's mid position: this is the zero pose used by the firmware."]),
+        ("elbow", "Elbow servo", "upper_arm",
+         f"Insert the elbow servo{'s' if dual('j3_elbow') else ''} ({key('j3_elbow')}, {idt('j3_elbow')}) into the cradle at "
+         f"the top of the upper arm and fit the retaining screws. {center.capitalize()} and press the horn on.", []),
+        ("forearm", "Forearm on the elbow", "forearm",
+         "Fit the forearm clevis over the elbow servo (horn cheek over the horn) and bolt both cheeks. Snap the joint cap on.",
+         []),
+        ("wrist", "Wrist-pitch servo", "forearm",
+         f"Insert the wrist-pitch servo ({key('j4_wrist_pitch')}, {idt('j4_wrist_pitch')}) into the forearm cradle and fix it. "
+         f"{center.capitalize()} and press the horn on.", []),
+        ("wrist_link", "Wrist on the wrist-pitch servo", "wrist",
+         "Fit the wrist clevis over the wrist-pitch servo and bolt horn and idler cheeks.", []),
+    ]
+    if L.dof == 6:
+        spec.append(("wrist_yaw", "Wrist-yaw servo and yaw bracket", "wrist_yaw",
+                     f"Insert the wrist-yaw servo ({key('j5_wrist_yaw')}, {idt('j5_wrist_yaw')}) into the wrist, centre it, "
+                     f"then fit the yaw bracket over it and bolt both cheeks.", []))
+    if roll:
+        spec.append(("roll", "Wrist-roll servo", "wrist" if L.dof == 5 else "wrist_yaw",
+                     f"Drop the wrist-roll servo ({key(roll)}, {idt(roll)}) into the cup at the end of the wrist, output "
+                     f"towards the gripper, and fix it with the side screws. {center.capitalize()}; fit the horn.", []))
+    spec += [
+        ("gripper", "Gripper mechanism", "gripper_base",
+         f"Screw the gripper servo ({g['servo']}, {idt('gripper')}) to the back of the hand frame. Press the heat-set "
+         f"inserts into the rack ears (soldering iron, 220 °C). With the servo {center.split(' (')[0].replace('set it to its ', 'at its ').replace('centre it with the servo tester', 'centred')}, "
+         f"bolt the {g['n']}-tooth pinion (module {_mech.MODULE}) to the horn. Lay both racks in from the front so their "
+         f"teeth mesh with the pinion when the jaws are at the object width, then fit the four guide bolts through the "
+         f"slots with washers and nylock nuts behind the plate: snug, then back off a quarter turn so the racks slide freely.",
+         ["Check the jaws move symmetrically over the full travel "
+          f"({g['T']:.0f} mm per jaw + {g['overtravel']:.0f} mm overtravel) before closing up."]),
+        ("fingers", "Fingers and force sensors" if sens else "Fingers and pads", "gripper_base",
+         ("Seat an FSR 402 on the floor of each finger's dovetail socket, sensing face towards the object and tail out of "
+          "the front. Slide the TPU pad into the dovetail until its tail bears on the sensor (0.15 mm preload). " if sens else
+          "Slide the pads onto the fingers. ") +
+         "Bolt each finger to its rack ear through the spacer with two screws into the inserts. Close the gripper on the "
+         "object (or a printed gauge of the same diameter): both pads must touch at the same time.",
+         ["Do not bend the FSR tail at the solder tabs." if sens else "Pads face the object."]),
+        ("hand_mount", "Gripper onto the wrist", "gripper_base",
+         ("With the wrist-roll servo at mid position, bolt the hand flange to the roll horn so the fingers open along the "
+          "arm's left-right axis." if roll else "Bolt the hand flange to the wrist flange with four screws."), []),
+        ("wiring", "Servo bus and sensor wiring", "upper_arm",
+         ("Daisy-chain the bus: controller → " + " → ".join(f"ID {i}" for _, i in getattr(b, "servo_ids", [])) +
+          ". Leave a service loop of about one finger-width at every joint so the cable never pulls at the end stops, "
+          "and clip the cable into the guides on the idler side of each link." if not pwm else
+          "Run each servo lead back to the PWM driver along the idler side of the arm (channel = joint order) and clip "
+          "the bundle into the guides; leave a service loop at every joint.") +
+         (" Route both FSR leads along the same path to the controller's analog inputs." if sens else ""),
+         ["Move every joint through its full range by hand (power off) and check no cable is pinched or tight."]),
+        ("final", "Covers, calibration and checks", "base",
+         "Fit the remaining covers. Power up, " + ("assign servo IDs 1… in chain order, " if not pwm else "") +
+         "drive every joint to zero (arm straight up) and store the offsets, then run the gripper close/open test and the "
+         "force-sensor tare. Finally run the pick-and-place self test with the supplied egg-shaped gauge.",
+         ["Keep the e-stop within reach during the first power-up." if "estop" in b.extras else
+          "Keep a hand on the power switch during the first power-up."]),
+    ]
+    order = [s[0] for s in spec]
+    by_key = {}
+    for p in a.parts:
+        k = p.meta.get("step_key", "final")
+        if k not in order:
+            k = "final"
+        by_key.setdefault(k, []).append(p)
+    steps = []
+    idx = 0
+    for key_, title, link, text, warns in spec:
+        parts = by_key.get(key_, [])
+        if not parts and key_ not in ("wiring", "final"):
+            continue
+        idx += 1
+        fast = {}
+        tools = set()
+        for p in parts:
+            if p.kind == "fastener":
+                k = (p.meta.get("spec"), p.meta.get("fastener_kind"))
+                e = fast.setdefault(k, {"spec": p.meta.get("label", f"{k[0]} {k[1]}"), "qty": 0,
+                                        "torque_nm": p.meta.get("torque_nm")})
+                e["qty"] += int(p.meta.get("qty", 1))
+                size = str(k[0]).split("x")[0]
+                if (k[1], size) in _HEX:
+                    tools.add(_HEX[(k[1], size)])
+        if key_ in ("electronics", "final"):
+            tools.add("multimeter")
+        if key_ == "wiring":
+            tools |= {"flush cutters", "cable ties (2.5 mm)"}
+        if key_ == "fingers":
+            tools.add("tweezers")
+        if any(f.get("torque_nm") for f in fast.values()):
+            tools.add("torque screwdriver 0.1–2 N·m")
+        for p in parts:
+            p.step = idx
+        mins = 3 + sum(f["qty"] for f in fast.values()) * 0.6 + len([p for p in parts if p.kind != "fastener"]) * 0.2
+        cam = {}
+        if parts:
+            Tw = a.world_transforms(a.meta.get("home") if isinstance(a.meta.get("home"), dict) else None)
+            cs = np.array([_pt(Tw[p.link], p.mesh.bounds.mean(axis=0)) for p in parts])
+            ext = float(np.ptp(cs, axis=0).max()) if len(cs) > 1 else 60.0
+            cam = {"target": [round(float(v), 1) for v in cs.mean(axis=0)], "dist": round(max(ext * 2.2, 220.0), 0)}
+        steps.append(Step(idx, title, [p.name for p in parts],
+                          fasteners=[{"spec": f["spec"], "qty": f["qty"], "torque_nm": f["torque_nm"]} for f in fast.values()],
+                          tools=sorted(tools), instructions=text, subassembly=link, camera=cam))
+        steps[-1].__dict__["warnings"] = warns
+        steps[-1].__dict__["time_min"] = round(mins, 1)
+    a.steps = steps
+
+
+# ================================================================== poses
+def _ik_planar(L1, L2, x, z, elbow_up=True):
+    """Shoulder at the origin, angles from vertical (+ = towards +x); returns (q2, q3) or None."""
+    d = math.hypot(x, z)
+    if d > L1 + L2 - 0.5 or d < abs(L1 - L2) + 0.5:
+        return None
+    c3 = (d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2)
+    q3 = math.acos(max(-1.0, min(1.0, c3)))
+    if not elbow_up:
+        q3 = -q3
+    phi = math.atan2(x, z)
+    alpha = math.atan2(L2 * math.sin(q3), L1 + L2 * math.cos(q3))
+    return phi - alpha, q3
+
+
+def _pose(L: _Layout, x, z_tcp, lim, gripper):
+    """Gripper pointing straight down with the TCP at (x, 0, z_tcp)."""
+    wrist_len = L.wl if L.dof != 6 else L.d45 + L.wl5
+    sol = _ik_planar(L.L1, L.L2, x, z_tcp + wrist_len + L.tcp_z - L.base_h)
+    if sol is None:
+        return None
+    q2, q3 = sol
+    q4 = math.pi - q2 - q3
+    for jn, v in (("j2_shoulder", q2), ("j3_elbow", q3), ("j4_wrist_pitch", q4)):
+        lo, hi = lim.get(jn, (-3, 3))
+        if not (lo <= v <= hi):
+            return None
+    q = {n: 0.0 for n in L.names}
+    q.update({"j2_shoulder": round(q2, 4), "j3_elbow": round(q3, 4), "j4_wrist_pitch": round(q4, 4), "gripper": gripper})
+    return q
+
+
+def _home_ready(design, L: _Layout):
+    R = design.object.diameter_mm / 2
+    tip = L.grip["tip"]
+    L12 = L.L1 + L.L2
+    lim = L.lim
+    home = ready = None
+    for f in np.linspace(0.36, 0.7, 18):
+        home = _pose(L, f * L12, R + tip + 45.0, lim, round(min(10.0, L.grip["T"]), 2))
+        if home:
+            break
+    for f in np.linspace(0.6, 0.85, 14):
+        ready = _pose(L, f * L12, R + tip + 30.0, lim, round(L.grip["T"], 2))
+        if ready:
+            break
+    base = {n: 0.0 for n in L.names}
+    home = home or {**base, "j2_shoulder": 0.0, "j3_elbow": 1.2, "j4_wrist_pitch": 1.2, "gripper": 5.0}
+    ready = ready or {**base, "j2_shoulder": 0.4, "j3_elbow": 1.0, "j4_wrist_pitch": 1.4, "gripper": round(L.grip["T"], 2)}
+    return home, ready
+
+
+# ================================================================== build
+def build(design, sizing: dict | None = None, electronics_plan: dict | None = None) -> Assembly:
+    """Whole robot: structure for design.build.config, purchased parts, gripper, electronics bay, cables, steps."""
+    sizing = sizing or size(design)
+    b = _Builder(design, sizing, electronics_plan)
+    b.servos, b.fsr_end, b.cam_conn, b.imu_conn = [], {}, None, None
+    b.frames()
+    b.joints()
+    b.base()
+    b.turret()
+    b.arm_parts()
+    b.hand()
+    b.camera()
+    b.imu()
+    _cables(b)
+    L = b.lay
+    home, ready = _home_ready(design, L)
+    a = b.asm
+    a.meta = {"arm_joints": L.names, "gripper_joint": "gripper", "tcp_link": "tcp", "home": home, "ready": ready,
+              "sizing": sizing}
+    _steps(b)
+    g = L.grip
+    a.meta.update({
+        "generator": "morph.robot.arm", "build_config": b.cfg, "title": f"Morph {L.dof}-DOF arm ({b.cfg})",
+        "dof": L.dof, "actuators": {jn: L.keys[jn] for jn in L.names}, "actuator_counts": dict(L.counts),
+        "servo_ids": [{"joint": jn, "id": i} for jn, i in getattr(b, "servo_ids", [])],
+        "bus": "pwm" if design.arm.actuator_family == "hobby_pwm" else "ttl_half_duplex",
+        "links_mm": {"base_h": round(L.base_h, 1), "L1": L.L1, "L2": L.L2, "wrist": round(L.wl if L.dof != 6 else L.d45 + L.wl5, 1),
+                     "hand": round(L.tcp_z, 1), "z_j1": round(L.z_j1, 1)},
+        "gripper": {"actuator": g["servo"], "teeth": g["n"], "module": _mech.MODULE, "pitch_radius_mm": g["r"],
+                    "travel_mm": round(g["T"], 2), "overtravel_mm": g["overtravel"], "tip_mm": round(g["tip"], 2),
+                    "object_center_v_mm": round(g["cv"], 2), "sensor": g["geom"].sensor},
+        "joint_limits": {k: list(v) for k, v in L.lim.items()},
+        "base": {"footprint_bounds": [round(v, 1) for v in b.footprint.bounds], "clamp_holes": [list(np.round(c, 1)) for c in b.clamps]},
+        "notes": list(sizing.get("notes", [])) + list(L.notes),
+        "warnings": list(b.issues),
+        "issues": [],
+    })
+    return a
+
+
+# ================================================================== preview helpers
+def _srgb_to_linear(c):
+    c = np.asarray(c, float) / 255.0
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _catmull(P, n=8):
+    P = np.asarray(P, float)
+    if len(P) < 3:
+        return np.vstack([P[0] + (P[-1] - P[0]) * t for t in np.linspace(0, 1, 2 * n)])
+    Q = np.vstack([P[0] * 2 - P[1], P, P[-1] * 2 - P[-2]])
+    out = []
+    for i in range(1, len(Q) - 2):
+        p0, p1, p2, p3 = Q[i - 1], Q[i], Q[i + 1], Q[i + 2]
+        for t in np.linspace(0, 1, n, endpoint=False):
+            t2, t3 = t * t, t * t * t
+            out.append(0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3))
+    out.append(P[-1])
+    return np.array(out)
+
+
+def cable_mesh(asm, c, q=None, sides=10):
+    """Tube mesh of a cable at pose q, in the base frame (for previews)."""
+    T = asm.world_transforms(q)
+    P = np.array([_pt(T[l], x) for l, x in c.points])
+    keep = [0] + [i for i in range(1, len(P)) if np.linalg.norm(P[i] - P[i - 1]) > 0.3]
+    P = _catmull(P[keep], 8)
+    r = max(c.diameter / 2, 0.7)
+    rings = []
+    prev_n = None
+    for i in range(len(P)):
+        t = P[min(i + 1, len(P) - 1)] - P[max(i - 1, 0)]
+        t /= np.linalg.norm(t) + 1e-9
+        n = np.cross(t, (0, 0, 1)) if prev_n is None else prev_n - np.dot(prev_n, t) * t
+        if np.linalg.norm(n) < 1e-6:
+            n = np.cross(t, (1, 0, 0))
+        n /= np.linalg.norm(n)
+        prev_n = n
+        bnn = np.cross(t, n)
+        rings.append([P[i] + r * (math.cos(a) * n + math.sin(a) * bnn) for a in np.linspace(0, 2 * math.pi, sides, endpoint=False)])
+    V = np.array(rings).reshape(-1, 3)
+    F = []
+    for i in range(len(rings) - 1):
+        for k in range(sides):
+            a0, a1 = i * sides + k, i * sides + (k + 1) % sides
+            b0, b1 = a0 + sides, a1 + sides
+            F += [[a0, a1, b1], [a0, b1, b0]]
+    return trimesh.Trimesh(V, np.array(F), process=False)
+
+
+def export_pose_glb(asm, path, q=None, cables=True, kinds=None):
+    """GLB of the robot baked at pose q (default meta['home']) with per-part PBR materials (sRGB colours linearised
+    the way the Studio viewer shows them) and cable tubes; for snapshots and previews."""
+    from trimesh.visual.material import PBRMaterial
+    from .assembly import MATERIAL_PBR, hex_rgba
+
+    if q is None:
+        q = asm.meta.get("home")
+    T = asm.world_transforms(q)
+    scene = trimesh.Scene()
+    for p in asm.parts:
+        if kinds and p.kind not in kinds:
+            continue
+        m = p.mesh.copy()
+        m.apply_transform(T[p.link])
+        metal, rough = MATERIAL_PBR.get(p.material, (0.0, 0.5))
+        lin = list(_srgb_to_linear(hex_rgba(p.color)[:3])) + [1.0]
+        m.visual = trimesh.visual.TextureVisuals(material=PBRMaterial(baseColorFactor=lin, metallicFactor=metal,
+                                                                      roughnessFactor=rough))
+        scene.add_geometry(m, node_name=f"part__{p.name}", geom_name=f"g_{p.name}")
+    if cables:
+        for c in asm.cables:
+            try:
+                m = cable_mesh(asm, c, q)
+            except Exception:  # noqa: BLE001
+                continue
+            lin = list(_srgb_to_linear(hex_rgba(c.color)[:3])) + [1.0]
+            m.visual = trimesh.visual.TextureVisuals(material=PBRMaterial(baseColorFactor=lin, metallicFactor=0.0,
+                                                                          roughnessFactor=0.5))
+            scene.add_geometry(m, node_name=f"cable__{c.name}", geom_name=f"c_{c.name}")
+    with open(path, "wb") as fh:
+        fh.write(scene.export(file_type="glb"))
+    return path

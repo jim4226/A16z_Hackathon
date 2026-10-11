@@ -111,16 +111,19 @@ def footprint(name: str) -> dict:
         pads += [_pad("SH", sx * 4.32, y, 1.0, 1.8, "oval", 0.7) for sx in (-1, 1) for y in (1.66, 5.84)]
         pads += [_pad("", sx * 2.89, 1.15, 0.65, 0.65, "circle", 0.65, np_=True) for sx in (-1, 1)]
         # pre-routed D+/D- crossover (same idea as the vendor 2-layer footprints): D- (B7-A7) joined on F.Cu by a
-        # U below the row, D+ (A6-B6) bridged on B.Cu through two vias placed inside / beside that U.
-        pre = [{"pad": "B7", "layer": "F.Cu", "pts": [(-0.75, 0.0), (-0.75, -0.85), (-1.0, -1.1), (-1.0, -2.6), (0.5, -2.6),
+        # U below the row, D+ (A6-B6) bridged on B.Cu through a via inside the U and one beside it. The GND pins
+        # tie straight into the shell legs (plated, both layers).
+        pre = [{"pad": "B7", "layer": "F.Cu", "pts": [(-0.75, 0.0), (-0.75, -1.6), (-1.0, -1.85), (-1.0, -3.0), (0.5, -3.0),
                                                       (0.5, -1.1), (0.25, -0.85), (0.25, 0.0)]},
-               {"pad": "A6", "layer": "F.Cu", "pts": [(-0.25, 0.0), (-0.25, -1.75)]},
+               {"pad": "A6", "layer": "F.Cu", "pts": [(-0.25, 0.0), (-0.25, -2.1)]},
                {"pad": "B6", "layer": "F.Cu", "pts": [(0.75, 0.0), (0.75, -0.75), (1.2, -1.2), (1.2, -1.9)]},
-               {"pad": "A6", "layer": "B.Cu", "pts": [(-0.25, -1.75), (-0.1, -1.9), (1.2, -1.9)]}]
-        return {"pads": pads, "body": (-4.47, 0.75, 4.47, 8.1), "court": (-5.1, -2.9, 5.1, 8.1), "front": (0, 1),
-                "height": 3.2, "overhang": 0.6, "fcu_keepout": (-4.0, 0.9, 4.0, 8.1),
-                "ties": {"A6": "DP", "B6": "DP", "B7": "DM", "A7": "DM"}, "pre": pre,
-                "pre_vias": [("A6", -0.25, -1.75), ("A6", 1.2, -1.9)]}
+               {"pad": "A6", "layer": "B.Cu", "pts": [(-0.25, -2.1), (1.0, -2.1), (1.2, -1.9)]},
+               {"pad": "A1B12", "layer": "F.Cu", "w": 0.4, "pts": [(-3.2, 0.0), (-3.85, 0.65), (-4.32, 1.12), (-4.32, 1.66)]},
+               {"pad": "B1A12", "layer": "F.Cu", "w": 0.4, "pts": [(3.2, 0.0), (3.85, 0.65), (4.32, 1.12), (4.32, 1.66)]}]
+        return {"pads": pads, "body": (-4.47, 0.75, 4.47, 8.1), "court": (-5.1, -3.3, 5.1, 8.1), "front": (0, 1),
+                "height": 3.2, "overhang": 0.6, "fcu_keepout": (-3.4, 0.9, 3.4, 8.1),
+                "ties": {"A6": "DP", "B6": "DP", "B7": "DM", "A7": "DM", "A1B12": "SH", "B1A12": "SH", "SH": "SH"},
+                "pre": pre, "pre_vias": [("A6", -0.25, -2.1), ("A6", 1.2, -1.9)], "no_stubs": True}
     if name == "SW_SMD_5x5":
         pads = [_pad(1, -3.0, 1.85, 1.0, 0.8), _pad(1, 3.0, 1.85, 1.0, 0.8), _pad(2, -3.0, -1.85, 1.0, 0.8),
                 _pad(2, 3.0, -1.85, 1.0, 0.8)]
@@ -396,6 +399,7 @@ class Router:
         ys = np.arange(self.ny) * GRID
         self.X, self.Y = np.meshgrid(xs, ys, indexing="ij")
         self.novia = np.zeros((self.nx, self.ny), dtype=bool)
+        self.holeblock = np.zeros((self.nx, self.ny), dtype=bool)
         self._reset()
 
     def _reset(self):
@@ -410,6 +414,9 @@ class Router:
         self._reset()
         for layers, shape, net, tag in self.shapes:
             self._raster(layers, shape, net)
+        self.holeblock = self.th_holeblock.copy() if hasattr(self, "th_holeblock") else np.zeros_like(self.novia)
+        for v in self.vias:
+            self.block_holes(v["x"], v["y"], v["drill"])
 
     def rip(self, net):
         """Remove the routed copper (tag 'route') of `net`; call rebuild() afterwards."""
@@ -526,7 +533,7 @@ class Router:
         via_ok = None
         if allow_via:
             va, vb = self.own[(0, "pwr")], self.own[(1, "pwr")]
-            via_ok = (((va == -1) | (va == k)) & ((vb == -1) | (vb == k)) & ~self.novia).ravel().tobytes()
+            via_ok = (((va == -1) | (va == k)) & ((vb == -1) | (vb == k)) & ~self.novia & ~self.holeblock).ravel().tobytes()
         ny = self.ny
         if window:
             wi0, wj0, wi1, wj1 = window
@@ -652,7 +659,17 @@ class Router:
                     self.mark([li], ("seg", x0, y0, x1, y1, width / 2), net, tag)
         return cells
 
+    def block_holes(self, x, y, drill):
+        """No new via whose drill would come within 0.3 mm (edge to edge) of this hole."""
+        rr = drill / 2 + VIA_DRILL / 2 + 0.3
+        i0, i1 = max(int(math.floor((x - rr) / GRID)), 0), min(int(math.ceil((x + rr) / GRID)) + 1, self.nx)
+        j0, j1 = max(int(math.floor((y - rr) / GRID)), 0), min(int(math.ceil((y + rr) / GRID)) + 1, self.ny)
+        if i0 < i1 and j0 < j1:
+            m = np.hypot(self.X[i0:i1, j0:j1] - x, self.Y[i0:i1, j0:j1] - y) < rr
+            self.holeblock[i0:i1, j0:j1] |= m
+
     def add_via(self, net, x, y, tag="route", key=None):
+        self.block_holes(x, y, VIA_DRILL)
         c = self.idx(int(round(x / GRID)), int(round(y / GRID)))
         self.vias.append({"x": round(x, 4), "y": round(y, 4), "d": VIA_D, "drill": VIA_DRILL, "net": net, "_tag": tag,
                           "_key": key, "_cell": c})
@@ -741,10 +758,11 @@ def _pre_copper(r, placed):
             pts = [[round(x + pl.x, 4), round(y + pl.y, 4)] for x, y in pts]
             li = LAYERS.index(t["layer"])
             key = (ref, ties.get(t["pad"]) or t["pad"])
-            r.traces.append({"net": net, "layer": t["layer"], "width": CLASSES["sig"], "points": pts, "_tag": "pre",
+            w = t.get("w", CLASSES["sig"])
+            r.traces.append({"net": net, "layer": t["layer"], "width": w, "points": pts, "_tag": "pre",
                              "_key": key, "_cells": {(li, c) for c in _seg_cells(r, pts)}})
             for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-                r.mark([li], ("seg", x0, y0, x1, y1, CLASSES["sig"] / 2), net, "pre")
+                r.mark([li], ("seg", x0, y0, x1, y1, w / 2), net, "pre")
         for num, x, y in fp.get("pre_vias", []):
             net = nets.get(num)
             if net:
@@ -757,7 +775,7 @@ def _escape_fanout(r, placed, hc_nets, pwr_nets):
     so later nets cannot run across the pad row and wall it in."""
     for ref, pl in placed.items():
         smd = [p for p in pl.pads if not p["drill"] and not p["np"]]
-        if len(smd) < 3:
+        if len(smd) < 3 or pl.fp.get("no_stubs"):
             continue
         xs = sorted({round(p["x"], 3) for p in smd})
         ys = sorted({round(p["y"], 3) for p in smd})
@@ -766,7 +784,13 @@ def _escape_fanout(r, placed, hc_nets, pwr_nets):
             if not p["net"] or p["net"] == "GND" or (p["w"] >= 3.0 and p["h"] >= 3.0) or p.get("tie"):
                 continue
             dx, dy = p["x"] - pl.x, p["y"] - pl.y
-            if abs(dx) * (pl.court[3] - pl.court[1]) >= abs(dy) * (pl.court[2] - pl.court[0]):
+            if p["w"] > p["h"] * 1.15:
+                horiz = True
+            elif p["h"] > p["w"] * 1.15:
+                horiz = False
+            else:
+                horiz = abs(dx) * (pl.court[3] - pl.court[1]) >= abs(dy) * (pl.court[2] - pl.court[0])
+            if horiz:
                 ux, uy, ext = (1 if dx > 0 else -1), 0, p["w"] / 2
             else:
                 ux, uy, ext = 0, (1 if dy > 0 else -1), p["h"] / 2
@@ -798,7 +822,7 @@ def _gnd_fanout(r, pads, unrouted):
     """Every SMD GND pad gets a short stub to a via into the B.Cu plane (done before signal routing)."""
     k_g = r.nid("GND")
     for p in pads:
-        if p["net"] != "GND" or p["np"] or p["drill"]:
+        if p["net"] != "GND" or p["np"] or p["drill"] or p.get("tie"):
             continue
         if p["w"] >= 3.0 and p["h"] >= 3.0:          # exposed pad: via-in-pad array (tented)
             for dx in (-0.9, 0.9):
@@ -808,7 +832,7 @@ def _gnd_fanout(r, pads, unrouted):
             continue
         reach = max(p["w"], p["h"]) / 2 + VIA_D / 2 + 0.2
         va, vb = r.own[(0, "pwr")], r.own[(1, "pwr")]
-        flat = (((va == -1) | (va == k_g)) & ((vb == -1) | (vb == k_g)) & ~r.novia).ravel()
+        flat = (((va == -1) | (va == k_g)) & ((vb == -1) | (vb == k_g)) & ~r.novia & ~r.holeblock).ravel()
         px, py = p["x"], p["y"]
 
         def goal_fn(c, l, px=px, py=py, reach=reach, flat=flat):
@@ -974,7 +998,7 @@ class _Routing:
                     break
         return out
 
-    def run(self, order, max_rounds=14):
+    def run(self, order, max_rounds=24):
         fails = []
         for net in order:
             fails += self.route_net(net)
@@ -1039,6 +1063,10 @@ def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=N
         if "fcu_keepout" in fp:
             k = _rect_rot(fp["fcu_keepout"], pl.rot, pl.x, pl.y)
             r.mark([0], ("area", k[0], k[1], k[2], k[3]), None)
+    for p in pads:
+        if p["drill"]:
+            r.block_holes(p["x"], p["y"], p["drill"])
+    r.th_holeblock = r.holeblock.copy()
     terms: dict = {}
     for p in pads:
         if p["net"] and not p["np"]:
@@ -1065,10 +1093,84 @@ def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=N
             i, j = int(round(x / GRID)), int(round(y / GRID))
             ok = all(a[i0, j0] in (-1, k_g) for a in (hc0, hc1)
                      for i0 in (i - 2, i, i + 2) for j0 in (j - 2, j, j + 2) if 0 <= i0 < r.nx and 0 <= j0 < r.ny)
-            if ok and not r.novia[i, j]:
+            if ok and not r.novia[i, j] and not r.holeblock[i, j]:
                 r.add_via("GND", i * GRID, j * GRID, tag="stitch")
     board = _assemble(circuit, placed, pads, r, W, H, unrouted, name)
+    for _ in range(3):      # tie any GND island (e.g. a module's exposed pad under traces) back to the main plane
+        islands = _gnd_islands(board)
+        if len(islands) < 2:
+            break
+        islands.sort(key=len, reverse=True)
+        main = islands[0]
+        tgt = set()
+        for v in board["vias"]:
+            if v["net"] == "GND" and ("v", v["x"], v["y"]) in main:
+                c = r.idx(int(round(v["x"] / GRID)), int(round(v["y"] / GRID)))
+                tgt |= {(0, c), (1, c)}
+        for p in pads:
+            if p["net"] == "GND" and p["drill"] and ("p", p["ref"], p["num"]) in main:
+                tgt |= {(l, c) for c in r.pad_cells(p) for l in (0, 1)}
+        fixed = False
+        for isl in islands[1:]:
+            src = set()
+            for v in board["vias"]:
+                if v["net"] == "GND" and ("v", v["x"], v["y"]) in isl:
+                    c = r.idx(int(round(v["x"] / GRID)), int(round(v["y"] / GRID)))
+                    src |= {(0, c), (1, c)}
+            for p in pads:
+                if p["net"] == "GND" and ("p", p["ref"], p["num"]) in isl:
+                    src |= {(0, c) for c in r.pad_cells(p)} | ({(1, c) for c in r.pad_cells(p)} if p["drill"] else set())
+            if not src or not tgt:
+                continue
+            gx = float(np.mean([r.ij(c)[0] for _, c in tgt]))
+            gy = float(np.mean([r.ij(c)[1] for _, c in tgt]))
+            path = r.astar("GND", "sig", list(src), tgt, (gx, gy), max_exp=120000)
+            if path:
+                r.commit_path("GND", path, CLASSES["sig"], tag="route", key="GND")
+                fixed = True
+        if not fixed:
+            break
+        board = _assemble(circuit, placed, pads, r, W, H, unrouted, name)
     return board
+
+
+def _gnd_islands(board) -> list:
+    """GND copper islands as sets of ('p', ref, pad) / ('v', x, y) keys (pads, vias, traces, pours)."""
+    pours = board.get("_pour_geoms") or []
+    items = [it for it in _copper_items(board) if it[0] == "GND"] + [("GND", p["layer"], p["geom"], "pour", None) for p in pours]
+    n = len(items)
+    par = list(range(n))
+
+    def f(a):
+        while par[a] != a:
+            par[a] = par[par[a]]
+            a = par[a]
+        return a
+    by_key: dict = {}
+    for i, it in enumerate(items):
+        if it[3] in ("pad", "via"):
+            by_key.setdefault(it[4], []).append(i)
+    for ids in by_key.values():
+        for a in ids[1:]:
+            par[f(a)] = f(ids[0])
+    from shapely.strtree import STRtree
+    for layer in LAYERS:
+        idx = [i for i, it in enumerate(items) if it[1] == layer]
+        tree = STRtree([items[i][2] for i in idx])
+        for a_pos, i in enumerate(idx):
+            for b in tree.query(items[i][2]):
+                j = idx[int(b)]
+                if j != i and f(i) != f(j) and items[i][2].distance(items[j][2]) < 1e-4:
+                    par[f(i)] = f(j)
+    vias = board["vias"]
+    groups: dict = {}
+    for i, it in enumerate(items):
+        if it[3] == "pad":
+            groups.setdefault(f(i), set()).add(("p", it[4][0], it[4][1]))
+        elif it[3] == "via":
+            v = vias[it[4][1]]
+            groups.setdefault(f(i), set()).add(("v", v["x"], v["y"]))
+    return [g for g in groups.values() if any(k[0] == "p" for k in g)]
 
 
 def _copper_items(board):
@@ -1373,3 +1475,447 @@ def to_svg(board: dict, scale: float = 12.0, title: str = "") -> str:
         o.append(f'<text x="0" y="-4" font-size="2.2" font-weight="700" fill="#e6edf3">{_esc(title)}</text>')
     o.append("</svg>")
     return "".join(o)
+
+
+# ------------------------------------------------------------------ stroke font (silkscreen text in Gerbers)
+# glyphs on a 4 x 6 grid (x right, y up); each glyph is a list of polylines
+_F = {
+    "0": [[(0, 0), (4, 0), (4, 6), (0, 6), (0, 0), (4, 6)]], "1": [[(1, 5), (2, 6), (2, 0)], [(1, 0), (3, 0)]],
+    "2": [[(0, 5), (1, 6), (3, 6), (4, 5), (4, 4), (0, 0), (4, 0)]], "3": [[(0, 6), (4, 6), (2, 3), (4, 2), (4, 1), (3, 0), (0, 0)]],
+    "4": [[(3, 0), (3, 6), (0, 2), (4, 2)]], "5": [[(4, 6), (0, 6), (0, 3), (3, 3), (4, 2), (4, 1), (3, 0), (0, 0)]],
+    "6": [[(4, 6), (1, 6), (0, 5), (0, 0), (4, 0), (4, 3), (0, 3)]], "7": [[(0, 6), (4, 6), (1, 0)]],
+    "8": [[(0, 0), (4, 0), (4, 6), (0, 6), (0, 0)], [(0, 3), (4, 3)]], "9": [[(0, 0), (3, 0), (4, 1), (4, 6), (0, 6), (0, 3), (4, 3)]],
+    "A": [[(0, 0), (0, 4), (2, 6), (4, 4), (4, 0)], [(0, 3), (4, 3)]], "B": [[(0, 0), (0, 6), (3, 6), (4, 5), (4, 4), (3, 3), (0, 3)], [(3, 3), (4, 2), (4, 1), (3, 0), (0, 0)]],
+    "C": [[(4, 6), (0, 6), (0, 0), (4, 0)]], "D": [[(0, 0), (0, 6), (3, 6), (4, 5), (4, 1), (3, 0), (0, 0)]],
+    "E": [[(4, 6), (0, 6), (0, 0), (4, 0)], [(0, 3), (3, 3)]], "F": [[(4, 6), (0, 6), (0, 0)], [(0, 3), (3, 3)]],
+    "G": [[(4, 6), (0, 6), (0, 0), (4, 0), (4, 3), (2, 3)]], "H": [[(0, 0), (0, 6)], [(4, 0), (4, 6)], [(0, 3), (4, 3)]],
+    "I": [[(1, 0), (3, 0)], [(1, 6), (3, 6)], [(2, 0), (2, 6)]], "J": [[(4, 6), (4, 0), (0, 0), (0, 2)]],
+    "K": [[(0, 0), (0, 6)], [(4, 6), (0, 3), (4, 0)]], "L": [[(0, 6), (0, 0), (4, 0)]],
+    "M": [[(0, 0), (0, 6), (2, 3), (4, 6), (4, 0)]], "N": [[(0, 0), (0, 6), (4, 0), (4, 6)]],
+    "O": [[(0, 0), (4, 0), (4, 6), (0, 6), (0, 0)]], "P": [[(0, 0), (0, 6), (4, 6), (4, 3), (0, 3)]],
+    "Q": [[(0, 0), (4, 0), (4, 6), (0, 6), (0, 0)], [(2, 2), (4, -1)]], "R": [[(0, 0), (0, 6), (4, 6), (4, 3), (0, 3), (4, 0)]],
+    "S": [[(4, 6), (0, 6), (0, 3), (4, 3), (4, 0), (0, 0)]], "T": [[(0, 6), (4, 6)], [(2, 6), (2, 0)]],
+    "U": [[(0, 6), (0, 0), (4, 0), (4, 6)]], "V": [[(0, 6), (2, 0), (4, 6)]], "W": [[(0, 6), (1, 0), (2, 3), (3, 0), (4, 6)]],
+    "X": [[(0, 0), (4, 6)], [(0, 6), (4, 0)]], "Y": [[(0, 6), (2, 3), (4, 6)], [(2, 3), (2, 0)]], "Z": [[(0, 6), (4, 6), (0, 0), (4, 0)]],
+    "-": [[(1, 3), (3, 3)]], "+": [[(0, 3), (4, 3)], [(2, 1), (2, 5)]], ".": [[(2, 0), (2, 0.5)]], "/": [[(0, 0), (4, 6)]],
+    "_": [[(0, 0), (4, 0)]], ":": [[(2, 1), (2, 1.5)], [(2, 4.5), (2, 5)]], " ": [],
+}
+
+
+def text_strokes(text: str, x: float, y: float, h: float = 1.0) -> list:
+    """Polylines (board mm) for `text` with its baseline-left at (x, y), cap height h."""
+    k = h / 6.0
+    out = []
+    cx = x
+    for ch in text.upper():
+        for line in _F.get(ch, _F["-"] if ch not in _F else []):
+            out.append([(cx + px * k, y + py * k) for px, py in line])
+        cx += 5.5 * k
+    return out
+
+
+# ------------------------------------------------------------------ Gerber / Excellon / JLC outputs
+
+def _gfmt(v):
+    return f"{int(round(v * 1e6))}"
+
+
+class _Gerber:
+    def __init__(self, function, polarity="Positive", comment=""):
+        self.ap, self.body = {}, []
+        self.head = ["%TF.GenerationSoftware,Morph,morph.robot.pcb,1.0*%", f"%TF.FileFunction,{function}*%",
+                     f"%TF.FilePolarity,{polarity}*%", "%FSLAX46Y46*%", "%MOMM*%", f"G04 Morph {comment}*", "%LPD*%", "G01*"]
+        self.cur = None
+
+    def aperture(self, shape, w, h=None):
+        h = w if h is None else h
+        key = (shape, round(w, 4), round(h, 4))
+        if key not in self.ap:
+            code = 10 + len(self.ap)
+            if shape == "C":
+                self.ap[key] = (code, f"%ADD{code}C,{w:.4f}*%")
+            elif shape == "O":
+                self.ap[key] = (code, f"%ADD{code}O,{w:.4f}X{h:.4f}*%")
+            else:
+                self.ap[key] = (code, f"%ADD{code}R,{w:.4f}X{h:.4f}*%")
+        return self.ap[key][0]
+
+    def use(self, code):
+        if self.cur != code:
+            self.body.append(f"D{code}*")
+            self.cur = code
+
+    def flash(self, shape, w, h, x, y):
+        self.use(self.aperture(shape, w, h))
+        self.body.append(f"X{_gfmt(x)}Y{_gfmt(y)}D03*")
+
+    def line(self, pts, width):
+        self.use(self.aperture("C", width))
+        for i, (x, y) in enumerate(pts):
+            self.body.append(f"X{_gfmt(x)}Y{_gfmt(y)}D0{2 if i == 0 else 1}*")
+
+    def region(self, ring):
+        self.body.append("G36*")
+        for i, (x, y) in enumerate(ring):
+            self.body.append(f"X{_gfmt(x)}Y{_gfmt(y)}D0{2 if i == 0 else 1}*")
+        self.body.append("G37*")
+
+    def text(self):
+        return "\n".join(self.head + [v[1] for v in sorted(self.ap.values())] + self.body + ["M02*"]) + "\n"
+
+
+def _hole_free(poly):
+    """Split a polygon with holes into hole-free pieces (Gerber regions cannot carry holes)."""
+    if isinstance(poly, MultiPolygon):
+        return [q for g in poly.geoms for q in _hole_free(g)]
+    if not isinstance(poly, Polygon) or poly.is_empty:
+        return []
+    if not poly.interiors:
+        return [poly]
+    hx = poly.interiors[0].centroid.x
+    y0, y1 = poly.bounds[1] - 1, poly.bounds[3] + 1
+    pieces = split(poly, LineString([(hx, y0), (hx, y1)]))
+    out = []
+    for g in pieces.geoms:
+        out += _hole_free(g)
+    return out
+
+
+def _pad_ap(p, grow=0.0):
+    w, h = p["w"] + 2 * grow, p["h"] + 2 * grow
+    if p["shape"] == "circle":
+        return "C", w, w
+    if p["shape"] == "oval":
+        return "O", w, h
+    return "R", w, h
+
+
+def _outline_pts(W, H, r=1.0, n=6):
+    pts = []
+    for cx, cy, a0 in ((W - r, r, -90), (W - r, H - r, 0), (r, H - r, 90), (r, r, 180)):
+        for k in range(n + 1):
+            a = math.radians(a0 + 90 * k / n)
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts + [pts[0]]
+
+
+def silk_lines(board) -> list:
+    """[(polyline, width)] for the top silkscreen: body outlines, pin-1 marks, reference designators, title."""
+    out = []
+    for c in board["components"]:
+        if c["kind"] == "MH":
+            continue
+        x0, y0, x1, y1 = c["outline"]
+        if c.get("round"):
+            r = c["round"]
+            out.append(([(c["x"] + r * math.cos(2 * math.pi * k / 40), c["y"] + r * math.sin(2 * math.pi * k / 40)) for k in range(41)], 0.15))
+            out.append(([(c["x"] - r * 0.95, c["y"] + 0.6 * r), (c["x"] - r * 0.95 + 1.2, c["y"] + 0.6 * r)], 0.15))   # + mark
+        else:
+            out.append(([(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)], 0.15))
+        if len(c["pads"]) > 3 and c["kind"] in ("box", "conn"):
+            p1 = next((p for p in c["pads"] if p["name"] in ("1", "A1B12")), None)
+            if p1:
+                dx = -0.9 if p1["x"] <= c["x"] else 0.9
+                out.append(([(p1["x"] + dx, p1["y"]), (p1["x"] + dx, p1["y"] + 0.01)], 0.5))
+        W_, H_ = board["size_mm"]
+        tw = len(c["ref"]) * 5.5 / 6.0 - 0.1
+        tx, ty = max(c["court"][0], 0.6), c["court"][3] + 0.45
+        if ty + 1.0 > H_ - 0.3:          # top-edge part: put the designator beside the body
+            tx, ty = c["outline"][0] - tw - 0.6, c["outline"][1] + 0.4
+            if tx < 0.6:
+                tx = c["outline"][2] + 0.6
+        if c.get("overhang") and c["court"][0] < 0:     # left-edge connector hanging off the board
+            tx, ty = 0.8, c["court"][3] + 0.45
+        tx = min(tx, W_ - tw - 0.6)
+        for line in text_strokes(c["ref"], tx, ty, 1.0):
+            out.append((line, 0.15))
+    W, H = board["size_mm"]
+    title = board.get("silk_title", "")
+    if title:
+        for line in text_strokes(title, 6.0, 1.2, 1.2):
+            out.append((line, 0.18))
+    return out
+
+
+def write_gerbers(board: dict, outdir: str, name: str = "morph_ctrl") -> list:
+    os.makedirs(outdir, exist_ok=True)
+    W, H = board["size_mm"]
+    pours = board.get("_pour_geoms") or [{"layer": r["layer"], "geom": Polygon(r["exterior"], r["holes"])} for r in board["pour"]]
+    layers = {}
+    for li, (lname, fn) in enumerate((("F.Cu", "Copper,L1,Top"), ("B.Cu", "Copper,L2,Bot"))):
+        g = _Gerber(fn, comment=lname)
+        for p in pours:
+            if p["layer"] == lname:
+                for piece in _hole_free(p["geom"]):
+                    g.region(list(piece.exterior.coords))
+        for t in board["traces"]:
+            if t["layer"] == lname:
+                g.line(t["points"], t["width"])
+        for c in board["components"]:
+            for p in c["pads"]:
+                if p.get("np") or lname not in p.get("layers", []):
+                    continue
+                g.flash(*_pad_ap(p), p["x"], p["y"])
+        for v in board["vias"]:
+            g.flash("C", v["d"], v["d"], v["x"], v["y"])
+        layers[f"{name}-{lname.replace('.', '_')}.gbr"] = g
+    for lname, fn in (("F.Mask", "Soldermask,Top"), ("B.Mask", "Soldermask,Bot")):
+        g = _Gerber(fn, "Negative", lname)
+        for c in board["components"]:
+            for p in c["pads"]:
+                if p.get("np"):
+                    g.flash("C", p["drill"] + 0.1, p["drill"] + 0.1, p["x"], p["y"])
+                    continue
+                cu = "F.Cu" if lname == "F.Mask" else "B.Cu"
+                if cu in p.get("layers", []):
+                    g.flash(*_pad_ap(p, 0.05), p["x"], p["y"])
+        layers[f"{name}-{lname.replace('.', '_')}.gbr"] = g
+    g = _Gerber("Paste,Top", comment="F.Paste")
+    for c in board["components"]:
+        for p in c["pads"]:
+            if not p.get("np") and not p.get("drill") and "F.Cu" in p.get("layers", []):
+                s, w, h = _pad_ap(p, -0.02)
+                g.flash(s, w, h, p["x"], p["y"])
+    layers[f"{name}-F_Paste.gbr"] = g
+    g = _Gerber("Legend,Top", comment="F.SilkS")
+    for line, w in silk_lines(board):
+        g.line(line, w)
+    layers[f"{name}-F_Silkscreen.gbr"] = g
+    g = _Gerber("Profile,NP", comment="Edge.Cuts")
+    g.line(_outline_pts(W, H), 0.1)
+    layers[f"{name}-Edge_Cuts.gbr"] = g
+    files = {}
+    for fn, g in layers.items():
+        files[fn] = g.text()
+    pth = [(p["x"], p["y"], p["drill"]) for c in board["components"] for p in c["pads"] if p.get("drill") and not p.get("np")]
+    pth += [(v["x"], v["y"], v["drill"]) for v in board["vias"]]
+    npth = [(p["x"], p["y"], p["drill"]) for c in board["components"] for p in c["pads"] if p.get("np")]
+    for fn, holes, plated in ((f"{name}-PTH.drl", pth, True), (f"{name}-NPTH.drl", npth, False)):
+        tools = sorted({round(d, 3) for _, _, d in holes})
+        L = ["M48", f"; DRILL file Morph pcb.py, {'plated' if plated else 'non-plated'} holes",
+             "; FORMAT={-:-/ absolute / metric / decimal}", f"; #@! TF.FileFunction,{'Plated' if plated else 'NonPlated'},1,2,{'PTH' if plated else 'NPTH'}",
+             "FMAT,2", "METRIC"]
+        L += [f"T{i + 1}C{d:.3f}" for i, d in enumerate(tools)] + ["%", "G90", "G05"]
+        for i, d in enumerate(tools):
+            L.append(f"T{i + 1}")
+            L += [f"X{x:.3f}Y{y:.3f}" for x, y, dd in holes if round(dd, 3) == d]
+        L.append("M30")
+        files[fn] = "\n".join(L) + "\n"
+    for fn, txt in files.items():
+        with open(os.path.join(outdir, fn), "w") as fh:
+            fh.write(txt)
+    with zipfile.ZipFile(os.path.join(outdir, "gerbers.zip"), "w", zipfile.ZIP_DEFLATED) as z:
+        for fn in files:
+            z.write(os.path.join(outdir, fn), fn)
+    return sorted(files) + ["gerbers.zip"]
+
+
+def jlc_files(board: dict, circuit, outdir: str) -> dict:
+    """JLCPCB assembly BOM (Comment, Designator, Footprint, LCSC Part #) and CPL (pick-and-place)."""
+    groups = {}
+    by_ref = {c.ref: c for c in circuit.comps}
+    for comp in board["components"]:
+        c = by_ref[comp["ref"]]
+        if c.kind == "MH":
+            continue
+        key = (c.value, c.footprint, c.lcsc or "verify", c.mpn)
+        groups.setdefault(key, []).append(c.ref)
+    bom_rows = []
+    for (value, fp, lcsc, mpn), refs in sorted(groups.items(), key=lambda kv: kv[1][0]):
+        bom_rows.append({"Comment": f"{value}" + (f" ({mpn})" if mpn and mpn != value else ""), "Designator": ",".join(sorted(refs, key=_refkey)),
+                         "Footprint": fp, "LCSC Part #": lcsc if lcsc else "verify", "Qty": len(refs)})
+    with open(os.path.join(outdir, "jlc_bom.csv"), "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["Comment", "Designator", "Footprint", "LCSC Part #", "Qty"])
+        w.writeheader()
+        w.writerows(bom_rows)
+    cpl = []
+    for comp in board["components"]:
+        if comp["kind"] == "MH":
+            continue
+        cpl.append({"Designator": comp["ref"], "Mid X": f"{comp['x']:.3f}mm", "Mid Y": f"{comp['y']:.3f}mm", "Layer": "Top",
+                    "Rotation": comp["rot"]})
+    with open(os.path.join(outdir, "jlc_cpl.csv"), "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
+        w.writeheader()
+        w.writerows(sorted(cpl, key=lambda r: _refkey(r["Designator"])))
+    n_verify = sum(1 for r in bom_rows if r["LCSC Part #"] == "verify")
+    return {"bom": "jlc_bom.csv", "cpl": "jlc_cpl.csv", "lines": len(bom_rows), "verify_lines": n_verify,
+            "placements": len(cpl), "note": "CPL rotations follow the Morph footprint zero; confirm against JLCPCB's "
+            "3D preview before ordering (their library zero differs for some packages)"}
+
+
+def _refkey(ref):
+    import re
+    m = re.match(r"([A-Z]+)(\d+)", ref)
+    return (m.group(1), int(m.group(2))) if m else (ref, 0)
+
+
+# ------------------------------------------------------------------ cache + one-call build
+
+def _cache_key(circuit, W, H, hc, pwr) -> str:
+    import hashlib
+    blob = json.dumps({"v": 7, "W": W, "H": H, "hc": list(hc), "pwr": list(pwr),
+                       "c": [(c.ref, c.value, c.footprint, sorted(c.place.items(), key=str), [(p.num, p.net) for p in c.pins])
+                             for c in circuit.comps if c.board]}, sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode()).hexdigest()[:20]
+
+
+def build(circuit, W, H, outdir, hc_nets=(), pwr_nets=(), name="morph_ctrl", title="", cache=True) -> dict:
+    """Generate (or load from cache) the board, write board.json/.svg, Gerbers, drill, JLC BOM/CPL."""
+    import tempfile
+    cdir = os.environ.get("MORPH_PCB_CACHE", os.path.join(tempfile.gettempdir(), "morph_pcb_cache"))
+    key = _cache_key(circuit, W, H, hc_nets, pwr_nets)
+    path = os.path.join(cdir, f"{key}.json")
+    board = None
+    if cache and os.path.exists(path):
+        try:
+            board = json.load(open(path))
+        except Exception:
+            board = None
+    if board is None:
+        board = generate(circuit, W, H, hc_nets=hc_nets, pwr_nets=pwr_nets, name=name)
+        board.pop("_pour_geoms", None)
+        if cache:
+            os.makedirs(cdir, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump(board, fh)
+            os.replace(tmp, path)
+    board["silk_title"] = title
+    os.makedirs(outdir, exist_ok=True)
+    gfiles = write_gerbers(board, os.path.join(outdir, "gerbers"), name)
+    jlc = jlc_files(board, circuit, outdir)
+    with open(os.path.join(outdir, "board.json"), "w") as fh:
+        json.dump(board, fh)
+    with open(os.path.join(outdir, "board.svg"), "w") as fh:
+        fh.write(to_svg(board, title=title))
+    with open(os.path.join(outdir, "board_render.svg"), "w") as fh:
+        fh.write(render_svg(board, title=title))
+    return {"board": board, "gerbers": [f"gerbers/{f}" for f in gfiles], "jlc": jlc}
+
+
+def render_svg(board: dict, scale: float = 14.0, title: str = "") -> str:
+    """Photo-style render of the assembled board: green mask, ENIG pads, white legend, component bodies."""
+    W, H = board["size_mm"]
+    fy = lambda y: H - y  # noqa: E731
+    m = 5.0
+    o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{-m} {-m - 4} {W + 2 * m} {H + 2 * m + 4}" '
+         f'width="{(W + 2 * m) * scale:.0f}" height="{(H + 2 * m + 4) * scale:.0f}" font-family="Inter, Helvetica, Arial, sans-serif">',
+         '<defs>'
+         '<linearGradient id="mask" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#13784a"/><stop offset="1" stop-color="#0b5535"/></linearGradient>'
+         '<linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f1d58a"/><stop offset="1" stop-color="#c79a3c"/></linearGradient>'
+         '<linearGradient id="can" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e3e7ec"/><stop offset=".55" stop-color="#b9c0c9"/><stop offset="1" stop-color="#9aa3ae"/></linearGradient>'
+         '<linearGradient id="ic" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2b30"/><stop offset="1" stop-color="#131317"/></linearGradient>'
+         '<linearGradient id="plas" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbf6ea"/><stop offset="1" stop-color="#ddd2bb"/></linearGradient>'
+         '<radialGradient id="alu" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#eef1f4"/><stop offset="1" stop-color="#9ba3ad"/></radialGradient>'
+         '<filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0.25" dy="0.35" stdDeviation="0.3" flood-color="#000" flood-opacity=".45"/></filter>'
+         '</defs>',
+         f'<rect x="{-m}" y="{-m - 4}" width="{W + 2 * m}" height="{H + 2 * m + 4}" fill="#0d1117"/>',
+         f'<rect x="0.15" y="0.35" width="{W}" height="{H}" rx="1" fill="#000" opacity=".5"/>',
+         f'<rect x="0" y="0" width="{W}" height="{H}" rx="1" fill="url(#mask)"/>']
+    cu = "#1f8a55"
+    for ring in board.get("pour", []):
+        if ring.get("layer") == "F.Cu":
+            o.append(f'<path d="{_ring_path(ring, fy)}" fill="{cu}" fill-rule="evenodd" opacity=".55"/>')
+    for t in board["traces"]:
+        if t["layer"] == "F.Cu":
+            pts = " ".join(f"{x:.3f},{fy(y):.3f}" for x, y in t["points"])
+            o.append(f'<polyline points="{pts}" fill="none" stroke="{cu}" stroke-width="{t["width"]}" stroke-linecap="round" stroke-linejoin="round"/>')
+    for v in board.get("vias", []):
+        o.append(f'<circle cx="{v["x"]:.3f}" cy="{fy(v["y"]):.3f}" r="{v["d"] / 2}" fill="{cu}"/>'
+                 f'<circle cx="{v["x"]:.3f}" cy="{fy(v["y"]):.3f}" r="{v["drill"] / 2}" fill="#06140d"/>')
+    for c in board["components"]:
+        for p in c["pads"]:
+            if p.get("np"):
+                if c["kind"] == "MH":
+                    o.append(f'<circle cx="{p["x"]:.3f}" cy="{fy(p["y"]):.3f}" r="{p["drill"] / 2 + 0.9}" fill="url(#gold)"/>')
+                o.append(f'<circle cx="{p["x"]:.3f}" cy="{fy(p["y"]):.3f}" r="{p["drill"] / 2}" fill="#05070a"/>')
+            elif "F.Cu" in p.get("layers", []):
+                o.append(_pad_svg(p, fy, "url(#gold)", "#1a1206"))
+    for line, w in silk_lines(board):
+        pts = " ".join(f"{x:.3f},{fy(y):.3f}" for x, y in line)
+        o.append(f'<polyline points="{pts}" fill="none" stroke="#f3f1e7" stroke-width="{w}" stroke-linecap="round" stroke-linejoin="round"/>')
+    for c in board["components"]:
+        o.append(_body_svg(c, fy))
+    if title:
+        o.append(f'<text x="0" y="-1.6" font-size="2.0" font-weight="600" fill="#e6edf3">{_esc(title)}</text>')
+    st = board.get("stats", {})
+    o.append(f'<text x="{W}" y="-1.6" font-size="1.5" fill="#8b95a7" text-anchor="end">{W:g} × {H:g} mm · '
+             f'{st.get("smd", 0)} SMD + {st.get("tht", 0)} THT · ENIG · green mask</text>')
+    o.append("</svg>")
+    return "".join(o)
+
+
+def _body_svg(c, fy):
+    k, fp, ref, val = c["kind"], c.get("footprint", ""), c["ref"], c["value"]
+    x0, y0, x1, y1 = c["outline"]
+    X, Y, Wd, Hd = x0, fy(y1), x1 - x0, y1 - y0
+    cx, cy = c["x"], fy(c["y"])
+    horiz = Wd >= Hd
+    fs = max(0.5, min(1.1, min(Wd, Hd) * 0.32))
+    lab = lambda txt, col="#c9cdd3", size=fs: (f'<text x="{cx:.2f}" y="{cy + size * 0.35:.2f}" font-size="{size:.2f}" '  # noqa: E731
+                                               f'fill="{col}" text-anchor="middle" font-weight="600">{_esc(txt)}</text>')
+    if k == "MH":
+        return ""
+    if fp in ("R0603", "C0603", "C0805", "LED0603", "L_4x4", "FUSE_2410"):
+        body = {"R0603": "#1c1c1f", "C0603": "#b8925a", "C0805": "#b8925a", "LED0603": "#e8f5e9", "L_4x4": "#2b2d33",
+                "FUSE_2410": "#f0eadc"}[fp]
+        e = 0.28 * (Wd if horiz else Hd)
+        s = [f'<g filter="url(#sh)"><rect x="{X:.3f}" y="{Y:.3f}" width="{Wd:.3f}" height="{Hd:.3f}" rx="0.12" fill="{body}"/>']
+        if fp != "L_4x4":
+            if horiz:
+                s.append(f'<rect x="{X:.3f}" y="{Y:.3f}" width="{e:.3f}" height="{Hd:.3f}" fill="#cfd4da"/>'
+                         f'<rect x="{X + Wd - e:.3f}" y="{Y:.3f}" width="{e:.3f}" height="{Hd:.3f}" fill="#cfd4da"/>')
+            else:
+                s.append(f'<rect x="{X:.3f}" y="{Y:.3f}" width="{Wd:.3f}" height="{e:.3f}" fill="#cfd4da"/>'
+                         f'<rect x="{X:.3f}" y="{Y + Hd - e:.3f}" width="{Wd:.3f}" height="{e:.3f}" fill="#cfd4da"/>')
+        if fp == "L_4x4":
+            s.append(f'<circle cx="{cx:.3f}" cy="{cy:.3f}" r="{min(Wd, Hd) * 0.32:.3f}" fill="none" stroke="#6b6f78" stroke-width="0.18"/>')
+        if fp == "LED0603":
+            s.append(f'<rect x="{cx - 0.3:.3f}" y="{cy - 0.25:.3f}" width="0.6" height="0.5" fill="{"#46d36b" if "PWR" in val else "#ff4d4d"}" opacity=".85"/>')
+        if fp == "R0603":
+            s.append(f'<text x="{cx:.2f}" y="{cy + 0.18:.2f}" font-size="0.5" fill="#e8e8e8" text-anchor="middle">{_esc(val.replace("k", "K"))}</text>')
+        s.append("</g>")
+        return "".join(s)
+    if fp in ("SOD123", "SMA", "SMB"):
+        band = (f'<rect x="{X + Wd * 0.18:.3f}" y="{Y:.3f}" width="{Wd * 0.1:.3f}" height="{Hd:.3f}" fill="#9aa1ab"/>' if horiz else
+                f'<rect x="{X:.3f}" y="{Y + Hd * 0.72:.3f}" width="{Wd:.3f}" height="{Hd * 0.1:.3f}" fill="#9aa1ab"/>')
+        return f'<g filter="url(#sh)"><rect x="{X:.3f}" y="{Y:.3f}" width="{Wd:.3f}" height="{Hd:.3f}" rx="0.15" fill="url(#ic)"/>{band}</g>'
+    if fp == "ESP32S3_WROOM1":
+        # module PCB, shield can over the pad field, printed antenna at the top
+        return (f'<g filter="url(#sh)"><rect x="{X:.3f}" y="{Y:.3f}" width="{Wd:.3f}" height="{Hd:.3f}" rx="0.3" fill="#1b2a3a"/>'
+                f'<rect x="{X + 0.9:.3f}" y="{Y + 6.9:.3f}" width="{Wd - 1.8:.3f}" height="{Hd - 7.8:.3f}" rx="0.4" fill="url(#can)"/>'
+                f'<path d="M{X + 1.5:.2f},{Y + 4.8:.2f} h3 v-2.6 h2 v2.6 h2 v-2.6 h2 v2.6 h2 v-2.6 h2 v2.6 h1.5" fill="none" stroke="#d9b65a" stroke-width="0.45"/>'
+                f'<text x="{cx:.2f}" y="{Y + 13:.2f}" font-size="1.25" fill="#3b4350" text-anchor="middle" font-weight="700">ESPRESSIF</text>'
+                f'<text x="{cx:.2f}" y="{Y + 15:.2f}" font-size="1.05" fill="#4b5563" text-anchor="middle">ESP32-S3-WROOM-1</text>'
+                f'<text x="{cx:.2f}" y="{Y + 16.6:.2f}" font-size="0.8" fill="#6b7280" text-anchor="middle">N8R8 · FCC ID 2AC7Z</text></g>')
+    if fp == "USBC_16P":
+        return (f'<g filter="url(#sh)"><rect x="{X:.3f}" y="{Y - 0.6:.3f}" width="{Wd:.3f}" height="{Hd:.3f}" rx="0.8" fill="url(#can)"/>'
+                f'<rect x="{X + 1.2:.3f}" y="{Y + 0.2:.3f}" width="{Wd - 2.4:.3f}" height="1.2" rx="0.5" fill="#2a2f36"/></g>')
+    if fp == "XT30PW":
+        return (f'<g filter="url(#sh)"><rect x="{X:.3f}" y="{Y:.3f}" width="{Wd:.3f}" height="{Hd:.3f}" rx="0.6" fill="#e3b021"/>'
+                f'<rect x="{X + 0.8:.3f}" y="{Y + 1.0:.3f}" width="{Wd * 0.55:.3f}" height="{Hd - 2:.3f}" rx="0.4" fill="#c9960f"/>'
+                f'<text x="{cx - 1:.2f}" y="{cy + 0.4:.2f}" font-size="1.0" fill="#5a4300" text-anchor="middle" font-weight="700">XT30</text></g>')
+    if fp == "CP_D10":
+        r = c.get("round") or 5.0
+        return (f'<g filter="url(#sh)"><circle cx="{cx:.3f}" cy="{cy:.3f}" r="{r:.3f}" fill="url(#alu)"/>'
+                f'<path d="M{cx - r:.3f},{cy:.3f} A{r},{r} 0 0 1 {cx - r * 0.5:.3f},{cy - r * 0.866:.3f} L{cx - r * 0.5:.3f},{cy + r * 0.866:.3f} A{r},{r} 0 0 1 {cx - r:.3f},{cy:.3f}" fill="#2a3340"/>'
+                f'<path d="M{cx + 0.6:.2f},{cy - 2.2:.2f} v4.4 M{cx - 1.6:.2f},{cy:.2f} h4.4" stroke="#7c8591" stroke-width="0.25"/>'
+                f'<text x="{cx + 0.8:.2f}" y="{cy + r * 0.62:.2f}" font-size="0.9" fill="#3b4350" text-anchor="middle">{_esc(val)}</text></g>')
+    if fp == "SW_SMD_5x5":
+        return (f'<g filter="url(#sh)"><rect x="{cx - 2.55:.3f}" y="{cy - 2.55:.3f}" width="5.1" height="5.1" rx="0.3" fill="url(#can)"/>'
+                f'<circle cx="{cx:.3f}" cy="{cy:.3f}" r="1.5" fill="#1f2126"/></g>')
+    if fp.startswith("HDR_3x") or fp in ("CONN_2P5_3", "JST_PH_2", "JST_XH_2", "JST_SH_4"):
+        holes = "".join(f'<rect x="{p["x"] - 0.4:.3f}" y="{fy(p["y"]) - 0.4:.3f}" width="0.8" height="0.8" fill="#2a2420"/>'
+                        for p in c["pads"] if p.get("drill"))
+        col = "#1d1f24" if fp.startswith("HDR") else "url(#plas)"
+        return (f'<g filter="url(#sh)"><rect x="{X:.3f}" y="{Y:.3f}" width="{Wd:.3f}" height="{Hd:.3f}" rx="0.25" fill="{col}"/>{holes}</g>')
+    # generic IC (SOT, SSOP, TSSOP, SOT223, TO252)
+    s = [f'<g filter="url(#sh)"><rect x="{X:.3f}" y="{Y:.3f}" width="{Wd:.3f}" height="{Hd:.3f}" rx="0.15" fill="url(#ic)"/>']
+    s.append(f'<circle cx="{X + 0.45:.3f}" cy="{Y + 0.45:.3f}" r="0.2" fill="#3c3f46"/>')
+    txt = val.split("-")[0][:10]
+    size = min(0.85, fs, (max(Wd, Hd) * 0.85) / max(len(txt) * 0.62, 1))
+    if min(Wd, Hd) > 1.8 and size >= 0.45:
+        s.append(lab(txt, "#9aa1ab", size))
+    s.append("</g>")
+    return "".join(s)

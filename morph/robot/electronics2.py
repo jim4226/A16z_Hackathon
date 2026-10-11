@@ -597,7 +597,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
         pins += [(num, f"A{i}", "GND", "L", "input") for i, num in enumerate(("1", "2", "3", "4", "5", "24"))]
         pins += [("23", "~OE", "PWM_OE", "L", "input"), ("25", "EXTCLK", "GND", "L", "input"), ("26", "SCL", "SCL", "L", "input"),
                  ("27", "SDA", "SDA", "L", "bidir"), ("28", "VDD", "3V3", "T", "power_in"), ("14", "VSS", "GND", "B", "power_in")]
-        _part(c, "U2", "PCA9685", "box", pins, "pwm", place={"at_xy": (0.55, 0.36)})
+        _part(c, "U2", "PCA9685", "box", pins, "pwm", place={"at_xy": (0.56, 0.42), "rot": 90})
         _part(c, "C11", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "pwm", place={"near": "U2", "pin": "28"})
         _part(c, "R16", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "PWM_OE")], "pwm", place={"near": "U2", "pin": "23"})
         _part(c, "R17", "R4k7", "R", [("1", "1", "3V3"), ("2", "2", "SDA")], "pwm", place={"near": "U2", "pin": "27"})
@@ -605,7 +605,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
         hp = []
         for k, a in enumerate(acts):
             _part(c, f"R{20 + k}", "R220", "R", [("1", "1", f"PWM{k}"), ("2", "2", f"SERVO{k + 1}")], "pwm",
-                  place={"near": "J3", "pin": str(3 * k + 1), "side": "above"})
+                  place={"near": "U2", "pin": led_num(k), "prio": 2})
             hp += [(str(3 * k + 1), f"S{k + 1}", f"SERVO{k + 1}", "R", "output"), (str(3 * k + 2), f"V{k + 1}", "V_SERVO", "R", "power_out"),
                    (str(3 * k + 3), f"G{k + 1}", "GND", "R", "power_in")]
         c.add("J3", f"SERVO 3x{n}", "conn", hp, footprint=f"HDR_3x{n}", mpn=f"2.54 mm pin header 3x{n}, vertical",

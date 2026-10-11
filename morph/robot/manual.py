@@ -62,14 +62,17 @@ def _camera(az_deg, el_deg):
 def _cluster(mesh, cell):
     """Vertex-clustering decimation (drops thread / knurl detail far below a pixel)."""
     if cell <= 0 or len(mesh.faces) < 400:
-        return mesh.vertices, mesh.faces
-    q = np.floor(mesh.vertices / cell).astype(np.int64)
-    _, inv, cnt = np.unique(q, axis=0, return_inverse=True, return_counts=True)
+        return np.asarray(mesh.vertices), np.asarray(mesh.faces)
+    V = np.asarray(mesh.vertices)
+    q = np.floor(V / cell).astype(np.int64)
+    q -= q.min(axis=0)
+    key = (q[:, 0] << 42) | (q[:, 1] << 21) | q[:, 2]          # one int64 per cell: 1-D unique is fast
+    _, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
     inv = inv.reshape(-1)
     v = np.zeros((cnt.size, 3))
-    np.add.at(v, inv, mesh.vertices)
+    np.add.at(v, inv, V)
     v /= cnt[:, None]
-    f = inv[mesh.faces]
+    f = inv[np.asarray(mesh.faces)]
     keep = (f[:, 0] != f[:, 1]) & (f[:, 1] != f[:, 2]) & (f[:, 0] != f[:, 2])
     return v, f[keep]
 
@@ -85,10 +88,11 @@ def _subdivide(v, f, max_edge):
 
 
 def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg=(255, 255, 255), pad=0.07,
-           shadow=True, arrows=(), cache=None):
+           shadow=True, arrows=(), cache=None, lines=(), dots=()):
     """items: [(mesh_in_world_mm, '#rrggbb', style)] with style in normal | focus | ghost.
     focus_frame: optional (N, 3) world points to frame (zoom); default frames everything.
-    arrows: [(p_from, p_to)] world points, drawn as dashed motion arrows. Returns a PIL RGB image."""
+    arrows: [(p_from, p_to)] world points, drawn as dashed motion arrows; lines: [(points (N, 3), '#rrggbb', width_px)]
+    overlay polylines (cable routes); dots: [(point, '#rrggbb', radius_px, label)]. Returns a PIL RGB image."""
     from PIL import Image, ImageDraw, ImageFilter
 
     W, H = size[0] * ss, size[1] * ss
@@ -107,14 +111,14 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     for k, (m, color, style) in enumerate(items):
         if len(m.faces) == 0:
             continue
-        cell = 2.0 ** math.floor(math.log2(max(px_mm * 0.9, 1e-3)))       # quantized so results can be cached
+        cell = 2.0 ** round(math.log2(max(px_mm * (2.8 if style == "ghost" else 1.4), 1e-3)))   # quantized for the cache
         ck = (id(m), cell)
         if cache is not None and ck in cache:
             v, f = cache[ck]
         else:
             v, f = _cluster(m, cell)
             if len(f):
-                v, f = _subdivide(v, f, max(scene / 28.0, cell * 6))
+                v, f = _subdivide(v, f, max(scene / 22.0, cell * 8))
             if cache is not None:
                 cache[ck] = (v, f)
         if len(f) == 0:
@@ -144,18 +148,18 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     ys = H / 2 - (st[:, :, 1] - cy) * scale
     depth = st[:, :, 2].mean(1)
     inside = (xs.max(1) >= 0) & (xs.min(1) < W) & (ys.max(1) >= 0) & (ys.min(1) < H)
-    order = np.argsort(depth[inside], kind="stable")
+    area2 = np.abs((xs[:, 1] - xs[:, 0]) * (ys[:, 2] - ys[:, 0]) - (xs[:, 2] - xs[:, 0]) * (ys[:, 1] - ys[:, 0]))
+    inside &= area2 > 0.15                         # sub-pixel slivers add nothing at this scale
+    order = np.argsort(depth[inside])
     sel = np.nonzero(inside)[0][order]
-    idimg = Image.new("RGB", (W, H), (0, 0, 0))
-    dr = ImageDraw.Draw(idimg)
-    pts = np.stack([xs[sel], ys[sel]], axis=2).tolist()
-    ids = sel + 1
-    rgb = np.stack([ids & 255, (ids >> 8) & 255, (ids >> 16) & 255], axis=1).tolist()
-    poly = dr.polygon
-    for p3, c in zip(pts, rgb):
-        poly([tuple(p3[0]), tuple(p3[1]), tuple(p3[2])], fill=tuple(c))
-    a = np.asarray(idimg, np.int32)
-    fid = a[:, :, 0] + (a[:, :, 1] << 8) + (a[:, :, 2] << 16) - 1
+    idimg = Image.new("I", (W, H), 0)
+    core = ImageDraw.Draw(idimg).draw
+    flat = np.stack([xs[sel, 0], ys[sel, 0], xs[sel, 1], ys[sel, 1], xs[sel, 2], ys[sel, 2]], axis=1).tolist()
+    ids = (sel + 1).tolist()                       # 32-bit face-ID buffer: 0 = background
+    dp = core.draw_polygon
+    for xy, ink in zip(flat, ids):
+        dp(xy, ink, 1)
+    fid = np.asarray(idimg, np.int32) - 1
     mask = fid >= 0
     # flat shading is per face: shade the faces, then gather once
     L1 = 0.40 * r + 0.75 * u + 0.52 * d
@@ -199,8 +203,8 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
         cand &= same_part
         iy, ix = np.nonzero(cand)
         if len(iy):
-            dots = np.einsum("ij,ij->i", N[A_[iy, ix]], N[B_[iy, ix]])
-            hit = dots < 0.82
+            ndot = np.einsum("ij,ij->i", N[A_[iy, ix]], N[B_[iy, ix]])
+            hit = ndot < 0.82
             crease[sl_a][iy[hit], ix[hit]] = True
     sty_n = sty.copy()
     sty_n[:-1, :] = np.maximum(sty_n[:-1, :], sty[1:, :])
@@ -234,6 +238,27 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
             o = np.asarray(res, np.float32)
             o[free] *= (1 - 0.35 * sa[free])[:, None]
             res = Image.fromarray(o.astype(np.uint8), "RGB")
+    def scr(p):
+        a_ = np.asarray(p, float) @ P
+        return (a_[0] - cx) * scale + W / 2, H / 2 - (a_[1] - cy) * scale
+
+    if lines or dots:
+        dr3 = ImageDraw.Draw(res)
+        for pts3, color, width in lines:
+            xy = [scr(p) for p in pts3]
+            rgb = tuple(int(round(c * 255)) for c in _hex(color))
+            if len(xy) > 1:
+                dr3.line(xy, fill=(255, 255, 255), width=int((width + 3) * ss), joint="curve")
+                dr3.line(xy, fill=rgb, width=int(width * ss), joint="curve")
+            for x, y in (xy[0], xy[-1]):
+                rr = (width + 2) * ss
+                dr3.ellipse([x - rr, y - rr, x + rr, y + rr], fill=rgb, outline=(255, 255, 255), width=ss)
+        for p3, color, rad, label in dots:
+            x, y = scr(p3)
+            rgb = tuple(int(round(c * 255)) for c in _hex(color))
+            rr = rad * ss
+            dr3.ellipse([x - rr, y - rr * 0.55, x + rr, y + rr * 0.55], outline=rgb, width=3 * ss)
+            dr3.ellipse([x - 3 * ss, y - 3 * ss, x + 3 * ss, y + 3 * ss], fill=rgb)
     if arrows:
         dr2 = ImageDraw.Draw(res)
         for p0, p1 in arrows:
@@ -259,7 +284,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
 
 def _b64png(img, quality_colors=None) -> str:
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.save(buf, format="PNG", compress_level=7)
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
@@ -278,7 +303,8 @@ def _joint_label(jn: str) -> str:
     m = re.match(r"j(\d)_(.*)", jn)
     if m:
         return f"J{m.group(1)} {m.group(2).replace('_', ' ')}"
-    return jn.replace("_", " ")
+    s = jn.replace("_", " ")
+    return s[:1].upper() + s[1:]
 
 
 class _Facts:
@@ -326,8 +352,12 @@ class _Facts:
     @property
     def supply(self):
         for r in (self.efinal.get("power_budget") or {}).get("rails", []):
-            if r.get("source"):
-                return f"{r.get('v', '')} V · {r.get('source')}"
+            src = str(r.get("source") or "")
+            key = src.split(" ")[0]
+            if key in catalog.MODULES:
+                return _short(catalog.MODULES[key]["name"])
+            if src:
+                return f"{r.get('v', ''):g} V · {src}" if isinstance(r.get("v"), (int, float)) else src
         return "12 V 10 A desktop supply" if self.family != "hobby_pwm" else "6 V 10 A supply"
 
 
@@ -592,19 +622,24 @@ def _posed(asm, q):
     return T
 
 
-def _step_images(F: _Facts, steps, size=(860, 600)):
-    asm = F.asm
-    q = dict(asm.meta.get("home") or {})
-    T = _posed(asm, q)
-    world = {}
+def _world_meshes(asm, q):
+    T = asm.world_transforms(q)
+    out = {}
     for p in asm.parts:
         m = p.mesh.copy()
         m.apply_transform(T[p.link])
-        world[p.name] = m
-    imgs = {}
+        out[p.name] = m
+    return out, T
+
+
+def _image_jobs(F: _Facts, steps, size=(800, 505)):
+    """Every illustration as a render job: {key: kwargs}. Step images ghost earlier steps and zoom onto small
+    new parts; electrical steps show the finished robot; the cover uses the 'ready' pose."""
+    asm = F.asm
+    world, T = _world_meshes(asm, dict(asm.meta.get("home") or {}))
     cache = {}
-    mech = [s for s in steps if s["kind"] == "mechanical"]
-    for s in mech:
+    jobs = OrderedDict()
+    for s in [s for s in steps if s["kind"] == "mechanical"]:
         cur = set(s["parts"])
         items, focus_pts, arrows = [], [], []
         for p in asm.parts:
@@ -633,29 +668,41 @@ def _step_images(F: _Facts, steps, size=(860, 600)):
         if focus_pts and span_f < 0.45 * span_a:
             c = (fb.max(0) + fb.min(0)) / 2
             h = max(span_f * 1.1, span_a * 0.28) / 2
-            frame = np.array([[c[0] - h, c[1] - h, c[2] - h], [c[0] + h, c[1] + h, c[2] + h]])
-        img = render(items, size=size, focus_frame=frame, arrows=arrows, shadow=frame is None, cache=cache)
-        imgs[s["index"]] = img
-    # electrical steps: the finished robot, cables visible
-    full = [(world[p.name], p.color, "normal") for p in asm.parts]
-    if full:
-        last = render(full, size=size, cache=cache)
-        for s in steps:
-            if s["kind"] != "mechanical" and s["kind"] in ("wiring", "test"):
-                imgs[s["index"]] = last
-    return imgs, world
+            frame = np.array([[c[0] + sx * h, c[1] + sy * h, c[2] + sz * h]
+                              for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+        jobs[("step", s["index"])] = dict(items=items, size=size, focus_frame=frame, arrows=arrows, shadow=frame is None,
+                                          cache=cache)
+    if asm.parts:
+        # wiring: the finished robot ghosted, cable routes drawn over it
+        routes = []
+        palette = ["#ff6a1a", "#2b6cd4", "#1f8a4c", "#8e44ad", "#c0392b"]
+        for i, c in enumerate(asm.cables):
+            pts = [(T[l] @ np.r_[np.asarray(x, float), 1.0])[:3] for l, x in c.points if l in T]
+            if len(pts) > 1:
+                routes.append((pts, palette[i % len(palette)], 3.0))
+        jobs[("step", "wiring")] = dict(items=[(world[p.name], p.color, "ghost" if p.kind not in ("electronics", "pcb") else "normal")
+                                               for p in asm.parts], size=size, cache=cache, lines=routes)
+        d = F.design.task
+        z0 = min(float(m.bounds[0][2]) for m in world.values())
+        jobs[("step", "test")] = dict(items=[(world[p.name], p.color, "normal") for p in asm.parts], size=size, cache=cache,
+                                      dots=[((d.pick_x_mm, d.pick_y_mm, z0), "#1f8a4c", 16, "pick"),
+                                            ((d.place_x_mm, d.place_y_mm, z0), "#2b6cd4", 16, "place")],
+                                      focus_frame=np.vstack([np.vstack([m.bounds for m in world.values()]),
+                                                             [[d.pick_x_mm, d.pick_y_mm, z0], [d.place_x_mm, d.place_y_mm, z0]]]))
+        jobs[("cover",)] = dict(items=[(m, p.color, "normal") for p, m in zip(asm.parts, _cover_pose(F))],
+                                view=(32.0, 18.0), size=(1000, 700), bg=(246, 247, 249), pad=0.04)
+    return jobs
 
 
-def _cover_image(F: _Facts, world, size=(1000, 760)):
+def _cover_pose(F):
+    """The 'ready' pose when it shows the arm articulated, else 'home' (a straight-up arm reads as a stick)."""
     asm = F.asm
-    q = dict(asm.meta.get("ready") or asm.meta.get("home") or {})
-    T = asm.world_transforms(q)
-    items = []
-    for p in asm.parts:
-        m = p.mesh.copy()
-        m.apply_transform(T[p.link])
-        items.append((m, p.color, "normal"))
-    return render(items, view=(32.0, 18.0), size=size, bg=(246, 247, 249), pad=0.05)
+    ready = dict(asm.meta.get("ready") or {})
+    arm = [j for j in F.arm_joints if not j.startswith("j1")]
+    if not any(abs(ready.get(j, 0.0)) > 0.25 for j in arm):
+        ready = {**ready, **dict(asm.meta.get("home") or {})}
+    world, _ = _world_meshes(asm, ready)
+    return [world[p.name] for p in asm.parts]
 
 
 def _thumb(mesh, color, size=(180, 130)):
@@ -680,13 +727,13 @@ color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
 .runfoot{position:absolute;bottom:7mm;left:15mm;right:15mm;display:flex;justify-content:space-between;font-size:7.5pt;color:var(--muted)}
 h1,h2,h3{margin:0;font-weight:700;letter-spacing:-.01em}
 h2{font-size:17pt;margin:4mm 0 3mm}
-h3{font-size:11pt;margin:5mm 0 2mm}
+h3{font-size:10.5pt;margin:4.2mm 0 1.6mm}
 .kicker{font-size:8pt;font-weight:700;color:var(--acc);letter-spacing:.14em;text-transform:uppercase}
 .muted{color:var(--muted)} .mono{font-family:var(--mono);font-size:.92em}
 table{border-collapse:collapse;width:100%}
 th{font-size:7.6pt;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600;text-align:left;
 padding:5px 6px;border-bottom:1.5px solid var(--ink)}
-td{padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top;font-size:9.4pt}
 td.n,th.n{text-align:right;white-space:nowrap}
 /* cover */
 .cover{display:flex;flex-direction:column;padding:0;overflow:hidden}
@@ -694,19 +741,19 @@ td.n,th.n{text-align:right;white-space:nowrap}
 .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.24em;font-size:10pt}
 .brand i{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--acc),#ff9a4a);display:inline-block;
 box-shadow:inset 0 0 0 2px rgba(255,255,255,.35)}
-.cover h1{font-size:34pt;line-height:1.05;margin-top:9mm;letter-spacing:-.025em}
+.cover h1{font-size:34pt;line-height:1.05;margin-top:3mm;letter-spacing:-.025em}
 .cover .sub{font-size:13pt;color:var(--ink2);margin-top:2mm}
-.cover .hero{display:block;width:100%;margin-top:2mm}
-.cover .meta{padding:9mm 15mm 0;display:grid;grid-template-columns:1.35fr 1fr;gap:10mm}
-.spec td{padding:4px 0;border-bottom:1px solid var(--line);font-size:9.5pt}
+.cover .hero{display:block;width:100%;max-height:118mm;object-fit:contain;margin-top:1mm}
+.cover .meta{padding:7mm 15mm 0;display:grid;grid-template-columns:1.45fr 1fr;gap:9mm}
+.spec td{padding:3.5px 0;border-bottom:1px solid var(--line);font-size:9pt}
 .spec td:first-child{color:var(--muted);width:38%}
 .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-content:start}
 .tile{border:1px solid var(--line);border-radius:8px;padding:9px 11px}
-.tile .v{font-size:17pt;font-weight:700;letter-spacing:-.02em}
+.tile .v{font-size:15pt;font-weight:700;letter-spacing:-.02em;white-space:nowrap}
 .tile .l{font-size:7.5pt;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
-.docid{padding:0 15mm 10mm;margin-top:auto;display:flex;justify-content:space-between;font-size:8pt;color:var(--muted)}
+.docid{padding:6mm 15mm 9mm;margin-top:auto;display:flex;justify-content:space-between;gap:10mm;font-size:7.6pt;color:var(--muted)}
 /* contents */
-.toc td{padding:6px 6px}
+.toc td{padding:4.5px 6px}
 .toc .no{width:9mm;font-weight:700;color:var(--acc)}
 .toc .t{font-weight:600}
 .pill{display:inline-block;font-size:7.5pt;padding:1px 7px;border-radius:999px;background:#eef1f5;color:var(--ink2);
@@ -715,23 +762,27 @@ text-transform:uppercase;letter-spacing:.06em;font-weight:600}
 .pill.firmware{background:#eef8f1;color:#1b7a43}.pill.calibration{background:#f4effc;color:#6237a8}.pill.test{background:#eef1f5;color:#3b4654}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8mm}
 .note{border-left:3px solid var(--acc2);background:#f3f7fd;padding:8px 11px;border-radius:0 6px 6px 0;font-size:9.3pt;margin:3mm 0}
-.warn{border-left:3px solid var(--warn-line);background:var(--warn-bg);color:#5b3d00;padding:7px 10px 7px 34px;
+.warn{border-left:3px solid var(--warn-line);background:var(--warn-bg);color:#5b3d00;padding:6px 10px 6px 34px;
 border-radius:0 6px 6px 0;font-size:9.2pt;margin:2.2mm 0;position:relative}
 .warn:before{content:"!";position:absolute;left:10px;top:7px;width:16px;height:16px;border-radius:4px;background:#f2a516;color:#fff;
 font-weight:800;font-size:10px;display:flex;align-items:center;justify-content:center;transform:rotate(0)}
 /* kit */
-.kit{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.kit{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.kit.f{grid-template-columns:repeat(7,1fr)}
+.kit.f .k img{padding:0 6px}
 .kit .k{border:1px solid var(--line);border-radius:8px;padding:6px 7px 7px;position:relative;break-inside:avoid}
 .kit .k img{width:100%;height:auto;display:block}
-.kit .k .q{position:absolute;top:6px;right:7px;font-weight:800;font-size:11pt}
-.kit .k .nm{font-size:8.2pt;font-weight:600;line-height:1.25;margin-top:2px}
+.kit .k .ph{aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;color:#9aa3ad}
+.kit .k .ph svg{width:44%;height:auto}
+.kit .k .q{position:absolute;top:5px;right:7px;font-weight:800;font-size:10pt}
+.kit .k .nm{font-size:7.8pt;font-weight:600;line-height:1.22;margin-top:2px}
 .kit .k .s{font-size:7.4pt;color:var(--muted)}
-.tools{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-.tool{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:8.8pt}
-.tool svg{flex:0 0 22px;height:22px;color:var(--ink2)}
+.tools{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.tool{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:8px;padding:5px 7px;font-size:8.2pt;line-height:1.25}
+.tool svg{flex:0 0 18px;height:18px;color:var(--ink2)}
 /* steps */
 .stephead{display:flex;align-items:flex-end;gap:12px;border-bottom:2px solid var(--ink);padding-bottom:3mm;margin-top:2mm}
-.stepno{font-size:44pt;font-weight:800;line-height:.85;letter-spacing:-.04em;color:var(--ink);min-width:16mm}
+.stepno{font-size:42pt;font-weight:800;line-height:.85;letter-spacing:-.04em;color:var(--ink);min-width:15mm;padding-right:2mm}
 .stephead .t{flex:1}
 .stephead h2{margin:1mm 0 0;font-size:16pt}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:1.5mm}
@@ -745,8 +796,13 @@ padding:6px 8px;display:flex;gap:10px;align-items:flex-end}
 .callout .f img{height:38px;width:auto;display:block;margin:0 auto 2px}
 .callout .f b{font-size:10pt}
 .cols{display:grid;grid-template-columns:0.9fr 1.1fr;gap:7mm;margin-top:3mm}
+.cols.top{grid-template-columns:1.05fr 0.95fr;margin-top:4mm}
+.cols.top .fig{margin-top:0}
+table.harn td{font-size:8.3pt;padding:4px 5px}
+table.harn td.mono{font-size:7.6pt}
 ol.ins{margin:0;padding:0;list-style:none;counter-reset:i}
 ol.ins li{counter-increment:i;position:relative;padding:0 0 2.6mm 9mm;font-size:9.8pt}
+.cols.top ol.ins li{font-size:9.2pt;padding-bottom:2mm}
 ol.ins li:before{content:counter(i);position:absolute;left:0;top:0;width:6mm;height:6mm;border-radius:50%;background:var(--ink);
 color:#fff;font-size:8pt;font-weight:700;display:flex;align-items:center;justify-content:center}
 .check li:before{content:"";background:#fff;border:1.6px solid var(--ink);border-radius:3px;width:4.2mm;height:4.2mm;top:.4mm}
@@ -785,6 +841,7 @@ ICONS = {
     "power": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13 2L5 14h6l-1 8 8-12h-6z"/></svg>',
     "gauge": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>',
     "nut": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><circle cx="12" cy="12" r="3"/></svg>',
+    "tie": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 18c3-9 9-14 16-14"/><path d="M6.5 13.5l2 1M8.5 10.5l2 1M11 8l2 1M14 6l1.8 1.2"/><rect x="2.5" y="17" width="4" height="4" rx="1"/></svg>',
 }
 
 
@@ -820,6 +877,24 @@ def _fastener_mesh(f):
     except Exception:
         return None, None
     return None, None
+
+
+def _wire_short(name: str) -> str:
+    out = []
+    for tok in str(name).replace("→", "->").split():
+        if "->" in tok or "." in tok:
+            break
+        out.append(tok)
+    return " ".join(out) or str(name)
+
+
+def _ph(kind="") -> str:
+    icon = ICONS["tie"] if kind == "tie" else ICONS["nut"]
+    return f'<div class="ph">{icon}</div>'
+
+
+def _img(src, alt="") -> str:
+    return f'<img src="{src}" alt="{_e(alt)}">' if src else ""
 
 
 def _robot_title(design) -> str:
@@ -900,7 +975,7 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
         if e.get("process") not in mf.FAB_PROCESSES:
             continue
         im = thumbs.get(e["group"])
-        fab_cards.append(f'<div class="k"><span class="q">×{e["qty"]}</span>{f"<img src={chr(34)}{im}{chr(34)}>" if im else ""}'
+        fab_cards.append(f'<div class="k"><span class="q">×{e["qty"]}</span>{_img(im)}'
                          f'<div class="nm">{_e(e["name"])}</div><div class="s">{_e(mf.PROC_LABEL.get(e["process"], e["process"]))} · '
                          f'{_e(e.get("material", ""))}</div></div>')
     if not fab_cards:
@@ -910,13 +985,16 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
             n = sum(1 for p in asm.parts if (p.group or p.name) == g)
             fab_cards.append(f'<div class="k"><span class="q">×{n}</span><img src="{im}"><div class="nm">{_e(mf.pretty(g))}</div></div>')
     cnt = Counter(e["sku"] for e in F.inst.values())
+    for k, n in F.act_count.items():
+        if k in catalog.ACTUATORS:
+            cnt[k] = max(cnt.get(k, 0), n)
     for sku, n in cnt.items():
         try:
             nm = _short(catalog.get(sku)["name"])
         except KeyError:
             nm = mf.pretty(sku)
         im = thumbs.get("buy:" + sku)
-        buy_cards.append(f'<div class="k"><span class="q">×{n}</span>{f"<img src={chr(34)}{im}{chr(34)}>" if im else ""}'
+        buy_cards.append(f'<div class="k"><span class="q">×{n}</span>{_img(im)}'
                          f'<div class="nm">{_e(nm)}</div><div class="s">purchased</div></div>')
     fast_tot = OrderedDict()
     for s in steps:
@@ -927,14 +1005,14 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
     fcards = []
     for k, f in fast_tot.items():
         im = fthumbs.get(k)
-        fcards.append(f'<div class="k"><span class="q">×{f["qty"]}</span>{f"<img src={chr(34)}{im}{chr(34)}>" if im else ""}'
+        fcards.append(f'<div class="k"><span class="q">×{f["qty"]}</span>{_img(im) or _ph(f["kind"])}'
                       f'<div class="nm">{_e(f["spec"])}</div><div class="s">{_e(f.get("drive") or "")}</div></div>')
     inner = (f'<div class="kicker" style="margin-top:4mm">Kit</div><h2>What is in the box</h2>'
              f'<p class="muted" style="margin:0 0 3mm">Lay every part out and tick it off before step 1. Fabricated parts are made '
              f'per the manufacturing plan ({_e(cfg)}); purchased parts and fasteners come from the BOM.</p>'
              f'<h3>Made parts</h3><div class="kit">{"".join(fab_cards)}</div>'
              f'<h3>Purchased parts</h3><div class="kit">{"".join(buy_cards)}</div>'
-             f'<h3>Fasteners <span class="muted" style="font-weight:500">(order +10 % spares)</span></h3><div class="kit">{"".join(fcards)}</div>')
+             f'<h3>Fasteners <span class="muted" style="font-weight:500">(order +10 % spares)</span></h3><div class="kit f">{"".join(fcards)}</div>')
     pages.append(sheet(inner))
     # ------------------------------------------------------------------ steps
     for i, s in enumerate(steps):
@@ -943,7 +1021,8 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
         if s["fasteners"]:
             chips.append(f'<span class="chip"><b>{sum(f["qty"] for f in s["fasteners"])}</b> fasteners</span>')
         if s.get("parts_table"):
-            chips.append(f'<span class="chip"><b>{sum(t["qty"] for t in s["parts_table"])}</b> parts</span>')
+            n_pt = sum(t["qty"] for t in s["parts_table"])
+            chips.append(f'<span class="chip"><b>{n_pt}</b> {"wires" if s["kind"] == "wiring" else "parts"}</span>')
         headh = (f'<div class="stephead"><div class="stepno">{i + 1}</div><div class="t"><div class="kicker">Step {i + 1} of {len(steps)}</div>'
                  f'<h2>{_e(s["title"])}</h2><div class="chips">{"".join(chips)}</div></div></div>')
         fig = ""
@@ -953,13 +1032,12 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
             fsel = [f for f in s["fasteners"] if f["kind"] != "tie"][:4]
             if fsel:
                 call = '<div class="callout">' + "".join(
-                    f'<div class="f">{f"<img src={chr(34)}{fthumbs[f[chr(115) + chr(112) + chr(101) + chr(99)]]}{chr(34)}>" if fthumbs.get(f["spec"]) else ""}'
-                    f'<b>{f["qty"]}×</b><br>{_e(f["spec"])}</div>' for f in fsel) + "</div>"
-            fig = f'<div class="fig"><img src="{im}" alt="step {i + 1}">{call}</div>'
+                    f'<div class="f">{_img(fthumbs.get(f["spec"]))}<b>{f["qty"]}×</b><br>{_e(f["spec"])}</div>' for f in fsel) + "</div>"
+            fig = f'<div class="fig{"" if s["kind"] == "mechanical" else " small"}"><img src="{im}" alt="step {i + 1}">{call}</div>'
         left = ""
         if s.get("parts_table") and s["kind"] == "mechanical":
             left += ('<h3>Parts</h3><table><thead><tr><th>Item</th><th class="n">Qty</th></tr></thead><tbody>'
-                     + "".join(f'<tr><td>{_e(t["item"])}<div class="muted" style="font-size:8pt">{_e(t["source"])}</div></td>'
+                     + "".join(f'<tr><td>{_e(t["item"])} <span class="muted" style="font-size:7.8pt;white-space:nowrap">· {_e(t["source"])}</span></td>'
                                f'<td class="n"><b>{t["qty"]}</b></td></tr>' for t in s["parts_table"]) + "</tbody></table>")
         if s["fasteners"]:
             left += ('<h3>Fasteners</h3><table class="fast"><thead><tr><th>Fastener</th><th class="n">Qty</th><th class="n">Torque</th>'
@@ -976,12 +1054,12 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
         extra = ""
         if s["kind"] == "wiring":
             if F.family != "hobby_pwm" and F.act_joints:
-                extra += ('<h3>Bus order</h3><div class="chain"><span>controller</span>'
-                          + "".join(f'<i>→</i><span>{_e(_joint_label(j))} · ID {F.servo_id.get(j, "?")}</span>' for j in F.act_joints)
-                          + "</div>")
-            extra += ('<h3>Harness</h3><table><thead><tr><th>Wire</th><th>From → to</th><th class="n">Length</th><th>Wire</th>'
+                left += ('<h3>Bus order</h3><div class="chain"><span>controller</span>'
+                         + "".join(f'<i>→</i><span>{_e(_joint_label(j))} · ID {F.servo_id.get(j, "?")}</span>' for j in F.act_joints)
+                         + "</div>")
+            extra += ('<h3>Harness</h3><table class="harn"><thead><tr><th>Wire</th><th>From → to</th><th class="n">Length</th><th>Wire</th>'
                       '<th>Connectors</th></tr></thead><tbody>'
-                      + "".join(f'<tr><td><b>{_e(w["name"])}</b></td><td class="mono">{_e(w["from"])} → {_e(w["to"])}</td>'
+                      + "".join(f'<tr><td><b>{_e(_wire_short(w["name"]))}</b></td><td class="mono">{_e(w["from"])} → {_e(w["to"])}</td>'
                                 f'<td class="n">{w["length_mm"]} mm</td><td>{_e(w["conductors"])}× {_e(w["wire"])}</td>'
                                 f'<td class="muted">{_e(w["connector_a"])} / {_e(w["connector_b"])}</td></tr>' for w in s["harness"])
                       + "</tbody></table>")
@@ -998,7 +1076,10 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
             extra += ('<h3>Joint zero offsets</h3><table class="cal"><thead><tr><th>Joint</th><th>Offset (ticks / deg)</th><th>Done</th>'
                       '</tr></thead><tbody>' + "".join(f"<tr><td>{_e(_joint_label(j))}</td><td></td><td>☐</td></tr>" for j in F.act_joints)
                       + "</tbody></table>")
-        body = headh + fig + f'<div class="cols"><div>{left}</div><div>{right}</div></div>' + extra
+        if s["kind"] == "mechanical" or not fig:
+            body = headh + fig + f'<div class="cols"><div>{left}</div><div>{right}</div></div>' + extra
+        else:
+            body = headh + f'<div class="cols top"><div>{fig}{left}</div><div>{right}</div></div>' + extra
         pages.append(sheet(body))
     # ------------------------------------------------------------------ appendix
     tq_rows = "".join(f'<tr><td class="mono">{_e(size)}</td><td class="n tq"><b>{t:g} N·m</b></td>'
@@ -1038,42 +1119,51 @@ def build(design, asm, mfg, efinal, outdir, images: bool = True) -> dict:
     imgs, thumbs, fthumbs, cover = {}, {}, {}, ""
     if images:
         try:
-            raw, world = _step_images(F, steps)
-            imgs = {k: _b64png(v) for k, v in raw.items()}
-            cover = _b64png(_cover_image(F, world))
-            for g in F.mfg_by_group or {}:
+            jobs = _image_jobs(F, steps)
+            tsz = dict(view=(35.0, 28.0), size=(180, 130), pad=0.1, shadow=False)
+            groups = list(F.mfg_by_group) or list(OrderedDict.fromkeys(
+                p.group or p.name for p in asm.parts if p.process in mf.FAB_PROCESSES))
+            for g in groups:
                 p = next((p for p in asm.parts if (p.group or p.name) == g), None)
-                if p is not None:
-                    thumbs[g] = _b64png(_thumb(p.mesh, p.color))
-            if not F.mfg_by_group:
-                for p in asm.parts:
-                    g = p.group or p.name
-                    if p.process in mf.FAB_PROCESSES and g not in thumbs:
-                        thumbs[g] = _b64png(_thumb(p.mesh, p.color))
+                if p is not None:            # render frames the bounds itself: no copy needed
+                    jobs[("thumb", g)] = dict(items=[(p.mesh, p.color, "normal")], **tsz)
             seen = set()
             for k, e in F.inst.items():
                 if e["sku"] in seen:
                     continue
                 seen.add(e["sku"])
                 ms = [asm.part(n) for n in e["parts"]]
-                if ms:
-                    m = trimesh.util.concatenate([x.mesh for x in ms])
-                    items = [(x.mesh.copy(), x.color, "normal") for x in ms]
-                    c = m.bounds.mean(0)
-                    for it in items:
-                        it[0].apply_translation(-c)
-                    thumbs["buy:" + e["sku"]] = _b64png(render(items, view=(35.0, 28.0), size=(180, 130), pad=0.1,
-                                                               shadow=False))
+                jobs[("thumb", "buy:" + e["sku"])] = dict(items=[(x.mesh, x.color, "normal") for x in ms], **tsz)
             for s in steps:
                 for f in s["fasteners"]:
-                    if f["spec"] in fthumbs:
+                    if ("fast", f["spec"]) in jobs:
                         continue
                     fm, col = _fastener_mesh(mf.parse_fastener(f["spec"]))
                     if fm is not None:
-                        fthumbs[f["spec"]] = _b64png(_thumb(fm, col, size=(120, 90)))
-        except ImportError as exc:  # illustrations are a nicety; never lose the manual over them
-            imgs, thumbs, fthumbs = {}, {}, {}
-            cover = ""
+                        fm.apply_translation(-fm.bounds.mean(0))
+                        jobs[("fast", f["spec"])] = dict(items=[(fm, col, "normal")], view=(35.0, 28.0), size=(120, 90),
+                                                         pad=0.1, shadow=False)
+            from concurrent.futures import ThreadPoolExecutor
+
+            keys = list(jobs)
+            with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as ex:
+                pngs = list(ex.map(lambda k: _b64png(render(**jobs[k])), keys))
+            res = dict(zip(keys, pngs))
+            special = {k[1]: v for k, v in res.items() if k[0] == "step" and isinstance(k[1], str)}
+            for k, v in res.items():
+                if k[0] == "step" and not isinstance(k[1], str):
+                    imgs[k[1]] = v
+                elif k[0] == "thumb":
+                    thumbs[k[1]] = v
+                elif k[0] == "fast":
+                    fthumbs[k[1]] = v
+                elif k[0] == "cover":
+                    cover = v
+            for s in steps:
+                if s["kind"] in special:
+                    imgs[s["index"]] = special[s["kind"]]
+        except Exception as exc:  # illustrations are a nicety; never lose the manual over them
+            imgs, thumbs, fthumbs, cover = {}, {}, {}, ""
             print(f"manual: illustrations skipped ({exc.__class__.__name__}: {exc})")
     if not cover:
         cover = "data:image/svg+xml;base64," + base64.b64encode(

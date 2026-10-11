@@ -427,31 +427,42 @@ def _rotz_to(axis) -> np.ndarray:
     return trimesh.transformations.rotation_matrix(math.acos(max(-1.0, min(1.0, c))), v)
 
 
-def _ray_first_hit(origins, dirs, tris, chunk=24):
-    """Möller-Trumbore, vectorized: distance to the first hit (inf if none) and the hit triangle index."""
+def _ray_first_hit(origins, dirs, tris):
+    """First hit along each ray (Möller-Trumbore): distance (inf if none) and triangle index. Each ray is only
+    tested against triangles whose bounding sphere touches the ray line, so cost ~ rays x (few hundred)."""
     n = len(origins)
     best = np.full(n, np.inf)
     idx = np.full(n, -1)
-    v0, v1, v2 = tris[:, 0], tris[:, 1], tris[:, 2]
-    e1, e2 = v1 - v0, v2 - v0
-    for s in range(0, n, chunk):
-        o = origins[s:s + chunk, None, :]
-        d = dirs[s:s + chunk, None, :]
-        p = np.cross(d, e2[None])
-        det = np.einsum("rtk,tk->rt", p, e1)
+    if n == 0 or len(tris) == 0:
+        return best, idx
+    v0 = tris[:, 0]
+    e1, e2 = tris[:, 1] - v0, tris[:, 2] - v0
+    C = tris.mean(axis=1)
+    R2 = np.max(np.sum((tris - C[:, None, :]) ** 2, axis=2), axis=1) * 1.0001 + 1e-9
+    CC = np.einsum("ij,ij->i", C, C)
+    for i in range(n):
+        o, d = origins[i], dirs[i]
+        tp = C @ d - o @ d
+        perp2 = CC - 2.0 * (C @ o) + o @ o - tp * tp
+        cand = np.nonzero((perp2 <= R2) & (tp * np.abs(tp) >= -R2))[0]
+        if len(cand) == 0:
+            continue
+        E1, E2 = e1[cand], e2[cand]
+        p = np.cross(d, E2)
+        det = np.einsum("ij,ij->i", p, E1)
         ok = np.abs(det) > 1e-12
         inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
-        tv = o - v0[None]
-        u = np.einsum("rtk,rtk->rt", tv, p) * inv
-        q = np.cross(tv, e1[None])
-        v = np.einsum("rk,rtk->rt", d[:, 0], q) * inv
-        t = np.einsum("rtk,tk->rt", q, e2) * inv
+        tv = o - v0[cand]
+        u = np.einsum("ij,ij->i", tv, p) * inv
+        q = np.cross(tv, E1)
+        v = (q @ d) * inv
+        t = np.einsum("ij,ij->i", q, E2) * inv
         hit = ok & (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1 + 1e-9) & (t > 1e-6)
-        t = np.where(hit, t, np.inf)
-        j = np.argmin(t, axis=1)
-        tt = t[np.arange(len(j)), j]
-        best[s:s + chunk] = tt
-        idx[s:s + chunk] = np.where(np.isfinite(tt), j, -1)
+        if hit.any():
+            t = np.where(hit, t, np.inf)
+            j = int(np.argmin(t))
+            best[i] = t[j]
+            idx[i] = cand[j]
     return best, idx
 
 
@@ -578,6 +589,7 @@ class Geo:
             except np.linalg.LinAlgError:
                 flat = None
         best = None
+        prof = None
         for label, R in cands:
             Rm = R[:3, :3]
             nz = n @ Rm[2]
@@ -591,9 +603,14 @@ class Geo:
             score = sup + 1.5 * h - 0.05 * contact - (25.0 if label.startswith("profile") else 0.0)
             # mean height of overhang above the bed ~ support column height
             sup_h = float(np.average(z[over] - z0, weights=a[over])) if over.any() else 0.0
+            cand = {"label": label, "R": R, "support_mm2": sup, "support_h": sup_h, "height": h,
+                    "contact_mm2": contact, "score": score}
+            if label.startswith("profile"):
+                prof = cand
             if best is None or score < best["score"]:
-                best = {"label": label, "R": R, "support_mm2": sup, "support_h": sup_h, "height": h,
-                        "contact_mm2": contact, "score": score}
+                best = cand
+        if prof is not None and prof["support_mm2"] <= max(25.0, best["support_mm2"] + 25.0):
+            best = prof            # 2.5D parts print flat (profile on the bed) unless that needs real supports
         T = best["R"].copy()
         pm = m.copy()
         pm.apply_transform(T)
@@ -616,12 +633,10 @@ class Geo:
             return None
         rng = np.random.default_rng(7)
         prob = m.area_faces / m.area_faces.sum()
+        n_rays = int(min(n_rays, max(24, 1.5e6 // len(m.faces))))      # ~1.5M ray-triangle tests per part
         fi = rng.choice(len(m.faces), size=min(n_rays, len(m.faces)), replace=False, p=prob)
         n = m.face_normals[fi]
         o = m.triangles_center[fi] - n * 1e-3
-        budget = max(1, int(4e6 // max(len(m.faces), 1)))
-        if len(fi) > budget:
-            fi, n, o = fi[:budget], n[:budget], o[:budget]
         t, j = _ray_first_hit(o, -n, m.triangles)
         ok = np.isfinite(t) & (j >= 0)
         if not ok.any():
@@ -643,6 +658,7 @@ class Geo:
         n = m.face_normals
         a = m.area_faces
         rng = np.random.default_rng(11)
+        n_rays = int(min(n_rays, max(16, 6e5 // max(len(m.faces), 1))))
         fi = rng.choice(len(m.faces), size=min(n_rays, len(m.faces)), replace=False, p=a / a.sum())
         best = None
         for axis in range(3):
@@ -652,7 +668,7 @@ class Geo:
             o = m.triangles_center[fi]
             up_ok = ns > -0.02
             dn_ok = ns < 0.02
-            if len(m.faces) <= 40000:
+            if len(m.faces) <= 120000:
                 tu, _ = _ray_first_hit(o + n[fi] * 0.02, np.tile(s, (len(fi), 1)), m.triangles)
                 td, _ = _ray_first_hit(o + n[fi] * 0.02, np.tile(-s, (len(fi), 1)), m.triangles)
                 up_ok &= ~np.isfinite(tu)
@@ -1368,10 +1384,10 @@ def write_gcode(nc_path, poly, thickness, material, label, svg_path=None):
 
 # ================================================================== 3MF / STL
 def write_3mf(path, mesh, qty=1, title="", meta=None, bed=FDM_BED):
-    v = np.asarray(mesh.vertices)
-    f = np.asarray(mesh.faces)
-    verts = "".join(f'<vertex x="{x:.4f}" y="{y:.4f}" z="{z:.4f}"/>' for x, y, z in v)
-    tris = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in f)
+    v = np.asarray(mesh.vertices, float)
+    f = np.asarray(mesh.faces, np.int64)
+    verts = ('<vertex x="%.4f" y="%.4f" z="%.4f"/>' * len(v)) % tuple(v.ravel().tolist())     # one C-level format pass
+    tris = ('<triangle v1="%d" v2="%d" v3="%d"/>' * len(f)) % tuple(f.ravel().tolist())
     ext = mesh.extents
     gap = 6.0
     cols = max(1, int((bed[0] + gap) // (ext[0] + gap)))
@@ -1392,7 +1408,7 @@ def write_3mf(path, mesh, qty=1, title="", meta=None, bed=FDM_BED):
     rels = ('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
             '<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>'
             '</Relationships>')
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=3) as z:
         z.writestr("[Content_Types].xml", ct)
         z.writestr("_rels/.rels", rels)
         z.writestr("3D/3dmodel.model", model)
@@ -1877,13 +1893,13 @@ def _write_readme(m, outdir, design):
 
 def _write_zip(m, outdir, cfg):
     name = f"mfg_{cfg}.zip"
-    with zipfile.ZipFile(os.path.join(outdir, name), "w", zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(os.path.join(outdir, name), "w", zipfile.ZIP_DEFLATED, compresslevel=3) as z:
         z.write(os.path.join(outdir, "README.txt"), "README.txt")
         for e in m["parts"]:
             for f in e.get("files", []):
                 p = os.path.join(outdir, f)
-                if os.path.isfile(p):
-                    z.write(p, f)
+                if os.path.isfile(p):       # 3MF / zip are already compressed: store them
+                    z.write(p, f, compress_type=zipfile.ZIP_STORED if f.endswith((".3mf", ".zip")) else zipfile.ZIP_DEFLATED)
     return name
 
 
