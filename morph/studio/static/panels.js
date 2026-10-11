@@ -207,11 +207,12 @@ export class ViewerAdapter {
     this.ghost(this.st.ghost && !!this.prevRobot);
     this.onLoad?.();
   }
-  async xray(on) { this.st.xray = !!on; await this.ready; this.call(['setXray', 'xray'], !!on); }
-  async labels(on) { this.st.labels = !!on; await this.ready; this.call(['setLabels', 'showLabels'], !!on); }
+  async xray(on) { this.st.xray = !!on; this.onState?.(); await this.ready; this.call(['setXray', 'xray'], !!on); }
+  async labels(on) { this.st.labels = !!on; this.onState?.(); await this.ready; this.call(['setLabels', 'showLabels'], !!on); }
   async explode(t) { this.st.explode = t; await this.ready; this.call(['setExplode', 'explode'], t); }
   async ghost(on) {
     this.st.ghost = !!on && !!this.prevRobot;
+    this.onState?.();
     await this.ready;
     this.call(['setGhost', 'showGhost'], this.st.ghost ? this.ctx.resolve(this.prevRobot.json) : null);
   }

@@ -186,7 +186,7 @@ function fixtureNext(d, cur, changes, rev, label, prov, timings) {
   for (const p of n.params || []) if (p.key in changes) p.value = changes[p.key];
   const ec = n.design['electronics.config'], bc = n.design['build.config'];
   if ('electronics.config' in changes) {
-    const src = Object.values(d.revisions).find((r) => r.electronics?.config === ec);
+    const src = Object.values(d.revisions).reverse().find((r) => r.electronics?.config === ec && r.rev <= 'r003');
     if (src) {
       n.electronics = structuredClone(src.electronics);
       Object.assign(n.summary, { electronics_config: ec, pcb: !!n.electronics.board, harness_wires: n.electronics.harness.length,
@@ -240,7 +240,8 @@ const ctx = {
 function applyChanges(changes) {
   if (!backend) return;
   backend.params(changes);
-  setConn('busy', 'Regenerating');
+  // pills show a busy shimmer until the next revision lands; clear it if the server declined the change
+  setTimeout(() => $$('.pills button.busy').forEach((b) => b.classList.remove('busy')), 20000);
 }
 
 // ------------------------------------------------------------------ header
@@ -315,7 +316,7 @@ async function openRev(r) {
 function setConn(kind, text) {
   const c = $('#conn');
   c.className = 'conn ' + (kind === 'live' ? '' : kind);
-  $('span', c).textContent = text || { live: 'Live', off: 'Reconnecting', busy: 'Regenerating', fixture: 'Fixture data' }[kind] || kind;
+  $('span', c).textContent = text || { live: 'Live', off: 'Reconnecting', busy: 'Regenerating', fixture: 'Offline demo' }[kind] || kind;
 }
 
 // ------------------------------------------------------------------ chat
@@ -617,9 +618,13 @@ function primaryTab(changes) {
 function runTour(cur, regen) {
   const first = primaryTab(cur.changes);
   const order = ['robot', 'sim', 'elec', 'mfg', 'bom', 'asm'];
+  const has = {
+    robot: () => !!cur.robot, sim: () => Object.keys(cur.sims || {}).length > 0, elec: () => !!cur.electronics,
+    mfg: () => !!cur.manufacturing, bom: () => !!cur.bom?.rows?.length, asm: () => !!cur.manual?.steps?.length,
+  };
   const seq = [];
-  if (first && (regen.has(first) || first === 'robot')) seq.push(first);
-  for (const t of order) if (regen.has(t) && !seq.includes(t)) seq.push(t);
+  if (first && (regen.has(first) || first === 'robot') && has[first]()) seq.push(first);
+  for (const t of order) if (regen.has(t) && !seq.includes(t) && has[t]()) seq.push(t);
   if (!seq.length) return;
   const steps = seq.slice(0, 5);
   tour = { steps, i: 0, timer: null };
@@ -669,6 +674,7 @@ function onEvent(ev) {
     case 'node': if (liveProv) liveProv[ev.node] = ev.status; nodeEvent(ev); break;
     case 'project': reloadProject().catch((e) => console.warn(e)); break;
     case 'done': {
+      typing(false);
       const cur = ev.current;
       if (!S.revs.includes(cur.rev)) S.revs.push(cur.rev);
       S.latest = cur.rev;
@@ -702,6 +708,7 @@ async function boot() {
     robot: new RobotPanel(views.robot, ctx), sim: new SimPanel(views.sim, ctx), elec: new ElecPanel(views.elec, ctx),
     mfg: new MfgPanel(views.mfg, ctx), asm: new AsmPanel(views.asm, ctx), bom: new BomPanel(views.bom, ctx),
   };
+  viewer.onState = () => panels.robot.sync();
   $$('#tabs .tab').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
   document.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;

@@ -849,7 +849,6 @@ def _wrist_links(asm, arm_joints, hand_root) -> set:
 # ====================================================================== MJCF
 
 def _xml(asm, design, opts: SimOptions, info: _Info, masses, kv=None) -> str:
-    meta = asm.meta or {}
     shape, R, L = _object_dims(design)
     mu = max(design.object.friction, 0.05)
     contact = 'condim="4" solref="0.004 1" solimp="0.95 0.99 0.001"'
@@ -1114,7 +1113,7 @@ class _Robot:
         use_yaw = axis is not None and self.n >= 5
         wr = 0.15
         ep_n = er_n = 1e9
-        for it in range(iters):
+        for _ in range(iters):
             d.qpos[self.qadr] = q
             mj.mj_kinematics(m, d)
             mj.mj_comPos(m, d)
@@ -1248,7 +1247,7 @@ class _Plan:
         qs = []
         for i in range(1, n + 1):
             p, ax = fn(i / n)
-            q, ep, er = self.rob.ik(p, ax, q, iters=25)
+            q, ep, _ = self.rob.ik(p, ax, q, iters=25)
             self.ik_err_mm = max(self.ik_err_mm, ep)
             qs.append(q)
         self._push(qs, phase, grip)
@@ -1699,8 +1698,8 @@ def _payload_sweep(rob: _Robot, design, fast=False):
     """Carry the object out to a far pose, then ramp an extra mass at the TCP until a servo saturates
     (or the TCP sags > SAG_MM); unload and let the arm recover."""
     info = rob.info
-    q_far, p_far, r_max = _far_pose(rob, design)
-    cap, tau_g = _static_capacity(rob, q_far)
+    q_far, p_far, _ = _far_pose(rob, design)
+    cap, _ = _static_capacity(rob, q_far)
     mobj = design.object.mass_g / 1000.0
     est = float(np.min(cap)) - mobj
     ramp_T = 3.0 if fast else 5.0
