@@ -98,16 +98,26 @@ def baseline(p: RobotProject) -> str | None:
     return clean[-1] if clean else revs[0]
 
 
-def _remove_rev(p: RobotProject, rev: str):
-    """Delete a revision folder. If Windows holds a file open, move what is left aside so the
-    project never lists a half-deleted revision (revs() only lists names like r012)."""
+def _remove_rev(p: RobotProject, rev: str) -> bool:
+    """Delete a revision folder, all or nothing: rename it out of the project first (Windows refuses
+    while any file inside is open, and then nothing has been touched), then delete the renamed copy.
+    revs() only lists names like r012, so a leftover "r012.deleted-..." folder is invisible."""
     d = p.rev_dir(rev)
-    shutil.rmtree(d, ignore_errors=True)
-    if os.path.isdir(d):
-        try:
-            os.rename(d, f"{d}.deleted-{int(time.time())}")
-        except OSError:
-            pass
+    trash = f"{d}.deleted-{time.time_ns()}"
+    try:
+        os.rename(d, trash)
+    except OSError:
+        return False
+    shutil.rmtree(trash, ignore_errors=True)
+    return True
+
+
+def is_robot_project(root: str) -> bool:
+    try:
+        with open(os.path.join(root, "meta.json"), encoding="utf-8") as fh:
+            return json.load(fh).get("kind") == "robot"
+    except (OSError, ValueError):  # a plain file (desktop.ini), a gripper project, anything else
+        return False
 
 
 def integrations() -> dict:
@@ -170,7 +180,7 @@ class Studio:
         for name in sorted(os.listdir(self.home)) if os.path.isdir(self.home) else []:
             root = os.path.join(self.home, name)
             meta = os.path.join(root, "meta.json")
-            if os.path.isfile(meta) and RobotProject(root).revs():
+            if os.path.isfile(meta) and is_robot_project(root) and RobotProject(root).revs():
                 m = json.load(open(meta, encoding="utf-8"))
                 if m.get("kind") == "robot":
                     rp = RobotProject(root)
@@ -242,7 +252,7 @@ class Studio:
         it = interpret(msg, cur, (self.p.load_results(base).get("summary") or {}).get("grip_target_n"))
         if not it["changes"]:
             self.hub.send({"type": "user", "text": msg})
-            self.hub.send({"type": "assistant", "text": it["reply"]})
+            self.hub.send({"type": "assistant", "text": it["reply"], "noop": True})
             return
         self.apply(it["changes"], msg, user_text=msg, reply=it["reply"], source=it["source"])
 
@@ -255,13 +265,16 @@ class Studio:
         rev = rev if rev in p.revs() else p.latest()
         try:
             self.hub.send({"type": "sourcing", "status": "start", "rev": rev, "project": os.path.basename(p.root)})
-            prog = lambda n, tot, t: self.hub.send({"type": "sourcing", "status": "progress", "rev": rev, "done": n, "total": tot, **t})
-            darwin.source(p, rev, workers=6, on_progress=prog, timeout=20)  # the Studio shows cached answers rather than hang
+            name = os.path.basename(p.root)
+            prog = lambda n, tot, t: self.hub.send({"type": "sourcing", "status": "progress", "rev": rev, "project": name,
+                                                     "done": n, "total": tot, **t})
+            # one 15 s try per lookup, then the cached answer: the Studio never hangs on a slow Darwin
+            darwin.source(p, rev, workers=6, on_progress=prog, timeout=15, retries=0)
             self.hub.send({"type": "sourcing", "status": "done", "rev": rev, "project": os.path.basename(p.root),
                            "sourcing": _sourcing(p, rev)})
         except Exception as exc:
             traceback.print_exc()
-            self.hub.send({"type": "sourcing", "status": "error", "rev": rev, "error": str(exc)})
+            self.hub.send({"type": "sourcing", "status": "error", "rev": rev, "project": os.path.basename(p.root), "error": str(exc)})
         finally:
             self.sourcing.release()
 
@@ -273,16 +286,22 @@ class Studio:
             return False
         try:
             for name in sorted(os.listdir(self.home)):
-                p = RobotProject(os.path.join(self.home, name))
+                root = os.path.join(self.home, name)
+                if not is_robot_project(root):
+                    continue
+                p = RobotProject(root)
                 keep = baseline(p)
                 if not keep:
                     continue
                 revs = p.revs()
-                for r in revs[revs.index(keep) + 1:]:
-                    _remove_rev(p, r)
-                if (self._results(p, keep) or {}).get("pipeline_version") != pipeline_version():
+                complete = True
+                for r in reversed(revs[revs.index(keep) + 1:]):  # newest first, so what is left stays contiguous
+                    if not _remove_rev(p, r):
+                        complete = False  # a file in it is open (Excel, a viewer): keep the rest intact
+                        break
+                if complete and (self._results(p, keep) or {}).get("pipeline_version") != pipeline_version():
                     keep = p.run(p.load_design(keep), parent=None, label="rebuilt with latest Morph", verbose=False)
-                p.log({"type": "demo_reset", "rev": keep})
+                p.log({"type": "demo_reset", "rev": keep, "complete": complete})
             self.p = RobotProject(os.path.join(self.home, self.start))
             self.hub.history.clear()
             self.hub.send({"type": "project", "project": self.start})
@@ -399,6 +418,10 @@ def make_handler(studio: Studio):
 
 
 class _Server(ThreadingHTTPServer):
+    daemon_threads = True
+    # On Windows SO_REUSEADDR lets a second Studio bind the same port while this one still listens
+    allow_reuse_address = os.name != "nt"
+
     def handle_error(self, request, client_address):
         # a browser tab closing mid-response is normal; don't print a traceback for it
         import sys
@@ -411,7 +434,11 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     if not project.revs():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     studio = Studio(project, home)
-    httpd = _Server((host, port), make_handler(studio))
+    try:
+        httpd = _Server((host, port), make_handler(studio))
+    except OSError as exc:
+        raise SystemExit(f"Port {port} is busy ({exc}): Morph Studio is probably already running. "
+                         "Close its CMD window, then start again.")
     httpd.daemon_threads = True
     print(f"Morph Studio: http://{host}:{port}  (project {project.root}; Ctrl+C to stop)")
     try:

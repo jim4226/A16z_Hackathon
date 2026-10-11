@@ -190,12 +190,36 @@ def open_app_window(url: str):
     webbrowser.open(url)
 
 
+def _set_aside_cut_off(proj):
+    """A build cut off mid-way (window closed, Ctrl+C) leaves rNNN/design.json without results.json,
+    which would stop every later launch. Move it aside; the next build reuses the number."""
+    for rev in reversed(proj.revs()):
+        d = proj.rev_dir(rev)
+        if os.path.isfile(os.path.join(d, "results.json")):
+            break
+        print(f"{os.path.basename(proj.root)}: {rev} was cut off mid-build; setting it aside")
+        try:
+            os.rename(d, f"{d}.incomplete-{int(time.time())}")
+        except OSError:
+            break
+
+
 def cmd_studio(a):
     from .robot.pipeline2 import RobotProject
     from .studio.server import serve
 
+    import socket
+    with socket.socket() as sock:  # a Studio left running in another window would share the port on Windows
+        sock.settimeout(1)
+        if sock.connect_ex((a.host, a.port)) == 0:
+            if a.open:
+                open_app_window(f"http://{a.host}:{a.port}")
+            sys.exit(f"Morph Studio is already running at http://{a.host}:{a.port}. "
+                     "To restart it, close its CMD window first.")
     if os.environ.get("MUJOCO_GL") is None and sys.platform.startswith("linux"):
         os.environ["MUJOCO_GL"] = "egl"
+    for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
+        _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
     if not p.revs():
         print(f"no project {a.name} yet: generating the first robot (about a minute)...")
@@ -403,16 +427,28 @@ def load_env(path=None):
     if not os.path.isfile(path):
         return []
     loaded = []
-    with open(path, encoding="utf-8-sig") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            k, v = k.strip().removeprefix("export ").strip(), v.strip().strip('"').strip("'")
-            if k and v and k not in os.environ:
-                os.environ[k] = v
-                loaded.append(k)
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):  # PowerShell 5.1 `>` / Out-File writes UTF-16
+        text = raw.decode("utf-16", errors="replace")
+    else:
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:  # Notepad "ANSI"
+            text = raw.decode("cp1252", errors="replace")
+    text = text.replace("\x00", "")  # a UTF-16 line appended to a UTF-8 file with `>>`
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.strip().removeprefix("export ").strip(), v.strip()
+        if v[:1] not in ('"', "'"):
+            v = v.split(" #", 1)[0].strip()  # KEY=value  # comment
+        v = v.strip('"').strip("'")
+        if k and v and k not in os.environ:
+            os.environ[k] = v
+            loaded.append(k)
     return loaded
 
 

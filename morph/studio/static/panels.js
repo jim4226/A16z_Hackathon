@@ -1403,6 +1403,7 @@ export class BomPanel {
     this.view = 'parts';
     this.live = null;  // Darwin search in flight: {rev, done, total, rows: [{kind, item, found, cached}]}
   }
+  resetCache() { this.live = null; }  // project switched: a search for the other robot is not ours
   // ---- Darwin: an agent for every purchased part and every fabrication handoff
   findAgents() {
     this.view = 'darwin';
@@ -1429,7 +1430,7 @@ export class BomPanel {
       const pct = live.total ? live.done / live.total * 100 : 4;
       el.innerHTML = head(`Searching the agentic web for ${live.total || '…'} jobs: every purchased part and bulk material, plus the PCB, prints and machined parts`, `<span class="tag acc"><span class="spin"></span>${live.done}/${live.total || '…'}</span>`) +
         `<div class="dw-prog"><b style="width:${pct}%"></b></div><div class="dw-list">` +
-        live.rows.map((r) => `<div class="dw-row fade-in"><div class="l">${kindTag(r.kind)}<span class="it">${esc(['part', 'material'].includes(r.kind) ? r.item : (KIND[r.kind] || [r.kind])[0])}</span></div><div class="r">${r.found ? `<span class="tag good">${r.found} agent${r.found === 1 ? '' : 's'} found</span>` : '<span class="tag warn">no agent yet</span>'}${r.cached ? '<span class="tag neutral">cached</span>' : ''}</div></div>`).join('') + '</div>';
+        live.rows.map((r, k) => `<div class="dw-row${k === live.rows.length - 1 ? ' fade-in' : ''}"><div class="l">${kindTag(r.kind)}<span class="it">${esc(['part', 'material'].includes(r.kind) ? r.item : (KIND[r.kind] || [r.kind])[0])}</span></div><div class="r">${r.found ? `<span class="tag good">${r.found} agent${r.found === 1 ? '' : 's'} found</span>` : '<span class="tag warn">no agent yet</span>'}${r.cached ? '<span class="tag neutral">cached</span>' : ''}</div></div>`).join('') + '</div>';
       return;
     }
     if (!sc) {

@@ -55,6 +55,7 @@ PREFERRED = {
     "order": {"cmudvaa8f01dl0agm69qoso01": "store_buy", "cmudseo52018i0agmp89pntne": "Quick buy"},
 }
 PREFERRED["material"] = PREFERRED["part"]   # bulk stock (filament, plate, sheet, wire) is bought like a part
+PREFERRED["cnc"] = PREFERRED["sheet_metal"] = QUOTE   # the same RFQ agents take DXF/STEP for machined and bent parts
 ROLES = [("quote", "look up live distributor stock and price for a manufacturer part number"),  # part-lookup
          ("quote", "get a price quote for electronic components"),  # kits / modules
          ("order", "buy and checkout a product online for me")]
@@ -92,11 +93,9 @@ def search(query: str, max_results: int = 5, retries: int = 1, timeout: float = 
             req = Request(API, data=body, headers={"Content-Type": "application/json"})
             with urlopen(req, timeout=timeout) as resp:
                 out = _normalize(query, json.load(resp))
-            os.makedirs(CACHE, exist_ok=True)
-            with open(_cache_path(query), "w", encoding="utf-8") as fh:
-                json.dump({**out, "fetched": time.strftime("%Y-%m-%dT%H:%M:%S")}, fh)
+            _remember(query, out)
             return out
-        except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+        except Exception as exc:  # HTTP/URL errors, timeouts, truncated bodies (IncompleteRead), bad JSON
             err = f"{exc.__class__.__name__}: {exc}"
             if attempt < retries:
                 time.sleep(2)
@@ -107,6 +106,26 @@ def search(query: str, max_results: int = 5, retries: int = 1, timeout: float = 
         except (OSError, ValueError):
             continue
     return {"query": query, "ok": False, "agents": [], "error": err}
+
+
+def _remember(query: str, out: dict):
+    """Cache a good answer. An empty answer never replaces a cached one that found agents: Darwin's
+    results vary run to run, and the cache is what the Studio falls back to when Darwin is down."""
+    path = _cache_path(query, CACHE)
+    if not out.get("agents"):
+        for root in (CACHE, SHIPPED):
+            try:
+                with open(_cache_path(query, root), encoding="utf-8") as fh:
+                    if json.load(fh).get("agents"):
+                        return
+            except (OSError, ValueError):
+                continue
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({**out, "fetched": time.strftime("%Y-%m-%dT%H:%M:%S")}, fh)
+    except OSError:
+        pass
 
 
 def part_query(item: str) -> str:
@@ -221,7 +240,8 @@ def tasks_for(results: dict, rev_dir: str) -> list:
     return tasks
 
 
-def source(project, rev: str, max_results: int = 3, workers: int = 4, on_progress=None, timeout: float | None = None) -> dict:
+def source(project, rev: str, max_results: int = 3, workers: int = 4, on_progress=None, timeout: float | None = None,
+           retries: int | None = None) -> dict:
     """Shortlist Darwin agents for every purchased part and handoff of `rev`; log each lookup.
 
     on_progress(done, total, task) is called as each search returns (for the Studio's live view).
@@ -232,7 +252,7 @@ def source(project, rev: str, max_results: int = 3, workers: int = 4, on_progres
 
     found = [None] * len(tasks)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        kw = {} if timeout is None else {"timeout": timeout}  # None: search()'s own default
+        kw = {k: v for k, v in (("timeout", timeout), ("retries", retries)) if v is not None}  # None: search()'s defaults
         futs = {pool.submit(search, t[2], max_results, **kw): i for i, t in enumerate(tasks)}
         for n, fut in enumerate(as_completed(futs), 1):
             i = futs[fut]

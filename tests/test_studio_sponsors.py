@@ -103,6 +103,7 @@ def _rev(root, rev, parent, label="", design=None, version=None):
     from morph.spec import Design
 
     (root / rev).mkdir(parents=True)
+    (root / "meta.json").write_text(json.dumps({"kind": "robot"}))
     (root / rev / "results.json").write_text(json.dumps({"parent": parent, "label": label, "provenance": {}, "timings_s": {},
                                                          "pipeline_version": version or pipeline_version()}))
     (root / rev / "design.json").write_text(json.dumps(Design().with_changes(design or {}).to_dict()))
@@ -186,3 +187,102 @@ def test_env_file_sets_missing_keys_only(tmp_path, monkeypatch):
     monkeypatch.setenv("KEEWANO_API_KEY", "from-terminal")
     assert sorted(load_env(str(f))) == ["KEEWANO_PAT", "KEEWANO_PROJECT_ID"]
     assert os.environ["KEEWANO_PAT"] == "kwpat-abc" and os.environ["KEEWANO_API_KEY"] == "from-terminal"
+
+
+def test_reset_skips_non_robot_entries_and_never_half_deletes(tmp_path, monkeypatch):
+    from morph.robot.pipeline2 import RobotProject
+    from morph.studio import server
+    from morph.studio.server import Studio
+
+    home = tmp_path / "projects"
+    egg = home / "egg-picker"
+    for r, parent, d in (("r001", None, None), ("r002", "r001", {"build.config": "pilot"}), ("r003", "r002", {"arm.dof": 6}),
+                         ("r004", "r003", {"arm.dof": 4})):
+        _rev(egg, r, parent, design=d)
+    gripper = home / "raw-egg"                      # a gripper project: not the Studio's to reset
+    (gripper / "r001").mkdir(parents=True)
+    (gripper / "r002").mkdir()
+    (home / "desktop.ini").write_text("[.ShellClassInfo]")
+    real_rename = os.rename
+
+    def locked(src, dst):                           # Windows: a file in r002 is open in another program
+        if src.endswith("r002"):
+            raise PermissionError(5, "Access is denied")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(server.os, "rename", locked)
+    assert Studio(RobotProject(str(egg)), str(home)).reset()
+    revs = RobotProject(str(egg)).revs()
+    assert revs == ["r001", "r002"]                 # newest first, stopped at the locked one, nothing half-deleted
+    assert all((egg / r / "results.json").exists() for r in revs)
+    assert sorted(os.listdir(gripper)) == ["r001", "r002"]
+
+
+def test_cut_off_build_is_set_aside_at_launch(tmp_path):
+    from morph.cli import _set_aside_cut_off
+    from morph.robot.pipeline2 import RobotProject
+
+    egg = tmp_path / "egg-picker"
+    _rev(egg, "r001", None)
+    (egg / "r002").mkdir()
+    (egg / "r002" / "design.json").write_text("{}")  # Ctrl+C before results.json was written
+    p = RobotProject(str(egg))
+    _set_aside_cut_off(p)
+    assert p.revs() == ["r001"] and p.latest() == "r001"
+
+
+def test_env_file_in_windows_encodings(tmp_path, monkeypatch):
+    from morph.cli import load_env
+
+    for k in ("KW_A", "KW_B", "KW_C"):
+        monkeypatch.delenv(k, raising=False)
+    u16 = tmp_path / "u16.env"
+    u16.write_bytes("KW_A=one\r\n".encode("utf-16"))          # PowerShell 5.1 `>`
+    ansi = tmp_path / "ansi.env"
+    ansi.write_bytes("# cl\xe9\nKW_B=two  # inline comment\n".encode("cp1252"))
+    mixed = tmp_path / "mixed.env"
+    mixed.write_bytes(b"# from env.example\n" + "KW_C=three\r\n".encode("utf-16-le"))  # `>>` onto a UTF-8 file
+    assert load_env(str(u16)) == ["KW_A"] and os.environ["KW_A"] == "one"
+    assert load_env(str(ansi)) == ["KW_B"] and os.environ["KW_B"] == "two"
+    assert load_env(str(mixed)) == ["KW_C"] and os.environ["KW_C"] == "three"
+
+
+def test_empty_darwin_answer_keeps_the_good_cached_one(tmp_path, monkeypatch):
+    q = "CNC machining quote from DXF and STEP files"
+    monkeypatch.setattr(darwin, "CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(darwin, "SHIPPED", str(tmp_path / "shipped"))
+    darwin._remember(q, {"query": q, "ok": True, "agents": [{"name": "get_machining_services"}]})
+    darwin._remember(q, {"query": q, "ok": True, "agents": []})
+    with open(darwin._cache_path(q, str(tmp_path / "cache")), encoding="utf-8") as fh:
+        assert json.load(fh)["agents"][0]["name"] == "get_machining_services"
+
+
+def test_chat_that_maps_to_nothing_is_flagged_noop(tmp_path, monkeypatch):
+    from morph.robot.pipeline2 import RobotProject
+    from morph.studio import server
+    from morph.studio.server import Studio
+
+    egg = tmp_path / "projects" / "egg-picker"
+    _rev(egg, "r001", None)
+    monkeypatch.setattr(server, "interpret", lambda msg, design, grip: {"changes": {}, "reply": "No parameter for that.", "source": "rules"})
+    st = Studio(RobotProject(str(egg)), str(tmp_path / "projects"))
+    sent = []
+    st.hub.send = sent.append
+    st.chat("make it sparkle")
+    assert sent[-1]["type"] == "assistant" and sent[-1]["noop"] is True
+
+
+def test_keewano_emit_never_waits_on_the_network(monkeypatch):
+    import time
+
+    monkeypatch.setenv("KEEWANO_API_KEY", "k")
+    calls = []
+    monkeypatch.setattr(keewano, "send", lambda name, evs, ts=None, key=None: (time.sleep(2), calls.append(name)))
+    t0 = time.time()
+    assert keewano.emit("egg-picker", {"type": "tool_time", "cmd": "studio", "seconds": 3})
+    assert time.time() - t0 < 0.5                     # queued; the background thread sends it
+    for _ in range(50):
+        if calls:
+            break
+        time.sleep(0.1)
+    assert calls == ["egg-picker"]

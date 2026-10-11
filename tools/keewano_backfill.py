@@ -18,6 +18,9 @@ import time
 
 sys.path.insert(0, ".")
 from morph import keewano  # noqa: E402
+from morph.cli import load_env  # noqa: E402
+
+load_env()  # the same .env the Studio reads
 
 # Assumed real-vs-sim holding force: the sim's rigid fingers and capsule objects overrate grip,
 # most for flat pads and slick PLA. These are the invented numbers; label them as such on stage.

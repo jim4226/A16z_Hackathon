@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import sys
+import threading
 import time
 import uuid
 import zlib
@@ -144,8 +146,30 @@ def send(project_name: str, events: list, ts: int | None = None, key: str | None
         return False
 
 
+_queue = None
+_queue_lock = threading.Lock()
+
+
 def emit(project_name: str, entry: dict, design: dict | None = None) -> bool:
-    return send(project_name, events_for(entry, design))
+    """Queue one ledger entry for Keewano and return at once: a slow or unreachable Keewano must not
+    hold up a design run or the Studio (each send can take up to its 5 s timeout). One background
+    thread sends in order, so batch numbers stay sequential."""
+    global _queue
+    events = events_for(entry, design)
+    if not events or not os.environ.get("KEEWANO_API_KEY"):
+        return False
+    with _queue_lock:
+        if _queue is None:
+            _queue = queue.Queue()
+
+            def worker():
+                while True:
+                    name, evs, ts = _queue.get()
+                    send(name, evs, ts=ts)
+
+            threading.Thread(target=worker, daemon=True, name="keewano-sender").start()
+    _queue.put((project_name, events, int(time.time())))
+    return True
 
 
 # -- query side ------------------------------------------------------------------------------

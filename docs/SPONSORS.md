@@ -31,10 +31,11 @@ Check: `python -m morph.cli ask "SELECT count(*) FROM events"` prints a number.
 
 **If the keys are for a project other than R cubed**, it has no build history yet. Load it once and
 wait about 5 minutes before demoing: `python tools/keewano_backfill.py --send`. The backfilled
-projects are named `synthetic-*`, and their force ratios are invented: say so if asked.
+projects are named `synthetic-*`, and their force ratios are invented: say so if asked. The R cubed
+project's history is the same kind of seeded data.
 
-After setting keys for the first time, delete the `projects` folder (or use **Present → Reset demo**,
-then restart) so the gripper stage reruns and picks up the calibration.
+After setting keys for the first time, close the Studio, delete the `projects` folder and start it
+again, so the gripper stage reruns and picks up the calibration (Reset demo keeps the existing build).
 
 ## Darwin when its API is down
 
@@ -47,8 +48,9 @@ cached answer is used and labelled **cached**.
 ```
 python -m morph.cli source egg-picker          # Darwin shortlist for the latest revision
 python -m morph.cli darwin "PCB fabrication quote from Gerber files"
-python -m morph.cli ask 'SELECT "PadStyle", avg("HoldForceRatioPct") FROM events GROUP BY "PadStyle"'
+python -m morph.cli ask "SELECT \"PadStyle\", avg(\"HoldForceRatioPct\") FROM events GROUP BY \"PadStyle\""
 ```
+That quoting works in Windows cmd and in bash (in PowerShell, run it from cmd). The commands read `.env` too.
 
 ## Claude Code: Darwin and Keewano as MCP servers (for a live agent call or a judge's question)
 

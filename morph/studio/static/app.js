@@ -694,7 +694,7 @@ let sysMsg = null, startT = 0, liveProv = null;
 function onEvent(ev) {
   switch (ev.type) {
     case 'user': addMsg('user', ev.text); typing(true); break;
-    case 'assistant': typing(false); addMsg('assistant', ev.text, ev.noop ? null : ev.changes); if (/^(Error|Couldn't apply)/.test(ev.text || '')) S.busy = false; if (ev.noop) S.noopAt = performance.now(); break;
+    case 'assistant': typing(false); addMsg('assistant', ev.text, ev.noop ? null : ev.changes); if (/^(Error|Couldn't apply)/.test(ev.text || '')) { S.busy = false; S.errorAt = performance.now(); } if (ev.noop) S.noopAt = performance.now(); break;
     case 'start': {
       typing(false);
       stopTour();
@@ -712,7 +712,11 @@ function onEvent(ev) {
       break;
     }
     case 'node': if (liveProv) liveProv[ev.node] = ev.status; nodeEvent(ev); break;
-    case 'sourcing': panels.bom.onSourcing(ev); if (ev.status === 'done' && S.current?.rev === ev.rev) S.current.sourcing = ev.sourcing; break;
+    case 'sourcing':
+      if (ev.project && ev.project !== S.project) break;  // a search still running for the other robot
+      panels.bom.onSourcing(ev);
+      if (ev.status === 'done' && S.current?.rev === ev.rev) S.current.sourcing = ev.sourcing;
+      break;
     case 'project': reloadProject().catch((e) => console.warn(e)); break;
     case 'done': {
       typing(false);

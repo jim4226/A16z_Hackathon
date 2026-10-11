@@ -14,54 +14,52 @@ const STEPS = [
     run: async (a) => { a.tab('robot'); a.robot({ motion: false, xray: false, labels: false }); a.explode(0); a.home(); },
   },
   {
-    title: 'Real kinematics, real parts inside',
+    title: 'Real kinematics, real parts inside', project: 'egg-picker',
     say: 'Everything that moves is real kinematics: five servo joints and a rack-and-pinion gripper. X-ray shows the electronics: the controller in the base, the servo bus, cables through every joint, force sensors in the fingers.',
-    run: async (a) => { a.tab('robot'); a.robot({ motion: true }); await sleep(2200); a.robot({ xray: true, labels: true }); },
+    run: async (a, still) => { a.tab('robot'); a.robot({ motion: true }); await sleep(2200); if (still()) a.robot({ xray: true, labels: true }); },
   },
   {
-    title: 'Every part is a real part',
+    title: 'Every part is a real part', project: 'egg-picker',
     say: 'Exploded view: printed links, off-the-shelf servos, bearings, fasteners and cables, each with a part number, a vendor and an assembly step.',
     run: async (a) => { a.tab('robot'); a.robot({ motion: false, labels: false }); await a.explode(0.65); },
   },
   {
-    title: 'Tested in physics simulation',
+    title: 'Tested in physics simulation', project: 'egg-picker',
     say: 'MuJoCo runs the task: pick the egg with a force-limited grip and place it. Torque on every joint, live, plus a payload sweep, the workspace and a shake test.',
     run: async (a) => { a.explode(0); a.robot({ xray: false }); a.tab('sim'); await a.sim('pick_place'); },
   },
   {
-    title: 'Change it in one sentence', chat: 'Swap to Dynamixel servos',
+    title: 'Change it in one sentence', project: 'egg-picker', chat: 'Swap to Dynamixel servos',
     say: '“Swap to Dynamixel servos.” New actuators touch everything, so Morph re-sizes the joints and regenerates the gripper, electronics, CAD, simulation, firmware, manufacturing, BOM and manual, in about half a minute.',
     after: async (a) => { a.tab('elec'); },
   },
   {
-    title: 'From modules to a custom PCB', chat: 'Use a custom PCB',
+    title: 'From modules to a custom PCB', project: 'egg-picker', chat: 'Use a custom PCB',
     say: '“Use a custom PCB.” Only what depends on the electronics reruns; sizing, grasp and simulation are reused. The board is placed, routed and DRC-checked on screen, with Gerbers and JLCPCB files ready to order.',
     after: async (a) => { a.tab('elec'); a.elec('pcb'); },
   },
   {
-    title: 'Same robot, another way to build it', params: { 'build.config': 'pilot' },
+    title: 'Same robot, another way to build it', project: 'egg-picker', params: { 'build.config': 'pilot' },
     say: 'Pilot build: CNC aluminium, sheet-metal brackets with flat patterns, nylon prints. Metal links are heavier, so Morph re-sizes the joints too. Per-part process, vendor, cost and lead time, with all three build configs compared.',
     after: async (a) => { a.tab('mfg'); },
   },
   {
-    title: 'Darwin: who sells and who builds every part',
+    title: 'Darwin: who sells and who builds every part', project: 'egg-picker',
     say: 'Darwin searches the agentic web for an agent per purchased part and bulk material, plus PCB fab from our Gerbers, CNC from our DXFs and prints from our STLs. Starred agents are where Morph routes the work.',
     run: async (a) => { a.tab('bom'); a.darwin(); },
   },
   {
-    title: 'Keewano: the build memory',
+    title: 'Keewano: the build memory', project: 'egg-picker',
     say: (a) => {
       const cal = a.state.current?.gripper?.force?.hold_calibration;
       return cal
-        ? `Every revision and bench measurement is logged to Keewano. Real builds with these pads needed ×${fmt(cal.ratio, '', 2)} the simulated holding force (${cal.n} builds), so the grip target is calibrated before the firmware ships.`
-        : a.state.integrations?.keewano?.send
-          ? 'Every revision, chat edit and bench measurement is logged to Keewano. Measured builds then calibrate the simulated grip force before the firmware ships.'
-          : 'With Keewano connected, every revision, chat edit and bench measurement is logged, and measured builds calibrate the simulated grip force before the firmware ships.';
+        ? `Keewano logs every revision, chat edit and bench measurement. Its build history for these pads (seeded for this demo) says they need ×${fmt(cal.ratio, '', 2)} the simulated holding force over ${cal.n} builds, so the grip target is raised before the firmware ships.`
+        : 'With Keewano connected, every revision, chat edit and bench measurement is logged, and measured builds calibrate the simulated grip force before the firmware ships.';
     },
     run: async (a) => { a.tab('sim'); a.spotlight('.fw'); },
   },
   {
-    title: 'The assembly manual writes itself',
+    title: 'The assembly manual writes itself', project: 'egg-picker',
     say: 'Step by step: which parts, which fasteners at what torque, which tools and how long. The printable manual is generated with every revision.',
     run: async (a) => { a.tab('asm'); a.asm(); },
   },
@@ -71,12 +69,12 @@ const STEPS = [
     run: async (a) => { a.tab('robot'); a.robot({ motion: false, xray: false, labels: false }); a.home(); },
   },
   {
-    title: 'Edit someone else’s robot', chat: 'Swap to Dynamixel servos',
+    title: 'Edit someone else’s robot', project: 'so101', chat: 'Swap to Dynamixel servos',
     say: '“Swap to Dynamixel servos.” The new servos go in, the electronics and firmware follow, and the printed holders that no longer fit are flagged in orange for redesign.',
     after: async (a) => { a.tab('robot'); },
   },
   {
-    title: 'Add a wrist camera', chat: 'Add a wrist camera',
+    title: 'Add a wrist camera', project: 'so101', chat: 'Add a wrist camera',
     say: '“Add a wrist camera.” Camera mount, USB device, wiring, power budget and BOM all update together.',
     after: async (a) => { a.tab('robot'); },
   },
@@ -109,14 +107,18 @@ export class Presenter {
     document.addEventListener('keydown', this.onKey, true);
     this.i = -1;
     this.render();
+    if (this.narrow()) this.a.toast('The window is too narrow for the right panel: press Ctrl and - (minus) once');
   }
+  narrow() { const el = document.querySelector('#inspector'); return !!el && getComputedStyle(el).display === 'none'; }
   close() {
     document.body.classList.remove('presenting');
     document.removeEventListener('keydown', this.onKey, true);
+    this.gen = (this.gen || 0) + 1;  // a step still waiting on the pipeline stops waiting
+    this.waiting = null;
   }
   toggle() { if (this.on) this.close(); else this.open(); }
   onKey(e) {
-    if (e.target.closest?.('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.closest?.('textarea, select, input:not([type=checkbox]):not([type=range]):not([type=radio])') || e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
     if (k === 'ArrowRight' || k === 'PageDown' || k === ' ' || k === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); this.next(); }
     else if (k === 'ArrowLeft' || k === 'PageUp') { e.preventDefault(); e.stopImmediatePropagation(); this.go(this.i - 1); }
@@ -128,7 +130,8 @@ export class Presenter {
     if (this.waiting || i < -1 || i >= STEPS.length) return;
     this.i = i;
     if (i < 0) return this.render();
-    const st = STEPS[i], a = this.a;
+    const st = STEPS[i], a = this.a, gen = this.gen = (this.gen || 0) + 1;
+    const still = () => this.gen === gen && this.i === i;
     this.render();
     try {
       if (st.project && a.state.project !== st.project) {
@@ -144,32 +147,43 @@ export class Presenter {
         if (st.chat) a.chat(st.chat); else a.params(st.params);
         // the run starts within seconds (Claude interprets the sentence first); a no-op answers at once
         const noop = () => (a.state.noopAt || 0) > t0;
-        const started = await a.until(() => a.state.busy || a.state.latest !== before || noop(), 25000);
-        const ok = started && !noop() && await a.until(() => a.state.latest !== before && !a.state.busy, 180000, (p) => this.wait(p));
+        const failed = () => (a.state.errorAt || 0) > t0;
+        const started = await a.until(() => a.state.busy || a.state.latest !== before || noop() || failed() || !still(), 25000);
+        const ok = started && !noop() && !failed() && await a.until(
+          () => (a.state.latest !== before && !a.state.busy) || failed() || !still(), 180000, (p) => still() && this.wait(p));
+        if (!still()) return;
         this.wait(null);
         if (noop()) { a.toast('Already set from an earlier take: Esc, then Present → Reset demo for a clean run'); await st.after?.(a); }
+        else if (failed()) a.toast('That change failed; see the chat. Press → to continue');
         else if (!ok) a.toast('The pipeline is taking longer than usual; press → when it finishes');
         else if (!a.tourOn()) await st.after?.(a);
       } else if (st.chat || st.params) {
         await st.after?.(a);
       }
-      await st.run?.(a);
+      if (still()) await st.run?.(a, still);
     } catch (e) {
       console.warn('present step failed', e);
       this.wait(null);
     }
-    this.render();
+    if (still()) this.render();
   }
-  wait(text) { this.waiting = text; this.render(); }
+  wait(text) {
+    if (text === this.waiting) return;
+    const el = text && this.waiting ? this.el.querySelector('.pr-wait .t') : null;
+    this.waiting = text;
+    if (el) el.textContent = text; else this.render();  // update in place: no flicker, buttons stay put
+  }
   render() {
     const i = this.i, n = STEPS.length, a = this.a;
     const dots = STEPS.map((_, k) => `<b class="${k < i ? 'done' : k === i ? 'cur' : ''}" data-k="${k}"></b>`).join('');
     if (i < 0) {
       const dirty = (a.state.projects || []).filter((p) => p.at_start === false).map((p) => p.name);
+      const narrow = this.narrow();
       this.el.innerHTML = `<div class="pr-top"><span class="pr-n">${I('play', 'sm')}Present</span><span class="pr-t">The Morph demo, ${n} steps</span><span class="grow"></span>
         <button class="btn${dirty.length ? ' primary' : ''}" data-a="reset" title="Delete the chat edits from earlier takes and go back to each robot's original design">${I('replay', 'sm')}Reset demo</button>
         <button class="btn${dirty.length ? '' : ' primary'}" data-a="next">Start ${I('arrow', 'sm')}</button>
 <button class="btn icon ghost" data-a="close" title="Exit (Esc)">${I('x', 'sm')}</button></div>
+        ${narrow ? `<div class="pr-warn">${I('alert', 'sm')}<span>The window is too narrow to show the right panel (time card, grip force). Press <b>Ctrl</b> and <b>-</b> (minus) once, then open Present again.</span></div>` : ''}
         ${dirty.length ? `<div class="pr-warn">${I('alert', 'sm')}<span>${dirty.map(esc).join(' and ')} ${dirty.length === 1 ? 'has' : 'have'} edits from an earlier take. Click <b>Reset demo</b> first so every step changes something.</span></div>` : ''}
         <div class="pr-say">Press <kbd>→</kbd>, <kbd>Space</kbd> or a presentation clicker for each step; <kbd>←</kbd> goes back, <kbd>C</kbd> hides the caption, <kbd>Esc</kbd> exits. Steps that change the robot wait for the pipeline before you can move on.</div>
         <div class="pr-dots">${dots}</div>`;
@@ -178,7 +192,7 @@ export class Presenter {
       const say = typeof st.say === 'function' ? st.say(a) : st.say;
       const nextT = STEPS[i + 1]?.title;
       this.el.innerHTML = `<div class="pr-top"><span class="pr-n">${i + 1}<small>/${n}</small></span><span class="pr-t">${esc(st.title)}</span><span class="grow"></span>
-        ${this.waiting ? `<span class="pr-wait"><span class="spin"></span>${esc(this.waiting)}</span>` : nextT ? `<span class="pr-next">next: ${esc(nextT)}</span>` : '<span class="pr-next">end</span>'}
+        ${this.waiting ? `<span class="pr-wait"><span class="spin"></span><span class="t">${esc(this.waiting)}</span></span>` : nextT ? `<span class="pr-next">next: ${esc(nextT)}</span>` : '<span class="pr-next">end</span>'}
         <button class="btn icon" data-a="prev" title="Back (←)" ${i <= 0 || this.waiting ? 'disabled' : ''}>${I('prev', 'sm')}</button>
         <button class="btn icon primary" data-a="next" title="Next (→ / Space)" ${this.waiting || i >= n - 1 ? 'disabled' : ''}>${I('next', 'sm')}</button>
         <button class="btn icon ghost" data-a="close" title="Exit (Esc)">${I('x', 'sm')}</button></div>
