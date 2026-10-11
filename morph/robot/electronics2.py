@@ -485,7 +485,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
     fuse_a = ep["power_budget"]["fuse_a"]
 
     # ---- power input, protection, servo rail switch
-    _part(c, "J1", "XT30", "conn", [("1", "+", "VIN_RAW"), ("2", "-", "GND")], "power",
+    _part(c, "J1", "XT30", "conn", [("1", "+", "VIN_RAW"), ("2", "-", "GND")], "power", value=f"{vin:g}V IN",
           place={"edge": "left", "at": 0.36}, note=f"{vin:g} V in from {ep['supply']['key']}")
     c.add("F1", f"{fuse_a:g}A", "F", [("1", "1", "VIN_RAW"), ("2", "2", "V_FUSED")], footprint="FUSE_2410",
           mpn=f"Littelfuse 0456{int(round(fuse_a)):03d}.ER (NANO2, fast)", lcsc="verify", price=0.6, block="power",
@@ -508,7 +508,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
     _part(c, "R3", "R1k", "R", [("1", "1", "SERVO_EN_MCU"), ("2", "2", "SERVO_EN")], "power", place={"near": "Q3"})
     _part(c, "R4", "R100k", "R", [("1", "1", "SERVO_EN"), ("2", "2", "GND")], "power", place={"near": "Q3"})
     if "estop" in extras:
-        _part(c, "J9", "XH2", "conn", [("1", "1", "Q2_G"), ("2", "2", "ESTOP_LOOP")], "power",
+        _part(c, "J9", "XH2", "conn", [("1", "1", "Q2_G"), ("2", "2", "ESTOP_LOOP")], "power", value="E-STOP",
               place={"edge": "left", "at": 0.12}, note="E-stop NC loop (opens = servo power off)")
     cb = _part(c, "C1", "CBULK", "CP", [("1", "+", "V_SERVO"), ("2", "-", "GND")], "power",
                value=f"470u {'25V' if vin > 9 else '16V'}", place={"near": "Q2", "side": "below"})
@@ -625,6 +625,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
         for i, chain in enumerate(ports):
             ids = [a["id"] for a in chain]
             _part(c, f"J{3 + i}", key, "conn", [("1", "GND", "GND"), ("2", "V+", "V_SERVO"), ("3", "DATA", "BUS_DATA")], "bus",
+                  value=f"BUS {chr(65 + i)}",
                   place={"edge": "bottom", "at": 0.30 + 0.17 * i}, note=f"bus port {chr(65 + i)} → ID {ids[0]}" +
                   (f"-{ids[-1]}" if len(ids) > 1 else ""))
         if "imu" in extras:
@@ -635,7 +636,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
     if fsr:
         rdiv = ep["grip"]["fsr_divider_ohm"]
         for j, (net, at, where) in enumerate((("FSR_L", 0.30, "left"), ("FSR_R", 0.12, "right"))):
-            _part(c, f"J{6 + j}", "PH2", "conn", [("1", "1", "3V3"), ("2", "2", net)], "sensors",
+            _part(c, f"J{6 + j}", "PH2", "conn", [("1", "1", "3V3"), ("2", "2", net)], "sensors", value=f"FSR {where[0].upper()}",
                   place={"edge": "right", "at": at}, note=f"FSR 402 on the {where} jaw")
             r = c.add(f"R{40 + j}", ohm_str(rdiv), "R", [("1", "1", net), ("2", "2", "GND")], footprint="R0603",
                       mpn=f"0603 1% {ohm_str(rdiv)}", lcsc="verify" if rdiv != 10000 else "C25804", price=0.002,
@@ -644,7 +645,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
                   place={"near": f"J{6 + j}", "side": "left"})
     if "imu" in extras:
         _part(c, "J8", "SH4", "conn", [("1", "GND", "GND"), ("2", "3V3", "3V3"), ("3", "SDA", "SDA"), ("4", "SCL", "SCL")],
-              "sensors", place={"edge": "right", "at": 0.48}, note="Qwiic / STEMMA QT → BNO085 IMU")
+              "sensors", value="IMU", place={"edge": "right", "at": 0.48}, note="Qwiic / STEMMA QT → BNO085 IMU")
     for i, (fx, fy) in enumerate(((0, 0), (1, 0), (0, 1), (1, 1))):
         _part(c, f"H{i + 1}", "MH", "MH", [("1", "1", None)], "mech", place={"hole": i})
     c.notes = [f"Servo rail V_SERVO = input ({vin:g} V) switched by Q2; firmware enables it with SERVO_EN"
