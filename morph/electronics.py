@@ -36,6 +36,9 @@ SERVOS = {  # stall torque kgf*cm at the listed voltage, stall current A, voltag
     "mg90s": dict(name="MG90S (micro, metal gear)", torque=2.2, stall_a=0.7, v=(4.8, 6.0), price=5.0),
     "mg996r": dict(name="TowerPro MG996R (standard, metal gear)", torque=11.0, stall_a=2.5, v=(4.8, 7.2), price=9.0),
     "ds3218": dict(name="DS3218 (20 kg digital)", torque=20.0, stall_a=2.5, v=(4.8, 6.8), price=16.0),
+    "sts3215": dict(name="Feetech STS3215 serial bus servo (12 V)", torque=29.6, stall_a=2.7, v=(6.0, 12.6), price=17.0),
+    "xl430_w250": dict(name="ROBOTIS DYNAMIXEL XL430-W250-T", torque=15.3, stall_a=1.4, v=(6.5, 12.0), price=49.9),
+    "xm430_w350": dict(name="ROBOTIS DYNAMIXEL XM430-W350-T", torque=41.8, stall_a=2.3, v=(10.0, 14.8), price=289.9),
 }
 
 

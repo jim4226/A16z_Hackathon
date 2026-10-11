@@ -168,11 +168,55 @@ def cmd_bench(a):
 
 
 def cmd_studio(a):
+    from .robot.pipeline2 import RobotProject
     from .studio.server import serve
 
     if os.environ.get("MUJOCO_GL") is None and sys.platform.startswith("linux"):
         os.environ["MUJOCO_GL"] = "egl"
-    serve(_project(a.name), a.host, a.port)
+    serve(RobotProject(os.path.join(HOME, a.name)), a.host, a.port)
+
+
+EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
+             "object.length_mm": 57.0, "object.mass_g": 60.0, "object.friction": 0.35, "object.max_force_n": 25.0,
+             "finger.sensor": "fsr402", "finger.width_mm": 20.0, "finger.length_mm": 52.0, "finger.thickness_mm": 6.0,
+             "finger.pad_depth_mm": 5.5, "finger.pad_height_mm": 19.8, "electronics.servo": "sts3215"}
+
+
+def _robot_summary(p, rev):
+    s = p.load_results(rev)["summary"]
+    keys = ["dof", "reach_mm", "actuators", "min_torque_margin", "parts", "robot_mass_kg", "pick_place_success",
+            "cycle_time_s", "max_payload_g", "electronics_config", "pcb", "build_config", "unit_cost", "assembly_steps"]
+    print(f"\n{rev}: " + "  ".join(f"{k}={s.get(k)}" for k in keys))
+    for i in s.get("issues", []):
+        print(f"  ✗ {i}")
+
+
+def cmd_robot(a):
+    from .robot.pipeline2 import RobotProject
+
+    p = RobotProject(os.path.join(HOME, a.name))
+    if a.action == "new":
+        if p.revs():
+            sys.exit(f"{p.root} already exists")
+        design = Design().with_changes({**EGG_ROBOT, "name": a.name})
+        if a.need:
+            from .studio.intent import interpret
+            it = interpret(a.need, design)
+            design = design.with_changes(it["changes"])
+            print(it["reply"])
+        json.dump({"kind": "robot", "need": a.need or "Pick a raw egg and place it without cracking it."},
+                  open(os.path.join(p.root, "meta.json"), "w"))
+        rev = p.run(design, label="first design", n_trials=a.trials, fast_sim=a.fast)
+        _robot_summary(p, rev)
+    elif a.action == "change":
+        base = a.base or p.latest()
+        changes = dict(kv.split("=", 1) for kv in a.changes)
+        rev = p.run(p.load_design(base).with_changes(changes), parent=base, label=" ".join(a.changes)[:48],
+                    n_trials=a.trials, fast_sim=a.fast)
+        _robot_summary(p, rev)
+    elif a.action == "show":
+        for r in ([a.base] if a.base else p.revs()):
+            _robot_summary(p, r)
 
 
 def cmd_research(a):
@@ -296,8 +340,18 @@ def main(argv=None):
     s.add_argument("rev", nargs="?", help="revision that was fabricated")
     s.set_defaults(fn=cmd_time)
 
-    s = sub.add_parser("studio", help="web UI: chat with the design, watch it regenerate")
-    s.add_argument("name", nargs="?", default="raw-egg")
+    s = sub.add_parser("robot", help="whole-robot projects: new | change | show")
+    s.add_argument("action", choices=["new", "change", "show"])
+    s.add_argument("name", nargs="?", default="egg-picker")
+    s.add_argument("changes", nargs="*", help="dotted.key=value (change)")
+    s.add_argument("--need", help="natural-language request applied to the default robot (new)")
+    s.add_argument("--from", dest="base")
+    s.add_argument("--trials", type=int, default=4)
+    s.add_argument("--fast", action="store_true", help="shorter simulations")
+    s.set_defaults(fn=cmd_robot)
+
+    s = sub.add_parser("studio", help="web UI: chat with / edit the robot, watch everything regenerate")
+    s.add_argument("name", nargs="?", default="egg-picker")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.set_defaults(fn=cmd_studio)

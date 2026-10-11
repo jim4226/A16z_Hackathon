@@ -45,9 +45,69 @@ def object_changes(key: str) -> dict:
     return ch
 
 
+def robot_rules(t: str, d: Design, ch: dict, said: list):
+    """Whole-robot requests: actuator family, DOF, reach, electronics config, extras, build config."""
+    fam = None
+    if re.search(r"dynamixel|robotis|xl430|xm430", t):
+        fam = "dynamixel"
+    elif re.search(r"feetech|sts3215|smart (bus )?servo|serial bus|bus servo", t):
+        fam = "smart_bus"
+    elif re.search(r"hobby|pwm servo|rc servo|cheap servo|mg996r servos|ds3218", t) and "gripper" not in t:
+        fam = "hobby_pwm"
+    if fam:
+        ch["arm.actuator_family"] = fam
+        said.append(f"actuators → {fam.replace('_', ' ')}")
+    m = re.search(r"\b([456])\s*-?\s*(dof|axis|axes|degrees)", t) or re.search(r"\b(four|five|six)\s*-?\s*(dof|axis|axes|degrees)", t)
+    if m:
+        n = {"four": 4, "five": 5, "six": 6}.get(m.group(1), None) or int(m.group(1))
+        ch["arm.dof"] = n
+        said.append(f"{n}-DOF arm")
+    m = re.search(r"reach (?:to |of )?(\d{3})\s*mm", t) or re.search(r"(\d{3})\s*mm reach", t)
+    if m:
+        ch["arm.reach_mm"] = float(m.group(1))
+        said.append(f"reach → {m.group(1)} mm")
+    elif re.search(r"(longer|more|bigger|increase) reach", t):
+        ch["arm.reach_mm"] = d.arm.reach_mm + 60
+        said.append(f"reach → {d.arm.reach_mm + 60:g} mm")
+    elif re.search(r"(shorter|less|smaller|reduce) reach|more compact", t):
+        ch["arm.reach_mm"] = max(d.arm.reach_mm - 60, 200)
+        said.append(f"reach → {max(d.arm.reach_mm - 60, 200):g} mm")
+    if re.search(r"custom pcb|custom board|pcba|single board|one board", t):
+        ch["electronics.config"] = "custom_pcb"
+        said.append("electronics → one custom controller PCBA")
+    elif re.search(r"off[- ]the[- ]shelf|modules|dev ?boards|breakout", t):
+        ch["electronics.config"] = "modules"
+        said.append("electronics → off-the-shelf modules")
+    extras = [e for e in d.electronics.extras.split(",") if e]
+    for pat, key in ((r"camera", "wrist_camera"), (r"e-?stop|emergency stop|kill switch", "estop"), (r"\bimu\b", "imu")):
+        if re.search(pat, t):
+            if re.search(r"(remove|no|without|drop) (the |a )?(wrist )?" + pat, t):
+                extras = [e for e in extras if e != key]
+                said.append(f"removed {key.replace('_', ' ')}")
+            elif key not in extras:
+                extras.append(key)
+                said.append(f"added {key.replace('_', ' ')}")
+    if ",".join(extras) != d.electronics.extras:
+        ch["electronics.extras"] = ",".join(extras)
+    if re.search(r"\bpilot\b|cnc|sheet[- ]metal|aluminum|aluminium|machined", t):
+        ch["build.config"] = "pilot"
+        said.append("build → pilot (CNC aluminium + sheet metal + PCBA)")
+    elif re.search(r"production|injection|molded|moulded|mass produc", t):
+        ch["build.config"] = "production"
+        said.append("build → production (molded covers + sheet metal + PCBA)")
+    elif re.search(r"prototype|3d[- ]?print", t):
+        ch["build.config"] = "prototype"
+        said.append("build → prototype (3D printed)")
+    m = re.search(r"(\d+)\s*(units|robots|pcs|pieces)", t)
+    if m:
+        ch["build.quantity"] = int(m.group(1))
+        said.append(f"quantity → {m.group(1)}")
+
+
 def rules(msg: str, d: Design) -> tuple[dict, list]:
     t = msg.lower()
     ch, said = {}, []
+    robot_rules(t, d, ch, said)
     for alias, key in ALIASES.items():
         if re.search(rf"\b{alias}", t):
             ch.update(object_changes(key))
@@ -56,16 +116,18 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
                         + (f", damages above ~{o['max_force_n']} N)" if o["max_force_n"] else ")"))
             break
     for s in ("sg90", "mg90s", "mg996r", "ds3218"):
-        if s in t.replace(" ", "").replace("-", ""):
+        if s in t.replace(" ", "").replace("-", "") and ("gripper" in t or "arm.actuator_family" not in ch):
             ch["electronics.servo"] = s
             said.append(f"servo → {s.upper()}")
-    for words, mcu in ((("esp32",), "esp32_devkit"), (("pico", "rp2040"), "rp2040_pico"),
+    for words, mcu in ((("esp32-s3", "esp32 s3", "esp32s3"), "esp32_s3_devkit"), (("esp32",), "esp32_devkit"), (("pico", "rp2040"), "rp2040_pico"),
                        (("nano", "arduino"), "arduino_nano")):
         if any(w in t for w in words):
             ch["electronics.mcu"] = mcu
             said.append(f"MCU → {mcu}")
             break
-    if "laser" in t:
+    if "build.config" in ch:
+        pass
+    elif "laser" in t:
         ch.update({"fab.process": "laser_cut", "finger.material": "Delrin", "finger.width_mm": 6.0, "finger.sensor": "none"})
         said.append("fab → laser-cut 6 mm Delrin (the FSR needs a 20 mm printed finger, so the sensor is dropped)")
     elif "cnc" in t or "alumin" in t:
@@ -78,7 +140,7 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
     if re.search(r"(no|remove|without|drop)( the)? (force )?sensor", t):
         ch["finger.sensor"] = "none"
         said.append("force sensor removed")
-    elif re.search(r"(add|with|use)( a)? (force )?sensor|force feedback|fsr", t):
+    elif re.search(r"(add|with|use)( a)? force sensor|force feedback|fsr", t):
         ch.update({"finger.sensor": "fsr402", "finger.width_mm": 20.0, "fab.process": "fdm_print",
                    "finger.material": ch.get("finger.material", d.finger.material) if d.finger.material in ("PLA", "PETG", "Nylon-CF") else "PETG"})
         said.append("FSR 402 force sensor added (20 mm printed finger)")
@@ -87,13 +149,13 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
         dl = float(m.group(1)) * (1 if m.group(2) == "longer" else -1)
         ch["finger.length_mm"] = round(ch.get("finger.length_mm", d.finger.length_mm) + dl, 1)
         said.append(f"fingers {m.group(2)} by {m.group(1)} mm")
-    elif re.search(r"\blonger\b", t):
+    elif re.search(r"longer fingers?", t):
         ch["finger.length_mm"] = round(ch.get("finger.length_mm", d.finger.length_mm) + 10, 1)
         said.append("fingers 10 mm longer")
-    if re.search(r"thicker|stiffer|stronger finger", t):
+    if re.search(r"thicker finger|stiffer finger|stronger finger", t):
         ch["finger.thickness_mm"] = round(d.finger.thickness_mm + 1.5, 1)
         said.append("finger beam 1.5 mm thicker")
-    elif re.search(r"thinner|lighter finger", t):
+    elif re.search(r"thinner finger|lighter finger", t):
         ch["finger.thickness_mm"] = round(max(d.finger.thickness_mm - 1.0, 3.0), 1)
         said.append("finger beam 1 mm thinner")
     for words, pad in ((("v-groove", "v groove", "vee"), "v"), (("flat pad", "flat finger", "flat"), "flat"),
@@ -145,7 +207,10 @@ TOOL = {
                    "and fab.process=fdm_print. Allowed enums: finger.pad flat|v|contour; finger.sensor none|fsr402; "
                    "finger.material PLA|PETG|Nylon-CF|Acrylic|Delrin|HDPE|Al6061; fab.process "
                    "auto|fdm_print|laser_cut|cnc_router; electronics.mcu auto|arduino_nano|esp32_devkit|rp2040_pico; "
-                   "electronics.servo auto|sg90|mg90s|mg996r|ds3218.",
+                   "electronics.servo auto|sg90|mg90s|mg996r|ds3218 (the GRIPPER servo); electronics.config modules|custom_pcb; "
+                   "electronics.extras comma list of wrist_camera,estop,imu; arm.dof 4|5|6; arm.reach_mm 200-500; "
+                   "arm.actuator_family hobby_pwm|smart_bus|dynamixel; arm.actuator_overrides 'j2=xm430_w350'; "
+                   "build.config prototype|pilot|production; build.quantity; task.pick_x_mm/pick_y_mm/place_x_mm/place_y_mm.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -168,8 +233,9 @@ def interpret(msg: str, d: Design, last_target: float | None = None) -> dict:
         client = anthropic.Anthropic()
         resp = client.messages.create(
             model=MODEL, max_tokens=4000, output_config={"effort": "low"},
-            system="You are Morph's design assistant for a force-sensing robot gripper. Turn each request into a "
-                   "call to apply_design_changes. Always call the tool exactly once.",
+            system="You are Morph's design assistant for a whole robot: a robot arm with a force-sensing parallel "
+                   "gripper, its electronics and its manufacturing. Turn each request into a call to "
+                   "apply_design_changes. Always call the tool exactly once.",
             tools=[TOOL], tool_choice={"type": "auto"},
             messages=[{"role": "user", "content": f"Current design:\n{json.dumps(d.to_dict())}\n\nRequest: {msg}"}],
         )
@@ -183,6 +249,6 @@ def interpret(msg: str, d: Design, last_target: float | None = None) -> dict:
     ch, said = rules(msg, d)
     if not ch:
         return {"changes": {}, "source": "rules",
-                "reply": "I couldn't map that to a design parameter. Try: “make it for a strawberry”, “use an SG90”, "
-                         "“switch to an ESP32”, “fingers 10 mm longer”, “gentler grip”, or “laser cut it”."}
+                "reply": "I couldn't map that to a design parameter. Try: “swap to Dynamixel servos”, “use a custom PCB”, "
+                         "“make it 6-DOF”, “add a wrist camera”, “pilot build”, “reach 380 mm”, “make it work for a strawberry”."}
     return {"changes": ch, "reply": "Changing " + "; ".join(said) + ".", "source": "rules"}
