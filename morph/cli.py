@@ -268,10 +268,16 @@ def cmd_source(a):
         tag = " (cached)" if r["cached"] else ""
         print(f"\n[{r['kind']}] {r['item']}{tag}")
         if top:
-            for ag in r["agents"]:
-                print(f"  {ag['name']:<32} readiness={ag['readiness']:<12} startable={ag['can_start']}  {ag['url']}")
-        print(f"  gap: {r['gap']}" if r["gap"] else "", end="")
+            show = r["picked"] or r["agents"][:1]
+            for ag in show:
+                mark = "*" if ag in r["picked"] else " "
+                print(f" {mark}{ag['name']:<40} startable={str(ag['can_start']):<5}  {ag['url']}")
+            if len(r["agents"]) > len(show):
+                print(f"   (+{len(r['agents']) - len(show)} other agents in the JSON)")
+        print(f"  gap: {r['gap']}" if r["gap"] else ("" if r["readiness_verified"] else
+              "  found; readiness checked only after sign-in (Darwin Act)"), end="")
     print(f"\n\n{len(rep['gaps'])} gap(s) of {len(rep['rows'])} lookups -> {p.rev_dir(rev)}/sourcing_darwin.json")
+    print("* = an agent we route this work to (darwin.PREFERRED)")
     print(rep["note"])
 
 

@@ -77,7 +77,9 @@ def test_darwin_source_shortlists_parts_and_reports_gaps(tmp_path, monkeypatch):
         if "Gerber" in query:
             return {"query": query, "ok": False, "agents": [], "error": "HTTPError 500"}
         return {"query": query, "ok": True, "agents": [
-            {"name": "shopping_search", "can_start": "Nano" in query, "readiness": "ready", "url": "u"}]}
+            {"name": "other_shop", "agent_id": "x1", "can_start": False, "readiness": "ready", "url": "u"},
+            {"name": "shopping_search", "agent_id": "cmuds975i00op0agm4ievg1pe", "can_start": "Nano" in query,
+             "readiness": "ready", "url": "u"}]}
 
     monkeypatch.setattr(darwin, "search", fake_search)
     p = Project(str(root))
@@ -88,7 +90,11 @@ def test_darwin_source_shortlists_parts_and_reports_gaps(tmp_path, monkeypatch):
     assert ("Interlink FSR 402", "no_agent") in gaps
     assert ("pcb_fab", "darwin_unavailable") in gaps
     assert items["Arduino Nano (ATmega328P)"]["gap"] is None
-    assert any(g == "not_executable" for _, g in gaps)
+    assert items["TowerPro MG996R (standard, metal gear)"]["readiness_verified"] is False
+    assert items["Arduino Nano (ATmega328P)"]["readiness_verified"] is True
+    nano = items["Arduino Nano (ATmega328P)"]
+    assert nano["agents"][0]["name"] == "shopping_search"  # preferred agent sorted ahead of x1
+    assert [a["name"] for a in nano["picked"]] == ["shopping_search"]
     logged = [e for e in p.entries() if e["type"] == "sourcing"]
     assert len(logged) == len(rep["rows"])
     assert json.load(open(root / "r001" / "sourcing_darwin.json"))["note"].startswith("Shortlist only")
