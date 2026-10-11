@@ -123,7 +123,7 @@ export class Presenter {
     else if (k === 'Escape') { e.preventDefault(); this.close(); }
     else if (k === 'c' || k === 'C') this.el.classList.toggle('mini');
   }
-  next() { if (!this.waiting) this.go(this.i + 1); }
+  next() { if (!this.waiting && !this.resetting) this.go(this.i + 1); }
   async go(i) {
     if (this.waiting || i < -1 || i >= STEPS.length) return;
     this.i = i;
@@ -191,7 +191,8 @@ export class Presenter {
     if (btn('reset')) btn('reset').onclick = async () => {
       btn('reset').disabled = true;
       btn('reset').innerHTML = '<span class="spin"></span>Resetting (up to a minute)…';
-      const ok = await a.reset();
+      this.resetting = true;
+      const ok = await a.reset().finally(() => { this.resetting = false; });
       this.ran.clear();
       a.toast(ok ? 'Demo reset: both robots are back at their full builds' : 'Still regenerating; reset when the pipeline is idle');
       this.render();
