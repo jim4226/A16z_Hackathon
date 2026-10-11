@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import os
 
+from . import keewano
 from .design import FSR
 from .spec import Design
 
@@ -74,6 +75,13 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
     if hold is None or hold == float("inf"):
         hold = analysis["required_grip_n"] / design.safety_factor  # closed-form fallback
         warnings.append("no simulated holding force; using closed-form estimate")
+    calibration = None
+    if not e.target_force_n:
+        calibration = keewano.hold_ratio(f.pad, f.material)
+        if calibration:
+            hold *= calibration["ratio"]
+            warnings.append(f"holding force scaled x{calibration['ratio']:.2f} from {calibration['n']} measured "
+                            f"{f.pad}/{f.material} builds in Keewano")
     lo = hold * HOLD_MARGIN
     hi = (o.max_force_n / CRUSH_MARGIN) if o.max_force_n > 0 else float("inf")
     if sensor:
@@ -146,7 +154,7 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
         "open_deg": mech["servo_open_deg"] if mech else 20, "closed_deg": mech["servo_closed_deg"] if mech else 160,
         "mcu": mcu_key, "servo": servo, "sensor": sensor or "none",
         "hold_force_n": round(hold, 3), "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
-        "target_force_n": round(target, 2), "servo_stall_force_n": round(f_stall, 1),
+        "target_force_n": round(target, 2), "hold_calibration": calibration, "servo_stall_force_n": round(f_stall, 1),
         "limit_n": round(min(o.max_force_n / 1.2 if o.max_force_n > 0 else 1e9,
                              FSR[sensor]["max_n"] * 0.95 if sensor else 1e9, f_stall), 2),
         "open_loop_crushes": bool(crush_open_loop), "object_limit_n": o.max_force_n or None,

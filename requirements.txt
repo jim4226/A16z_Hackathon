@@ -11,3 +11,5 @@ pytest
 # optional, for driving real machines
 pyserial
 requests
+# optional, for Keewano queries (Postgres wire protocol)
+pg8000

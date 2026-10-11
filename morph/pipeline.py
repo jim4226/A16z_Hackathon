@@ -15,7 +15,7 @@ import os
 import shutil
 import time
 
-from . import analysis, board, design as cad, electronics, fab, mechanism, sim
+from . import analysis, board, design as cad, electronics, fab, keewano, mechanism, sim
 from .spec import Design, diff
 
 # node: (parameter patterns it reads, upstream nodes)
@@ -78,6 +78,14 @@ class Project:
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **entry}
         with open(self.ledger_path, "a") as fh:
             fh.write(json.dumps(entry) + "\n")
+        design = None
+        if entry.get("type") == "measurement":
+            try:
+                design = self.load_design(entry["rev"]).to_dict()
+                design["electronics"]["servo"] = self.load_results(entry["rev"])["summary"].get("servo")
+            except Exception:
+                pass
+        keewano.emit(os.path.basename(os.path.normpath(self.root)), entry, design)
 
     def entries(self) -> list:
         if not os.path.exists(self.ledger_path):

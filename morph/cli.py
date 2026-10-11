@@ -18,7 +18,7 @@ import os
 import sys
 import time
 
-from . import agent, report
+from . import agent, darwin, keewano, report
 from .explore import explore
 from .pipeline import Project
 from .spec import Design
@@ -258,6 +258,33 @@ def cmd_robot(a):
             _robot_summary(p, r)
 
 
+def cmd_source(a):
+    p = _project(a.name)
+    rev = a.rev or p.latest()
+    print(f"asking Darwin for agents that can supply / build {a.name} {rev} ...")
+    rep = darwin.source(p, rev)
+    for r in rep["rows"]:
+        top = r["agents"][0] if r["agents"] else None
+        tag = " (cached)" if r["cached"] else ""
+        print(f"\n[{r['kind']}] {r['item']}{tag}")
+        if top:
+            for ag in r["agents"]:
+                print(f"  {ag['name']:<32} readiness={ag['readiness']:<12} startable={ag['can_start']}  {ag['url']}")
+        print(f"  gap: {r['gap']}" if r["gap"] else "", end="")
+    print(f"\n\n{len(rep['gaps'])} gap(s) of {len(rep['rows'])} lookups -> {p.rev_dir(rev)}/sourcing_darwin.json")
+    print(rep["note"])
+
+
+def cmd_darwin(a):
+    print(json.dumps(darwin.search(a.query, a.n), indent=2))
+
+
+def cmd_ask(a):
+    rows = keewano.query(a.sql)
+    print("Keewano not configured (KEEWANO_PAT, KEEWANO_EMAIL, KEEWANO_PROJECT_ID)" if rows is None
+          else json.dumps(rows, indent=2, default=str))
+
+
 def cmd_research(a):
     print(agent.research(a.query))
 
@@ -396,6 +423,20 @@ def main(argv=None):
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.set_defaults(fn=cmd_studio)
+
+    s = sub.add_parser("source", help="Darwin: shortlist agents that sell each part / build the PCB and prints")
+    s.add_argument("name")
+    s.add_argument("rev", nargs="?")
+    s.set_defaults(fn=cmd_source)
+
+    s = sub.add_parser("darwin", help="one Darwin Search query")
+    s.add_argument("query")
+    s.add_argument("-n", type=int, default=5)
+    s.set_defaults(fn=cmd_darwin)
+
+    s = sub.add_parser("ask", help="run SQL against the project's Keewano events")
+    s.add_argument("sql")
+    s.set_defaults(fn=cmd_ask)
 
     s = sub.add_parser("research", help="web research via Claude (components, tooling, suppliers)")
     s.add_argument("query")
