@@ -1617,10 +1617,16 @@ def _pick_place(rob: _Robot, design, fast=False):
         metrics["note"] = "; ".join(notes)
     metrics.update(_damage(design, run, metrics))
     metrics.update({"peak_grip_n": metrics["grip_n_max"], "target_grip_n": metrics["grip_target_n"],
-                    "slip_mm": metrics["max_slip_mm"], "payload_g": design.object.mass_g, "reach_mm": design.arm.reach_mm})
+                    "slip_mm": metrics["max_slip_mm"], "payload_g": design.object.mass_g, "reach_mm": _sized_reach(rob, design)})
     if not metrics["intact"]:
         metrics["success"] = False
     return plan, run, metrics
+
+
+def _sized_reach(rob, design):
+    """Reach the robot was sized for (an imported robot reports its own), else the design parameter."""
+    r = (rob.asm.meta.get("sizing") or {}).get("reach_mm")
+    return float(r) if r else float(design.arm.reach_mm)
 
 
 def _label_grip(plan, run):
@@ -1831,7 +1837,7 @@ def _workspace(rob: _Robot, design, fast=False):
         "volume_l": round(vol, 2), "samples": int(N), "valid_fraction": round(len(pts) / N, 3),
         "top_down_reach_mm": [min(ok), max(ok)] if ok else None,
         "pick_reachable": bool(e1 < 1 and r1 < 1e-2), "place_reachable": bool(e2 < 1 and r2 < 1e-2),
-        "design_reach_mm": design.arm.reach_mm, "min_reach_mm": min(ok) if ok else None,
+        "design_reach_mm": _sized_reach(rob, design), "min_reach_mm": min(ok) if ok else None,
         "height_mm": [rnd(P[:, 2].min()), rnd(P[:, 2].max())],
         "yaw_deg": rnd(math.degrees(float(hi[0] - lo[0]))), "points": int(len(pts)),
     }

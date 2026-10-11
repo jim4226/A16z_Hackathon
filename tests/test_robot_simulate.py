@@ -194,7 +194,7 @@ def test_workspace(egg_run):
     d = egg_run["design"]
     assert m["success"] and m["pick_reachable"] and m["place_reachable"]
     assert len(doc["points"]) >= 500 and all(len(p) == 3 for p in doc["points"])
-    assert 0.85 * d.arm.reach_mm < m["reach_mm"] < 1.15 * d.arm.reach_mm
+    assert 0.85 * m["design_reach_mm"] < m["reach_mm"] < 1.15 * m["design_reach_mm"]
     lo, hi = m["top_down_reach_mm"]
     assert lo < math.hypot(d.task.pick_x_mm, d.task.pick_y_mm) < hi
     assert m["volume_l"] > 1.0
