@@ -98,27 +98,71 @@ def test_repo_ships_a_darwin_cache_for_the_demo():
         assert d["ok"] and "query" in d and "agents" in d
 
 
-def _rev(root, rev, parent, label=""):
+def _rev(root, rev, parent, label="", design=None, version=None):
+    from morph.robot.pipeline2 import pipeline_version
+    from morph.spec import Design
+
     (root / rev).mkdir(parents=True)
-    (root / rev / "results.json").write_text(json.dumps({"parent": parent, "label": label, "provenance": {}, "timings_s": {}}))
+    (root / rev / "results.json").write_text(json.dumps({"parent": parent, "label": label, "provenance": {}, "timings_s": {},
+                                                         "pipeline_version": version or pipeline_version()}))
+    (root / rev / "design.json").write_text(json.dumps(Design().with_changes(design or {}).to_dict()))
 
 
-def test_demo_reset_keeps_the_last_full_build(tmp_path):
+def test_demo_reset_returns_to_the_original_design(tmp_path):
+    from morph.robot.pipeline2 import RobotProject
+    from morph.studio.server import Studio, baseline
+
+    home = tmp_path / "projects"
+    egg, arm = home / "egg-picker", home / "so101"
+    dxl = {"arm.actuator_family": "dynamixel"}
+    # r003 is a start-up rebuild of an edited design (an earlier take's Dynamixel swap): not a clean start
+    for r, parent, d in (("r001", None, None), ("r002", "r001", dxl), ("r003", None, dxl), ("r004", "r003", dxl)):
+        _rev(egg, r, parent, design=d)
+    for r, parent in (("r001", None), ("r002", "r001")):
+        _rev(arm, r, parent)
+    assert baseline(RobotProject(str(egg))) == "r001"
+    st = Studio(RobotProject(str(egg)), str(home))
+    st.p = RobotProject(str(arm))  # the presenter had switched to so101
+    assert st.reset()
+    assert RobotProject(str(egg)).revs() == ["r001"]
+    assert RobotProject(str(arm)).revs() == ["r001"]
+    assert os.path.basename(st.p.root) == "egg-picker"
+
+
+def test_demo_reset_rebuilds_a_stale_baseline(tmp_path, monkeypatch):
     from morph.robot.pipeline2 import RobotProject
     from morph.studio.server import Studio
 
     home = tmp_path / "projects"
-    egg, arm = home / "egg-picker", home / "so101"
-    for r, parent in (("r001", None), ("r002", "r001"), ("r003", None), ("r004", "r003"), ("r005", "r004")):
-        _rev(egg, r, parent)
-    for r, parent in (("r001", None), ("r002", "r001")):
-        _rev(arm, r, parent)
-    st = Studio(RobotProject(str(egg)), str(home))
-    st.p = RobotProject(str(arm))  # the presenter had switched to so101
-    assert st.reset()
-    assert RobotProject(str(egg)).revs() == ["r001", "r002", "r003"]
-    assert RobotProject(str(arm)).revs() == ["r001"]
-    assert os.path.basename(st.p.root) == "egg-picker"
+    egg = home / "egg-picker"
+    _rev(egg, "r001", None, version="old-code")
+    _rev(egg, "r002", "r001", design={"build.config": "pilot"})
+    runs = []
+
+    def fake_run(self, design, parent=None, label="", **kw):
+        runs.append((os.path.basename(self.root), parent, label))
+        _rev(egg, "r002", None, label)
+        return "r002"
+
+    monkeypatch.setattr(RobotProject, "run", fake_run)
+    assert Studio(RobotProject(str(egg)), str(home)).reset()
+    assert runs == [("egg-picker", None, "rebuilt with latest Morph")]
+    assert RobotProject(str(egg)).revs() == ["r001", "r002"]
+
+
+def test_a_request_that_changes_nothing_is_not_rebuilt(tmp_path, monkeypatch):
+    from morph.robot.pipeline2 import RobotProject
+    from morph.studio.server import Studio
+
+    egg = tmp_path / "projects" / "egg-picker"
+    _rev(egg, "r001", None, design={"arm.actuator_family": "dynamixel"})
+    monkeypatch.setattr(RobotProject, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
+    st = Studio(RobotProject(str(egg)), str(tmp_path / "projects"))
+    sent = []
+    st.hub.send = sent.append
+    st.apply({"arm.actuator_family": "dynamixel"}, "Swap to Dynamixel servos", user_text="Swap to Dynamixel servos")
+    assert sent[-1]["type"] == "assistant" and sent[-1]["noop"] is True
+    assert RobotProject(str(egg)).revs() == ["r001"]
 
 
 def test_time_card_counts_a_rebuilt_design_once(tmp_path):

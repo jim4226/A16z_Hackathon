@@ -694,7 +694,7 @@ let sysMsg = null, startT = 0, liveProv = null;
 function onEvent(ev) {
   switch (ev.type) {
     case 'user': addMsg('user', ev.text); typing(true); break;
-    case 'assistant': typing(false); addMsg('assistant', ev.text, ev.changes); if (/^(Error|Couldn't apply)/.test(ev.text || '')) S.busy = false; break;
+    case 'assistant': typing(false); addMsg('assistant', ev.text, ev.noop ? null : ev.changes); if (/^(Error|Couldn't apply)/.test(ev.text || '')) S.busy = false; if (ev.noop) S.noopAt = performance.now(); break;
     case 'start': {
       typing(false);
       stopTour();

@@ -139,14 +139,16 @@ export class Presenter {
       const fresh = (st.chat || st.params) && !this.ran.has(i);
       if (fresh) {
         this.ran.add(i);
-        const before = a.state.latest;
+        const before = a.state.latest, t0 = performance.now();
         this.wait('Regenerating…');
         if (st.chat) a.chat(st.chat); else a.params(st.params);
-        // the run starts within seconds (Claude interprets the sentence first); if it never does, nothing changed
-        const started = await a.until(() => a.state.busy || a.state.latest !== before, 25000);
-        const ok = started && await a.until(() => a.state.latest !== before && !a.state.busy, 180000, (p) => this.wait(p));
+        // the run starts within seconds (Claude interprets the sentence first); a no-op answers at once
+        const noop = () => (a.state.noopAt || 0) > t0;
+        const started = await a.until(() => a.state.busy || a.state.latest !== before || noop(), 25000);
+        const ok = started && !noop() && await a.until(() => a.state.latest !== before && !a.state.busy, 180000, (p) => this.wait(p));
         this.wait(null);
-        if (!ok) a.toast('The pipeline is taking longer than usual; press → when it finishes');
+        if (noop()) { a.toast('Already set from an earlier take: Esc, then Present → Reset demo for a clean run'); await st.after?.(a); }
+        else if (!ok) a.toast('The pipeline is taking longer than usual; press → when it finishes');
         else if (!a.tourOn()) await st.after?.(a);
       } else if (st.chat || st.params) {
         await st.after?.(a);
@@ -163,9 +165,12 @@ export class Presenter {
     const i = this.i, n = STEPS.length, a = this.a;
     const dots = STEPS.map((_, k) => `<b class="${k < i ? 'done' : k === i ? 'cur' : ''}" data-k="${k}"></b>`).join('');
     if (i < 0) {
+      const dirty = (a.state.projects || []).filter((p) => p.at_start === false).map((p) => p.name);
       this.el.innerHTML = `<div class="pr-top"><span class="pr-n">${I('play', 'sm')}Present</span><span class="pr-t">The Morph demo, ${n} steps</span><span class="grow"></span>
-        <button class="btn" data-a="reset" title="Delete the chat edits from earlier takes and go back to the full builds">${I('replay', 'sm')}Reset demo</button>
-        <button class="btn primary" data-a="next">Start ${I('arrow', 'sm')}</button><button class="btn icon ghost" data-a="close" title="Exit (Esc)">${I('x', 'sm')}</button></div>
+        <button class="btn${dirty.length ? ' primary' : ''}" data-a="reset" title="Delete the chat edits from earlier takes and go back to each robot's original design">${I('replay', 'sm')}Reset demo</button>
+        <button class="btn${dirty.length ? '' : ' primary'}" data-a="next">Start ${I('arrow', 'sm')}</button>
+<button class="btn icon ghost" data-a="close" title="Exit (Esc)">${I('x', 'sm')}</button></div>
+        ${dirty.length ? `<div class="pr-warn">${I('alert', 'sm')}<span>${dirty.map(esc).join(' and ')} ${dirty.length === 1 ? 'has' : 'have'} edits from an earlier take. Click <b>Reset demo</b> first so every step changes something.</span></div>` : ''}
         <div class="pr-say">Press <kbd>→</kbd>, <kbd>Space</kbd> or a presentation clicker for each step; <kbd>←</kbd> goes back, <kbd>C</kbd> hides the caption, <kbd>Esc</kbd> exits. Steps that change the robot wait for the pipeline before you can move on.</div>
         <div class="pr-dots">${dots}</div>`;
     } else {
@@ -185,6 +190,7 @@ export class Presenter {
     btn('close').onclick = () => this.close();
     if (btn('reset')) btn('reset').onclick = async () => {
       btn('reset').disabled = true;
+      btn('reset').innerHTML = '<span class="spin"></span>Resetting (up to a minute)…';
       const ok = await a.reset();
       this.ran.clear();
       a.toast(ok ? 'Demo reset: both robots are back at their full builds' : 'Still regenerating; reset when the pipeline is idle');

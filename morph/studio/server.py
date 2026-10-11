@@ -23,7 +23,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-from ..robot.pipeline2 import LABELS, RobotProject, params_for
+from ..robot.pipeline2 import LABELS, RobotProject, params_for, pipeline_version
 from ..spec import Design
 from .intent import OBJECTS, interpret, object_changes
 
@@ -77,6 +77,37 @@ def _sourcing(p: RobotProject, rev: str) -> dict | None:
             for r in rep.get("rows") or []]
     return {"rev": rep.get("rev"), "rows": rows, "gaps": rep.get("gaps") or [], "note": rep.get("note"),
             "searched": time.strftime("%H:%M", time.localtime(os.path.getmtime(path)))}
+
+
+def _design(p: RobotProject, rev: str) -> dict | None:
+    try:
+        return p.load_design(rev).to_dict()
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def baseline(p: RobotProject) -> str | None:
+    """The newest clean build of the project's ORIGINAL design (its first revision's): a revision with no
+    parent whose design equals r001's. Later parentless revisions can carry an earlier take's edits
+    (the start-up rebuild rebuilds the latest design), so they don't count."""
+    revs = p.revs()
+    if not revs:
+        return None
+    orig = _design(p, revs[0])
+    clean = [r for r in revs if not (Studio._results(p, r) or {}).get("parent") and _design(p, r) == orig]
+    return clean[-1] if clean else revs[0]
+
+
+def _remove_rev(p: RobotProject, rev: str):
+    """Delete a revision folder. If Windows holds a file open, move what is left aside so the
+    project never lists a half-deleted revision (revs() only lists names like r012)."""
+    d = p.rev_dir(rev)
+    shutil.rmtree(d, ignore_errors=True)
+    if os.path.isdir(d):
+        try:
+            os.rename(d, f"{d}.deleted-{int(time.time())}")
+        except OSError:
+            pass
 
 
 def integrations() -> dict:
@@ -142,7 +173,9 @@ class Studio:
             if os.path.isfile(meta) and RobotProject(root).revs():
                 m = json.load(open(meta))
                 if m.get("kind") == "robot":
-                    out.append({"name": name, "source": m.get("source") or "", "need": m.get("need", "")})
+                    rp = RobotProject(root)
+                    out.append({"name": name, "source": m.get("source") or "", "need": m.get("need", ""),
+                                "at_start": rp.latest() == baseline(rp)})
         return out
 
     def switch(self, name: str) -> bool:
@@ -185,6 +218,10 @@ class Studio:
                 design = cur.with_changes(changes)
             except (KeyError, ValueError) as exc:
                 self.hub.send({"type": "assistant", "text": f"Couldn't apply that: {exc}"})
+                return
+            if design.to_dict() == cur.to_dict():
+                self.hub.send({"type": "assistant", "noop": True, "changes": changes,
+                               "text": f"Nothing to change: {base} already has that, so nothing was regenerated."})
                 return
             if reply:
                 self.hub.send({"type": "assistant", "text": reply, "changes": changes, "source": source})
@@ -229,20 +266,23 @@ class Studio:
             self.sourcing.release()
 
     def reset(self) -> bool:
-        """Demo reset: every project goes back to its last full build (the newest revision without a
-        parent); the chat edits made after it are deleted. Same as deleting the projects folder, but instant."""
+        """Demo reset: every project goes back to a clean build of its original design (see baseline());
+        the revisions after it are deleted, like deleting the projects folder but keeping the first
+        build. If that build is from older code it is rebuilt now (about 30 s per robot)."""
         if not self.busy.acquire(blocking=False):
             return False
         try:
             for name in sorted(os.listdir(self.home)):
                 p = RobotProject(os.path.join(self.home, name))
-                revs = p.revs()
-                base = [r for r in revs if not (self._results(p, r) or {}).get("parent")]
-                if not base:
+                keep = baseline(p)
+                if not keep:
                     continue
-                for r in revs[revs.index(base[-1]) + 1:]:
-                    shutil.rmtree(p.rev_dir(r), ignore_errors=True)
-                p.log({"type": "demo_reset", "rev": base[-1]})
+                revs = p.revs()
+                for r in revs[revs.index(keep) + 1:]:
+                    _remove_rev(p, r)
+                if (self._results(p, keep) or {}).get("pipeline_version") != pipeline_version():
+                    keep = p.run(p.load_design(keep), parent=None, label="rebuilt with latest Morph", verbose=False)
+                p.log({"type": "demo_reset", "rev": keep})
             self.p = RobotProject(os.path.join(self.home, self.start))
             self.hub.history.clear()
             self.hub.send({"type": "project", "project": self.start})
