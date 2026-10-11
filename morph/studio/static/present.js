@@ -40,12 +40,12 @@ const STEPS = [
   },
   {
     title: 'Same robot, another way to build it', params: { 'build.config': 'pilot' },
-    say: 'Pilot build: CNC aluminium, sheet-metal brackets with flat patterns, nylon prints. Per-part process, vendor, cost and lead time, with all three build configs compared.',
+    say: 'Pilot build: CNC aluminium, sheet-metal brackets with flat patterns, nylon prints. Metal links are heavier, so Morph re-sizes the joints too. Per-part process, vendor, cost and lead time, with all three build configs compared.',
     after: async (a) => { a.tab('mfg'); },
   },
   {
     title: 'Darwin: who sells and who builds every part',
-    say: 'Darwin searches the agentic web for an agent per purchased part, plus PCB fab from our Gerbers, CNC from our DXFs, prints from our STLs and a design review. Starred agents are where Morph routes the work.',
+    say: 'Darwin searches the agentic web for an agent per purchased part and bulk material, plus PCB fab from our Gerbers, CNC from our DXFs and prints from our STLs. Starred agents are where Morph routes the work.',
     run: async (a) => { a.tab('bom'); a.darwin(); },
   },
   {

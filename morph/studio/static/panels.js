@@ -93,7 +93,7 @@ export function pretty(v, raw) {
 const PROC_COL = { fdm_print: '#7091ff', sla_print: '#a78bfa', mjf_print: '#9d7cf5', cnc_mill: '#2dd4d4', cnc_turn: '#22b8c8', laser_cut: '#f5b942',
   sheet_metal: '#ffb86b', injection_mold: '#ff6b9d', pcb_assembly: '#3dd68c', cable_assembly: '#ff9152', purchased: '#838c9d' };
 const CAT_COL = { actuator: '#7091ff', electronics: '#2dd4d4', pcb: '#3dd68c', cable: '#f5b942', connector: '#ff9152', fastener: '#838c9d',
-  mechanical: '#a78bfa', fabricated: '#ff6b9d' };
+  mechanical: '#a78bfa', fabricated: '#ff6b9d', material: '#c9a227' };
 const SERIES = ['#7091ff', '#ff9152', '#3dd68c', '#f5b942', '#a78bfa', '#2dd4d4', '#ff6b9d'];
 const PHASE_COL = { approach: '#7091ff', grasp: '#ff9152', lift: '#3dd68c', move: '#2dd4d4', place: '#a78bfa', release: '#f5b942', retreat: '#838c9d' };
 const MOD_NAMES = { esp32_devkit: 'ESP32-DevKitC-32E', esp32_s3_devkit: 'ESP32-S3-DevKitC-1', arduino_nano: 'Arduino Nano', rp2040_pico: 'Raspberry Pi Pico',
@@ -1390,8 +1390,9 @@ export class AsmPanel {
 }
 
 // ------------------------------------------------------------------ 6. BOM & sourcing
-const CATS = ['actuator', 'electronics', 'pcb', 'cable', 'connector', 'fastener', 'mechanical', 'fabricated'];
-const catLabel = (c) => { const t = { pcb: 'PCB' }[c] || String(c || '').replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
+const CATS = ['actuator', 'electronics', 'pcb', 'cable', 'connector', 'fastener', 'mechanical', 'fabricated', 'material'];
+const catLabel = (c) => { const t = { pcb: 'PCB', material: 'bulk material' }[c] || String(c || '').replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
+const counted = (r) => r.in_total !== false;  // bulk materials are listed with links but already priced into the parts
 export class BomPanel {
   constructor(root, ctx) {
     this.ctx = ctx;
@@ -1420,7 +1421,7 @@ export class BomPanel {
   }
   renderDarwin() {
     const sc = this.cur.sourcing, live = this.live, el = this.root.querySelector('.tscroll');
-    const KIND = { part: ['Part', 'cart'], pcb_fab: ['PCB fab', 'chip'], print: ['3D print', 'box'], cnc: ['CNC', 'factory'], sheet_metal: ['Sheet metal', 'layers'],
+    const KIND = { part: ['Part', 'cart'], material: ['Material', 'layers'], pcb_fab: ['PCB fab', 'chip'], print: ['3D print', 'box'], cnc: ['CNC', 'factory'], sheet_metal: ['Sheet metal', 'layers'],
       design_review: ['Design review', 'eye'], quote: ['Quote', 'target'], order: ['Order', 'cart'] };
     const kindTag = (k) => { const [l, ic] = KIND[k] || [k, 'spark']; return `<span class="dk k-${esc(k)}">${I(ic, 'sm')}${esc(l)}</span>`; };
     const head = (sub, btn) => `<div class="dw-h"><div class="dw-logo">${I('spark')}</div><div class="grow"><div class="t">Darwin · agents that can supply and build this robot</div><div class="s">${sub}</div></div>${btn}</div>`;
@@ -1428,7 +1429,7 @@ export class BomPanel {
       const pct = live.total ? live.done / live.total * 100 : 4;
       el.innerHTML = head(`Searching the agentic web for ${live.total || '…'} jobs: every purchased part, the PCB, the prints, a design review`, `<span class="tag acc"><span class="spin"></span>${live.done}/${live.total || '…'}</span>`) +
         `<div class="dw-prog"><b style="width:${pct}%"></b></div><div class="dw-list">` +
-        live.rows.map((r) => `<div class="dw-row fade-in"><div class="l">${kindTag(r.kind)}<span class="it">${esc(r.kind === 'part' ? r.item : (KIND[r.kind] || [r.kind])[0])}</span></div><div class="r">${r.found ? `<span class="tag good">${r.found} agent${r.found === 1 ? '' : 's'} found</span>` : '<span class="tag warn">no agent yet</span>'}${r.cached ? '<span class="tag neutral">cached</span>' : ''}</div></div>`).join('') + '</div>';
+        live.rows.map((r) => `<div class="dw-row fade-in"><div class="l">${kindTag(r.kind)}<span class="it">${esc(['part', 'material'].includes(r.kind) ? r.item : (KIND[r.kind] || [r.kind])[0])}</span></div><div class="r">${r.found ? `<span class="tag good">${r.found} agent${r.found === 1 ? '' : 's'} found</span>` : '<span class="tag warn">no agent yet</span>'}${r.cached ? '<span class="tag neutral">cached</span>' : ''}</div></div>`).join('') + '</div>';
       return;
     }
     if (!sc) {
@@ -1439,8 +1440,9 @@ export class BomPanel {
     }
     const rows = sc.rows || [];
     const withA = rows.filter((r) => r.n_agents > 0).length;
-    const order = ['pcb_fab', 'print', 'cnc', 'sheet_metal', 'design_review', 'part', 'quote', 'order'];
-    const groups = [['Fabrication handoffs', (r) => !['part', 'quote', 'order'].includes(r.kind)], ['Purchased parts', (r) => r.kind === 'part'], ['Quote & order, any part', (r) => ['quote', 'order'].includes(r.kind)]];
+    const order = ['pcb_fab', 'print', 'cnc', 'sheet_metal', 'design_review', 'part', 'material', 'quote', 'order'];
+    const groups = [['Fabrication handoffs', (r) => !['part', 'material', 'quote', 'order'].includes(r.kind)], ['Purchased parts', (r) => r.kind === 'part'],
+      ['Bulk materials', (r) => r.kind === 'material'], ['Quote & order, any part', (r) => ['quote', 'order'].includes(r.kind)]];
     const stale = sc.rev && sc.rev !== this.cur.rev;
     const agentChip = (a, pick) => `<a class="ag${pick ? ' pick' : ''}" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.description || '')}">${pick ? '★ ' : ''}${esc(a.name)}</a>`;
     el.innerHTML = head(`${rows.length} lookups · <b>${withA}</b> with agents · ${(sc.gaps || []).length} gap${(sc.gaps || []).length === 1 ? '' : 's'} · searched ${esc(sc.searched || '')}${stale ? ` for ${esc(sc.rev)}` : ''}`, `<button class="btn" data-a="darwin">${I('spark', 'sm')}Search again</button>`) +
@@ -1452,7 +1454,7 @@ export class BomPanel {
           const rest = (r.agents || []).filter((a) => !names.has(a.name)).slice(0, Math.max(0, 3 - picks.length));
           const more = r.n_agents - picks.length - rest.length;
           const files = r.n_files ? `<span class="fl">${I('file', 'sm')}${r.n_files} file${r.n_files === 1 ? '' : 's'} · ${esc(String(r.files[0] || '').split('/').pop())}${r.n_files > 1 ? '…' : ''}</span>` : '';
-          return `<div class="dw-row fade-in" style="animation-delay:${i * 25}ms"><div class="l">${kindTag(r.kind)}<span class="it" title="${esc(r.query || '')}">${esc(r.kind === 'part' ? r.item : (KIND[r.kind] || [r.kind])[0])}</span>${files}</div>
+          return `<div class="dw-row fade-in" style="animation-delay:${i * 25}ms"><div class="l">${kindTag(r.kind)}<span class="it" title="${esc(r.query || '')}">${esc(['part', 'material'].includes(r.kind) ? r.item : (KIND[r.kind] || [r.kind])[0])}</span>${files}</div>
             <div class="r">${picks.map((a) => agentChip(a, true)).join('')}${rest.map((a) => agentChip(a, false)).join('')}${more > 0 ? `<span class="more">+${more}</span>` : ''}
             ${r.gap === 'no_agent' ? '<span class="tag warn">gap: no agent yet</span>' : r.gap ? '<span class="tag bad">Darwin unavailable</span>' : ''}${r.cached ? '<span class="tag neutral" title="Darwin did not answer; last good result">cached</span>' : ''}</div></div>`;
         }).join('');
@@ -1465,7 +1467,8 @@ export class BomPanel {
     this.root.querySelector('.bm').classList.toggle('nobom', !b);
     nodata(this.root.querySelector('.tablewrap'), !b, emptyHTML('cart', 'No BOM yet', 'Every purchased and fabricated item, with vendors, prices and make-vs-buy, appears here once the BOM stage runs.'));
     if (!b) { this.root.querySelector('.tscroll').innerHTML = ''; return; }
-    const rows = b.rows || [], t = b.totals || {};
+    const all = b.rows || [], rows = all.filter(counted), t = b.totals || {};
+    const nMat = all.length - rows.length;
     const pt = prev?.bom?.totals || {};
     const total = t.total ?? rows.reduce((a, r) => a + (r.ext_price || 0), 0);
     const buy = t.buy ?? rows.filter((r) => r.make_or_buy === 'buy').reduce((a, r) => a + r.ext_price, 0);
@@ -1477,7 +1480,7 @@ export class BomPanel {
     const dTot = pt.total != null && pt.total !== total ? total - pt.total : null;
     const vendors = new Set(rows.flatMap((r) => (r.vendors || []).map((v) => v.vendor)));
     this.root.querySelector('.stats').innerHTML = `
-      <div class="stat"><div class="l">${I('cart', 'sm')}Unit cost · ${esc(pretty(curCfg || ''))}</div><div class="v">${money(total)}</div><div class="s">${dTot ? `<span class="delta ${dTot < 0 ? 'up' : 'down'}" style="margin:0">${dTot < 0 ? '▼' : '▲'} ${money(Math.abs(dTot))}</span> vs ${esc(prev.rev)}` : `${rows.length} line items · ${pcs} pieces`}</div></div>
+      <div class="stat"><div class="l">${I('cart', 'sm')}Unit cost · ${esc(pretty(curCfg || ''))}</div><div class="v">${money(total)}</div><div class="s">${dTot ? `<span class="delta ${dTot < 0 ? 'up' : 'down'}" style="margin:0">${dTot < 0 ? '▼' : '▲'} ${money(Math.abs(dTot))}</span> vs ${esc(prev.rev)}` : `${rows.length} line items · ${pcs} pieces${nMat ? ` · ${nMat} bulk materials` : ''}`}</div></div>
       <div class="stat"><div class="l"><span class="mob buy">buy</span>Purchased</div><div class="v">${money(buy)}</div><div class="s">${rows.filter((r) => r.make_or_buy === 'buy').length} items · ${vendors.size} vendors</div></div>
       <div class="stat"><div class="l"><span class="mob make">make</span>Built in-house</div><div class="v">${money(make)}</div><div class="s">${rows.filter((r) => r.make_or_buy === 'make').length} items · printed / fabricated</div></div>
       <div class="stat"><div class="l">${I('target', 'sm')}Buy vs build</div><div class="v">${total ? Math.round(buy / total * 100) : 0}<small style="font-size:13px;color:var(--muted)">% bought</small></div>
@@ -1505,14 +1508,14 @@ export class BomPanel {
   }
   renderTable(regen) {
     const rows = (this.cur.bom.rows || []).filter((r) => (this.cat === 'all' || r.category === this.cat) && (this.mob === 'all' || r.make_or_buy === this.mob));
-    const sum = rows.reduce((a, r) => a + (r.ext_price || 0), 0);
+    const sum = rows.filter(counted).reduce((a, r) => a + (r.ext_price || 0), 0);
     this.root.querySelector('.tscroll').innerHTML = `<table class="table"><thead><tr><th>Item</th><th>Category</th><th class="num">Qty</th><th>Make / buy</th><th>How</th><th>Vendors</th><th class="num">Ext. price</th></tr></thead><tbody>
       ${rows.map((r, i) => `<tr class="${regen ? 'fade-in' : ''}" style="${regen ? `animation-delay:${i * 18}ms` : ''}"><td class="strong">${esc(r.item)}</td>
         <td><span class="catd"><i style="background:${CAT_COL[r.category] || '#838c9d'}"></i>${esc(catLabel(r.category))}</span></td><td class="num">${r.qty}</td>
         <td><span class="mob ${r.make_or_buy === 'make' ? 'make' : 'buy'}">${esc(r.make_or_buy)}</span></td><td><div class="how">${esc(r.how || '')}</div></td>
         <td><div class="vend">${(r.vendors || []).map((v) => { const sel = r.selected && v.vendor === r.selected.vendor; return v.url ? `<a href="${esc(v.url)}" target="_blank" rel="noopener" class="${sel ? 'selv' : ''}" title="${esc(v.note || '')}">${esc(v.vendor)} <span class="pr">${money(v.unit_price)}${v.lead_days != null ? ` · ${v.lead_days}d` : ''}</span></a>` : `<a class="${sel ? 'selv' : ''}">${esc(v.vendor)} <span class="pr">${money(v.unit_price)}</span></a>`; }).join('')}</div></td>
-        <td class="num strong">${money(r.ext_price)}</td></tr>`).join('')}
-      <tr><td colspan="6" style="text-align:right;color:var(--muted)">${rows.length} items shown</td><td class="num strong" style="color:var(--ink)">${money(sum)}</td></tr></tbody></table>`;
+        <td class="num ${counted(r) ? 'strong' : 'incl'}" title="${counted(r) ? '' : esc(r.note || '')}">${money(r.ext_price)}${counted(r) ? '' : '<small>in part cost</small>'}</td></tr>`).join('')}
+      <tr><td colspan="6" style="text-align:right;color:var(--muted)">${rows.length} items shown${rows.some((r) => !counted(r)) ? ' · bulk materials not added (already in part cost)' : ''}</td><td class="num strong" style="color:var(--ink)">${money(sum)}</td></tr></tbody></table>`;
   }
   onShow() { this.ctx.viewer.reset(); }
   tour() { return 3400; }

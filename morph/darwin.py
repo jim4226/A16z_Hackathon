@@ -54,6 +54,7 @@ PREFERRED = {
     # store_buy hands back a Stripe checkout_url for the human to pay; Quick buy is instant checkout.
     "order": {"cmudvaa8f01dl0agm69qoso01": "store_buy", "cmudseo52018i0agmp89pntne": "Quick buy"},
 }
+PREFERRED["material"] = PREFERRED["part"]   # bulk stock (filament, plate, sheet, wire) is bought like a part
 ROLES = [("quote", "look up live distributor stock and price for a manufacturer part number"),  # part-lookup
          ("quote", "get a price quote for electronic components"),  # kits / modules
          ("order", "buy and checkout a product online for me")]
@@ -157,6 +158,8 @@ def robot_parts(results: dict) -> list:
         if r.get("make_or_buy") != "buy" or not r.get("ext_price"):
             continue
         cat = r.get("category")
+        if cat == "material":
+            continue  # robot_materials()
         if cat in ("fastener", "cable"):
             kits.setdefault(cat, r["item"])
             continue
@@ -169,6 +172,12 @@ def robot_parts(results: dict) -> list:
     if "fastener" in kits:
         out.append(("Fastener kit (M2-M4)", part_query("metric socket screw assortment kit M2 M2.5 M3 M4")))
     return out
+
+
+def robot_materials(results: dict) -> list:
+    """[(BOM item, query)] for the bulk materials (filament, resin, plate and sheet stock, wire)."""
+    return [(r["item"], part_query(short_item(r["item"]))) for r in (results.get("bom") or {}).get("rows") or []
+            if r.get("category") == "material"]
 
 
 def robot_handoffs(rev_dir: str, results: dict) -> list:
@@ -204,6 +213,7 @@ def tasks_for(results: dict, rev_dir: str) -> list:
     tasks = [(kind, kind, q, []) for kind, q in ROLES]
     if isinstance(results.get("bom"), dict):  # whole robot
         tasks += [("part", item, q, []) for item, q in robot_parts(results)]
+        tasks += [("material", item, q, []) for item, q in robot_materials(results)]
         tasks += [(kind, kind, q, files) for kind, q, files in robot_handoffs(rev_dir, results)]
     else:
         tasks += [("part", r["item"], part_query(r["item"]), []) for r in results.get("bom") or [] if is_purchased(r)]

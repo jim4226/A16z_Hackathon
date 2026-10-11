@@ -9,10 +9,16 @@ from morph.studio.intent import rules
 
 
 def test_dependency_graph_is_selective():
-    assert dirty_nodes(["task.pick_x_mm"]) == ["sim"]
+    assert dirty_nodes(["task.cycle_time_s"]) == ["sim"]
     assert "sim" not in dirty_nodes(["electronics.config"])
-    assert "sizing" not in dirty_nodes(["build.config"])
+    assert {"sizing", "gripper", "sim"}.isdisjoint(dirty_nodes(["electronics.config"]))
     assert dirty_nodes(["arm.actuator_family"])[0] == "sizing"
+
+
+def test_sizing_reruns_for_everything_it_reads():
+    # arm.size() reads the build config (metal links are heavier) and the pick/place positions (reach)
+    assert "sizing" in dirty_nodes(["build.config"]) and "gripper" not in dirty_nodes(["build.config"])
+    assert "sizing" in dirty_nodes(["task.pick_x_mm"]) and "sizing" not in dirty_nodes(["task.cycle_time_s"])
 
 
 def test_pipeline_runs_and_reuses(tmp_path):
@@ -23,7 +29,7 @@ def test_pipeline_runs_and_reuses(tmp_path):
     assert set(res["provenance"]) == set(ORDER)
     assert res["cad"]["validate"] == [] and res["cad"]["parts"] > 10
     assert (tmp_path / "egg" / r1 / "cad" / "robot.glb").exists()
-    r2 = p.run(d.with_changes({"task.pick_x_mm": 200.0}), parent=r1, n_trials=1, verbose=False, fast_sim=True)
+    r2 = p.run(d.with_changes({"task.cycle_time_s": 8.0}), parent=r1, n_trials=1, verbose=False, fast_sim=True)
     prov = p.load_results(r2)["provenance"]
     assert prov["sim"] == "computed" and prov["cad"].startswith("reused")
 

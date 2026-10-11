@@ -2040,7 +2040,136 @@ def bom(design, asm, mfg, efinal=None) -> dict:
     buy = _r(sum(r["ext_price"] for r in rows if r["make_or_buy"] == "buy"))
     make = _r(sum(r["ext_price"] for r in rows if r["make_or_buy"] == "make"))
     per = {k: v.get("unit_cost") for k, v in (mfg.get("configs") or {}).items()}
-    return {"rows": rows, "totals": {"buy": buy, "make": make, "total": _r(buy + make), "per_config": per,
-                                     "tooling": _r(tooling), "lines": len(rows), "pieces": int(sum(r["qty"] for r in rows)),
-                                     "quantity": nq, "config": mfg.get("config", design.build.config)},
+    mats = material_rows(mfg, efinal, nq)
+    return {"rows": rows + mats, "totals": {"buy": buy, "make": make, "total": _r(buy + make), "per_config": per,
+                                            "tooling": _r(tooling), "lines": len(rows), "pieces": int(sum(r["qty"] for r in rows)),
+                                            "materials": len(mats), "quantity": nq, "config": mfg.get("config", design.build.config)},
             "cost_basis": COST_BASIS}
+
+
+# -- bulk materials ----------------------------------------------------------------------------
+# Stock you buy by the spool / bottle / plate to make the parts yourself. Links only (search and
+# category pages that resolved on 2026-10-11); nothing is ordered. These rows are NOT added to the
+# totals: each fabricated part's price already includes its material.
+
+def _amazon(q: str) -> str:
+    return "https://www.amazon.com/s?k=" + q.replace(" ", "+")
+
+
+def _mlink(vendor, url, price, lead, note=""):
+    return {"vendor": vendor, "url": url, "unit_price": _r(price), "lead_days": lead, "note": note}
+
+
+FILAMENT_LINKS = {
+    "PETG": [("prusa", "https://www.prusa3d.com/category/prusament-petg/"), ("polymaker", "https://us.polymaker.com/collections/all")],
+    "PLA": [("prusa", "https://www.prusa3d.com/category/prusament-pla/"), ("polymaker", "https://us.polymaker.com/collections/all")],
+}
+STOCK_LINKS = {
+    "Al6061": "https://www.mcmaster.com/6061-aluminum/", "Al7075": "https://www.mcmaster.com/products/aluminum/",
+    "Al5052": "https://www.mcmaster.com/5052-aluminum/", "Delrin": "https://www.mcmaster.com/delrin/",
+    "POM": "https://www.mcmaster.com/acetal/",
+}
+MAT_NAME = {"Al6061": "6061-T6 aluminium", "Al7075": "7075 aluminium", "Al5052": "5052-H32 aluminium", "Delrin": "Delrin (acetal)",
+            "POM": "acetal (POM)", "Steel": "mild steel", "Stainless": "stainless steel", "Brass": "brass"}
+
+
+def material_rows(mfg: dict, efinal: dict | None = None, nq: int = 1) -> list:
+    """Bulk materials for making the robot's parts in-house: filament, resin, plate/bar stock, sheet, wire."""
+    parts = [e for e in (mfg or {}).get("parts", []) if e.get("in_bom", True)]
+    out = []
+
+    def add(item, qty, unit, unit_price, how, vendors, need):
+        out.append({"item": item, "category": "material", "qty": qty, "make_or_buy": "buy", "how": how, "vendors": vendors,
+                    "selected": {"vendor": vendors[0]["vendor"], "unit_price": vendors[0]["unit_price"]} if vendors else None,
+                    "ext_price": _r(qty * unit_price), "in_total": False, "unit": unit, "need": need,
+                    "note": "bulk stock for making the parts yourself; not added to the total (each part's price includes its material)"})
+
+    # FDM filament, per material: grams of every FDM part (+10 % for supports, purge and failed prints)
+    grams = {}
+    for e in parts:
+        if e.get("process") == "fdm_print":
+            g = ((e.get("cost_model") or {}).get("inputs") or {}).get("grams") or 0.0
+            grams[e.get("material") or "PETG"] = grams.get(e.get("material") or "PETG", 0.0) + g * e["qty"] * nq
+    for m, g in sorted(grams.items(), key=lambda kv: -kv[1]):
+        spool = 500.0 if m == "TPU" else 1000.0
+        per_kg = MAT.get(m, (1.2, 25.0))[1]
+        price = per_kg * spool / 1000.0
+        n = max(1, math.ceil(g * 1.1 / spool))
+        q = f"{m} filament 1.75mm {'95A ' if m == 'TPU' else ''}{int(spool)}g"
+        vend = [_mlink("Amazon", _amazon(q), price, 2)]
+        for name, url in FILAMENT_LINKS.get(m, []):
+            vend.append(_mlink({"prusa": "Prusa (Prusament)", "polymaker": "Polymaker"}[name], url, price * 1.25, 5))
+        amount = f"{g / 1000:.2f} kg" if g >= 100 else f"{g:.0f} g"
+        add(f"{m} filament, 1.75 mm, {int(spool)} g spool", n, "spool", price,
+            f"{amount} for every FDM part (+10 % supports and purge); print services include their own material",
+            vend, amount)
+
+    # SLA resin
+    ml = sum((((e.get("cost_model") or {}).get("inputs") or {}).get("resin_cm3") or 0.0) * e["qty"] * nq
+             for e in parts if e.get("process") == "sla_print")
+    if ml:
+        n = max(1, math.ceil(ml * 1.15 / 1000.0))
+        add("Tough engineering resin, 1 L", n, "bottle", 149.0,
+            f"{ml:.0f} mL for every SLA part (+15 % supports and tank)",
+            [_mlink("Formlabs", "https://formlabs.com/store/materials/", 149.0, 4, "Tough 2000 class"),
+             _mlink("Elegoo", "https://us.elegoo.com/collections/resin", 45.0, 4, "ABS-like resin"),
+             _mlink("Amazon", _amazon("tough resin 1L 405nm"), 40.0, 2)], f"{ml:.0f} mL")
+
+    # CNC stock (plate and bar), per material: the stock volume the cost model assumed
+    stock = {}
+    for e in parts:
+        if e.get("process") in ("cnc_mill", "cnc_turn"):
+            v = ((e.get("cost_model") or {}).get("inputs") or {}).get("stock_cm3") or 0.0
+            stock[e.get("material") or "Al6061"] = stock.get(e.get("material") or "Al6061", 0.0) + v * e["qty"] * nq
+    for m, v in sorted(stock.items(), key=lambda kv: -kv[1]):
+        dens, per_kg = MAT.get(m, (2.7, 9.0))
+        kg = v * dens / 1000.0 * 1.25                     # +25 % saw kerf, squaring and offcuts
+        nm = MAT_NAME.get(m, m)
+        vend = [_mlink("McMaster-Carr", STOCK_LINKS.get(m, "https://www.mcmaster.com/products/aluminum/"), per_kg * 2.5, 2, "cut to size"),
+                _mlink("Amazon", _amazon(f"{nm} plate"), per_kg * 1.8, 3)]
+        add(f"{nm} plate / bar stock", _r(kg, 2), "kg", per_kg * 2.5,
+            f"{v:.0f} cm\u00b3 of stock for the CNC parts (+25 % kerf and offcuts); machine shops supply their own",
+            vend, f"{kg:.2f} kg")
+
+    # sheet stock, per material and gauge
+    sheet = {}
+    for e in parts:
+        if e.get("process") in ("sheet_metal", "laser_cut"):
+            inp = (e.get("cost_model") or {}).get("inputs") or {}
+            k = (e.get("material") or "Al5052", inp.get("thickness_mm"))
+            sheet[k] = sheet.get(k, 0.0) + (inp.get("sheet_cm2") or 0.0) * e["qty"] * nq
+    for (m, t), cm2 in sorted(sheet.items(), key=lambda kv: -kv[1]):
+        if not cm2:
+            continue
+        nm = MAT_NAME.get(m, m)
+        side = math.ceil(math.sqrt(cm2 * 1.3) / 5.0) * 5          # square blank, +30 % nesting margin, 5 cm steps
+        price = 0.012 * side * side * (t or 1.5) / 1.5
+        add(f"{nm} sheet, {t or '?'} mm, {side} x {side} cm", 1, "sheet", price,
+            f"{cm2:.0f} cm\u00b2 of flat patterns (+30 % nesting); or order the cut, bent parts",
+            [_mlink("McMaster-Carr", STOCK_LINKS.get(m, "https://www.mcmaster.com/products/aluminum/"), price, 2),
+             _mlink("SendCutSend", "https://sendcutsend.com/materials/", price, 5, "cut and bent from your DXF"),
+             _mlink("Amazon", _amazon(f"{nm} sheet {t} mm"), price * 0.9, 3)], f"{cm2:.0f} cm\u00b2")
+
+    # hook-up wire for the harness, per gauge
+    wire = {}
+    for w in (efinal or {}).get("harness") or []:
+        hit = re.search(r"(\d+)\s*AWG", str(w.get("wire") or ""))
+        if hit and w.get("length_mm"):
+            awg = int(hit.group(1))
+            wire[awg] = wire.get(awg, 0.0) + w["length_mm"] * (w.get("conductors") or 2) * nq / 1000.0
+    wire_links = lambda q, p: [_mlink("Amazon", _amazon(q), p, 2, "6 colours"),  # noqa: E731
+                               _mlink("Pololu", "https://www.pololu.com/category/215/wires", p * 1.3, 4),
+                               _mlink("McMaster-Carr", "https://www.mcmaster.com/silicone-wire/", p * 1.6, 2)]
+    short = {a: m for a, m in wire.items() if m < 2.0}
+    for awg, m in sorted(wire.items()):
+        if awg in short:
+            continue
+        add(f"{awg} AWG silicone hook-up wire, 10 m pack", max(1, math.ceil(m * 1.3 / 10.0)), "pack", 9.0,
+            f"{m:.1f} m of conductor across the harness (+30 % for service loops and mistakes)",
+            wire_links(f"{awg} AWG silicone wire", 9.0), f"{m:.1f} m")
+    if short:
+        gauges = ", ".join(str(a) for a in sorted(short))
+        add(f"Silicone hook-up wire kit, 18-30 AWG (for the short runs: {gauges} AWG)", 1, "kit", 16.0,
+            f"{sum(short.values()):.1f} m in short power and sensor runs; one assorted kit covers them",
+            wire_links("silicone wire kit 18 20 22 24 26 28 AWG", 16.0), f"{sum(short.values()):.1f} m")
+    return out

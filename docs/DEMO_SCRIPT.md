@@ -33,8 +33,8 @@ The caption is the script. Read it, or say it in your own words.
 | 4 | Tested in physics simulation | Simulation tab, pick & place plays with live torque | |
 | 5 | Change it in one sentence | Types **Swap to Dynamixel servos**; new actuators touch everything, so all 9 stages regenerate; the auto-tour walks the changed tabs | ~30 s |
 | 6 | From modules to a custom PCB | Types **Use a custom PCB**; only 6 of 9 stages rerun (sizing, grasp and simulation are reused); the board places, routes and pours on screen | ~30 s |
-| 7 | Same robot, another way to build it | Switches the build to **Pilot** (CNC, sheet metal, MJF) | ~20 s |
-| 8 | Darwin: who sells and who builds every part | BOM tab, **Darwin agents**: one search per purchased part plus PCB fab, CNC, sheet metal, prints and a design review stream in | ~15 s, keep talking |
+| 7 | Same robot, another way to build it | Switches the build to **Pilot** (CNC, sheet metal, MJF); heavier metal links re-size the joints (8 of 9 stages) | ~25 s |
+| 8 | Darwin: who sells and who builds every part | BOM tab, **Darwin agents**: one search per purchased part and bulk material (filament, plate, sheet, wire), plus PCB fab, CNC, sheet metal and prints, stream in | ~20 s, keep talking |
 | 9 | Keewano: the build memory | Simulation tab; the grip-force window in the right panel lights up, with the Keewano calibration line | |
 | 10 | The assembly manual writes itself | Assembly tab, autoplay | |
 | 11 | Import a real open-source robot | Switches to **so101** (Hugging Face SO-101 from its own URDF) | |

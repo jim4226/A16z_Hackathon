@@ -26,7 +26,10 @@ from ..spec import Design, diff
 
 # node: (parameter patterns it reads, upstream nodes, output directory)
 GRAPH = {
-    "sizing": (["arm.*", "object.mass_g", "electronics.servo"], [], None),
+    # arm.size() reads the build config (link materials set the masses), the task (reach) and the hand
+    # (gripper/finger set the payload), so a pilot build re-sizes the joints instead of reusing prototype torques
+    "sizing": (["arm.*", "object.*", "electronics.servo", "build.*", "task.pick_*", "task.place_*", "finger.*", "gripper.*"],
+               [], None),
     "gripper": (["finger.*", "object.*", "gripper.*", "safety_factor", "electronics.target_force_n",
                  "electronics.servo", "electronics.supply_v", "electronics.pinion_radius_mm", "arm.actuator_family",
                  "arm.source", "arm.actuator_overrides"],
