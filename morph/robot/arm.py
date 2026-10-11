@@ -383,6 +383,11 @@ class _JG:
     ear: dict | None
     conn_box: list = field(default_factory=list)   # canonical bboxes of connector regions
     lim: tuple = (-1.8, 1.8)
+    cup_D2: float | None = None                      # narrower cradle (in y) than the clevis, e.g. the wrist yaw
+
+    @property
+    def cD2(self):
+        return self.cup_D2 if self.cup_D2 else self.D2
 
     @property
     def z_cup(self):
@@ -653,6 +658,9 @@ def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None, 
     jg = {}
     for jn in ("j2_shoulder", "j3_elbow", "j4_wrist_pitch") + (("j5_wrist_yaw",) if dof >= 6 else ()):
         jg[jn] = _jg(jn, keys[jn], counts.get(jn, 1))
+    if dof >= 6:
+        y5 = jg["j5_wrist_yaw"]
+        y5.cup_D2 = min(y5.D2, max(abs(v) for v in y5.case_y) + WALL)
     # base: yaw actuator hangs below the turntable, electronics bay height
     foot, floor = 2.5, 3.5
     bay_h = _bay_height(design, eplan)
@@ -706,17 +714,29 @@ def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None, 
                    wl5=wl5, tcp_z=tcp_z, L3=L3, notes=notes, issues=issues)
 
 
-def _task_L12(design, lay: _Layout) -> float:
-    """Shoulder->wrist length (L1 + L2) needed to reach the pick and place targets top-down with the hand vertical
-    and the fingertips 10 mm above the object (6 % margin so the elbow is never fully stretched)."""
+def _task_L12(design, lay: _Layout, j4_max=1.78) -> float:
+    """Shoulder->wrist length (L1 + L2) needed to reach the pick and place targets top-down with the hand vertical:
+    at the grasp and 10 mm above the object (approach hover), elbow up, the wrist pitch within `j4_max`, and a
+    6 % margin so the elbow is never fully stretched."""
     R = design.object.diameter_mm / 2
     hover = R + lay.grip["tip"] + 10.0
-    need = 0.0
+    pts = []
     for x, y in ((design.task.pick_x_mm, design.task.pick_y_mm), (design.task.place_x_mm, design.task.place_y_mm)):
-        r = math.hypot(x, y)
-        dz = R + hover + lay.L3 - lay.base_h
-        need = max(need, math.hypot(r, dz))
-    return need / 0.94
+        r = math.hypot(x, y) * 1.03
+        for zt in (R, R + hover):
+            pts.append((r, zt + lay.L3 - lay.base_h))
+    need = max(math.hypot(r, dz) for r, dz in pts) / 0.94
+    for L12 in np.arange(need, need * 1.8, 3.0):
+        L1 = 0.51 * L12
+        ok = True
+        for r, dz in pts:
+            sol = _ik_planar(L1, L12 - L1, r, dz)
+            if sol is None or math.pi - sol[0] - sol[1] > j4_max:
+                ok = False
+                break
+        if ok:
+            return float(L12)
+    return float(need)
 
 
 # ------------------------------------------------------------------ mass + static torque model
@@ -1194,7 +1214,7 @@ class _Builder:
 
     # ------------------------------------------------------------ cradle / clevis geometry (canonical frame)
     def cup_block(self, j: _JG):
-        return _rbox2(-j.hw, j.hw, -j.D2, j.D2, j.z_floor, j.z_cup, r=4.0, f=2.0)
+        return _rbox2(-j.hw, j.hw, -j.cD2, j.cD2, j.z_floor, j.z_cup, r=4.0, f=2.0)
 
     def cup_adds(self, j: _JG):
         A = j.A
@@ -1834,7 +1854,7 @@ class _Builder:
                       + box_pts(T4, -jw.A.W / 2, jw.A.W / 2, -1, 1, jw.z_body[0], jw.z_body[1]))
         if L.dof == 6:
             jy = L.jg["j5_wrist_yaw"]
-            wr = link_sil(jw, box_pts(self.T["j5_par"], -jy.hw, jy.hw, -jy.D2, jy.D2, jy.z_floor,
+            wr = link_sil(jw, box_pts(self.T["j5_par"], -jy.hw, jy.hw, -jy.cD2, jy.cD2, jy.z_floor,
                                       jy.z_cup)).union(hand(np.eye(4), L.d45 + L.wl5))
         else:
             Ar = L.Ar

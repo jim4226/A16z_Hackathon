@@ -263,6 +263,8 @@ def power_budget(design, acts: list, config: str, supply: dict, extras: list, ct
     in_stall = (s_stall * servo_v / (supply["v"] * eff) if supply.get("servo_buck") else s_stall) + logic_in
     margin = supply["a"] / max(in_peak, 1e-6)
     fuse = next((f for f in STD_FUSES if f >= max(in_peak * 1.1, in_avg * 1.5)), STD_FUSES[-1])
+    if fuse > supply["a"] >= in_peak:          # the supply's own current limit is the tighter bound
+        fuse = max(f for f in STD_FUSES if f <= supply["a"])
     feed_awg = pick_awg(min(fuse, max(in_peak, 1.0)))
     return {"rails": rails, "supply_ok": bool(margin >= 1.1), "supply_a": supply["a"], "supply_v": supply["v"],
             "supply_w": round(supply["a"] * supply["v"], 1), "peak_w": round(in_peak * supply["v"], 1),
@@ -685,23 +687,14 @@ MODULE_PINS = {
 
 
 def _module_box(c: Circuit, ref: str, key: str, nets: dict, block: str, value=None, extra=(), note=""):
-    """Box symbol for a dev-board module: every header pin, nets by pin name (first match for duplicates)."""
+    """Box symbol for a dev-board module: every header pin, nets by pin name ("D12/SCL" matches "D12" or "SCL")."""
     left, right = MODULE_PINS[key]
-    pins, seen = [], set()
+    pins = []
     for side, names, hdr in (("L", left, "J1"), ("R", right, "J3" if key == "esp32_s3_devkit" else "J2")):
         for i, nm in enumerate(names):
-            label = nm.replace("D12/SCL", "D12/SCL")
-            net = None
-            for k in (nm, nm.split("/")[-1]):
-                if k in nets:
-                    net = nets[k]
-            if nm in ("GND", "AGND"):
-                net = "GND"
-            if nm in ("3V3", "VCC") and "3V3" in nets.values() and (nm, side) not in seen:
-                net = "3V3" if any(v == "3V3" for v in nets.values()) else None
-            seen.add((nm, side))
+            net = "GND" if nm in ("GND", "AGND") else next((nets[k] for k in (nm, *nm.split("/")) if k in nets), None)
             et = "power_in" if nm in ("GND", "AGND", "5V", "VIN", "VSYS", "VBUS") else "bidir"
-            pins.append((f"{hdr}-{i + 1}", label, net, side, et))
+            pins.append((f"{hdr}-{i + 1}", nm, net, side, et))
     pins += list(extra)
     return c.add(ref, value or MODULES[key]["name"].split(" (")[0], "box", pins, board=False, block=block,
                  mpn=MODULES[key]["name"], note=note, meta={"key": key})
