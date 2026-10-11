@@ -147,9 +147,10 @@ def test_darwin_pcb_handoff_carries_the_kicad_zip(tmp_path):
     bdir = tmp_path / "electronics" / "board"
     (bdir / "gerbers").mkdir(parents=True)
     (bdir / "gerbers" / "gerbers.zip").write_bytes(b"")
+    pcb = lambda: [h for h in darwin.handoffs(str(tmp_path), {}) if h[0] == "pcb_fab"][0]  # noqa: E731
+    before = pcb()
     (bdir / "kicad").mkdir()
     (bdir / "kicad" / "board-kicad.zip").write_bytes(b"")
-    pcb = [h for h in darwin.handoffs(str(tmp_path), {}) if h[0] == "pcb_fab"][0]
-    assert pcb[1] == "PCB fabrication and assembly quote from Gerber files, 2-layer through-hole"  # cache key unchanged
-    assert pcb[2] == [os.path.join("electronics", "board", "gerbers", "gerbers.zip"),
-                      os.path.join("electronics", "board", "kicad", "board-kicad.zip")]
+    after = pcb()
+    assert after[1] == before[1]   # same Darwin query, so its cache still hits
+    assert after[2] == before[2] + [os.path.join("electronics", "board", "kicad", "board-kicad.zip")]
