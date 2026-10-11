@@ -18,7 +18,7 @@ import os
 import sys
 import time
 
-from . import agent, report
+from . import agent, darwin, keewano, report
 from .explore import explore
 from .pipeline import Project
 from .spec import Design
@@ -264,6 +264,39 @@ def cmd_robot(a):
             _robot_summary(p, r)
 
 
+def cmd_source(a):
+    p = _project(a.name)
+    rev = a.rev or p.latest()
+    print(f"asking Darwin for agents that can supply / build {a.name} {rev} ...")
+    rep = darwin.source(p, rev)
+    for r in rep["rows"]:
+        top = r["agents"][0] if r["agents"] else None
+        tag = " (cached)" if r["cached"] else ""
+        print(f"\n[{r['kind']}] {r['item']}{tag}")
+        if top:
+            show = r["picked"] or r["agents"][:1]
+            for ag in show:
+                mark = "*" if ag in r["picked"] else " "
+                print(f" {mark}{ag['name']:<40} startable={str(ag['can_start']):<5}  {ag['url']}")
+            if len(r["agents"]) > len(show):
+                print(f"   (+{len(r['agents']) - len(show)} other agents in the JSON)")
+        print(f"  gap: {r['gap']}" if r["gap"] else ("" if r["readiness_verified"] else
+              "  found; readiness checked only after sign-in (Darwin Act)"), end="")
+    print(f"\n\n{len(rep['gaps'])} gap(s) of {len(rep['rows'])} lookups -> {p.rev_dir(rev)}/sourcing_darwin.json")
+    print("* = an agent we route this work to (darwin.PREFERRED)")
+    print(rep["note"])
+
+
+def cmd_darwin(a):
+    print(json.dumps(darwin.search(a.query, a.n), indent=2))
+
+
+def cmd_ask(a):
+    rows = keewano.query(a.sql)
+    print("Keewano not configured (KEEWANO_PAT, KEEWANO_PROJECT_ID)" if rows is None
+          else json.dumps(rows, indent=2, default=str))
+
+
 def cmd_research(a):
     print(agent.research(a.query))
 
@@ -402,6 +435,20 @@ def main(argv=None):
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.set_defaults(fn=cmd_studio)
+
+    s = sub.add_parser("source", help="Darwin: shortlist agents that sell each part / build the PCB and prints")
+    s.add_argument("name")
+    s.add_argument("rev", nargs="?")
+    s.set_defaults(fn=cmd_source)
+
+    s = sub.add_parser("darwin", help="one Darwin Search query")
+    s.add_argument("query")
+    s.add_argument("-n", type=int, default=5)
+    s.set_defaults(fn=cmd_darwin)
+
+    s = sub.add_parser("ask", help="run SQL against the project's Keewano events")
+    s.add_argument("sql")
+    s.set_defaults(fn=cmd_ask)
 
     s = sub.add_parser("research", help="web research via Claude (components, tooling, suppliers)")
     s.add_argument("query")

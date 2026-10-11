@@ -105,6 +105,29 @@ Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli �
 | `report.py` | the comparison page |
 | `agent.py` | Claude need → spec (fragility, sensor, servo inferred), web research |
 
+## Sponsor integrations
+
+**Keewano: the build memory.** Every ledger entry (revision, bench measurement, human minutes,
+Darwin lookup) is sent to Keewano as typed events from `Project.log()` (`morph/keewano.py`).
+Before choosing the grip-force target, `electronics.plan()` asks Keewano how much more holding
+force real builds with the same pad and material needed than the simulation predicted, and
+scales the target by that ratio. Remove Keewano and the firmware ships the uncalibrated number.
+
+```bash
+export KEEWANO_API_KEY=...                       # send (Settings -> Project -> API Keys)
+export KEEWANO_PAT=kwpat-... KEEWANO_PROJECT_ID=<uuid>   # query (Settings -> Personal -> Security)
+python tools/keewano_backfill.py --send          # 2 weeks of synthetic-* builds, labelled
+morph ask 'SELECT "PadStyle", avg("HoldForceRatioPct") FROM events GROUP BY "PadStyle"'
+```
+
+**Darwin: who sells the parts and builds the rest.** Morph designs and programs; `morph source
+<project> [rev]` asks Darwin Search for an agent per purchased BOM line plus the engineering
+handoffs (PCB fab from the Gerbers, printing the STLs, a design review), writes
+`<rev>/sourcing_darwin.json`, and logs every lookup, including gaps, to Keewano. It stops at a
+shortlist: ordering is Darwin Act, which needs the user's own account and approval.
+
+With no keys set, both integrations are no-ops and everything runs offline.
+
 ## Honest limits
 
 - The FSR is calibrated with one known mass (`c<grams>` over serial). Its absolute accuracy is about ±10–25%, so the window margins absorb that error.
