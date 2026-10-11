@@ -285,14 +285,45 @@ def _poly_d(p):
     return " ".join("M" + " L".join(f"{x:.2f},{y:.2f}" for x, y in r.coords) + " Z" for r in rings)
 
 
-def plan(design: Design, geom: FingerGeometry, outdir: str) -> dict:
+def plan_gripper_body(parts: dict, outdir: str) -> dict:
+    """Print plate for the generated gripper mechanism (racks, bosses, pinion, back plate), PETG."""
+    import trimesh
+
+    mat = MATERIALS["PETG"]
+    meshes, x, vol = [], 0.0, 0.0
+    for name, (poly, thick) in parts.items():
+        polys = [poly] if poly.geom_type == "Polygon" else [g for g in poly.geoms if g.area > 0.05]
+        for p in polys:
+            m = to_mesh(p, thick)
+            m.apply_translation([x - m.bounds[0][0], -m.bounds[0][1], 0])
+            x += m.extents[0] + GAP
+            meshes.append(m)
+            vol += p.area * thick
+    trimesh.util.concatenate(meshes).export(os.path.join(outdir, "gripper_plate.stl"))
+    # gripper parts are stiff structure: more infill than the fingers
+    minutes = vol * 0.7 / PRINT_FLOW_MM3_S / 60.0 * 1.3 + 4.0
+    grams = vol * 0.7 / 1000.0 * mat.density_g_cc
+    return {"file": "gripper_plate.stl", "minutes": round(minutes, 1), "material_g": round(grams, 1),
+            "material_cost": round(grams / 1000.0 * mat.cost_per_kg, 2), "parts": sorted(parts)}
+
+
+def plan(design: Design, geom: FingerGeometry, outdir: str, mech_parts: dict | None = None) -> dict:
     os.makedirs(outdir, exist_ok=True)
     process = choose_process(design)
     planner = {"fdm_print": plan_print, "laser_cut": plan_laser, "cnc_router": plan_cnc}[process]
     out = planner(design, geom, outdir)
     out["process"] = process
     out["dfm_warnings"] = dfm(design, geom, process)
-    out["machine_cost"] = round(out["minutes"] / 60.0 * MACHINE_RATE_PER_HR[process], 2)
+    out["finger_minutes"] = out["minutes"]
+    if mech_parts:
+        body = plan_gripper_body(mech_parts, outdir)
+        out["gripper_body"] = body
+        out["files"].append(body["file"])
+        out["minutes"] = round(out["minutes"] + body["minutes"], 1)
+        out["material_cost"] = round(out["material_cost"] + body["material_cost"], 2)
+        out["machine_cost_body"] = round(body["minutes"] / 60.0 * MACHINE_RATE_PER_HR["fdm_print"], 2)
+    out["machine_cost"] = round(out["finger_minutes"] / 60.0 * MACHINE_RATE_PER_HR[process]
+                                + out.get("machine_cost_body", 0.0), 2)
     out["total_cost"] = round(out["machine_cost"] + out["material_cost"], 2)
     return out
 
@@ -302,7 +333,8 @@ def bom(design: Design, fab_plan: dict) -> list:
     return [
         {"item": f"finger ({design.finger.material}, {fab_plan['process']})", "qty": q,
          "cost": fab_plan["total_cost"]},
-        {"item": "M3 x 10 socket head cap screw", "qty": 2 * q, "cost": round(0.12 * 2 * q, 2)},
+        {"item": "M3 x 30 bolt + nylock nut (finger + boss + rack)", "qty": 2 * q, "cost": round(0.2 * 2 * q, 2)},
+        {"item": "M3 x 16 bolt + 2 washers + nylock nut (rack guides)", "qty": 4, "cost": 0.8},
         {"item": "friction tape pad 20x30 mm (optional)", "qty": q, "cost": round(0.30 * q, 2)},
         {"item": design.gripper.name, "qty": 1, "cost": 0.0, "note": "existing hardware"},
     ]

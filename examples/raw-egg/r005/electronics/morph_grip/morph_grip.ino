@@ -11,9 +11,9 @@ const float ADC_MAX = 1023.0;
 const float R_DIV = 3900.0;          // ohms, divider resistor to GND
 float K_FSR = 10000.0;                // ohm*N: F = K_FSR / R_fsr (calibrate with c<grams>)
 float TARGET_N = 2.34;            // from Morph: inside the window 1.17 - 16.0 N
-const float LIMIT_N = 8.83;        // never exceed (object damage / sensor range)
-const int OPEN_DEG = 20;      // set for your gripper
-const int CLOSED_DEG = 160;  // mechanical end stop, never commanded past
+const float LIMIT_N = 10.09;        // never exceed (object damage / sensor range)
+const int OPEN_DEG = 16;      // from the generated rack-and-pinion: jaws fully open
+const int CLOSED_DEG = 106;  // contact at 90 deg + overtravel; slots stop here (swap if your servo turns the other way)
 const float STEP_DEG = 0.5;           // closing speed per 20 ms tick
 
 Servo servo;

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 from shapely.geometry import box as sbox
 
-from .design import MOUNT_H, FingerGeometry, object_radius
+from .design import MOUNT_H, FingerGeometry, object_radius  # MOUNT_H only sizes the visual hand block
 from .materials import MATERIALS
 from .spec import Design
 

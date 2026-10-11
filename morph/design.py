@@ -58,6 +58,11 @@ class FingerGeometry:
         return self.area_mm2 * self.width_mm
 
 
+def mount_dims(f) -> tuple[float, float]:
+    """Mount tab above the finger: two M3 holes stacked along the finger, bolted to a gripper rack."""
+    return f.mount_hole_spacing_mm + f.mount_hole_d_mm + 5.0, max(f.thickness_mm, f.mount_hole_d_mm + 6.0)
+
+
 def object_radius(design: Design) -> float:
     return design.object.diameter_mm / 2.0
 
@@ -98,11 +103,11 @@ def build_profile(design: Design) -> FingerGeometry:
     if ph > L:
         ph = L
         notes.append("pad height clipped to finger length")
-    mount_w = max(t, f.mount_hole_spacing_mm + 2 * f.mount_hole_d_mm + 2.0)
+    mount_h, mount_w = mount_dims(f)
     u_c = L - ph / 2.0
-    holes = [Point(-MOUNT_H / 2.0, mount_w / 2.0 + s * f.mount_hole_spacing_mm).buffer(
+    holes = [Point(-mount_h / 2.0 + s * f.mount_hole_spacing_mm, mount_w / 2.0).buffer(
         f.mount_hole_d_mm / 2.0, quad_segs=16) for s in (-0.5, 0.5)]
-    base = box(-MOUNT_H, 0, 0, mount_w).union(box(0, 0, L, t))
+    base = box(-mount_h, 0, 0, mount_w).union(box(0, 0, L, t))
 
     if sensor not in FSR:
         v_face = t + d

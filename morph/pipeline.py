@@ -15,7 +15,7 @@ import os
 import shutil
 import time
 
-from . import analysis, design as cad, electronics, fab, sim
+from . import analysis, board, design as cad, electronics, fab, mechanism, sim
 from .spec import Design, diff
 
 # node: (parameter patterns it reads, upstream nodes)
@@ -26,11 +26,12 @@ GRAPH = {
                   "gripper.*", "safety_factor", "fab.process"], ["cad"]),
     "sim": (["object.shape", "object.diameter_mm", "object.length_mm", "object.mass_g", "object.friction",
              "gripper.*"], ["cad"]),
-    "electronics": (["electronics.*", "object.max_force_n", "finger.sensor"], ["analysis", "sim"]),
-    "fab": (["fab.*", "finger.material", "finger.width_mm"], ["cad"]),
+    "mech": (["electronics.servo", "electronics.pinion_radius_mm"], ["cad", "analysis", "sim"]),
+    "electronics": (["electronics.*", "object.max_force_n", "finger.sensor"], ["analysis", "sim", "mech"]),
+    "fab": (["fab.*", "finger.material", "finger.width_mm"], ["cad", "mech"]),
     "bom": (["gripper.name", "fab.quantity"], ["fab", "electronics"]),
 }
-ORDER = ["cad", "analysis", "sim", "electronics", "fab", "bom"]
+ORDER = ["cad", "analysis", "sim", "mech", "electronics", "fab", "bom"]
 
 
 def dirty_nodes(changed_keys) -> list:
@@ -86,7 +87,8 @@ class Project:
 
     # -- the pipeline
     def run(self, design: Design, parent: str | None = None, label: str = "", n_trials: int = 8,
-            verbose: bool = True) -> str:
+            verbose: bool = True, on_event=None) -> str:
+        emit = on_event or (lambda e: None)
         revs = self.revs()
         rev = f"r{len(revs) + 1:03d}"
         out = self.rev_dir(rev)
@@ -105,6 +107,7 @@ class Project:
                    "changes": {k: list(v) for k, v in changes.items()},
                    "provenance": {}, "timings_s": {}}
         geom = cad.build_profile(design)  # cheap; needed by every downstream node
+        emit({"type": "start", "rev": rev, "parent": parent, "changes": results["changes"], "dirty": todo})
 
         for node in ORDER:
             if node not in todo:
@@ -115,7 +118,9 @@ class Project:
                     shutil.copytree(src, os.path.join(out, node))
                 if verbose:
                     print(f"  {node:<9} reused  (unaffected by change)")
+                emit({"type": "node", "node": node, "status": "reused"})
                 continue
+            emit({"type": "node", "node": node, "status": "computing"})
             t0 = time.time()
             nd = os.path.join(out, node)
             os.makedirs(nd, exist_ok=True)
@@ -132,19 +137,24 @@ class Project:
                 with open(os.path.join(nd, "scene.xml"), "w") as fh:
                     fh.write(sim.build_mjcf(design, geom))
                 results["sim"] = sim.simulate(design, geom, n_trials)
+            elif node == "mech":
+                servo = electronics.choose_servo(design, electronics.target_force(design, results["analysis"], results["sim"]))
+                results["mech"] = mechanism.build(design, geom, servo, nd)
             elif node == "electronics":
-                results["electronics"] = electronics.plan(design, results["analysis"], results["sim"])
+                results["electronics"] = electronics.plan(design, results["analysis"], results["sim"], results["mech"])
                 if results["electronics"]["sensor"] != "none":
                     electronics.write_firmware(design, results["electronics"], nd)
                     results["electronics"]["firmware"] = "electronics/morph_grip/morph_grip.ino"
+                    results["electronics"]["board"] = board.build(results["electronics"], os.path.join(nd, "board"))
             elif node == "fab":
-                results["fab"] = fab.plan(design, geom, nd)
+                results["fab"] = fab.plan(design, geom, nd, mechanism.printed_profiles(design, geom, results["mech"]["servo"]))
             elif node == "bom":
                 results["bom"] = fab.bom(design, results["fab"]) + results["electronics"]["parts"]
             results["provenance"][node] = "computed"
             results["timings_s"][node] = round(time.time() - t0, 2)
             if verbose:
                 print(f"  {node:<9} computed ({results['timings_s'][node]:.2f}s)")
+            emit({"type": "node", "node": node, "status": "computed", "seconds": results["timings_s"][node]})
 
         results["summary"] = summarize(results)
         with open(os.path.join(out, "results.json"), "w") as fh:
@@ -192,5 +202,7 @@ def summarize(r: dict) -> dict:
         "servo_stall_force_n": e.get("servo_stall_force_n"),
         "open_loop_crushes": e.get("open_loop_crushes"),
         "bom_cost": round(sum(i.get("cost", 0) for i in r.get("bom") or []), 2),
-        "issues": a.get("issues", []) + e.get("issues", []),
+        "jaw_travel_mm": (r.get("mech") or {}).get("travel_mm"),
+        "servo_sweep_deg": (r.get("mech") or {}).get("servo_sweep_deg"),
+        "issues": a.get("issues", []) + (r.get("mech") or {}).get("issues", []) + e.get("issues", []),
     }

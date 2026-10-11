@@ -44,12 +44,25 @@ def servo_max_force(servo: str, pinion_radius_mm: float) -> float:
     return SERVOS[servo]["torque"] * G * GEAR_EFF / (pinion_radius_mm / 10.0)
 
 
+def choose_servo(design: Design, target: float) -> str:
+    e = design.electronics
+    if e.servo != "auto":
+        return e.servo
+    fits = [k for k in SERVOS if servo_max_force(k, e.pinion_radius_mm) >= 2.0 * target]
+    return fits[0] if fits else "ds3218"
+
+
+def target_force(design: Design, analysis: dict, sim: dict) -> float:
+    """Same target the electronics plan picks; used to size the servo before electronics runs."""
+    return plan(design, analysis, sim, mech=None)["target_force_n"]
+
+
 def nearest_e12(ohms: float) -> float:
     decade = 10 ** math.floor(math.log10(ohms))
     return min((m * decade for m in E12 + [10.0]), key=lambda r: abs(math.log(r / ohms)))
 
 
-def plan(design: Design, analysis: dict, sim: dict) -> dict:
+def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) -> dict:
     e, o, f = design.electronics, design.object, design.finger
     issues, warnings = [], []
     sensor = f.sensor if f.sensor in FSR else None
@@ -69,10 +82,7 @@ def plan(design: Design, analysis: dict, sim: dict) -> dict:
     elif not lo <= target <= hi:
         warnings.append(f"target {target:.2f} N is outside the window {lo:.2f}-{hi:.2f} N")
 
-    servo = e.servo
-    if servo == "auto":
-        fits = [k for k in SERVOS if servo_max_force(k, e.pinion_radius_mm) >= 2.0 * target]
-        servo = fits[0] if fits else "ds3218"
+    servo = choose_servo(design, target)
     s = SERVOS[servo]
     f_stall = servo_max_force(servo, e.pinion_radius_mm)
     crush_open_loop = o.max_force_n > 0 and f_stall > o.max_force_n
@@ -127,7 +137,10 @@ def plan(design: Design, analysis: dict, sim: dict) -> dict:
         parts += [{"item": "Interlink FSR 402", "qty": 1, "cost": 7.0, "note": "one finger is enough to close the loop"},
                   {"item": f"{sensing['divider_ohm']:g} ohm resistor", "qty": 1, "cost": 0.1}]
 
+    if mech and mech.get("servo") and mech["servo"] != servo:
+        warnings.append(f"mechanism was sized for {mech['servo']}, electronics chose {servo}")
     return {
+        "open_deg": mech["servo_open_deg"] if mech else 20, "closed_deg": mech["servo_closed_deg"] if mech else 160,
         "mcu": mcu_key, "servo": servo, "sensor": sensor or "none",
         "hold_force_n": round(hold, 3), "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
         "target_force_n": round(target, 2), "servo_stall_force_n": round(f_stall, 1),
@@ -153,8 +166,8 @@ const float R_DIV = {r_div};          // ohms, divider resistor to GND
 float K_FSR = {k_fsr};                // ohm*N: F = K_FSR / R_fsr (calibrate with c<grams>)
 float TARGET_N = {target};            // from Morph: inside the window {lo} - {hi} N
 const float LIMIT_N = {limit};        // never exceed (object damage / sensor range)
-const int OPEN_DEG = {open_deg};      // set for your gripper
-const int CLOSED_DEG = {closed_deg};  // mechanical end stop, never commanded past
+const int OPEN_DEG = {open_deg};      // from the generated rack-and-pinion: jaws fully open
+const int CLOSED_DEG = {closed_deg};  // contact at 90 deg + overtravel; slots stop here (swap if your servo turns the other way)
 const float STEP_DEG = 0.5;           // closing speed per 20 ms tick
 
 Servo servo;
@@ -219,7 +232,7 @@ def write_firmware(design: Design, ep: dict, outdir: str) -> str:
         servo_pin_num=pin(mcu["servo_pin"]), fsr_pin_num=mcu["fsr_pin"] if mcu["fsr_pin"].startswith("A") else pin(mcu["fsr_pin"]),
         vcc=mcu["vcc"], adc_max=2 ** mcu["adc_bits"] - 1, r_div=sensing["divider_ohm"], k_fsr=FSR_K_OHM_N,
         target=ep["target_force_n"], lo=lo, hi=hi if hi else "inf", limit=ep["limit_n"],
-        open_deg=20, closed_deg=160)
+        open_deg=int(round(ep.get("open_deg", 20))), closed_deg=int(round(ep.get("closed_deg", 160))))
     os.makedirs(os.path.join(outdir, "morph_grip"), exist_ok=True)
     path = os.path.join(outdir, "morph_grip", "morph_grip.ino")
     with open(path, "w") as fh:

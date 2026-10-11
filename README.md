@@ -24,7 +24,30 @@ squeezes up to about 54 N per finger at stall, while an egg's side can crack aro
 - sets a grip-force window: slips below 1.2 N, damage-limited at 16 N;
 - generates the **Arduino firmware** that closes until 2.3 N and never exceeds 19 N;
 - sizes the sensor divider resistor and produces the wiring table and electronics BOM;
-- emits print files (4 parts, about 31 min).
+- generates the **gripper itself**: a printable rack-and-pinion mechanism for the chosen servo, so the device doesn't depend on a gripper kit you may not have;
+- generates a **carrier PCB** (Nano + FSR divider + servo + power) with Gerbers, solderable on perfboard today;
+- emits print files: fingers ≈31 min plus the gripper body ≈61 min.
+
+## Morph Studio (the live demo)
+
+```bash
+python -m morph.cli demo            # builds projects/raw-egg (≈25 s)
+python -m morph.cli studio raw-egg  # → http://localhost:8765
+```
+
+Chat on the left: "make it work for a strawberry", "use an SG90 servo instead", "switch to an ESP32",
+"make the fingers 10 mm longer", "gentler grip". Each request becomes parameter changes. The pipeline strip
+shows which of the 7 stages regenerate and which are reused. Then the views tour what changed:
+
+- **3D design:** the whole printable gripper (back plate, servo, pinion, two racks, sensor fingers) around the object. The previous revision is shown dashed.
+- **Electronics + PCB:** the carrier board builds itself: parts drop in, then ratsnest, routed traces, GND pour, and a DRC pass. Download Gerbers or solder it on perfboard.
+- **Fab:** print beds for the fingers and the gripper body, with time and cost.
+- **Firmware:** generated `morph_grip.ino` with changed lines highlighted (target force, divider, servo angles).
+- **Simulation:** MuJoCo grasp GIF.
+- **Inspector:** design diffs, metric deltas, and the grip-force window.
+
+The Studio uses Claude to interpret chat when `ANTHROPIC_API_KEY` is set; otherwise a built-in rule parser
+handles the common requests, so the demo works offline.
 
 ## Quick start
 
@@ -66,6 +89,9 @@ Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli �
 
 | module | job |
 |---|---|
+| `mechanism.py` | printable rack-and-pinion parallel gripper sized to the servo and object: involute pinion, slotted racks, back plate with servo/guide/arm holes, jaw travel, servo angles |
+| `board.py` | carrier board: real module pinouts, placement, two-layer maze router, GND pour, DRC, Gerbers + drill, perfboard-ready |
+| `studio/` | Morph Studio web app (stdlib server + SSE, three.js viewer, PCB build animation, chat → changes) |
 | `spec.py` | one `Design` (object, finger, gripper, electronics, fab); changes are dotted keys |
 | `design.py` | 2.5D profiles → watertight solids. Pads: flat, V, or contour. With `finger.sensor=fsr402`, a two-part finger: a dovetail socket plus a sliding pad whose tail presses on the FSR |
 | `analysis.py` | grip-force budget, cantilever deflection and stress, print derate |

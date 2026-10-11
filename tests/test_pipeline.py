@@ -16,11 +16,10 @@ def test_profile_and_mesh_are_valid(tmp_path):
 
 
 def test_dirty_propagation():
-    assert dirty_nodes(["object.mass_g"]) == ["analysis", "sim", "electronics", "bom"]
-    assert dirty_nodes(["finger.material"]) == ["analysis", "electronics", "fab", "bom"]
-    assert dirty_nodes(["electronics.servo"]) == ["electronics", "bom"]
     assert dirty_nodes(["object.max_force_n"]) == ["electronics", "bom"]
-    assert dirty_nodes(["finger.length_mm"]) == ["cad", "analysis", "sim", "electronics", "fab", "bom"]
+    assert dirty_nodes(["electronics.mcu"]) == ["electronics", "bom"]
+    assert dirty_nodes(["electronics.servo"]) == ["mech", "electronics", "fab", "bom"]
+    assert dirty_nodes(["finger.length_mm"]) == ["cad", "analysis", "sim", "mech", "electronics", "fab", "bom"]
 
 
 def test_analysis_flags_weak_finger():
@@ -118,3 +117,41 @@ def test_simulated_bench_logs_measurement(tmp_path):
     entry = bench.run(p, rev, None, seconds=3.0, simulate=True)
     assert entry["actual"]["simulated"] and entry["actual"]["held_at_end"]
     assert "hold_force_n" in entry["error_vs_prediction"]
+
+
+def test_gripper_mechanism_meshes_and_drives_firmware(tmp_path):
+    from morph import mechanism
+
+    d = Design().with_changes(EGG)
+    g = cad.build_profile(d)
+    m = mechanism.build(d, g, "mg996r", str(tmp_path))
+    assert not m["issues"] and m["travel_mm"] >= 8
+    assert all(p["watertight"] for p in m["printed"].values())
+    # racks sit on the pinion's pitch circle top and bottom; fingers bolt to the rack ears
+    assert m["servo_open_deg"] < 90 < m["servo_closed_deg"] <= 180
+    p = Project(str(tmp_path / "egg"))
+    rev = p.run(d, n_trials=1, verbose=False)
+    res = p.load_results(rev)
+    fw = (tmp_path / "egg" / rev / res["electronics"]["firmware"]).read_text()
+    assert f"OPEN_DEG = {int(round(res['mech']['servo_open_deg']))};" in fw
+    assert "gripper_plate.stl" in res["fab"]["files"]
+
+
+def test_board_routes_for_every_mcu(tmp_path):
+    from morph import board
+
+    for mcu in ("arduino_nano", "rp2040_pico", "esp32_devkit"):
+        out = board.build({"mcu": mcu, "sensing": {"divider_ohm": 4700}}, str(tmp_path / mcu))
+        assert out["drc"]["pass"], out["drc"]
+        assert (tmp_path / mcu / "gerbers" / "gerbers.zip").exists()
+
+
+def test_chat_rules_map_requests_to_changes():
+    from morph.studio.intent import rules
+
+    d = Design().with_changes(EGG)
+    ch, _ = rules("make it work for a strawberry", d)
+    assert ch["object.name"] == "strawberry" and ch["object.max_force_n"] == 3
+    assert rules("use an SG90 servo instead", d)[0] == {"electronics.servo": "sg90"}
+    assert rules("switch to an ESP32", d)[0] == {"electronics.mcu": "esp32_devkit"}
+    assert rules("make the fingers 10 mm longer", d)[0]["finger.length_mm"] == d.finger.length_mm + 10

@@ -167,6 +167,14 @@ def cmd_bench(a):
     _report(p, [a.rev], f"{a.rev}.html")
 
 
+def cmd_studio(a):
+    from .studio.server import serve
+
+    if os.environ.get("MUJOCO_GL") is None and sys.platform.startswith("linux"):
+        os.environ["MUJOCO_GL"] = "egl"
+    serve(_project(a.name), a.host, a.port)
+
+
 def cmd_research(a):
     print(agent.research(a.query))
 
@@ -287,6 +295,12 @@ def main(argv=None):
     s.add_argument("name")
     s.add_argument("rev", nargs="?", help="revision that was fabricated")
     s.set_defaults(fn=cmd_time)
+
+    s = sub.add_parser("studio", help="web UI: chat with the design, watch it regenerate")
+    s.add_argument("name", nargs="?", default="raw-egg")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8765)
+    s.set_defaults(fn=cmd_studio)
 
     s = sub.add_parser("research", help="web research via Claude (components, tooling, suppliers)")
     s.add_argument("query")

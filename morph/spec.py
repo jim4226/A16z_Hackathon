@@ -44,7 +44,7 @@ class ElectronicsSpec:
     mcu: str = "auto"                # auto | arduino_nano | esp32_devkit | rp2040_pico
     servo: str = "auto"              # auto | sg90 | mg90s | mg996r | ds3218
     supply_v: float = 6.0
-    pinion_radius_mm: float = 12.0   # servo horn/pinion radius driving the jaws
+    pinion_radius_mm: float = 10.5   # pitch radius of the printed pinion (module 1.5, 14 teeth)
     target_force_n: float = 0.0      # 0 = derive from simulation + object fragility
 
 
