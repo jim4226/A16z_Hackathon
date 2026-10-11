@@ -153,6 +153,41 @@ def _simplify(pts):
     return out
 
 
+def _connectivity(nets, pad_xy, traces, cell) -> list:
+    """Union-find over copper: pads join both layers, traces join cells on their own layer only."""
+    parent = {}
+
+    def find(a):
+        parent.setdefault(a, a)
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    pad_cells = {cell(xy) for xy in pad_xy.values()}
+    for c in pad_cells:
+        union(("B", c), ("F", c))
+    for t in traces:
+        lay = "B" if t["layer"] == "B.Cu" else "F"
+        pts = [cell(p) for p in t["points"]]
+        for a, b in zip(pts, pts[1:]):   # walk every grid cell along each straight segment
+            steps = max(abs(b[0] - a[0]), abs(b[1] - a[1]), 1)
+            prev = a
+            for k in range(1, steps + 1):
+                cur = (a[0] + (b[0] - a[0]) * k // steps, a[1] + (b[1] - a[1]) * k // steps)
+                union((lay, prev), (lay, cur))
+                prev = cur
+    bad = []
+    for net, pins in nets.items():
+        roots = {find(("B", cell(pad_xy[p]))) for p in pins}
+        if len(roots) > 1:
+            bad.append({"net": net, "islands": len(roots)})
+    return bad
+
+
 def generate(ep: dict) -> dict:
     mcu = ep["mcu"]
     divider = (ep.get("sensing") or {}).get("divider_ohm", 10000)
@@ -178,11 +213,12 @@ def generate(ep: dict) -> dict:
     for net in order:
         width = W_PWR if net in ("V_SERVO", "GND") else W_SIG
         pins = [cell(pad_xy[p]) for p in nets[net]]
-        tree = {pins[0]}
+        tree = {pins[0]}          # connected through-hole pads: valid starting points on BOTH layers
         remaining = pins[1:]
         while remaining:
             routed = False
             for layer in (1, 0):  # bottom first, then top
+                # start from connected pads or copper of this net on the SAME layer (no implicit vias)
                 srcs = tree | {c for c, o in r.occ[layer].items() if o[0] == net}
                 path = r.route(layer, srcs, set(remaining), net, width)
                 if path:
@@ -191,7 +227,7 @@ def generate(ep: dict) -> dict:
                     traces.append({"net": net, "layer": "B.Cu" if layer else "F.Cu", "width": width,
                                    "points": [[round(x, 3), round(y, 3)] for x, y in pts]})
                     end = path[-1]
-                    tree |= set(path)
+                    tree.add(end)
                     remaining.remove(end)
                     routed = True
                     break
@@ -223,7 +259,9 @@ def generate(ep: dict) -> dict:
         for a, b in zip(pts, pts[1:]):
             ratsnest.append({"net": net, "a": a, "b": b})
 
-    drc = {"unrouted": unrouted, "clearance_mm": CLEAR, "min_trace_mm": W_SIG, "pass": not unrouted}
+    disconnected = _connectivity(nets, pad_xy, traces, cell)
+    drc = {"unrouted": unrouted, "disconnected": disconnected, "clearance_mm": CLEAR, "min_trace_mm": W_SIG,
+           "pass": not unrouted and not disconnected}
     return {"size_mm": [round(W, 2), round(H, 2)], "components": comps, "nets": {k: [f"{a}.{b}" for a, b in v] for k, v in nets.items()},
             "traces": traces, "pour": pour_rings, "ratsnest": ratsnest, "drc": drc,
             "notes": ["Plug the MCU into female headers; power it from USB for serial/bench.",

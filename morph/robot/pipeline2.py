@@ -162,16 +162,19 @@ class RobotProject(Project):
             t0 = time.time()
             nd = os.path.join(out, sub) if sub else out
             os.makedirs(nd, exist_ok=True)
+            status = "computed"
             try:
-                self._compute(node, design, res, nd, asm, n_trials, fast_sim)
+                if self._compute(node, design, res, nd, asm, n_trials, fast_sim) is False:
+                    status = "pending"          # module not available yet: say so, never fake "computed"
             except Exception as exc:  # keep the rest of the pipeline alive; surface the error
                 traceback.print_exc()
                 res.setdefault("errors", {})[node] = f"{exc.__class__.__name__}: {exc}"
-            res["provenance"][node] = "computed"
+                status = "error"
+            res["provenance"][node] = status
             res["timings_s"][node] = round(time.time() - t0, 2)
-            emit({"type": "node", "node": node, "status": "computed", "seconds": res["timings_s"][node]})
+            emit({"type": "node", "node": node, "status": status, "seconds": res["timings_s"][node]})
             if verbose:
-                print(f"  {node:<14} computed ({res['timings_s'][node]:.2f}s)")
+                print(f"  {node:<14} {status} ({res['timings_s'][node]:.2f}s)")
 
         res["summary"] = summarize(res)
         with open(os.path.join(out, "results.json"), "w") as fh:
@@ -211,6 +214,7 @@ class RobotProject(Project):
         elif node == "electronics":
             e2 = _mod("electronics2")
             res["eplan"] = e2.plan(design, res["sizing"]) if e2 else None
+            return e2 is not None
         elif node == "cad":
             a = asm()
             errs = a.validate()
@@ -228,18 +232,23 @@ class RobotProject(Project):
         elif node == "sim":
             simulate = _mod("simulate")
             res["sims"] = simulate.run_all(asm(), design, nd, fast=fast_sim) if simulate else None
+            return simulate is not None
         elif node == "wiring":
             e2 = _mod("electronics2")
-            res["electronics"] = e2.finalize(design, res["sizing"], res["eplan"], asm(), nd) if e2 else None
+            res["electronics"] = e2.finalize(design, res["sizing"], res["eplan"], asm(), nd) if e2 and res.get("eplan") else None
+            return res["electronics"] is not None
         elif node == "manufacturing":
             mfg = _mod("manufacturing")
             res["manufacturing"] = mfg.plan(design, asm(), nd, res.get("electronics")) if mfg else None
+            return mfg is not None
         elif node == "bom":
             mfg = _mod("manufacturing")
             res["bom"] = mfg.bom(design, asm(), res["manufacturing"], res.get("electronics")) if mfg and res.get("manufacturing") else None
+            return res["bom"] is not None
         elif node == "manual":
             man = _mod("manual")
             res["manual"] = man.build(design, asm(), res.get("manufacturing"), res.get("electronics"), nd) if man else None
+            return man is not None
 
 
 def _jsonable(o):
@@ -273,6 +282,11 @@ def summarize(r: dict) -> dict:
         list(el.get("issues", []) or []) + list(mfg.get("issues", []) or [])
     for node, err in (r.get("errors") or {}).items():
         issues.append(f"{node} stage error: {err}")
+    if pp.get("success") is False:
+        issues.append(f"pick-and-place failed in simulation ({pp.get('failure') or pp.get('reason') or 'object not delivered'})")
+    pending = [n for n, v in (r.get("provenance") or {}).items() if v in ("pending", "error")]
+    if pending:
+        issues.append("not computed: " + ", ".join(pending))
     return {
         "dof": len(joints), "reach_mm": sz.get("reach_mm"), "payload_g": sz.get("payload_g"),
         "actuators": ", ".join(sorted({j["actuator"] for j in joints})),
