@@ -21,14 +21,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 API = "https://api.darwin.so/api/v3/search"
 AGENT_PAGE = "https://index.darwin.so/agent/{agent}?capability={cap}"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "morph", "darwin")
+# Answers from live searches, shipped with the repo: the last fallback when Darwin is down
+# and this machine has never searched that query (a fresh demo laptop).
+SHIPPED = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "darwin-cache")
 
 # The agents we route each kind of work to, by Darwin agent id (names are not unique).
 # Picked from live searches on 2026-10-11; Search still runs, these just go first and are
@@ -55,8 +59,8 @@ ROLES = [("quote", "look up live distributor stock and price for a manufacturer 
          ("order", "buy and checkout a product online for me")]
 
 
-def _cache_path(query: str) -> str:
-    return os.path.join(CACHE, hashlib.sha1(query.encode()).hexdigest()[:16] + ".json")
+def _cache_path(query: str, root: str = CACHE) -> str:
+    return os.path.join(root, hashlib.sha1(query.encode()).hexdigest()[:16] + ".json")
 
 
 def _normalize(query: str, raw: dict) -> dict:
@@ -95,11 +99,13 @@ def search(query: str, max_results: int = 5, retries: int = 1, timeout: float = 
             err = f"{exc.__class__.__name__}: {exc}"
             if attempt < retries:
                 time.sleep(2)
-    try:
-        with open(_cache_path(query)) as fh:
-            return {**json.load(fh), "cached": True, "error": err}
-    except (OSError, ValueError):
-        return {"query": query, "ok": False, "agents": [], "error": err}
+    for root in (CACHE, SHIPPED):
+        try:
+            with open(_cache_path(query, root)) as fh:
+                return {**json.load(fh), "cached": True, "error": err}
+        except (OSError, ValueError):
+            continue
+    return {"query": query, "ok": False, "agents": [], "error": err}
 
 
 def part_query(item: str) -> str:
@@ -131,16 +137,96 @@ def handoffs(rev_dir: str, results: dict) -> list:
     return out
 
 
-def source(project, rev: str, max_results: int = 3, workers: int = 4) -> dict:
-    """Shortlist Darwin agents for every purchased part and handoff of `rev`; log each lookup."""
+# -- whole robots (morph.robot.pipeline2): BOM is {"rows": [...]} with make_or_buy per line ------
+
+def short_item(item: str) -> str:
+    """Catalogue description -> what a shop search understands ("Feetech STS3215 serial bus servo")."""
+    s = re.sub(r"\s*\([^)]*\)", "", item)
+    head, _, tail = s.partition(":")
+    s = (head if len(head) >= 15 or not tail else f"{head} {tail}").split(";")[0].split(",")[0]
+    return re.sub(r"\s+", " ", s.replace("\u00b7", " ").replace("\u00d7", "x")).strip()[:70]
+
+
+def robot_parts(results: dict) -> list:
+    """[(BOM item, query)]: one lookup per purchased line; fasteners and servo cables as one kit each."""
+    out, seen, kits = [], set(), {}
+    for r in (results.get("bom") or {}).get("rows") or []:
+        if r.get("make_or_buy") != "buy" or not r.get("ext_price"):
+            continue
+        cat = r.get("category")
+        if cat in ("fastener", "cable"):
+            kits.setdefault(cat, r["item"])
+            continue
+        q = short_item(r["item"])
+        if q and q.lower() not in seen:
+            seen.add(q.lower())
+            out.append((r["item"], part_query(q)))
+    if "cable" in kits:
+        out.append(("Servo cables", part_query(short_item(kits["cable"]))))
+    if "fastener" in kits:
+        out.append(("Fastener kit (M2-M4)", part_query("metric socket screw assortment kit M2 M2.5 M3 M4")))
+    return out
+
+
+def robot_handoffs(rev_dir: str, results: dict) -> list:
+    """Fabrication Morph hands off for a whole robot: the PCB, the prints, CNC and sheet-metal parts."""
+    out = []
+    gerbers = os.path.join(rev_dir, "electronics", "board", "gerbers", "gerbers.zip")
+    if os.path.exists(gerbers):
+        out.append(("pcb_fab", "PCB fabrication quote from Gerber files", [os.path.relpath(gerbers, rev_dir)]))
+    by_proc = {}
+    for g in (results.get("manufacturing") or {}).get("parts") or []:
+        files = [f"mfg/{f}" for f in g.get("files") or [] if isinstance(f, str)]
+        by_proc.setdefault(g.get("process") or "", []).extend(files)
+    mfg = os.path.join(rev_dir, "mfg")
+    if not by_proc and os.path.isdir(mfg):
+        for root, _, fns in os.walk(mfg):
+            by_proc.setdefault("fdm_print", []).extend(os.path.relpath(os.path.join(root, f), rev_dir)
+                                                       for f in fns if f.endswith(".stl"))
+    prints = [f for k, fs in by_proc.items() if k.endswith("_print") for f in fs if f.endswith((".stl", ".3mf"))]
+    if prints:
+        out.append(("print", "upload STL design file for a 3D printed parts quote, PETG", prints))
+    cnc = [f for k, fs in by_proc.items() if k.startswith("cnc") or k == "laser_cut" for f in fs if f.endswith((".dxf", ".nc", ".stl"))]
+    if cnc:
+        out.append(("cnc", "CNC machining quote from DXF and STEP files", cnc))
+    sheet = [f for f in by_proc.get("sheet_metal", []) if f.endswith(".dxf")]
+    if sheet:
+        out.append(("sheet_metal", "sheet metal fabrication quote from DXF flat patterns", sheet))
+    out.append(("design_review", "mechanical design review of a robot gripper", []))  # "...robot arm" 500s
+    return out
+
+
+def tasks_for(results: dict, rev_dir: str) -> list:
+    """[(kind, label, query, files)] for one revision: roles, purchased parts, handoffs."""
+    tasks = [(kind, kind, q, []) for kind, q in ROLES]
+    if isinstance(results.get("bom"), dict):  # whole robot
+        tasks += [("part", item, q, []) for item, q in robot_parts(results)]
+        tasks += [(kind, kind, q, files) for kind, q, files in robot_handoffs(rev_dir, results)]
+    else:
+        tasks += [("part", r["item"], part_query(r["item"]), []) for r in results.get("bom") or [] if is_purchased(r)]
+        tasks += [(kind, kind, q, files) for kind, q, files in handoffs(rev_dir, results)]
+    return tasks
+
+
+def source(project, rev: str, max_results: int = 3, workers: int = 4, on_progress=None, timeout: float | None = None) -> dict:
+    """Shortlist Darwin agents for every purchased part and handoff of `rev`; log each lookup.
+
+    on_progress(done, total, task) is called as each search returns (for the Studio's live view).
+    """
     results = project.load_results(rev)
     rev_dir = project.rev_dir(rev)
-    tasks = [(kind, kind, q, []) for kind, q in ROLES]
-    tasks += [("part", r["item"], part_query(r["item"]), []) for r in results.get("bom") or [] if is_purchased(r)]
-    tasks += [(kind, kind, q, files) for kind, q, files in handoffs(rev_dir, results)]
+    tasks = tasks_for(results, rev_dir)
 
+    found = [None] * len(tasks)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        found = list(pool.map(lambda t: search(t[2], max_results), tasks))
+        kw = {} if timeout is None else {"timeout": timeout}  # None: search()'s own default
+        futs = {pool.submit(search, t[2], max_results, **kw): i for i, t in enumerate(tasks)}
+        for n, fut in enumerate(as_completed(futs), 1):
+            i = futs[fut]
+            found[i] = fut.result()
+            if on_progress:
+                on_progress(n, len(tasks), {"kind": tasks[i][0], "item": tasks[i][1], "found": len(found[i]["agents"]),
+                                            "cached": found[i].get("cached", False)})
 
     rows, gaps = [], []
     for (kind, label, query, files), res in zip(tasks, found):

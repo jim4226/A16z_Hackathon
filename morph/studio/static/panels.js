@@ -1399,6 +1399,65 @@ export class BomPanel {
     this.root = root;
     this.cat = 'all';
     this.mob = 'all';
+    this.view = 'parts';
+    this.live = null;  // Darwin search in flight: {rev, done, total, rows: [{kind, item, found, cached}]}
+  }
+  // ---- Darwin: an agent for every purchased part and every fabrication handoff
+  findAgents() {
+    this.view = 'darwin';
+    this.live = { rev: this.cur?.rev, done: 0, total: 0, rows: [] };
+    this.renderFilters();
+    this.renderDarwin();
+    this.ctx.source?.(this.cur?.rev);
+  }
+  onSourcing(ev) {
+    if (!this.cur) return;
+    if (ev.status === 'start') { this.live = { rev: ev.rev, done: 0, total: 0, rows: [] }; this.view = 'darwin'; }
+    else if (ev.status === 'progress' && this.live) { this.live.done = ev.done; this.live.total = ev.total; this.live.rows.push(ev); }
+    else if (ev.status === 'done') { this.live = null; if (ev.rev === this.cur.rev) this.cur.sourcing = ev.sourcing; }
+    else if (ev.status === 'error') { this.live = null; this.ctx.toast(`Darwin search failed: ${ev.error}`); }
+    if (this.cur.bom) { this.renderFilters(); if (this.view === 'darwin') this.renderDarwin(); }
+  }
+  renderDarwin() {
+    const sc = this.cur.sourcing, live = this.live, el = this.root.querySelector('.tscroll');
+    const KIND = { part: ['Part', 'cart'], pcb_fab: ['PCB fab', 'chip'], print: ['3D print', 'box'], cnc: ['CNC', 'factory'], sheet_metal: ['Sheet metal', 'layers'],
+      design_review: ['Design review', 'eye'], quote: ['Quote', 'target'], order: ['Order', 'cart'] };
+    const kindTag = (k) => { const [l, ic] = KIND[k] || [k, 'spark']; return `<span class="dk k-${esc(k)}">${I(ic, 'sm')}${esc(l)}</span>`; };
+    const head = (sub, btn) => `<div class="dw-h"><div class="dw-logo">${I('spark')}</div><div class="grow"><div class="t">Darwin · agents that can supply and build this robot</div><div class="s">${sub}</div></div>${btn}</div>`;
+    if (live) {
+      const pct = live.total ? live.done / live.total * 100 : 4;
+      el.innerHTML = head(`Searching the agentic web for ${live.total || '…'} jobs: every purchased part, the PCB, the prints, a design review`, `<span class="tag acc"><span class="spin"></span>${live.done}/${live.total || '…'}</span>`) +
+        `<div class="dw-prog"><b style="width:${pct}%"></b></div><div class="dw-list">` +
+        live.rows.map((r) => `<div class="dw-row fade-in"><div class="l">${kindTag(r.kind)}<span class="it">${esc(r.kind === 'part' ? r.item : (KIND[r.kind] || [r.kind])[0])}</span></div><div class="r">${r.found ? `<span class="tag good">${r.found} agent${r.found === 1 ? '' : 's'} found</span>` : '<span class="tag warn">no agent yet</span>'}${r.cached ? '<span class="tag neutral">cached</span>' : ''}</div></div>`).join('') + '</div>';
+      return;
+    }
+    if (!sc) {
+      el.innerHTML = head('Morph designs and programs the robot; Darwin finds the agents that sell each part and fabricate the rest.', `<button class="btn primary" data-a="darwin">${I('spark', 'sm')}Find agents</button>`) +
+        emptyHTML('spark', 'Not searched yet', 'One click asks Darwin Search for an agent per purchased BOM line, plus PCB fab from the Gerbers, prints from the STLs, CNC from the DXFs and a design review.');
+      el.querySelector('[data-a="darwin"]').onclick = () => this.findAgents();
+      return;
+    }
+    const rows = sc.rows || [];
+    const withA = rows.filter((r) => r.n_agents > 0).length;
+    const order = ['pcb_fab', 'print', 'cnc', 'sheet_metal', 'design_review', 'part', 'quote', 'order'];
+    const groups = [['Fabrication handoffs', (r) => !['part', 'quote', 'order'].includes(r.kind)], ['Purchased parts', (r) => r.kind === 'part'], ['Quote & order, any part', (r) => ['quote', 'order'].includes(r.kind)]];
+    const stale = sc.rev && sc.rev !== this.cur.rev;
+    const agentChip = (a, pick) => `<a class="ag${pick ? ' pick' : ''}" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.description || '')}">${pick ? '★ ' : ''}${esc(a.name)}</a>`;
+    el.innerHTML = head(`${rows.length} lookups · <b>${withA}</b> with agents · ${(sc.gaps || []).length} gap${(sc.gaps || []).length === 1 ? '' : 's'} · searched ${esc(sc.searched || '')}${stale ? ` for ${esc(sc.rev)}` : ''}`, `<button class="btn" data-a="darwin">${I('spark', 'sm')}Search again</button>`) +
+      `<div class="dw-list">` + groups.map(([title, f]) => {
+        const g = rows.filter(f).sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+        if (!g.length) return '';
+        return `<div class="dw-g">${esc(title)}<span>${g.length}</span></div>` + g.map((r, i) => {
+          const picks = r.picked || [], names = new Set(picks.map((a) => a.name));
+          const rest = (r.agents || []).filter((a) => !names.has(a.name)).slice(0, Math.max(0, 3 - picks.length));
+          const more = r.n_agents - picks.length - rest.length;
+          const files = r.n_files ? `<span class="fl">${I('file', 'sm')}${r.n_files} file${r.n_files === 1 ? '' : 's'} · ${esc(String(r.files[0] || '').split('/').pop())}${r.n_files > 1 ? '…' : ''}</span>` : '';
+          return `<div class="dw-row fade-in" style="animation-delay:${i * 25}ms"><div class="l">${kindTag(r.kind)}<span class="it" title="${esc(r.query || '')}">${esc(r.kind === 'part' ? r.item : (KIND[r.kind] || [r.kind])[0])}</span>${files}</div>
+            <div class="r">${picks.map((a) => agentChip(a, true)).join('')}${rest.map((a) => agentChip(a, false)).join('')}${more > 0 ? `<span class="more">+${more}</span>` : ''}
+            ${r.gap === 'no_agent' ? '<span class="tag warn">gap: no agent yet</span>' : r.gap ? '<span class="tag bad">Darwin unavailable</span>' : ''}${r.cached ? '<span class="tag neutral" title="Darwin did not answer; last good result">cached</span>' : ''}</div></div>`;
+        }).join('');
+      }).join('') + `<div class="dw-note">${I('alert', 'sm')}<span>${esc(sc.note || '')} ★ = the agent Morph routes this work to.</span></div></div>`;
+    el.querySelector('[data-a="darwin"]').onclick = () => this.findAgents();
   }
   update(cur, prev) {
     this.cur = cur;
@@ -1426,17 +1485,23 @@ export class BomPanel {
       <div class="stat pcfg"><div class="l" style="margin-bottom:4px">${I('factory', 'sm')}Per build config</div>
         ${['prototype', 'pilot', 'production'].filter((k) => per[k] != null).map((k) => `<div class="row"><span class="n${k === curCfg ? ' on' : ''}">${esc(pretty(k))}</span><span class="meter"><b class="${k === curCfg ? 'acc' : ''}" style="width:${per[k] / pmax * 100}%;${k === curCfg ? '' : 'background:var(--bg5);filter:brightness(1.6)'}"></b></span><span class="p">${money(per[k], false)}</span></div>`).join('')}</div>`;
     this.renderFilters();
-    this.renderTable(changedNode(cur, 'bom'));
+    if (this.view === 'darwin') this.renderDarwin(); else this.renderTable(changedNode(cur, 'bom'));
   }
   renderFilters() {
     const rows = this.cur.bom.rows || [];
     const cnt = (c) => rows.filter((r) => r.category === c).length;
     const cats = CATS.filter((c) => cnt(c)).concat([...new Set(rows.map((r) => r.category))].filter((c) => !CATS.includes(c)));
-    this.root.querySelector('.filters').innerHTML = `<button class="fchip${this.cat === 'all' ? ' on' : ''}" data-c="all">All <span class="c">${rows.length}</span></button>` +
+    const sc = this.cur.sourcing, nAg = sc ? (sc.rows || []).filter((r) => r.n_agents > 0).length : null;
+    const viewSw = `<div class="pills" data-vw><button data-vw="parts" class="${this.view === 'parts' ? 'on' : ''}">${I('cart', 'sm')}Parts</button><button data-vw="darwin" class="${this.view === 'darwin' ? 'on' : ''}">${I('spark', 'sm')}Darwin agents${this.live ? ' <span class="spin"></span>' : nAg != null ? ` <span class="c">${nAg}</span>` : ''}</button></div>`;
+    this.root.querySelector('.filters').innerHTML = viewSw + (this.view === 'parts' ? `<span class="sep"></span><button class="fchip${this.cat === 'all' ? ' on' : ''}" data-c="all">All <span class="c">${rows.length}</span></button>` +
       cats.map((c) => `<button class="fchip${this.cat === c ? ' on' : ''}" data-c="${esc(c)}" title="${cnt(c)} items"><i style="background:${CAT_COL[c] || '#838c9d'}"></i>${esc(catLabel(c))}</button>`).join('') +
-      `<span class="grow"></span><div class="pills" data-m><button data-m="all" class="${this.mob === 'all' ? 'on' : ''}">All</button><button data-m="buy" class="${this.mob === 'buy' ? 'on' : ''}">Buy</button><button data-m="make" class="${this.mob === 'make' ? 'on' : ''}">Make</button></div>`;
+      `<span class="grow"></span><div class="pills" data-m><button data-m="all" class="${this.mob === 'all' ? 'on' : ''}">All</button><button data-m="buy" class="${this.mob === 'buy' ? 'on' : ''}">Buy</button><button data-m="make" class="${this.mob === 'make' ? 'on' : ''}">Make</button></div>`
+      : `<span class="grow"></span>${this.live ? '' : `<button class="btn primary" data-a="find">${I('spark', 'sm')}${sc ? 'Search Darwin again' : 'Find agents on Darwin'}</button>`}`);
     this.root.querySelectorAll('.fchip').forEach((b) => (b.onclick = () => { this.cat = b.dataset.c; this.renderFilters(); this.renderTable(); }));
     this.root.querySelectorAll('[data-m] button').forEach((b) => (b.onclick = () => { this.mob = b.dataset.m; this.renderFilters(); this.renderTable(); }));
+    this.root.querySelectorAll('[data-vw] button').forEach((b) => (b.onclick = () => { this.view = b.dataset.vw; this.renderFilters(); if (this.view === 'darwin') this.renderDarwin(); else this.renderTable(); }));
+    const f = this.root.querySelector('[data-a="find"]');
+    if (f) f.onclick = () => this.findAgents();
   }
   renderTable(regen) {
     const rows = (this.cur.bom.rows || []).filter((r) => (this.cat === 'all' || r.category === this.cat) && (this.mob === 'all' || r.make_or_buy === this.mob));

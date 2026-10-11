@@ -342,7 +342,28 @@ def cmd_demo(a):
     _report(p, ["r001", best] + revs[-2:], "report.html")
 
 
+def load_env(path=None):
+    """KEY=value lines from the repo's .env (git-ignored) into the environment, without overriding
+    anything already set. Lets the demo laptop keep its Keewano/Anthropic keys in one file."""
+    path = path or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not os.path.isfile(path):
+        return []
+    loaded = []
+    with open(path, encoding="utf-8-sig") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip().removeprefix("export ").strip(), v.strip().strip('"').strip("'")
+            if k and v and k not in os.environ:
+                os.environ[k] = v
+                loaded.append(k)
+    return loaded
+
+
 def main(argv=None):
+    load_env()
     ap = argparse.ArgumentParser(prog="morph", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 

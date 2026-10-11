@@ -1128,7 +1128,10 @@ class _Robot:
                 yd = yd / max(np.linalg.norm(yd), 1e-9)
                 if np.dot(y, yd) < 0:
                     yd = -yd
-                er = er + np.cross(y, yd)
+                ey = np.cross(y, yd)
+                # a 6-DOF wrist controls tilt about the TCP x axis, which the z term already corrects:
+                # count only the yaw part of the y term there, or each step overshoots ~2x and oscillates
+                er = er + (zd * np.dot(ey, zd) if self.n >= 6 else ey)
             ep_n, er_n = np.linalg.norm(ep), np.linalg.norm(er)
             if ep_n < tol_mm * MM and er_n < 2e-3:
                 break

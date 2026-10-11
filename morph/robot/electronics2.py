@@ -212,7 +212,7 @@ def _pick_supply(vrange, nom, need_a) -> dict:
             continue
         v, a = m["out_v"], m["out_a"]
         if vrange[0] - 1e-6 <= v <= vrange[1] + 1e-6:
-            cands.append((abs(v - nom) / nom > 0.15, a < need_a * 1.25, abs(v - nom), catalog.price(k), k))
+            cands.append((a < need_a * 1.25, abs(v - nom) / nom > 0.15, abs(v - nom), catalog.price(k), k))  # enough current first
     if cands:
         cands.sort()
         k = cands[0][-1]

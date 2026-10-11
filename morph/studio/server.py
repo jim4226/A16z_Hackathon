@@ -16,6 +16,7 @@ import json
 import mimetypes
 import os
 import queue
+import shutil
 import threading
 import time
 import traceback
@@ -57,6 +58,34 @@ def _url(base: str, rel: str | None) -> str | None:
     return f"{base}/{rel}" if rel else None
 
 
+def _sourcing(p: RobotProject, rev: str) -> dict | None:
+    """<rev>/sourcing_darwin.json, trimmed to what the BOM tab shows."""
+    path = os.path.join(p.rev_dir(rev), "sourcing_darwin.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as fh:
+            rep = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    ag = lambda a: {"name": a.get("name"), "url": a.get("url"), "can_start": a.get("can_start"),
+                    "description": (a.get("description") or "")[:160]}
+    rows = [{"kind": r.get("kind"), "item": r.get("item"), "query": r.get("query"), "files": (r.get("files") or [])[:3],
+             "n_files": len(r.get("files") or []), "gap": r.get("gap"), "cached": r.get("cached"),
+             "error": (r.get("error") or "")[:120] or None, "n_agents": len(r.get("agents") or []),
+             "picked": [ag(a) for a in r.get("picked") or []], "agents": [ag(a) for a in (r.get("agents") or [])[:4]]}
+            for r in rep.get("rows") or []]
+    return {"rev": rep.get("rev"), "rows": rows, "gaps": rep.get("gaps") or [], "note": rep.get("note"),
+            "searched": time.strftime("%H:%M", time.localtime(os.path.getmtime(path)))}
+
+
+def integrations() -> dict:
+    """Which sponsor services are configured on this machine (keys come from the environment)."""
+    env = os.environ.get
+    return {"keewano": {"send": bool(env("KEEWANO_API_KEY")), "query": bool(env("KEEWANO_PAT") and env("KEEWANO_PROJECT_ID"))},
+            "darwin": {"search": True}}
+
+
 def rev_payload(p: RobotProject, rev: str) -> dict:
     res, d = p.load_results(rev), p.load_design(rev)
     base = f"/files/{rev}"
@@ -94,7 +123,7 @@ def rev_payload(p: RobotProject, rev: str) -> dict:
         "cad": cad, "sizing": res.get("sizing"), "sims": sims, "electronics": el or None,
         "manufacturing": mfg or None, "bom": res.get("bom"), "manual": man or None,
         "gripper": {"analysis": grip.get("analysis"), "sim": grip.get("sim"), "force": grip.get("force")},
-        "time_study": time_card,
+        "time_study": time_card, "sourcing": _sourcing(p, rev),
     }
 
 
@@ -102,6 +131,8 @@ class Studio:
     def __init__(self, project: RobotProject, home: str | None = None):
         self.p, self.hub, self.busy = project, Hub(), threading.Lock()
         self.home = home or os.path.dirname(project.root)
+        self.start = os.path.basename(project.root)
+        self.sourcing = threading.Lock()
 
     def projects(self) -> list:
         out = []
@@ -126,7 +157,7 @@ class Studio:
     def state(self):
         rev = self.p.latest()
         out = {"project": os.path.basename(self.p.root), "projects": self.projects(), "revs": self.p.revs(),
-               "history": self.hub.history}
+               "history": self.hub.history, "integrations": integrations()}
         if rev:
             out["current"] = rev_payload(self.p, rev)
             parent = out["current"]["parent"]
@@ -177,6 +208,54 @@ class Studio:
             self.hub.send({"type": "assistant", "text": it["reply"]})
             return
         self.apply(it["changes"], msg, user_text=msg, reply=it["reply"], source=it["source"])
+
+    def source(self, rev: str | None = None):
+        """Darwin: shortlist agents for every purchased part and fab handoff of a revision, streamed."""
+        from .. import darwin
+        if not self.sourcing.acquire(blocking=False):
+            return
+        p = self.p
+        rev = rev if rev in p.revs() else p.latest()
+        try:
+            self.hub.send({"type": "sourcing", "status": "start", "rev": rev, "project": os.path.basename(p.root)})
+            prog = lambda n, tot, t: self.hub.send({"type": "sourcing", "status": "progress", "rev": rev, "done": n, "total": tot, **t})
+            darwin.source(p, rev, workers=6, on_progress=prog, timeout=20)  # the Studio shows cached answers rather than hang
+            self.hub.send({"type": "sourcing", "status": "done", "rev": rev, "project": os.path.basename(p.root),
+                           "sourcing": _sourcing(p, rev)})
+        except Exception as exc:
+            traceback.print_exc()
+            self.hub.send({"type": "sourcing", "status": "error", "rev": rev, "error": str(exc)})
+        finally:
+            self.sourcing.release()
+
+    def reset(self) -> bool:
+        """Demo reset: every project goes back to its last full build (the newest revision without a
+        parent); the chat edits made after it are deleted. Same as deleting the projects folder, but instant."""
+        if not self.busy.acquire(blocking=False):
+            return False
+        try:
+            for name in sorted(os.listdir(self.home)):
+                p = RobotProject(os.path.join(self.home, name))
+                revs = p.revs()
+                base = [r for r in revs if not (self._results(p, r) or {}).get("parent")]
+                if not base:
+                    continue
+                for r in revs[revs.index(base[-1]) + 1:]:
+                    shutil.rmtree(p.rev_dir(r), ignore_errors=True)
+                p.log({"type": "demo_reset", "rev": base[-1]})
+            self.p = RobotProject(os.path.join(self.home, self.start))
+            self.hub.history.clear()
+            self.hub.send({"type": "project", "project": self.start})
+            return True
+        finally:
+            self.busy.release()
+
+    @staticmethod
+    def _results(p, r):
+        try:
+            return p.load_results(r)
+        except (OSError, ValueError):
+            return None
 
     def params(self, changes: dict):
         desc = ", ".join(f"{k.split('.')[-1].replace('_', ' ')} → {v}" for k, v in changes.items())
@@ -262,6 +341,12 @@ def make_handler(studio: Studio):
                 return self._send(202, b'{"ok":true}')
             if u.path == "/api/project":
                 ok = studio.switch(str(body.get("name", "")))
+                return self._send(200 if ok else 409, json.dumps({"ok": ok}).encode())
+            if u.path == "/api/source":
+                threading.Thread(target=studio.source, args=(body.get("rev"),), daemon=True).start()
+                return self._send(202, b'{"ok":true}')
+            if u.path == "/api/reset":
+                ok = studio.reset()
                 return self._send(200 if ok else 409, json.dumps({"ok": ok}).encode())
             if u.path == "/api/params":
                 changes = body.get("changes") or {}

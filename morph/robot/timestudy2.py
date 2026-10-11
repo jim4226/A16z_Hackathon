@@ -88,12 +88,18 @@ def project(p, base: dict | None = None) -> dict:
     for e in p.entries():
         if e.get("type") == "human_time":
             human[e.get("rev") or "_"] = human.get(e.get("rev") or "_", 0.0) + e["minutes"]
-    revs, tb, ta = [], 0.0, 0.0
+    revs, tb, ta, designed = [], 0.0, 0.0, False
     for r in p.revs():
         try:
             res = p.load_results(r)
         except FileNotFoundError:
             continue
+        if not res.get("parent"):
+            # a parentless revision after the first is the same design rebuilt by newer Morph code,
+            # not new engineering work: count the design once
+            if designed:
+                continue
+            designed = True
         card = revision(res, base, human.get(r, 0.0))
         tb += card["before_min"]
         ta += card["after_min"]

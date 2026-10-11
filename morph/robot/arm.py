@@ -34,6 +34,26 @@ output faces -y (so its printed label faces the front, +x), the child link is a 
 cheek bolts to the horn (-y side) and whose idler cheek bolts to the idler / rides on a bearing (+y
 side): dual-sided support at every pitch joint. A "dual" joint (two actuators back to back, both
 horns driving the clevis) is used automatically when one actuator cannot hold the shoulder/elbow.
+
+Public API
+----------
+size(design) -> sizing dict (contract keys + "count" per joint, "kind", "reach_requested_mm", "gripper",
+    "hand_mass_g", "build_config", "notes"). Link lengths: L3 (wrist + hand) comes from the real hardware stack;
+    L1 + L2 = max(reach_mm - L3, what the task's top-down pick/place needs incl. the approach hover, minimums).
+build(design, sizing=None, electronics_plan=None) -> Assembly. Joint limits come from a 2D sweep of the link
+    silhouettes; Joint.meta = {"count", "servo_sign"} (servo output sense vs joint axis). Every Part has a
+    step and an explode vector (home pose scaled about the base + a local offset along the part's own axis);
+    Part.meta: "step_key", "label", "mass_g" (printed parts: shell + 18 % infill estimate); fasteners carry
+    {"spec", "fastener_kind", "qty", "torque_nm"} and one Part holds a whole bolt pattern (qty n); CNC /
+    laser parts set profile + profile_frame + thickness; sheet-metal parts add meta["sheet"] with the flat
+    pattern as `profile`. Cables: servo bus daisy chain (bus_0 = driver -> ID 1, ...) or PWM star (pwm_i),
+    FSR leads, camera / IMU / e-stop / power / USB; points run along the idler (+y) side of each link with
+    service loops beside the joint axes.
+assembly.meta adds: generator, build_config, title, dof, actuators, actuator_counts, servo_ids, bus, links_mm,
+    gripper {actuator, teeth, module, pitch_radius_mm, travel_mm, overtravel_mm, tip_mm, ...}, joint_limits,
+    base {footprint_bounds, clamp_holes}, notes, warnings, issues (always [] from geometry).
+export_pose_glb(asm, path, q=None, cables=True, explode=0.0): posed GLB (Studio-like linear colours, cable
+    tubes) for snapshots; cable_mesh(asm, cable, q) gives one cable tube.
 """
 
 from __future__ import annotations
@@ -1139,7 +1159,6 @@ class _Builder:
     # ------------------------------------------------------------ joint hardware (actuators, horns, bolts)
     def joint_hw(self, j: _JG, par, Tp, child, Tc, prefix, step_par, step_child):
         A = j.A
-        cfg = self.cfg
         for i, Ta in enumerate(j.T_acts):
             sfx = "" if j.count == 1 else ("_a", "_b")[i]
             comp = components.actuator(j.key, horn=False)
@@ -1382,7 +1401,6 @@ class _Builder:
         """Printed / moulded link body. prox = (jg, T) child-side clevis or None; dists = [("jg", jg, T) |
         ("roll", A, T) | ("flange", r, z0, z1, pcd)]. Returns (manifold, xz silhouette polygon, info)."""
         hull_parts, adds, cuts = [], [], []
-        sil = []
         info = {"z0": None, "z1": None}
         neck = None
         if prox:
@@ -1433,6 +1451,8 @@ class _Builder:
             face = lambda z: D2p + (D2d - D2p) * min(max((z - zn1) / max(zc0 - zn1, 1e-6), 0.0), 1.0)  # noqa: E731
             sil2 = self.silhouette(body)
             reg = sil2.buffer(-6.0, join_style=1).intersection(box(-500, info["z0"] + 5, 500, info["z1"] - 3))
+            face = self.fit_face(body, reg, face)
+            reg = self.pocket_band(body, reg, face)
             if not reg.is_empty and reg.area > 120 and reg.geom_type == "Polygon":
                 reg = reg.buffer(-2.0, join_style=1).buffer(2.0, join_style=1)
                 if reg.geom_type == "Polygon" and not reg.is_empty:
@@ -1474,6 +1494,72 @@ class _Builder:
         tm.apply_transform(F)
         self.struct(f"{link}_logo", link, tm, step, (0, -12.0, 0), role="dark", kind="visual", collide=False,
                     label="logo inlay")
+
+    @staticmethod
+    def _depths(body, z, xs):
+        """Side-face depths (-y face, +y face) of a manifold at height z for each x in xs (None where absent)."""
+        try:
+            sec = unary_union([Polygon(p).buffer(0) for p in body.slice(float(z)).to_polygons() if len(p) >= 3])
+        except Exception:  # noqa: BLE001
+            return [None for _ in xs]
+        out = []
+        for x in xs:
+            cut = LineString([(x, -1000.0), (x, 1000.0)]).intersection(sec) if not sec.is_empty else sec
+            out.append(None if cut.is_empty else (-cut.bounds[1], cut.bounds[3]))
+        return out
+
+    @classmethod
+    def fit_face(cls, body, reg, face, n=9):
+        """Least-squares straight line through the real side-face depth along the pocket (the analytic taper
+        misses cradles that are deeper than the cup); falls back to ``face`` when it cannot be measured."""
+        if reg.is_empty:
+            return face
+        x0, z0, x1, z1 = reg.bounds
+        zs, ds = [], []
+        for z in np.linspace(z0 + 1.0, z1 - 1.0, n):
+            d = cls._depths(body, z, [0.5 * (x0 + x1)])[0]
+            if d is not None:
+                zs.append(z)
+                ds.append(0.5 * (d[0] + d[1]))
+        if len(zs) < 4:
+            return face
+        b, a = np.polyfit(zs, ds, 1)
+        return lambda z: float(a + b * z)  # noqa: E731
+
+    @classmethod
+    def pocket_band(cls, body, reg, face, n=18):
+        """Trim a pocket region to the z band where the real side faces sit within -0.5..+1.5 mm of the linear
+        ``face(z)`` model. Where a cradle or collar bulges the hull outward the cut would only hollow out a void
+        under a thin skin (and bury the logo), so the pocket stops short of it."""
+        if reg.is_empty or reg.geom_type != "Polygon":
+            return reg
+        _, z0, _, z1 = reg.bounds
+        zs = np.linspace(z0 + 0.5, z1 - 0.5, n)
+        ok = []
+        for z in zs:
+            span = reg.intersection(box(-500, z - 0.05, 500, z + 0.05))
+            if span.is_empty:
+                ok.append(True)
+                continue
+            sx0, _, sx1, _ = span.bounds
+            deps = cls._depths(body, z, (sx0, 0.5 * (sx0 + sx1), sx1))
+            ok.append(all(d is not None and all(-0.5 <= v - face(z) <= 1.5 for v in d) for d in deps))
+        if all(ok):
+            return reg
+        best, run = (0, -1), None
+        for i, g in enumerate(ok + [False]):
+            if g and run is None:
+                run = i
+            elif not g and run is not None:
+                if i - 1 - run > best[1] - best[0]:
+                    best = (run, i - 1)
+                run = None
+        if best[1] < 0 or zs[best[1]] - zs[best[0]] < 20.0:
+            return Polygon()
+        lo = z0 if best[0] == 0 else zs[best[0]]
+        hi = z1 if best[1] == n - 1 else zs[best[1]]
+        out = reg.intersection(box(-500, lo, 500, hi))
+        return out if out.geom_type == "Polygon" else Polygon()
 
     def silhouette(self, man):
         """xz silhouette (convex hull of the projected vertices)."""
@@ -1684,7 +1770,6 @@ class _Builder:
         return hs
 
     def links_pilot(self):
-        L = self.lay
         for link, prox, dists, step, label in self.link_specs():
             jp, Tp = prox
             short = {"upper_arm": "ua", "forearm": "fa", "wrist": "wr", "wrist_yaw": "wy"}[link]
@@ -1726,7 +1811,6 @@ class _Builder:
                     w_ = core.intersection(box(-500, a0 + 3.0, 500, a1 - 3.0))
                     if not w_.is_empty and w_.area > 60:
                         win.append(w_.buffer(-3.0, join_style=1).buffer(3.0, join_style=1))
-            br_z = z0b + SHEET_T / 2
             br_holes = [Point(x, z0b + 9.0).buffer(1.7, quad_segs=8) for x in (-jp.neck * 0.55, jp.neck * 0.55)]
             so_pts = []
             if zB - zA > 30:
@@ -1748,8 +1832,6 @@ class _Builder:
                          material=mat, color=col, process=proc, process_options=opts, profile=poly,
                          profile_frame=Tp @ _xz_frame(y1), thickness=PLATE_T, label=f"{label} side plate ({side} side)")
             # spacers between plate and horn / idler where the plates sit outside the cheek faces
-            gap_h = jp.y_h - (-D2m + PLATE_T)
-            gap_i = (D2m - PLATE_T) - jp.y_i
             for nm, ya, yb in (("horn", -D2m + PLATE_T, jp.y_h), ("idler", jp.y_i, D2m - PLATE_T)):
                 if yb - ya > 0.4:
                     sp = _D(_ycyl(jp.r_ch - 3.0, ya, yb, f=0.3), _ycyl(4.2, ya - 1, yb + 1, f=0.0))
@@ -1800,7 +1882,6 @@ class _Builder:
                              process="cnc_mill", process_options=("cnc_mill", "mjf_print"), label=f"{label} machined mount")
             # MJF cable cover on the back between the plates
             if zB - zA > 24:
-                zc = (zA + zB) / 2
                 xs = sil.intersection(box(-500, zA, 500, zB)).bounds
                 xb = xs[0]
                 cov = _rbox2(xb + 0.5, xb + 4.0, -D2m + PLATE_T + 0.3, D2m - PLATE_T - 0.3, zA - 4, zB + 2, r=1.2, f=0.8)
@@ -2046,10 +2127,9 @@ class _Builder:
     # ------------------------------------------------------------ base + electronics bay
     def bay_layout(self):
         """Pack the electronics bay (behind the turntable). Returns placements and the base outline."""
-        L = self.lay
         R_f = 72.0
         ep = self.eplan or {}
-        mods, panel = [], []
+        mods = []
         custom = ep.get("custom_pcb") if (ep.get("config") == "custom_pcb" or ep.get("custom_pcb")) else None
         for m in ep.get("modules") or []:
             spec = catalog.MODULES.get(m.get("key"))
@@ -2122,8 +2202,6 @@ class _Builder:
         self.footprint = fp
         inner = fp.buffer(-WALL, join_style=2)
         bay = inner.intersection(box(x_back - 10, -500, x_bay, 500))
-        A1 = L.A1
-        holes_deck = [Point(0, 0).buffer(28.0, quad_segs=32)]
         ri, ro, Bb = 30.0, 50.0, 8.0
         rb = (ri + ro) / 2 + 2.5
         lh = (rb + Bb / 4 * 1.6 + ro) / 2
@@ -2221,7 +2299,6 @@ class _Builder:
                 vents.append(_xf(_rbox(3.0, 10.0, 14.0, (0, 0, 0), r=1.4, f=0.0), trans((xx, sy * ly / 2, foot + H / 2))))
         tray = _D(tray, vents + [_cyl(3.3, 10, foot - 1, xy=c, segs=20) for c in clamps])
         Rb = 1.0
-        ba = math.pi / 2 * (Rb + 0.44 * t)
         flat = Polygon([(-H, 0), (0, 0), (0, -H), (lx, -H), (lx, 0), (lx + H, 0), (lx + H, ly), (lx, ly), (lx, ly + H),
                         (0, ly + H), (0, ly), (-H, ly)])
         bends = [{"line": [[0, 0], [0, ly]], "angle_deg": 90.0, "radius": Rb},
@@ -2414,14 +2491,12 @@ class _Builder:
         tcp = g["tcp_z"]
         M = _mech_to_gb(tcp)
         self.M = M
-        px, y_top, py0 = g["px"], g["y_top"], g["py0"]
+        px, py0 = g["px"], g["py0"]
         zp0, zp1 = g["z_plate"]
         zr0, zr1 = g["z_rack"]
         zb0, zb1 = g["z_boss"]
-        zf = g["w"] / 2
         zg = lambda y_m: tcp - y_m  # noqa: E731  mechanism height -> gripper_base z
         r_mount = (L.Ar.horn_d / 2 + 5.0) if L.Ar is not None else 24.0
-        y_front = -(r_mount + 3.0)
         y_back = zp1 + 13.0
         z_pb = zg(py0)                          # plate bottom (gb z)
         # ---- servo (laid flat behind the plate, output towards the pinion)
@@ -2494,13 +2569,9 @@ class _Builder:
                      color=C_ANOD, process="cnc_mill", process_options=("cnc_mill", "laser_cut"), profile=prof,
                      profile_frame=_xz_frame(zp1), thickness=zp1 - zp0, label="gripper back plate (6061)")
             br = _D(_U(flange, gus, walls), cuts)
-            self.add("hand_bracket", "gripper_base", br, "structural", "gripper", (0, 0, -18), material="Al5052",
-                     color=C_SHEET, process="sheet_metal", process_options=("sheet_metal",),
-                     profile=box(0, 0, 2 * px, (y_back - y_front) + (z_pb - T_FLANGE)), profile_frame=np.eye(4),
-                     thickness=SHEET_T, sheet={"thickness": SHEET_T, "k_factor": 0.44,
-                                               "bends": [{"line": [[0, y_back - y_front], [2 * px, y_back - y_front]],
-                                                          "angle_deg": 90.0, "radius": 1.2}]},
-                     label="hand bracket (folded 5052)")
+            self.add("hand_flange", "gripper_base", br, "structural", "gripper", (0, 0, -18), material="Al6061",
+                     color=C_ANOD_DK, process="cnc_mill", process_options=("cnc_mill", "mjf_print"), profile=fl_poly,
+                     profile_frame=np.eye(4), thickness=T_FLANGE, label="hand flange with gussets (6061, dark anodised)")
             if len(parts) > 2 + len(walls) + len(gus):
                 self.struct("hand_servo_housing", "gripper_base", _D(parts[-1], cuts), "gripper", (0, 25, 0), role="cover",
                             label="servo housing (MJF)")
@@ -2584,7 +2655,6 @@ class _Builder:
                             profile=poly, profile_frame=Tgb, thickness=w,
                             label="TPU contact pad (dovetail)" if pname == "pad" else "finger")
             if sensor in FSR:
-                fsr = FSR[sensor]
                 v_floor = f.thickness_mm + 1.5
                 Tfsr = Tgb @ np.array([[0, -1, 0, u_c], [0, 0, 1, v_floor], [-1, 0, 0, w / 2], [0, 0, 0, 1.0]])
                 comp = components.module("fsr402")
@@ -2610,7 +2680,7 @@ class _Builder:
         a.add_joint(Joint("gripper", "prismatic", "gripper_base", "jaw_left", np.eye(4), (-1, 0, 0), -ot, round(T, 2),
                           actuator=A.key, effort=float(self.d.gripper.force_n),
                           velocity=round(float(A.spec.get("speed_rad_s", 4.0)) * r * 0.8, 1),
-                          meta={"pitch_radius_mm": r, "teeth": g["n"], "module": _mech.MODULE,
+                          meta={"pitch_radius_mm": r, "teeth": g["n"], "module": _mech.MODULE, "servo_sign": -1,
                                 "stall_force_n": round(A.torque * 0.8 / (r / 1000.0), 1)}))
         a.add_joint(Joint("gripper_right", "prismatic", "gripper_base", "jaw_right", np.eye(4), (1, 0, 0), -ot, round(T, 2),
                           mimic={"joint": "gripper", "multiplier": 1.0}))
@@ -2872,7 +2942,6 @@ def _cables(b):
             asm.cables.append(Cable(f"pwm_{i}", pts, diameter=2.4, color=pwm_col, src=f"{drv}.CH{ch}", dst=f"{sv['joint']}.servo",
                                     conductors=3, meta={"kind": "pwm", "to_joint": sv["joint"], "channel": ch}))
     # FSR leads: jaw -> gripper base -> trunk -> controller ADC
-    ig = attach("gripper_base")
     igc = max(i for i, (l, _, k) in enumerate(trunk) if l == "gripper_base" and k == "cross")
     for side, (link, p) in sorted(getattr(b, "fsr_end", {}).items()):
         p = np.asarray(p, float)
@@ -2970,7 +3039,6 @@ def _steps(b):
     a = b.asm
     cfg = b.cfg
     fam = d.arm.actuator_family
-    ids = dict(getattr(b, "servo_ids", []))
     sid = {}
     for jn, i in getattr(b, "servo_ids", []):
         sid.setdefault(jn, []).append(i)

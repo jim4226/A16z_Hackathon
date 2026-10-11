@@ -4,6 +4,7 @@ import {
   I, esc, fmt, money, pretty, sleep, h, ViewerAdapter, clearCaches,
   RobotPanel, SimPanel, ElecPanel, MfgPanel, AsmPanel, BomPanel, forceWindowSVG,
 } from './panels.js';
+import { Presenter } from './present.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -13,7 +14,7 @@ const FIX_BASE = new URL('./fixtures/', import.meta.url).href;
 
 const SUGGEST = [
   ['Swap to Dynamixel servos', 'cpu'], ['Use a custom PCB', 'chip'], ['Make it 6-DOF', 'axis'], ['Add a wrist camera', 'camera'],
-  ['Pilot build: CNC + sheet metal', 'factory'], ['Make it work for a strawberry', 'leaf'], ['Increase reach to 380 mm', 'ruler'],
+  ['Pilot build: CNC + sheet metal', 'factory'], ['Make it work for a strawberry', 'leaf'], ['Increase reach to 550 mm', 'ruler'],
 ];
 const TABS = ['robot', 'sim', 'elec', 'mfg', 'asm', 'bom'];
 const NODE_TAB = { sizing: 'robot', gripper: 'robot', cad: 'robot', geometry: 'robot', arm: 'robot', sim: 'sim', simulate: 'sim',
@@ -64,6 +65,11 @@ class ServerBackend {
   async rev(r) { return getFresh(`/api/rev?rev=${encodeURIComponent(r)}`); }
   chat(message) { return post('/api/chat', { message }); }
   params(changes) { return post('/api/params', { changes }); }
+  source(rev) { return post('/api/source', { rev }); }
+  async reset() {
+    const r = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    return r.ok;
+  }
   async project(name) {
     const r = await fetch('/api/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
     return r.ok;
@@ -225,14 +231,15 @@ function toast(text) {
 }
 
 // ------------------------------------------------------------------ app state
-const S = { project: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null };
-let backend, viewer, panels;
+const S = { project: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null, integrations: {}, busy: false };
+let backend, viewer, panels, presenter;
 
 const ctx = {
   resolve, join, getJSON, getText, toast, fixture: FIXTURE,
   get current() { return S.current; }, get previous() { return S.previous; },
   get viewer() { return viewer; },
   postParams: (changes) => applyChanges(changes),
+  source: (rev) => backend?.source?.(rev),
   showTab: (t, o) => showTab(t, o),
   isActive: (t) => S.tab === t,
 };
@@ -269,10 +276,12 @@ async function reloadProject() {
   S.project = st.project; S.projects = st.projects || S.projects; S.revs = st.revs || []; S.latest = st.current?.rev || null;
   S.labels = {}; S.robotKey = null; S.justAdded = null;
   $('#messages').innerHTML = '';
+  S.integrations = st.integrations || S.integrations;
   for (const m of st.history || []) addMsg(m.type, m.text, m.changes);
   if (!(st.history || []).length && st.current) addMsg('assistant', `Switched to ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`);
   renderProjects();
   if (st.current) await show(st.current, st.previous, { tour: false });
+  S.reloads = (S.reloads || 0) + 1;
   for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
 }
 
@@ -553,18 +562,48 @@ function renderInspector(cur, prev) {
       <div class="lb">${esc(cur.label || 'Revision ' + cur.rev)}</div>
       <div class="mt">${cur.parent ? `from <span class="mono">${esc(cur.parent)}</span> · ` : 'first revision · '}${nComp}/${prov.length || nodesOf(cur).length} stages regenerated</div>
     </div>
+    ${timeCard(cur)}
     <div class="isec"><div class="sec-t">Quick facts</div><div class="facts">${facts.map(([l, v, u, k]) => `<div class="fact${flash(k)}"><div class="l">${l}</div><div class="v">${v ?? '–'}${u && v != null && v !== '–' ? `<small>${u}</small>` : ''}</div></div>`).join('')}</div></div>
     <div class="isec"><div class="sec-t">What changed${prev ? `<span class="r">vs ${esc(prev.rev)}</span>` : ''}</div>
       ${changes.length ? `<div class="chg">${changes.map(([k, [a, b]]) => `<div class="c"><div class="k">${esc(k)}</div><div class="vv"><span class="o">${esc(pretty(a, true))}</span>${I('arrow', 'sm')}<span class="n">${esc(pretty(b, true))}</span></div></div>`).join('')}</div>`
         : `<div class="muted" style="font-size:12px">${cur.parent ? 'No parameter changes.' : 'First revision: everything was generated from the request.'}</div>`}</div>
     <div class="isec"><div class="sec-t">Metrics${prev ? `<span class="r">Δ vs ${esc(prev.rev)}</span>` : ''}</div><table class="mt-table">${rows.join('')}</table></div>
-    ${force?.window_n && force.window_n[0] != null && force.window_n[1] != null ? `<div class="isec"><div class="sec-t">Grip force window<span class="r">per finger</span></div><div class="fw">${forceWindowSVG(force)}</div></div>` : ''}
+    ${force?.window_n && force.window_n[0] != null && force.window_n[1] != null ? `<div class="isec"><div class="sec-t">Grip force window<span class="r">per finger</span></div><div class="fw">${forceWindowSVG(force)}</div>${keewanoLine(cur)}</div>` : ''}
     <div class="isec"><div class="sec-t">Issues &amp; warnings</div>
       ${errs.map(([n, e]) => `<div class="issue bad">${I('x', 'sm')}<span><b>${esc(n)}</b>: ${esc(e)}</span></div>`).join('')}
       ${issues.map((t) => `<div class="issue bad">${I('x', 'sm')}<span>${esc(t)}</span></div>`).join('')}
       ${warns.map((t) => `<div class="issue warn">${I('alert', 'sm')}<span>${esc(t)}</span></div>`).join('')}
       ${!issues.length && !warns.length && !errs.length ? `<div class="issue ok">${I('check', 'sm')}<span>No issues: torque margins, grasp force window, DRC and DFM checks pass.</span></div>` : ''}
     </div>`;
+}
+// "By hand" = cited engineering hours for every step this revision touched (morph/robot/time_baseline.json);
+// "With Morph" = measured compute + a stated review allowance. See docs/TIME_SAVED.md.
+const hrs = (m) => (m >= 120 ? `${fmt(m / 60, '', m >= 6000 ? 0 : 1)}<small>h</small>` : `${fmt(m, '', 0)}<small>min</small>`);
+const mins = (m) => (m < 1 ? `${fmt(m * 60, '', 0)}<small>s</small>` : `${fmt(m, '', m < 10 ? 1 : 0)}<small>min</small>`);
+function timeCard(cur) {
+  const t = cur.time_study;
+  if (!t || t.error || !t.revision) return '';
+  const r = t.revision, p = t.project || {};
+  const sp = r.speedup ? `${Math.round(r.speedup).toLocaleString('en-US')}×` : '';
+  const pr = (p.revisions || []).length;
+  const bar = r.before_min ? Math.max(0.6, Math.min(100, r.after_min / r.before_min * 100)) : 0;
+  return `<div class="isec tcard fade-in" id="timeCard">
+    <div class="sec-t">${I('clock', 'sm')}Time saved<span class="r">${r.first ? 'whole design' : 'this change'}</span></div>
+    <div class="tc-main"><div class="tc-col"><div class="l">By hand</div><div class="v">${hrs(r.before_min)}</div><div class="s">${r.first ? `≈ ${fmt(r.before_min / 60 / 40, '', 1)} engineer-weeks` : `${r.rows.length} step${r.rows.length === 1 ? '' : 's'} redone`}</div></div>
+      <div class="tc-x">${sp ? `<b>${sp}</b>` : ''}${I('arrow', 'sm')}</div>
+      <div class="tc-col good"><div class="l">With Morph</div><div class="v">${mins(r.after_min)}</div><div class="s">${fmt(r.compute_min * 60, '', 0)} s compute + ${fmt(r.review_min, '', 0)} min review</div></div></div>
+    <div class="tc-bar"><b style="width:${bar}%"></b></div>
+    ${pr > 1 ? `<div class="tc-proj">Project so far · ${pr} revisions: <b>${hrs(p.before_min)}</b> by hand → <b class="g">${mins(p.after_min)}</b></div>` : ''}
+    <details class="tc-d"><summary>What's counted (cited)</summary>${r.rows.map((x) => `<div class="tc-r"><span>${esc(x.label)}</span><span class="num">${hrs(x.before_min)}</span></div>`).join('')}
+      <div class="tc-foot">Typical published effort per step (surveys and case studies, see docs/TIME_SAVED.md)${r.first ? '' : `; a change costs ${fmt(r.per_change_share * 100, '', 0)}% of a full design`}. Review time is ${r.review_assumed ? 'an allowance, not measured' : 'logged'}.</div></details>
+  </div>`;
+}
+function keewanoLine(cur) {
+  const f = cur.gripper?.force || {}, cal = f.hold_calibration, kw = S.integrations?.keewano || {};
+  const pad = cur.design?.['finger.pad'], mat = cur.design?.['finger.material'];
+  if (cal) return `<div class="kw on">${I('spark', 'sm')}<span><b>Keewano</b>: holding force ×${fmt(cal.ratio, '', 2)} from ${cal.n} measured ${esc(pretty(pad))} · ${esc(mat || '')} builds</span></div>`;
+  if (kw.query) return `<div class="kw">${I('spark', 'sm')}<span><b>Keewano</b>: no measured ${esc(pretty(pad))} · ${esc(mat || '')} builds yet; simulation value</span></div>`;
+  return `<div class="kw off">${I('spark', 'sm')}<span>Keewano not connected: simulation-only target</span></div>`;
 }
 function inspectorSkeleton() {
   $('#insp').innerHTML = `<div class="skel" style="height:96px;margin-bottom:16px;border-radius:12px"></div>
@@ -655,7 +694,7 @@ let sysMsg = null, startT = 0, liveProv = null;
 function onEvent(ev) {
   switch (ev.type) {
     case 'user': addMsg('user', ev.text); typing(true); break;
-    case 'assistant': typing(false); addMsg('assistant', ev.text, ev.changes); break;
+    case 'assistant': typing(false); addMsg('assistant', ev.text, ev.changes); if (/^(Error|Couldn't apply)/.test(ev.text || '')) S.busy = false; break;
     case 'start': {
       typing(false);
       stopTour();
@@ -668,10 +707,12 @@ function onEvent(ev) {
       const nd = ev.dirty ? ev.dirty.length : nodes.length;
       sysMsg = addMsg('system', `Regenerating ${ev.rev} from ${ev.parent || 'scratch'} · ${nd} of ${nodes.length} stages affected`);
       setConn('busy', 'Regenerating');
+      S.busy = true;
       renderRevs(ev.rev);
       break;
     }
     case 'node': if (liveProv) liveProv[ev.node] = ev.status; nodeEvent(ev); break;
+    case 'sourcing': panels.bom.onSourcing(ev); if (ev.status === 'done' && S.current?.rev === ev.rev) S.current.sourcing = ev.sourcing; break;
     case 'project': reloadProject().catch((e) => console.warn(e)); break;
     case 'done': {
       typing(false);
@@ -686,6 +727,7 @@ function onEvent(ev) {
         sysMsg = null;
       }
       liveProv = null;
+      S.busy = false;
       setConn(backend.label === 'Fixture' ? 'fixture' : 'live');
       show(cur, ev.previous, { tour: true });
       break;
@@ -694,9 +736,84 @@ function onEvent(ev) {
   }
 }
 
+// ------------------------------------------------------------------ present mode (press-through demo)
+async function until(cond, timeout = 20000, onProgress) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < timeout) {
+    if (cond()) return true;
+    if (onProgress && liveProv) {
+      const v = Object.values(liveProv), done = v.filter((x) => x === 'computed' || x === 'reused').length;
+      onProgress(`Regenerating… ${done}/${v.length} stages`);
+    }
+    await sleep(200);
+  }
+  return false;
+}
+function presentApi() {
+  const tb = () => panels.robot.tb, b = (k) => tb().querySelector(`[data-a="${k}"]`);
+  return {
+    state: S, until, toast,
+    tab: (t) => showTab(t),
+    chat: (t) => sendChat(t),
+    params: (c) => applyChanges(c),
+    tourOn: () => $('#tour').checked,
+    async project(name) {
+      const n = S.reloads || 0;
+      const ok = await backend.project?.(name).catch(() => false);
+      if (ok) await until(() => S.project === name && (S.reloads || 0) > n, 30000);
+      return ok;
+    },
+    async reset() {
+      const n = S.reloads || 0;
+      const ok = await backend.reset?.().catch(() => false);
+      if (ok) await until(() => (S.reloads || 0) > n, 30000);
+      return ok;
+    },
+    robot(o) {
+      if ('motion' in o && !!panels.robot.motionOn !== o.motion) b('motion').click();
+      if ('xray' in o && !!viewer.st.xray !== o.xray) b('xray').click();
+      if ('labels' in o && !!viewer.st.labels !== o.labels) b('labels').click();
+    },
+    explode(f) {
+      const el = b('explode'), from = +el.value, to = Math.round(f * 100), t0 = performance.now(), dur = 1100;
+      if (from === to) return Promise.resolve();
+      return new Promise((res) => {
+        const step = (t) => {
+          const k = Math.min(1, (t - t0) / dur), e = k < .5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+          el.value = String(Math.round(from + (to - from) * e));
+          el.dispatchEvent(new Event('input'));
+          if (k < 1) requestAnimationFrame(step); else res();
+        };
+        requestAnimationFrame(step);
+      });
+    },
+    home: () => viewer?.home?.(),
+    async sim(name) { await panels.sim.select(name); panels.sim.t = 0; panels.sim.setPlaying(true); },
+    elec: (sub) => panels.elec.showSub(sub, true),
+    asm() { panels.asm.go(0); panels.asm.startAuto(); },
+    darwin: () => panels.bom.findAgents(),
+    spotlight(sel) {
+      const el = $(sel)?.closest('.isec') || $(sel);
+      if (!el) return;
+      // scroll only the inspector column (scrollIntoView would also nudge the whole window)
+      const box = el.closest('#inspector');
+      if (box) {
+        const r = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+        box.scrollTo({ top: Math.max(0, box.scrollTop + r.top - b.top - box.clientHeight / 2 + r.height / 2), behavior: 'smooth' });
+      }
+      el.classList.remove('spot'); void el.offsetWidth; el.classList.add('spot');
+      clearTimeout(el._spot); el._spot = setTimeout(() => el.classList.remove('spot'), 7000);
+    },
+  };
+}
+
 // ------------------------------------------------------------------ boot
 async function boot() {
   document.body.style.opacity = '1';
+  // the app is a fixed-viewport layout; never let a child's scrollIntoView shift the whole window
+  const pin = () => { if (window.scrollY || document.scrollingElement?.scrollTop) window.scrollTo(0, 0); };
+  window.addEventListener('scroll', pin, { passive: true });
+  document.addEventListener('scroll', pin, { passive: true, capture: false });
   setupChat();
   setupParams();
   setupProjects();
@@ -716,6 +833,11 @@ async function boot() {
     if (i >= 1 && i <= TABS.length) showTab(TABS[i - 1]);
   });
   $('#tour').addEventListener('change', (e) => { if (!e.target.checked) stopTour(); });
+  presenter = new Presenter(presentApi());
+  $('#presentBtn').onclick = () => presenter.toggle();
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'p' || e.key === 'P') && !e.target.closest('input, textarea, select') && !e.metaKey && !e.ctrlKey && !e.altKey) presenter.toggle();
+  });
   if (QS.get('tour') === '0') $('#tour').checked = false;
   const start = QS.get('tab');
   showTab(TABS.includes(start) ? start : 'robot');
@@ -726,6 +848,7 @@ async function boot() {
     S.project = st.project;
     S.projects = st.projects || [];
     S.revs = st.revs || [];
+    S.integrations = st.integrations || {};
     renderProjects();
     S.latest = st.current?.rev || null;
     for (const m of st.history || []) addMsg(m.type, m.text, m.changes);
@@ -741,6 +864,7 @@ async function boot() {
     // labels for older revisions (shown on the timeline chips), fetched in the background
     for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
     if (QS.get('demo')) setTimeout(() => sendChat(QS.get('demo')), 600);
+    if (QS.get('present')) presenter.open();
   } catch (e) {
     console.error(e);
     setConn('off', 'Offline');
@@ -748,5 +872,5 @@ async function boot() {
   }
 }
 
-window.morph = { show, showTab, state: S, get viewer() { return viewer; }, get panels() { return panels; }, onEvent, sendChat };
+window.morph = { show, showTab, state: S, get viewer() { return viewer; }, get panels() { return panels; }, get presenter() { return presenter; }, onEvent, sendChat };
 boot();

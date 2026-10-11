@@ -1,51 +1,60 @@
-# Morph: first recording script (3 minutes, single take)
+# Morph: recording the demo (about 3 minutes, single take)
 
-**Setup:** double-click `run_studio.bat`. Wait for the Morph Studio window (the first start after an update rebuilds the projects in CMD for about a minute), then maximize it. Screen recorder: full screen, 1080p, mic on.
-Reset before each take: close the window, Ctrl+C then Y in CMD, delete the `projects` folder, and double-click `run_studio.bat` again. This gives you a clean r001.
+The demo is built into the app. Click **Present** (top right, or press **P**). Then each press of
+**→** (or Space, or a presentation clicker) runs the next step for real: it switches the view,
+types the chat request, flips the build config or asks Darwin. A caption at the bottom says what
+Morph is doing, so the video explains itself. Steps that change the robot hold the Next button
+until the pipeline has finished, so you can't skip ahead mid-build.
 
-Lines to say are in quotes; actions are in **bold**.
+| Key | Does |
+|---|---|
+| → · Space · PageDown · clicker | next step |
+| ← · PageUp | back (only re-shows the view; a chat edit is never sent twice) |
+| C | hide or show the caption text (keeps the controls) |
+| Esc / P | leave Present mode |
 
----
+## Before each take
 
-**0:00 — Hook (15 s).** *Morph Studio open on the **egg-picker** robot, Robot tab.*
-"Designing one robot (CAD, simulation, electronics, firmware, sourcing, manufacturing, assembly docs) takes an engineer about six weeks: 241 hours by published numbers. Every change ripples through all of it. Morph does it in about a minute, and every change ripples automatically."
+1. Double-click `run_studio.bat`. Wait for the Morph Studio window. The first start after an update
+   rebuilds both robots in CMD for about two minutes. Maximize the window.
+2. Click **Present**, then **Reset demo** on the start card. This deletes the chat edits from the
+   last take; both robots go back to their full builds in about a second.
+3. Screen recorder: full screen, 1080p, mic on. Press **Start**.
 
-**0:15 — The robot (20 s).**
-- Click **Motion demo**: "Everything that moves is real kinematics: five joints plus a rack-and-pinion gripper."
-- Click **X-ray** and **Labels**: "The electronics in the base, the servo bus, the cables routed through every joint, the force sensor in the fingers."
-- Drag **Explode** to about 60%, then back.
+## The 14 steps (what you'll see, and what to say)
 
-**0:35 — Simulation (20 s).** Open the **Simulation** tab and choose **Pick & place**, then press play.
-"It doesn't just draw the robot, it tests it: MuJoCo physics, pick and place with the force-limited grip, torque on every joint, payload sweep, workspace and a shake test."
+The caption is the script. Read it, or say it in your own words.
 
-**0:55 — Edit the electronics in chat (30 s).** Type: **Swap to Dynamixel servos**
-- "Watch the pipeline." *Point at the strip: sizing → electronics → CAD → simulation → schematic/PCB/firmware → manufacturing → BOM → manual regenerate; the gripper analysis is reused.*
-- When the auto-tour lands on **Electronics**: "New bus, new protocol, new firmware, new power budget, new harness."
-- On **BOM & Sourcing**: "Every part with a vendor, a price and a link. Buy it, or build it."
+| # | Step | What happens on screen | Wait |
+|---|---|---|---|
+| 1 | One sentence in, a whole robot out | Robot tab, the egg-picker arm | |
+| 2 | Real kinematics, real parts inside | Motion demo, then X-ray and labels: controller, servo bus, cables, sensors | |
+| 3 | Every part is a real part | Explodes to 65% | |
+| 4 | Tested in physics simulation | Simulation tab, pick & place plays with live torque | |
+| 5 | Change it in one sentence | Types **Swap to Dynamixel servos**; new actuators touch everything, so all 9 stages regenerate; the auto-tour walks the changed tabs | ~30 s |
+| 6 | From modules to a custom PCB | Types **Use a custom PCB**; only 6 of 9 stages rerun (sizing, grasp and simulation are reused); the board places, routes and pours on screen | ~30 s |
+| 7 | Same robot, another way to build it | Switches the build to **Pilot** (CNC, sheet metal, MJF) | ~20 s |
+| 8 | Darwin: who sells and who builds every part | BOM tab, **Darwin agents**: one search per purchased part plus PCB fab, CNC, sheet metal, prints and a design review stream in | ~15 s, keep talking |
+| 9 | Keewano: the build memory | Simulation tab; the grip-force window in the right panel lights up, with the Keewano calibration line | |
+| 10 | The assembly manual writes itself | Assembly tab, autoplay | |
+| 11 | Import a real open-source robot | Switches to **so101** (Hugging Face SO-101 from its own URDF) | |
+| 12 | Edit someone else's robot | Types **Swap to Dynamixel servos**; holders that no longer fit turn orange | ~30 s |
+| 13 | Add a wrist camera | Types **Add a wrist camera** | ~30 s |
+| 14 | Time given back | Back to egg-picker; the **Time saved** card lights up (241 h by hand vs about 15 min, and this session's total) | |
 
-**1:25 — Custom PCB (20 s).** Type: **Use a custom PCB**
-- *The PCB builds itself on screen: parts, ratsnest, routed traces, ground pour, DRC pass.*
-- "From off-the-shelf boards to one controller PCBA, with Gerbers plus the JLCPCB BOM and pick-and-place files ready to order."
+Where a step waits, the caption stays up and the button shows "Regenerating… 4/9 stages". Talk over
+it: the pipeline strip and the auto-tour are the visual.
 
-**1:45 — Manufacturing configs (20 s).** Click the **Pilot** pill (or type **Pilot build: CNC + sheet metal**).
-"Same robot, different way to make it: CNC aluminium plates, bent sheet-metal brackets with flat patterns, molded covers. Per-part process, vendor, cost and lead time, and all three build configs compared."
+## If something goes wrong on camera
 
-**2:05 — Assembly (15 s).** Open the **Assembly** tab and click **Autoplay**.
-"Step-by-step assembly with fasteners, torques and tools. The printable manual is generated too."
-
-**2:20 — An open-source robot (25 s).** In the **project switcher** (top left), choose **so101**.
-- "It also imports real open-source robots. This is Hugging Face's SO-101, from its own files."
-- Type: **Swap to Dynamixel servos**. "The servos are swapped, and Morph flags in orange the printed holders that no longer fit."
-- Type: **Add a wrist camera**. "Camera mount added, USB device added, wiring and BOM updated."
-
-**2:45 — Time saved (15 s).** Point at the **time card**.
-"One revision: 241 engineer-hours by published numbers, about 15 minutes with Morph, including the engineer's review. Every change after that: minutes instead of days. That's Morph."
-
----
-
-**If something goes wrong on camera:**
-- A stage shows an error: keep talking. Every other stage keeps working, and the strip shows exactly what failed.
-- Chat doesn't understand a sentence: use the suggestion chips under the chat box. They always work, even without an API key.
-- The 3D view is slow: turn off **X-ray** and **Labels**.
+- A stage shows an error: keep talking. Every other stage keeps working, and the strip shows exactly
+  what failed.
+- Darwin is slow or down: its rows are labelled **cached** and come from the last good search
+  (shipped with the repo). Move on whenever you like; the search finishes in the background.
+- Keewano isn't connected: the caption and the right panel both say so honestly. Keys go in `.env`
+  (see `docs/SPONSORS.md`).
+- The 3D view is slow: press → past the X-ray step, or turn **X-ray** and **Labels** off.
+- Anything else: **Esc**, fix it by hand, **P**, then click the step's dot in the progress bar to
+  jump back in.
 
 **Numbers to have on screen or a slide:** see `docs/TIME_SAVED.md` (cited table and one-liners).
