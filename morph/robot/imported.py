@@ -33,7 +33,7 @@ FAMILY_SWAPS = {  # stock smart-bus robot -> other families, by joint position (
 
 def load_profile(source: str) -> tuple[dict, str]:
     d = os.path.join(ROOT, source)
-    with open(os.path.join(d, "morph_profile.json")) as fh:
+    with open(os.path.join(d, "morph_profile.json"), encoding="utf-8") as fh:
         return json.load(fh), d
 
 

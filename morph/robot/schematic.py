@@ -712,10 +712,10 @@ def _title_block(x, y, w, h, circuit, sheet, rev, date, company, path_hint) -> s
 def write(circuit: Circuit, outdir: str, rev: str = "", date: str = "", name: str = "schematic") -> dict:
     """Write <name>.svg and <name>.json (netlist + symbol positions)."""
     svg, layout = render(circuit, rev=rev, date=date, path_hint=f"{name}.svg")
-    with open(f"{outdir}/{name}.svg", "w") as fh:
+    with open(f"{outdir}/{name}.svg", "w", encoding="utf-8") as fh:
         fh.write('<?xml version="1.0" encoding="UTF-8"?>\n' + svg)
     data = circuit.to_json()
     data["layout"] = layout
-    with open(f"{outdir}/{name}.json", "w") as fh:
+    with open(f"{outdir}/{name}.json", "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=1)
     return {"svg": f"{name}.svg", "json": f"{name}.json", "sheet": layout["sheet"], "nets": data["nets"]}

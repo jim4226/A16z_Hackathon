@@ -1489,7 +1489,7 @@ void loop() {
     code = "\n".join(L)
     d = os.path.join(outdir, "firmware", "morph_arm")
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "morph_arm.ino"), "w") as fh:
+    with open(os.path.join(d, "morph_arm.ino"), "w", encoding="utf-8") as fh:
         fh.write(code)
     return "firmware/morph_arm/morph_arm.ino"
 
@@ -1684,7 +1684,7 @@ def finalize(design, sizing: dict, eplan: dict, asm, outdir: str) -> dict:
             warnings.append(f"PCB grew to {b['size_mm']} mm (planned {ep['custom_pcb']['size_mm']})")
     harness, w = build_harness(design, ep, asm, ep["power_budget"])
     warnings += w
-    with open(os.path.join(outdir, "harness.csv"), "w", newline="") as fh:
+    with open(os.path.join(outdir, "harness.csv"), "w", newline="", encoding="utf-8") as fh:
         cols = ["name", "from", "to", "length_mm", "conductors", "wire", "connector_a", "connector_b", "current_a", "make_or_buy",
                 "stock_mm", "note"]
         wr = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
@@ -1702,6 +1702,6 @@ def finalize(design, sizing: dict, eplan: dict, asm, outdir: str) -> dict:
                    "actuators": round(sum(r["ext_price"] for r in sourcing if r["category"] == "actuator"), 2)},
         "issues": issues, "warnings": list(dict.fromkeys(warnings)),
     }
-    with open(os.path.join(outdir, "electronics.json"), "w") as fh:
+    with open(os.path.join(outdir, "electronics.json"), "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=1, default=str)
     return result

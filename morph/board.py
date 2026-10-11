@@ -325,7 +325,7 @@ def write_gerbers(board: dict, outdir: str) -> list:
     files["board.drl"] = drill
     written = []
     for name, lines in files.items():
-        with open(os.path.join(outdir, name), "w") as fh:
+        with open(os.path.join(outdir, name), "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
         written.append(name)
     with zipfile.ZipFile(os.path.join(outdir, "gerbers.zip"), "w") as z:
@@ -364,9 +364,9 @@ def to_svg(board: dict, scale: float = 10.0) -> str:
 def build(ep: dict, outdir: str) -> dict:
     board = generate(ep)
     os.makedirs(outdir, exist_ok=True)
-    with open(os.path.join(outdir, "board.json"), "w") as fh:
+    with open(os.path.join(outdir, "board.json"), "w", encoding="utf-8") as fh:
         json.dump(board, fh)
-    with open(os.path.join(outdir, "board.svg"), "w") as fh:
+    with open(os.path.join(outdir, "board.svg"), "w", encoding="utf-8") as fh:
         fh.write(to_svg(board))
     files = ["board.json", "board.svg"] + [f"gerbers/{f}" for f in write_gerbers(board, os.path.join(outdir, "gerbers"))]
     try:  # KiCad project + BoardRepo-ready zip; a writer bug must not cost the Gerbers

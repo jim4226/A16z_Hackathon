@@ -1223,7 +1223,7 @@ class DXF:
         return "\n".join(H + T + E) + "\n"
 
     def save(self, path):
-        with open(path, "w", newline="\r\n") as fh:
+        with open(path, "w", newline="\r\n", encoding="utf-8") as fh:
             fh.write(self.dumps())
         return path
 
@@ -1261,7 +1261,7 @@ def _profile_svg(path, poly, title, bends=(), holes_round=(), sub="", w_px=520):
     if sub:
         s.append(f'<text x="{b[0]:.2f}" y="{-b[1] + pad * 0.9 + max(W, H) / 26:.2f}" font-size="{max(W, H) / 44:.2f}" fill="#7a8592">{sub}</text>')
     s.append("</svg>")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(s))
     return path
 
@@ -1453,7 +1453,7 @@ def write_gcode(nc_path, poly, thickness, material, label, svg_path=None):
     g.emit("M30")
     minutes = g.minutes() + 4.0
     g.lines.insert(1, f"( estimated cycle {minutes:.1f} min, {len(g.lines)} blocks )")
-    with open(nc_path, "w") as fh:
+    with open(nc_path, "w", encoding="utf-8") as fh:
         fh.write("%\n" + "\n".join(g.lines) + "\n%\n")
     if svg_path:
         sw = max(sx, sy) / 350
@@ -1468,7 +1468,7 @@ def write_gcode(nc_path, poly, thickness, material, label, svg_path=None):
             p = LineString(contour.coords).interpolate(t)
             s.append(f'<rect x="{p.x - 2.5:.2f}" y="{-p.y - 2.5:.2f}" width="5" height="5" fill="#f2a516"/>')
         s.append(f'<text x="0" y="{12:.1f}" font-size="{min(5.0, vw / 34):.1f}" fill="#36404c">{label} · {minutes:.0f} min</text></svg>')
-        with open(svg_path, "w") as fh:
+        with open(svg_path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(s))
     return {"minutes": _r(minutes, 1), "blocks": len(g.lines), "tools": list(tools), "tabs": n_tabs, "passes": nl,
             "stock_mm": [_r(sx, 1), _r(sy, 1), _r(thickness, 2)]}
@@ -1646,7 +1646,7 @@ def _bend_table(path, sheet, poly):
                      "bend_allowance_mm": _r(ba, 3), "outside_setback_mm": _r(ossb, 3), "bend_deduction_mm": _r(bd_, 3),
                      "line_u0": _r(u0, 3), "line_v0": _r(v0, 3), "line_u1": _r(u1, 3), "line_v1": _r(v1, 3),
                      "length_mm": _r(math.hypot(u1 - u0, v1 - v0), 2)})
-    with open(path, "w", newline="") as fh:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
         cols = list(rows[0]) if rows else ["bend", "angle_deg", "inside_radius_mm", "k_factor", "bend_allowance_mm", "bend_deduction_mm"]
         w = csv.DictWriter(fh, fieldnames=cols)
         w.writeheader()
@@ -1724,7 +1724,7 @@ def write_files(entry: dict, g: Group, outdir: str, design, efinal=None) -> list
             "tool": {"vendor": entry["vendor"], "cost_usd": entry["tooling_cost"], "lead_days": entry["lead_days"],
                      "type": sel.get("note", "")}, "cost_model": entry["cost_model"],
             "dfm": entry.get("dfm", [])}
-        with open(rel(f"{key}_molding.json"), "w") as fh:
+        with open(rel(f"{key}_molding.json"), "w", encoding="utf-8") as fh:
             json.dump(notes, fh, indent=1)
         lines = [f"INJECTION MOLDING NOTES — {entry['name']} ({key})", "=" * 60,
                  f"Material ........ {entry['material']}", f"Qty per robot ... {entry['qty']}",
@@ -1738,7 +1738,7 @@ def write_files(entry: dict, g: Group, outdir: str, design, efinal=None) -> list
                  f"Piece price ..... ${entry['unit_cost']:.2f} at {entry['qty'] * design.build.quantity} pcs",
                  "", "Cost model: " + entry["cost_model"]["formula"], "Inputs: " + json.dumps(entry["cost_model"]["inputs"]),
                  "", "DFM:"] + [f"  - {x}" for x in entry.get("dfm", [])] + ["", "Send the STEP from CAD (STL here is for reference) for a binding DFM review."]
-        with open(rel(f"{key}_molding.txt"), "w") as fh:
+        with open(rel(f"{key}_molding.txt"), "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
     return files
 
@@ -1761,7 +1761,7 @@ def _write_elec_files(entry, outdir, efinal):
     elif entry["process"] == "cable_assembly":
         harness = (efinal or {}).get("harness") or []
         p = os.path.join(d, "harness_cutlist.csv")
-        with open(p, "w", newline="") as fh:
+        with open(p, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
             w.writerow(["wire", "from", "to", "cut_length_mm", "conductors", "wire_type", "connector_a", "connector_b",
                         "strip_mm", "crimps"])
@@ -1772,7 +1772,7 @@ def _write_elec_files(entry, outdir, efinal):
                             h.get("connector_b", ""), 2.5, 2 * c])
         files.append(f"{entry['group']}/harness_cutlist.csv")
         svg = _harness_svg(harness, entry["name"])
-        with open(os.path.join(d, "harness.svg"), "w") as fh:
+        with open(os.path.join(d, "harness.svg"), "w", encoding="utf-8") as fh:
             fh.write(svg)
         files.append(f"{entry['group']}/harness.svg")
     return files
@@ -1919,7 +1919,7 @@ def plan(design, asm, outdir, efinal=None) -> dict:
     _write_readme(out, outdir, design)
     out["readme"] = "README.txt"
     out["package"] = _write_zip(out, outdir, active)
-    with open(os.path.join(outdir, "manufacturing.json"), "w") as fh:
+    with open(os.path.join(outdir, "manufacturing.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1, default=_json)
     return out
 
@@ -1985,7 +1985,7 @@ def _write_readme(m, outdir, design):
         L.append(f"{k:<11} ${c['unit_cost']:>10,.2f}/unit  tooling ${c['tooling_cost']:>9,.0f}  lead {c['lead_days']:>3} d   {c['summary']}")
     if m["warnings"]:
         L += ["", "WARNINGS"] + [f" - {w}" for w in m["warnings"]]
-    with open(os.path.join(outdir, "README.txt"), "w") as fh:
+    with open(os.path.join(outdir, "README.txt"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(L) + "\n")
 
 

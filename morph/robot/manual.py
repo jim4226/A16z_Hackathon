@@ -1295,6 +1295,6 @@ def build(design, asm, mfg, efinal, outdir, images: bool = True) -> dict:
         fh.write(page)
     out = {"json": "manual.json", "html": "manual.html", "steps": steps, "tools": tools, "time_min_total": total,
            "title": _robot_title(design), "controller": F.controller}
-    with open(os.path.join(outdir, "manual.json"), "w") as fh:
+    with open(os.path.join(outdir, "manual.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1, default=str)
     return out

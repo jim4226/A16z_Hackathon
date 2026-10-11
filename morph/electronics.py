@@ -246,6 +246,6 @@ def write_firmware(design: Design, ep: dict, outdir: str) -> str:
         open_deg=int(round(ep.get("open_deg", 20))), closed_deg=int(round(ep.get("closed_deg", 160))))
     os.makedirs(os.path.join(outdir, "morph_grip"), exist_ok=True)
     path = os.path.join(outdir, "morph_grip", "morph_grip.ino")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(code)
     return path

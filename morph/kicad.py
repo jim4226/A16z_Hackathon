@@ -313,7 +313,7 @@ def check(outdir: str, name: str = "board") -> dict | None:
 
 
 if __name__ == "__main__":   # python -m morph.kicad board.json outdir [name]
-    with open(sys.argv[1]) as fh:
+    with open(sys.argv[1], encoding="utf-8") as fh:
         brd = json.load(fh)
     nm = sys.argv[3] if len(sys.argv) > 3 else "board"
     print(export(brd, sys.argv[2], nm))

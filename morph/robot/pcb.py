@@ -1822,7 +1822,7 @@ def write_gerbers(board: dict, outdir: str, name: str = "morph_ctrl") -> list:
         L.append("M30")
         files[fn] = "\n".join(L) + "\n"
     for fn, txt in files.items():
-        with open(os.path.join(outdir, fn), "w") as fh:
+        with open(os.path.join(outdir, fn), "w", encoding="utf-8") as fh:
             fh.write(txt)
     with zipfile.ZipFile(os.path.join(outdir, "gerbers.zip"), "w", zipfile.ZIP_DEFLATED) as z:
         for fn in files:
@@ -1844,7 +1844,7 @@ def jlc_files(board: dict, circuit, outdir: str) -> dict:
     for (value, fp, lcsc, mpn), refs in sorted(groups.items(), key=lambda kv: kv[1][0]):
         bom_rows.append({"Comment": f"{value}" + (f" ({mpn})" if mpn and mpn != value else ""), "Designator": ",".join(sorted(refs, key=_refkey)),
                          "Footprint": fp, "LCSC Part #": lcsc if lcsc else "verify", "Qty": len(refs)})
-    with open(os.path.join(outdir, "jlc_bom.csv"), "w", newline="") as fh:
+    with open(os.path.join(outdir, "jlc_bom.csv"), "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["Comment", "Designator", "Footprint", "LCSC Part #", "Qty"])
         w.writeheader()
         w.writerows(bom_rows)
@@ -1854,7 +1854,7 @@ def jlc_files(board: dict, circuit, outdir: str) -> dict:
             continue
         cpl.append({"Designator": comp["ref"], "Mid X": f"{comp['x']:.3f}mm", "Mid Y": f"{comp['y']:.3f}mm", "Layer": "Top",
                     "Rotation": comp["rot"]})
-    with open(os.path.join(outdir, "jlc_cpl.csv"), "w", newline="") as fh:
+    with open(os.path.join(outdir, "jlc_cpl.csv"), "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
         w.writeheader()
         w.writerows(sorted(cpl, key=lambda r: _refkey(r["Designator"])))
@@ -1889,7 +1889,7 @@ def build(circuit, W, H, outdir, hc_nets=(), pwr_nets=(), name="morph_ctrl", tit
     board = None
     if cache and os.path.exists(path):
         try:
-            board = json.load(open(path))
+            board = json.load(open(path, encoding="utf-8"))
         except Exception:
             board = None
     if board is None:
@@ -1898,18 +1898,18 @@ def build(circuit, W, H, outdir, hc_nets=(), pwr_nets=(), name="morph_ctrl", tit
         if cache:
             os.makedirs(cdir, exist_ok=True)
             tmp = path + ".tmp"
-            with open(tmp, "w") as fh:
+            with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(board, fh)
             os.replace(tmp, path)
     board["silk_title"] = title
     os.makedirs(outdir, exist_ok=True)
     gfiles = write_gerbers(board, os.path.join(outdir, "gerbers"), name)
     jlc = jlc_files(board, circuit, outdir)
-    with open(os.path.join(outdir, "board.json"), "w") as fh:
+    with open(os.path.join(outdir, "board.json"), "w", encoding="utf-8") as fh:
         json.dump(board, fh)
-    with open(os.path.join(outdir, "board.svg"), "w") as fh:
+    with open(os.path.join(outdir, "board.svg"), "w", encoding="utf-8") as fh:
         fh.write(to_svg(board, title=title))
-    with open(os.path.join(outdir, "board_render.svg"), "w") as fh:
+    with open(os.path.join(outdir, "board_render.svg"), "w", encoding="utf-8") as fh:
         fh.write(render_svg(board, title=title))
     return {"board": board, "gerbers": [f"gerbers/{f}" for f in gfiles], "jlc": jlc}
 

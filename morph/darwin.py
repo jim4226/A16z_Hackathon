@@ -92,7 +92,7 @@ def search(query: str, max_results: int = 5, retries: int = 1, timeout: float = 
             with urlopen(req, timeout=timeout) as resp:
                 out = _normalize(query, json.load(resp))
             os.makedirs(CACHE, exist_ok=True)
-            with open(_cache_path(query), "w") as fh:
+            with open(_cache_path(query), "w", encoding="utf-8") as fh:
                 json.dump({**out, "fetched": time.strftime("%Y-%m-%dT%H:%M:%S")}, fh)
             return out
         except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
@@ -101,7 +101,7 @@ def search(query: str, max_results: int = 5, retries: int = 1, timeout: float = 
                 time.sleep(2)
     for root in (CACHE, SHIPPED):
         try:
-            with open(_cache_path(query, root)) as fh:
+            with open(_cache_path(query, root), encoding="utf-8") as fh:
                 return {**json.load(fh), "cached": True, "error": err}
         except (OSError, ValueError):
             continue
@@ -255,6 +255,6 @@ def source(project, rev: str, max_results: int = 3, workers: int = 4, on_progres
 
     report = {"rev": rev, "source": "darwin search", "rows": rows, "gaps": gaps,
               "note": "Shortlist only. Ordering needs the user's Darwin account (Act) and their approval."}
-    with open(os.path.join(rev_dir, "sourcing_darwin.json"), "w") as fh:
+    with open(os.path.join(rev_dir, "sourcing_darwin.json"), "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
     return report

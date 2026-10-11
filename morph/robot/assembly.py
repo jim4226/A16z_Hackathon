@@ -339,7 +339,7 @@ class Assembly:
     def to_robot_json(self, path: str, glb_name: str = "robot.glb") -> str:
         d = self.to_dict()
         d["glb"] = glb_name
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(d, fh)
         return path
 
@@ -379,7 +379,7 @@ class Assembly:
                      + "</joint>")
         L.append("</robot>")
         path = os.path.join(outdir, f"{self.name}.urdf")
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(L))
         return path
 

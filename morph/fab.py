@@ -140,7 +140,7 @@ def plan_laser(design: Design, geom: FingerGeometry, outdir: str) -> dict:
            f'viewBox="0 0 {sx:.2f} {sy:.2f}">\n'
            + "\n".join(f'<path d="{d}" fill="none" stroke="#ff0000" stroke-width="0.01"/>' for d in paths)
            + "\n</svg>\n")
-    with open(os.path.join(outdir, "cut.svg"), "w") as fh:
+    with open(os.path.join(outdir, "cut.svg"), "w", encoding="utf-8") as fh:
         fh.write(svg)
     speed = LASER_SPEED.get(mat.name, 5.0) * (6.0 / max(design.finger.width_mm, 1.0))
     pierces = len(paths)
@@ -257,7 +257,7 @@ def plan_cnc(design: Design, geom: FingerGeometry, outdir: str) -> dict:
     g.emit("M5")
     g.rapid(0, 0, 10)
     g.emit("M30")
-    with open(os.path.join(outdir, "job.nc"), "w") as fh:
+    with open(os.path.join(outdir, "job.nc"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(g.lines) + "\n")
 
     svg = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 {sx+4:.1f} {sy+4:.1f}" '
@@ -269,7 +269,7 @@ def plan_cnc(design: Design, geom: FingerGeometry, outdir: str) -> dict:
         d = "M" + " L".join(f"{x:.2f},{y:.2f}" for x, y in ring.coords)
         svg.append(f'<path d="{d}" fill="none" stroke="#d1495b" stroke-width="0.35"/>')
     svg.append("</svg>")
-    with open(os.path.join(outdir, "toolpath.svg"), "w") as fh:
+    with open(os.path.join(outdir, "toolpath.svg"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(svg))
 
     minutes = g.minutes() + 5.0  # + tool change / zeroing

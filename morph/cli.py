@@ -52,7 +52,7 @@ def _report(p: Project, revs, name="report.html") -> str:
 
 def cmd_new(a):
     if a.spec:
-        design, src = Design.from_dict(json.load(open(a.spec))), "spec file"
+        design, src = Design.from_dict(json.load(open(a.spec, encoding="utf-8"))), "spec file"
         rationale = ""
     else:
         design, need, src = agent.propose(a.need)
@@ -62,7 +62,7 @@ def cmd_new(a):
     p = _project(name)
     if p.revs():
         sys.exit(f"project {name} already exists at {p.root}")
-    json.dump({"need": a.need, "source": src, "rationale": rationale}, open(os.path.join(p.root, "meta.json"), "w"))
+    json.dump({"need": a.need, "source": src, "rationale": rationale}, open(os.path.join(p.root, "meta.json"), "w", encoding="utf-8"))
     rev = p.run(design, label="baseline proposal", n_trials=a.trials)
     _print_summary(p, rev)
     _report(p, [rev], f"{rev}.html")
@@ -250,7 +250,7 @@ def cmd_robot(a):
         json.dump({"kind": "robot", "source": source,
                    "need": a.need or ("Imported open-source SO-101 arm: edit its electronics, sims and build."
                                       if source else "Pick a raw egg and place it without cracking it.")},
-                  open(os.path.join(p.root, "meta.json"), "w"))
+                  open(os.path.join(p.root, "meta.json"), "w", encoding="utf-8"))
         rev = p.run(design, label="first design", n_trials=a.trials, fast_sim=a.fast)
         _robot_summary(p, rev)
     elif a.action == "change":
@@ -307,7 +307,7 @@ def cmd_kicad(a):
     src = os.path.join(p.rev_dir(rev), "electronics", "board", "board.json")
     if not os.path.exists(src):
         sys.exit(f"{a.name} {rev} has no carrier board (Morph builds one for sensor fingers, finger.sensor=fsr402)")
-    with open(src) as fh:
+    with open(src, encoding="utf-8") as fh:
         brd = json.load(fh)
     results = p.load_results(rev)
     design, summary = p.load_design(rev).to_dict(), results.get("summary") or {}

@@ -102,13 +102,13 @@ def fetch(board: str, timeout: float = 15) -> dict:
     else:
         try:   # best effort: an unwritable cache must not drop a good answer
             os.makedirs(CACHE, exist_ok=True)
-            with open(_cache_path(board), "w") as fh:
+            with open(_cache_path(board), "w", encoding="utf-8") as fh:
                 json.dump({**info, "fetched": time.strftime("%Y-%m-%dT%H:%M:%S")}, fh)
         except OSError:
             pass
         return info
     try:
-        with open(_cache_path(board)) as fh:
+        with open(_cache_path(board), encoding="utf-8") as fh:
             return {**json.load(fh), "cached": True, "error": err}
     except (OSError, ValueError):
         return {**out, "ok": False, "error": err}

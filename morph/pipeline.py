@@ -67,16 +67,16 @@ class Project:
         return os.path.join(self.root, rev)
 
     def load_design(self, rev: str) -> Design:
-        with open(os.path.join(self.rev_dir(rev), "design.json")) as fh:
+        with open(os.path.join(self.rev_dir(rev), "design.json"), encoding="utf-8") as fh:
             return Design.from_dict(json.load(fh))
 
     def load_results(self, rev: str) -> dict:
-        with open(os.path.join(self.rev_dir(rev), "results.json")) as fh:
+        with open(os.path.join(self.rev_dir(rev), "results.json"), encoding="utf-8") as fh:
             return json.load(fh)
 
     def log(self, entry: dict):
         entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **entry}
-        with open(self.ledger_path, "a") as fh:
+        with open(self.ledger_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
         design = None
         if entry.get("type") == "measurement":
@@ -90,7 +90,7 @@ class Project:
     def entries(self) -> list:
         if not os.path.exists(self.ledger_path):
             return []
-        with open(self.ledger_path) as fh:
+        with open(self.ledger_path, encoding="utf-8") as fh:
             return [json.loads(line) for line in fh if line.strip()]
 
     # -- the pipeline
@@ -101,7 +101,7 @@ class Project:
         rev = f"r{len(revs) + 1:03d}"
         out = self.rev_dir(rev)
         os.makedirs(out)
-        with open(os.path.join(out, "design.json"), "w") as fh:
+        with open(os.path.join(out, "design.json"), "w", encoding="utf-8") as fh:
             fh.write(design.dumps())
 
         if parent:
@@ -142,7 +142,7 @@ class Project:
             elif node == "analysis":
                 results["analysis"] = analysis.analyze(design, geom)
             elif node == "sim":
-                with open(os.path.join(nd, "scene.xml"), "w") as fh:
+                with open(os.path.join(nd, "scene.xml"), "w", encoding="utf-8") as fh:
                     fh.write(sim.build_mjcf(design, geom))
                 results["sim"] = sim.simulate(design, geom, n_trials)
             elif node == "mech":
@@ -165,7 +165,7 @@ class Project:
             emit({"type": "node", "node": node, "status": "computed", "seconds": results["timings_s"][node]})
 
         results["summary"] = summarize(results)
-        with open(os.path.join(out, "results.json"), "w") as fh:
+        with open(os.path.join(out, "results.json"), "w", encoding="utf-8") as fh:
             json.dump(results, fh, indent=2)
         self.log({"type": "revision", "rev": rev, "parent": parent, "label": label,
                   "changes": results["changes"], "recomputed": todo,

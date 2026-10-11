@@ -33,7 +33,7 @@ NODE_STEPS = {
 
 
 def load_baseline() -> dict:
-    with open(BASELINE_PATH) as fh:
+    with open(BASELINE_PATH, encoding="utf-8") as fh:
         return json.load(fh)
 
 

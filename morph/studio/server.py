@@ -64,7 +64,7 @@ def _sourcing(p: RobotProject, rev: str) -> dict | None:
     if not os.path.isfile(path):
         return None
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             rep = json.load(fh)
     except (OSError, ValueError):
         return None
@@ -171,7 +171,7 @@ class Studio:
             root = os.path.join(self.home, name)
             meta = os.path.join(root, "meta.json")
             if os.path.isfile(meta) and RobotProject(root).revs():
-                m = json.load(open(meta))
+                m = json.load(open(meta, encoding="utf-8"))
                 if m.get("kind") == "robot":
                     rp = RobotProject(root)
                     out.append({"name": name, "source": m.get("source") or "", "need": m.get("need", ""),
@@ -363,7 +363,7 @@ def make_handler(studio: Studio):
                         except queue.Empty:
                             self.wfile.write(b": ping\n\n")
                         self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):  # tab closed (Windows: 10053)
                     pass
                 finally:
                     studio.hub.unsubscribe(q)
@@ -398,11 +398,20 @@ def make_handler(studio: Studio):
     return H
 
 
+class _Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # a browser tab closing mid-response is normal; don't print a traceback for it
+        import sys
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None):
     if not project.revs():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     studio = Studio(project, home)
-    httpd = ThreadingHTTPServer((host, port), make_handler(studio))
+    httpd = _Server((host, port), make_handler(studio))
     httpd.daemon_threads = True
     print(f"Morph Studio: http://{host}:{port}  (project {project.root}; Ctrl+C to stop)")
     try:

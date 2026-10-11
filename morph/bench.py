@@ -91,7 +91,7 @@ def run(project, rev: str, port: str | None, seconds: float = 8.0, simulate: boo
         sys.stdout.write(f"\r t={t:5.2f}s  F={f:6.2f} N  {_bar(f, target, limit)}  {st:<8}")
         sys.stdout.flush()
     print()
-    with open(path, "w", newline="") as fh:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["t_s", "force_n", "angle_deg", "state"])
         w.writerows(rows)

@@ -138,7 +138,7 @@ class RobotProject(Project):
         rev = f"r{len(self.revs()) + 1:03d}"
         out = self.rev_dir(rev)
         os.makedirs(out)
-        with open(os.path.join(out, "design.json"), "w") as fh:
+        with open(os.path.join(out, "design.json"), "w", encoding="utf-8") as fh:
             fh.write(design.dumps())
         if parent:
             changes = diff(self.load_design(parent), design)
@@ -198,7 +198,7 @@ class RobotProject(Project):
 
         res["summary"] = summarize(res)
         res["pipeline_version"] = pipeline_version()
-        with open(os.path.join(out, "results.json"), "w") as fh:
+        with open(os.path.join(out, "results.json"), "w", encoding="utf-8") as fh:
             json.dump(res, fh, indent=1, default=_jsonable)
         self.log({"type": "revision", "rev": rev, "parent": parent, "label": label, "changes": res["changes"],
                   "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"]})

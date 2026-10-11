@@ -96,7 +96,7 @@ def build(project: Project, revs, path: str, title: str = "") -> str:
     res = {r: project.load_results(r) for r in revs}
     des = {r: project.load_design(r) for r in revs}
     meta_path = os.path.join(project.root, "meta.json")
-    meta = json.load(open(meta_path)) if os.path.exists(meta_path) else {}
+    meta = json.load(open(meta_path, encoding="utf-8")) if os.path.exists(meta_path) else {}
     head = "".join(f'<th><span class="dot" style="background:{COLORS[i % len(COLORS)]}"></span>{r}'
                    f'<br><span style="font-weight:400">{html.escape(res[r].get("label") or "")}</span></th>'
                    for i, r in enumerate(revs))
@@ -210,7 +210,7 @@ def build(project: Project, revs, path: str, title: str = "") -> str:
 {'<div class="card" style="margin-top:16px"><h2>Measured vs predicted</h2><table><tr><th>rev</th><th>actual</th><th>error vs prediction</th></tr>' + mrows + '</table></div>' if mrows else ''}
 <div class="card" style="margin-top:16px"><details><summary>Simulation trials (randomized offset, friction, mass; lift 80 mm + 0.5 g shake)</summary>{''.join(trials)}</details></div>
 </main></body></html>"""
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(doc)
     return path
 
@@ -245,7 +245,7 @@ def _trace_svg(project, rev: str, ep: dict) -> str:
     runs = sorted(f for f in os.listdir(bdir) if f.endswith(".csv"))
     if not runs:
         return ""
-    rows = list(csv.DictReader(open(os.path.join(bdir, runs[-1]))))
+    rows = list(csv.DictReader(open(os.path.join(bdir, runs[-1]), encoding="utf-8")))
     if not rows:
         return ""
     ts = [float(r["t_s"]) for r in rows]

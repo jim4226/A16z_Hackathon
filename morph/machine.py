@@ -12,7 +12,7 @@ import time
 
 def stream_grbl(port: str, gcode_path: str, baud: int = 115200, dry_run: bool = False) -> dict:
     """Simple send-and-wait-for-ok streaming (safe, a bit slower than character counting)."""
-    with open(gcode_path) as fh:
+    with open(gcode_path, encoding="utf-8") as fh:
         lines = [ln.split(";")[0].strip() for ln in fh]
     lines = [ln for ln in lines if ln and not ln.startswith("(")]
     if dry_run:

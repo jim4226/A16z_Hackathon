@@ -954,10 +954,11 @@ def _xml(asm, design, opts: SimOptions, info: _Info, masses, kv=None) -> str:
         og = f'type="box" size="{_fmt([R * MM, L / 2 * MM, R * MM])}"'
     else:
         og = f'type="capsule" size="{R * MM:.6g} {max(L / 2 - R, 0.5) * MM:.6g}" euler="1.5707963 0 0"'
+    ocontact = contact.replace('condim="4"', 'condim="6"')  # no backslashes inside f-strings: Python 3.11
     obj = (f'    <body name="sim_object" pos="{_fmt([x0 * MM, y0 * MM, (R + 0.2) * MM])}" quat="{_fmt(oq)}">\n'
            f'      <freejoint name="sim_object"/>\n'
            f'      <geom name="sim_object" {og} mass="{design.object.mass_g / 1000.0:.6g}" friction="{mu:.3f} 0.005 0.001" '
-           f'{contact.replace("condim=\"4\"", "condim=\"6\"")} contype="{ct}" conaffinity="{ca}" rgba="{ocol}"/>\n'
+           f'{ocontact} contype="{ct}" conaffinity="{ca}" rgba="{ocol}"/>\n'
            f'    </body>')
     px, py = design.task.place_x_mm, design.task.place_y_mm
     tct, tca = GROUPS["table"]
@@ -2038,7 +2039,7 @@ def _make_robot(asm, design, fast, opts):
 
 def _write(outdir, name, doc):
     path = os.path.join(outdir, f"sim_{name}.json")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, separators=(",", ":"))
     return path
 
@@ -2052,7 +2053,7 @@ def run(asm, design, scenario: str, outdir: str | None = None, fast: bool = Fals
     doc["info"]["wall_s"] = round(time.time() - t0, 2)
     if outdir:
         os.makedirs(outdir, exist_ok=True)
-        with open(os.path.join(outdir, "robot.xml"), "w") as fh:
+        with open(os.path.join(outdir, "robot.xml"), "w", encoding="utf-8") as fh:
             fh.write(rob.xml)
         _write(outdir, scenario, doc)
     return doc
@@ -2062,7 +2063,7 @@ def run_all(asm, design, outdir: str, scenarios=None, fast: bool = False, **opts
     """Run the scenarios (default: all four), write sim_<name>.json + robot.xml into outdir."""
     os.makedirs(outdir, exist_ok=True)
     rob = _make_robot(asm, design, fast, opts)
-    with open(os.path.join(outdir, "robot.xml"), "w") as fh:
+    with open(os.path.join(outdir, "robot.xml"), "w", encoding="utf-8") as fh:
         fh.write(rob.xml)
     out = {"scenarios": {}, "mjcf": "robot.xml"}
     for name in scenarios or SCENARIOS:
@@ -2086,7 +2087,7 @@ def _render_iter(asm, design, sim, times, size, camera, fast):
     import mujoco
 
     if isinstance(sim, str):
-        with open(sim) as fh:
+        with open(sim, encoding="utf-8") as fh:
             sim = json.load(fh)
     rob = _make_robot(asm, design, fast, {})
     m, d = rob.model, mujoco.MjData(rob.model)
@@ -2135,7 +2136,7 @@ def render_gif(asm, design, sim: dict | str, path: str, fps: float = 15.0, size=
     from PIL import Image
 
     if isinstance(sim, str):
-        with open(sim) as fh:
+        with open(sim, encoding="utf-8") as fh:
             sim = json.load(fh)
     t_end = sim["frames"][-1]["t"]
     times = np.arange(0.0, t_end + 1e-9, 1.0 / fps)

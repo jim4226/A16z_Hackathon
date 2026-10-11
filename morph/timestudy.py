@@ -39,7 +39,7 @@ def load_baseline(project_root: str) -> dict:
     base = {k: v[0] for k, v in BASELINE.items()}
     path = os.path.join(project_root, "baseline.json")
     if os.path.exists(path):
-        base.update(json.load(open(path)))
+        base.update(json.load(open(path, encoding="utf-8")))
     return base
 
 
