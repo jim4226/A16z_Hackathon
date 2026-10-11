@@ -1,11 +1,12 @@
 """KiCad project from Morph's board.json: open the carrier board in KiCad, publish it on BoardRepo.
 
 Writes a KiCad 8/9 project (.kicad_pro, .kicad_pcb, .kicad_sch) with the same copper as
-morph/board.py: one inline footprint per component (no library links), every trace as a
-segment, the GND pour as a B.Cu zone that KiCad refills with its own clearance rules, and a
-schematic with one box symbol per part whose pins carry the board's net labels, so KiCad's
-PCB-vs-schematic check passes. Pads cover both mask layers, so fab outputs that KiCad (or
-BoardRepo) generates from this project include solder mask, which Morph's own Gerbers don't.
+morph/board.py: one inline footprint per component (no library links) with round pads like
+Morph's, every trace as a segment, and the GND pour as a B.Cu zone stored filled with Morph's
+own pour polygon (fractured the way KiCad stores fills), so a headless plot matches Morph's
+Gerbers and KiCad can still refill it. The schematic has one box symbol per part whose pins carry
+the board's net labels, so KiCad's PCB-vs-schematic check passes. Pads cover both mask layers, so
+fab outputs that KiCad (or BoardRepo) generates include solder mask, which Morph's Gerbers don't.
 
 Morph's board coordinates are y-up (Gerber convention); KiCad is y-down, so y -> H - y.
 UUIDs are derived from the board, so the same board.json always gives the same files.
@@ -41,7 +42,7 @@ LAYERS = [(0, "F.Cu", "signal"), (31, "B.Cu", "signal"),
 
 
 def _q(s) -> str:
-    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
 
 
 def _n(v: float) -> str:
@@ -65,7 +66,7 @@ def _sym_uuid(ref: str) -> str:
 
 
 def _fp_name(c: dict) -> str:
-    return f"{c['ref']}_{c['value']}".replace(" ", "_")
+    return "".join("_" if ch in ' :/\\' else ch for ch in f"{c['ref']}_{c['value']}")   # ':' would read as lib:item
 
 
 def _nc(c: dict, p: dict) -> str:
@@ -119,12 +120,12 @@ def to_kicad_pcb(board: dict, name: str = "board", title: str = "Morph carrier b
         cy1 = max([ry1] + [y + PAD_D / 2 for _, y in px]) + 0.25
         o.append(f"\t\t(fp_rect (start {_n(cx0)} {_n(cy0)}) (end {_n(cx1)} {_n(cy1)}) "
                  f"(stroke (width 0.05) (type solid)) (fill none) (layer \"F.CrtYd\") {uid()})")
-        for i, p in enumerate(c["pads"]):
+        for p in c["pads"]:
             dx, dy = rel(p["x"], p["y"])
             pn = p.get("net") or _nc(c, p)
-            o.append(f"\t\t(pad {_q(p['name'])} thru_hole {'rect' if i == 0 else 'circle'} (at {_n(dx)} {_n(dy)}) "
+            o.append(f"\t\t(pad {_q(p['name'])} thru_hole circle (at {_n(dx)} {_n(dy)}) "   # round, like the pour assumes
                      f"(size {PAD_D} {PAD_D}) (drill {DRILL_D}) (layers \"*.Cu\" \"*.Mask\") (remove_unused_layers no) "
-                     f"(net {net_id[pn]} {_q(pn)}) {uid()})")   # square pad marks pin 1
+                     f"(net {net_id[pn]} {_q(pn)}) {uid()})")
         o.append("\t)")
 
     o.append(f"\t(gr_rect (start 0 0) (end {_n(W)} {_n(H)}) (stroke (width 0.1) (type default)) (fill none) "
@@ -134,16 +135,38 @@ def to_kicad_pcb(board: dict, name: str = "board", title: str = "Morph carrier b
         for (xa, ya), (xb, yb) in zip(pts, pts[1:]):
             o.append(f"\t(segment (start {_n(xa)} {_n(fy(ya))}) (end {_n(xb)} {_n(fy(yb))}) (width {_n(t['width'])}) "
                      f"(layer {_q(t['layer'])}) (net {net_id[t['net']]}) {uid()})")
-    if "GND" in net_id:   # outline only: KiCad computes the fill (and keeps its own clearances)
+    if "GND" in net_id:   # zone outline + Morph's pour as the stored fill; KiCad may refill it
         for zi, ring in enumerate(board.get("pour", [])):
             pts = " ".join(f"(xy {_n(x)} {_n(fy(y))})" for x, y in ring["exterior"][:-1])
+            fill = " ".join(f"(xy {_n(x)} {_n(fy(y))})" for x, y in _fracture(ring["exterior"], ring.get("holes", [])))
             o += [f"\t(zone (net {net_id['GND']}) (net_name \"GND\") (layer \"B.Cu\") {uid()} (name \"GND_POUR{zi}\") "
-                  f"(priority {zi})", "\t\t(hatch edge 0.5)", "\t\t(connect_pads yes (clearance 0.5))",
+                  f"(priority {zi})", "\t\t(hatch edge 0.5)",
+                  "\t\t(connect_pads yes (clearance 0.49))",   # Morph's 0.5 mm arcs are polygons: KiCad measures 0.499
                   "\t\t(min_thickness 0.25) (filled_areas_thickness no)",
                   "\t\t(fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5) (island_removal_mode 0))",
-                  f"\t\t(polygon (pts {pts}))", "\t)"]
+                  f"\t\t(polygon (pts {pts}))", f"\t\t(filled_polygon (layer \"B.Cu\") (pts {fill}))", "\t)"]
     o.append(")")
     return "\n".join(o) + "\n"
+
+
+def _fracture(ext: list, holes: list) -> list:
+    """Polygon with holes -> one hole-free ring, each hole joined to the outline by a zero-width
+    keyhole cut (how KiCad stores a zone fill). Holes are taken left to right; each is bridged
+    horizontally from its leftmost vertex to the nearest edge of the ring built so far."""
+    out = [tuple(p) for p in ext[:-1]]
+    for h in sorted((tuple(map(tuple, h[:-1])) for h in holes), key=lambda h: min(p[0] for p in h)):
+        k = min(range(len(h)), key=lambda i: h[i])
+        px, py = h[k]
+        best = None
+        for i in range(len(out)):
+            (ax, ay), (bx, by) = out[i], out[(i + 1) % len(out)]
+            if (ay > py) != (by > py):
+                x = ax + (py - ay) * (bx - ax) / (by - ay)
+                if x <= px and (best is None or x > best[0]):
+                    best = (x, i)
+        x, i = best
+        out = out[:i + 1] + [(x, py)] + list(h[k:] + h[:k]) + [h[k], (x, py)] + out[i + 1:]
+    return out
 
 
 def to_kicad_sch(board: dict, name: str = "board") -> str:
@@ -226,14 +249,16 @@ def readme(board: dict, name: str, about: dict | None = None, notes: str = "") -
     rows = [("Board", f"{W:g} x {H:g} mm, 2 layers, 1.6 mm, through-hole on a 0.1\" grid"), ("Parts", parts),
             ("Nets", ", ".join(board["nets"])), ("Morph DRC", "pass" if drc.get("pass") else f"FAIL {drc}")]
     rows += [(k, v) for k, v in about.items() if v not in (None, "")]
+    cell = lambda v: str(v).replace("|", "\\|").replace("\n", " ")  # noqa: E731
     lines = [f"# {name}", "",
              "Carrier board for a force-limited gripper (servo + force-sensing resistor + MCU module), "
              "generated by [Morph](https://github.com/jim4226/A16z_Hackathon) from a one-sentence need.", "",
-             "| | |", "|---|---|"] + [f"| {k} | {v} |" for k, v in rows] + [
+             "| | |", "|---|---|"] + [f"| {cell(k)} | {cell(v)} |" for k, v in rows] + [
              "", "Opens in KiCad 8 or 9. Footprints and symbols are embedded in the project (no library links). "
-             "The GND pour is a zone outline; press B in KiCad's PCB editor to refill it. Solder it on perfboard "
-             "following the layout, or have KiCad generate fab outputs (they include solder mask).", "",
-             "Licensed under Apache-2.0, like the Morph repository."]
+             "The GND pour is stored filled with Morph's own polygon (B in KiCad's PCB editor refills it). "
+             "Solder it on perfboard following the layout, or have KiCad generate fab outputs (they include "
+             "solder mask).", "",
+             "Licensed under Apache-2.0, like the Morph repository (LICENSE)."]
     return "\n".join(lines) + "\n" + (f"\n{notes}" if notes else "")
 
 
@@ -243,6 +268,10 @@ def export(board: dict, outdir: str, name: str = "board", about: dict | None = N
     os.makedirs(outdir, exist_ok=True)
     files = {f"{name}.kicad_pro": to_kicad_pro(name), f"{name}.kicad_pcb": to_kicad_pcb(board, name),
              f"{name}.kicad_sch": to_kicad_sch(board, name), "README.md": readme(board, name, about, notes)}
+    lic = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LICENSE")
+    if os.path.exists(lic):   # BoardRepo shows a board with no licence file as all rights reserved
+        with open(lic, encoding="utf-8") as fh:
+            files["LICENSE"] = fh.read()
     for fn, text in files.items():
         with open(os.path.join(outdir, fn), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
@@ -254,21 +283,26 @@ def export(board: dict, outdir: str, name: str = "board", about: dict | None = N
 
 
 def check(outdir: str, name: str = "board") -> dict | None:
-    """kicad-cli DRC (+ schematic parity) and ERC on an exported project; None without kicad-cli."""
+    """kicad-cli DRC (+ schematic parity) and ERC on an exported project; None without kicad-cli.
+
+    kicad-cli doesn't refill zones, so DRC checks the stored fill (Morph's pour). Never raises."""
     cli = shutil.which("kicad-cli")
     if not cli:
         return None
     out = {}
-    with tempfile.TemporaryDirectory() as tmp:
-        for kind, args in (("drc", ["pcb", "drc", "--schematic-parity", os.path.join(outdir, f"{name}.kicad_pcb")]),
-                           ("erc", ["sch", "erc", "--severity-error", os.path.join(outdir, f"{name}.kicad_sch")])):
-            rep = os.path.join(tmp, f"{kind}.json")
-            proc = subprocess.run([cli, *args[:2], "--format", "json", "-o", rep, *args[2:]],
-                                  capture_output=True, text=True, timeout=120)
-            if not os.path.exists(rep):
-                return {"ok": False, "error": (proc.stderr or proc.stdout).strip()[-400:]}
-            with open(rep, encoding="utf-8") as fh:
-                out[kind] = json.load(fh)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            for kind, args in (("drc", ["pcb", "drc", "--schematic-parity", os.path.join(outdir, f"{name}.kicad_pcb")]),
+                               ("erc", ["sch", "erc", "--severity-error", os.path.join(outdir, f"{name}.kicad_sch")])):
+                rep = os.path.join(tmp, f"{kind}.json")
+                proc = subprocess.run([cli, *args[:2], "--format", "json", "-o", rep, *args[2:]],
+                                      capture_output=True, text=True, timeout=120)
+                if not os.path.exists(rep):   # e.g. KiCad 7, which can't read the 8/9 format
+                    return {"ok": False, "error": (proc.stderr or proc.stdout).strip()[-400:]}
+                with open(rep, encoding="utf-8") as fh:
+                    out[kind] = json.load(fh)
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
+        return {"ok": False, "error": f"{exc.__class__.__name__}: {exc}"}
     d, e = out["drc"], out["erc"]
     res = {"violations": len(d.get("violations", [])), "unconnected": len(d.get("unconnected_items", [])),
            "parity": len(d.get("schematic_parity", [])),

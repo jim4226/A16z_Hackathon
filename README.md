@@ -132,7 +132,7 @@ With no keys set, both integrations are no-ops and everything runs offline.
 
 **BoardRepo: the board in KiCad, and open boards to learn from** (not a sponsor). Every carrier
 board is also written as a KiCad project next to its Gerbers (`electronics/board/kicad/`), with
-the same copper. KiCad 9 reports 0 DRC violations, 0 unconnected items, 0 PCB-vs-schematic
+the same copper, the GND pour included. KiCad 9 reports 0 DRC violations, 0 unconnected items, 0 PCB-vs-schematic
 mismatches and 0 ERC errors for every MCU. Darwin's PCB-fab handoff includes it. `morph kicad`
 packages a revision for [BoardRepo](https://boardrepo.com), which takes a zipped KiCad project and
 renders schematic, PCB, 3D and BOM. The README inside the zip lists related open designs.

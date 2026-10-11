@@ -4,11 +4,12 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import zipfile
 
 import pytest
 
-from morph import board, boardrepo, darwin, kicad
+from morph import board, boardrepo, cli, darwin, kicad
 
 EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "examples", "raw-egg", "r004", "electronics", "board", "board.json")
 
@@ -40,6 +41,18 @@ def test_pcb_has_the_same_copper_as_board_json():
         assert f'(net {list(b["nets"]).index(net) + 1} "{net}")' in pcb
     assert '(sheetfile "egg.kicad_sch")' in pcb
     assert "(via " not in pcb   # the router never needs vias; the KiCad file adds none of its own
+    assert " thru_hole rect " not in pcb   # round pads, as Morph's Gerbers and pour assume
+
+
+def test_zone_is_stored_filled_with_morphs_pour():
+    from shapely.geometry import Polygon
+    b = _example()
+    pcb = kicad.to_kicad_pcb(b, "egg")
+    assert pcb.count("(filled_polygon ") == len(b["pour"])
+    for ring in b["pour"]:
+        fr = kicad._fracture(ring["exterior"], ring["holes"])
+        area = abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(fr, fr[1:] + fr[:1]))) / 2
+        assert area == pytest.approx(Polygon(ring["exterior"], ring["holes"]).area, rel=1e-9)
 
 
 def test_schematic_labels_every_connected_pin():
@@ -59,6 +72,7 @@ def test_export_is_deterministic_and_zips_the_folder(tmp_path):
         assert (tmp_path / "a" / f).read_bytes() == (tmp_path / "b" / f).read_bytes()
     with zipfile.ZipFile(tmp_path / "a" / r1["zip"]) as z:
         assert sorted(z.namelist()) == sorted(f"egg-r004/{f}" for f in r1["files"])
+    assert "LICENSE" in r1["files"] and "Apache License" in (tmp_path / "a" / "LICENSE").read_text()
     readme = (tmp_path / "a" / "README.md").read_text()
     assert "| Servo | mg996r |" in readme and "## Related" in readme and "Morph DRC | pass" in readme
 
@@ -80,7 +94,15 @@ def test_a_writer_failure_never_costs_the_gerbers(tmp_path, monkeypatch):
     assert "gerbers/gerbers.zip" in out["files"] and out["drc"]["pass"]
 
 
-@pytest.mark.skipif(not shutil.which("kicad-cli"), reason="kicad-cli not installed")
+def _kicad_cli_major():
+    exe = shutil.which("kicad-cli")
+    try:
+        return int(subprocess.run([exe, "version"], capture_output=True, text=True, timeout=30).stdout.split(".")[0]) if exe else 0
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return 0
+
+
+@pytest.mark.skipif(_kicad_cli_major() < 8, reason="needs kicad-cli 8+ (the project is in the KiCad 8/9 format)")
 @pytest.mark.parametrize("mcu", ["arduino_nano", "rp2040_pico", "esp32_devkit"])
 def test_kicad_drc_erc_and_parity_are_clean(tmp_path, mcu):
     board.build({"mcu": mcu, "sensing": {"divider_ohm": 10000}}, str(tmp_path))
@@ -117,7 +139,17 @@ def test_parse_markdown_twin():
     info = boardrepo.parse_md(MD)
     assert info["license"] == "MIT" and info["title"] == "robotic-gripper"
     assert info["contents"] == ["Schematic", "PCB layout", "Bill of materials"]
+    assert boardrepo.parse_md("\ufeff" + MD.replace("\n", "\r\n")) == info   # BOM / CRLF
     assert boardrepo.parse_md("no front matter")["license"] is None
+
+
+def test_board_ids_accept_pasted_urls_and_reject_the_rest():
+    for s in ("evroc/robotic-gripper", "https://boardrepo.com/evroc/robotic-gripper/",
+              "https://boardrepo.com/evroc/robotic-gripper.md", "boardrepo.com/evroc/robotic-gripper"):
+        assert boardrepo.board_id(s) == "evroc/robotic-gripper"
+    for s in ("?q=1#", "../x", "a b/c", "evroc", "a/b/c"):
+        assert boardrepo.board_id(s) is None
+    assert boardrepo.fetch("?q=1#")["ok"] is False   # rejected before any request
 
 
 def test_references_follow_the_design():
@@ -143,6 +175,41 @@ def test_fetch_offline_never_raises(tmp_path, monkeypatch):
     assert info["url"] == "https://boardrepo.com/evroc/robotic-gripper"
 
 
+class _Resp:
+    def __init__(self, text):
+        self.text = text.encode()
+
+    def read(self, n=-1):
+        return self.text
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_fetch_keeps_a_live_answer_when_the_cache_cannot_be_written(tmp_path, monkeypatch):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    monkeypatch.setattr(boardrepo, "CACHE", str(blocker / "cache"))
+    monkeypatch.setattr(boardrepo, "urlopen", lambda *a, **k: _Resp(MD))
+    info = boardrepo.fetch("https://boardrepo.com/evroc/robotic-gripper")
+    assert info["ok"] is True and info["license"] == "MIT" and info["board"] == "evroc/robotic-gripper"
+
+
+def test_morph_kicad_checks_project_and_revision(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "HOME", str(tmp_path))
+    with pytest.raises(SystemExit, match="no project nosuch"):
+        cli.main(["kicad", "nosuch"])
+    assert not (tmp_path / "nosuch").exists()   # no side effect
+    (tmp_path / "egg" / "r001").mkdir(parents=True)
+    with pytest.raises(SystemExit, match="no revision r999"):
+        cli.main(["kicad", "egg", "r999"])
+    with pytest.raises(SystemExit, match="no carrier board"):
+        cli.main(["kicad", "egg", "r001"])
+
+
 def test_darwin_pcb_handoff_carries_the_kicad_zip(tmp_path):
     bdir = tmp_path / "electronics" / "board"
     (bdir / "gerbers").mkdir(parents=True)
@@ -153,4 +220,4 @@ def test_darwin_pcb_handoff_carries_the_kicad_zip(tmp_path):
     (bdir / "kicad" / "board-kicad.zip").write_bytes(b"")
     after = pcb()
     assert after[1] == before[1]   # same Darwin query, so its cache still hits
-    assert after[2] == before[2] + [os.path.join("electronics", "board", "kicad", "board-kicad.zip")]
+    assert after[2] == before[2] + ["electronics/board/kicad/board-kicad.zip"]   # JSON paths use '/' everywhere

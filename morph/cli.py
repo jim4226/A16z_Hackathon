@@ -292,11 +292,15 @@ def cmd_ask(a):
 
 
 def cmd_kicad(a):
+    if not os.path.isdir(os.path.join(HOME, a.name)):
+        sys.exit(f"no project {a.name} in {HOME}")
     p = _project(a.name)
     rev = a.rev or p.latest()
+    if not rev or rev not in p.revs():
+        sys.exit(f"{a.name} has no revision {rev or '(none yet)'}")
     src = os.path.join(p.rev_dir(rev), "electronics", "board", "board.json")
     if not os.path.exists(src):
-        sys.exit(f"{a.name} {rev} has no carrier board (it is built when finger.sensor is set)")
+        sys.exit(f"{a.name} {rev} has no carrier board (Morph builds one for sensor fingers, finger.sensor=fsr402)")
     with open(src) as fh:
         brd = json.load(fh)
     results = p.load_results(rev)
@@ -305,7 +309,7 @@ def cmd_kicad(a):
     about = {"Morph project": f"{a.name} {rev}", "Object": o.get("name"), "Servo": summary.get("servo"),
              "Grip target": f"{summary['target_force_n']} N" if summary.get("target_force_n") else None}
     refs = boardrepo.related(boardrepo.keys_for(design, summary, robot="sizing" in results))
-    name = f"{a.name}-{rev}"
+    name = f"{os.path.basename(os.path.normpath(p.root))}-{rev}"
     out = os.path.join(p.rev_dir(rev), "boardrepo", name)
     kc = kicad.export(brd, out, name, about, boardrepo.notes_md(refs))
     chk = kicad.check(out, name)
@@ -324,7 +328,8 @@ def cmd_kicad(a):
             print(f"  {boardrepo.page(r['board'])}  ({r['license'] or 'no licence recognised'})")
     print(f"\npublish on BoardRepo: {zpath}")
     print("\n".join("  " + s for s in boardrepo.publish_steps(zpath)))
-    p.log({"type": "board_export", "rev": rev, "zip": os.path.relpath(zpath, p.root), "kicad_check": chk})
+    p.log({"type": "board_export", "rev": rev, "zip": os.path.relpath(zpath, p.root).replace(os.sep, "/"),
+           "kicad_check": chk})
 
 
 def cmd_boardrepo(a):
@@ -334,7 +339,8 @@ def cmd_boardrepo(a):
     for r in boardrepo.related({k for ref in boardrepo.REFERENCES for k in ref["for"]}, live=True):
         info = r["live"]
         state = "cached" if info.get("cached") else ("live" if info.get("ok") else f"offline ({info.get('error')})")
-        print(f"{r['board']}  [{info.get('license') or r['license'] or 'no licence recognised'}; {state}]")
+        lic = info.get("license") if info.get("ok") else r["license"]   # the snapshot only when offline, no cache
+        print(f"{r['board']}  [{lic or 'no licence recognised'}; {state}]")
         print(f"  {r['why']}")
         print(f"  for: {', '.join(r['for'])}  views: {', '.join(info.get('contents') or []) or '?'}  {r.get('live', {}).get('url')}")
 

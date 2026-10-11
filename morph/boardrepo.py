@@ -52,8 +52,20 @@ def page(board: str) -> str:
     return f"{BASE}/{board}"
 
 
+def board_id(s: str) -> str | None:
+    """'owner/slug', a pasted board URL, or its .md twin -> 'owner/slug'; None if it isn't one."""
+    s = s.strip()
+    for pre in (BASE + "/", "boardrepo.com/", "/"):
+        s = s[len(pre):] if s.startswith(pre) else s
+    s = s.rstrip("/")
+    s = s[:-3] if s.endswith(".md") else s
+    ok = re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", s) and not {".", ".."} & set(s.split("/"))
+    return s if ok else None
+
+
 def parse_md(text: str) -> dict:
     """A board's markdown twin -> {title, description, license, contents}. Pure."""
+    text = text.lstrip("\ufeff").replace("\r\n", "\n")
     fm = {}
     m = re.match(r"---\n(.*?)\n---", text, re.S)
     if m:
@@ -75,17 +87,26 @@ def _cache_path(board: str) -> str:
 
 def fetch(board: str, timeout: float = 15) -> dict:
     """Live details of one public board; falls back to the disk cache. Never raises."""
-    out = {"board": board, "url": page(board)}
+    bid = board_id(board)
+    if not bid:
+        return {"board": board, "url": None, "ok": False, "error": "not a BoardRepo board (expected owner/slug)"}
+    board, out = bid, {"board": bid, "url": page(bid)}
     try:
         req = Request(f"{page(board)}.md", headers={"Accept": "text/markdown", "User-Agent": "morph"})
         with urlopen(req, timeout=timeout) as resp:
-            info = {**out, **parse_md(resp.read().decode("utf-8", "replace")), "ok": True}
-        os.makedirs(CACHE, exist_ok=True)
-        with open(_cache_path(board), "w") as fh:
-            json.dump({**info, "fetched": time.strftime("%Y-%m-%dT%H:%M:%S")}, fh)
-        return info
+            info = {**out, **parse_md(resp.read(1 << 20).decode("utf-8", "replace")), "ok": True}
+        if not (info["title"] or info["license"] or info["contents"]):
+            raise ValueError("no board front matter in the page")
     except Exception as exc:
         err = f"{exc.__class__.__name__}: {exc}"
+    else:
+        try:   # best effort: an unwritable cache must not drop a good answer
+            os.makedirs(CACHE, exist_ok=True)
+            with open(_cache_path(board), "w") as fh:
+                json.dump({**info, "fetched": time.strftime("%Y-%m-%dT%H:%M:%S")}, fh)
+        except OSError:
+            pass
+        return info
     try:
         with open(_cache_path(board)) as fh:
             return {**json.load(fh), "cached": True, "error": err}
