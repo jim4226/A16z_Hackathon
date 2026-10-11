@@ -4,9 +4,11 @@
 built from published surveys and case studies) for every engineering step a
 revision touched. "With Morph" = the pipeline's measured runtime for that
 revision plus human minutes the team logged (`morph clock`). A first revision
-costs every step in full; later revisions cost each affected step at the
-iteration rate from the baseline (re-doing an affected step after one design
-change), which is how real engineering changes ripple.
+costs every step in full. A later revision (one design change) costs the
+cited per-change effort scaled by the share of engineering work the change
+touches: a BOM-only edit costs minutes, a change that ripples through CAD,
+simulation, electronics and manufacturing costs the full per-change figure.
+This is deliberately conservative.
 """
 
 from __future__ import annotations
@@ -53,22 +55,30 @@ def revision(results: dict, base: dict | None = None, human_min: float = 0.0) ->
                     touched.append(k)
     if first and "spec_requirements" in steps:
         touched.insert(0, "spec_requirements")
-    frac = base.get("iteration_fraction", 0.35)
+    total_typ = sum(s["typical_min"] for s in steps.values()) or 1.0
+    per_change = (base.get("per_change") or {}).get("typical_min", 1440.0)
     rows = []
     for k in touched:
         s = steps.get(k)
         if not s:
             continue
         full = s["typical_min"]
-        before = full if first else full * frac
+        before = full if first else per_change * full / total_typ
         rows.append({"key": k, "label": s["label"], "before_min": round(before, 1), "full_min": full,
-                     "low_min": s.get("low_min"), "high_min": s.get("high_min"), "citations": s.get("citations", [])})
+                     "low_min": s.get("low_min"), "high_min": s.get("high_min"), "citations": s.get("citations", []),
+                     "derivation": s.get("derivation", "")})
+    frac = per_change / total_typ
     tim = results.get("timings_s") or {}
-    after_min = sum(v for n, v in tim.items() if prov.get(n) == "computed") / 60.0 + human_min
+    compute_min = sum(v for n, v in tim.items() if prov.get(n) == "computed") / 60.0
+    # the engineer still reads and checks what Morph produced: logged minutes if any, else a stated allowance
+    review = base.get("review_allowance_min", {"first": 15.0, "change": 5.0})
+    review_min = human_min if human_min > 0 else review["first" if first else "change"]
+    after_min = compute_min + review_min
     before = sum(r["before_min"] for r in rows)
     return {"first": first, "rows": rows, "before_min": round(before, 1), "after_min": round(after_min, 2),
+            "compute_min": round(compute_min, 2), "review_min": round(review_min, 1), "review_assumed": human_min <= 0,
             "saved_min": round(before - after_min, 1), "speedup": round(before / after_min, 0) if after_min > 0 else None,
-            "iteration_fraction": frac}
+            "per_change_share": round(frac, 4)}
 
 
 def project(p, base: dict | None = None) -> dict:

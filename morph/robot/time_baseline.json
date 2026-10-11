@@ -1,16 +1,684 @@
 {
-  "status": "PLACEHOLDER until the cited research lands; do not present these numbers",
-  "iteration_fraction": 0.35,
-  "steps": [
-    {"key": "spec_requirements", "label": "Requirements + concept", "low_min": 60, "typical_min": 120, "high_min": 240, "citations": []},
-    {"key": "cad_arm_and_gripper", "label": "CAD: arm + gripper", "low_min": 960, "typical_min": 1920, "high_min": 4800, "citations": []},
-    {"key": "simulation_setup_and_runs", "label": "Simulation setup + runs", "low_min": 480, "typical_min": 960, "high_min": 2400, "citations": []},
-    {"key": "electronics_schematic_pcb", "label": "Electronics: parts, schematic, PCB", "low_min": 480, "typical_min": 1440, "high_min": 2880, "citations": []},
-    {"key": "firmware", "label": "Firmware", "low_min": 240, "typical_min": 960, "high_min": 2400, "citations": []},
-    {"key": "bom_sourcing", "label": "BOM + sourcing", "low_min": 120, "typical_min": 360, "high_min": 960, "citations": []},
-    {"key": "manufacturing_prep_quotes", "label": "Manufacturing prep + quotes", "low_min": 240, "typical_min": 720, "high_min": 2400, "citations": []},
-    {"key": "assembly_manual", "label": "Assembly instructions", "low_min": 120, "typical_min": 480, "high_min": 960, "citations": []}
-  ],
-  "headlines": [],
-  "caveats": "placeholder"
+ "status": "cited: built from published surveys, papers and case studies; verified 38/40 figures against their sources",
+ "unit": "engineer-minutes, one experienced engineer, hands-on time only (no waiting, fabrication or meetings)",
+ "per_change": {
+  "low_min": 480,
+  "typical_min": 1440,
+  "high_min": 4800,
+  "derivation": "Example change: a heavier payload forces a larger joint-2 servo. That touches links and brackets, the simulations, the power budget and possibly the PCB, plus the BOM, drawings and manual pages.\n- Low 8 h: about one fingertip redesign-and-verify cycle (6-8 h, Wolniakowski et al.).\n- Typical 24 h: 3 working days, the low end of Honarpardaz's 3-4 working days per manual finger-design iteration.\n- High 80 h: 10 working days. Terwiesch & Loch found the hands-on activity in one engineering change order 'does not exceed 10 days'. This also matches roughly one PCB re-spin when the change reaches the board (Lifecycle Insights via Mentor: 2.9 re-spins per project at about 5.5-8.5 days each; the two versions conflict).\n\nElapsed-time figures are deliberately excluded: Terwiesch & Loch's 2 months to over a year per change, and Langer et al.'s self-reported mean of 60.6 working days (SD 140).\n\nScale context: engineering changes take about 31% of R&D capacity (Langer et al., n=27), and Soderberg (via Terwiesch & Loch) reported about 45% of engineering time going to changing parts that were 'thought to be ready'.",
+  "citations": [
+   {
+    "title": "Finger Design Automation for Industrial Robots: A Generic and Agile Approach (M. Honarpardaz), Dissertation No. 1917",
+    "publisher": "Linkoping University",
+    "year": "2018",
+    "url": "https://www.dissertations.se/dissertation/47746412ec/"
+   },
+   {
+    "title": "Robotic Finger Design Workflow for Adaptable Industrial Assembly Tasks (Wolniakowski et al.), Proc. ROBOVIS 2020",
+    "publisher": "SCITEPRESS",
+    "year": "2020",
+    "url": "https://www.scitepress.org/Papers/2020/100201/100201.pdf"
+   },
+   {
+    "title": "Managing the Process of Engineering Change Orders: The Case of the Climate Control System in Automobile Development (Terwiesch, Loch), JPIM 16(2) (INSEAD working paper)",
+    "publisher": "Journal of Product Innovation Management / INSEAD",
+    "year": "1999",
+    "url": "https://sites.insead.edu/facultyresearch/research/doc.cfm?did=1023"
+   },
+   {
+    "title": "Modern practices in PCB design verification (citing Lifecycle Insights, Sept 2018)",
+    "publisher": "Design World (WTWH Media); vendor-authored (Mentor Graphics)",
+    "year": "2019",
+    "url": "https://www.designworldonline.com/modern-practices-in-pcb-design-verification/"
+   },
+   {
+    "title": "Exploring Differences Between Average and Critical Engineering Changes: Survey Results from Denmark (Langer, Maier, Wilberg, Munch, Lindemann), DESIGN 2012",
+    "publisher": "Design Society (copy on Strathprints, University of Strathclyde)",
+    "year": "2012",
+    "url": "https://strathprints.strath.ac.uk/79508/1/Langer_etal_DS70_2012_Exploring_differences_between_average_and_critical_engineering_changes.pdf"
+   }
+  ]
+ },
+ "steps": [
+  {
+   "key": "spec_requirements",
+   "label": "Requirements + spec",
+   "long_label": "Requirements and spec (payload, reach, DOF, joint-torque sizing, architecture choice)",
+   "low_min": 240,
+   "typical_min": 720,
+   "high_min": 3840,
+   "derivation": "Estimate, informed by the 2019 Embedded Markets Study. No source gives hours for writing a spec for a small robot arm. Low is 4 h: a one-page requirements list with no review. Typical is 12 h (1.5 days): requirements, reach and payload numbers, joint-torque sizing to pick actuators, and a controller/architecture choice. High is 64 h. In the 2019 bars of the 'What percentage of your design time is spent on each stage?' chart (p.38, N=424), 'Developing system specs' is 13% against 31% for 'Detailed design'. I read the 13% myself from the same chart that holds the verified 31% and 19% figures; the 2019 values add to 99%. Applying that 13/31 ratio to this baseline's typical detailed-design effort (CAD 56 h + electronics 57 h + firmware 40 h = 153 h) gives about 64 h. Typical is set well below that ratio because a small team writes lighter specs than the ~16-engineer, ~12-month projects in that survey. Context: a 2006 Flomerics survey named design requirement changes (59%) as the top cause of PCB schedule overruns.",
+   "citations": [
+    {
+     "title": "2019 Embedded Markets Study (p.38 design-time-by-stage chart)",
+     "publisher": "AspenCore / EETimes-Embedded.com (survey by Wilson Research Group)",
+     "year": "2019",
+     "url": "https://www.embedded.com/wp-content/uploads/2019/11/EETimes_Embedded_2019_Embedded_Markets_Study.pdf"
+    },
+    {
+     "title": "Flomerics Releases PCB Design Survey Results",
+     "publisher": "Circuits Assembly (UP Media Group)",
+     "year": "2006",
+     "url": "https://circuitsassembly.com/ca/news/293-news/2006-news/12736-flomerics-releases-pcb-design-survey-results.html"
+    }
+   ]
+  },
+  {
+   "key": "cad_arm_and_gripper",
+   "label": "Mechanical CAD (arm + gripper)",
+   "long_label": "Mechanical CAD: 5-DOF arm plus force-sensing gripper (one revision)",
+   "low_min": 1920,
+   "typical_min": 3360,
+   "high_min": 12000,
+   "derivation": "GRIPPER (low 8 h / typical 16 h / high 80 h):\n- Low 8 h: Kuhn-Stoff's average design time for one custom AM gripper hand, a vendor CEO estimate for adapting finger geometry on an existing base gripper.\n- Typical 16 h: two fingertips at the 6-8 h per fingertip an expert engineer reported in Wolniakowski et al. (2020), which includes 3D-print verification. Taken as 2 x 8 h, with sensor mounting absorbed into that figure.\n- High 80 h: about 2 weeks (10 workdays x 8 h), Honarpardaz's figure for manually designing one industrial finger at 3-4 working days per iteration. The same researcher told LiU it takes 'at least a month' for an expert, so 80 h is the conservative end.\n\nARM (low 24 h / typical 40 h / high 120 h): estimate only. No verified source gives hours for CAD of a whole 5-DOF arm. Assumes about 12-20 custom parts (base, turntable, shoulder/elbow/wrist links, servo brackets, covers).\n- Low: 12 parts x 2 h.\n- Typical: 16 parts x 2.5 h.\n- High: 20 parts x 6 h, using the 6-8 h-per-fingertip figure as the per-part ceiling for complex parts.\n\nTotals:\n- Low: 8 + 24 = 32 h.\n- Typical: 16 + 40 = 56 h (about 7 workdays).\n- High: 80 + 120 = 200 h.\n\nThis covers one revision only. Rework from changes is in per_change_iteration.",
+   "citations": [
+    {
+     "title": "Robotic Finger Design Workflow for Adaptable Industrial Assembly Tasks (Wolniakowski, Lindvig, Iversen, Kruger, Kramberger), Proc. ROBOVIS 2020, pp. 69-76",
+     "publisher": "SCITEPRESS",
+     "year": "2020",
+     "url": "https://www.scitepress.org/Papers/2020/100201/100201.pdf"
+    },
+    {
+     "title": "Finger Design Automation for Industrial Robots: A Generic and Agile Approach (M. Honarpardaz), Linkoping Studies in Science and Technology, Dissertation No. 1917",
+     "publisher": "Linkoping University",
+     "year": "2018",
+     "url": "https://www.dissertations.se/dissertation/47746412ec/"
+    },
+    {
+     "title": "Two fingers suffice (news item quoting M. Honarpardaz)",
+     "publisher": "Linkoping University",
+     "year": "2018",
+     "url": "https://liu.se/en/news-item/tva-fingrar-racker"
+    },
+    {
+     "title": "paramate case study: Kuhn-Stoff custom gripper hands (corroborated by EOS case study, 11/2020)",
+     "publisher": "trinckle 3D GmbH (vendor case study)",
+     "year": "2020",
+     "url": "https://paramate.trinckle.com/case_kuhnstoff.php"
+    }
+   ]
+  },
+  {
+   "key": "simulation_setup_and_runs",
+   "label": "Simulation setup + runs",
+   "long_label": "Simulation: build MJCF/URDF from CAD, then pick-and-place, payload, workspace and shake runs",
+   "low_min": 720,
+   "typical_min": 1440,
+   "high_min": 3360,
+   "derivation": "Estimate. Published sources describe robot-model setup as manual and hard but give no hours for it. In Tola & Corke's 2023 survey, 67% of URDF users wrote URDFs by hand and 89% rated creating them medium or difficult. In Afzal et al. (2020), 34% of developers skipped simulation on a project, and 53.6% of those cited lack of time or resources.\n\nComponents:\n- Model build (export meshes, inertias, joint limits, actuators, contacts): low 4 h, typical 8 h, high 24 h.\n- Four test scenarios, each scripted, run and post-processed: low 2 h each, typical 4 h each, high 8 h each, so 8 / 16 / 32 h.\n\nTotals: low 12 h, typical 24 h, high 56 h.\n\nCompute time is not counted. In Sandia's analysis, running the simulation was 4% of analyst engineering time, with about 91% going to setup steps. Tech-Clarity found preprocessing takes 38% of simulation time, against 23% waiting for the solver.\n\nCross-check: the Embedded Markets Study puts the simulation stage at 6% of design time against 31% for detailed design. Applied to this baseline's 153 h of detailed design, that gives about 30 h, so the 24 h typical is conservative.\n\nNot used as a baseline: DAA's 63 h of preprocessing for one FEA iteration, and Sandia's 317-1,798 h per analysis. Both are heavy FEA work, not MuJoCo rigid-body simulation.",
+   "citations": [
+    {
+     "title": "DART System Analysis, SAND2005-4647 (Hardwick, Clay, Boggs, Walsh, Larzelere, Altshuler)",
+     "publisher": "Sandia National Laboratories / US DOE OSTI",
+     "year": "2005",
+     "url": "https://www.osti.gov/servlets/purl/876325"
+    },
+    {
+     "title": "Addressing the Bottlenecks of FEA Simulation (M. Boucher)",
+     "publisher": "Tech-Clarity, Inc. (hosted by Siemens PLM)",
+     "year": "2016",
+     "url": "https://www.plm.automation.siemens.com/media/global/en/Tech-Clarity_Perspective_Simulation_tcm27-33115.pdf"
+    },
+    {
+     "title": "Understanding URDF: A Survey Based on User Experience (Tola, Corke), IEEE CASE 2023",
+     "publisher": "IEEE / arXiv 2302.13442",
+     "year": "2023",
+     "url": "https://arxiv.org/abs/2302.13442"
+    },
+    {
+     "title": "A Study on the Challenges of Using Robotics Simulators for Testing (Afzal, Katz, Le Goues, Timperley)",
+     "publisher": "Carnegie Mellon University / arXiv 2004.07368",
+     "year": "2020",
+     "url": "https://arxiv.org/abs/2004.07368"
+    },
+    {
+     "title": "2019 Embedded Markets Study",
+     "publisher": "AspenCore (survey by Wilson Research Group)",
+     "year": "2019",
+     "url": "https://www.embedded.com/wp-content/uploads/2019/11/EETimes_Embedded_2019_Embedded_Markets_Study.pdf"
+    },
+    {
+     "title": "Design Automation Associates case study: Simcenter 3D (63 h preprocessing per FEA iteration, upper-bound context only)",
+     "publisher": "Siemens Digital Industries Software",
+     "year": "n.d.",
+     "url": "https://resources.sw.siemens.com/en-US/case-study-design-automation-associates-simcenter"
+    }
+   ]
+  },
+  {
+   "key": "electronics_schematic_pcb",
+   "label": "Electronics: parts, schematic, PCB",
+   "long_label": "Electronics: part selection, power budget, schematic, routed 2-layer PCB and Gerbers, harness",
+   "low_min": 1320,
+   "typical_min": 3420,
+   "high_min": 7320,
+   "derivation": "Anchored on PCB layout hours that the original designers reported for real boards (Bazeghi et al. 2007, layout only).\n- Three 2-layer boards took 12, 32 and 40 h.\n- A 90-component motor driver took 21 h.\n- The largest small board took 68 h.\n- A 5-DOF arm controller (MCU, servo bus/motor drivers, regulators, load-cell amplifier, connectors; roughly 60-120 parts) is comparable to boards B11, B4, B8 and B9.\n\nLayout: low 12 h (the smallest 2-layer board), typical 32 h (the median 2-layer board), high 68 h (the largest small board).\n\nSchematic and part selection, scaled from Feranec's logged hours (95 h schematic, 50 h component research, 215 h layout):\n- Schematic = 0.44 x layout. This is conservative: excluding the DDR3 routing, the ratio would be about 0.8.\n- Component research = 0.23 x layout.\n- Harness design is an estimate: 2 / 4 / 8 h.\n\nTotals:\n- Low: 12 + 5 + 3 + 2 = 22 h.\n- Typical: 32 + 14 + 7 + 4 = 57 h.\n- High: 68 + 30 + 16 + 8 = 122 h.\n\nCalendar context, not counted here: Predictable Designs gives 2-5 weeks each for schematic and layout plus 1-4 weeks for critical part selection. The Aberdeen survey for Siemens averages about 3 months from schematic to manufacturing release. Fabrication alone is at least 24 h at JLCPCB, plus shipping.",
+   "citations": [
+    {
+     "title": "Estimating Design Time for System Circuits (Bazeghi, Mesa-Martinez, Greskamp, Torrellas, Renau), IFIP/IEEE VLSI-SoC 2007",
+     "publisher": "IFIP/IEEE (hosted by UIUC IACOMA)",
+     "year": "2007",
+     "url": "https://iacoma.cs.uiuc.edu/iacoma-papers/vlsi07.pdf"
+    },
+    {
+     "title": "Do you know how long schematic design and PCB layout take?",
+     "publisher": "FEDEVEL (Robert Feranec)",
+     "year": "2011",
+     "url": "https://fedevel.com/blog/do-you-know-how-long-schematic-design-and-pcb-layout-take"
+    },
+    {
+     "title": "Product Development Timeline: How Long It Takes to Develop a New Hardware Product",
+     "publisher": "Predictable Designs (John Teel)",
+     "year": "c. 2019, updated",
+     "url": "https://predictabledesigns.com/product-development-timeline-how-long-it-takes-to-develop-a-new-hardware-product/"
+    },
+    {
+     "title": "Are you normal? (summarizing Aberdeen 'PCB Design Best Practices in 2023')",
+     "publisher": "Siemens Digital Industries Software blog",
+     "year": "2024",
+     "url": "https://blogs.sw.siemens.com/electronic-systems-design/2024/03/05/are-you-normal/"
+    },
+    {
+     "title": "PCB Fabrication Services and Production Time",
+     "publisher": "JLCPCB",
+     "year": "2026",
+     "url": "https://jlcpcb.com/help/article/pcb-fabrication-services-and-production-time"
+    }
+   ]
+  },
+  {
+   "key": "firmware",
+   "label": "Firmware",
+   "long_label": "Firmware: servo bus driver, joint control/IK, gripper force loop, host comms, bring-up",
+   "low_min": 960,
+   "typical_min": 2400,
+   "high_min": 9600,
+   "derivation": "Estimate, informed by two sources. Predictable Designs puts firmware/software at 1-6 months of calendar time for a commercial hardware product. The 2019 Embedded Markets Study splits design time into 19% testing and debugging versus 31% detailed design, so debugging is about 0.6x the design effort.\n- Typical 40 h: about 25 h writing code plus about 15 h test and debug (0.61 x 25).\n- Low 16 h: reuse the vendor servo library; about 10 h writing plus 6 h debug.\n- High 160 h: the low end of Predictable Designs' range, treating 1 calendar month as about 4 x 40 h of full-time effort.\n\nThe Embedded study's 12.2-month average project (teams of about 16 engineers) is not used, because it would overstate the scope.",
+   "citations": [
+    {
+     "title": "Product Development Timeline: How Long It Takes to Develop a New Hardware Product",
+     "publisher": "Predictable Designs (John Teel)",
+     "year": "c. 2019, updated",
+     "url": "https://predictabledesigns.com/product-development-timeline-how-long-it-takes-to-develop-a-new-hardware-product/"
+    },
+    {
+     "title": "2019 Embedded Markets Study",
+     "publisher": "AspenCore (survey by Wilson Research Group)",
+     "year": "2019",
+     "url": "https://www.embedded.com/wp-content/uploads/2019/11/EETimes_Embedded_2019_Embedded_Markets_Study.pdf"
+    }
+   ]
+  },
+  {
+   "key": "bom_sourcing",
+   "label": "BOM + sourcing",
+   "long_label": "BOM with vendor sourcing: find parts and supplier models, price, check availability, alternates",
+   "low_min": 240,
+   "typical_min": 600,
+   "high_min": 1440,
+   "derivation": "Assumes a BOM of about 60-150 lines: servos, bearings, fasteners, shafts and electronics. Electronic component research is already counted under electronics.\n\nPricing, anchored on the CalcuQuote/Phase Electronics case (about 2 h to price a 100-line BOM by hand; a variant says 2-3 h):\n- Low: 60 lines, 1.2 h.\n- Typical: 100 lines, 2 h.\n- High: 150 lines at 3 h per 100, 4.5 h.\n\nSearching for standard and supplier parts and their CAD models: 2 / 5 / 12 h. In CADENAS's 2022 survey, 52% reported 30 min/day and 48% reported 1 h/day or more, which implies a mean of about 0.9 h/day. Only part of that is counted here, to avoid double-counting with CAD.\n\nCompiling the BOM, alternates and vendor carts: 1 / 3 / 7.5 h.\n\nTotals: about 4 / 10 / 24 h.\n\nContext, not added: in Fictiv x MISUMI 2026, 83% of 321 director-level respondents said their typical engineer spends 4+ hours a week on sourcing, quoting and ordering. In Accuris 2026, 77% of 439 respondents said they spend 5+ hours a week reading datasheets and comparing alternatives. In Tech-Clarity 2021, searching for information such as specs, BOMs and supplier data was 23% of non-value-added time, or about 7.6% of all engineering time.",
+   "citations": [
+    {
+     "title": "Phase Electronics customer story (formerly CalcuQuote case study)",
+     "publisher": "Elisa IndustrIQ (formerly CalcuQuote), vendor case study",
+     "year": "2025",
+     "url": "https://www.elisaindustriq.com/knowledge-center/customer-stories/phase-electronics"
+    },
+    {
+     "title": "6 Opportunities to Kick your Engineering into High Gear (2022 Engineering Efficiency Report)",
+     "publisher": "CADENAS GmbH / CADENAS PARTsolutions",
+     "year": "2022",
+     "url": "https://fs.hubspotusercontent00.net/hubfs/28407/2022%20Engineering%20Efficiency%20Report.pdf"
+    },
+    {
+     "title": "2026 State of Manufacturing & Supply Chain Report",
+     "publisher": "Fictiv x MISUMI (survey by Dimensional Research)",
+     "year": "2026",
+     "url": "https://www.fictiv.com/2026-state-of-manufacturing-report"
+    },
+    {
+     "title": "The Hidden Tax on Engineering Teams (Fuld & Company survey for Accuris, March 2026)",
+     "publisher": "Accuris",
+     "year": "2026",
+     "url": "https://accuristech.com/blog/the-hidden-tax-on-engineering-teams-what-inaction-on-parts-intelligence-actually-costs/"
+    },
+    {
+     "title": "How-To Reduce Non-Value-Added Work in Engineering (eBook)",
+     "publisher": "Tech-Clarity (licensed to Dassault Systemes SOLIDWORKS)",
+     "year": "2021",
+     "url": "https://www.solidworks.com/sites/default/files/2021-05/Tech-Clarity-ebook-NVA.pdf"
+    }
+   ]
+  },
+  {
+   "key": "manufacturing_prep_quotes",
+   "label": "Manufacturing prep + quotes",
+   "long_label": "Manufacturing prep: process plan, drawings, CAM and print setup, RFQs across 3D print, CNC, sheet metal and molding",
+   "low_min": 450,
+   "typical_min": 1080,
+   "high_min": 2080,
+   "derivation": "Counts hands-on effort only.\n- 2D drawings for outsourced CNC and sheet-metal parts, at NIST's 2.2-3.1 h to annotate one machined part (53-84 characteristics): low 2 parts x 2.2 h = 4.4 h; typical 4 x 2.5 h = 10 h; high 6 x 3.1 h = 18.6 h.\n- CAM programming from the 3D model, at Uski et al.'s 30-60 min per part: 1 / 3 / 6 h. Their 150 min of physical tool setup per part is excluded.\n- Slicing and print setup for about 10-15 printed parts: an estimate of 1 / 2 / 4 h.\n- Preparing and comparing RFQs across processes: an estimate of 1 / 3 / 6 h.\n\nTotals: about 7.5 / 18 / 34.7 h.\n\nWaiting is NOT counted. A conventional manufacturer takes 2-3 days to return a quote (Polyverse testimonial on Protolabs), and Xometry's S-1 says 'days or weeks' to finalize price and lead time. Instant-quote platforms already cut this wait, so Morph's gain here is mainly the drawings, CAM and planning work.",
+   "citations": [
+    {
+     "title": "Testing the Digital Thread in Support of Model-Based Manufacturing and Inspection (Hedberg, Lubell, Fischer, Maggiano, Barnard Feeney), J. Computing and Information Science in Engineering 16(2)",
+     "publisher": "ASME / NIST",
+     "year": "2016",
+     "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC4904719/"
+    },
+    {
+     "title": "Model-Based Definition Accelerates Product Life Cycle in Manufacturing and Inspection Phase - Experiment of Machined One-Off Production (Uski et al.), Proc. DESIGN 2022",
+     "publisher": "Cambridge University Press / Design Society",
+     "year": "2022",
+     "url": "https://doi.org/10.1017/pds.2022.66"
+    },
+    {
+     "title": "Polyverse Solutions case study: Multi-Process Manufacturing Helps Bring New Machinery to Market Faster",
+     "publisher": "Protolabs (vendor case study)",
+     "year": "n.d.",
+     "url": "https://www.protolabs.com/en-gb/resources/case-studies/polyverse-solutions/"
+    },
+    {
+     "title": "Xometry, Inc. Form S-1 Registration Statement (Business section)",
+     "publisher": "U.S. SEC EDGAR (filed by Xometry, Inc.)",
+     "year": "2021",
+     "url": "https://www.sec.gov/Archives/edgar/data/1657573/000119312521181945/d120843ds1.htm"
+    }
+   ]
+  },
+  {
+   "key": "assembly_manual",
+   "label": "Assembly instructions",
+   "long_label": "Assembly manual: step-by-step instructions with exploded views and photos, wiring, calibration",
+   "low_min": 720,
+   "typical_min": 1440,
+   "high_min": 5100,
+   "derivation": "Based on an industry estimating guide that budgets 3-5 h per page for a new-product operator or procedure manual (interviews, writing, graphics or photos, editing, index), plus about 10 h once to design a template if none exists.\n- Low: 4 pages x 3 h = 12 h.\n- Typical: 8 pages x 3 h = 24 h.\n- High: 15 pages x 5 h + 10 h template = 85 h.\n\nThis applies a guide written for professional technical writers to an engineer-written assembly manual by analogy. It is an estimating guide, not a measured study.\n\nPhysical assembly is not included. The LeRobot SO-100 guide says about 1 h per arm, and that figure assumes someone has already written the instructions.",
+   "citations": [
+    {
+     "title": "A Guide to Estimating Writing Projects (V4.0)",
+     "publisher": "Writing Assistance, Inc. (republished by Children's Hospital of Wisconsin)",
+     "year": "2006",
+     "url": "https://cupublic.chw.org/media/BestPractices/SharedResources/Documents/EstimatingWritingProjects.pdf"
+    },
+    {
+     "title": "LeRobot documentation: SO-100 (assembly-time context only)",
+     "publisher": "Hugging Face",
+     "year": "2024-2025 (living doc)",
+     "url": "https://huggingface.co/docs/lerobot/en/so100"
+    }
+   ]
+  }
+ ],
+ "headlines": [
+  {
+   "text": "An expert engineer estimated that designing just one robot-gripper fingertip by hand takes 6-8 hours, including 3D-print checks (Wolniakowski et al., ROBOVIS 2020).",
+   "url": "https://www.scitepress.org/Papers/2020/100201/100201.pdf"
+  },
+  {
+   "text": "In Sandia's analysis of design-through-analysis work, running the simulation took only 4% of analysts' engineering time; about 91% went to setup such as CAD cleanup, geometry decomposition and meshing (Sandia National Laboratories, SAND2005-4647, 2005).",
+   "url": "https://www.osti.gov/servlets/purl/876325"
+  },
+  {
+   "text": "Laying out even a small 2-layer circuit board took 12-40 engineer-hours, before any schematic or part selection (Bazeghi et al., IFIP/IEEE VLSI-SoC 2007).",
+   "url": "https://iacoma.cs.uiuc.edu/iacoma-papers/vlsi07.pdf"
+  },
+  {
+   "text": "83% of manufacturing leaders say their typical engineer spends 4+ hours every week on supplier sourcing, quoting and ordering (Fictiv x MISUMI State of Manufacturing Report, 2026).",
+   "url": "https://www.fictiv.com/2026-state-of-manufacturing-report"
+  },
+  {
+   "text": "Handling engineering changes uses up about 31% of manufacturers' R&D capacity (Langer et al., DESIGN 2012 survey of Danish companies).",
+   "url": "https://strathprints.strath.ac.uk/79508/1/Langer_etal_DS70_2012_Exploring_differences_between_average_and_critical_engineering_changes.pdf"
+  }
+ ],
+ "caveats": "TOTALS. One design revision by one experienced engineer at 8 h/day, excluding per-change work:\n- Low: 6,570 min, about 110 h (about 14 workdays).\n- Typical: 14,460 min, about 241 h (about 30 workdays, or 6 work-weeks).\n- High: 44,740 min, about 746 h (about 4.5 months).\nEach later design change adds about 1,440 min (3 days) typical, with a range of 480-4,800 min.\n\nWHAT IS COUNTED. These are hands-on engineer-minutes only. The baseline leaves out:\n- Waiting and calendar time: RFQ turnaround of 2-3 days to weeks, PCB fabrication of at least 24 h plus shipping, Aberdeen's 5.4 days to build a prototype, and change orders that take months elapsed.\n- Physical printing, machining and assembly.\n- Review meetings.\nOn calendar time the gap would look much larger. Predictable Designs gives 2-5 weeks each for schematic and layout and 1-6 months for firmware, and the Aberdeen survey for Siemens averages about 3 months from schematic to release. Do not put a calendar figure next to Morph's ~1 minute without labelling it.\n\nWHERE THE DATA IS THIN. Several numbers are my estimates, informed by the cited sources rather than taken from them:\n- Arm CAD: only gripper and finger figures exist.\n- MuJoCo/MJCF setup: surveys show it is manual and hard but give no hours.\n- Firmware, spec, harness, print slicing, and RFQ prep effort.\nThe 13% \"developing system specs\" share is not one of the pre-verified figures. I read it myself from the same p.38 chart of the verified 2019 Embedded Markets Study; the 2019 bars add to 99%.\n\nVENDOR SOURCES. Many figures come from vendor-run or vendor-sponsored surveys and case studies: Fictiv, Accuris, CADENAS, Tech-Clarity, CalcuQuote, trinckle, Protolabs and Mentor/Lifecycle Insights. Cite them as such. The two conflicting Lifecycle Insights versions (8.5 days vs about 5.5 days per re-spin) are why only ranges are used.\n\nFIGURES NOT TO STRETCH. Do not apply these directly to this robot:\n- Sandia's 317-1,798 h per analysis.\n- DAA's 63 h of FEA preprocessing.\n- NIST's 60.3 h cycle, which is mostly the supplier re-modelling parts from drawings.\n- The Embedded study's 12.2-month projects.\n- Langer's 60.6 working days.\nRejected figures, not used: Robinson 2010 / IEEE \"39 days\", and roboticscenter.ai's SO-101 times.\n\nFRAMING FOR THE PITCH. Morph's output is a first draft that an engineer still has to review. For an honest before/after card, add review time to the \"after\" side, for example \"~1 min to generate + a few hours of engineer review vs ~6 work-weeks (typical) by hand\". No verified IDC or McKinsey \"time spent searching\" figure was found, so don't use the commonly repeated IDC search-time statistic.",
+ "verified_figures": [
+  {
+   "step": "cad_mechanical: design one custom gripper finger or fingertip in CAD (per part)",
+   "claim": "An expert engineer reported that designing one gripper finger or fingertip by hand in CAD takes about 6-8 hours, including the 3D prints needed to verify it. The authors' simulation-based framework produced and checked an initial design in under 1 hour.",
+   "value": "6-8 (manual) vs <1 (tool-assisted)",
+   "unit": "hours per finger/fingertip design",
+   "source": "Wolniakowski, Lindvig, Iversen, Kr\u00fcger, Kramberger, 'Robotic Finger Design Workflow for Adaptable Industrial Assembly Tasks', Proc. ROBOVIS 2020, pp. 69-76, DOI 10.5220/0010020100690076",
+   "year": "2020",
+   "url": "https://www.scitepress.org/Papers/2020/100201/100201.pdf"
+  },
+  {
+   "step": "cad_mechanical: gripper finger design iteration cycle and total design time",
+   "claim": "Industrial gripper fingers are still designed by hand through repeated trial and error. Each iteration averages 3-4 working days, and a full finger design takes about two weeks depending on complexity.",
+   "value": "3-4 working days per iteration; ~2 weeks total",
+   "unit": "working days per design iteration / weeks per finger design",
+   "source": "Mohammadali Honarpardaz, 'Finger Design Automation for Industrial Robots: A Generic and Agile Approach', Link\u00f6ping Studies in Science and Technology, Dissertation No. 1917 (abstract)",
+   "year": "2018",
+   "url": "https://www.dissertations.se/dissertation/47746412ec/"
+  },
+  {
+   "step": "cad_mechanical: design a simple gripper by hand vs automated",
+   "claim": "Link\u00f6ping University's own news item quotes the researcher: designing a simple gripper by hand takes an expert at least a month, while the automated framework does it in three minutes.",
+   "value": "\u22651 month (manual, expert) vs 3 minutes (automated)",
+   "unit": "elapsed time per gripper design",
+   "source": "'Two fingers suffice' (Tv\u00e5 fingrar r\u00e4cker), news item quoting Mohammadali Honarpardaz",
+   "year": "2018",
+   "url": "https://liu.se/en/news-item/tva-fingrar-racker"
+  },
+  {
+   "step": "cad_mechanical: design time for a custom gripper hand (industry case)",
+   "claim": "In an industrial case, a custom gripper hand took about 8 hours of design time on average. A parametric configurator cut this to about 10 minutes.",
+   "value": "~8 (manual) vs ~0.17 (10 min, configurator)",
+   "unit": "hours per custom gripper hand design",
+   "source": "trinckle paramate case study: Kuhn-Stoff (custom 3D-printed robot gripper hands)",
+   "year": "undated (page has no date)",
+   "url": "https://paramate.trinckle.com/case_kuhnstoff.php"
+  },
+  {
+   "step": "cad_mechanical: number of design iterations / physical prototypes and time per prototype round (mechatronic products)",
+   "claim": "For mechatronic products, the industry average is 6.3 physical prototypes and 2.9 rounds of testing per product. Building one prototype takes 5.4 days for a low-complexity product (50-1,000 parts) and 10 days for a moderate one. The best-in-class companies, who need 2.3 fewer prototypes, save 12-40 days of schedule.",
+   "value": "6.3 physical prototypes (industry avg); 5.4 days per prototype build (low complexity); 10 days (moderate)",
+   "unit": "prototypes per product; days per prototype build",
+   "source": "Aberdeen Group, 'System Design: New Product Development for Mechatronics' (Table 5 and Table 6)",
+   "year": "2008",
+   "url": "https://public.dhe.ibm.com/software/plm/resources/aberdeen_mechatronics_report_2008.pdf"
+  },
+  {
+   "step": "cad_mechanical: time and people consumed per engineering change (rework after release)",
+   "claim": "In a survey of over 90 Danish engineering firms, handling engineering changes took almost one third (30.8%) of total R&D capacity. An average engineering change took a mean of 60.6 working days and involved 7.4 people. A critical change took 80.2 working days and involved 11.1 people.",
+   "value": "30.8% of R&D capacity; 60.6 working days and 7.4 people per average change",
+   "unit": "% of R&D capacity; working days per engineering change; people per change",
+   "source": "Langer, Maier, Wilberg, M\u00fcnch, Lindemann, 'Exploring Differences Between Average and Critical Engineering Changes: Survey Results from Denmark', Proc. International Design Conference DESIGN 2012, Dubrovnik",
+   "year": "2012",
+   "url": "https://strathprints.strath.ac.uk/79508/1/Langer_etal_DS70_2012_Exploring_differences_between_average_and_critical_engineering_changes.pdf"
+  },
+  {
+   "step": "cad_mechanical: elapsed time for an engineering change order to travel across disciplines",
+   "claim": "In a vehicle climate-control-system program, each engineering change order took between 2 months and over a year from start to finish, and drew in 5-10 people from 4-7 departments. The hands-on work in each change took no more than 10 days; the rest was waiting, approval and congestion.",
+   "value": "2 months to >1 year elapsed vs \u226410 days of actual work",
+   "unit": "elapsed calendar time per ECO vs working time per ECO",
+   "source": "Terwiesch, C. and Loch, C.H., 'Managing the Process of Engineering Change Orders: The Case of the Climate Control System in Automobile Development', Journal of Product Innovation Management 16(2), 1999, pp. 160-172 (INSEAD working-paper version)",
+   "year": "1999",
+   "url": "https://sites.insead.edu/facultyresearch/research/doc.cfm?did=1023"
+  },
+  {
+   "step": "cad_mechanical: share of engineering time lost to design changes and rework",
+   "claim": "Engineering change orders use up one third to one half of engineering capacity. In Soderberg's study, about 45% of engineering time went into changing components that were 'thought to be ready', so the average component was designed at least twice.",
+   "value": "33-50% of engineering capacity; ~45% of engineering time; each component designed \u22652 times",
+   "unit": "% of engineering capacity / % of engineering time / design passes per component",
+   "source": "Soderberg, L.G., 'Facing up to the Engineering Gap', McKinsey Quarterly, Spring 1989, as cited in Terwiesch & Loch (INSEAD WP 97/56/TM and JPIM 1999)",
+   "year": "1989 (original); cited 1997/1999",
+   "url": "https://sites.insead.edu/facultyresearch/research/doc.cfm?did=46595"
+  },
+  {
+   "step": "Simulation setup vs. solving (FEA/physics analysis)",
+   "claim": "Actually running the simulation is a small part of an analysis. In Sandia's community-weighted model of the design-through-analysis process, the Run Simulation step takes about 4% of total engineering time. The setup steps take about 91%: solid model creation/edit 0.04 + 0.21, geometry decomposition 0.32, meshing 0.14, mesh manipulation 0.06, parameter assignment 0.06 and model assembly 0.08 (Table 1, 'Comm. Model' column).",
+   "value": "4 (run) vs ~91 (setup steps)",
+   "unit": "% of analyst engineering time per analysis, measured up to the first simulation",
+   "source": "DART System Analysis, SAND2005-4647 (Hardwick, Clay, Boggs, Walsh; Larzelere, Altshuler)",
+   "year": "2005",
+   "url": "https://www.osti.gov/servlets/purl/876325"
+  },
+  {
+   "step": "Simulation setup vs. solving (FEA/physics analysis)",
+   "claim": "Sandia's community-weighted model gives the average analyst engineering time for one design-through-analysis job, up to the first simulation. Totals by problem type: community average 1,798 h; linear structural 317 h; nonlinear structural 1,984 h; heat transfer 659 h; fluid flow 253 h; radiation transport 432 h.",
+   "value": "1,798 (community avg); 317 (linear structural); 253 (fluid flow)",
+   "unit": "engineering hours per analysis",
+   "source": "DART System Analysis, SAND2005-4647, Table 7",
+   "year": "2005",
+   "url": "https://www.osti.gov/servlets/purl/876325"
+  },
+  {
+   "step": "Simulation setup vs. solving (FEA/physics analysis)",
+   "claim": "In a survey of manufacturers, preprocessing (model setup) took the largest share of total simulation time at 38%. Waiting for the solver took 23%, sending models to the solver 8%, postprocessing 25% and other 6%. Setup takes more time than computing.",
+   "value": "38 (preprocessing) vs 23 (waiting for solver)",
+   "unit": "% of total simulation time",
+   "source": "Addressing the Bottlenecks of FEA Simulation: Enabling Innovation by Getting Even More Value from CAE (Michelle Boucher)",
+   "year": "2016",
+   "url": "https://www.plm.automation.siemens.com/media/global/en/Tech-Clarity_Perspective_Simulation_tcm27-33115.pdf"
+  },
+  {
+   "step": "Simulation setup: geometry cleanup and meshing",
+   "claim": "Within preprocessing, cleaning up CAD geometry takes 32% of the time, meshing 31%, and applying loads and material properties 26%. The top preprocessing challenges are the time needed to find problematic geometry (44%) and time wasted recreating CAD geometry (41%).",
+   "value": "32 (geometry cleanup), 31 (meshing), 26 (loads/materials)",
+   "unit": "% of preprocessing time",
+   "source": "Addressing the Bottlenecks of FEA Simulation (Michelle Boucher)",
+   "year": "2016",
+   "url": "https://www.plm.automation.siemens.com/media/global/en/Tech-Clarity_Perspective_Simulation_tcm27-33115.pdf"
+  },
+  {
+   "step": "Simulation setup: hours for one FEA model",
+   "claim": "A real structural FEA job, a parachute-drop stress analysis of a military mobilizer, took 63 hours of preprocessing for a single iteration with legacy CAE tools. Mid-surfacing for the mesh alone took 12 hours.",
+   "value": "63 (one iteration of preprocessing); 12 (mid-surfacing alone)",
+   "unit": "engineer hours",
+   "source": "Design Automation Associates (DAA) / CIGNYS case study: Simcenter 3D",
+   "year": "n.d. (page live 2026)",
+   "url": "https://resources.sw.siemens.com/en-US/case-study-design-automation-associates-simcenter"
+  },
+  {
+   "step": "Simulation setup: CAD repair for analysis",
+   "claim": "An engineering consultancy estimated that its analysts spend 30% to 50% of project time repairing clients' CAD geometry before it can be simulated.",
+   "value": "30-50",
+   "unit": "% of simulation project time",
+   "source": "The CAD-CAE Cleanup Headache (Kenneth Wong)",
+   "year": "2013",
+   "url": "https://www.digitalengineering247.com/article/the-cad-cae-cleanup-headache"
+  },
+  {
+   "step": "Robot sim model (URDF/MJCF) creation from CAD",
+   "claim": "Building robot simulation models is still mostly manual. Of 439 respondents who had used URDF with meshes, 67% wrote it by hand (61% used a CAD exporter; respondents could choose several). Among those who had created or modified URDFs, 32% rated it difficult and 57% medium; only 7% said easy. The most painful parts were setting up poses and meshes (21.2%), the lack of debugging tools (18.6%), and getting dynamic and kinematic parameters accurate (9.0%).",
+   "value": "67 (hand-written); 32 difficult + 57 medium",
+   "unit": "% of URDF users",
+   "source": "Understanding URDF: A Survey Based on User Experience (Daniella Tola, Peter Corke)",
+   "year": "2023",
+   "url": "https://arxiv.org/pdf/2302.13442"
+  },
+  {
+   "step": "Robot simulation setup (Gazebo/MuJoCo etc.)",
+   "claim": "Setup effort keeps robotics developers away from simulation. 34% of surveyed developers (28 of 82) had decided not to use simulation on a project. Of those, 53.6% gave 'lack of time or resources' as a reason, the joint top reason with 'not realistic enough'. Developers described making URDFs by hand as painful and error-prone.",
+   "value": "34 (skipped simulation on a project); 53.6 of those (cited lack of time/resources)",
+   "unit": "% of surveyed robotics developers",
+   "source": "A Study on the Challenges of Using Robotics Simulators for Testing (Afzal, Katz, Le Goues, Timperley)",
+   "year": "2020",
+   "url": "https://arxiv.org/pdf/2004.07368"
+  },
+  {
+   "step": "electronics_pcb: PCB respins (count per project and time per respin)",
+   "claim": "A typical PCB project using a traditional flow goes through 2.9 re-spins. Each re-spin delays the schedule by 8.5 days on average and costs $44,000.",
+   "value": "2.9 re-spins per project; 8.5 days schedule hit per re-spin; $44,000 per re-spin",
+   "unit": "re-spins/project; days/re-spin; USD/re-spin",
+   "source": "Modern practices in PCB design verification (citing Lifecycle Insights, Sept 2018)",
+   "year": "2019",
+   "url": "https://www.designworldonline.com/modern-practices-in-pcb-design-verification/"
+  },
+  {
+   "step": "electronics_pcb: PCB layout effort for small boards (measured)",
+   "claim": "A peer-reviewed study recorded actual layout effort for 12 commercial PCBs. The 11 small boards took 12 to 68 engineering hours each, for layout alone. The three 2-layer boards took 12, 32 and 40 hours. A motor driver board took 21 hours and a motor controller board took 43 hours.",
+   "value": "12-68 hours layout-only for small boards (2-layer boards: 12, 32, 40 h; motor driver 21 h; motor controller 43 h); 400 h for an 8-layer network appliance",
+   "unit": "engineering-hours (PCB layout only, excluding schematic)",
+   "source": "Estimating Design Time for System Circuits (Bazeghi et al.)",
+   "year": "2007",
+   "url": "https://iacoma.cs.uiuc.edu/iacoma-papers/vlsi07.pdf"
+  },
+  {
+   "step": "electronics_pcb: schematic + layout + prototype + firmware calendar time (small-team product)",
+   "claim": "A hardware product-development consultant gives these typical calendar times for a new electronic product: schematic 2-5 weeks, PCB layout 2-5 weeks, ordering prototypes 1-2 weeks, evaluating and debugging prototypes 5+ weeks, firmware 1-6 months.",
+   "value": "Schematic 2-5 wk; PCB layout 2-5 wk; prototype order 1-2 wk; prototype evaluation/debug 5+ wk; firmware 1-6 months",
+   "unit": "calendar weeks / months",
+   "source": "Product Development Timeline: How Long It Takes to Develop a New Hardware Product",
+   "year": "2019",
+   "url": "https://predictabledesigns.com/product-development-timeline-how-long-it-takes-to-develop-a-new-hardware-product/"
+  },
+  {
+   "step": "electronics_pcb: PCB design cycle time (industry survey)",
+   "claim": "In a PCB design survey, half of respondents said a new PCB design takes 6-12 weeks from concept to final testing and manufacturing signoff. 29% said more than 12 weeks and 21% said less than 6 weeks.",
+   "value": "6-12 weeks (50% of respondents); >12 weeks (29%); <6 weeks (21%)",
+   "unit": "weeks per new PCB design (concept to manufacturing signoff)",
+   "source": "Flomerics Releases PCB Design Survey Results",
+   "year": "2006",
+   "url": "https://circuitsassembly.com/ca/news/293-news/2006-news/12736-flomerics-releases-pcb-design-survey-results.html"
+  },
+  {
+   "step": "electronics_pcb: schematic-to-manufacturing-release time (recent survey)",
+   "claim": "A 2023 Aberdeen Research survey commissioned by Siemens found that designs take about 3 months on average from completed schematic to manufacturing release, regardless of company size or industry.",
+   "value": "~3",
+   "unit": "months per design (schematic to PCB assembly / manufacturing release)",
+   "source": "Are you normal? (summarizing Aberdeen 'PCB Design Best Practices in 2023')",
+   "year": "2024",
+   "url": "https://blogs.sw.siemens.com/electronic-systems-design/2024/03/05/are-you-normal/"
+  },
+  {
+   "step": "electronics_pcb: embedded project duration and firmware test/debug share (bring-up proxy)",
+   "claim": "In a large survey of embedded engineers, the last completed embedded project took 12.2 months on average. Testing and debugging took 19% of design time and detailed design took 31%. 61% of projects finished late or were cancelled. Average team size was 16.1 engineers.",
+   "value": "12.2 months average project; 19% of design time on testing & debugging (~2.3 months, derived); 61% late or cancelled",
+   "unit": "months; % of design time; % of projects",
+   "source": "2019 Embedded Markets Study (EETimes / Embedded.com)",
+   "year": "2019",
+   "url": "https://www.embedded.com/wp-content/uploads/2019/11/EETimes_Embedded_2019_Embedded_Markets_Study.pdf"
+  },
+  {
+   "step": "electronics_pcb: schematic and layout hours logged on a real board (upper bound)",
+   "claim": "An experienced hardware designer logged his hours on one board: 95 hours of schematic design (72 h drawing + 23 h checking), 215 hours of PCB layout, and about 50 hours of component research (parts, availability, footprints).",
+   "value": "95 h schematic; 215 h PCB layout; ~50 h component research (~360 h total)",
+   "unit": "engineering-hours",
+   "source": "Do you know how long schematic design and PCB layout take?",
+   "year": "2011",
+   "url": "https://fedevel.com/blog/do-you-know-how-long-schematic-design-and-pcb-layout-take"
+  },
+  {
+   "step": "electronics_pcb: physical respin turnaround floor (fab time per iteration)",
+   "claim": "Even the fastest low-cost board house needs about 24 hours to make 5 small 2-layer prototype boards, and 1-2 days for under 50 pieces. Shipping, assembly and re-test come on top, so each physical respin adds days to weeks.",
+   "value": "24 hours (5 pcs, 1-2 layer, <=100x100 mm); 1-2 days (<50 pcs); 5-6 days (>=50 pcs)",
+   "unit": "production time (excludes shipping and assembly)",
+   "source": "PCB Fabrication Services and Production Time (JLCPCB Help Center)",
+   "year": "2026",
+   "url": "https://jlcpcb.com/help/article/pcb-fabrication-services-and-production-time"
+  },
+  {
+   "step": "sourcing_bom: supplier sourcing, quoting and supplier management",
+   "claim": "83% of engineers spend 4 or more hours every week on supplier sourcing, quoting and quality management. In the same survey, 93% say engineering productivity would improve if they could offload sourcing.",
+   "value": "4+",
+   "unit": "hours per engineer per week (reported by 83% of respondents)",
+   "source": "2026 State of Manufacturing & Supply Chain Report ('Your Engineers Are Spending 4+ Hours a Week on Procurement')",
+   "year": "2026",
+   "url": "https://www.fictiv.com/somscreport/faster-hardware"
+  },
+  {
+   "step": "sourcing_bom: component selection / datasheet research",
+   "claim": "77% of engineering professionals spend five or more hours per week reading datasheets and comparing component alternatives.",
+   "value": "5+",
+   "unit": "hours per week (reported by 77% of respondents)",
+   "source": "The Hidden Tax on Engineering Teams: What Inaction on Parts Intelligence Actually Costs (citing an independent survey by Fuld & Company, March 2026)",
+   "year": "2026",
+   "url": "https://accuristech.com/blog/the-hidden-tax-on-engineering-teams-what-inaction-on-parts-intelligence-actually-costs/"
+  },
+  {
+   "step": "sourcing_bom: searching for standard / supplier parts",
+   "claim": "48% of engineers spend at least one hour per day searching for standard or supplier parts. The answers were: 30 min 52.3%, 1 hour 31.9%, 2 hours 12%, 3 hours 3.8%. The report models search as 27% of engineering time, and search, configuring and recreating parts together as 68%, or 1,251 hours per year per engineer.",
+   "value": "1",
+   "unit": "hour or more per day searching for parts (48% of engineers); search = 27% of time",
+   "source": "2022 Engineering Efficiency Report: 6 Opportunities to Kick your Engineering into High Gear",
+   "year": "2022",
+   "url": "https://fs.hubspotusercontent00.net/hubfs/28407/2022%20Engineering%20Efficiency%20Report.pdf"
+  },
+  {
+   "step": "sourcing_bom: searching for / recreating supplier part models",
+   "claim": "Engineers each lose 1.82 hours a day searching for or recreating supplier parts in their design systems. That is 59 working days per engineer per year, or almost 20% of engineering time.",
+   "value": "1.82",
+   "unit": "hours per engineer per day (about 59 working days per year)",
+   "source": "2015 Engineering Design Efficiency Report Reveals Engineers Waste 59 Days Per Year (press release)",
+   "year": "2015",
+   "url": "https://partsolutions.com/?p=7654"
+  },
+  {
+   "step": "sourcing_bom: non-value-added engineering time (searching for information, BOMs, supplier info)",
+   "claim": "Engineers waste a third of their time on non-value-added work and spend only 54% on design. The largest share of that waste, 23%, is searching for information, which the report says includes BOMs, supplier information and components. Another 15% is recreating data that couldn't be found.",
+   "value": "23",
+   "unit": "% of non-value-added time spent searching for information (non-value-added work = 33% of total time, so about 7.6% of all engineering time)",
+   "source": "How-To Reduce Non-Value-Added Work in Engineering (eBook)",
+   "year": "2021",
+   "url": "https://www.solidworks.com/sites/default/files/2021-05/Tech-Clarity-ebook-NVA.pdf"
+  },
+  {
+   "step": "sourcing_bom: BOM creation and cost estimating share of engineering week",
+   "claim": "At build-to-order and engineer-to-order manufacturers, creating bills of material takes 14% of engineers' week. Creating cost estimates takes 4% and pricing orders another 4%.",
+   "value": "14",
+   "unit": "% of engineers' weekly time creating BOMs (plus 4% cost estimates and 4% pricing)",
+   "source": "Report: Engineers Spend More Than Half of Time on Low-Value Activity (summarizing Cincom 'Best Practices: Mass Customization and Build-to-Order Manufacturing')",
+   "year": "2007",
+   "url": "https://www.digitalengineering247.com/article/report-engineers-spend-more-than-half-of-time-on-low-value-activity"
+  },
+  {
+   "step": "sourcing_bom: manually pricing / costing an electronics BOM",
+   "claim": "An EMS company pricing quotes by hand in spreadsheets needed about 2 hours to price out a 100-line BOM. With quoting software it took 10\u201315 minutes.",
+   "value": "2",
+   "unit": "hours to manually price a 100-line BOM (vs 10\u201315 min automated)",
+   "source": "Phase Electronics customer story (formerly CalcuQuote case study)",
+   "year": "2025",
+   "url": "https://www.elisaindustriq.com/knowledge-center/customer-stories/phase-electronics"
+  },
+  {
+   "step": "Manufacturing quotes (traditional RFQ vs instant quote)",
+   "claim": "In traditional custom-parts sourcing, finalizing price and lead time through RFQs takes days to weeks. Xometry's instant quoting engine prices CAD uploads in real time and analyzes geometry in seconds.",
+   "value": "days to weeks (traditional) vs seconds (instant)",
+   "unit": "elapsed time per order to get a firm price and lead time",
+   "source": "Xometry, Inc. Form S-1 Registration Statement (Business section)",
+   "year": "2021",
+   "url": "https://www.sec.gov/Archives/edgar/data/1657573/000119312521181945/d120843ds1.htm"
+  },
+  {
+   "step": "Manufacturing quotes (traditional RFQ vs instant quote)",
+   "claim": "A customer case study says conventional manufacturers take 2-3 days to return a quote and lead time. On Protolabs, uploading the model gives price and lead time immediately.",
+   "value": "2-3",
+   "unit": "days per quote (conventional manufacturer), vs immediate/seconds (instant)",
+   "source": "Polyverse Solutions case study: Multi-Process Manufacturing Helps Bring New Machinery to Market Faster",
+   "year": "n.d. (page copyright 1999-2026; accessed Oct 2026)",
+   "url": "https://www.protolabs.com/en-gb/resources/case-studies/polyverse-solutions/"
+  },
+  {
+   "step": "Supplier sourcing/quoting overhead (engineer time)",
+   "claim": "83% of engineers spend 4 or more hours every week on supplier sourcing, quoting and quality management. 81% of manufacturing leaders call supplier sourcing and management too time-consuming.",
+   "value": "4+ (reported by 83% of engineers)",
+   "unit": "hours per week",
+   "source": "2026 State of Manufacturing & Supply Chain Report",
+   "year": "2026",
+   "url": "https://www.fictiv.com/somscreport"
+  },
+  {
+   "step": "Manufacturing documentation: 2D drawings / design annotation",
+   "claim": "In a NIST controlled study, annotating a fully dimensioned 2D engineering drawing took 2.2-3.1 hours per machined part (53-84 characteristics each). Across design annotation, manufacture and inspection, the drawing-based cycle averaged 60.3 hours per part, versus 15.2 hours for the model-based cycle (a 74.8% reduction).",
+   "value": "2.2-3.1 hrs drawing annotation per part; 60.3 hrs total drawing-based cycle vs 15.2 hrs model-based",
+   "unit": "hours per part",
+   "source": "Hedberg T., Lubell J., Fischer L., Maggiano L., Barnard Feeney A., 'Testing the Digital Thread in Support of Model-Based Manufacturing and Inspection', J. Computing and Information Science in Engineering 16(2):021001",
+   "year": "2016",
+   "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC4904719/"
+  },
+  {
+   "step": "Manufacturing documentation: CAM programming",
+   "claim": "A professional CAM programmer took 30 minutes (simple part, 4 machined features) to 57-60 minutes (multi-axis part, 19 features) to program a one-off aluminium part from a 3D model. Working from 2D drawings only, it took 130-152 minutes. Tool preparation added another 150 minutes per part.",
+   "value": "30-60 min (from 3D model); 130-152 min (from 2D drawing); +150 min tool prep",
+   "unit": "minutes per part",
+   "source": "Uski P., Ellman A., Laine I., Hillman L., Nieminen J., 'Model-Based Definition Accelerates Product Life Cycle in Manufacturing and Inspection Phase - Experiment of Machined One-Off Production', Proceedings of the Design Society (DESIGN 2022)",
+   "year": "2022",
+   "url": "https://doi.org/10.1017/pds.2022.66"
+  },
+  {
+   "step": "Assembly instructions / work instructions authoring",
+   "claim": "An industry estimating guide budgets 3-5 hours per page to write an operator's or procedure manual for a new product or system (interviews, writing, photos/graphics, editing, index). It adds about 10 hours to design a template if none exists.",
+   "value": "3-5 (plus ~10 hrs one-time template)",
+   "unit": "hours per page",
+   "source": "A Guide to Estimating Writing Projects (V4.0)",
+   "year": "2006",
+   "url": "https://cupublic.chw.org/media/BestPractices/SharedResources/Documents/EstimatingWritingProjects.pdf"
+  },
+  {
+   "step": "Physical assembly of an open-source robot arm (SO-100)",
+   "claim": "Hugging Face's official LeRobot SO-100 guide says the first arm takes a bit more than 1 hour to assemble and later arms under 1 hour. Motor ID/baudrate setup and calibration are separate steps on top of that.",
+   "value": "~1+ (first arm); <1 (subsequent arm)",
+   "unit": "hours per arm (mechanical assembly only)",
+   "source": "LeRobot documentation: SO-100",
+   "year": "2025 (living documentation, accessed Oct 2026)",
+   "url": "https://huggingface.co/docs/lerobot/en/so100"
+  }
+ ],
+ "review_allowance_min": {
+  "first": 15.0,
+  "change": 5.0,
+  "note": "assumed engineer time to read and check Morph's output per revision; replaced by minutes logged with `morph clock`"
+ }
 }
