@@ -85,7 +85,15 @@ class Part:
 
     @property
     def volume_mm3(self) -> float:
-        return float(abs(self.mesh.volume)) if self.mesh.is_volume else float(self.mesh.convex_hull.volume)
+        if self.mesh.is_volume:
+            return float(abs(self.mesh.volume))
+        v = abs(float(self.mesh.volume))  # signed-volume integral is still a fair estimate for nearly closed meshes
+        if v > 1e-6:
+            return v
+        try:
+            return float(self.mesh.convex_hull.volume)
+        except Exception:
+            return float(np.prod(self.mesh.extents)) * 0.3
 
 
 @dataclass
@@ -278,6 +286,25 @@ class Assembly:
         data = scene.export(file_type="glb")
         with open(path, "wb") as fh:
             fh.write(data)
+        return path
+
+    def posed_mesh(self, q: dict | None = None, kinds: tuple | None = None) -> trimesh.Trimesh:
+        """All parts baked into the base frame at joint values q (for snapshots, previews, collision checks)."""
+        T = self.world_transforms(q)
+        ms = []
+        for p in self.parts:
+            if kinds and p.kind not in kinds:
+                continue
+            m = p.mesh.copy()
+            m.apply_transform(T[p.link])
+            m.visual.face_colors = hex_rgba(p.color)
+            ms.append(m)
+        return trimesh.util.concatenate(ms)
+
+    def export_posed_glb(self, path: str, q: dict | None = None) -> str:
+        """Single-node GLB of the robot at pose q (colours per part); handy for snapshots."""
+        with open(path, "wb") as fh:
+            fh.write(trimesh.Scene(self.posed_mesh(q)).export(file_type="glb"))
         return path
 
     def to_dict(self) -> dict:
