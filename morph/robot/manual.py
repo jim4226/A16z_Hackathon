@@ -16,7 +16,11 @@ hundred ms per image, no browser needed.
 
 Returns {"json","html","steps":[{index,title,parts,fasteners,tools,instructions,warnings,time_min,...}],
 "tools","time_min_total"}. Mechanical steps keep the assembly's step indices (the Studio viewer highlights
-parts by `Part.step`); wiring / bring-up steps follow with the next indices.
+parts by `Part.step`); wiring / bring-up steps follow with the next indices. A generator step titled like
+wiring becomes the wiring step (same index, its parts and text first); a part-less check / calibration step is
+folded into the calibration step. Extra per-step keys: kind (mechanical | wiring | safety | firmware |
+calibration | test), parts_table [{item, qty, source}], substeps, and per kind harness, commands, servo_ids,
+checklist, cal_weights_g, grip_target_n. `build(..., images=False)` skips the illustrations (fast, for tests).
 """
 
 from __future__ import annotations
@@ -283,7 +287,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     return res.resize(size, Image.LANCZOS)
 
 
-def _b64png(img, quality_colors=None) -> str:
+def _b64png(img) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG", compress_level=7)
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
@@ -339,6 +343,7 @@ class _Facts:
                 self.servo_id.setdefault(jn, self.id_rows[-1][1])
         self.act_count = mf.actuator_counts(asm)
         self.folded = {"wiring": [], "calibration": []}
+        self.wiring_from = None                 # the generator's own wiring step, adopted as the wiring step
         self.family = next((catalog.ACTUATORS[k].get("family") for k in self.act_count if k in catalog.ACTUATORS), "smart_bus")
         mods = [e["sku"] for e in self.inst.values() if e["sku"] in catalog.MODULES]
         ctrl = next((k for k in mods if catalog.MODULES[k].get("role") == "controller"), None)
@@ -434,12 +439,12 @@ def _mech_steps(F: _Facts):
         fl = [dict(f) for f in F.fast.get(idx, [])]
         if not parts and not fl and not s.instructions:
             continue
-        if not parts and not fl:                # generator's own wiring / check steps: fold into the bring-up steps
-            low = s.title.lower()
-            kind = "wiring" if any(k in low for k in ("wiring", "wire", "cable", "harness", "bus")) else \
-                "calibration" if any(k in low for k in ("calibrat", "check", "zero", "power", "test")) else None
-            if kind:
-                F.folded[kind].append({"title": s.title, "sentences": _sentences(s.instructions), "tools": list(s.tools or [])})
+        low = s.title.lower()
+        is_wiring = any(k in low for k in ("wiring", "wire", "cable", "harness", "bus "))
+        if not parts and not fl and not is_wiring:   # generator's own check / calibration step: fold into bring-up
+            if any(k in low for k in ("calibrat", "check", "zero", "power", "test")):
+                F.folded["calibration"].append({"title": s.title, "sentences": _sentences(s.instructions),
+                                                "tools": list(s.tools or [])})
                 continue
         table, sent, warn = OrderedDict(), [], []
         inst = [(k, e) for k, e in F.inst.items() if any(n in names for n in e["parts"])]
@@ -512,13 +517,19 @@ def _mech_steps(F: _Facts):
                            + (["ESD wrist strap"] if any(e["kind"] in ("electronics", "pcb") for k, e in inst) else []))
         t_min = 3.0 + sum(TIME.get(f["kind"], 0.4) * f["qty"] for f in fl)
         t_min += sum(1.2 * t["qty"] if t["source"] != "purchased" else 2.0 * t["qty"] for t in table.values())
-        steps.append({"index": int(idx), "title": s.title, "kind": "mechanical", "parts": names,
-                      "parts_table": list(table.values()),
-                      "fasteners": [{"spec": f["spec"], "qty": int(f["qty"]), "torque_nm": f.get("torque_nm"),
-                                     "drive": f.get("drive"), "label": f.get("label"), "kind": f["kind"],
-                                     "source": f.get("source", "")} for f in fl],
-                      "tools": tools, "instructions": " ".join(sent), "substeps": sent, "warnings": warn,
-                      "time_min": int(math.ceil(t_min)), "subassembly": getattr(s, "subassembly", "")})
+        step = {"index": int(idx), "title": s.title, "kind": "mechanical", "parts": names,
+                "parts_table": list(table.values()),
+                "fasteners": [{"spec": f["spec"], "qty": int(f["qty"]), "torque_nm": f.get("torque_nm"),
+                               "drive": f.get("drive"), "label": f.get("label"), "kind": f["kind"],
+                               "source": f.get("source", "")} for f in fl],
+                "tools": tools, "instructions": " ".join(sent), "substeps": sent, "warnings": warn,
+                "time_min": int(math.ceil(t_min)), "subassembly": getattr(s, "subassembly", "")}
+        if is_wiring and F.wiring_from is None:  # the generator's wiring step becomes the wiring step (same index)
+            step["substeps"] = _sentences(s.instructions) if s.instructions else []
+            step["src_tools"] = list(s.tools or [])
+            F.wiring_from = step
+            continue
+        steps.append(step)
     return steps
 
 
@@ -542,6 +553,10 @@ def _elec_steps(F: _Facts, start: int):
     # ---------------------------------------------------------------- wiring
     order = [w["name"] for w in rows]
     chain = " → ".join(_joint_label(j) for j in F.act_joints) if bus != "pwm" else ""
+    W = F.wiring_from
+    if W is not None:
+        idx = W["index"]
+        F.folded["wiring"].append({"title": W["title"], "sentences": W["substeps"], "tools": W.get("src_tools", [])})
     sent = ["Lay the harness out on the bench and check every wire against the table below before routing it."]
     for fo in F.folded["wiring"]:
         sent += fo["sentences"]
@@ -558,20 +573,22 @@ def _elec_steps(F: _Facts, start: int):
                  "Connect the force-sensor leads (if fitted) to their inputs, then fix the harness with cable ties every 60–80 mm."]
     sent.append("Plug the power lead into the inlet last; keep the supply unplugged.")
     n_ties = max(6, 2 * len(rows))
-    steps.append({"index": idx, "title": "Wiring and cable routing", "kind": "wiring",
-                  "parts": [c.name for c in F.asm.cables],
-                  "parts_table": [{"item": w["name"], "qty": 1, "source": f"{w['length_mm']} mm · {w['conductors']}-wire",
-                                   "group": "harness"} for w in rows],
-                  "fasteners": [{"spec": "cable tie 100 mm", "qty": n_ties, "torque_nm": None, "drive": "flush cutters",
-                                 "label": "cable tie 100 mm", "kind": "tie", "source": "inferred"}],
+    w_parts = (W["parts"] if W else []) + [c.name for c in F.asm.cables]
+    w_table = (W["parts_table"] if W else []) + [{"item": w["name"], "qty": 1, "source": f"{w['length_mm']} mm · "
+                                                   f"{w['conductors']}-wire", "group": "harness"} for w in rows]
+    w_fast = (W["fasteners"] if W else []) + [{"spec": "cable tie 100 mm", "qty": n_ties, "torque_nm": None,
+                                               "drive": "flush cutters", "label": "cable tie 100 mm", "kind": "tie",
+                                               "source": "inferred"}]
+    steps.append({"index": idx, "title": W["title"] if W else "Wiring and cable routing", "kind": "wiring",
+                  "parts": w_parts, "parts_table": w_table, "fasteners": w_fast,
                   "tools": _add_tools(["wire stripper", "JST / Molex crimp tool", "flush cutters", "multimeter"],
-                                      [t for fo in F.folded["wiring"] for t in fo["tools"]]),
+                                      [t for fo in F.folded["wiring"] for t in fo["tools"]] + (W["tools"] if W else [])),
                   "instructions": " ".join(sent), "substeps": sent,
                   "warnings": ["Check the power lead polarity with the multimeter before it touches the controller: "
                                "reversed 12 V destroys the regulator and every servo on the bus.",
                                "Never route a cable across a joint axis without a service loop."],
-                  "time_min": int(10 + 4 * len(rows)), "harness": rows, "order": order})
-    idx += 1
+                  "time_min": int(10 + 4 * len(rows)) + (W["time_min"] if W else 0), "harness": rows, "order": order})
+    idx = max(idx, start) + 1
     # ---------------------------------------------------------------- first power-on safety
     psu = F.supply
     peak = sum(r.get("peak_a", 0) for r in (F.efinal.get("power_budget") or {}).get("rails", [])[:1]) or None
@@ -660,9 +677,6 @@ def _elec_steps(F: _Facts, start: int):
 
 
 # ================================================================== illustrations
-def _posed(asm, q):
-    T = asm.world_transforms(q)
-    return T
 
 
 def _world_meshes(asm, q):
@@ -748,10 +762,6 @@ def _cover_pose(F):
     return [world[p.name] for p in asm.parts]
 
 
-def _thumb(mesh, color, size=(180, 130)):
-    m = mesh.copy()
-    m.apply_translation(-m.bounds.mean(0))
-    return render([(m, color, "normal")], view=(35.0, 28.0), size=size, ss=2, pad=0.1, shadow=False, bg=(255, 255, 255))
 
 
 # ================================================================== HTML
@@ -945,26 +955,14 @@ def _sku_name(sku: str):
     return (g["name"] if g else mf.pretty(sku)), "purchased"
 
 
+def _harness_overflow(s) -> bool:
+    return s.get("kind") == "wiring" and len(s.get("harness") or []) > 8
+
+
 def _drive_short(d: str) -> str:
     return str(d).replace(" hex key", " hex").replace("soldering iron + ", "iron + ").replace(" nut driver", " nut drv")
 
 
-def _fig_style(s) -> str:
-    """Shrink a mechanical step's illustration when the text below it would push the page past A4."""
-    if s["kind"] != "mechanical":
-        return ""
-    left = 0
-    if s.get("parts_table"):
-        left += 52 + sum(26 if len(t["item"]) + len(t["source"]) < 44 else 42 for t in s["parts_table"])
-    if s["fasteners"]:
-        left += 52 + 26 * len(s["fasteners"])
-    if s["tools"]:
-        left += 40 + 24 * math.ceil(len(s["tools"]) / 2)
-    right = 34 + sum(20 * math.ceil(len(x) / 52) + 9 for x in s["substeps"]) + sum(14 + 18 * math.ceil(len(w) / 55)
-                                                                                    for w in s["warnings"])
-    room = 900 - max(left, right)
-    h = int(max(250, min(430, room)))
-    return f' style="max-height:{h}px;width:auto;max-width:100%;margin:0 auto"' if h < 430 else ""
 
 
 def _wire_short(name: str) -> str:
@@ -1106,9 +1104,13 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
         [intro + sec_made, '<div class="kicker" style="margin-top:4mm">Kit, continued</div><h2>Purchased parts and fasteners</h2>'
          + sec_buy + sec_fast]
     # ------------------------------------------------------------------ contents + before you start
+    first_page, pg_no = [], 3 + len(kit_pages)          # cover, contents, kit sheets, then the steps
+    for s in steps:
+        first_page.append(pg_no)
+        pg_no += 1 + (1 if _harness_overflow(s) else 0)
     toc = "".join(f'<tr><td class="no">{i + 1}</td><td><span class="t">{_e(s["title"])}</span></td>'
                   f'<td><span class="pill {"mech" if s["kind"] == "mechanical" else s["kind"]}">{_e(s["kind"])}</span></td>'
-                  f'<td class="n">{s["time_min"]} min</td><td class="n muted">p. {i + 3 + len(kit_pages)}</td></tr>' for i, s in enumerate(steps))
+                  f'<td class="n">{s["time_min"]} min</td><td class="n muted">p. {first_page[i]}</td></tr>' for i, s in enumerate(steps))
     tool_html = "".join(f'<div class="tool">{_icon_for(t)}<span>{_e(t)}</span></div>' for t in tools)
     safety = ["Read each step fully before starting it; the illustration shows the parts added in that step in colour, "
               "earlier parts in grey.",
@@ -1160,18 +1162,24 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
         right = f'<h3>{"Checklist" if s.get("checklist") else "Instructions"}</h3><ol class="{ol_cls}">' + \
                 "".join(f"<li>{_e(x)}</li>" for x in s["substeps"]) + "</ol>"
         right += "".join(f'<div class="warn">{_e(w)}</div>' for w in s["warnings"])
-        extra = ""
+        extra, cont = "", ""
         if s["kind"] == "wiring":
             if F.family != "hobby_pwm" and F.act_joints:
                 left += ('<h3>Bus order</h3><div class="chain"><span>controller</span>'
                          + "".join(f'<i>→</i><span>{_e(_joint_label(j))} · ID {sid}</span>' for j, sid in F.id_rows)
                          + "</div>")
-            extra += ('<h3>Harness</h3><table class="harn"><thead><tr><th>Wire</th><th>From → to</th><th class="n">Length</th><th>Wire</th>'
-                      '<th>Connectors</th></tr></thead><tbody>'
-                      + "".join(f'<tr><td><b>{_e(_wire_short(w["name"]))}</b></td><td class="mono">{_e(w["from"])} → {_e(w["to"])}</td>'
-                                f'<td class="n">{w["length_mm"]} mm</td><td>{_e(w["conductors"])}× {_e(w["wire"])}</td>'
-                                f'<td class="muted">{_e(w["connector_a"])} / {_e(w["connector_b"])}</td></tr>' for w in s["harness"])
-                      + "</tbody></table>")
+            harn = ('<table class="harn"><thead><tr><th>Wire</th><th>From → to</th><th class="n">Length</th><th>Wire</th>'
+                    '<th>Connectors</th></tr></thead><tbody>'
+                    + "".join(f'<tr><td><b>{_e(_wire_short(w["name"]))}</b></td><td class="mono">{_e(w["from"])} → {_e(w["to"])}</td>'
+                              f'<td class="n">{w["length_mm"]} mm</td><td>{_e(w["conductors"])}× {_e(w["wire"])}</td>'
+                              f'<td class="muted">{_e(w["connector_a"])} / {_e(w["connector_b"])}</td></tr>' for w in s["harness"])
+                    + "</tbody></table>")
+            if _harness_overflow(s):
+                cont = (f'<div class="kicker" style="margin-top:4mm">Step {i + 1} · continued</div><h2>Harness: {len(s["harness"])} wires</h2>'
+                        f'<p class="muted" style="margin:0 0 3mm">Cut, crimp and label every wire before routing; lengths include '
+                        f'service loops. The same table ships as harness.csv.</p>' + harn)
+            else:
+                extra += "<h3>Harness</h3>" + harn
         if s["kind"] == "firmware":
             extra += ('<h3>Commands</h3><pre class="cmd">' + "\n".join(f'<span class="p">$</span> {_e(c)}' for c in s["commands"]) + "</pre>")
             extra += ('<h3>Servo IDs</h3><table><thead><tr><th>Joint</th><th>Actuator</th><th class="n">Bus ID</th><th>Done</th></tr></thead><tbody>'
@@ -1190,6 +1198,8 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
         else:
             body = headh + f'<div class="cols top"><div>{fig}{left}</div><div>{right}</div></div>' + extra
         pages.append(sheet(body, "step" if s["kind"] == "mechanical" and fig else ""))
+        if _harness_overflow(s):
+            pages.append(sheet(cont))
     # ------------------------------------------------------------------ appendix
     tq_rows = "".join(f'<tr><td class="mono">{_e(size)}</td><td class="n tq"><b>{t:g} N·m</b></td>'
                       f'<td class="n">{catalog.FASTENER_SIZES.get(size, (0, 0, 0))[2]:g} mm</td></tr>'
@@ -1215,8 +1225,11 @@ def build(design, asm, mfg, efinal, outdir, images: bool = True) -> dict:
     os.makedirs(outdir, exist_ok=True)
     F = _Facts(design, asm, mfg, efinal)
     steps = _mech_steps(F)
-    start = max([s["index"] for s in steps] + [s.index for s in asm.steps] + [0]) + 1
+    start = max([s["index"] for s in steps] + [p.step for p in asm.parts] + [0]) + 1
+    if F.wiring_from is not None:
+        start = max(start - 1, F.wiring_from["index"])
     steps += _elec_steps(F, start)
+    steps.sort(key=lambda s: s["index"])
     tools = []
     for s in steps:
         for t in s["tools"]:

@@ -238,7 +238,9 @@ class RobotProject(Project):
                               "force": grip_electronics.plan(gd, a, s)}
         elif node == "electronics":
             e2 = _mod("electronics2")
-            res["eplan"] = e2.plan(design, res["sizing"]) if e2 else None
+            grip_t = ((res.get("gripper") or {}).get("force") or {}).get("target_force_n")
+            sz = {**res["sizing"], **({"grip_target_n": grip_t} if grip_t else {})}
+            res["eplan"] = e2.plan(design, sz) if e2 else None
             return e2 is not None
         elif node == "cad":
             a = asm()

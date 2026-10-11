@@ -23,7 +23,7 @@ import trimesh
 from shapely.geometry import Point, Polygon, box
 
 from morph.robot import catalog, components, manufacturing, manual
-from morph.robot.assembly import Assembly, Cable, Joint, Part, Step, rot, trans
+from morph.robot.assembly import Assembly, Cable, Joint, Part, Step, trans
 from morph.spec import Design
 
 EGG = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
@@ -498,10 +498,14 @@ def test_manual_folds_generator_wiring_step_and_uses_servo_ids(tmp_path):
                              {"joint": "j2_shoulder", "id": 3}, {"joint": "j3_elbow", "id": 4},
                              {"joint": "j4_wrist_pitch", "id": 5}, {"joint": "roll", "id": 6}, {"joint": "gripper", "id": 7}]
     man = manual.build(d, asm, None, mock_efinal(), str(tmp_path), images=False)
-    titles = [s["title"] for s in man["steps"]]
-    assert "Servo bus and sensor wiring" not in titles
-    wiring = next(s for s in man["steps"] if s["kind"] == "wiring")
+    wiring = [s for s in man["steps"] if s["kind"] == "wiring"]
+    assert len(wiring) == 1                                # the generator's wiring step is adopted, not duplicated
+    wiring = wiring[0]
+    assert wiring["title"] == "Servo bus and sensor wiring" and wiring["index"] == 9
     assert any(x.startswith("Daisy-chain the bus") for x in wiring["substeps"])
+    assert "cable ties (2.5 mm)" in wiring["tools"] and wiring["harness"]
+    idx = [s["index"] for s in man["steps"]]
+    assert idx == sorted(idx) and len(set(idx)) == len(idx)
     assert not any("PWM channel" in x for x in wiring["substeps"])           # bus robot: no PWM wording
     fw = next(s for s in man["steps"] if s["kind"] == "firmware")
     assert [x["id"] for x in fw["servo_ids"]] == [1, 2, 3, 4, 5, 6, 7]

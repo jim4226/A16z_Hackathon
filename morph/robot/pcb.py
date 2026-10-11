@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import csv
 import heapq
-import io
 import json
 import math
 import os
@@ -897,7 +896,7 @@ class _Routing:
         if len(groups) < 2:
             return []
         cls0 = net_class(net, self.hc, self.pwr)
-        k = r.nid(net)
+        r.nid(net)
         cen = np.mean([_centre(g) for _, g in groups], axis=0)
         groups.sort(key=lambda kg: math.hypot(_centre(kg[1])[0] - cen[0], _centre(kg[1])[1] - cen[1]))
         tree = set(self.group_cells(net, *groups[0]))
@@ -946,9 +945,13 @@ class _Routing:
                     if min(p["w"], p["h"]) >= need:
                         srcs += [lc for lc in self.pad_cells([p]) if lc in tree]
             if not srcs:
+                if attempt_cls != "sig":
+                    continue             # nowhere a trace this wide may start: fall back to the signal class
                 srcs = list(tree)
             tgt = self.entry_ok(g, attempt_cls, net) | (self.group_cells(net, gk, g) - self.pad_cells(g))
             if not tgt:
+                if attempt_cls != "sig":
+                    continue
                 tgt = self.group_cells(net, gk, g)
             allp = [r.ij(c) for _, c in srcs] + [r.ij(c) for _, c in tgt]
             pad_i = 32
@@ -1088,7 +1091,11 @@ def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=N
     import copy
     snapshot = (copy.deepcopy(r.shapes), copy.deepcopy(r.traces), copy.deepcopy(r.vias))
     best = None
+    import time as _time
+    t_start = _time.time()
     for attempt in range(3):
+        if attempt and _time.time() - t_start > 40:
+            break
         if attempt:          # restart from the fan-out state with the hardest nets first
             r.shapes, r.traces, r.vias = copy.deepcopy(snapshot[0]), copy.deepcopy(snapshot[1]), copy.deepcopy(snapshot[2])
             r.rebuild()
@@ -1379,6 +1386,58 @@ def drc(board, pours) -> dict:
             "checks": ["clearance", "edge_clearance", "annular_ring", "hole_to_hole", "connectivity", "unrouted"]}
 
 
+def _merge_traces(traces):
+    """Join same-net/layer/width segments that meet end to end at a point no other segment touches
+    (pure bookkeeping: identical copper, fewer polylines for the Studio's build animation)."""
+    key = lambda p: (round(p[0], 3), round(p[1], 3))  # noqa: E731
+    groups: dict = {}
+    for t in traces:
+        groups.setdefault((t["net"], t["layer"], t["width"]), []).append({**t, "points": [list(p) for p in t["points"]]})
+    out = []
+    for _, ts in groups.items():
+        changed = True
+        while changed:
+            changed = False
+            deg: dict = {}
+            for t in ts:
+                for e in (key(t["points"][0]), key(t["points"][-1])):
+                    deg[e] = deg.get(e, 0) + 1
+            for i, a in enumerate(ts):
+                for j, b in enumerate(ts):
+                    if i == j:
+                        continue
+                    ea = key(a["points"][-1])
+                    if deg.get(ea) != 2:
+                        continue
+                    if key(b["points"][0]) == ea:
+                        pts = b["points"]
+                    elif key(b["points"][-1]) == ea:
+                        pts = b["points"][::-1]
+                    else:
+                        continue
+                    a["points"] = a["points"] + pts[1:]
+                    if b.get("kind") == "route":
+                        a["kind"] = "route"
+                    ts.pop(j)
+                    changed = True
+                    break
+                if changed:
+                    break
+                sa = key(a["points"][0])          # also try extending at the start
+                if deg.get(sa) == 2:
+                    for j, b in enumerate(ts):
+                        if j != i and (key(b["points"][-1]) == sa or key(b["points"][0]) == sa) and b is not a:
+                            pts = b["points"] if key(b["points"][-1]) == sa else b["points"][::-1]
+                            a["points"] = pts[:-1] + a["points"]
+                            ts.pop(j)
+                            changed = True
+                            break
+                if changed:
+                    break
+        out += ts
+    return out
+
+
 def _assemble(circuit, placed, pads, r, W, H, unrouted, name):
     comps = []
     for ref, pl in placed.items():
@@ -1419,7 +1478,8 @@ def _assemble(circuit, placed, pads, r, W, H, unrouted, name):
             rats.append({"net": n, "a": list(a), "b": list(b)})
             inn.append(b)
             rest.remove(b)
-    traces = [{**{k: v for k, v in t.items() if not k.startswith("_")}, "kind": t.get("_tag", "route")} for t in r.traces]
+    traces = _merge_traces([{**{k: v for k, v in t.items() if not k.startswith("_")}, "kind": t.get("_tag", "route")}
+                            for t in r.traces])
     vias = [{**{k: v for k, v in v.items() if not k.startswith("_")}, "kind": v.get("_tag", "route")} for v in r.vias]
     board = {"name": name, "size_mm": [round(W, 2), round(H, 2)], "layers": 2, "thickness_mm": 1.6, "copper_oz": 1,
              "components": comps, "nets": nets, "traces": traces, "vias": vias, "ratsnest": rats,
@@ -1814,7 +1874,7 @@ def _refkey(ref):
 
 def _cache_key(circuit, W, H, hc, pwr) -> str:
     import hashlib
-    blob = json.dumps({"v": 9, "W": W, "H": H, "hc": list(hc), "pwr": list(pwr),
+    blob = json.dumps({"v": 12, "W": W, "H": H, "hc": list(hc), "pwr": list(pwr),
                        "c": [(c.ref, c.value, c.footprint, sorted(c.place.items(), key=str), [(p.num, p.net) for p in c.pins])
                              for c in circuit.comps if c.board]}, sort_keys=True, default=str)
     return hashlib.sha1(blob.encode()).hexdigest()[:20]
@@ -1907,7 +1967,7 @@ def render_svg(board: dict, scale: float = 14.0, title: str = "") -> str:
 
 
 def _body_svg(c, fy):
-    k, fp, ref, val = c["kind"], c.get("footprint", ""), c["ref"], c["value"]
+    k, fp, _ref, val = c["kind"], c.get("footprint", ""), c["ref"], c["value"]
     x0, y0, x1, y1 = c["outline"]
     X, Y, Wd, Hd = x0, fy(y1), x1 - x0, y1 - y0
     cx, cy = c["x"], fy(c["y"])

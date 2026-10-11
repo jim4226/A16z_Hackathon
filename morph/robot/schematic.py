@@ -238,9 +238,8 @@ def _box_symbol(comp: Comp) -> _El:
     if sides["T"] and sides["B"]:
         bh = max(bh, 3 * G)
     ext = {}
-    parts = {}
     for sd in ("L", "R"):
-        e, svg = 0.0, []
+        e, _svg = 0.0, []
         for p in sides[sd]:
             _, w = _attach_h(0, 0, p.net, "left" if sd == "L" else "right")
             e = max(e, w)
@@ -331,7 +330,7 @@ def _two_pin_body(kind, cx, top, bot, value="", flip=False) -> str:
             s.append(_l(cx - 1.1, mid + 0.35, cx + 1.1, mid + 0.35, col, 0.3))
     elif kind == "L":
         s.append(_l(cx, top, cx, mid - 1.6, col, 0.18) + _l(cx, mid + 1.6, cx, bot, col, 0.18))
-        d = f"M{cx:.3f},{mid - 1.6:.3f}" + "".join(f" a0.4,0.4 0 0 1 0,0.8" for _ in range(4))
+        d = f"M{cx:.3f},{mid - 1.6:.3f}" + "".join(" a0.4,0.4 0 0 1 0,0.8" for _ in range(4))
         s.append(f'<path d="{d}" fill="none" stroke="{col}" stroke-width="0.25"/>')
     elif kind == "F":
         s.append(_l(cx, top, cx, bot, col, 0.18))

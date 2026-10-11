@@ -23,13 +23,24 @@ What it does
     PCBA / harness  gerbers + JLC BOM/CPL copied from the electronics stage, harness cut list + drawing
   plus README.txt (what to send where) and mfg_<config>.zip with everything.
 
+Contract keys are all present; extra keys (backward-compatible) the Studio may use:
+  plan:   quantity, cost_basis, readme, package (zip), configs[*].{parts_cost, purchased_cost, setup_cost,
+          fab_lead_days, processes, curve [{qty, unit_cost}], breakeven_vs_pilot_qty (production)},
+          parts[*].{class, quotes [{vendor,url,unit_price,lead_days,note,setup_cost,tooling_cost}], cost_model
+          {formula, inputs}, tooling_cost, how, in_bom, parts, print | cnc | sheet}
+  bom:    rows[*].{sku, source, group, process, material, files, spec, torque_nm, note}, totals.{tooling, lines,
+          pieces, quantity, config}, cost_basis
+Process choice: an assembly that declares meta['build_config'] (the arm generator does) keeps its own
+Part.process in that config, except that a mold is swapped for a listed alternative when it cannot pay off
+at the order quantity (noted on the part); other configs use the class defaults in PREFS. Assemblies without
+build_config (stub, imported robots) use process_options as the alternatives; no options = fixed process.
+
 Units: mm, g, USD. Lead times are calendar days including typical shipping to the US.
 """
 
 from __future__ import annotations
 
 import csv
-import io
 import json
 import math
 import os
@@ -42,9 +53,8 @@ import numpy as np
 import shapely
 import trimesh
 from shapely import affinity
-from shapely.geometry import LineString, MultiPolygon, Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 from shapely.geometry.polygon import orient
-from shapely.ops import unary_union
 
 from . import catalog
 from ..fab import GcodeWriter, SAFE_Z

@@ -54,9 +54,9 @@ STD_FUSES = [1, 2, 3, 5, 7.5, 10, 15, 20, 25, 30]
 
 # pin maps: logical signal -> controller pin name (as printed on the board / module pinout)
 PINMAP = {
-    "esp32_s3_wroom": {"BUS_TX": "IO17", "BUS_RX": "IO18", "BUS_DIR": "IO16", "SDA": "IO42", "SCL": "IO41", "PWM_OE": "IO7",
-                       "FSR_L": "IO1", "FSR_R": "IO2", "VSERVO_SENSE": "IO6", "SERVO_EN": "IO15", "LED": "IO21",
-                       "USB_DM": "IO19", "USB_DP": "IO20", "ESTOP": "IO6"},
+    "esp32_s3_wroom": {"BUS_TX": "IO11", "BUS_RX": "IO12", "BUS_DIR": "IO13", "SDA": "IO42", "SCL": "IO41", "PWM_OE": "IO9",
+                       "FSR_L": "IO1", "FSR_R": "IO2", "VSERVO_SENSE": "IO10", "SERVO_EN": "IO14", "LED": "IO21",
+                       "USB_DM": "IO19", "USB_DP": "IO20", "ESTOP": "IO10"},
     "esp32_s3_devkit": {"BUS_TX": "GPIO17", "BUS_RX": "GPIO18", "BUS_DIR": "GPIO16", "SDA": "GPIO8", "SCL": "GPIO9",
                         "PWM_OE": "GPIO7", "FSR_L": "GPIO4", "FSR_R": "GPIO5", "ESTOP": "GPIO6", "5V": "5V", "3V3": "3V3"},
     "esp32_devkit": {"BUS_TX": "IO17", "BUS_RX": "IO16", "BUS_DIR": "IO4", "SDA": "IO21", "SCL": "IO22", "PWM_OE": "IO25",
@@ -69,8 +69,8 @@ PINMAP = {
 }
 # Arduino pin expressions for firmware (same signals)
 ARDUINO_PIN = {
-    "esp32_s3_wroom": {"BUS_TX": "17", "BUS_RX": "18", "BUS_DIR": "16", "SDA": "42", "SCL": "41", "PWM_OE": "7", "FSR_L": "1",
-                       "FSR_R": "2", "VSERVO_SENSE": "6", "SERVO_EN": "15", "LED": "21", "ESTOP": "-1"},
+    "esp32_s3_wroom": {"BUS_TX": "11", "BUS_RX": "12", "BUS_DIR": "13", "SDA": "42", "SCL": "41", "PWM_OE": "9", "FSR_L": "1",
+                       "FSR_R": "2", "VSERVO_SENSE": "10", "SERVO_EN": "14", "LED": "21", "ESTOP": "-1"},
     "esp32_s3_devkit": {"BUS_TX": "17", "BUS_RX": "18", "BUS_DIR": "16", "SDA": "8", "SCL": "9", "PWM_OE": "7", "FSR_L": "4",
                         "FSR_R": "5", "ESTOP": "6", "LED": "-1", "VSERVO_SENSE": "-1", "SERVO_EN": "-1"},
     "esp32_devkit": {"BUS_TX": "17", "BUS_RX": "16", "BUS_DIR": "4", "SDA": "21", "SCL": "22", "PWM_OE": "25", "FSR_L": "34",
@@ -212,10 +212,10 @@ def _pick_supply(vrange, nom, need_a) -> dict:
             continue
         v, a = m["out_v"], m["out_a"]
         if vrange[0] - 1e-6 <= v <= vrange[1] + 1e-6:
-            cands.append((a < need_a * 1.25, abs(v - nom), catalog.price(k), k))
+            cands.append((abs(v - nom) / nom > 0.15, a < need_a * 1.25, abs(v - nom), catalog.price(k), k))
     if cands:
         cands.sort()
-        k = cands[0][3]
+        k = cands[0][-1]
         return {"key": k, "v": MODULES[k]["out_v"], "a": MODULES[k]["out_a"], "servo_buck": False}
     return {"key": "psu_12v", "v": 12.0, "a": 10.0, "servo_buck": True}
 
@@ -582,7 +582,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
     _part(c, "SW1", "BTN", "SW", [("1", "1", "EN"), ("2", "2", "GND")], "mcu", value="RESET", place={"near": "U1", "pin": "27", "prio": 2})
     _part(c, "SW2", "BTN", "SW", [("1", "1", "BOOT"), ("2", "2", "GND")], "mcu", value="BOOT", place={"near": "U1", "pin": "27"})
     _part(c, "R12", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "BOOT")], "mcu", place={"near": "U1", "pin": "27"})
-    _part(c, "R13", "R1k", "R", [("1", "1", "LED_STAT"), ("2", "2", "LED_K")], "mcu", place={"near": "U1", "pin": "23"})
+    _part(c, "R13", "R1k", "R", [("1", "1", "LED_STAT"), ("2", "2", "LED_K")], "mcu", place={"near": "U1", "pin": "23", "prio": 3})
     _part(c, "D6", "LED_R", "LED", [("1", "K", "GND"), ("2", "A", "LED_K")], "mcu", value="STAT", place={"near": "R13"})
 
     # ---- USB-C
@@ -647,7 +647,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
         for j, (net, at, where) in enumerate((("FSR_L", 0.30, "left"), ("FSR_R", 0.12, "right"))):
             _part(c, f"J{6 + j}", "PH2", "conn", [("1", "1", "3V3"), ("2", "2", net)], "sensors", value=f"FSR {where[0].upper()}",
                   place={"edge": "right", "at": at}, note=f"FSR 402 on the {where} jaw")
-            r = c.add(f"R{40 + j}", ohm_str(rdiv), "R", [("1", "1", net), ("2", "2", "GND")], footprint="R0603",
+            c.add(f"R{40 + j}", ohm_str(rdiv), "R", [("1", "1", net), ("2", "2", "GND")], footprint="R0603",
                       mpn=f"0603 1% {ohm_str(rdiv)}", lcsc="verify" if rdiv != 10000 else "C25804", price=0.002,
                       block="sensors", place={"near": f"J{6 + j}", "side": "left"})
             _part(c, f"C{40 + j}", "C100n", "C", [("1", "1", net), ("2", "2", "GND")], "sensors",
@@ -745,7 +745,7 @@ def modules_circuit(design, ep: dict) -> Circuit:
     # controller
     nets = {"GND": "GND", "3V3": "3V3"}
     if ctrl == "openrb_150":
-        nets.update({"VIN": "V_FUSED"})
+        nets.update({"VIN": "V_FUSED", "VCC": "3V3"})
         if fsr:
             nets.update({pm["FSR_L"]: "FSR_L", pm["FSR_R"]: "FSR_R"})
         if "imu" in extras:
@@ -904,7 +904,7 @@ def build_harness(design, ep: dict, asm, pb: dict) -> tuple[list, list]:
     for c in cables:
         by_kind.setdefault((c.meta or {}).get("kind", ""), []).append(c)
     ports = bus_ports(acts, "ttl") if bus != "pwm" else []
-    port_of = {a["id"]: chr(65 + i) for i, ch in enumerate(ports) for a in ch}
+    {a["id"]: chr(65 + i) for i, ch in enumerate(ports) for a in ch}
 
     def L(c):
         return round(asm.cable_length(c), 0)
@@ -1077,7 +1077,6 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
     home = (asm.meta.get("home") if asm is not None else None) or {}
     ready = (asm.meta.get("ready") if asm is not None else None) or {}
     bus = ep["bus"]
-    lines = []
     jt = []
     for n_ in names:
         j = jmap.get(n_)
@@ -1184,7 +1183,7 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
           f"float GRIP_ZERO             = {_c(g_zero, 1)};   // {unit} with the jaws touching the object (calibrate)",
           f"const float GRIP_MIN_MM     = {_c(g_lo, 2)};   // max squeeze (overtravel)",
           f"const float GRIP_MAX_MM     = {_c(g_hi, 2)};   // fully open",
-          f"const float GRIP_CLOSE_MM_S = 8.0f;",
+          "const float GRIP_CLOSE_MM_S = 8.0f;",
           f"float GRIP_TARGET_N         = {_c(grip['target_n'], 2)};   // window {grip['window_n'][0]} - {grip['window_n'][1]} N for the {design.object.name}",
           f"const float GRIP_LIMIT_N    = {_c(grip['limit_n'], 2)};   // hard stop (object damage / sensor range)",
           f"const float FSR_R_DIV       = {rd:.1f}f;   // divider resistor to GND, ohms",
@@ -1217,7 +1216,9 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
         if cfg == "custom_pcb":
             L += ["  // the 74LVC2G241 direction pin is driven by UART1's RTS in RS-485 half-duplex mode (asserted while sending)",
                   "  uart_set_pin(UART_NUM_1, PIN_BUS_TX, PIN_BUS_RX, PIN_BUS_DIR, UART_PIN_NO_CHANGE);",
-                  "  uart_set_mode(UART_NUM_1, UART_MODE_RS485_HALF_DUPLEX);"]
+                  "  uart_set_mode(UART_NUM_1, UART_MODE_RS485_HALF_DUPLEX);",
+                  "  // bench check: DIR must read HIGH while a frame is sent; if it is inverted on your silicon add",
+                  "  // uart_set_line_inverse(UART_NUM_1, UART_SIGNAL_RTS_INV);"]
         L += ["#else", "  BUS_SERIAL.begin(BUS_BAUD);", "#endif", "  bus.pSerial = &BUS_SERIAL;", "  delay(50);", "}", "",
               "void busTorque(bool on) {",
               "  for (uint8_t k = 0; k < N_SERVOS; k++) bus.EnableTorque(SERVO[k].id, on ? 1 : 0);",
@@ -1232,7 +1233,7 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
               "  int p = bus.ReadPos(k < N_SERVOS ? SERVO[k].id : GRIP_ID);",
               "  if (p < 0) return false;", "  *pos = (float)p;", "  return true;", "}", ""]
     else:
-        L += [f"Dynamixel2Arduino dxl(BUS_SERIAL, PIN_BUS_DIR);", "using namespace ControlTableItem;", "",
+        L += ["Dynamixel2Arduino dxl(BUS_SERIAL, PIN_BUS_DIR);", "using namespace ControlTableItem;", "",
               "void busBegin() {", "  dxl.begin(BUS_BAUD);",
               "#if defined(ARDUINO_ARCH_ESP32)", "  BUS_SERIAL.setPins(PIN_BUS_RX, PIN_BUS_TX);", "#endif",
               "  dxl.setPortProtocolVersion(2.0);",

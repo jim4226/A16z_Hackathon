@@ -1106,6 +1106,8 @@ class _Builder:
         col, mat = components.FASTENER_LOOK.get(kind, ("#2b2c30", "Steel"))
         mass = DENS["Steel"] * abs(float(mesh.volume)) / 1000.0
         tq = torque if torque is not None else catalog.FASTENER_TORQUE_NM.get(size, 0.5)
+        if kind in ("washer", "insert"):
+            tq = None
         names = {"shcs": "SHCS", "bhcs": "BHCS", "fhcs": "FHCS", "nut": "nut", "washer": "washer", "insert": "heat-set insert"}
         return self.add(name, link, mesh, "fastener", step, ex, material=mat, color=color or col, process="purchased",
                         sku=f"{spec}_{kind}", group=f"{spec}_{kind}", mass_g=mass, spec=spec, fastener_kind=kind,
@@ -1130,13 +1132,9 @@ class _Builder:
         self.pinion_origin = _pt(self.M, (0, g["y_p"], (g["z_rack"][0] + g["z_rack"][1]) / 2))
         self.T["yaw_child"] = rot((0, 0, 1), -math.pi / 2)
         self.T["roll_child"] = rot((0, 0, 1), math.pi / 2)
-        chain = ["base", "turret", "upper_arm", "forearm", "wrist"] + (["wrist_yaw"] if L.dof == 6 else []) + \
-            ["gripper_base"]
-        for i, ln in enumerate(chain):
-            self.lex[ln] = (0.0, 0.0, 26.0 * i) if i else (0.0, 0.0, 0.0)
-        self.lex["turret"] = (0, 0, 34.0)
-        for ln, v in (("jaw_left", (-24.0, 0, 0)), ("jaw_right", (24.0, 0, 0)), ("pinion", (0, -12.0, 0)), ("tcp", (0, 0, 0))):
-            self.lex[ln] = tuple(np.asarray(self.lex["gripper_base"]) + v)
+        # link-local extra separation (the chain separation itself is added in finish_explode)
+        for ln, v in (("jaw_left", (-22.0, 0, 0)), ("jaw_right", (22.0, 0, 0)), ("pinion", (0, -14.0, 0))):
+            self.lex[ln] = v
 
     # ------------------------------------------------------------ joint hardware (actuators, horns, bolts)
     def joint_hw(self, j: _JG, par, Tp, child, Tc, prefix, step_par, step_child):
@@ -1145,8 +1143,8 @@ class _Builder:
         for i, Ta in enumerate(j.T_acts):
             sfx = "" if j.count == 1 else ("_a", "_b")[i]
             comp = components.actuator(j.key, horn=False)
-            ex_dir = _vec(Tp @ Ta, (0, 0, 1)) * 0.0 + _vec(Tp, (0, 0, -1))
-            self.comp(comp, f"{prefix}_servo{sfx}", par, Tp @ Ta, step_par, explode=ex_dir * 30.0,
+            ex_dir = _vec(Tp, (0, 0, 1))
+            self.comp(comp, f"{prefix}_servo{sfx}", par, Tp @ Ta, step_par, explode=ex_dir * 28.0,
                       kind="actuator", skip=("wire_",), meta={"drives": j.name, "servo_index": i})
             self.servos.append(dict(joint=j.name, link=par, T=Tp @ Ta, A=A))
             hc = components.horn(j.key)
@@ -1356,7 +1354,7 @@ class _Builder:
         comp = components.actuator(A.key, horn=False)
         self.comp(comp, f"{prefix}_servo", par, Tp, step_par, explode=_vec(Tp, (0, 0, 1)) * 26.0, kind="actuator",
                   skip=("wire_",), meta={"drives": "roll"})
-        self.servos.append(dict(joint="roll", link=par, T=Tp, A=A))
+        self.servos.append(dict(joint=next(n for n in self.lay.names if n.endswith("roll")), link=par, T=Tp, A=A))
         hc = components.horn(A.key)
         self.comp(hc, f"{prefix}_horn", child, Tc @ trans((0, 0, -A.ht)), step_child, explode=(0, 0, -14.0), kind="horn")
         fr = []
@@ -1424,20 +1422,58 @@ class _Builder:
             body = _D(body, scoop)
         if adds:
             body = _U(body, adds)
-        # decorative pocket on both flat side faces of the beam
-        if pocket and prox and info["z0"] is not None and info["z1"] is not None and info["z1"] - info["z0"] > 26:
-            sil2 = self.silhouette(body)
+        # decorative pocket on both side faces of the beam (faces may taper from the clevis to the cradle)
+        self.last_pocket = None
+        if pocket and prox and info["z0"] is not None and info["z1"] is not None and info["z1"] - info["z0"] > 26 \
+                and np.allclose(prox[1][:3, :3], np.eye(3)):
             jp = prox[0]
-            D2s = [jp.D2] + [dd[1].D2 for dd in dists if dd[0] == "jg"]
-            if max(D2s) - min(D2s) < 0.6 and not np.allclose(prox[1][:3, :3], self.T["yaw_child"][:3, :3]):
-                reg = sil2.buffer(-6.0, join_style=1).intersection(box(-500, info["z0"] + 5, 500, info["z1"] - 3))
-                if not reg.is_empty and reg.area > 120:
-                    reg = reg.buffer(-2.0, join_style=1).buffer(2.0, join_style=1)
-                    D2 = min(D2s)
-                    for y1 in (-D2 + 1.0, D2 + 1.0):
-                        cuts.append(_xz_ext(reg, y1 - 2.0, y1))
+            dj = [dd for dd in dists if dd[0] == "jg"]
+            D2p, D2d = jp.D2, (dj[0][1].cD2 if dj else jp.D2)
+            zn1, zc0 = jp.z_b + T_BR + 3.0, info["z1"]
+            face = lambda z: D2p + (D2d - D2p) * min(max((z - zn1) / max(zc0 - zn1, 1e-6), 0.0), 1.0)  # noqa: E731
+            sil2 = self.silhouette(body)
+            reg = sil2.buffer(-6.0, join_style=1).intersection(box(-500, info["z0"] + 5, 500, info["z1"] - 3))
+            if not reg.is_empty and reg.area > 120 and reg.geom_type == "Polygon":
+                reg = reg.buffer(-2.0, join_style=1).buffer(2.0, join_style=1)
+                if reg.geom_type == "Polygon" and not reg.is_empty:
+                    P = np.asarray(reg.exterior.coords)[:-1]
+                    for sg in (-1, 1):
+                        pts = [(x, sg * (face(z) + dy), z) for x, z in P for dy in (-1.0, 2.5)]
+                        cuts.append(MF.hull_points(np.array(pts, float)))
+                    self.last_pocket = dict(reg=reg, face=face)
         body = _D(body, cuts)
         return body
+
+    def logo(self, link, step, text="MORPH"):
+        """Raised two-colour logo on the -y pocket floor of the last link body built."""
+        pk = getattr(self, "last_pocket", None)
+        if not pk:
+            return
+        reg, face = pk["reg"], pk["face"]
+        c = reg.centroid
+        b = reg.bounds
+        h = min(9.0, (b[2] - b[0]) * 0.4)
+        try:
+            tm = components.text_mesh(text, h, relief=0.7, weight=0.16)
+            if tm.extents[0] > (b[3] - b[1]) * 0.6:
+                h *= (b[3] - b[1]) * 0.6 / tm.extents[0]
+                tm = components.text_mesh(text, h, relief=0.7, weight=0.16)
+        except Exception:  # noqa: BLE001
+            return
+        if h < 4.0:
+            return
+        k = (face(c.y + 1.0) - face(c.y - 1.0)) / 2.0
+        t = np.array([0.0, -k, 1.0])
+        t /= np.linalg.norm(t)
+        n = np.array([0.0, -1.0, -k])
+        n /= np.linalg.norm(n)
+        F = np.eye(4)
+        F[:3, 0], F[:3, 2] = t, n
+        F[:3, 1] = np.cross(n, t)
+        F[:3, 3] = (c.x, -(face(c.y) - 1.0) - 0.02, c.y)
+        tm.apply_transform(F)
+        self.struct(f"{link}_logo", link, tm, step, (0, -12.0, 0), role="dark", kind="visual", collide=False,
+                    label="logo inlay")
 
     def silhouette(self, man):
         """xz silhouette (convex hull of the projected vertices)."""
@@ -1527,6 +1563,8 @@ class _Builder:
         for link, prox, dists, step, label in self.link_specs():
             body = self.link_body(prox, dists)
             short = {"upper_arm": "ua", "forearm": "fa", "wrist": "wr", "wrist_yaw": "wy"}[link]
+            if link == "upper_arm":
+                self.logo(link, step)
             if not prod:
                 self.struct(f"{short}_body", link, body, step, (0, 0, 0), role="shell", label=f"{label} (printed)")
             else:
@@ -2278,6 +2316,9 @@ class _Builder:
             n = 4 if min(l, w) > 20 else 2
             pts = [(sx * (l / 2 - 3.2), sy * (w / 2 - 3.2)) for sx in (-1, 1) for sy in (-1, 1)] if n == 4 else \
                 [(sx * (l / 2 - 3.2), 0.0) for sx in (-1, 1)]
+            mh = (self.eplan.get("custom_pcb") or {}).get("mounting_holes") if pl["custom"] else None
+            if mh:
+                pts = [(float(hx) - l / 2, float(hy) - w / 2) for hx, hy in mh]
             so = []
             fr = []
             for px, py in pts:
@@ -2608,6 +2649,20 @@ class _Builder:
         self.imu_conn = ("gripper_base", _pt(T, np.asarray(comp.frames["connector_a"])[:3, 3]))
 
 
+def _finish_explode(b, home, k=0.55):
+    """Exploded view: scale the home pose about the base origin (each link moves k x its origin), expressed in the
+    link's own frame, plus every part's local offset along its own axis."""
+    a = b.asm
+    T = a.world_transforms(home)
+    for p in a.parts:
+        Tl = T[p.link]
+        chain = Tl[:3, :3].T @ (k * Tl[:3, 3]) if p.link != a.root else np.zeros(3)
+        if p.link == "turret":
+            chain = chain + Tl[:3, :3].T @ np.array([0, 0, 22.0])
+        ex = chain + np.asarray(p.explode, float)
+        p.explode = tuple(round(float(v), 2) for v in ex)
+
+
 def _tube(p0, p1, r, segs=24):
     """Cylinder between two points."""
     p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
@@ -2683,16 +2738,19 @@ def _cables(b):
         cross(clink, _pt(Tch, (-4.0, jg.D2 + 4.5, 3.0)))
 
     def side_run(link, jp, Tp, z_end, D2d=None, z_conn=None, Td=None):
-        Dy = max(jp.D2, D2d or 0.0) + 3.4
         z0 = jp.z_b + T_BR + 8.0
+        D2d_ = D2d if D2d else jp.D2
+        Dy = lambda z: jp.D2 + (D2d_ - jp.D2) * min(max((z - z0 + 5.0) / max(z_end - z0 + 5.0, 1e-6), 0.0), 1.0) + 3.4  # noqa: E731
         if z_end - z0 > 12:
             for zz in np.linspace(z0, z_end, 3):
-                run(link, _pt(Tp, (0.0, Dy, zz)))
+                run(link, _pt(Tp, (0.0, Dy(zz), zz)))
+            b.clip_at.append((link, Tp, (z0 + z_end) / 2, Dy((z0 + z_end) / 2) - 3.4))
         else:
-            run(link, _pt(Tp, (0.0, Dy, z0)))
+            run(link, _pt(Tp, (0.0, Dy(z0), z0)))
         if z_conn is not None and Td is not None:
             run(link, _pt(Td, (2.0, (D2d or jp.D2) + 3.4, z_conn)))
 
+    b.clip_at = []
     pitch_cross(js, Tj2, "turret", "upper_arm")
     je, jw = L.jg["j3_elbow"], L.jg["j4_wrist_pitch"]
 
@@ -2748,12 +2806,23 @@ def _cables(b):
         p_drv = np.array([x_bay - 20.0, 0.0, zfl + 12.0])
     if p_ctl is None:
         p_ctl = p_drv + np.array([-10.0, 10.0, 0.0])
-    servos = sorted(b.servos, key=lambda sv: ["j1_base_yaw", "j2_shoulder", "j3_elbow", "j4_wrist_pitch", "j5_wrist_yaw",
-                                               "roll", "gripper"].index(sv["joint"]))
-    ids = {}
+    order = ["j1_base_yaw", "j2_shoulder", "j3_elbow", "j4_wrist_pitch", "j5_wrist_yaw", "j5_wrist_roll", "j6_wrist_roll",
+             "gripper"]
+    servos = sorted(b.servos, key=lambda sv: order.index(sv["joint"]))
+    # servo IDs / PWM channels: from the electronics plan when it lists them, else chain order
+    plan_ids = {}
+    for e in (ep.get("actuators") or []):
+        plan_ids.setdefault(e.get("joint"), []).append(e)
+    seen = {}
+    b.servo_ids = []
     for i, sv in enumerate(servos):
-        ids[(sv["joint"], id(sv))] = i + 1
-    b.servo_ids = [(sv["joint"], i + 1) for i, sv in enumerate(servos)]
+        k = seen.get(sv["joint"], 0)
+        seen[sv["joint"]] = k + 1
+        lst = plan_ids.get(sv["joint"], [])
+        e = lst[k] if k < len(lst) else {}
+        sv["id"] = int(e.get("id") or (i + 1))
+        sv["channel"] = e.get("channel", i)
+        b.servo_ids.append((sv["joint"], sv["id"]))
     bus_col, pwm_col = "#1d1f22", "#3b2f2b"
 
     def pts_of(i0, i1, off=0.0):
@@ -2768,8 +2837,7 @@ def _cables(b):
             a, bb, out = _servo_conn(sv)
             if prev is None:
                 pts = [("base", tuple(np.round(p_drv, 2))), ("base", tuple(np.round(p_drv + np.array([8, 0, 6.0]), 2)))]
-                pts += pts_of(0, attach("base") - 0 if sv["link"] != "base" else 0)[:-1] if sv["link"] != "base" else \
-                    pts_of(0, 0)
+                pts += pts_of(0, attach(sv["link"]))
                 pts.append((sv["link"], tuple(np.round(a + out * 8.0, 2))))
                 pts.append((sv["link"], tuple(np.round(a, 2))))
                 src = f"{drv}.bus" if drv else "U2.bus"
@@ -2784,9 +2852,9 @@ def _cables(b):
                     pts += pts_of(i0 + 1, i1)
                 pts.append((sv["link"], tuple(np.round(a + out * 8.0, 2))))
                 pts.append((sv["link"], tuple(np.round(a, 2))))
-                src = f"ID{i}.bus"
-            asm.cables.append(Cable(f"bus_{i}", pts, diameter=3.0, color=bus_col, src=src, dst=f"ID{i + 1}.bus",
-                                    conductors=3, meta={"kind": "servo_bus", "to_joint": sv["joint"], "servo_id": i + 1}))
+                src = f"ID{prev['id']}.bus"
+            asm.cables.append(Cable(f"bus_{i}", pts, diameter=3.0, color=bus_col, src=src, dst=f"ID{sv['id']}.bus",
+                                    conductors=3, meta={"kind": "servo_bus", "to_joint": sv["joint"], "servo_id": sv["id"]}))
             prev = sv
     else:
         n = len(servos)
@@ -2800,8 +2868,9 @@ def _cables(b):
                 pts += pts_of(0, ia, off)
             pts.append((sv["link"], tuple(np.round(a + out * 8.0, 2))))
             pts.append((sv["link"], tuple(np.round(a, 2))))
-            asm.cables.append(Cable(f"pwm_{i}", pts, diameter=2.4, color=pwm_col, src=f"{drv}.CH{i}", dst=f"{sv['joint']}.servo",
-                                    conductors=3, meta={"kind": "pwm", "to_joint": sv["joint"], "channel": i}))
+            ch = sv.get("channel", i) if sv.get("channel") is not None else i
+            asm.cables.append(Cable(f"pwm_{i}", pts, diameter=2.4, color=pwm_col, src=f"{drv}.CH{ch}", dst=f"{sv['joint']}.servo",
+                                    conductors=3, meta={"kind": "pwm", "to_joint": sv["joint"], "channel": ch}))
     # FSR leads: jaw -> gripper base -> trunk -> controller ADC
     ig = attach("gripper_base")
     igc = max(i for i, (l, _, k) in enumerate(trunk) if l == "gripper_base" and k == "cross")
@@ -2866,6 +2935,26 @@ def _cables(b):
             asm.cables.append(Cable("estop", pts, diameter=3.6, color="#20232a", src="S1", dst=f"{ctl}.ESTOP / servo power",
                                     conductors=2, meta={"kind": "safety"}))
     b.trunk = trunk
+    _clips(b)
+
+
+def _clips(b):
+    """Printed cable clips on the idler side of the links, sized to the bundle that passes there."""
+    for link, Tp, zc, face_y in getattr(b, "clip_at", []):
+        xs, rmax = [], 1.0
+        for c in b.asm.cables:
+            for l, x in c.points:
+                if l == link and abs(x[2] - zc) < 40 and x[1] > face_y:
+                    xs.append(x[0])
+                    rmax = max(rmax, c.diameter / 2)
+        if not xs:
+            continue
+        x0, x1 = min(xs) - rmax, max(xs) + rmax
+        yc = face_y + 3.4
+        clip = _rbox2(x0 - 2.4, x1 + 2.4, face_y - 0.6, yc + rmax + 1.6, zc - 3.5, zc + 3.5, r=1.2, f=0.6)
+        clip = _D(clip, _box2(x0 - 0.3, x1 + 0.3, face_y - 2, yc + rmax + 0.3, zc - 10, zc + 10))
+        b.struct(f"{link}_cable_clip", link, _xf(clip, Tp), "wiring", (0, 10.0, 0), role="dark",
+                 label="cable clip")
 
 
 # ================================================================== assembly sequence
@@ -2888,15 +2977,24 @@ def _steps(b):
     idt = lambda jn: "/".join(f"ID {i}" for i in sid.get(jn, [])) or "—"  # noqa: E731
     pwm = fam == "hobby_pwm"
     center = "set it to its mid position (2048 ticks)" if not pwm else "centre it with the servo tester (1500 µs)"
+    at_mid = "at its mid position (2048 ticks)" if not pwm else "centred (1500 µs)"
     key = lambda jn: L.keys.get(jn, "")  # noqa: E731
     roll = next((n for n in L.names if n.endswith("roll")), None)
-    proc = {"prototype": "printed", "pilot": "machined", "production": "moulded"}[cfg]
+    proc = {"prototype": "printed", "pilot": "folded sheet-metal", "production": "moulded"}[cfg]
+    hob = lambda jn: _act(key(jn)).hobby if key(jn) else False  # noqa: E731
+    fix = lambda jn: ((f"screw {'their' if dual(jn) else 'its'} mounting ears to the collar (M3, 0.8 N·m)") if hob(jn) else  # noqa: E731
+                      f"secure {'them' if dual(jn) else 'it'} with the side screws through the cradle wall")
+    plates = (" First assemble the two 6061 side plates with the sheet-metal bridge and cradle brackets and the hex "
+              "standoffs (M3 button heads, 0.8 N·m), checking the plates stay parallel." if cfg == "pilot" else
+              " Clip the two moulded half shells together around the stamped stiffener first (parting line "
+              "towards the cable side)." if cfg == "production" else "")
     g = L.grip
     dual = lambda jn: L.counts.get(jn, 1) > 1  # noqa: E731
     sens = b.d.finger.sensor in FSR
     spec = [
         ("base", "Base, turntable and base-yaw servo", "base",
-         f"Press the four rubber feet into the corners of the {proc} base. Screw the base-yaw servo ({key('j1_base_yaw')}, "
+         f"Press the four rubber feet into the corners of the {proc} base{' tray and screw the 6061 deck on top' if cfg == 'pilot' else ''}. "
+         f"Screw the base-yaw servo ({key('j1_base_yaw')}, "
          f"{idt('j1_base_yaw')}) into its mount, output up and connector towards the electronics bay, then fix the mount to "
          f"the floor. Lay the turntable bearing on the deck, align its four holes and bolt the lower ring down; the servo "
          f"spline must sit in the middle of the bearing bore.",
@@ -2909,31 +3007,42 @@ def _steps(b):
           "Before plugging in the controller, power the board from the inlet and check the logic rail is 5.0 V ± 0.1 V."),
          ["Disconnect the supply while working in the bay."]),
         ("turret", "Turret on the turntable", "turret",
-         f"With the base servo {center}, place the turret on the bearing so the shoulder points forward (+x). Screw the horn "
+         f"With the base servo {at_mid}, place the turret on the bearing so the shoulder points forward (+x). Screw the horn "
          f"to the turret floor through the four counterbores, then fix the bearing's upper ring from below.",
          ["Do not rotate the base servo by hand against its gears."]),
         ("shoulder", "Shoulder servo" + ("s (dual, back to back)" if dual("j2_shoulder") else ""), "turret",
          f"Slide the shoulder servo{'s' if dual('j2_shoulder') else ''} ({key('j2_shoulder')}, {idt('j2_shoulder')}) into the "
-         f"turret cradle, horn side to the robot's right (−y), label facing forward. Secure with the side screws. "
+         f"turret cradle, horn side to the robot's right (−y), label facing forward, then {fix('j2_shoulder')}. "
          f"{'Both servos must be set to the same mid position before the upper arm goes on; they drive one joint and are paired in firmware (one inverted). ' if dual('j2_shoulder') else ''}"
          f"Fit the horn on the spline at mid position.",
          ["Route the bus cable out through the notch on the idler side before tightening."]),
         ("upper_arm", "Upper arm on the shoulder", "upper_arm",
-         "Hold the upper arm vertical and slide its clevis over the shoulder: the horn cheek over the horn, the idler cheek "
-         "over the idler" + (" bearing pin" if _act(key('j2_shoulder')).hobby else "") + ". Bolt the horn cheek to the horn "
-         "and the idler cheek to the idler, alternating diagonally, then snap the joint cap on.",
+         plates.strip() + (" " if plates else "") +
+         "Hold the upper arm vertical and slide its clevis over the shoulder: "
+         + ("one cheek over each horn. Bolt both cheeks to their horns, alternating diagonally, " if dual('j2_shoulder') else
+            "the horn cheek over the horn, the idler cheek (with its 608 bearing) over the steel idler pin. Bolt the horn "
+            "cheek to the horn, alternating diagonally, " if hob('j2_shoulder') else
+            "the horn cheek over the horn, the idler cheek over the idler. Bolt the horn cheek to the horn and the idler "
+            "cheek to the idler, alternating diagonally, ")
+         + "then snap the joint cap on.",
          ["The arm must point straight up at the servo's mid position: this is the zero pose used by the firmware."]),
         ("elbow", "Elbow servo", "upper_arm",
          f"Insert the elbow servo{'s' if dual('j3_elbow') else ''} ({key('j3_elbow')}, {idt('j3_elbow')}) into the cradle at "
-         f"the top of the upper arm and fit the retaining screws. {center.capitalize()} and press the horn on.", []),
+         f"the top of the upper arm and {fix('j3_elbow')}. {center.capitalize()} and press the horn on.", []),
         ("forearm", "Forearm on the elbow", "forearm",
-         "Fit the forearm clevis over the elbow servo (horn cheek over the horn) and bolt both cheeks. Snap the joint cap on.",
+         plates.strip() + (" " if plates else "") +
+         "Fit the forearm clevis over the elbow servo (horn cheek over the horn) and bolt it to the horn; " +
+         ("the idler cheek's bearing slides over the steel pin. " if hob('j3_elbow') else "bolt the idler cheek to the idler. ")
+         + "Snap the joint cap on.",
          []),
         ("wrist", "Wrist-pitch servo", "forearm",
-         f"Insert the wrist-pitch servo ({key('j4_wrist_pitch')}, {idt('j4_wrist_pitch')}) into the forearm cradle and fix it. "
+         f"Insert the wrist-pitch servo ({key('j4_wrist_pitch')}, {idt('j4_wrist_pitch')}) into the forearm cradle and "
+         f"{fix('j4_wrist_pitch')}. "
          f"{center.capitalize()} and press the horn on.", []),
         ("wrist_link", "Wrist on the wrist-pitch servo", "wrist",
-         "Fit the wrist clevis over the wrist-pitch servo and bolt horn and idler cheeks.", []),
+         "Fit the wrist clevis over the wrist-pitch servo and bolt the horn cheek to the horn; " +
+         ("the idler cheek's bearing slides over the steel pin." if hob('j4_wrist_pitch') else
+          "bolt the idler cheek to the idler.") + " Snap the joint cap on.", []),
     ]
     if L.dof == 6:
         spec.append(("wrist_yaw", "Wrist-yaw servo and yaw bracket", "wrist_yaw",
@@ -2942,11 +3051,13 @@ def _steps(b):
     if roll:
         spec.append(("roll", "Wrist-roll servo", "wrist" if L.dof == 5 else "wrist_yaw",
                      f"Drop the wrist-roll servo ({key(roll)}, {idt(roll)}) into the cup at the end of the wrist, output "
-                     f"towards the gripper, and fix it with the side screws. {center.capitalize()}; fit the horn.", []))
+                     f"towards the gripper, and " + ("screw its ears to the cup rim" if hob(roll) else
+                                                     "fix it with the side screws") +
+                     f". {center.capitalize()}; fit the horn.", []))
     spec += [
         ("gripper", "Gripper mechanism", "gripper_base",
          f"Screw the gripper servo ({g['servo']}, {idt('gripper')}) to the back of the hand frame. Press the heat-set "
-         f"inserts into the rack ears (soldering iron, 220 °C). With the servo {center.split(' (')[0].replace('set it to its ', 'at its ').replace('centre it with the servo tester', 'centred')}, "
+         f"inserts into the rack ears (soldering iron, 220 °C). With the servo {at_mid}, "
          f"bolt the {g['n']}-tooth pinion (module {_mech.MODULE}) to the horn. Lay both racks in from the front so their "
          f"teeth mesh with the pinion when the jaws are at the object width, then fit the four guide bolts through the "
          f"slots with washers and nylock nuts behind the plate: snug, then back off a quarter turn so the racks slide freely.",
@@ -3114,6 +3225,7 @@ def build(design, sizing: dict | None = None, electronics_plan: dict | None = No
     a.meta = {"arm_joints": L.names, "gripper_joint": "gripper", "tcp_link": "tcp", "home": home, "ready": ready,
               "sizing": sizing}
     _steps(b)
+    _finish_explode(b, home)
     g = L.grip
     a.meta.update({
         "generator": "morph.robot.arm", "build_config": b.cfg, "title": f"Morph {L.dof}-DOF arm ({b.cfg})",
@@ -3127,7 +3239,7 @@ def build(design, sizing: dict | None = None, electronics_plan: dict | None = No
                     "object_center_v_mm": round(g["cv"], 2), "sensor": g["geom"].sensor},
         "joint_limits": {k: list(v) for k, v in L.lim.items()},
         "base": {"footprint_bounds": [round(v, 1) for v in b.footprint.bounds], "clamp_holes": [list(np.round(c, 1)) for c in b.clamps]},
-        "notes": list(sizing.get("notes", [])) + list(L.notes),
+        "notes": list(dict.fromkeys(list(sizing.get("notes", [])) + list(L.notes))),
         "warnings": list(b.issues),
         "issues": [],
     })
@@ -3184,9 +3296,10 @@ def cable_mesh(asm, c, q=None, sides=10):
     return trimesh.Trimesh(V, np.array(F), process=False)
 
 
-def export_pose_glb(asm, path, q=None, cables=True, kinds=None):
+def export_pose_glb(asm, path, q=None, cables=True, kinds=None, explode=0.0):
     """GLB of the robot baked at pose q (default meta['home']) with per-part PBR materials (sRGB colours linearised
-    the way the Studio viewer shows them) and cable tubes; for snapshots and previews."""
+    the way the Studio viewer shows them) and cable tubes; `explode` scales every part's explode offset (link frame).
+    For snapshots and previews."""
     from trimesh.visual.material import PBRMaterial
     from .assembly import MATERIAL_PBR, hex_rgba
 
@@ -3198,13 +3311,15 @@ def export_pose_glb(asm, path, q=None, cables=True, kinds=None):
         if kinds and p.kind not in kinds:
             continue
         m = p.mesh.copy()
+        if explode:
+            m.apply_translation(np.asarray(p.explode, float) * explode)
         m.apply_transform(T[p.link])
         metal, rough = MATERIAL_PBR.get(p.material, (0.0, 0.5))
         lin = list(_srgb_to_linear(hex_rgba(p.color)[:3])) + [1.0]
         m.visual = trimesh.visual.TextureVisuals(material=PBRMaterial(baseColorFactor=lin, metallicFactor=metal,
                                                                       roughnessFactor=rough))
         scene.add_geometry(m, node_name=f"part__{p.name}", geom_name=f"g_{p.name}")
-    if cables:
+    if cables and not explode:
         for c in asm.cables:
             try:
                 m = cable_mesh(asm, c, q)

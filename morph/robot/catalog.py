@@ -183,3 +183,9 @@ MODULES.update({
                       dims=dict(l=160.0, w=98.0, h=38.0), out_v=6.0, out_a=20.0, mass_g=550.0, external=True, verify=True,
                       vendors=[V("amazon", "6V 20A 120W switching power supply", 24.0)]),
 })
+MODULES.update({
+    "psu_12v20a": dict(name="12 V 20 A (240 W) enclosed switching supply", role="supply", dims=dict(l=200.0, w=98.0, h=40.0),
+                       out_v=12.0, out_a=20.0, mass_g=700.0, external=True, verify=True,
+                       vendors=[V("amazon", "12V 20A 240W switching power supply", 26.0),
+                                V("digikey", "Mean Well LRS-350-12", 38.0)]),
+})
