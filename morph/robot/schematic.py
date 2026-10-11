@@ -245,7 +245,9 @@ def _box_symbol(comp: Comp) -> _El:
             _, w = _attach_h(0, 0, p.net, "left" if sd == "L" else "right")
             e = max(e, w)
         ext[sd] = PIN_LEN + e
-    ext["T"] = PIN_LEN + (4.5 if sides["T"] else 0) + 3.2          # + ref/value text
+    top_lab = max([(_tw(p.net, 1.27) + 2.2 + G) if (p.net and not (is_power(p.net) and p.net != "GND")) else 4.5
+                   for p in sides["T"]] + [0])
+    ext["T"] = PIN_LEN + top_lab + 3.2          # + ref/value text
     ext["B"] = PIN_LEN + (3.2 if sides["B"] else 0) + (2.2 if comp.note else 0) + 1.0
     if not sides["T"]:
         ext["T"] = 4.2
@@ -261,13 +263,13 @@ def _box_symbol(comp: Comp) -> _El:
                 x0, x1 = ox, ox - PIN_LEN
                 s.append(_l(x0, y, x1, y, C["pin"], 0.18))
                 s.append(_t(x0 + 0.7, y + 0.45, p.name, ns, C["pinname"]))
-                s.append(_t((x0 + x1) / 2, y - 0.45, p.num, 1.0, C["pinnum"], "middle"))
+                s.append(_t((x0 + x1) / 2, y - 0.45, p.num.split("-")[-1], 1.0, C["pinnum"], "middle"))
                 a, _ = _attach_h(x1, y, p.net, "left")
             else:
                 x0, x1 = ox + bw, ox + bw + PIN_LEN
                 s.append(_l(x0, y, x1, y, C["pin"], 0.18))
                 s.append(_t(x0 - 0.7, y + 0.45, p.name, ns, C["pinname"], "end"))
-                s.append(_t((x0 + x1) / 2, y - 0.45, p.num, 1.0, C["pinnum"], "middle"))
+                s.append(_t((x0 + x1) / 2, y - 0.45, p.num.split("-")[-1], 1.0, C["pinnum"], "middle"))
                 a, _ = _attach_h(x1, y, p.net, "right")
             s.append(a)
             s.append(f'<circle cx="{x1:.3f}" cy="{y:.3f}" r="0.25" fill="{C["pin"]}" opacity="0"/>')
@@ -503,6 +505,71 @@ def _block_layout(comps: list, max_w: float):
     return placed, max(wb, ws), oy + hs
 
 
+def _skyline(laid, W, gap=5.0, limit=None):
+    """Bottom-left skyline packing of block frames, in order: [(key, title, placed, x, y, w, h)].
+    `limit(x0, x1)` is the lowest y a frame spanning x0..x1 may reach (title block / notes are obstacles)."""
+    sky = [(0.0, W, 0.0)]
+    out = []
+    for key, title, placed, bw, bh in laid:
+        best = None
+        for x in sorted({seg[0] for seg in sky}):
+            if x + bw > W + 1e-6:
+                continue
+            y = max(seg[2] for seg in sky if seg[0] < x + bw - 1e-6 and seg[1] > x + 1e-6)
+            over = max(0.0, y + bh - limit(x, x + bw)) if limit else 0.0
+            if best is None or (over, y) < (best[2], best[0] - 1e-6):
+                best = (y, x, over)
+        if best is None:
+            best = (max(seg[2] for seg in sky), 0.0, 1e9)
+        y, x = best[0], best[1]
+        out.append((key, title, placed, x, y, bw, bh, best[2]))
+        x1 = min(x + bw + gap, W)
+        new = []
+        for a, b, yy in sky:
+            if b <= x + 1e-9 or a >= x1 - 1e-9:
+                new.append((a, b, yy))
+                continue
+            if a < x:
+                new.append((a, x, yy))
+            if b > x1:
+                new.append((x1, b, yy))
+        new.append((x, x1, y + bh + gap))
+        sky = sorted(new)
+    return out
+
+
+def _mosaic(pos, W, limit, gap=5.0):
+    """Grow each frame down, then right, into empty space (never into another frame) for a tidy grid."""
+    rects = [[b[3], b[4], b[5], b[6]] for b in pos]
+
+    def hits(i, x, y, w, h):
+        for j, (X, Y, Wd, Hd) in enumerate(rects):
+            if j != i and x < X + Wd + gap - 1e-6 and X < x + w + gap - 1e-6 and y < Y + Hd + gap - 1e-6 and Y < y + h + gap - 1e-6:
+                return True
+        return False
+    for i in range(len(rects)):
+        x, y, w, h = rects[i]
+        lo, hi = h, max(h, limit(x, x + w) - y)
+        while hi - lo > 0.5:              # binary search the tallest collision-free height
+            mid = (lo + hi) / 2
+            if hits(i, x, y, w, mid):
+                hi = mid
+            else:
+                lo = mid
+        rects[i][3] = lo
+    for i in range(len(rects)):
+        x, y, w, h = rects[i]
+        lo, hi = w, max(w, W - x)
+        while hi - lo > 0.5:
+            mid = (lo + hi) / 2
+            if hits(i, x, y, mid, h) or y + h > limit(x, x + mid) + 0.01:
+                hi = mid
+            else:
+                lo = mid
+        rects[i][2] = lo
+    return [(b[0], b[1], b[2], r[0], r[1], r[2], r[3], b[5], b[6]) for b, r in zip(pos, rects)]
+
+
 def render(circuit: Circuit, rev: str = "", date: str = "", company: str = "Morph", path_hint: str = "schematic.svg") -> tuple[str, dict]:
     """Render the circuit to a schematic sheet SVG. Returns (svg, layout json)."""
     blocks = list(circuit.blocks) or [("main", circuit.title.upper())]
@@ -526,20 +593,40 @@ def render(circuit: Circuit, rev: str = "", date: str = "", company: str = "Morp
             target = content_w * min(frac * (1.3 if key in ("mcu", "ctrl", "power") else 1.0), 0.95)
             placed, bw, bh = _block_layout(comps, target)
             laid.append((key, title, placed, bw + 2 * pad, bh + 2 * pad + title_h))
-        pos = _skyline(laid, content_w)
+        tb_h, tb_w = 32.0, 180.0
+        notes_h = 3.2 * (len(circuit.notes) + 2) if circuit.notes else 0
+        notes_w = max([_tw(f"{i + 1}. {n}", 1.35) for i, n in enumerate(circuit.notes)] + [0]) + 4
+        full = inner[1] - 8.0
+
+        def limit(x0, x1, full=full, tb_h=tb_h, tb_w=tb_w, notes_h=notes_h, notes_w=notes_w, cw=content_w):
+            lim = full
+            if x1 > cw - tb_w + 2:
+                lim = min(lim, full - tb_h - 5)
+            if x0 < notes_w:
+                lim = min(lim, full - notes_h - 3)
+            return lim
+        pos = _skyline(laid, content_w, limit=limit)
         total_h = max((b[4] + b[6] for b in pos), default=0.0)
-        tb_h = 32.0
-        notes_h = 3.2 * (len(circuit.notes) + 1) if circuit.notes else 0
-        avail = inner[1] - 8.0 - max(tb_h, notes_h) - 4.0
-        if total_h <= avail and all(b[5] <= content_w for b in pos):
+        avail = full
+        if all(b[7] <= 0 for b in pos) and all(b[5] <= content_w for b in pos):
             fill = total_h / avail
             if fits is None or fill > fits[6]:
                 fits = (sheet_name, SW, SH, inner, content_w, pos, fill)
       if fits:
         break
     sheet_name, SW, SH, inner, content_w, pos = (fits or (sheet_name, SW, SH, inner, content_w, pos, 1.0))[:6]
-    avail = inner[1] - 8.0 - max(32.0, 3.2 * (len(circuit.notes) + 1) if circuit.notes else 0) - 4.0
-    pos = _mosaic(pos, content_w, max(avail, max(b[4] + b[6] for b in pos)))
+    full = inner[1] - 8.0
+    notes_h = 3.2 * (len(circuit.notes) + 2) if circuit.notes else 0
+    notes_w = max([_tw(f"{i + 1}. {n}", 1.35) for i, n in enumerate(circuit.notes)] + [0]) + 4
+
+    def limit2(x0, x1):
+        lim = full
+        if x1 > content_w - 180.0 + 2:
+            lim = min(lim, full - 37.0)
+        if x0 < notes_w:
+            lim = min(lim, full - notes_h - 3)
+        return max(lim, max(b[4] + b[6] for b in pos if b[3] < x1 and b[3] + b[5] > x0) if pos else lim)
+    pos = _mosaic(pos, content_w, limit2)
     ox, oy = 10.0 + 4.0, 10.0 + 4.0
     svg = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SW} {SH}" width="{SW * 4:.0f}" height="{SH * 4:.0f}" '
            f'font-family="{FONT}">', f'<rect x="0" y="0" width="{SW}" height="{SH}" fill="{C["paper"]}"/>']

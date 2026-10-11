@@ -178,3 +178,8 @@ MODULES.update({
                         dims=dict(l=60.0, w=20.0, h=12.0), mass_g=12.0, external=True,
                         vendors=[V("amazon", "inline ATO fuse holder 16 AWG", 1.5), V("digikey", "Littelfuse 0FHA0001ZXJ", 4.2)]),
 })
+MODULES.update({
+    "psu_6v20a": dict(name="6 V 20 A (120 W) enclosed switching supply, adjustable 5.4-6.6 V", role="supply",
+                      dims=dict(l=160.0, w=98.0, h=38.0), out_v=6.0, out_a=20.0, mass_g=550.0, external=True, verify=True,
+                      vendors=[V("amazon", "6V 20A 120W switching power supply", 24.0)]),
+})

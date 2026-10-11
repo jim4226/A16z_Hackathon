@@ -158,17 +158,20 @@ def actuator_list(design, sizing: dict) -> tuple[list, list]:
     bus, proto, _ = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])
     out = []
     for i, j in enumerate(sizing.get("joints", [])):
-        out.append({"joint": j["name"], "key": j["actuator"], "torque_req_nm": j.get("torque_req_nm", 0.0),
-                    "torque_with_margin_nm": j.get("torque_with_margin_nm", 0.0), "sid": j.get("servo_id")})
+        n = max(int(j.get("count", 1) or 1), 1)        # dual (back-to-back) actuators share one joint
+        for k in range(n):
+            out.append({"joint": j["name"], "key": j["actuator"], "torque_req_nm": (j.get("torque_req_nm") or 0.0) / n,
+                        "torque_with_margin_nm": (j.get("torque_with_margin_nm") or 0.0) / n,
+                        "sid": j.get("servo_id") if n == 1 else None, "mirror": k > 0, "count": n})
     gkey, warns = _gripper_key(design, sizing, family)
     g = sizing.get("gripper") if isinstance(sizing.get("gripper"), dict) else {}
     out.append({"joint": "gripper", "key": gkey, "torque_req_nm": g.get("torque_req_nm"),
-                "torque_with_margin_nm": g.get("torque_with_margin_nm"), "sid": g.get("servo_id")})
+                "torque_with_margin_nm": g.get("torque_with_margin_nm"), "sid": g.get("servo_id"), "mirror": False, "count": 1})
     for i, a in enumerate(out):
         if bus == "pwm":
             a["id"], a["channel"] = i + 1, i
         else:
-            a["id"], a["channel"] = int(a.pop("sid") or (i + 1)), None
+            a["id"], a["channel"] = int(a.get("sid") or (i + 1)), None
         a.pop("sid", None)
     return out, warns
 
@@ -209,7 +212,7 @@ def _pick_supply(vrange, nom, need_a) -> dict:
             continue
         v, a = m["out_v"], m["out_a"]
         if vrange[0] - 1e-6 <= v <= vrange[1] + 1e-6:
-            cands.append((a < need_a * 1.1, abs(v - nom), catalog.price(k), k))
+            cands.append((a < need_a * 1.25, abs(v - nom), catalog.price(k), k))
     if cands:
         cands.sort()
         k = cands[0][3]
@@ -348,6 +351,10 @@ def plan(design, sizing: dict) -> dict:
     if pb["input_stall_a"] > supply["a"]:
         warnings.append(f"all servos stalled together would draw {pb['input_stall_a']:.1f} A > {supply['a']:g} A supply: "
                         "the firmware ramps targets and the supply's current limit / the fuse protect the rest")
+    if config == "custom_pcb" and pb["input_peak_a"] > 8.0:
+        warnings.append(f"{pb['input_peak_a']:.1f} A peak through the PCB power path: order 2 oz copper (JLCPCB option)")
+    if config == "modules" and supply["v"] < 7.0 and ctrl != "openrb_150":
+        warnings.append("buck_5v from a 6 V input runs near its dropout; verify the regulator's minimum input at 1 A")
     if not grip["ok"]:
         issues.append(f"no safe grip force: holding needs {grip['window_n'][0]} N but the object limit is {grip['window_n'][1]} N")
 
@@ -826,3 +833,881 @@ def modules_circuit(design, ep: dict) -> Circuit:
     c.notes = [f"All grounds common at the supply; fuse {fuse:g} A on the supply lead",
                "Servo power and logic power are separate branches: the e-stop (if fitted) only opens the servo branch"]
     return c
+
+
+# ------------------------------------------------------------------ harness
+
+STOCK_MM = [100, 150, 200, 250, 300, 400, 500, 750, 1000]
+BUS_CABLE_VENDOR = {
+    "feetech_scs": lambda L: [V("aliexpress", f"Feetech servo cable 5264 3P {L}mm", 0.6, lead_days=14),
+                              V("seeed", "STS3215 servo cable", 1.2)],
+    "dynamixel_2": lambda L: [V("robotis", f"Robot Cable-X3P {L}mm", 1.8 if L <= 180 else 2.4,
+                                 "https://www.robotis.us/robot-cable-x3p-180mm-10pcs/", note="10-pack price / 10")],
+}
+
+
+def _stock(L):
+    return next((s for s in STOCK_MM if s >= L), None)
+
+
+def _joint_alias(name, joints):
+    if name in joints:
+        return name
+    return next((j for j in joints if j.endswith(name) or name.endswith(j.split("_")[-1])), name)
+
+
+def _route_len(asm, la, pa, lb, pb):
+    """Cable length between two points on (possibly) different links, routed through the joint origins between them."""
+    from .assembly import Cable
+    def up(link):
+        out = [link]
+        while link != asm.root:
+            j = asm.parent_joint(link)
+            if j is None:
+                break
+            link = j.parent
+            out.append(link)
+        return out
+    A, B = up(la), up(lb)
+    common = next((l for l in A if l in B), asm.root)
+    pts = [(la, tuple(pa))]
+    for l in A[:A.index(common)]:
+        j = asm.parent_joint(l)
+        pts.append((j.parent, tuple(j.origin[:3, 3])))
+    tail = []
+    for l in B[:B.index(common)]:
+        j = asm.parent_joint(l)
+        tail.append((j.parent, tuple(j.origin[:3, 3])))
+    pts += tail[::-1] + [(lb, tuple(pb))]
+    return asm.cable_length(Cable("tmp", pts))
+
+
+def _anchor(asm, joint):
+    """(link, point) of the actuator driving `joint` (part meta 'drives', stub naming), else the joint origin."""
+    parts = [p for p in asm.parts if p.kind == "actuator" and (p.meta.get("drives") == joint or
+             p.name.startswith(f"act_{joint.split('_')[0]}_"))]
+    if parts:
+        p = max(parts, key=lambda q: len(q.mesh.faces))
+        return p.link, p.mesh.bounds.mean(axis=0)
+    try:
+        j = asm.joint(joint)
+        return j.parent, j.origin[:3, 3]
+    except StopIteration:
+        return asm.root, np.zeros(3)
+
+
+def build_harness(design, ep: dict, asm, pb: dict) -> tuple[list, list]:
+    proto, bus, cfg = ep["protocol"], ep["bus"], ep["config"]
+    acts = ep["actuators"]
+    warns = []
+    rows = []
+    joints = [j.name for j in asm.joints] if asm is not None else []
+    grip = grip_window(design)
+    cur = {a["id"] if bus != "pwm" else a["channel"]: _actuator_currents(a, design, grip) for a in acts}
+    servo_v = ep["supply"]["servo_v"]
+    conn = BUS_CONNECTOR[proto]
+    cables = list(asm.cables) if asm is not None else []
+    by_kind: dict = {}
+    for c in cables:
+        by_kind.setdefault((c.meta or {}).get("kind", ""), []).append(c)
+    ports = bus_ports(acts, "ttl") if bus != "pwm" else []
+    port_of = {a["id"]: chr(65 + i) for i, ch in enumerate(ports) for a in ch}
+
+    def L(c):
+        return round(asm.cable_length(c), 0)
+
+    def wire_for(peak, avg, length_mm, min_awg=24, cond=3):
+        g = min(pick_awg(avg * 1.25), min_awg)
+        while True:
+            drop = peak * 2 * length_mm / 1000.0 * awg_ohm_m(g)
+            if drop <= 0.05 * servo_v or g <= 20:
+                return g, drop
+            g -= 2
+
+    n = 0
+
+    def add(name, frm, to, length, cond, wire, ca, cb, kind, current=None, mob="make", stock=None, note=""):
+        nonlocal n
+        n += 1
+        rows.append({"name": f"W{n} {name}", "from": frm, "to": to, "length_mm": int(round(length)), "conductors": cond,
+                     "wire": wire, "connector_a": ca, "connector_b": cb, "kind": kind,
+                     "current_a": round(current, 2) if current is not None else None, "make_or_buy": mob,
+                     "stock_mm": stock, "note": note})
+
+    ctrl_ref = {"custom_pcb": "PCBA"}.get(cfg, "U2" if ep["controller"] != "openrb_150" else "U1")
+    # ---- servo bus / PWM channels
+    if bus != "pwm":
+        chain = sorted(by_kind.get("servo_bus", []), key=lambda c: (c.meta or {}).get("servo_id", 0))
+        if not chain:       # stub arm: synthesise one cable per hop from actuator anchors
+            prev = (asm.root, np.array([-40.0, -45.0, 20.0])) if asm is not None else None
+            for a in acts:
+                la, pa = _anchor(asm, a["joint"]) if asm is not None else (None, None)
+                length = _route_len(asm, prev[0], prev[1], la, pa) if asm is not None else 200.0
+                chain.append(type("C", (), {"meta": {"servo_id": a["id"], "to_joint": a["joint"]}, "_len": length,
+                                            "src": "", "dst": ""})())
+                prev = (la, pa)
+        ids = [a["id"] for a in acts]
+        for c in chain:
+            sid = (c.meta or {}).get("servo_id")
+            length = c._len if hasattr(c, "_len") else L(c)
+            down = [cur[i] for i in ids if i >= (sid or 0)]
+            peak, avg = sum(d[0] for d in down), sum(d[1] for d in down)
+            g, drop = wire_for(peak, avg, length)
+            first = sid == min(ids)
+            if cfg == "custom_pcb":
+                frm = f"J{3 + 0} BUS A" if first else f"ID{sid - 1}"
+            else:
+                frm = f"{ctrl_ref} bus port" if first else f"ID{sid - 1}"
+            jn = _joint_alias((c.meta or {}).get("to_joint", ""), joints)
+            st = _stock(length)
+            buy = st is not None and st <= 500
+            add(f"bus → ID{sid} {jn.replace('_', ' ')}", frm, f"ID{sid} {jn}", length, 3, f"{g} AWG silicone, GND/V+/DATA",
+                conn, conn, "servo_bus", peak, "buy" if buy else "make", st,
+                f"carries {len(down)} servo(s): {avg:.1f} A avg / {peak:.1f} A peak, {drop:.2f} V drop at peak")
+            if avg > CONNECTOR_A.get(conn, 3.0):
+                warns.append(f"bus hop to ID{sid} carries {avg:.1f} A average through a {conn} (rated "
+                             f"{CONNECTOR_A.get(conn, 3.0):g} A): feed power at the shoulder or split the chain")
+    else:
+        pw = sorted(by_kind.get("pwm", []), key=lambda c: (c.meta or {}).get("channel", 0))
+        if not pw and asm is not None:
+            for a in acts:
+                la, pa = _anchor(asm, a["joint"])
+                pw.append(type("C", (), {"meta": {"channel": a["channel"], "to_joint": a["joint"]},
+                                          "_len": _route_len(asm, asm.root, np.array([-40.0, -45.0, 20.0]), la, pa)})())
+        for c in pw:
+            ch = (c.meta or {}).get("channel", 0)
+            length = c._len if hasattr(c, "_len") else L(c)
+            peak, avg, _ = cur.get(ch, (1.0, 0.3, 1.0))
+            g, drop = wire_for(peak, avg, length, 22)
+            jn = _joint_alias((c.meta or {}).get("to_joint", ""), joints)
+            lead = 300 if ACTUATORS[acts[min(ch, len(acts) - 1)]["key"]]["mass_g"] > 30 else 250
+            ext = max(0, length - lead)
+            add(f"PWM ch{ch} → {jn.replace('_', ' ')}", "J3 SERVO" if cfg == "custom_pcb" else f"U2 PWM{ch}",
+                f"{jn} servo", length, 3, f"{g} AWG servo extension (signal/V+/GND)", "JR/Dupont 3p (F)", "servo lead (JR 3p M)",
+                "pwm", peak, "buy", _stock(ext) if ext else None,
+                f"servo's own ~{lead} mm lead + {ext:.0f} mm extension" if ext else "servo lead reaches directly")
+    # ---- force sensors
+    fsr_from = {"S1": "J6 FSR L", "S2": "J7 FSR R"} if cfg == "custom_pcb" else {"S1": "U1 A/IO + R1", "S2": "U1 A/IO + R2"}
+    sens = {s["ref"]: s for s in ep["sensors"]}
+    for side, ref in (("left", "S1"), ("right", "S2")):
+        if ref not in sens:
+            continue
+        c = next((c for c in by_kind.get("sensor", []) if side in c.name), None)
+        if c is not None:
+            length = L(c)
+        elif asm is not None and f"jaw_{side}" in asm.links:
+            length = _route_len(asm, f"jaw_{side}", np.zeros(3), asm.root, np.array([-40.0, -45.0, 20.0]))
+        else:
+            length = 800.0
+        add(f"FSR {side} jaw", fsr_from[ref], f"{ref} FSR 402 ({side} jaw)", length, 2, "28 AWG twisted pair, shielded",
+            "JST-PH 2p" if cfg == "custom_pcb" else "Dupont 2p (F)", "Amphenol Clincher 2p (FSR tail)", "sensor", 0.001,
+            "make", None, "route along the arm's cable channel with the bus; leave a service loop at every joint")
+    if "imu" in ep["extras"]:
+        c = (by_kind.get("i2c") or [None])[0]
+        length = L(c) if c is not None else 750.0
+        st = _stock(length)
+        add("IMU (I2C, Qwiic)", "J8 IMU" if cfg == "custom_pcb" else "U1 SDA/SCL/3V3/GND", "IMU1 BNO085 (wrist)", length, 4,
+            "28 AWG 4-core (Qwiic colours)", "JST-SH 4p (Qwiic)" if cfg == "custom_pcb" else "Dupont 4p (F)", "JST-SH 4p (Qwiic)",
+            "i2c", 0.02, "buy" if st and st <= 500 and cfg == "custom_pcb" else "make", st, "keep I2C at 100 kHz over this length")
+    if "wrist_camera" in ep["extras"]:
+        c = next((c for c in by_kind.get("usb", []) if "camera" in c.name), None)
+        length = (L(c) if c is not None else 750.0) + 1500.0
+        add("wrist camera USB → host", "CAM1 (wrist)", "host PC USB-A", length, 4, "USB 2.0 high-flex (2x28 + 2x24 AWG)",
+            "camera USB header / micro-B", "USB-A", "usb", 0.25, "buy", None, "camera streams straight to the host, not through the controller")
+    # ---- power, host link, e-stop
+    feed = pb["feed_awg"]
+    c = (by_kind.get("power") or [None])[0]
+    length = L(c) if c is not None else 140.0
+    if cfg == "custom_pcb":
+        add("power in", "J_PWR panel jack 5.5x2.5", "J1 XT30 (PCBA)", length, 2, f"{feed} AWG silicone red/black",
+            "5.5x2.5 mm panel jack", "XT30 (F)", "power", pb["input_peak_a"], "make")
+    else:
+        add("power in", "J_PWR panel jack 5.5x2.5", "F1 inline fuse", length, 2, f"{feed} AWG silicone red/black",
+            "5.5x2.5 mm panel jack", "ATO fuse holder leads", "power", pb["input_peak_a"], "make")
+        dest = "U4 buck (servo)" if ep["supply"]["servo_buck"] else {"hobby_pwm": "U2 PCA9685 V+ terminal", "dynamixel": "U1 OpenRB VIN"}.get(
+            ep["family"], "U2 adapter DC in")
+        add("servo power", "SW1 e-stop NC" if "estop" in ep["extras"] else "F1 fuse", dest, 120, 2, f"{feed} AWG silicone",
+            "spade / screw", "screw terminal", "power", pb["rails"][0]["peak_a"], "make")
+        if ep["controller"] != "openrb_150" and ep["supply"]["v"] >= 6.0:
+            add("logic 5 V", "U3 buck 5V VOUT", "U1 5V pin", 100, 2, "22 AWG", "Dupont 2p (F)", "Dupont 2p (F)", "power",
+                pb["rails"][1]["peak_a"], "make")
+        if ep["bus"] == "pwm":
+            add("I2C + OE", "U1 GPIO8/9/7, 3V3, GND", "U2 PCA9685 header", 100, 5, "26 AWG jumper", "Dupont 5p (F)", "Dupont 6p (F)",
+                "signal", 0.01, "buy")
+        elif ep["controller"] != "openrb_150":
+            add("UART", "U1 GPIO17/18, GND", "U2 adapter UART header", 100, 3, "26 AWG jumper", "Dupont 3p (F)", "Dupont 3p (F)",
+                "signal", 0.01, "buy")
+    c = next((c for c in by_kind.get("usb", []) if "host" in c.name), None)
+    add("USB host link", "J_USB panel USB-C", "USB-C (controller)", L(c) if c is not None else 140.0, 4, "USB-C extension",
+        "USB-C panel mount (F)", "USB-C (M)", "usb", 0.5, "buy", None, "then a USB-C cable to the host PC")
+    if "estop" in ep["extras"]:
+        c = (by_kind.get("safety") or [None])[0]
+        length = L(c) if c is not None else 150.0
+        if cfg == "custom_pcb":
+            add("e-stop loop", "J9 E-STOP", "SW1 NC contact (11-12)", length, 2, "24 AWG", "JST-XH 2p", "6.3 mm spade",
+                "safety", 0.002, "make", None, "low-current gate loop: opening it turns the servo rail FET off in hardware")
+        else:
+            add("e-stop", "SW1 NC (11-12) / NO (23-24)", "F1 / U1 ESTOP pin", length, 4, f"2x {feed} AWG + 2x 24 AWG",
+                "6.3 mm spades", "screw terminal / Dupont", "safety", pb["rails"][0]["peak_a"], "make", None,
+                "NC contact carries the servo current; NO contact tells the firmware")
+    return rows, warns
+
+
+# ------------------------------------------------------------------ firmware
+
+FW_PROTOCOL = """//   J q1 .. qN       joint targets in radians (order below), clamped to the joint limits
+//   M i q            move joint i (0..N-1) to q radians
+//   V s              speed scale 0.05 .. 1.0
+//   W mm             gripper opening target in mm (0 = jaws touching the object)
+//   G                grip: close until the fingertip force reaches the target, then hold it
+//   O                open the gripper
+//   F n              grip force target in newtons (capped at GRIP_LIMIT_N)
+//   H | R            move to the home | ready pose
+//   E | C            software e-stop (torque off) | clear the e-stop
+//   S1 | S0          start | stop 20 Hz telemetry: T,ms,state,q1..qN,grip_mm,force_n
+//   Q                print one status line
+//   Z grams          calibrate the force sensors with a known mass resting on one pad"""
+
+
+def _c(v, nd=4):
+    return f"{v:.{nd}f}f"
+
+
+def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
+    fam, proto, cfg, ctrl = ep["family"], ep["protocol"], ep["config"], ep["controller"]
+    pins = ARDUINO_PIN[ctrl]
+    acts = ep["actuators"]
+    grip = ep["grip"]
+    arm_joints = [a["joint"] for a in acts if a["joint"] != "gripper"]
+    names = list(dict.fromkeys(arm_joints))
+    jmap = {j.name: j for j in asm.joints} if asm is not None else {}
+    home = (asm.meta.get("home") if asm is not None else None) or {}
+    ready = (asm.meta.get("ready") if asm is not None else None) or {}
+    bus = ep["bus"]
+    lines = []
+    jt = []
+    for n_ in names:
+        j = jmap.get(n_)
+        key = next(a["key"] for a in acts if a["joint"] == n_)
+        rng = math.radians(ACTUATORS[key]["range_deg"]) / 2 * 0.98
+        lo, hi = (max(j.lower, -rng), min(j.upper, rng)) if j else (-rng, rng)
+        vmax = ACTUATORS[key]["speed_rad_s"] * 0.6
+        jt.append((n_, lo, hi, float(home.get(n_, 0.0)), float(ready.get(n_, home.get(n_, 0.0))), vmax))
+    servo_rows = []
+    for a in acts:
+        if a["joint"] == "gripper":
+            continue
+        k = names.index(a["joint"])
+        if bus == "pwm":
+            scale = 2000.0 / math.radians(ACTUATORS[a["key"]]["range_deg"])
+            servo_rows.append((a["channel"], k, -1 if a.get("mirror") else 1, scale, 1500.0))
+        else:
+            servo_rows.append((a["id"], k, -1 if a.get("mirror") else 1, 4096 / (2 * math.pi), 2048.0))
+    ga = next(a for a in acts if a["joint"] == "gripper")
+    gj = jmap.get("gripper")
+    g_lo, g_hi = (gj.lower, gj.upper) if gj else (-3.0, 14.0)
+    rp = design.electronics.pinion_radius_mm
+    g_scale = 2000.0 / math.radians(ACTUATORS[ga["key"]]["range_deg"]) if bus == "pwm" else 4096 / (2 * math.pi)
+    g_zero = 1500.0 if bus == "pwm" else 2048.0
+    fsr = grip["sensor"] == "fsr402"
+    adc_bits = ADC_BITS[ctrl]
+    vref = LOGIC_V[ctrl]
+    wifi = "wifi" in ep["extras"] and ctrl in WIFI_MCUS
+    estop_mode = "none"
+    if cfg == "custom_pcb":
+        estop_mode = "vsense"
+    elif "estop" in ep["extras"]:
+        estop_mode = "pin"
+    ctrl_name = {"esp32_s3_wroom": "Morph controller PCBA (ESP32-S3-WROOM-1)"}.get(ctrl, MODULES.get(ctrl, {}).get("name", ctrl))
+    libs = {"pca9685_pwm": "Adafruit PWM Servo Driver Library (Adafruit_PWMServoDriver)",
+            "feetech_scs": "SCServo (Feetech, SMS_STS class)", "dynamixel_2": "Dynamixel2Arduino (ROBOTIS)"}[proto]
+    rd = grip.get("fsr_divider_ohm") or 10000
+    hdr = [f"// morph_arm.ino - generated by Morph for {design.name}" + (f" ({rev})" if rev else ""),
+           f"// {len(names)}-DOF arm + force-sensing parallel gripper | {fam} | {len(acts)} actuators | {ep['supply']['v']:g} V supply",
+           f"// Controller: {ctrl_name} | bus: {proto} | library: {libs}",
+           "// Do not edit by hand: change the design in Morph Studio and regenerate.",
+           "//", "// Serial protocol (USB, 115200 baud, one command per line):", FW_PROTOCOL, ""]
+    L = hdr
+    L.append("#include <Arduino.h>")
+    if proto == "pca9685_pwm":
+        L += ["#include <Wire.h>", "#include <Adafruit_PWMServoDriver.h>"]
+    elif proto == "feetech_scs":
+        L += ["#include <SCServo.h>"]
+        if cfg == "custom_pcb":
+            L += ["#if defined(ARDUINO_ARCH_ESP32)", "#include \"driver/uart.h\"", "#endif"]
+    else:
+        L += ["#include <Dynamixel2Arduino.h>"]
+    if wifi:
+        L += ["#include <WiFi.h>"]
+    if "imu" in ep["extras"] and proto != "pca9685_pwm":
+        L += ["#include <Wire.h>"]
+    L += ["", "// ---------------------------------------------------------------- hardware (matches schematic.svg)"]
+    pdef = lambda name, sig: L.append(f"#define {name:<16} {pins.get(sig, '-1'):<6}")  # noqa: E731
+    if bus != "pwm":
+        L.append(f"#define BUS_SERIAL       {'Serial1' if ctrl in ('esp32_s3_wroom', 'esp32_s3_devkit', 'openrb_150') else 'Serial2' if ctrl in ('esp32_devkit', 'rp2040_pico') else 'Serial'}")
+        L.append(f"#define BUS_BAUD         {ep['baud']}")
+        pdef("PIN_BUS_TX", "BUS_TX")
+        pdef("PIN_BUS_RX", "BUS_RX")
+        L.append(f"#define PIN_BUS_DIR      {pins['BUS_DIR'] if cfg == 'custom_pcb' else '-1'}       // 74LVC2G241 direction, HIGH = transmit"
+                 if cfg == "custom_pcb" else "#define PIN_BUS_DIR      -1       // the adapter / OpenRB switches direction itself")
+    else:
+        pdef("PIN_SDA", "SDA")
+        pdef("PIN_SCL", "SCL")
+        pdef("PIN_PWM_OE", "PWM_OE")
+        L.append("#define PCA9685_ADDR     0x40")
+    if "imu" in ep["extras"] and bus != "pwm":
+        pdef("PIN_SDA", "SDA")
+        pdef("PIN_SCL", "SCL")
+    L.append(f"#define PIN_FSR_L        {pins['FSR_L'] if fsr else '-1'}")
+    L.append(f"#define PIN_FSR_R        {pins['FSR_R'] if fsr else '-1'}")
+    L.append(f"#define PIN_ESTOP        {pins['ESTOP'] if estop_mode == 'pin' else '-1'}       // e-stop NO contact to GND (LOW = pressed)")
+    L.append(f"#define PIN_VSERVO_SENSE {pins['VSERVO_SENSE'] if estop_mode == 'vsense' else '-1'}       // servo rail through 100k/22k")
+    L.append(f"#define PIN_SERVO_EN     {pins['SERVO_EN'] if cfg == 'custom_pcb' else '-1'}       // HIGH turns the servo rail FET on")
+    L.append(f"#define PIN_LED          {pins.get('LED', '-1')}")
+    L.append(f"#define ADC_MAX          {2 ** adc_bits - 1}.0f")
+    L.append(f"#define ADC_VREF         {vref:.2f}f")
+    L.append(f"#define VSERVO_NOMINAL   {ep['supply']['servo_v']:.2f}f")
+    L.append(f"#define VSERVO_DIVIDER   {(100 + 22) / 22:.4f}f   // (100k + 22k) / 22k")
+    L.append(f"#define MORPH_WIFI       {1 if wifi else 0}")
+    L += ["", "// ---------------------------------------------------------------- robot model (from the generated assembly)",
+          f"#define N_JOINTS         {len(names)}",
+          f"#define N_SERVOS         {len(servo_rows)}",
+          "struct JointCfg { const char *name; float lo, hi, home, ready, vmax; };   // rad, rad/s",
+          "const JointCfg JOINT[N_JOINTS] = {"]
+    for (n_, lo, hi, h, r, vm) in jt:
+        L.append(f"  {{\"{n_}\", {_c(lo)}, {_c(hi)}, {_c(h)}, {_c(r)}, {_c(vm, 2)}}},")
+    L.append("};")
+    unit = "us" if bus == "pwm" else "ticks"
+    L += [f"struct ServoCfg {{ uint8_t {'ch' if bus == 'pwm' else 'id'}; uint8_t joint; int8_t dir; float per_rad; float zero; }};   // {unit}",
+          "// dir -1 = the second servo of a dual (back-to-back) joint; zero = position at q = 0 (calibrate on the bench)",
+          "const ServoCfg SERVO[N_SERVOS] = {"]
+    for (i, k, d, sc, z) in servo_rows:
+        L.append(f"  {{{i}, {k}, {d}, {_c(sc, 2)}, {_c(z, 1)}}},   // {names[k]}")
+    L.append("};")
+    L += ["", "// gripper: rack-and-pinion, opening in mm beyond contact with the design object",
+          f"#define GRIP_{'CH' if bus == 'pwm' else 'ID'}          {ga['channel'] if bus == 'pwm' else ga['id']}",
+          f"const float GRIP_PITCH_R_MM = {_c(rp, 2)};   // pinion pitch radius",
+          f"const float GRIP_PER_RAD    = {_c(g_scale, 2)};   // {unit} per pinion radian",
+          f"float GRIP_ZERO             = {_c(g_zero, 1)};   // {unit} with the jaws touching the object (calibrate)",
+          f"const float GRIP_MIN_MM     = {_c(g_lo, 2)};   // max squeeze (overtravel)",
+          f"const float GRIP_MAX_MM     = {_c(g_hi, 2)};   // fully open",
+          f"const float GRIP_CLOSE_MM_S = 8.0f;",
+          f"float GRIP_TARGET_N         = {_c(grip['target_n'], 2)};   // window {grip['window_n'][0]} - {grip['window_n'][1]} N for the {design.object.name}",
+          f"const float GRIP_LIMIT_N    = {_c(grip['limit_n'], 2)};   // hard stop (object damage / sensor range)",
+          f"const float FSR_R_DIV       = {rd:.1f}f;   // divider resistor to GND, ohms",
+          f"float FSR_K                 = {FSR_K_OHM_N:.1f}f;   // ohm*N: F = K / R_fsr (Z command calibrates)",
+          ""]
+    # bus layer
+    L.append("// ---------------------------------------------------------------- servo bus")
+    if proto == "pca9685_pwm":
+        L += ["Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(PCA9685_ADDR);", "",
+              "void busBegin() {",
+              "#if defined(ARDUINO_ARCH_ESP32)", "  Wire.begin(PIN_SDA, PIN_SCL);",
+              "#elif defined(ARDUINO_ARCH_RP2040)", "  Wire.setSDA(PIN_SDA);", "  Wire.setSCL(PIN_SCL);", "  Wire.begin();",
+              "#else", "  Wire.begin();", "#endif",
+              "  pca.begin();", "  pca.setOscillatorFrequency(27000000);", "  pca.setPWMFreq(50);",
+              "  if (PIN_PWM_OE >= 0) { pinMode(PIN_PWM_OE, OUTPUT); digitalWrite(PIN_PWM_OE, HIGH); }   // outputs off until enabled",
+              "}", "",
+              "void busTorque(bool on) {",
+              "  if (PIN_PWM_OE >= 0) digitalWrite(PIN_PWM_OE, on ? LOW : HIGH);",
+              "  if (!on) for (uint8_t ch = 0; ch < 16; ch++) pca.setPWM(ch, 0, 0);   // no pulses = servos go limp",
+              "}", "",
+              "void busWrite(const float *pos, uint8_t n, float grip) {",
+              "  for (uint8_t k = 0; k < n; k++) pca.writeMicroseconds(SERVO[k].ch, (uint16_t)constrain(pos[k], 500.0f, 2500.0f));",
+              "  pca.writeMicroseconds(GRIP_CH, (uint16_t)constrain(grip, 500.0f, 2500.0f));",
+              "}", "",
+              "bool busRead(uint8_t k, float *pos) { return false; }   // hobby servos have no position feedback", ""]
+    elif proto == "feetech_scs":
+        L += ["SMS_STS bus;", "", "void busBegin() {",
+              "#if defined(ARDUINO_ARCH_ESP32)",
+              "  BUS_SERIAL.begin(BUS_BAUD, SERIAL_8N1, PIN_BUS_RX, PIN_BUS_TX);"]
+        if cfg == "custom_pcb":
+            L += ["  // the 74LVC2G241 direction pin is driven by UART1's RTS in RS-485 half-duplex mode (asserted while sending)",
+                  "  uart_set_pin(UART_NUM_1, PIN_BUS_TX, PIN_BUS_RX, PIN_BUS_DIR, UART_PIN_NO_CHANGE);",
+                  "  uart_set_mode(UART_NUM_1, UART_MODE_RS485_HALF_DUPLEX);"]
+        L += ["#else", "  BUS_SERIAL.begin(BUS_BAUD);", "#endif", "  bus.pSerial = &BUS_SERIAL;", "  delay(50);", "}", "",
+              "void busTorque(bool on) {",
+              "  for (uint8_t k = 0; k < N_SERVOS; k++) bus.EnableTorque(SERVO[k].id, on ? 1 : 0);",
+              "  bus.EnableTorque(GRIP_ID, on ? 1 : 0);", "}", "",
+              "uint8_t ids[N_SERVOS + 1];", "s16 tgt[N_SERVOS + 1];", "u16 spd[N_SERVOS + 1];", "u8 acc[N_SERVOS + 1];", "",
+              "void busWrite(const float *pos, uint8_t n, float grip) {",
+              "  for (uint8_t k = 0; k < n; k++) { ids[k] = SERVO[k].id; tgt[k] = (s16)constrain(pos[k], 0.0f, 4095.0f); spd[k] = 0; acc[k] = 0; }",
+              "  ids[n] = GRIP_ID; tgt[n] = (s16)constrain(grip, 0.0f, 4095.0f); spd[n] = 0; acc[n] = 0;",
+              "  bus.SyncWritePosEx(ids, n + 1, tgt, spd, acc);   // targets are already rate-limited",
+              "}", "",
+              "bool busRead(uint8_t k, float *pos) {",
+              "  int p = bus.ReadPos(k < N_SERVOS ? SERVO[k].id : GRIP_ID);",
+              "  if (p < 0) return false;", "  *pos = (float)p;", "  return true;", "}", ""]
+    else:
+        L += [f"Dynamixel2Arduino dxl(BUS_SERIAL, PIN_BUS_DIR);", "using namespace ControlTableItem;", "",
+              "void busBegin() {", "  dxl.begin(BUS_BAUD);",
+              "#if defined(ARDUINO_ARCH_ESP32)", "  BUS_SERIAL.setPins(PIN_BUS_RX, PIN_BUS_TX);", "#endif",
+              "  dxl.setPortProtocolVersion(2.0);",
+              "  for (uint8_t k = 0; k <= N_SERVOS; k++) {",
+              "    uint8_t id = k < N_SERVOS ? SERVO[k].id : GRIP_ID;",
+              "    if (!dxl.ping(id)) { Serial.print(\"# no DYNAMIXEL at id \"); Serial.println(id); continue; }",
+              "    dxl.torqueOff(id);", "    dxl.setOperatingMode(id, OP_POSITION);",
+              "    dxl.writeControlTableItem(PROFILE_VELOCITY, id, 0);   // targets are rate-limited here",
+              "  }", "}", "",
+              "void busTorque(bool on) {",
+              "  for (uint8_t k = 0; k <= N_SERVOS; k++) { uint8_t id = k < N_SERVOS ? SERVO[k].id : GRIP_ID; if (on) dxl.torqueOn(id); else dxl.torqueOff(id); }",
+              "}", "",
+              "void busWrite(const float *pos, uint8_t n, float grip) {",
+              "  for (uint8_t k = 0; k < n; k++) dxl.setGoalPosition(SERVO[k].id, constrain(pos[k], 0.0f, 4095.0f));",
+              "  dxl.setGoalPosition(GRIP_ID, constrain(grip, 0.0f, 4095.0f));", "}", "",
+              "bool busRead(uint8_t k, float *pos) {",
+              "  float p = dxl.getPresentPosition(k < N_SERVOS ? SERVO[k].id : GRIP_ID);",
+              "  if (p <= 0.0f) return false;", "  *pos = p;", "  return true;", "}", ""]
+    tmpl = r'''// ---------------------------------------------------------------- state
+enum State : uint8_t { ST_RUN, ST_ESTOP };
+enum Grip : uint8_t { G_POS, G_CLOSING, G_HOLD };
+const char *STATE_NAME[] = {"RUN", "ESTOP"};
+const char *GRIP_NAME[] = {"POS", "CLOSING", "HOLD"};
+State state = ST_RUN;
+Grip gstate = G_POS;
+float qT[N_JOINTS], qC[N_JOINTS];      // target / commanded joint angle, rad
+float gT = GRIP_MAX_MM, gC = GRIP_MAX_MM;  // gripper opening target / commanded, mm
+float speedScale = 0.5f, force = 0.0f, gripI = 0.0f;
+bool telemetry = false;
+uint32_t lastTick = 0, lastTele = 0, lowSince = 0;
+const uint16_t TICK_MS = 10;
+char line[96];
+uint8_t lineLen = 0;
+Print *out = &Serial;
+#if MORPH_WIFI
+WiFiServer server(3333);
+WiFiClient client;
+#endif
+
+// ---------------------------------------------------------------- sensors
+float fsrNewtons(int pin) {
+  if (pin < 0) return 0.0f;
+  float v = analogRead(pin) * ADC_VREF / ADC_MAX;
+  if (v < 0.01f) return 0.0f;
+  float rFsr = FSR_R_DIV * (ADC_VREF - v) / v;
+  return FSR_K / rFsr;
+}
+
+float readForce() {    // per-finger normal force: mean of the fitted pads
+  float l = fsrNewtons(PIN_FSR_L), r = fsrNewtons(PIN_FSR_R);
+  if (PIN_FSR_L >= 0 && PIN_FSR_R >= 0) return 0.5f * (l + r);
+  return l + r;
+}
+
+float servoRailVolts() {
+  if (PIN_VSERVO_SENSE < 0) return VSERVO_NOMINAL;
+  return analogRead(PIN_VSERVO_SENSE) * ADC_VREF / ADC_MAX * VSERVO_DIVIDER;
+}
+
+bool estopActive() {
+  if (PIN_ESTOP >= 0 && digitalRead(PIN_ESTOP) == LOW) return true;
+  if (PIN_VSERVO_SENSE >= 0) {               // servo rail collapsed = e-stop loop open or supply lost
+    if (servoRailVolts() < 0.6f * VSERVO_NOMINAL) { if (!lowSince) lowSince = millis(); }
+    else lowSince = 0;
+    return lowSince && millis() - lowSince > 50;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------- outputs
+float servoPos[N_SERVOS];
+
+void writeAll() {
+  for (uint8_t k = 0; k < N_SERVOS; k++)
+    servoPos[k] = SERVO[k].zero + SERVO[k].dir * qC[SERVO[k].joint] * SERVO[k].per_rad;
+  float g = GRIP_ZERO + (gC / GRIP_PITCH_R_MM) * GRIP_PER_RAD;
+  busWrite(servoPos, N_SERVOS, g);
+}
+
+void servoPower(bool on) {
+  if (PIN_SERVO_EN >= 0) digitalWrite(PIN_SERVO_EN, on ? HIGH : LOW);
+  busTorque(on);
+}
+
+void enterEstop(const char *why) {
+  if (state == ST_ESTOP) return;
+  state = ST_ESTOP;
+  servoPower(false);
+  gstate = G_POS;
+  if (PIN_LED >= 0) digitalWrite(PIN_LED, HIGH);
+  out->print("!ESTOP ");
+  out->println(why);
+}
+
+void resyncFromServos() {   // after an e-stop the arm may have moved: start from where it is
+  for (uint8_t k = 0; k < N_SERVOS; k++) {
+    float p;
+    if (busRead(k, &p)) qC[SERVO[k].joint] = qT[SERVO[k].joint] = (p - SERVO[k].zero) / (SERVO[k].dir * SERVO[k].per_rad);
+  }
+}
+
+void clearEstop() {
+  if (PIN_ESTOP >= 0 && digitalRead(PIN_ESTOP) == LOW) { out->println("!ESTOP still pressed"); return; }
+  if (PIN_SERVO_EN >= 0) { digitalWrite(PIN_SERVO_EN, HIGH); delay(150); }
+  if (PIN_VSERVO_SENSE >= 0 && servoRailVolts() < 0.8f * VSERVO_NOMINAL) {
+    if (PIN_SERVO_EN >= 0) digitalWrite(PIN_SERVO_EN, LOW);
+    out->println("!ESTOP servo rail still off (release the e-stop / check the supply)");
+    return;
+  }
+  lowSince = 0;
+  resyncFromServos();
+  busTorque(true);
+  state = ST_RUN;
+  if (PIN_LED >= 0) digitalWrite(PIN_LED, LOW);
+  out->println("OK estop cleared");
+}
+
+// ---------------------------------------------------------------- commands
+void status() {
+  out->print("S,"); out->print(STATE_NAME[state]); out->print(','); out->print(GRIP_NAME[gstate]);
+  for (uint8_t i = 0; i < N_JOINTS; i++) { out->print(','); out->print(qC[i], 4); }
+  out->print(','); out->print(gC, 2); out->print(','); out->print(force, 3);
+  out->print(','); out->println(servoRailVolts(), 2);
+}
+
+void setPose(bool ready) {
+  for (uint8_t i = 0; i < N_JOINTS; i++) qT[i] = ready ? JOINT[i].ready : JOINT[i].home;
+}
+
+void command(char *s) {
+  char *tok = strtok(s, " ,\t");
+  if (!tok) return;
+  char c = toupper(tok[0]);
+  float v[N_JOINTS];
+  uint8_t n = 0;
+  char *t;
+  while (n < N_JOINTS && (t = strtok(NULL, " ,\t")) != NULL) v[n++] = atof(t);
+  switch (c) {
+    case 'J':
+      if (n != N_JOINTS) { out->println("ERR J needs N_JOINTS values"); return; }
+      for (uint8_t i = 0; i < N_JOINTS; i++) qT[i] = constrain(v[i], JOINT[i].lo, JOINT[i].hi);
+      break;
+    case 'M':
+      if (n == 2 && v[0] >= 0 && v[0] < N_JOINTS) { uint8_t i = (uint8_t)v[0]; qT[i] = constrain(v[1], JOINT[i].lo, JOINT[i].hi); }
+      break;
+    case 'V': if (n) speedScale = constrain(v[0], 0.05f, 1.0f); break;
+    case 'W': if (n) { gstate = G_POS; gT = constrain(v[0], GRIP_MIN_MM, GRIP_MAX_MM); } break;
+    case 'G': gstate = (PIN_FSR_L >= 0 || PIN_FSR_R >= 0) ? G_CLOSING : G_POS; if (gstate == G_POS) gT = 0.0f; gripI = 0; break;
+    case 'O': gstate = G_POS; gT = GRIP_MAX_MM; break;
+    case 'F': if (n) GRIP_TARGET_N = constrain(v[0], 0.1f, GRIP_LIMIT_N); break;
+    case 'H': setPose(false); break;
+    case 'R': setPose(true); break;
+    case 'E': enterEstop("software"); return;
+    case 'C': clearEstop(); return;
+    case 'S': telemetry = n && v[0] > 0.5f; break;
+    case 'Q': status(); return;
+    case 'Z':
+      if (n) {
+        int pin = PIN_FSR_L >= 0 ? PIN_FSR_L : PIN_FSR_R;
+        float volts = pin >= 0 ? analogRead(pin) * ADC_VREF / ADC_MAX : 0.0f;
+        if (volts > 0.01f) FSR_K = (v[0] / 1000.0f * 9.81f) * (FSR_R_DIV * (ADC_VREF - volts) / volts);
+        out->print("OK K_FSR="); out->println(FSR_K, 1);
+      }
+      return;
+    default: out->println("ERR unknown command"); return;
+  }
+  out->println("OK");
+}
+
+void pollStream(Stream &in, Print &reply) {
+  while (in.available()) {
+    char ch = in.read();
+    if (ch == '\n' || ch == '\r') {
+      if (lineLen) { line[lineLen] = 0; out = &reply; command(line); out = &Serial; lineLen = 0; }
+    } else if (lineLen < sizeof(line) - 1) {
+      line[lineLen++] = ch;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- control loop (100 Hz)
+void gripControl(float dt) {
+  force = readForce();
+  if (force > GRIP_LIMIT_N) { gC += 1.0f; gT = gC; gstate = G_HOLD; }      // over the limit: back off hard
+  if (gstate == G_CLOSING) {
+    if (force >= GRIP_TARGET_N) { gstate = G_HOLD; gT = gC; }
+    else gT = gC - GRIP_CLOSE_MM_S * dt;
+    if (gT <= GRIP_MIN_MM) { gT = GRIP_MIN_MM; gstate = G_HOLD; }
+  } else if (gstate == G_HOLD) {                                         // PI on the force error
+    float e = GRIP_TARGET_N - force;
+    gripI = constrain(gripI + e * dt, -2.0f, 2.0f);
+    gT = constrain(gT - (0.08f * e + 0.25f * gripI) * dt * 10.0f, GRIP_MIN_MM, GRIP_MAX_MM);
+  }
+  float step = 25.0f * dt;                                               // mm/s opening slew
+  gC += constrain(gT - gC, -step, step);
+}
+
+void tick(float dt) {
+  if (estopActive()) enterEstop("hardware");
+  if (state == ST_ESTOP) return;
+  for (uint8_t i = 0; i < N_JOINTS; i++) {
+    float step = JOINT[i].vmax * speedScale * dt;
+    qC[i] += constrain(qT[i] - qC[i], -step, step);
+  }
+  gripControl(dt);
+  writeAll();
+}
+
+void setup() {
+  Serial.begin(115200);
+#if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_RP2040)
+  analogReadResolution(12);
+#endif
+  if (PIN_LED >= 0) pinMode(PIN_LED, OUTPUT);
+  if (PIN_ESTOP >= 0) pinMode(PIN_ESTOP, INPUT_PULLUP);
+  if (PIN_SERVO_EN >= 0) { pinMode(PIN_SERVO_EN, OUTPUT); digitalWrite(PIN_SERVO_EN, LOW); }
+  busBegin();
+  setPose(false);
+  for (uint8_t i = 0; i < N_JOINTS; i++) qC[i] = qT[i];
+  resyncFromServos();
+  servoPower(true);
+  delay(100);
+#if MORPH_WIFI
+  WiFi.softAP("morph-arm", "morph-arm-$PASS");   // or WiFi.begin(ssid, pass) for your network
+  server.begin();
+#endif
+  Serial.println("# Morph arm ready: $NJ joints + gripper ($PROTO). Send Q for status.");
+}
+
+void loop() {
+  pollStream(Serial, Serial);
+#if MORPH_WIFI
+  if (!client || !client.connected()) client = server.available();
+  if (client && client.connected()) pollStream(client, client);
+#endif
+  uint32_t now = millis();
+  if (now - lastTick >= TICK_MS) {
+    float dt = (now - lastTick) / 1000.0f;
+    lastTick = now;
+    tick(dt > 0.05f ? 0.05f : dt);
+  }
+  if (telemetry && now - lastTele >= 50) {
+    lastTele = now;
+    Serial.print("T,"); Serial.print(now); Serial.print(','); Serial.print(STATE_NAME[state]);
+    for (uint8_t i = 0; i < N_JOINTS; i++) { Serial.print(','); Serial.print(qC[i], 4); }
+    Serial.print(','); Serial.print(gC, 2); Serial.print(','); Serial.println(force, 3);
+  }
+}
+'''
+    import string
+    body = string.Template(tmpl).safe_substitute(NJ=len(names), PROTO=proto, PASS=design.name[:8])
+    L.append(body)
+    code = "\n".join(L)
+    d = os.path.join(outdir, "firmware", "morph_arm")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "morph_arm.ino"), "w") as fh:
+        fh.write(code)
+    return "firmware/morph_arm/morph_arm.ino"
+
+
+# ------------------------------------------------------------------ sourcing
+
+def _row(item, category, qty, vendors, make_or_buy="buy", how="buy from vendor", sku=None, note="", ref=""):
+    vs = [dict(v) for v in vendors if v] or [V("digikey", item, 0.0)]
+    sel = min(vs, key=lambda v: (v["unit_price"], v.get("lead_days", 99)))
+    return {"item": item, "category": category, "qty": qty, "make_or_buy": make_or_buy, "how": how, "vendors": vs,
+            "selected": {"vendor": sel["vendor"], "unit_price": round(sel["unit_price"], 2)},
+            "ext_price": round(sel["unit_price"] * qty, 2), "sku": sku, "note": note, "ref": ref, "source": "electronics"}
+
+
+def pcba_cost(circuit, qty: int) -> dict:
+    """JLCPCB-style per-board estimate: bare PCB + assembly fees amortised over the order + parts."""
+    comps = [c for c in circuit.comps if c.board and c.kind != "MH"]
+    parts = sum(c.price for c in comps)
+    ext_lines = len({(c.value, c.footprint) for c in comps if c.lcsc in ("verify", "")})
+    tht_joints = sum(len(c.pins) for c in comps if (c.footprint or "").startswith(("CONN", "JST_PH", "JST_XH", "XT30", "CP_", "HDR")))
+    smd_joints = sum(len(c.pins) for c in comps) - tht_joints
+    q = max(qty, 2)
+    fixed = 2.0 + 8.0 + 1.5 + 3.0 * ext_lines + (3.5 if tht_joints else 0.0) + 12.0     # pcb, setup, stencil, ext-part fees, THT setup, shipping
+    unit = parts + smd_joints * 0.0017 + tht_joints * 0.0173 + fixed / q
+    return {"unit": round(unit, 2), "parts": round(parts, 2), "fixed": round(fixed, 2), "order_qty": q,
+            "extended_lines": ext_lines, "smd_joints": smd_joints, "tht_joints": tht_joints}
+
+
+def sourcing_rows(design, ep: dict, circuit, harness: list, include_actuators=True) -> list:
+    rows = []
+    cfg = ep["config"]
+    qty_build = max(design.build.quantity, 1)
+    if include_actuators:
+        counts: dict = {}
+        for a in ep["actuators"]:
+            counts[a["key"]] = counts.get(a["key"], 0) + 1
+        for k, n_ in counts.items():
+            joints = sorted({a["joint"] for a in ep["actuators"] if a["key"] == k})
+            rows.append(_row(ACTUATORS[k]["name"], "actuator", n_, ACTUATORS[k]["vendors"], sku=k,
+                             note="joints: " + ", ".join(joints) + ("; set bus IDs before assembly" if ep["bus"] != "pwm" else "")))
+    if cfg == "custom_pcb":
+        est = pcba_cost(circuit, qty_build)
+        W, H = (ep.get("custom_pcb") or {}).get("size_mm", [92, 66])
+        rows.append(_row(f"Morph controller PCBA ({W:g} x {H:g} mm, 2-layer, ESP32-S3)", "pcb", 1,
+                         [V("jlcpcb", "PCBA", est["unit"], "https://jlcpcb.com/quote", lead_days=12,
+                            note=f"order {est['order_qty']}: gerbers.zip + jlc_bom.csv + jlc_cpl.csv; {est['extended_lines']} extended-part lines"),
+                          V("pcbway", "PCBA", round(est["unit"] * 1.35, 2), "https://www.pcbway.com/orderonline.aspx", lead_days=15,
+                            note="same files; turnkey assembly")],
+                         make_or_buy="make", how="order PCBA from JLCPCB with gerbers.zip + jlc_bom.csv + jlc_cpl.csv",
+                         sku="morph_controller_pcba", note=f"parts ${est['parts']:.2f}/board + fixed ${est['fixed']:.0f}/order; "
+                         "bench alternative: hand-build on perfboard with an ESP32-S3-DevKitC and the same pinout", ref="U1"))
+    for m in ep["modules"]:
+        k = m["key"]
+        if k == "morph_controller_pcba":
+            continue
+        cat = {"supply": "electronics", "safety": "electronics", "protection": "electronics"}.get(MODULES[k].get("role"), "electronics")
+        rows.append(_row(MODULES[k]["name"], cat, 1, MODULES[k]["vendors"], sku=k, ref=m["ref"],
+                         note={"buck_servo": f"set the output to {ep['supply']['servo_v']:g} V before connecting servos",
+                               "estop": "22 mm panel cut-out in the base cover; 1NC + 1NO contact blocks"}.get(k, "")))
+    sens: dict = {}
+    for s in ep["sensors"]:
+        sens.setdefault(s["key"], []).append(s)
+    for k, ss in sens.items():
+        rows.append(_row(MODULES[k]["name"], "electronics", len(ss), MODULES[k]["vendors"], sku=k,
+                         ref=",".join(s["ref"] for s in ss), note="mounted at " + ", ".join(s["where"] for s in ss)))
+    if cfg == "modules" and ep["grip"]["sensor"] == "fsr402":
+        r = ohm_str(ep["grip"]["fsr_divider_ohm"])
+        rows.append(_row(f"FSR divider: 2 x {r} 1% resistors on a 20 x 30 mm perfboard + 2 x 2-pin headers", "electronics", 1,
+                         [V("amazon", "perfboard resistor kit", 1.2)], make_or_buy="make", how="hand-solder on perfboard (10 min)"))
+    # cables + connectors from the harness
+    proto = ep["protocol"]
+    bus_rows = [h for h in harness if h["kind"] == "servo_bus"]
+    by_len: dict = {}
+    for h in bus_rows:
+        by_len.setdefault(h["stock_mm"] or h["length_mm"], []).append(h)
+    for L_, hs in sorted(by_len.items(), key=lambda kv: kv[0] or 0):
+        if hs[0]["make_or_buy"] == "buy":
+            rows.append(_row(f"{BUS_CONNECTOR[proto]} servo cable {L_} mm", "cable", len(hs), BUS_CABLE_VENDOR[proto](L_),
+                             note=", ".join(h["name"].split(" ", 1)[0] for h in hs)))
+        else:
+            rows.append(_row(f"{BUS_CONNECTOR[proto]} servo cable, custom {L_} mm", "cable", len(hs),
+                             [V("amazon", "silicone wire 24 AWG 3 colours", 0.4)], make_or_buy="make",
+                             how="cut and crimp to harness.csv", note=", ".join(h["name"].split(" ", 1)[0] for h in hs)))
+    pwm = [h for h in harness if h["kind"] == "pwm" and h.get("stock_mm")]
+    if pwm:
+        rows.append(_row("Servo extension cable 3-pin JR, 300/500 mm assortment", "cable", len(pwm),
+                         [V("amazon", "servo extension cable 300mm 500mm", 0.5)], note="one per channel that needs it"))
+    if any(h["kind"] == "sensor" for h in harness):
+        rows.append(_row("FSR lead: shielded 28 AWG pair + JST-PH 2p housing + Amphenol Clincher", "cable",
+                         sum(1 for h in harness if h["kind"] == "sensor"),
+                         [V("digikey", "Amphenol Clincher 2 pin 65801-002LF", 1.9), V("adafruit", "FSR clincher", 1.5)],
+                         make_or_buy="make", how="crimp per harness.csv; heat-shrink the Clincher"))
+    if any(h["kind"] == "i2c" for h in harness):
+        h = next(h for h in harness if h["kind"] == "i2c")
+        rows.append(_row(f"Qwiic / STEMMA QT cable {h['stock_mm'] or h['length_mm']} mm", "cable", 1,
+                         [V("sparkfun", "Qwiic cable 500mm", 1.95), V("adafruit", "STEMMA QT cable 400mm", 1.25)],
+                         make_or_buy=h["make_or_buy"]))
+    if "wrist_camera" in ep["extras"]:
+        rows.append(_row("High-flex USB 2.0 cable, 2 m (wrist camera to host)", "cable", 1, [V("amazon", "high flex USB 2.0 cable 2m", 7.0)]))
+    rows.append(_row("USB-C panel-mount extension (host link)", "connector", 1, MODULES["usb_c_breakout"]["vendors"], sku="usb_c_breakout"))
+    rows.append(_row("5.5 x 2.5 mm panel DC jack + " + (f"XT30 (F) pigtail, {ep['power_budget']['feed_awg']} AWG" if cfg == "custom_pcb"
+                     else f"{ep['power_budget']['feed_awg']} AWG leads"), "connector", 1,
+                     [V("amazon", "5.5x2.5 panel jack XT30 pigtail", 2.5)], make_or_buy="make", how="solder + heat-shrink"))
+    rows.append(_row("Crimp kit: JST-PH/XH/SH housings + contacts, heat-shrink, cable ties", "connector", 1,
+                     [V("amazon", "JST PH XH crimp connector kit", 9.0)], note="shared across builds"))
+    return rows
+
+
+def configs_compare(design, sizing, asm) -> dict:
+    out = {}
+    for cfg in ("modules", "custom_pcb"):
+        d2 = design.with_changes({"electronics.config": cfg})
+        ep = plan(d2, sizing)
+        circ = custom_circuit(d2, ep) if cfg == "custom_pcb" else modules_circuit(d2, ep)
+        har, _ = build_harness(d2, ep, asm, ep["power_budget"])
+        rows = sourcing_rows(d2, ep, circ, har, include_actuators=False)
+        cost = sum(r["ext_price"] for r in rows)
+        wires = len(har)
+        bay = [h for h in har if h["kind"] in ("power", "signal")]
+        if cfg == "custom_pcb":
+            minutes = 15 + 3 * wires
+            lead = 12
+            est = pcba_cost(circ, max(design.build.quantity, 1))
+            summary = (f"One {ep['custom_pcb']['size_mm'][0]:g} x {ep['custom_pcb']['size_mm'][1]:g} mm 2-layer PCBA from JLCPCB "
+                       f"(ESP32-S3, {'PCA9685' if ep['bus'] == 'pwm' else 'half-duplex TTL buffer'}, buck + LDO, FSR inputs, USB-C, "
+                       f"protected input, FET-switched servo rail); {wires} harness cables")
+            effort = "order PCBA, crimp the harness, flash firmware"
+            extra = {"pcba_unit": est["unit"], "order_qty": est["order_qty"]}
+        else:
+            minutes = 30 + 5 * len(bay) + 3 * (wires - len(bay)) + (10 if ep["grip"]["sensor"] == "fsr402" else 0)
+            lead = max([v.get("lead_days", 3) for r in rows for v in r["vendors"][:1]] + [3])
+            names = [MODULES[m["key"]]["name"].split(" (")[0] for m in ep["modules"] if not MODULES[m["key"]].get("external")
+                     and m["key"] not in ("estop",)]
+            summary = f"{' + '.join(names)} on a printed tray; {wires} wires incl. {len(bay)} in the base bay" + \
+                      (", perfboard FSR dividers" if ep["grip"]["sensor"] == "fsr402" else "")
+            effort = "mount modules, wire the bay, crimp the harness, flash firmware"
+            extra = {}
+        if cfg == "custom_pcb":
+            pc = pcba_cost(circ, 100)
+            cost100 = cost - est["unit"] + pc["unit"]
+        else:
+            cost100 = cost * 0.82          # distributor price breaks on modules
+        out[cfg] = {"cost": round(cost, 2), "cost_qty100": round(cost100, 2), "summary": summary, "effort": effort,
+                    "assembly_min": int(minutes),
+                    "lead_days": lead, "wires": wires, "parts": len(rows), "issues": ep["issues"], **extra}
+    return out
+
+
+# ------------------------------------------------------------------ finalize
+
+def _rev_of(outdir):
+    import re
+    for part in os.path.normpath(outdir).split(os.sep)[::-1]:
+        if re.fullmatch(r"r\d{3,}", part):
+            return part
+    return ""
+
+
+def finalize(design, sizing: dict, eplan: dict, asm, outdir: str) -> dict:
+    os.makedirs(outdir, exist_ok=True)
+    ep = eplan
+    issues, warnings = list(ep.get("issues", [])), list(ep.get("warnings", []))
+    rev = _rev_of(outdir)
+    import datetime
+    date = datetime.date.today().isoformat()
+    # bus ids: the assembly is the physical truth when it carries its own id table
+    if asm is not None and asm.meta.get("servo_ids") and ep["bus"] != "pwm":
+        mine = [(a["joint"], a["id"]) for a in ep["actuators"]]
+        joints = [j.name for j in asm.joints]
+        theirs = [(_joint_alias(s["joint"], joints), s["id"]) for s in asm.meta["servo_ids"]]
+        if [i for _, i in mine] != [i for _, i in theirs] or [j for j, _ in mine] != [j for j, _ in theirs]:
+            warnings.append(f"assembly servo ids {theirs} differ from the electronics plan {mine}; firmware follows the plan")
+    circuit = custom_circuit(design, ep) if ep["config"] == "custom_pcb" else modules_circuit(design, ep)
+    from . import schematic
+    sch = schematic.write(circuit, outdir, rev=rev, date=date, name="schematic")
+    # system wiring sheet for the custom board too (PCBA + supply + actuators + sensors)
+    board = None
+    if ep["config"] == "custom_pcb":
+        from . import pcb
+        W, H = ep["custom_pcb"]["size_mm"]
+        res = pcb.build(circuit, W, H, os.path.join(outdir, "board"), hc_nets=("VIN_RAW", "V_FUSED", "V_IN", "V_SERVO"),
+                        pwr_nets=("5V", "VSYS", "3V3", "VBUS", "SW"), name="morph_ctrl",
+                        title=f"MORPH CTRL {rev.upper() or 'REV A'}")
+        b = res["board"]
+        board = {"json": "board/board.json", "gerbers": "board/gerbers/gerbers.zip", "size_mm": b["size_mm"], "drc": b["drc"],
+                 "svg": "board/board.svg", "render": "board/board_render.svg", "bom": "board/jlc_bom.csv", "cpl": "board/jlc_cpl.csv",
+                 "layers": 2, "components": b["stats"]["components"], "traces": b["stats"]["traces"], "vias": b["stats"]["vias"],
+                 "stats": b["stats"], "jlc": res["jlc"], "files": ["board/" + f for f in res["gerbers"]]}
+        if not b["drc"]["pass"]:
+            issues.append(f"custom PCB DRC fails: {len(b['drc']['unrouted'])} unrouted, {b['drc']['n_violations']} violations")
+        if b["size_mm"] != list(ep["custom_pcb"]["size_mm"]):
+            warnings.append(f"PCB grew to {b['size_mm']} mm (planned {ep['custom_pcb']['size_mm']})")
+    harness, w = build_harness(design, ep, asm, ep["power_budget"])
+    warnings += w
+    with open(os.path.join(outdir, "harness.csv"), "w", newline="") as fh:
+        cols = ["name", "from", "to", "length_mm", "conductors", "wire", "connector_a", "connector_b", "current_a", "make_or_buy",
+                "stock_mm", "note"]
+        wr = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        wr.writeheader()
+        wr.writerows(harness)
+    fw = firmware(design, ep, asm, outdir, rev)
+    sourcing = sourcing_rows(design, ep, circuit, harness)
+    configs = configs_compare(design, sizing, asm)
+    result = {
+        "config": ep["config"], "bus": ep["bus"], "protocol": ep["protocol"], "controller": ep["controller"],
+        "schematic_svg": "schematic.svg", "schematic_json": "schematic.json", "sheet": sch["sheet"], "nets": sch["nets"],
+        "board": board, "harness": harness, "harness_csv": "harness.csv", "firmware": fw,
+        "power_budget": ep["power_budget"], "grip": ep["grip"], "sourcing": sourcing, "configs": configs,
+        "totals": {"electronics": round(sum(r["ext_price"] for r in sourcing if r["category"] != "actuator"), 2),
+                   "actuators": round(sum(r["ext_price"] for r in sourcing if r["category"] == "actuator"), 2)},
+        "issues": issues, "warnings": list(dict.fromkeys(warnings)),
+    }
+    with open(os.path.join(outdir, "electronics.json"), "w") as fh:
+        json.dump(result, fh, indent=1, default=str)
+    return result

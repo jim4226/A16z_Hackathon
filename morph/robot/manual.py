@@ -39,6 +39,7 @@ from . import manufacturing as mf
 
 # ================================================================== renderer
 _INK = np.array([0.11, 0.14, 0.18])
+SS_STEP = 1.5          # supersampling of the large step illustrations (thumbnails and the cover use 2)
 _GHOST_INK = np.array([0.66, 0.70, 0.75])
 
 
@@ -95,7 +96,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     overlay polylines (cable routes); dots: [(point, '#rrggbb', radius_px, label)]. Returns a PIL RGB image."""
     from PIL import Image, ImageDraw, ImageFilter
 
-    W, H = size[0] * ss, size[1] * ss
+    W, H = int(round(size[0] * ss)), int(round(size[1] * ss))
     d, r, u = _camera(*view)
     P = np.stack([r, u, d], axis=1)               # world -> (x_screen, y_screen, depth)
     allv = np.vstack([m.vertices for m, _, _ in items if len(m.vertices)]) if items else np.zeros((1, 3))
@@ -118,7 +119,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
         else:
             v, f = _cluster(m, cell)
             if len(f):
-                v, f = _subdivide(v, f, max(scene / 22.0, cell * 8))
+                v, f = _subdivide(v, f, max(scene / 14.0, cell * 8))
             if cache is not None:
                 cache[ck] = (v, f)
         if len(f) == 0:
@@ -252,12 +253,12 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
                 dr3.line(xy, fill=rgb, width=int(width * ss), joint="curve")
             for x, y in (xy[0], xy[-1]):
                 rr = (width + 2) * ss
-                dr3.ellipse([x - rr, y - rr, x + rr, y + rr], fill=rgb, outline=(255, 255, 255), width=ss)
+                dr3.ellipse([x - rr, y - rr, x + rr, y + rr], fill=rgb, outline=(255, 255, 255), width=max(1, int(ss)))
         for p3, color, rad, label in dots:
             x, y = scr(p3)
             rgb = tuple(int(round(c * 255)) for c in _hex(color))
             rr = rad * ss
-            dr3.ellipse([x - rr, y - rr * 0.55, x + rr, y + rr * 0.55], outline=rgb, width=3 * ss)
+            dr3.ellipse([x - rr, y - rr * 0.55, x + rr, y + rr * 0.55], outline=rgb, width=int(3 * ss))
             dr3.ellipse([x - 3 * ss, y - 3 * ss, x + 3 * ss, y + 3 * ss], fill=rgb)
     if arrows:
         dr2 = ImageDraw.Draw(res)
@@ -274,7 +275,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
             s = 0.0
             while s < L - 14 * ss:
                 e = min(s + dash, L - 14 * ss)
-                dr2.line([(x0 + ux * s, y0 + uy * s), (x0 + ux * e, y0 + uy * e)], fill=(255, 106, 26), width=2 * ss)
+                dr2.line([(x0 + ux * s, y0 + uy * s), (x0 + ux * e, y0 + uy * e)], fill=(255, 106, 26), width=int(2 * ss))
                 s += dash * 1.7
             hx, hy = x1, y1
             dr2.polygon([(hx, hy), (hx - ux * 14 * ss - uy * 6 * ss, hy - uy * 14 * ss + ux * 6 * ss),
@@ -320,9 +321,24 @@ class _Facts:
         for a in (self.efinal.get("actuators") or (self.efinal.get("plan") or {}).get("actuators") or []):
             if a.get("joint") and a.get("id") is not None:
                 self.servo_id[a["joint"]] = a["id"]
-        for i, jn in enumerate(order):
-            self.servo_id.setdefault(jn, i + 1)
-        self.act_count = Counter(j.actuator for j in acts)
+        self.id_rows = []                       # [(joint, id)] one row per physical servo
+        for e in asm.meta.get("servo_ids") or []:
+            jn = e.get("joint")
+            if jn not in self.act_joints:       # tolerate short names ("roll") from generators
+                jn = next((j for j in self.act_joints if jn and (j.endswith(jn) or jn in j)), jn)
+            if e.get("id") is not None:
+                self.id_rows.append((jn, e["id"]))
+                self.servo_id.setdefault(jn, e["id"])
+        if not self.id_rows:
+            nxt = 1
+            for jn in order:
+                j = next(x for x in acts if x.name == jn)
+                for _ in range(int((j.meta or {}).get("count", 1) or 1)):
+                    self.id_rows.append((jn, self.servo_id.get(jn, nxt) if _ == 0 else nxt))
+                    nxt = max(nxt, self.id_rows[-1][1]) + 1
+                self.servo_id.setdefault(jn, self.id_rows[-1][1])
+        self.act_count = mf.actuator_counts(asm)
+        self.folded = {"wiring": [], "calibration": []}
         self.family = next((catalog.ACTUATORS[k].get("family") for k in self.act_count if k in catalog.ACTUATORS), "smart_bus")
         mods = [e["sku"] for e in self.inst.values() if e["sku"] in catalog.MODULES]
         ctrl = next((k for k in mods if catalog.MODULES[k].get("role") == "controller"), None)
@@ -366,16 +382,29 @@ TIME = {"shcs": 0.45, "bhcs": 0.45, "fhcs": 0.5, "insert": 0.9, "nut": 0.35, "wa
         "setscrew": 0.4, "tie": 0.25, "other": 0.4}
 
 
+def _tool_key(t: str) -> str:
+    t = t.lower()
+    for k in ("torque screwdriver", "soldering iron", "flush cutter", "multimeter", "cable tie", "crimp", "esd"):
+        if k in t:
+            return k
+    return t
+
+
+def _add_tools(tools, new):
+    keys = {_tool_key(t) for t in tools}
+    for t in new:
+        if t and _tool_key(t) not in keys:
+            tools.append(t)
+            keys.add(_tool_key(t))
+    return tools
+
+
 def _tools_for(fasteners, extra=()):
     tools = []
-    for f in fasteners:
-        if f.get("drive") and f["drive"] not in tools:
-            tools.append(f["drive"])
+    _add_tools(tools, list(extra))
+    _add_tools(tools, [f.get("drive") for f in fasteners])
     if any(f.get("torque_nm") for f in fasteners):
-        tools.append("torque screwdriver 0.2–2 N·m")
-    for t in extra:
-        if t and t not in tools:
-            tools.append(t)
+        _add_tools(tools, ["torque screwdriver 0.2–2 N·m"])
     return tools
 
 
@@ -405,17 +434,21 @@ def _mech_steps(F: _Facts):
         fl = [dict(f) for f in F.fast.get(idx, [])]
         if not parts and not fl and not s.instructions:
             continue
+        if not parts and not fl:                # generator's own wiring / check steps: fold into the bring-up steps
+            low = s.title.lower()
+            kind = "wiring" if any(k in low for k in ("wiring", "wire", "cable", "harness", "bus")) else \
+                "calibration" if any(k in low for k in ("calibrat", "check", "zero", "power", "test")) else None
+            if kind:
+                F.folded[kind].append({"title": s.title, "sentences": _sentences(s.instructions), "tools": list(s.tools or [])})
+                continue
         table, sent, warn = OrderedDict(), [], []
         inst = [(k, e) for k, e in F.inst.items() if any(n in names for n in e["parts"])]
         fab = [p for p in parts if p.process in mf.FAB_PROCESSES and p.kind not in ("fastener", "cable")]
         # parts table
         for k, e in inst:
-            try:
-                nm = _short(catalog.get(e["sku"])["name"])
-            except KeyError:
-                nm = mf.pretty(e["sku"])
+            nm, src = _sku_name(e["sku"])
             key = ("buy", e["sku"])
-            table.setdefault(key, {"item": nm, "qty": 0, "source": "purchased", "sku": e["sku"], "group": e["sku"]})
+            table.setdefault(key, {"item": nm, "qty": 0, "source": src, "sku": e["sku"], "group": e["sku"]})
             table[key]["qty"] += 1
         for p in fab:
             g = p.group or p.name
@@ -510,17 +543,20 @@ def _elec_steps(F: _Facts, start: int):
     order = [w["name"] for w in rows]
     chain = " → ".join(_joint_label(j) for j in F.act_joints) if bus != "pwm" else ""
     sent = ["Lay the harness out on the bench and check every wire against the table below before routing it."]
+    for fo in F.folded["wiring"]:
+        sent += fo["sentences"]
     if F.mfg_by_group.get("harness"):
         sent.append("Crimp any wires you make yourself from harness_cutlist.csv: strip 2.5 mm, crimp, tug-test each pin.")
-    if bus != "pwm":
+    if bus == "pwm":
+        sent.append("Plug each servo into its PWM channel on the driver board (brown/black = GND to the outside edge).")
+    elif not F.folded["wiring"]:
         sent.append(f"Daisy-chain the servo bus from the controller through every joint ({chain}); each servo has two "
                     "identical bus sockets, so either one can be the input.")
-    else:
-        sent.append("Plug each servo into its PWM channel on the driver board (brown/black = GND to the outside edge).")
-    sent += ["Route each run along the link's cable channel and leave a 30 mm service loop at every joint so the cable "
-             "never pulls tight at the end of travel.",
-             "Connect the force-sensor leads (if fitted) to their inputs, then fix the harness with cable ties every 60–80 mm.",
-             "Plug the power lead into the inlet last; keep the supply unplugged."]
+    if not F.folded["wiring"]:
+        sent += ["Route each run along the link's cable channel and leave a 30 mm service loop at every joint so the cable "
+                 "never pulls tight at the end of travel.",
+                 "Connect the force-sensor leads (if fitted) to their inputs, then fix the harness with cable ties every 60–80 mm."]
+    sent.append("Plug the power lead into the inlet last; keep the supply unplugged.")
     n_ties = max(6, 2 * len(rows))
     steps.append({"index": idx, "title": "Wiring and cable routing", "kind": "wiring",
                   "parts": [c.name for c in F.asm.cables],
@@ -528,7 +564,8 @@ def _elec_steps(F: _Facts, start: int):
                                    "group": "harness"} for w in rows],
                   "fasteners": [{"spec": "cable tie 100 mm", "qty": n_ties, "torque_nm": None, "drive": "flush cutters",
                                  "label": "cable tie 100 mm", "kind": "tie", "source": "inferred"}],
-                  "tools": ["wire stripper", "JST / Molex crimp tool", "flush cutters", "multimeter"],
+                  "tools": _add_tools(["wire stripper", "JST / Molex crimp tool", "flush cutters", "multimeter"],
+                                      [t for fo in F.folded["wiring"] for t in fo["tools"]]),
                   "instructions": " ".join(sent), "substeps": sent,
                   "warnings": ["Check the power lead polarity with the multimeter before it touches the controller: "
                                "reversed 12 V destroys the regulator and every servo on the bus.",
@@ -576,8 +613,9 @@ def _elec_steps(F: _Facts, start: int):
         sent.append("Check each servo is on the PWM channel listed in the table.")
     sent.append("Open the serial monitor at 115200 baud and power the servo supply: the boot log must list every servo "
                 "and both force-sensor channels.")
-    ids = [{"joint": jn, "label": _joint_label(jn), "id": F.servo_id.get(jn), "actuator": next(
-        (j.actuator for j in F.asm.joints if j.name == jn), "")} for jn in F.act_joints]
+    ids = [{"joint": jn, "label": _joint_label(jn) + (f" ({k + 1})" if sum(1 for a, _ in F.id_rows if a == jn) > 1 else ""),
+            "id": sid, "actuator": next((j.actuator for j in F.asm.joints if j.name == jn), "")}
+           for jn, sid, k in ((jn, sid, [x for x, _ in F.id_rows[:i]].count(jn)) for i, (jn, sid) in enumerate(F.id_rows))]
     steps.append({"index": idx, "title": "Flash the firmware and set servo IDs", "kind": "firmware", "parts": [],
                   "parts_table": [], "fasteners": [], "tools": ["USB-C data cable", "computer with arduino-cli / Arduino IDE 2"],
                   "instructions": " ".join(sent), "substeps": sent, "commands": cmds, "servo_ids": ids,
@@ -595,9 +633,14 @@ def _elec_steps(F: _Facts, start: int):
             "firmware fits the curve from the table.",
             (f"Set the grip force limit to {target:.1f} N per finger ({obj.name}: damage above {obj.max_force_n:g} N)."
              if target else "Set the grip force limit for the object.")]
+    for fo in F.folded["calibration"]:
+        if any("zero" in x.lower() for x in fo["sentences"]):
+            sent = [x for x in sent if not x.startswith("Joint zero")]
+        sent = fo["sentences"] + sent
     steps.append({"index": idx, "title": "Calibrate joints, gripper and force sensors", "kind": "calibration", "parts": [],
-                  "parts_table": [], "fasteners": [], "tools": ["kitchen scale or calibration weights (50–500 g)",
-                                                               f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"],
+                  "parts_table": [], "fasteners": [],
+                  "tools": _add_tools(["kitchen scale or calibration weights (50–500 g)", f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"],
+                                      [t for fo in F.folded["calibration"] for t in fo["tools"]]),
                   "instructions": " ".join(sent), "substeps": sent, "cal_weights_g": [50, 100, 200, 500],
                   "grip_target_n": round(target, 2),
                   "warnings": ["Re-run the force-sensor calibration after a 10 minute warm-up: FSR readings drift with temperature."],
@@ -671,7 +714,7 @@ def _image_jobs(F: _Facts, steps, size=(800, 505)):
             frame = np.array([[c[0] + sx * h, c[1] + sy * h, c[2] + sz * h]
                               for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
         jobs[("step", s["index"])] = dict(items=items, size=size, focus_frame=frame, arrows=arrows, shadow=frame is None,
-                                          cache=cache)
+                                          cache=cache, ss=SS_STEP)
     if asm.parts:
         # wiring: the finished robot ghosted, cable routes drawn over it
         routes = []
@@ -681,10 +724,10 @@ def _image_jobs(F: _Facts, steps, size=(800, 505)):
             if len(pts) > 1:
                 routes.append((pts, palette[i % len(palette)], 3.0))
         jobs[("step", "wiring")] = dict(items=[(world[p.name], p.color, "ghost" if p.kind not in ("electronics", "pcb") else "normal")
-                                               for p in asm.parts], size=size, cache=cache, lines=routes)
+                                               for p in asm.parts], size=size, cache=cache, lines=routes, ss=SS_STEP)
         d = F.design.task
         z0 = min(float(m.bounds[0][2]) for m in world.values())
-        jobs[("step", "test")] = dict(items=[(world[p.name], p.color, "normal") for p in asm.parts], size=size, cache=cache,
+        jobs[("step", "test")] = dict(items=[(world[p.name], p.color, "normal") for p in asm.parts], size=size, cache=cache, ss=SS_STEP,
                                       dots=[((d.pick_x_mm, d.pick_y_mm, z0), "#1f8a4c", 16, "pick"),
                                             ((d.place_x_mm, d.place_y_mm, z0), "#2b6cd4", 16, "place")],
                                       focus_frame=np.vstack([np.vstack([m.bounds for m in world.values()]),
@@ -753,7 +796,7 @@ box-shadow:inset 0 0 0 2px rgba(255,255,255,.35)}
 .tile .l{font-size:7.5pt;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
 .docid{padding:6mm 15mm 9mm;margin-top:auto;display:flex;justify-content:space-between;gap:10mm;font-size:7.6pt;color:var(--muted)}
 /* contents */
-.toc td{padding:4.5px 6px}
+.toc td{padding:3px 6px;font-size:9.1pt}
 .toc .no{width:9mm;font-weight:700;color:var(--acc)}
 .toc .t{font-weight:600}
 .pill{display:inline-block;font-size:7.5pt;padding:1px 7px;border-radius:999px;background:#eef1f5;color:var(--ink2);
@@ -767,8 +810,8 @@ border-radius:0 6px 6px 0;font-size:9.2pt;margin:2.2mm 0;position:relative}
 .warn:before{content:"!";position:absolute;left:10px;top:7px;width:16px;height:16px;border-radius:4px;background:#f2a516;color:#fff;
 font-weight:800;font-size:10px;display:flex;align-items:center;justify-content:center;transform:rotate(0)}
 /* kit */
-.kit{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
-.kit.f{grid-template-columns:repeat(7,1fr)}
+.kit{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.kit.f{grid-template-columns:repeat(8,1fr)}
 .kit.f .k img{padding:0 6px}
 .kit .k{border:1px solid var(--line);border-radius:8px;padding:6px 7px 7px;position:relative;break-inside:avoid}
 .kit .k img{width:100%;height:auto;display:block}
@@ -791,8 +834,8 @@ font-weight:800;font-size:10px;display:flex;align-items:center;justify-content:c
 .fig{position:relative;margin:4mm 0 2mm;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
 .fig img{display:block;width:100%;height:auto}
 .callout{position:absolute;top:10px;right:10px;background:rgba(255,255,255,.94);border:1.5px solid var(--ink);border-radius:8px;
-padding:6px 8px;display:flex;gap:10px;align-items:flex-end}
-.callout .f{text-align:center;font-size:7.5pt;line-height:1.15}
+padding:6px 8px;display:flex;gap:10px;align-items:flex-end;z-index:2;max-width:70%;flex-wrap:wrap;justify-content:flex-end}
+.callout .f{text-align:center;font-size:7.5pt;line-height:1.15;flex:0 0 auto;white-space:nowrap}
 .callout .f img{height:38px;width:auto;display:block;margin:0 auto 2px}
 .callout .f b{font-size:10pt}
 .cols{display:grid;grid-template-columns:0.9fr 1.1fr;gap:7mm;margin-top:3mm}
@@ -806,7 +849,7 @@ ol.ins li{counter-increment:i;position:relative;padding:0 0 2.6mm 9mm;font-size:
 ol.ins li:before{content:counter(i);position:absolute;left:0;top:0;width:6mm;height:6mm;border-radius:50%;background:var(--ink);
 color:#fff;font-size:8pt;font-weight:700;display:flex;align-items:center;justify-content:center}
 .check li:before{content:"";background:#fff;border:1.6px solid var(--ink);border-radius:3px;width:4.2mm;height:4.2mm;top:.4mm}
-.fast td{font-size:9pt}
+.fast td{font-size:8.8pt;padding:3.4px 6px}
 .fast .tq{font-weight:700;color:var(--acc)}
 pre.cmd{background:#0f1720;color:#e6edf3;font-family:var(--mono);font-size:8.6pt;padding:9px 11px;border-radius:8px;margin:2mm 0;
 white-space:pre-wrap;line-height:1.55}
@@ -817,6 +860,12 @@ pre.cmd .p{color:#7ee2a8}
 .chain{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:2mm 0 1mm}
 .chain span{background:#fff;border:1.5px solid var(--ink);border-radius:6px;padding:2px 7px;font-size:8.2pt;font-weight:600}
 .chain i{color:var(--acc);font-style:normal;font-weight:800}
+.sheet.step{height:297mm;display:flex;flex-direction:column}
+.sheet.step .fig.flex{flex:1 1 auto;min-height:62mm;max-height:122mm;margin:4mm 0 1mm}
+.sheet.step .fig.flex > img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.sheet.step .cols{flex:0 0 auto}
+.fig.small > img{max-height:62mm;object-fit:contain}
+.grid2.tight{gap:0 4mm}.grid2.tight .warn{margin:1.4mm 0;font-size:8.6pt}
 @page{size:A4;margin:0}
 @media print{
  html,body{background:#fff}
@@ -825,6 +874,7 @@ pre.cmd .p{color:#7ee2a8}
  a{color:inherit;text-decoration:none}
 }
 @media screen and (max-width:820px){.sheet{width:auto;min-height:0;margin:10px;padding:10mm 6mm}
+ .sheet.step{height:auto}.sheet.step .fig.flex{height:62vw}
  .cover .meta,.grid2,.cols{grid-template-columns:1fr}.kit{grid-template-columns:repeat(2,1fr)}.tools{grid-template-columns:1fr 1fr}}
 """
 
@@ -879,6 +929,44 @@ def _fastener_mesh(f):
     return None, None
 
 
+def _sku_name(sku: str):
+    """Display name + source line for a purchased sku (catalog entry, servo horn, hardware, or anything else)."""
+    try:
+        return _short(catalog.get(sku)["name"]), "purchased"
+    except KeyError:
+        pass
+    base = next((k for k in catalog.ACTUATORS if sku.startswith(k + "_") and "horn" in sku), None)
+    if base:
+        return f"{_short(catalog.ACTUATORS[base]['name'])} horn", "supplied with the servo"
+    f = mf.parse_fastener(sku)
+    if f["size"] and f["kind"] in ("standoff", "insert", "nut", "washer", "setscrew", "shcs", "bhcs", "fhcs"):
+        return f["label"], "hardware"
+    g = mf._GENERIC.get(next((k for k in mf._GENERIC if k in sku.lower()), ""), None)
+    return (g["name"] if g else mf.pretty(sku)), "purchased"
+
+
+def _drive_short(d: str) -> str:
+    return str(d).replace(" hex key", " hex").replace("soldering iron + ", "iron + ").replace(" nut driver", " nut drv")
+
+
+def _fig_style(s) -> str:
+    """Shrink a mechanical step's illustration when the text below it would push the page past A4."""
+    if s["kind"] != "mechanical":
+        return ""
+    left = 0
+    if s.get("parts_table"):
+        left += 52 + sum(26 if len(t["item"]) + len(t["source"]) < 44 else 42 for t in s["parts_table"])
+    if s["fasteners"]:
+        left += 52 + 26 * len(s["fasteners"])
+    if s["tools"]:
+        left += 40 + 24 * math.ceil(len(s["tools"]) / 2)
+    right = 34 + sum(20 * math.ceil(len(x) / 52) + 9 for x in s["substeps"]) + sum(14 + 18 * math.ceil(len(w) / 55)
+                                                                                    for w in s["warnings"])
+    room = 900 - max(left, right)
+    h = int(max(250, min(430, room)))
+    return f' style="max-height:{h}px;width:auto;max-width:100%;margin:0 auto"' if h < 430 else ""
+
+
 def _wire_short(name: str) -> str:
     out = []
     for tok in str(name).replace("→", "->").split():
@@ -901,8 +989,8 @@ def _robot_title(design) -> str:
     return " ".join(w.capitalize() for w in re.split(r"[-_\s]+", design.name) if w) or "Robot"
 
 
-def _sheet(inner, head_l, head_r, foot_l, page):
-    return (f'<section class="sheet"><div class="runhead"><span>{_e(head_l)}</span><span>{_e(head_r)}</span></div>{inner}'
+def _sheet(inner, head_l, head_r, foot_l, page, cls=""):
+    return (f'<section class="sheet {cls}"><div class="runhead"><span>{_e(head_l)}</span><span>{_e(head_r)}</span></div>{inner}'
             f'<div class="runfoot"><span>{_e(foot_l)}</span><span>{page}</span></div></section>')
 
 
@@ -914,9 +1002,9 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
     pages = []
     pg = [0]
 
-    def sheet(inner):
+    def sheet(inner, cls=""):
         pg[0] += 1
-        return _sheet(inner, head, f"Morph · rev {rev}", f"{title} — generated by Morph on {today}", pg[0])
+        return _sheet(inner, head, f"Morph · rev {rev}", f"{title} — generated by Morph on {today}", pg[0], cls)
 
     # ------------------------------------------------------------------ cover
     acts = ", ".join(f"{n} × {_short(catalog.ACTUATORS.get(k, {}).get('name', k))}" for k, n in F.act_count.items())
@@ -953,23 +1041,7 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
              f'<span>Every number in this manual is generated from the design; costs are estimates.</span></div></section>')
     pg[0] += 1
     pages.append(cover)
-    # ------------------------------------------------------------------ contents + before you start
-    toc = "".join(f'<tr><td class="no">{i + 1}</td><td><span class="t">{_e(s["title"])}</span></td>'
-                  f'<td><span class="pill {"mech" if s["kind"] == "mechanical" else s["kind"]}">{_e(s["kind"])}</span></td>'
-                  f'<td class="n">{s["time_min"]} min</td><td class="n muted">p. {i + 4}</td></tr>' for i, s in enumerate(steps))
-    tool_html = "".join(f'<div class="tool">{_icon_for(t)}<span>{_e(t)}</span></div>' for t in tools)
-    safety = ["Read each step fully before starting it; the illustration shows the parts added in that step in colour, "
-              "earlier parts in grey.",
-              "Work on an ESD-safe, well-lit bench. Keep the power supply unplugged until the safety checks.",
-              "Torque values are for screws into heat-set inserts or metal; never exceed them in printed plastic.",
-              "The finished arm can move fast: clamp the base and keep the workspace clear when it is powered."]
-    inner = (f'<div class="kicker" style="margin-top:4mm">Contents</div><h2>{len(steps)} steps · {_fmt_min(total_min)}</h2>'
-             f'<table class="toc"><thead><tr><th></th><th>Step</th><th>Type</th><th class="n">Time</th><th class="n">Page</th></tr></thead>'
-             f'<tbody>{toc}</tbody></table>'
-             f'<h3>Tools you need</h3><div class="tools">{tool_html}</div>'
-             f'<h3>Before you start</h3>' + "".join(f'<div class="warn">{_e(x)}</div>' for x in safety))
-    pages.append(sheet(inner))
-    # ------------------------------------------------------------------ kit
+    # ------------------------------------------------------------------ kit (built first: its page count feeds the contents)
     fab_cards, buy_cards = [], []
     for e in mfg.get("parts", []):
         if e.get("process") not in mf.FAB_PROCESSES:
@@ -983,37 +1055,72 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
             if g.startswith("buy:"):
                 continue
             n = sum(1 for p in asm.parts if (p.group or p.name) == g)
-            fab_cards.append(f'<div class="k"><span class="q">×{n}</span><img src="{im}"><div class="nm">{_e(mf.pretty(g))}</div></div>')
+            fab_cards.append(f'<div class="k"><span class="q">×{n}</span>{_img(im)}<div class="nm">{_e(mf.pretty(g))}</div></div>')
     cnt = Counter(e["sku"] for e in F.inst.values())
     for k, n in F.act_count.items():
         if k in catalog.ACTUATORS:
             cnt[k] = max(cnt.get(k, 0), n)
+    hw = Counter()
     for sku, n in cnt.items():
+        if any(sku.startswith(k + "_") and "horn" in sku for k in catalog.ACTUATORS):
+            continue                                   # horns ship with their servo
         try:
             nm = _short(catalog.get(sku)["name"])
+            sub = "purchased" + (" · horn included" if sku in catalog.ACTUATORS else "")
         except KeyError:
-            nm = mf.pretty(sku)
+            f = mf.parse_fastener(sku)
+            if f["size"] and f["kind"] in ("standoff", "insert", "nut", "washer", "setscrew", "shcs", "bhcs", "fhcs"):
+                hw[f["spec"]] += n
+                continue
+            nm, sub = _sku_name(sku)
         im = thumbs.get("buy:" + sku)
         buy_cards.append(f'<div class="k"><span class="q">×{n}</span>{_img(im)}'
-                         f'<div class="nm">{_e(nm)}</div><div class="s">purchased</div></div>')
+                         f'<div class="nm">{_e(nm)}</div><div class="s">{_e(sub)}</div></div>')
     fast_tot = OrderedDict()
     for s in steps:
         for f in s["fasteners"]:
             k = f["spec"]
             fast_tot.setdefault(k, {**f, "qty": 0})
             fast_tot[k]["qty"] += f["qty"]
+    for spec, n in hw.items():
+        f = mf.parse_fastener(spec)
+        fast_tot.setdefault(f["spec"], {**f, "qty": 0})
+        fast_tot[f["spec"]]["qty"] = max(fast_tot[f["spec"]]["qty"], n)
     fcards = []
     for k, f in fast_tot.items():
         im = fthumbs.get(k)
         fcards.append(f'<div class="k"><span class="q">×{f["qty"]}</span>{_img(im) or _ph(f["kind"])}'
-                      f'<div class="nm">{_e(f["spec"])}</div><div class="s">{_e(f.get("drive") or "")}</div></div>')
-    inner = (f'<div class="kicker" style="margin-top:4mm">Kit</div><h2>What is in the box</h2>'
+                      f'<div class="nm">{_e(f["spec"])}</div><div class="s">{_e(_drive_short(f.get("drive") or ""))}</div></div>')
+    intro = (f'<div class="kicker" style="margin-top:4mm">Kit</div><h2>What is in the box</h2>'
              f'<p class="muted" style="margin:0 0 3mm">Lay every part out and tick it off before step 1. Fabricated parts are made '
-             f'per the manufacturing plan ({_e(cfg)}); purchased parts and fasteners come from the BOM.</p>'
-             f'<h3>Made parts</h3><div class="kit">{"".join(fab_cards)}</div>'
-             f'<h3>Purchased parts</h3><div class="kit">{"".join(buy_cards)}</div>'
-             f'<h3>Fasteners <span class="muted" style="font-weight:500">(order +10 % spares)</span></h3><div class="kit f">{"".join(fcards)}</div>')
+             f'per the manufacturing plan ({_e(cfg)}); purchased parts and fasteners come from the BOM.</p>')
+    sec_made = f'<h3>Made parts</h3><div class="kit">{"".join(fab_cards)}</div>'
+    sec_buy = f'<h3>Purchased parts</h3><div class="kit">{"".join(buy_cards)}</div>'
+    sec_fast = (f'<h3>Fasteners <span class="muted" style="font-weight:500">(order +10 % spares)</span></h3>'
+                f'<div class="kit f">{"".join(fcards)}</div>')
+    rows = lambda n, c: -(-n // c)                       # noqa: E731  (ceil)
+    est = 150 + 60 * 3 + 128 * (rows(len(fab_cards), 6) + rows(len(buy_cards), 6)) + 100 * rows(len(fcards), 8)
+    kit_pages = [intro + sec_made + sec_buy + sec_fast] if est <= 900 else \
+        [intro + sec_made, '<div class="kicker" style="margin-top:4mm">Kit, continued</div><h2>Purchased parts and fasteners</h2>'
+         + sec_buy + sec_fast]
+    # ------------------------------------------------------------------ contents + before you start
+    toc = "".join(f'<tr><td class="no">{i + 1}</td><td><span class="t">{_e(s["title"])}</span></td>'
+                  f'<td><span class="pill {"mech" if s["kind"] == "mechanical" else s["kind"]}">{_e(s["kind"])}</span></td>'
+                  f'<td class="n">{s["time_min"]} min</td><td class="n muted">p. {i + 3 + len(kit_pages)}</td></tr>' for i, s in enumerate(steps))
+    tool_html = "".join(f'<div class="tool">{_icon_for(t)}<span>{_e(t)}</span></div>' for t in tools)
+    safety = ["Read each step fully before starting it; the illustration shows the parts added in that step in colour, "
+              "earlier parts in grey.",
+              "Work on an ESD-safe, well-lit bench. Keep the power supply unplugged until the safety checks.",
+              "Torque values are for screws into heat-set inserts or metal; never exceed them in printed plastic.",
+              "The finished arm can move fast: clamp the base and keep the workspace clear when it is powered."]
+    inner = (f'<div class="kicker" style="margin-top:4mm">Contents</div><h2>{len(steps)} steps · {_fmt_min(total_min)}</h2>'
+             f'<table class="toc"><thead><tr><th></th><th>Step</th><th>Type</th><th class="n">Time</th><th class="n">Page</th></tr></thead>'
+             f'<tbody>{toc}</tbody></table>'
+             f'<h3>Tools you need</h3><div class="tools">{tool_html}</div>'
+             f'<h3>Before you start</h3><div class="grid2 tight">' + "".join(f'<div class="warn">{_e(x)}</div>' for x in safety) + "</div>")
     pages.append(sheet(inner))
+    for kp in kit_pages:
+        pages.append(sheet(kp))
     # ------------------------------------------------------------------ steps
     for i, s in enumerate(steps):
         chips = [f'<span class="chip">⏱ <b>{s["time_min"]} min</b></span>',
@@ -1033,7 +1140,7 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
             if fsel:
                 call = '<div class="callout">' + "".join(
                     f'<div class="f">{_img(fthumbs.get(f["spec"]))}<b>{f["qty"]}×</b><br>{_e(f["spec"])}</div>' for f in fsel) + "</div>"
-            fig = f'<div class="fig{"" if s["kind"] == "mechanical" else " small"}"><img src="{im}" alt="step {i + 1}">{call}</div>'
+            fig = f'<div class="fig{" flex" if s["kind"] == "mechanical" else " small"}"><img src="{im}" alt="step {i + 1}">{call}</div>'
         left = ""
         if s.get("parts_table") and s["kind"] == "mechanical":
             left += ('<h3>Parts</h3><table><thead><tr><th>Item</th><th class="n">Qty</th></tr></thead><tbody>'
@@ -1044,7 +1151,7 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
                      '<th>Drive</th></tr></thead><tbody>'
                      + "".join(f'<tr><td class="mono">{_e(f["spec"])}</td><td class="n"><b>{f["qty"]}</b></td>'
                                f'<td class="n tq">{(str(f["torque_nm"]) + " N·m") if f.get("torque_nm") else "—"}</td>'
-                               f'<td class="muted">{_e(f.get("drive") or "")}</td></tr>' for f in s["fasteners"]) + "</tbody></table>")
+                               f'<td class="muted">{_e(_drive_short(f.get("drive") or ""))}</td></tr>' for f in s["fasteners"]) + "</tbody></table>")
         if s["tools"]:
             left += '<h3>Tools</h3><div class="chips">' + "".join(f'<span class="chip">{_e(t)}</span>' for t in s["tools"]) + "</div>"
         ol_cls = "ins check" if s.get("checklist") else "ins"
@@ -1055,7 +1162,7 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
         if s["kind"] == "wiring":
             if F.family != "hobby_pwm" and F.act_joints:
                 left += ('<h3>Bus order</h3><div class="chain"><span>controller</span>'
-                         + "".join(f'<i>→</i><span>{_e(_joint_label(j))} · ID {F.servo_id.get(j, "?")}</span>' for j in F.act_joints)
+                         + "".join(f'<i>→</i><span>{_e(_joint_label(j))} · ID {sid}</span>' for j, sid in F.id_rows)
                          + "</div>")
             extra += ('<h3>Harness</h3><table class="harn"><thead><tr><th>Wire</th><th>From → to</th><th class="n">Length</th><th>Wire</th>'
                       '<th>Connectors</th></tr></thead><tbody>'
@@ -1080,18 +1187,18 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
             body = headh + fig + f'<div class="cols"><div>{left}</div><div>{right}</div></div>' + extra
         else:
             body = headh + f'<div class="cols top"><div>{fig}{left}</div><div>{right}</div></div>' + extra
-        pages.append(sheet(body))
+        pages.append(sheet(body, "step" if s["kind"] == "mechanical" and fig else ""))
     # ------------------------------------------------------------------ appendix
     tq_rows = "".join(f'<tr><td class="mono">{_e(size)}</td><td class="n tq"><b>{t:g} N·m</b></td>'
                       f'<td class="n">{catalog.FASTENER_SIZES.get(size, (0, 0, 0))[2]:g} mm</td></tr>'
                       for size, t in catalog.FASTENER_TORQUE_NM.items())
-    ftot = "".join(f'<tr><td class="mono">{_e(f["spec"])}</td><td>{_e(f.get("label") or "")}</td><td class="n"><b>{f["qty"]}</b></td>'
-                   f'<td class="n">{math.ceil(f["qty"] * 1.1)}</td></tr>' for f in fast_tot.values())
+    ftot = "".join(f'<tr><td class="mono">{_e(f["spec"])}</td><td class="muted">{_e(_drive_short(f.get("drive") or ""))}</td>'
+                   f'<td class="n"><b>{f["qty"]}</b></td><td class="n">{math.ceil(f["qty"] * 1.1)}</td></tr>' for f in fast_tot.values())
     inner = (f'<div class="kicker" style="margin-top:4mm">Appendix</div><h2>Reference</h2><div class="grid2"><div>'
              f'<h3>Torque table</h3><table class="fast"><thead><tr><th>Size</th><th class="n">Max torque</th><th class="n">Hex key</th></tr>'
              f'</thead><tbody>{tq_rows}</tbody></table><div class="note">Values are for screws into brass heat-set inserts or '
              f'metal. Into bare printed plastic use half.</div></div><div><h3>Fastener totals</h3><table class="fast"><thead><tr>'
-             f'<th>Spec</th><th>Part</th><th class="n">Need</th><th class="n">Order</th></tr></thead><tbody>{ftot}</tbody></table></div></div>'
+             f'<th>Spec</th><th>Drive</th><th class="n">Need</th><th class="n">Order</th></tr></thead><tbody>{ftot}</tbody></table></div></div>'
              f'<h3>Build record</h3><table class="cal"><tbody><tr><td style="width:40%">Serial number</td><td></td></tr>'
              f'<tr><td>Build config / quantity</td><td>{_e(cfg)} × {d.build.quantity}</td></tr><tr><td>Firmware version</td><td></td></tr>'
              f'<tr><td>Assembly time (actual)</td><td></td></tr><tr><td>First successful pick</td><td></td></tr></tbody></table>'

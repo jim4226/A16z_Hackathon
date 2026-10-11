@@ -93,7 +93,7 @@ MAT = {
     "Stainless": (8.0, 9.0), "Delrin": (1.41, 18.0), "Acrylic": (1.18, 12.0), "PC/ABS": (1.15, 4.0),
     "POM": (1.41, 3.5), "PA66-GF30": (1.36, 4.5), "TPE 60A": (1.10, 6.0), "Brass": (8.5, 12.0),
 }
-FDM_MATS = ("PLA", "PETG", "ABS", "ASA", "PC", "Nylon-CF", "TPU")
+FDM_MATS = ("PLA", "PETG", "ABS", "ASA", "Nylon-CF", "TPU")
 FDM_BED = (250.0, 210.0, 220.0)        # Prusa MK4-class build volume
 MJF_BED = (380.0, 284.0, 380.0)
 SLA_BED = (200.0, 125.0, 210.0)
@@ -195,7 +195,7 @@ def parse_fastener(spec) -> dict:
     elif kind == "standoff" and size:
         drive = f"{ {'M2': 4.0, 'M2.5': 5.0, 'M3': 5.5}.get(size, 5.0):g} mm nut driver"
     elif kind == "insert":
-        drive = "soldering iron + insert tip"
+        drive = f"soldering iron + {size or 'M3'} insert tip"
     return {"spec": short, "label": label, "key": key, "size": size, "length": length, "kind": kind,
             "torque_nm": torque, "drive": drive}
 
@@ -212,7 +212,7 @@ def _instances(asm) -> "OrderedDict[str, dict]":
     """Purchased component instances: prefix -> {sku, kind, parts, step, link} (a servo = many sub-parts)."""
     out = OrderedDict()
     for p in asm.parts:
-        if p.process != "purchased" or not p.sku or p.kind in ("fastener", "cable", "visual"):
+        if p.process != "purchased" or not p.sku or p.kind in ("fastener", "cable"):
             continue
         prefix = p.name
         g = p.group or ""
@@ -225,6 +225,27 @@ def _instances(asm) -> "OrderedDict[str, dict]":
         if p.kind in ("actuator", "electronics", "pcb", "bearing", "sensor"):
             e["kind"] = p.kind
     return out
+
+
+def actuator_counts(asm) -> Counter:
+    """Actuators per catalog key from the joints (a 'dual' joint carries meta['count'] = 2)."""
+    out = Counter()
+    for j in asm.joints:
+        if j.actuator and not j.mimic:
+            out[j.actuator] += int((j.meta or {}).get("count", 1) or 1)
+    return out
+
+
+def _short_name(name: str) -> str:
+    return re.split(r" \(|, ", str(name))[0]
+
+
+_GENERIC = {   # purchased bits generators use that are not catalog entries
+    "rubber_foot": {"name": "Self-adhesive rubber foot (14 mm)", "vendors": [
+        catalog.V("amazon", "self adhesive rubber feet 14mm", 0.12, note="pack of 50; price per piece"),
+        catalog.V("mcmaster", "adhesive-back rubber bumper", 0.35)]},
+    "cable_tie": {"name": "Cable tie 100 mm", "vendors": [catalog.V("amazon", "cable ties 100mm", 0.02)]},
+}
 
 
 def _fab_parts(asm):
@@ -255,9 +276,8 @@ def step_fasteners(asm) -> dict:
     for p in asm.parts:
         if p.kind != "fastener":
             continue
-        spec = p.meta.get("spec") or p.sku or p.group or p.name
-        if p.meta.get("kind") and not any(w in str(spec).lower() for w in ("shcs", "bhcs", "fhcs", "nut", "insert", "washer", "standoff")):
-            spec = f"{spec} {p.meta['kind']}"
+        # size/length from the first token that has them, kind from anywhere (meta spec "M4x10" + sku "M4x10_bhcs")
+        spec = " ".join(str(x) for x in (p.meta.get("spec"), p.meta.get("kind"), p.sku, p.group or p.name) if x)
         d = parse_fastener(spec)
         counted[p.step][d["key"]] += int(p.meta.get("qty", p.meta.get("count", 1)) or 1)
         proto[d["key"]] = d
@@ -364,16 +384,29 @@ PREFS = {
 }
 
 
-def choose_process(p, config: str, cls: str | None = None, active: bool = False) -> str:
+def choose_process(p, config: str, cls: str | None = None, active: bool = False, built_for: str = "") -> str:
+    """Process for one part in one build config.
+    * meta['process_by_config'][config] always wins.
+    * The assembly was generated for this config (asm.meta['build_config']): the part's own process.
+    * The assembly was generated for another config: that generator would build different geometry here, so use
+      the config's class default, preferring one of the part's process_options when the config would use it.
+    * No build_config on the assembly (stub / imported robots): process_options are the alternatives; a part
+      with none keeps its process in every config."""
     cls = cls or part_class(p)
     over = (p.meta.get("process_by_config") or {}).get(config)
     if over:
         return over
+    if built_for and config == built_for and p.process in FAB_PROCESSES:
+        return p.process
     allowed = set(p.process_options or ()) | {p.process}
     allowed &= set(FAB_PROCESSES)
+    prefs = PREFS[config].get(cls) or PREFS[config].get("*") or PREFS["prototype"]["*"]
+    if built_for and config != built_for:
+        top = prefs[:2]
+        hit = next((x for x in top if x in allowed), None)
+        return hit or prefs[0]
     if not p.process_options:                     # no alternatives offered: the part's process is fixed
         return p.process
-    prefs = PREFS[config].get(cls) or PREFS[config].get("*") or PREFS["prototype"]["*"]
     if config == "production" and cls == "plate":
         t = _plate_thickness(p)
         prefs = (["laser_cut", "sheet_metal", "cnc_mill"] if t <= 6.5 else ["cnc_mill", "laser_cut"]) + prefs
@@ -634,9 +667,10 @@ class Geo:
         rng = np.random.default_rng(7)
         prob = m.area_faces / m.area_faces.sum()
         n_rays = int(min(n_rays, max(24, 1.5e6 // len(m.faces))))      # ~1.5M ray-triangle tests per part
-        fi = rng.choice(len(m.faces), size=min(n_rays, len(m.faces)), replace=False, p=prob)
+        fi = rng.choice(len(m.faces), size=n_rays, replace=True, p=prob)        # area-weighted statistics
+        bc = rng.dirichlet((2.0, 2.0, 2.0), size=n_rays)                        # random point inside each face
         n = m.face_normals[fi]
-        o = m.triangles_center[fi] - n * 1e-3
+        o = np.einsum("ij,ijk->ik", bc, m.triangles[fi]) - n * 1e-3
         t, j = _ray_first_hit(o, -n, m.triangles)
         ok = np.isfinite(t) & (j >= 0)
         if not ok.any():
@@ -763,19 +797,22 @@ def quotes_for(proc: str, g: Geo, mat: str, n_order: int, cfg: str):
         holes = len(g.holes) if flat else 0
         minutes = removed / mrr + A / 18.0 + holes * 0.4 + 3.0
         setups = 1 if flat else 2
-        setup = 85.0 * setups + 40.0
         material = stock_cm3 * rho / 1000.0 * per_kg * 1.4
-        run = (material + minutes * 80.0 / 60.0 + 3.0) * 1.30 * _vf(n_order, 0.08, 0.7)
-        model = {"formula": "run = (stock_kg x $/kg x 1.4 + min x $80/h + $3 deburr) x 1.30 x vf; setup = $85/setup + $40 CAM, "
-                            "spread over the order; minutes = removed/MRR + area/18 cm2/min + 0.4/hole + 3",
+        vfo = _vf(n_order, 0.08, 0.7)
+        model = {"formula": "piece = (stock_kg x $/kg x 1.4 + min x shop $/h + $3 deburr) x margin x vf + (setup/op x ops + CAM) "
+                            "/ order; shop rates $/h, $/op, CAM, margin: Xometry 80/75/35/1.30, Protolabs 110/120/60/1.35, "
+                            "JLCCNC 25/8/0/1.15, PCBWay 30/12/0/1.15; minutes = removed/MRR + area/18 cm2/min + 0.4/hole + 3",
                  "inputs": {"stock_cm3": _r(stock_cm3, 1), "removed_cm3": _r(removed, 1), "mrr_cm3_min": mrr,
                             "machine_min": _r(minutes, 1), "setups": setups, "holes": holes, "order_qty": n_order}}
         q = []
-        for vk, k, lead, note in (("xometry_cnc", 1.0, 9, "3-axis, ISO 2768-m, as-machined"),
-                                  ("protolabs_cnc", 1.75, 4, "fast-turn, quote-to-part in days"),
-                                  ("jlccnc", 0.42, 11, "Shenzhen, ships DHL"),
-                                  ("pcbway_cnc", 0.50, 12, "Shenzhen, ships DHL")):
-            q.append(_quote(vk, run * k + setup * k / n_order, lead, note, setup=setup * k))
+        for vk, rate, op, cam, margin, lead, note in (
+                ("xometry_cnc", 80.0, 75.0, 35.0, 1.30, 9, "3-axis, ISO 2768-m, as-machined"),
+                ("protolabs_cnc", 110.0, 120.0, 60.0, 1.35, 4, "fast-turn, quote-to-part in days"),
+                ("jlccnc", 25.0, 8.0, 0.0, 1.15, 11, "Shenzhen, ships DHL"),
+                ("pcbway_cnc", 30.0, 12.0, 0.0, 1.15, 12, "Shenzhen, ships DHL")):
+            setup = op * setups + cam
+            run = (material + minutes * rate / 60.0 + 3.0) * margin * vfo
+            q.append(_quote(vk, run + setup / n_order, lead, note, setup=setup))
         return q, model
     if proc in ("sheet_metal", "laser_cut"):
         t = g.thickness
@@ -851,16 +888,34 @@ def fab_groups(asm) -> list:
     return [Group(k, v) for k, v in groups.items()]
 
 
-def _estimate(g: Group, cfg: str, nq: int, active_cfg: str) -> dict:
-    proc = choose_process(g.rep, cfg, g.cls, active=cfg == active_cfg)
+def _landed(sel, n_order):
+    return sel["unit_price"] + sel.get("tooling_cost", 0.0) / max(n_order, 1)
+
+
+def _estimate(g: Group, cfg: str, nq: int, active_cfg: str, built_for: str = "") -> dict:
+    proc = choose_process(g.rep, cfg, g.cls, active=cfg == active_cfg, built_for=built_for)
     mat = material_for(proc, g.cls, g.rep)
     n_order = g.qty * nq
     quotes, model = quotes_for(proc, g.geo, mat, n_order, cfg)
     sel = select_quote(quotes, cfg, n_order)
+    note = ""
+    if proc == "injection_mold" and cfg != "production":
+        # a mold rarely pays off outside production volumes: take a listed alternative when it is clearly cheaper
+        best = None
+        for alt in [x for x in (g.rep.process_options or ()) if x in FAB_PROCESSES and x != proc]:
+            amat = material_for(alt, g.cls, g.rep)
+            aq, am = quotes_for(alt, g.geo, amat, n_order, cfg)
+            asel = select_quote(aq, cfg, n_order)
+            if best is None or _landed(asel, n_order) < _landed(best[3], n_order):
+                best = (alt, amat, (aq, am), asel)
+        if best and _landed(best[3], n_order) < 0.7 * _landed(sel, n_order):
+            note = (f"generator suggested injection molding; at {n_order} pcs {PROC_LABEL[best[0]]} is cheaper "
+                    f"(${_landed(best[3], n_order):.2f} vs ${_landed(sel, n_order):.2f} incl. tooling)")
+            proc, mat, (quotes, model), sel = best
     return {"group": g.key, "qty": g.qty, "name": g.name, "process": proc, "material": mat, "class": g.cls,
             "vendor": sel["vendor"], "vendor_url": sel["url"], "unit_cost": _r(sel["unit_price"]),
             "setup_cost": _r(sel.get("setup_cost", 0.0)), "tooling_cost": _r(sel.get("tooling_cost", 0.0)),
-            "lead_days": sel["lead_days"], "quotes": quotes, "cost_model": model, "files": [], "dfm": [], "notes": "",
+            "lead_days": sel["lead_days"], "quotes": quotes, "cost_model": model, "files": [], "dfm": [], "notes": note,
             "step": g.step, "parts": [p.name for p in g.parts], "in_bom": True}
 
 
@@ -993,17 +1048,29 @@ def buy_rows(design, asm, efinal=None, elec_entries=None) -> list:
     stage's sourcing rows (deduped by sku), fasteners by spec, cables when no harness is planned."""
     inst = _instances(asm)
     qty = Counter(e["sku"] for e in inst.values())
-    jq = Counter(j.actuator for j in asm.joints if j.actuator and not j.mimic)
-    for k, n in jq.items():
+    for k, n in actuator_counts(asm).items():
         if k in catalog.ACTUATORS:
             qty[k] = max(qty[k], n)
     rows = OrderedDict()
+    hardware = Counter()
     for sku, n in qty.items():
+        how = "buy from vendor"
         try:
             c = catalog.get(sku)
         except KeyError:
-            c = {"name": pretty(sku), "vendors": []}
-        how = "buy from vendor"
+            base = next((k for k in catalog.ACTUATORS if sku.startswith(k + "_") and "horn" in sku), None)
+            hw = parse_fastener(sku)
+            if base:                                 # servo horn: ships with the servo
+                rows[sku] = {"item": f"{_short_name(catalog.ACTUATORS[base]['name'])} horn + horn screw", "category": "mechanical",
+                             "qty": int(n), "make_or_buy": "buy", "how": f"included with the {_short_name(catalog.ACTUATORS[base]['name'])}",
+                             "vendors": [], "selected": {"vendor": "included", "unit_price": 0.0}, "ext_price": 0.0,
+                             "sku": sku, "source": "assembly"}
+                continue
+            if hw["size"] and hw["kind"] in ("standoff", "insert", "nut", "washer", "setscrew", "shcs", "bhcs", "fhcs"):
+                hardware[hw["key"]] += n
+                continue
+            c = _GENERIC.get(next((g for g in _GENERIC if g in sku.lower()), ""), None) or \
+                {"name": pretty(sku), "vendors": [catalog.V("amazon", pretty(sku), 0.5, note="not in catalog: placeholder estimate")]}
         if sku == "morph_controller_pcba":
             how = "order PCBA from JLCPCB with jlc_bom.csv/jlc_cpl.csv"
         rows[sku] = _row(c.get("name", sku), _category_for(sku), n, [dict(v) for v in c.get("vendors", [])], how,
@@ -1038,12 +1105,16 @@ def buy_rows(design, asm, efinal=None, elec_entries=None) -> list:
         r["source"] = "electronics"
         elec.append(r)
     out = list(rows.values()) + elec
-    # fasteners by spec, over every step
+    # fasteners by spec, over every step (+ hardware that the assembly models as purchased parts, e.g. standoffs)
     tot = OrderedDict()
     for st, fl in sorted(step_fasteners(asm).items()):
         for f in fl:
             cur = tot.get(f["key"])
             tot[f["key"]] = {**f, "qty": (cur["qty"] if cur else 0) + f["qty"]}
+    for key, n in hardware.items():
+        f = parse_fastener(key)
+        cur = tot.get(f["key"])
+        tot[f["key"]] = {**f, "qty": max(cur["qty"] if cur else 0, n), "source": "assembly"}
     have_fast = {_norm(r["item"]) for r in elec if r.get("category") == "fastener"}
     for f in tot.values():
         if f["kind"] == "other" or _norm(f["label"]) in have_fast:
@@ -1502,8 +1573,11 @@ def _sheet_dfm(g: Geo) -> list:
         R = float(bd.get("radius", t))
         (u0, v0), (u1, v1) = bd["line"]
         ln = LineString([(u0, v0), (u1, v1)])
-        if R < t * 0.99:
-            out.append(f"B{i + 1}: inside radius {R:g} mm < thickness {t:g} mm: cracks on the outside of the bend (5052-H32)")
+        mat = str(sheet.get("material") or p.material)
+        rmin_f = {"Al6061": 2.0, "Al7075": 3.0, "Stainless": 0.8}.get(mat, 0.5)    # 5052-H32 / mild steel ~0.5 T
+        if R < t * rmin_f * 0.99:
+            out.append(f"B{i + 1}: inside radius {R:g} mm is below {rmin_f:g}×T ({t * rmin_f:.1f} mm) for {mat}: "
+                       "the outside of the bend can crack")
         # flange lengths: farthest outline point on each side of the (extended) bend line
         d = np.array([u1 - u0, v1 - v0], float)
         L = np.linalg.norm(d)
@@ -1750,8 +1824,10 @@ def plan(design, asm, outdir, efinal=None) -> dict:
     buy_total = _r(sum(r["ext_price"] for r in rows) * dvol)
     buy_lead = max([(_select_vendor(r.get("vendors") or []) or {}).get("lead_days", 3) for r in rows] or [3])
 
+    built_for = str(asm.meta.get("build_config") or "")
+
     def entries_for(cfg, q):
-        es = [_estimate(g, cfg, q, active) for g in groups]
+        es = [_estimate(g, cfg, q, active, built_for) for g in groups]
         return es + [dict(e) for e in _elec_estimates(design, asm, efinal, q)]
 
     configs, per_cfg = {}, {}
@@ -1811,7 +1887,7 @@ def plan(design, asm, outdir, efinal=None) -> dict:
                             "and most harness wires (electronics.config = custom_pcb)")
     for e in es:
         for d in e.get("dfm", []):
-            if "exceeds the" in d or "cracks" in d:
+            if "exceeds the" in d:              # only what blocks manufacture; the rest are DFM warnings
                 issues.append(f"{e['name']}: {d}")
     fab, tooling, setup, unit = _config_cost(es, buy_total, nq)
     out = {"config": active, "quantity": nq, "configs": configs, "parts": es,

@@ -252,15 +252,22 @@ def _ext(poly, z0, z1):
 
 
 def _plate(poly, t, fillet=0.0, chamfer=0.0):
-    """Extruded profile (z in [0, t]) with filleted / chamfered edges (components.trimesh_from_profile)."""
-    try:
-        m = components.trimesh_from_profile(poly, t, chamfer=chamfer or 0.0, fillet=fillet or 0.0)
-        man = _man(m)
-        if not man.is_empty():
-            return man
-    except Exception:  # noqa: BLE001
-        pass
-    return _ext(poly, 0.0, t)
+    """Extruded profile (z in [0, t]) with filleted / chamfered top and bottom edges (vertex-miter loft, as in
+    components.trimesh_from_profile); falls back to a plain extrusion for outlines the loft cannot offset."""
+    c = max(0.0, min(fillet or chamfer or 0.0, t * 0.45))
+    geoms = [poly] if poly.geom_type == "Polygon" else [g for g in getattr(poly, "geoms", []) if g.geom_type == "Polygon"]
+    out = []
+    for g in geoms:
+        if g.is_empty or g.area < 1e-6:
+            continue
+        man = None
+        if c > 1e-4:
+            try:
+                man = components._loft(g.buffer(0), _edge_layers(t, 0.0, c, 3 if fillet else 1))
+            except Exception:  # noqa: BLE001
+                man = None
+        out.append(man if man is not None and not man.is_empty() else _ext(g, 0.0, t))
+    return _U(out)
 
 
 # profile (u, v, w in [0, t]) -> link: u -> x, v -> z, w -> -y  (det +1);  y range [y1 - t, y1]
@@ -675,7 +682,7 @@ def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None, 
         wrist_len = wl
     else:
         y5 = jg["j5_wrist_yaw"]
-        d45 = w4.z_b + T_BR - y5.z_floor + 0.4
+        d45 = w4.z_b + T_BR - y5.z_floor + 0.4     # yaw servo in line, body hanging towards the wrist pitch
         wl5 = y5.z_b + T_BR + Ar.overall + 0.4
         wl = d45
         wrist_len = d45 + wl5
@@ -710,7 +717,7 @@ def _task_L12(design, lay: _Layout) -> float:
 # ------------------------------------------------------------------ mass + static torque model
 def _struct_mass_g(config, L, D2, hw):
     """Structural mass of one link (calibrated against the generated parts)."""
-    k = {"prototype": 0.0105, "pilot": 0.0135, "production": 0.0085}.get(config, 0.0105)
+    k = {"prototype": 0.0019, "pilot": 0.0036, "production": 0.0022}.get(config, 0.0019)
     return k * L * (2 * D2) * (2 * hw) / 10.0 + 12.0
 
 
@@ -718,9 +725,10 @@ def _hand_mass_g(lay: _Layout, config) -> float:
     g = lay.grip
     A = g["A"]
     area = sum(p.area for p in (g["rack_A"], g["rack_B"], g["pinion"])) * 6.0 + g["geom"].area_mm2 * g["w"] * 2
-    rho = 1.27e-3 * (0.55 if config == "prototype" else 1.0)
+    rho = 1.27e-3 * 0.55
     plate = (2 * g["px"]) * (g["y_top"] - g["py0"]) * 5.0 * 0.7 + (2 * g["px"]) * 40 * T_FLANGE
-    return A.mass_g + rho * (area + plate) + 14.0      # + fasteners, FSR, cabling
+    f = {"prototype": 1.4, "pilot": 3.2, "production": 1.95}.get(config, 1.4)   # calibrated on generated hands
+    return A.mass_g + f * rho * (area + plate) + 10.0      # + fasteners, FSR, cabling
 
 
 def _torques(design, lay: _Layout, config) -> dict:
@@ -1085,7 +1093,8 @@ class _Builder:
         self.T["j3_par"] = trans((0, 0, L.L1))                                      # upper arm
         self.T["j4_par"] = trans((0, 0, L.L2))                                      # forearm
         if L.dof == 6:
-            self.T["j5_par"] = trans((0, 0, L.d45)) @ rot((0, 0, 1), -math.pi / 2)  # wrist
+            self.T["j5_joint"] = trans((0, 0, L.d45)) @ rot((0, 0, 1), -math.pi / 2)
+            self.T["j5_par"] = self.T["j5_joint"]                                    # wrist
             self.T["roll_par"] = trans((0, 0, L.wl5)) @ rot((0, 0, 1), math.pi / 2)  # wrist_yaw
         elif L.dof == 5:
             self.T["roll_par"] = trans((0, 0, L.wl)) @ rot((0, 0, 1), math.pi / 2)  # wrist
@@ -1233,7 +1242,7 @@ class _Builder:
                 cuts.append(_rbox2(x0, x1, y0, j.D2 + 5, z0, max(z1, z0 + 4), r=1.0, f=0.0))
             else:
                 cuts.append(_rbox2(x0, x1, -j.D2 - 5, y1, z0, max(z1, z0 + 4), r=1.0, f=0.0))
-        if j.count == 1 and "label" in A.bounds or (j.count == 1 and "print" in A.bounds):
+        if j.count == 1 and not A.hobby and ("label" in A.bounds or "print" in A.bounds):
             lb = _canon_box(j.T_acts[0], A.bounds.get("label", A.bounds.get("print")))
             if lb[1][0] > 0:
                 z1 = min(lb[1][2] + 1.0, j.z_cup + 2.0)
@@ -1503,10 +1512,12 @@ class _Builder:
             self.joint_cap(link, prox, step, short)
 
     def shrink_body(self, prox, dists, t):
-        """Inner cavity for moulded shells: the same hull with every primitive shrunk by the wall thickness."""
+        """Inner cavity for moulded shells: the same two hulls as link_body with every primitive shrunk by the
+        wall thickness."""
         parts = []
         jp, Tp = prox
-        parts.append(_xf(_ycyl(max(jp.r_ch - t, 2), -jp.D2 + t, jp.D2 - t, f=0.5), Tp))
+        nk = _xf(_box2(-jp.neck + t, jp.neck - t, -jp.D2 + t, jp.D2 - t, jp.z_b - 2.0 + t, jp.z_b + T_BR + 3.0 - t), Tp)
+        parts.append(nk)
         for dd in dists:
             if dd[0] == "jg":
                 _, j, T = dd
@@ -1843,6 +1854,8 @@ class _Builder:
         if L.dof == 6:
             jy = L.jg["j5_wrist_yaw"]
             pi_y, po_y = _jg_parent_regions(jy, jw.r_ch, L.d45 + jy.z_floor)
+            reg_w = _rect(-jw.D2 - 2, jw.D2 + 2, -L.d45 - 40, -L.d45 + jw.z_b + T_BR + 2)
+            pi_y = pi_y.union(reg_w)
             wy = link_sil(jy, box_pts(np.eye(4), -L.Ar.W / 2 - WALL, L.Ar.W / 2 + WALL, -40, 15,
                                       L.wl5 - L.Ar.overall - FLOOR, L.wl5)).union(hand(np.eye(4), L.wl5))
             ci, co = _child_regions(jy, wy)
@@ -2665,7 +2678,7 @@ def _cables(b):
     if L.dof == 6:
         jy = L.jg["j5_wrist_yaw"]
         run("wrist", _pt(np.eye(4), (0.0, jw.D2 + 3.4, jw.z_b + T_BR + 6.0)))
-        pitch_cross(jy, T["j5_par"], "wrist", "wrist_yaw", T["yaw_child"])
+        pitch_cross(jy, T["j5_joint"], "wrist", "wrist_yaw", T["yaw_child"])
         run("wrist_yaw", _pt(T["yaw_child"], (0.0, jy.D2 + 3.4, jy.z_b + T_BR + 8.0)))
         run("wrist_yaw", (0.0, cp[1] + 2.0, L.wl5 - 14.0))
         cross("wrist_yaw", (0.0, cp[1], L.wl5 - 3.0))
@@ -2998,14 +3011,15 @@ def _ik_planar(L1, L2, x, z, elbow_up=True):
     return phi - alpha, q3
 
 
-def _pose(L: _Layout, x, z_tcp, lim, gripper):
-    """Gripper pointing straight down with the TCP at (x, 0, z_tcp)."""
+def _pose(L: _Layout, x, z_tcp, lim, gripper, tilt=0.0):
+    """Gripper pointing down (tilted `tilt` rad towards the base) with the TCP at (x, 0, z_tcp)."""
     wrist_len = L.wl if L.dof != 6 else L.d45 + L.wl5
-    sol = _ik_planar(L.L1, L.L2, x, z_tcp + wrist_len + L.tcp_z - L.base_h)
+    h = wrist_len + L.tcp_z
+    sol = _ik_planar(L.L1, L.L2, x + h * math.sin(tilt), z_tcp + h * math.cos(tilt) - L.base_h)
     if sol is None:
         return None
     q2, q3 = sol
-    q4 = math.pi - q2 - q3
+    q4 = math.pi - tilt - q2 - q3
     for jn, v in (("j2_shoulder", q2), ("j3_elbow", q3), ("j4_wrist_pitch", q4)):
         lo, hi = lim.get(jn, (-3, 3))
         if not (lo <= v <= hi):
@@ -3016,22 +3030,35 @@ def _pose(L: _Layout, x, z_tcp, lim, gripper):
 
 
 def _home_ready(design, L: _Layout):
+    """Natural poses with the gripper pointing straight down: home = compact, elbow up, forearm about level;
+    ready = hovering over the work area. Grid search inside the joint limits (5 deg margin)."""
     R = design.object.diameter_mm / 2
     tip = L.grip["tip"]
     L12 = L.L1 + L.L2
-    lim = L.lim
-    home = ready = None
-    for f in np.linspace(0.36, 0.7, 18):
-        home = _pose(L, f * L12, R + tip + 45.0, lim, round(min(10.0, L.grip["T"]), 2))
-        if home:
+    m = math.radians(5)
+    lim = {k: (lo + m, hi - m) for k, (lo, hi) in L.lim.items()}
+    best_h, best_r = (1e9, None), (1e9, None)
+    for f, zt, tilt in ((f, zt, t) for t in (0.0, 0.15, 0.3, 0.45) for f in np.linspace(0.28, 0.85, 24)
+                        for zt in np.linspace(R + tip + 25.0, R + tip + 220.0, 27)):
+        if tilt > 0 and best_h[1] is not None and best_r[1] is not None:
             break
-    for f in np.linspace(0.6, 0.85, 14):
-        ready = _pose(L, f * L12, R + tip + 30.0, lim, round(L.grip["T"], 2))
-        if ready:
-            break
+        q = _pose(L, f * L12, zt, lim, 0.0, tilt)
+        if True:
+            if not q:
+                continue
+            fa = q["j2_shoulder"] + q["j3_elbow"]            # forearm angle from vertical
+            sh = 1.6 * abs(fa - math.radians(92)) + 0.8 * abs(q["j2_shoulder"] + 0.12) + 0.004 * abs(zt - (R + tip + 50)) \
+                + 3.0 * tilt
+            sr = 0.02 * abs(zt - (R + tip + 30.0)) + 1.5 * abs(f - 0.62) + 0.3 * abs(q["j2_shoulder"] - 0.35) + 3.0 * tilt
+            if sh < best_h[0]:
+                best_h = (sh, q)
+            if sr < best_r[0]:
+                best_r = (sr, q)
     base = {n: 0.0 for n in L.names}
-    home = home or {**base, "j2_shoulder": 0.0, "j3_elbow": 1.2, "j4_wrist_pitch": 1.2, "gripper": 5.0}
-    ready = ready or {**base, "j2_shoulder": 0.4, "j3_elbow": 1.0, "j4_wrist_pitch": 1.4, "gripper": round(L.grip["T"], 2)}
+    home = dict(best_h[1]) if best_h[1] else {**base, "j2_shoulder": 0.0, "j3_elbow": 1.2, "j4_wrist_pitch": 1.2}
+    ready = dict(best_r[1]) if best_r[1] else {**base, "j2_shoulder": 0.4, "j3_elbow": 1.0, "j4_wrist_pitch": 1.4}
+    home["gripper"] = round(min(10.0, L.grip["T"]), 2)
+    ready["gripper"] = round(L.grip["T"], 2)
     return home, ready
 
 
