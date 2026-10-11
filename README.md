@@ -1,34 +1,16 @@
-# Morph: from "pick this up without breaking it" to printed, wired, force-controlled fingers
+# R Cubed
 
-**SpeedHacks, SF Tech Week, Oct 11 2026.** Challenge: *give people their time back.*
+**R Cubed turns weeks of work by a dedicated robotics engineering team into one afternoon for a non-technical person.**
 
-Adding a custom gripper for one tricky object today means bouncing between CAD, a
-simulator, hand calcs, a slicer, a parts list, a wiring diagram and firmware. Every
-change sends you around the loop again. Morph connects the whole loop:
+Every business and builder has tasks a robot could do, but a custom robot for one specific job means stitching together CAD, simulation, electronics, firmware and a dozen part suppliers, and any change to the design means modifying and redoing work across all of these subsystems. That loop takes skilled engineers days for a single gripper and weeks for a whole robot, so most of those tasks never get a robot at all.
 
-```
-describe a need → spec → parametric CAD → closed-form checks → MuJoCo grasp sim
-   → electronics (servo, force sensor, MCU, wiring, firmware) → machine files
-   → fabricate → live bench test → measured vs predicted
-```
+R Cubed puts that whole loop in one place: tell it "pick up a raw egg without cracking it," and in about 25 seconds you have a printable gripper with force-sensing fingers, firmware that grips at 2.3 N when the egg cracks at about 25 N, a routed PCB ready to order, and about 90 minutes of print files. Swap the servo or change the object and only the affected parts rebuild while you watch.
 
-Changing a parameter reruns **only the artifacts that depend on it**. Every revision
-(design → prediction → fab → measured result) is logged, building a dataset no public
-source has.
+Darwin handles purchasing and engineering help, finding agents that can quote and sell every part, fabricate the PCB and prints, and review the design.
 
-**Demo use case: picking up a raw egg without cracking it.** A typical MG996R hobby gripper
-squeezes up to about 54 N per finger at stall, while an egg's side can crack around 25 N (estimate). Morph:
+Keewano gives R Cubed observability and recursive self-improvement: every design, bench test and human minute is logged, and the measured results tune the next design's grip force.
 
-- designs fingers with a curved pad and a **force-sensor pocket**, where the pad's dovetail tail bears on an FSR 402;
-- simulates the grasp to find the force that actually holds the egg (≈0.8 N);
-- sets a grip-force window: slips below 1.2 N, damage-limited at 16 N;
-- generates the **Arduino firmware** that closes until 2.3 N and never exceeds 19 N;
-- sizes the sensor divider resistor and produces the wiring table and electronics BOM;
-- generates the **gripper itself**: a printable rack-and-pinion mechanism for the chosen servo, so the device doesn't depend on a gripper kit you may not have;
-- generates a **carrier PCB** (Nano + FSR divider + servo + power) with Gerbers, solderable on perfboard today;
-- emits print files: fingers ≈31 min plus the gripper body ≈61 min.
-
-## Morph Studio (the live demo)
+## R Cubed Studio (gripper demo)
 
 ```bash
 python -m morph.cli demo            # builds projects/raw-egg (≈25 s)
@@ -75,7 +57,7 @@ morph time egg r00X                                 # before/after time study
 Other commands:
 
 ```bash
-morph change egg electronics.servo=sg90             # only electronics + BOM rerun
+morph change egg electronics.servo=sg90             # rebuilds the affected artifacts
 morph change egg object.max_force_n=3               # e.g. a strawberry; window and firmware update
 morph compare egg r001 r004 r005
 morph send egg r00X --grbl COM3                     # CNC/laser parts (non-sensor fingers)
@@ -93,7 +75,7 @@ Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli �
 | `board.py` | carrier board: real module pinouts, placement, two-layer maze router, GND pour, DRC, Gerbers + drill, perfboard-ready |
 | `kicad.py` | the same board as a KiCad 8/9 project (PCB, schematic, project file) + a BoardRepo-ready zip; pure Python, `kicad-cli` DRC/ERC when installed |
 | `boardrepo.py` | checked open reference boards on BoardRepo (gripper carrier, servo bus, PWM, load cell), read live from their public pages |
-| `studio/` | Morph Studio web app (stdlib server + SSE, three.js viewer, PCB build animation, chat → changes) |
+| `studio/` | R Cubed Studio web app (stdlib server + SSE, three.js viewer, PCB build animation, chat → changes) |
 | `spec.py` | one `Design` (object, finger, gripper, electronics, fab); changes are dotted keys |
 | `design.py` | 2.5D profiles → watertight solids. Pads: flat, V, or contour. With `finger.sensor=fsr402`, a two-part finger: a dovetail socket plus a sliding pad whose tail presses on the FSR |
 | `analysis.py` | grip-force budget, cantilever deflection and stress, print derate |
@@ -122,7 +104,7 @@ python tools/keewano_backfill.py --send          # 2 weeks of synthetic-* builds
 morph ask 'SELECT "PadStyle", avg("HoldForceRatioPct") FROM events GROUP BY "PadStyle"'
 ```
 
-**Darwin: who sells the parts and builds the rest.** Morph designs and programs; `morph source
+**Darwin: who sells the parts and builds the rest.** R Cubed designs and programs; `morph source
 <project> [rev]` asks Darwin Search for an agent per purchased BOM line plus the engineering
 handoffs (PCB fab from the Gerbers, printing the STLs, a design review), writes
 `<rev>/sourcing_darwin.json`, and logs every lookup, including gaps, to Keewano. It stops at a
@@ -142,7 +124,7 @@ morph kicad raw-egg r004      # projects/raw-egg/r004/boardrepo/raw-egg-r004/*-k
 morph boardrepo               # reference boards with live licence and views
 ```
 
-Uploading needs your own BoardRepo sign-in, so Morph stops at the zip. More in `docs/BOARDREPO.md`.
+Uploading needs your own BoardRepo sign-in, so R Cubed stops at the zip. More in `docs/BOARDREPO.md`.
 
 ## Honest limits
 
