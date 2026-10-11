@@ -28,10 +28,11 @@ from ..spec import Design, diff
 GRAPH = {
     "sizing": (["arm.*", "object.mass_g", "electronics.servo"], [], None),
     "gripper": (["finger.*", "object.*", "gripper.*", "safety_factor", "electronics.target_force_n",
-                 "electronics.servo", "electronics.supply_v", "electronics.pinion_radius_mm", "arm.actuator_family"],
+                 "electronics.servo", "electronics.supply_v", "electronics.pinion_radius_mm", "arm.actuator_family",
+                 "arm.source", "arm.actuator_overrides"],
                 [], "gripper"),
     "electronics": (["electronics.*"], ["sizing", "gripper"], None),
-    "cad": (["finger.*", "object.shape", "object.diameter_mm", "object.length_mm", "build.*", "name"],
+    "cad": (["finger.*", "object.shape", "object.diameter_mm", "object.length_mm", "build.*", "name", "arm.source"],
             ["sizing", "electronics"], "cad"),
     # sim reads the arm geometry, but electronics placed in the fixed base do not change its dynamics,
     # so it keys off the geometry-defining parameters instead of the cad node
@@ -138,7 +139,11 @@ class RobotProject(Project):
 
         def asm():
             if "asm" not in cache:
-                cache["asm"] = arm.build(design, res["sizing"], res.get("eplan"))
+                if design.arm.source:
+                    from . import imported
+                    cache["asm"] = imported.build(design, res["sizing"], res.get("eplan"))
+                else:
+                    cache["asm"] = arm.build(design, res["sizing"], res.get("eplan"))
             return cache["asm"]
 
         for node in ORDER:
@@ -185,7 +190,14 @@ class RobotProject(Project):
         from . import arm
 
         if node == "sizing":
-            res["sizing"] = arm.size(design)
+            if design.arm.source:
+                from . import imported
+                res["sizing"] = imported.size(design)
+            else:
+                res["sizing"] = arm.size(design)
+        elif node == "gripper" and design.arm.source:
+            from . import imported
+            res["gripper"] = imported.gripper_summary(design, imported.size(design))
         elif node == "gripper":
             from .catalog import ACTUATORS
 
@@ -208,7 +220,11 @@ class RobotProject(Project):
             mass = sum(a.link_mass(l)[0] for l in a.links)
             res["cad"] = {"parts": len(a.parts), "links": len(a.links), "joints": len(a.joints), "mass_kg": round(mass, 3),
                           "validate": errs, "urdf": os.path.relpath(urdf, os.path.dirname(nd)),
-                          "groups": len({p.group or p.name for p in a.parts})}
+                          "groups": len({p.group or p.name for p in a.parts}),
+                          "source": a.meta.get("source") or "generated", "title": a.meta.get("title"),
+                          "license": a.meta.get("license"), "source_url": a.meta.get("source_url"),
+                          "issues": a.meta.get("issues", []),
+                          "redesign": [p.meta["needs_redesign"] for p in a.parts if p.meta.get("needs_redesign")]}
         elif node == "sim":
             simulate = _mod("simulate")
             res["sims"] = simulate.run_all(asm(), design, nd, fast=fast_sim) if simulate else None
@@ -252,7 +268,7 @@ def summarize(r: dict) -> dict:
     bom = (r.get("bom") or {}).get("totals", {})
     man = r.get("manual") or {}
     joints = sz.get("joints", [])
-    issues = list(sz.get("issues", [])) + list((g.get("analysis") or {}).get("issues", [])) + \
+    issues = list(sz.get("issues", [])) + list(cad.get("issues", []) or []) + list((g.get("analysis") or {}).get("issues", [])) + \
         list((g.get("force") or {}).get("issues", [])) + list(cad.get("validate", []) or []) + \
         list(el.get("issues", []) or []) + list(mfg.get("issues", []) or [])
     for node, err in (r.get("errors") or {}).items():

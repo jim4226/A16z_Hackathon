@@ -124,7 +124,8 @@ def load_urdf(urdf_path: str, profile: dict | None = None, mesh_dirs: list | Non
                 mesh = trimesh.creation.icosphere(radius=float(g.find("sphere").get("radius")) * 1000.0)
             if mesh is None or len(mesh.faces) == 0:
                 continue
-            mesh.apply_transform(_origin(vis))
+            T_vis = _origin(vis)
+            mesh.apply_transform(T_vis)
             base = os.path.splitext(os.path.basename(mesh_el.get("filename")))[0] if mesh_el is not None else f"{lname}_{i}"
             pname = _safe(base)
             k = 2
@@ -146,7 +147,10 @@ def load_urdf(urdf_path: str, profile: dict | None = None, mesh_dirs: list | Non
                     attrs.update(ov)
             asm.add_part(Part(name=pname, link=lname, mesh=mesh, kind=attrs["kind"], material=attrs["material"],
                               color=attrs["color"], process=attrs["process"], sku=attrs.get("sku", ""),
-                              group=attrs.get("group", pname), meta={"source": "urdf", **attrs.get("meta", {})}))
+                              group=attrs.get("group", pname),
+                              meta={"source": "urdf", "visual_origin": T_vis.tolist(),
+                                    "mesh_file": os.path.basename(mesh_el.get("filename")) if mesh_el is not None else "",
+                                    **attrs.get("meta", {})}))
 
     asm.meta = {"source": os.path.basename(urdf_path), "imported": True,
                 "arm_joints": profile.get("arm_joints") or [j.name for j in asm.joints if j.type != "fixed" and not j.mimic],

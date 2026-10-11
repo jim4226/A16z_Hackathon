@@ -58,6 +58,7 @@ class ArmSpec:
     actuator_family: str = "smart_bus"   # hobby_pwm | smart_bus | dynamixel
     actuator_overrides: str = ""     # "j2=xm430_w350,j3=sts3215" to force specific actuators
     payload_margin: float = 2.0      # torque safety factor at full stretch
+    source: str = ""                 # "" = Morph-generated arm; "so101" = imported open-source robot (robots/<source>/)
 
 
 @dataclass
