@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RobotViewer dev page</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%234aa3ff%22/%3E%3C/svg%3E">
+<style>
+  :root { --bg:#0d1014; --panel:#12171d; --panel2:#1a2129; --line:#242e38; --ink:#e8edf2; --muted:#8b98a5; --accent:#4aa3ff; --hot:#ff9a3c; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: grid; grid-template-columns: 300px 1fr; }
+  aside { border-right: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 14px 14px 30px; }
+  h1 { font-size: 15px; margin: 0 0 2px; font-weight: 750; letter-spacing: .2px; }
+  h1 span { color: var(--accent); font-weight: 600; }
+  .sub { color: var(--muted); font-size: 11.5px; margin-bottom: 10px; }
+  h2 { font-size: 10.5px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 16px 0 7px; font-weight: 650; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  button { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+  button:hover { border-color: #3a4a5a; }
+  button.on { border-color: var(--accent); color: #fff; background: #16304a; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .kv { display: grid; grid-template-columns: 96px 1fr 44px; gap: 4px 8px; align-items: center; font-size: 11.5px; color: var(--muted); }
+  .kv output { font-family: ui-monospace, monospace; color: var(--ink); font-size: 11px; text-align: right; }
+  #log { font: 11px/1.45 ui-monospace, monospace; color: var(--muted); background: #0b0e12; border: 1px solid var(--line); border-radius: 8px; padding: 8px; height: 150px; overflow-y: auto; white-space: pre-wrap; }
+  #view { position: relative; min-width: 0; }
+  #fps { position: absolute; right: 12px; top: 10px; z-index: 5; font: 11px ui-monospace, monospace; color: var(--muted); background: rgba(13,17,22,.7); padding: 3px 7px; border-radius: 6px; }
+  #shot { position: fixed; right: 16px; bottom: 16px; width: 280px; border: 1px solid var(--line); border-radius: 8px; display: none; z-index: 10; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Morph <span>RobotViewer</span></h1>
+  <div class="sub">viewer.js dev page · fixture robot · every API call</div>
+
+  <h2>Robot</h2>
+  <div class="row">
+    <button id="bLoad">Reload (crossfade)</button>
+    <button id="bGhost">Ghost: prev rev</button>
+    <button id="bGhostOff">Ghost off</button>
+    <button id="bFrame">Frame all</button>
+    <button id="bFrameGrip">Frame gripper</button>
+    <button id="bOrbit" class="on">Auto-orbit</button>
+    <button id="bTheme">Light theme</button>
+    <button id="bShot">Snapshot</button>
+  </div>
+
+  <h2>Pose</h2>
+  <div class="row">
+    <button id="bHome">Home</button>
+    <button id="bReady">Ready</button>
+    <button id="bRandom">Random pose</button>
+    <button id="bDemo">Motion demo</button>
+    <button id="bStop">Stop</button>
+  </div>
+  <div class="kv" id="sliders" style="margin-top:8px"></div>
+
+  <h2>Explode</h2>
+  <div class="row"><input id="explode" type="range" min="0" max="1" step="0.01" value="0"></div>
+  <div class="row"><button data-ex="0">0</button><button data-ex="0.35">0.35</button><button data-ex="0.7">0.7</button><button data-ex="1">1</button></div>
+
+  <h2>Assembly steps</h2>
+  <div class="row">
+    <button id="bPrev">‹ Prev</button><button id="bNext">Next ›</button><button id="bAll">All steps</button>
+    <span id="stepLbl" class="sub" style="margin:0"></span>
+  </div>
+
+  <h2>Inspect</h2>
+  <div class="row">
+    <button id="bXray">X-ray</button>
+    <button id="bLabels">Labels</button>
+    <button data-hl='["electronics","pcb","sensor"]'>Electronics</button>
+    <button data-hl='["actuator"]'>Actuators</button>
+    <button data-hl='["pad"]'>Pads</button>
+    <button id="bHlOff">Clear</button>
+  </div>
+
+  <h2>Simulation</h2>
+  <div class="row">
+    <button id="bTraj">Synthetic pick&amp;place</button>
+    <button id="bTrajFx">Fixture sim</button>
+    <button id="bPause">Pause</button>
+    <button id="bLoop" class="on">Loop</button>
+  </div>
+  <div class="row" style="margin-top:6px"><input id="scrub" type="range" min="0" max="1" step="0.001" value="0"></div>
+  <div class="sub" id="trajLbl">—</div>
+
+  <h2>Workspace</h2>
+  <div class="row">
+    <button id="bWs">Synthetic workspace</button>
+    <button id="bWsFx">Fixture workspace</button>
+    <button id="bClear">Clear overlays</button>
+  </div>
+
+  <h2>Events</h2>
+  <div id="log"></div>
+</aside>
+<div id="view"><div id="fps"></div></div>
+<img id="shot" alt="snapshot">
+
+<script type="module">
+import { RobotViewer } from './viewer.js';
+
+const P = new URLSearchParams(location.search);
+const ROBOT = P.get('robot') || 'fixtures/robot/robot.json';
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+const log = (s) => { logEl.textContent += s + '\n'; logEl.scrollTop = 1e9; };
+
+const v = window.viewer = new RobotViewer($('view'), {
+  autoOrbit: P.get('orbit') !== '0', intro: P.get('intro') !== '0', theme: P.get('theme') || 'dark',
+  preserveDrawingBuffer: P.get('pdb') === '1',
+});
+v.on('loaded', (e) => log(`loaded ${e.name} · ${e.parts} parts`));
+v.on('step', (e) => { log(`step ${e.index ?? 'all'} · ${e.title}`); $('stepLbl').textContent = e.index ? `${e.index}/${v.steps.length}` : 'all'; });
+v.on('motion', (e) => log(`motion ${e.joint} ${e.range}`));
+v.on('select', (e) => log(e ? `select ${e.part} (${e.kind}, ${e.link})` : 'select none'));
+let lastPhase = '';
+v.on('frame', (e) => {
+  $('scrub').value = e.t / e.duration;
+  $('trajLbl').textContent = `${e.phase || '—'} · ${e.t.toFixed(2)} / ${e.duration.toFixed(2)} s · grip ${(e.grip_n || 0).toFixed(2)} N`;
+  if (e.phase !== lastPhase) { lastPhase = e.phase; log(`frame phase ${e.phase} @ ${e.t.toFixed(2)}s`); }
+});
+
+await v.load(ROBOT);
+const json = v.robot;
+const meta = json.meta || {};
+
+// ------------------------------------------------ joint sliders
+const sl = $('sliders');
+const sliders = {};
+for (const j of v.jointInfo) {
+  const lab = document.createElement('label'); lab.textContent = j.name;
+  const r = document.createElement('input'); r.type = 'range'; r.min = j.lower; r.max = j.upper; r.step = (j.upper - j.lower) / 400; r.value = j.value;
+  const o = document.createElement('output'); o.textContent = (+j.value).toFixed(2);
+  r.oninput = () => { v.stopMotion({ home: false }); v.setJoints({ [j.name]: +r.value }); o.textContent = (+r.value).toFixed(2); };
+  sl.append(lab, r, o);
+  sliders[j.name] = { r, o };
+}
+setInterval(() => { const q = v.getJoints(); for (const [n, s] of Object.entries(sliders)) if (document.activeElement !== s.r && Number.isFinite(q[n])) { s.r.value = q[n]; s.o.textContent = q[n].toFixed(2); } }, 120);
+
+// ------------------------------------------------ synthetic trajectory (pick & place from the joint list)
+const arm = meta.arm_joints || v.jointInfo.filter((j) => j.type === 'revolute').map((j) => j.name);
+const gripJ = meta.gripper_joint || 'gripper';
+const home = Object.assign({}, meta.home || {});
+function tcpPos(q) { const M = v.fk(q, meta.tcp_link || 'tcp'); return [M.elements[12], M.elements[13], M.elements[14]]; }
+// tiny IK: base yaw from atan2, shoulder/elbow by damped Gauss-Newton, wrist pitch keeps the gripper pointing down
+function ikDown(target, seed = home) {
+  const [j1, j2, j3, j4] = arm;
+  const q = Object.assign({}, seed);
+  q[j1] = Math.atan2(target[1], target[0]);
+  const err = (qq) => { qq[j4] = Math.PI - qq[j2] - qq[j3]; const p = tcpPos(qq); return [p[0] - target[0], p[1] - target[1], p[2] - target[2]]; };
+  for (let it = 0; it < 60; it++) {
+    const e0 = err(q);
+    if (Math.hypot(...e0) < 0.05) break;
+    const J = [j2, j3].map((n) => { const qq = Object.assign({}, q); qq[n] += 1e-4; const e1 = err(qq); return e1.map((x, i) => (x - e0[i]) / 1e-4); });
+    // solve (J^T J + lambda I) dx = -J^T e
+    const a = J[0].reduce((s, x) => s + x * x, 0) + 1e-3, b = J[0].reduce((s, x, i) => s + x * J[1][i], 0), d = J[1].reduce((s, x) => s + x * x, 0) + 1e-3;
+    const g0 = -J[0].reduce((s, x, i) => s + x * e0[i], 0), g1 = -J[1].reduce((s, x, i) => s + x * e0[i], 0);
+    const det = a * d - b * b;
+    q[j2] += Math.max(-0.2, Math.min(0.2, (d * g0 - b * g1) / det));
+    q[j3] += Math.max(-0.2, Math.min(0.2, (a * g1 - b * g0) / det));
+  }
+  err(q);
+  return q;
+}
+window.makeTrajectory = function makeTrajectory() {
+  const egg = { shape: 'egg', diameter_mm: 44, length_mm: 57, color: '#f3e3c8' };
+  const zc = egg.length_mm / 2;
+  const pick = [205, -95, zc], place = [150, 165, zc];
+  const up = (p) => [p[0], p[1], p[2] + 75];
+  const g = v.jointInfo.find((j) => j.name === gripJ) || { upper: 14 };
+  const open = g.upper, closed = -1.2;
+  const qPrePick = ikDown(up(pick)), qPick = ikDown(pick, qPrePick), qPrePlace = ikDown(up(place)), qPlace = ikDown(place, qPrePlace);
+  const K = [   // [t, q, gripper, phase]
+    [0.0, home, home[gripJ] ?? 10, 'approach'], [1.5, qPrePick, open, 'approach'], [2.5, qPick, open, 'approach'],
+    [3.1, qPick, closed, 'grasp'], [3.3, qPick, closed, 'grasp'], [4.2, qPrePick, closed, 'lift'], [5.8, qPrePlace, closed, 'move'],
+    [6.7, qPlace, closed, 'place'], [7.3, qPlace, open, 'release'], [8.1, qPrePlace, open, 'retreat'], [9.6, home, home[gripJ] ?? 10, 'retreat'],
+  ];
+  const names = [...arm, gripJ];
+  const frames = [];
+  const dt = 1 / 30;
+  const ss = (x) => x * x * (3 - 2 * x);
+  for (let t = 0; t <= K[K.length - 1][0] + 1e-9; t += dt) {
+    let i = 0; while (i < K.length - 2 && t > K[i + 1][0]) i++;
+    const [ta, qa, ga, ph] = K[i], [tb, qb, gb] = K[i + 1];
+    const k = ss(Math.min(1, Math.max(0, (t - ta) / (tb - ta))));
+    const q = {}; for (const n of arm) q[n] = qa[n] + (qb[n] - qa[n]) * k; q[gripJ] = ga + (gb - ga) * k;
+    const carrying = t >= 3.1 && t < 7.3;
+    const gripN = q[gripJ] < 0 ? Math.min(3.2, -q[gripJ] / 1.2 * 3.2) : 0;
+    let obj = pick;
+    if (t >= 3.3 && t < 7.0) obj = tcpPos(q); else if (t >= 7.0) obj = place;
+    const tau = [0.02 * Math.sin(t * 2), -0.35 - 0.8 * Math.sin(q[arm[1]]) - (carrying ? 0.15 : 0), -0.25 - 0.3 * Math.sin(q[arm[1]] + q[arm[2]]), -0.03, 0];
+    frames.push({ t: +t.toFixed(4), q: names.map((n) => q[n]), obj: [obj[0], obj[1], obj[2], 1, 0, 0, 0], tau, grip_n: carrying ? gripN : 0, phase: ph });
+  }
+  return { scenario: 'pick_place', title: 'Pick & place: raw egg (synthetic)', dt, joints: names, frames,
+    markers: [{ t: 3.1, label: 'grasp' }, { t: 7.3, label: 'release' }], object: egg,
+    targets: { pick, place }, metrics: { success: true } };
+};
+window.makeWorkspace = function makeWorkspace(n = 2600) {
+  const pts = [];
+  const info = Object.fromEntries(v.jointInfo.map((j) => [j.name, j]));
+  let guard = 0;
+  while (pts.length < n && guard++ < n * 6) {
+    const q = Object.assign({}, home);
+    for (const nme of arm.slice(0, 4)) { const j = info[nme]; q[nme] = j.lower + Math.random() * (j.upper - j.lower); }
+    const [x, y, z] = tcpPos(q);
+    if (z > 5) pts.push([x, y, z]);
+  }
+  return pts;
+};
+
+// ------------------------------------------------ wiring
+const toggle = (btn, on) => btn.classList.toggle('on', on);
+$('bLoad').onclick = () => v.load(ROBOT + (ROBOT.includes('?') ? '&' : '?') + 'r=' + Date.now());
+$('bGhost').onclick = async () => {
+  // previous revision: same robot with a 22 mm shorter upper arm and forearm
+  const prev = JSON.parse(JSON.stringify(json));
+  for (const j of prev.joints) if (j.name === 'j3_elbow' || j.name === 'j4_wrist_pitch') j.origin[11] -= 22;
+  prev.glbUrl = new URL(json.glb || 'robot.glb', new URL(ROBOT, location.href)).href;
+  await v.setGhost(prev);
+  log('ghost on (shorter links)');
+};
+$('bGhostOff').onclick = () => v.setGhost(null);
+$('bFrame').onclick = () => v.frame();
+$('bFrameGrip').onclick = () => v.frame(['gripper_base', 'jaw_left', 'jaw_right', 'pinion']);
+$('bOrbit').onclick = (e) => { const on = !e.target.classList.contains('on'); v.setAutoOrbit(on); toggle(e.target, on); };
+$('bTheme').onclick = (e) => { const light = !e.target.classList.contains('on'); v.setTheme(light ? 'light' : 'dark'); toggle(e.target, light); };
+$('bShot').onclick = () => { const img = $('shot'); img.src = v.snapshot(); img.style.display = 'block'; setTimeout(() => { img.style.display = 'none'; }, 2500); };
+$('bHome').onclick = () => { v.stopMotion({ home: false }); v.animateTo(meta.home || {}); };
+$('bReady').onclick = () => { v.stopMotion({ home: false }); v.animateTo(meta.ready || {}); };
+$('bRandom').onclick = () => {
+  v.stopMotion({ home: false });
+  const q = {}; for (const j of v.jointInfo) q[j.name] = j.lower + (0.25 + Math.random() * 0.5) * (j.upper - j.lower);
+  v.animateTo(q, 1100);
+};
+$('bDemo').onclick = () => v.playMotionDemo();
+$('bStop').onclick = () => v.stopMotion();
+$('explode').oninput = (e) => v.setExplode(+e.target.value);
+document.querySelectorAll('[data-ex]').forEach((b) => { b.onclick = () => { v.setExplode(+b.dataset.ex); $('explode').value = b.dataset.ex; }; });
+let step = 0;
+const nSteps = () => (v.steps.length ? Math.max(...v.steps.map((s) => s.index)) : 0);
+$('bNext').onclick = () => { step = Math.min(nSteps(), step + 1); v.showStep(step); };
+$('bPrev').onclick = () => { step = Math.max(1, step - 1); v.showStep(step); };
+$('bAll').onclick = () => { step = 0; v.showAllSteps(); };
+let xray = false, labels = false;
+$('bXray').onclick = (e) => { xray = !xray; v.setXray(xray); toggle(e.target, xray); };
+$('bLabels').onclick = (e) => { labels = !labels; v.setLabels(labels); toggle(e.target, labels); };
+document.querySelectorAll('[data-hl]').forEach((b) => { b.onclick = () => { const names = v.highlight(JSON.parse(b.dataset.hl)); log(`highlight ${names.length} parts`); }; });
+$('bHlOff').onclick = () => v.highlight(null);
+let loop = true, synth = null;
+$('bTraj').onclick = () => { synth = synth || window.makeTrajectory(); v.playTrajectory(synth, { loop }); };
+$('bTrajFx').onclick = async () => { const t = await (await fetch('fixtures/sims/sim_pick_place.json')).json(); v.playTrajectory(t, { loop }); };
+$('bPause').onclick = () => (v.playing ? v.pause() : v.resume());
+$('bLoop').onclick = (e) => { loop = !loop; toggle(e.target, loop); };
+$('scrub').oninput = (e) => { v.pause(); v.setTime(+e.target.value * v.duration); };
+$('bWs').onclick = () => v.showWorkspace(window.makeWorkspace());
+$('bWsFx').onclick = async () => { const t = await (await fetch('fixtures/sims/sim_workspace.json')).json(); v.showWorkspace(t.points); };
+$('bClear').onclick = () => v.clearOverlays();
+
+// fps meter
+let frames = 0, t0 = performance.now();
+(function tick() { frames++; const t = performance.now(); if (t - t0 > 1000) { $('fps').textContent = `${Math.round(frames * 1000 / (t - t0))} fps`; frames = 0; t0 = t; } requestAnimationFrame(tick); })();
+
+window.ready = true;
+document.title = 'ready';
+</script>
+</body>
+</html>

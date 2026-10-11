@@ -4,53 +4,101 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Morph Studio</title>
-<link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%234aa3ff%22/%3E%3C/svg%3E">
+<meta name="description" content="Generate and edit a whole robot: CAD, simulation, electronics, manufacturing, sourcing and assembly in one place.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Cdefs%3E%3ClinearGradient id=%22g%22 x1=%220%22 y1=%220%22 x2=%221%22 y2=%221%22%3E%3Cstop offset=%220%22 stop-color=%22%237091ff%22/%3E%3Cstop offset=%221%22 stop-color=%22%23a78bfa%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22url(%23g)%22/%3E%3Cpath d=%22M8 22V10l8 7 8-7v12%22 fill=%22none%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+<style>html,body{background:#08090c;margin:0;height:100%}body{opacity:0}</style>
+<script>
+  // The Studio server serves this page at / with assets under /static/; plain static hosting
+  // (python -m http.server in the static dir, used for ?fixture=1) serves them next to the page.
+  (function () {
+    var bases = /\/static\//.test(location.pathname) ? [''] : ['/static/', ''];
+    function css(i) {
+      var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = bases[i] + 'style.css';
+      l.onerror = function () { l.remove(); if (i + 1 < bases.length) css(i + 1); };
+      document.head.appendChild(l);
+    }
+    function js(i) {
+      var s = document.createElement('script'); s.type = 'module'; s.src = bases[i] + 'app.js';
+      s.onerror = function () { s.remove(); if (i + 1 < bases.length) js(i + 1); };
+      document.body.appendChild(s);
+    }
+    css(0);
+    document.addEventListener('DOMContentLoaded', function () { js(0); });
+  })();
+</script>
 </head>
 <body>
-<header>
-  <div class="brand">Morph <span>Studio</span></div>
-  <div id="project" class="muted"></div>
-  <div id="revs" class="revs"></div>
-  <label class="toggle"><input type="checkbox" id="tour" checked> auto-tour changes</label>
-</header>
-<main>
-  <section id="chat">
-    <div id="messages"></div>
-    <div id="suggest"></div>
-    <form id="form"><input id="input" autocomplete="off" placeholder="Ask for a change… e.g. “make it work for a strawberry”"><button>Send</button></form>
-  </section>
-
-  <section id="center">
-    <div id="pipeline"></div>
-    <nav id="tabs">
-      <button data-tab="cad" class="on">3D design</button>
-      <button data-tab="board">Electronics + PCB</button>
-      <button data-tab="fab">Fab</button>
-      <button data-tab="fw">Firmware</button>
-      <button data-tab="sim">Simulation</button>
-    </nav>
-    <div id="views">
-      <div class="view on" data-view="cad"><div id="cad3d" class="three"></div><div class="legend" id="cadLegend"></div></div>
-      <div class="view" data-view="board"><div id="boardWrap"><svg id="board"></svg></div><div class="legend" id="boardLegend"></div></div>
-      <div class="view" data-view="fab"><div id="fab3d" class="three"></div><div class="legend" id="fabLegend"></div></div>
-      <div class="view" data-view="fw"><div id="fwHead" class="legend static"></div><pre id="fw"></pre></div>
-      <div class="view" data-view="sim"><div id="simWrap"></div></div>
+<div id="app">
+  <header id="top">
+    <div class="brand">
+      <span class="logo"><svg viewBox="0 0 24 24"><path d="M5 18V6l7 6 7-6v12"/></svg></span>
+      <span>Morph <span class="sub">Studio</span></span>
     </div>
-  </section>
+    <div class="crumb"><span class="sep">/</span><span class="proj"><i></i><span id="project">loading…</span></span></div>
+    <div id="revs" class="revs"></div>
+    <div class="grow"></div>
+    <div id="tourPill" class="tourpill"></div>
+    <div id="badges" class="badges"></div>
+    <label class="tourctl" title="After each change, walk through the views that were regenerated">
+      <span class="switch"><input type="checkbox" id="tour" checked><i></i></span>Auto-tour
+    </label>
+    <div id="conn" class="conn"><i></i><span>Connecting</span></div>
+  </header>
 
-  <aside id="inspector">
-    <h3>What changed</h3>
-    <div id="changes" class="muted">—</div>
-    <h3>Grip-force window</h3>
-    <div id="window"></div>
-    <h3>Predicted</h3>
-    <table id="metrics"></table>
-    <h3>Electronics</h3>
-    <div id="elec"></div>
-    <div id="issues"></div>
-  </aside>
-</main>
-<script type="module" src="/static/app.js"></script>
+  <main id="main">
+    <aside id="left">
+      <section id="chat">
+        <div class="panel-h"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>Design assistant<span class="grow"></span><span class="sub">chat to change anything</span></div>
+        <div id="messages"></div>
+        <div id="suggest"></div>
+        <form id="form" autocomplete="off">
+          <textarea id="input" rows="1" placeholder="Ask for a change, e.g. “make it 6-DOF”"></textarea>
+          <button id="send" type="submit" title="Send (Enter)"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </form>
+      </section>
+      <section id="params">
+        <button class="panel-h" id="paramsToggle" type="button">
+          <svg class="i" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+          Parameters <span class="count" id="paramsCount">–</span>
+          <span class="tag acc pend" id="paramsPend"></span>
+          <svg class="i chev" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+        </button>
+        <div id="paramsBody"></div>
+        <div id="paramsBar">
+          <span class="n" id="paramsN"></span><span class="grow"></span>
+          <button class="btn ghost" id="paramsReset" type="button">Reset</button>
+          <button class="btn primary" id="paramsApply" type="button"><svg class="i sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Regenerate</button>
+        </div>
+      </section>
+    </aside>
+
+    <section id="center">
+      <div id="pipeline"></div>
+      <nav id="tabs">
+        <button class="tab on" data-tab="robot"><svg class="i" viewBox="0 0 24 24"><path d="M12 2l8.5 5v10L12 22l-8.5-5V7z"/><path d="M12 22V12M20.5 7L12 12 3.5 7"/></svg>Robot<i class="nb"></i></button>
+        <button class="tab" data-tab="sim"><svg class="i" viewBox="0 0 24 24"><path d="M3 12h3l3-8 4 16 3-8h5"/></svg>Simulation<i class="nb"></i></button>
+        <button class="tab" data-tab="elec"><svg class="i" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>Electronics<i class="nb"></i></button>
+        <button class="tab" data-tab="mfg"><svg class="i" viewBox="0 0 24 24"><path d="M2 20h20M4 20V10l5 3V10l5 3V6l6 4v10"/></svg>Manufacturing<i class="nb"></i></button>
+        <button class="tab" data-tab="asm"><svg class="i" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>Assembly<i class="nb"></i></button>
+        <button class="tab" data-tab="bom"><svg class="i" viewBox="0 0 24 24"><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6"/><circle cx="10" cy="20.5" r="1"/><circle cx="18" cy="20.5" r="1"/></svg>BOM &amp; Sourcing<i class="nb"></i></button>
+        <div class="tinfo" id="tabsInfo"></div>
+      </nav>
+      <div id="views">
+        <div class="view on" data-view="robot"></div>
+        <div class="view" data-view="sim"></div>
+        <div class="view" data-view="elec"></div>
+        <div class="view" data-view="mfg"></div>
+        <div class="view" data-view="asm"></div>
+        <div class="view" data-view="bom"></div>
+      </div>
+    </section>
+
+    <aside id="inspector"><div class="in" id="insp"></div></aside>
+  </main>
+</div>
+<div id="viewerHost"></div>
+<div id="toast"></div>
 </body>
 </html>
