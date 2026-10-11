@@ -2,6 +2,7 @@
 
 Morph designs and programs. After a revision is built, `morph source` asks Darwin Search
 (no account needed) for:
+  - quote and order agents that work for any part (part-lookup, store_buy, ...)
   - every purchased BOM line: an agent that can quote and sell it (servo, MCU, FSR, supply...)
   - engineering handoffs: PCB fab from the Gerbers, printing the STLs, a design review
 
@@ -41,7 +42,17 @@ PREFERRED = {
     "pcb_fab": QUOTE,
     "print": QUOTE,
     "design_review": {"cmuzr1sh100ib06pbyy3kq62p": "Design Review Orchestrator"},
+    # Generic across parts, so looked up once per run (ROLES) rather than per BOM line.
+    # part-lookup: live stock + price breaks across DigiKey/Mouser/Farnell/RS/Arrow from an MPN,
+    #   $0.04 USDC per call via x402 (a Darwin payment request the user approves).
+    "quote": {"cmud0999x004b09gml2r8q5zf": "part-lookup",
+              "cmv04e1l1007f06mh94n2o7m0": "Get component marketplace products"},  # ElectroGen kits
+    # store_buy hands back a Stripe checkout_url for the human to pay; Quick buy is instant checkout.
+    "order": {"cmudvaa8f01dl0agm69qoso01": "store_buy", "cmudseo52018i0agmp89pntne": "Quick buy"},
 }
+ROLES = [("quote", "look up live distributor stock and price for a manufacturer part number"),  # part-lookup
+         ("quote", "get a price quote for electronic components"),  # kits / modules
+         ("order", "buy and checkout a product online for me")]
 
 
 def _cache_path(query: str) -> str:
@@ -124,7 +135,8 @@ def source(project, rev: str, max_results: int = 3, workers: int = 4) -> dict:
     """Shortlist Darwin agents for every purchased part and handoff of `rev`; log each lookup."""
     results = project.load_results(rev)
     rev_dir = project.rev_dir(rev)
-    tasks = [("part", r["item"], part_query(r["item"]), []) for r in results.get("bom") or [] if is_purchased(r)]
+    tasks = [(kind, kind, q, []) for kind, q in ROLES]
+    tasks += [("part", r["item"], part_query(r["item"]), []) for r in results.get("bom") or [] if is_purchased(r)]
     tasks += [(kind, kind, q, files) for kind, q, files in handoffs(rev_dir, results)]
 
     with ThreadPoolExecutor(max_workers=workers) as pool:

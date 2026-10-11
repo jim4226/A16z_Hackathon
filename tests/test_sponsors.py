@@ -90,6 +90,7 @@ def test_darwin_source_shortlists_parts_and_reports_gaps(tmp_path, monkeypatch):
     assert ("Interlink FSR 402", "no_agent") in gaps
     assert ("pcb_fab", "darwin_unavailable") in gaps
     assert items["Arduino Nano (ATmega328P)"]["gap"] is None
+    assert [r["kind"] for r in rep["rows"][:3]] == ["quote", "quote", "order"]
     assert items["TowerPro MG996R (standard, metal gear)"]["readiness_verified"] is False
     assert items["Arduino Nano (ATmega328P)"]["readiness_verified"] is True
     nano = items["Arduino Nano (ATmega328P)"]
