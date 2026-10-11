@@ -170,7 +170,7 @@ function patchMaterial(mat, u) {
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       {
         float mvFr = 1.0 - abs(dot(normalize(vViewPosition), normal));
-        totalEmissiveRadiance += uGlowColor * uGlow * (0.22 + 1.5 * pow(mvFr, 2.2));
+        totalEmissiveRadiance += uGlowColor * uGlow * (0.14 + 1.7 * pow(mvFr, 2.0));
         diffuseColor.a = clamp(diffuseColor.a + uFres * pow(mvFr, 2.4), 0.0, 1.0);
       }`);
   };
@@ -493,7 +493,7 @@ export class RobotViewer {
     injectCSS();
     this.container = container;
     this.opts = Object.assign({
-      theme: 'dark', autoOrbit: true, idleResumeMs: 9000, orbitSpeed: 0.55, edges: true, shadows: true, hud: true,
+      theme: 'dark', autoOrbit: true, idleResumeMs: 9000, orbitSpeed: 0.75, edges: true, shadows: true, hud: true,
       intro: true, pixelRatio: Math.min(window.devicePixelRatio || 1, 2), fov: 30, highlightColor: HOT, stepColor: HOT,
       preserveDrawingBuffer: false,
     }, opts);
@@ -531,7 +531,7 @@ export class RobotViewer {
 
     // ---- renderer
     const r = this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance',
-      preserveDrawingBuffer: !!this.opts.preserveDrawingBuffer });
+      alpha: this.opts.background === 'transparent', preserveDrawingBuffer: !!this.opts.preserveDrawingBuffer });
     r.setPixelRatio(this.opts.pixelRatio);
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
@@ -557,8 +557,8 @@ export class RobotViewer {
     this._envTex = pmrem.fromScene(new RoomEnvironment(r), 0.04).texture;
     scene.environment = this._envTex;
     pmrem.dispose();
-    this._bgTex = gradientTexture(this.theme.bgInner, this.theme.bgOuter);
-    scene.background = this._bgTex;
+    this._bgTex = this._makeBg();
+    scene.background = this.opts.background === 'transparent' ? null : this._bgTex;
 
     this.camera = new THREE.PerspectiveCamera(this.opts.fov, 1, 2, 60000);
     this.camera.position.set(500, 380, 900);
@@ -579,6 +579,7 @@ export class RobotViewer {
     this._idleT = 0;
     ctl.addEventListener('start', () => {
       this._userActive = true;
+      this._overlayFramed = false;
       this._orbitK = 0;
       this._cancelTween('camera');
       this._idleT = performance.now();
@@ -694,7 +695,7 @@ export class RobotViewer {
   _fitStage(R, footprint, reach) {
     const ext = Math.max(R, reach) * 1.25;
     this._floor.scale.set(ext * 9, ext * 9, 1);
-    this._floorU.uRadius.value = ext * 2.1;
+    this._floorU.uRadius.value = ext * 1.8;
     const nice = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
     const cell = nice.find((n) => n >= R / 10) || 1000;
     this._floorU.uCell.value = cell;
@@ -704,7 +705,7 @@ export class RobotViewer {
     const tgt = new THREE.Vector3(0, R * 0.55, 0);
     const key = this._key;
     key.target.position.copy(tgt);
-    key.position.copy(tgt).add(new THREE.Vector3(-0.55, 1.15, 0.75).normalize().multiplyScalar(R * 4));
+    key.position.copy(tgt).add(new THREE.Vector3(-0.5, 1.7, 0.55).normalize().multiplyScalar(R * 4));
     const sc = key.shadow.camera;
     sc.left = sc.bottom = -ext * 1.25;
     sc.right = sc.top = ext * 1.25;
@@ -730,7 +731,7 @@ export class RobotViewer {
     this.opts.theme = name;
     this.container.classList.toggle('mv-light', name === 'light');
     this._bgTex.dispose();
-    this._bgTex = gradientTexture(th.bgInner, th.bgOuter);
+    this._bgTex = this._makeBg();
     if (this.scene.background) this.scene.background = this._bgTex;
     this._floorU.uColor.value.set(th.floor);
     this._floorU.uGrid.value.set(th.grid);
@@ -739,6 +740,13 @@ export class RobotViewer {
     this._blob.material.opacity = th.contact;
     this.renderer.toneMappingExposure = this.opts.exposure ?? th.exposure;
     this._dirty = true;
+  }
+
+  _makeBg() {
+    const b = this.opts.background;
+    if (Array.isArray(b) && b.length >= 2) return gradientTexture(b[0], b[1]);
+    if (typeof b === 'string' && b !== 'transparent') return gradientTexture(b, b);
+    return gradientTexture(this.theme.bgInner, this.theme.bgOuter);
   }
 
   setAutoOrbit(on) { this._orbitOn = !!on; if (!on) this._orbitK = 0; this._dirty = true; }
@@ -1100,7 +1108,13 @@ export class RobotViewer {
       const t = new THREE.Vector3(...step.camera.target).applyMatrix4(this.robotFrame.matrixWorld);
       this._flyTo(t, step.camera.dist || R * 1.6, null, animate ? 1000 : 0);
     } else if (names && names.length) {
-      this.frame(names, { minRadius: R * 0.38, ms: animate ? 1000 : 0, atRest: true });
+      // frame the partial assembly; zoom onto the new parts only when they are small in comparison
+      const S = this._selectionBox(names, { atRest: true }).getBoundingSphere(new THREE.Sphere());
+      const U = this._selectionBox(null, { atRest: true }).getBoundingSphere(new THREE.Sphere());
+      if (S.radius > 0 && S.radius < U.radius * 0.5) {
+        const c = U.center.clone().lerp(S.center, 0.8);
+        this._flyTo(c, this._fitDistance(Math.max(S.radius * 1.7, R * 0.42)), null, animate ? 1000 : 0);
+      } else this.frame(null, { ms: animate ? 1000 : 0, atRest: true, minRadius: R * 0.3 });
     } else {
       this.frame(null, { ms: animate ? 1000 : 0 });
     }
@@ -1223,6 +1237,7 @@ export class RobotViewer {
     el.querySelector('span').textContent = sub;
     const obj = new CSS2DObject(el);
     obj.center.set(0, 0);
+    obj.renderOrder = 10;   // callouts stack above trajectory / workspace tags
     return { el, obj, pill: el.querySelector('.mv-pill'), lead: el.querySelector('.mv-lead'), side, w: 0, h: 0 };
   }
 
@@ -1233,7 +1248,7 @@ export class RobotViewer {
     // actuators: one per actuated joint, anchored on the joint axis
     for (const j of model.joints) {
       if (!j.actuator || j.mimic || j.type === 'fixed') continue;
-      const eff = Number.isFinite(j.effort) && j.effort > 0 ? (j.type === 'prismatic' ? ` · ${j.effort} N·m` : ` · ${j.effort} N·m`) : '';
+      const eff = Number.isFinite(j.effort) && j.effort > 0 ? ` · ${+j.effort.toFixed(2)} ${j.type === 'prismatic' ? 'N' : 'N·m'}` : '';
       const L = this._makeLabel(prettyJoint(j.name), `${pretty(j.actuator)}${eff}`, ACCENT, 1);
       if (j.type === 'prismatic') {
         const sub = model.subtreeLinks(j.child);
@@ -1330,10 +1345,13 @@ export class RobotViewer {
   }
 
   // ------------------------------------------------------------ trajectory playback
-  playTrajectory(traj, { loop = false, speed = 1, onFrame = null } = {}) {
+  playTrajectory(traj, { loop = false, speed = 1, onFrame = null, frame = true } = {}) {
     if (!traj || !Array.isArray(traj.frames) || !traj.frames.length) return Promise.resolve(false);
     this._stopMotionNow();
-    if (!this._traj || this._traj.src !== traj) this._buildTraj(traj);
+    if (!this._traj || this._traj.src !== traj) {
+      this._buildTraj(traj);
+      if (frame && this._traj) this._frameTraj();
+    }
     const T = this._traj;
     if (!T) return Promise.resolve(false);
     T.loop = loop; T.speed = speed; T.onFrame = onFrame;
@@ -1495,6 +1513,18 @@ export class RobotViewer {
     T.trailR = Math.max(1.4, model.R * 0.006);
   }
 
+  _frameTraj() {
+    const T = this._traj;
+    if (!T || !this.model) return;
+    const box = this._robotBox();
+    for (const p of T.tcp) box.expandByPoint(p);
+    const tg = T.src.targets || {};
+    for (const k of ['pick', 'place']) if (Array.isArray(tg[k])) box.expandByPoint(_v1.set(tg[k][0], tg[k][1], tg[k][2] || 0));
+    box.expandByPoint(_v1.set(box.min.x, box.min.y, 0));
+    this.frameBox(box, { ms: 1100, tight: 0.92 });
+    this._overlayFramed = true;
+  }
+
   _clearTraj() {
     const T = this._traj;
     if (!T) return;
@@ -1571,7 +1601,7 @@ export class RobotViewer {
   }
 
   // ------------------------------------------------------------ workspace
-  showWorkspace(points, { shell = true, pointSize = null } = {}) {
+  showWorkspace(points, { shell = true, pointSize = null, frame = true } = {}) {
     this._clearWorkspace();
     if (!points || !points.length) return;
     const n = points.length;
@@ -1591,9 +1621,9 @@ export class RobotViewer {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
     const R = this.model ? this.model.R : 300;
-    const size = pointSize || clamp(Math.cbrt((Math.PI * 4 / 3 * Math.pow(rmax, 3)) / n) * 0.42, 2.5, R * 0.03);
+    const size = pointSize || clamp(Math.cbrt((Math.PI * 4 / 3 * Math.pow(rmax, 3)) / n) * 0.2, 2, R * 0.014);
     const ws = this._ws = { group: new THREE.Group(), u: {
-      uSize: { value: size }, uScale: { value: 1 }, uReveal: { value: 0 }, uZmin: { value: zmin }, uZmax: { value: zmax }, uOpacity: { value: 0.9 } } };
+      uSize: { value: size }, uScale: { value: 1 }, uReveal: { value: 0 }, uZmin: { value: zmin }, uZmax: { value: zmax }, uOpacity: { value: 0.85 } } };
     ws.group.name = 'workspace';
     const mat = new THREE.ShaderMaterial({
       uniforms: ws.u, transparent: true, depthWrite: false,
@@ -1641,6 +1671,12 @@ export class RobotViewer {
     requestAnimationFrame(() => { el.style.opacity = '1'; });
     this.overlays.add(ws.group);
     this._resizeOverlays();
+    if (frame) {
+      const box = new THREE.Box3().setFromBufferAttribute(g.attributes.position).union(this._robotBox());
+      box.expandByPoint(_v1.set(box.min.x, box.min.y, 0));
+      this.frameBox(box, { ms: 1200, tight: 0.8 });
+      this._overlayFramed = true;
+    }
     this._tween('ws', 1500, Ease.inOutSine, (k) => {
       ws.u.uReveal.value = k;
       if (ws.shellU) ws.shellU.uOpacity.value = clamp(k * 1.4 - 0.4, 0, 1);
@@ -1651,30 +1687,54 @@ export class RobotViewer {
   }
 
   _buildShell(points, ws, zmin, zmax) {
-    // cylindrical bins -> max radius per (azimuth, height): a cheap outer envelope surface
-    const A = 48, Hn = 18;
-    const rmax = new Float32Array(A * Hn).fill(-1);
+    // cylindrical bins -> outer radius per (azimuth, height): a cheap, smooth envelope surface
+    const A = 40, Hn = 14;
+    const N = A * Hn;
+    const rmax = new Float32Array(N).fill(-1), cnt = new Uint16Array(N);
     for (const p of points) {
       const a = Math.floor(((Math.atan2(p[1], p[0]) + Math.PI) / (2 * Math.PI)) * A) % A;
       const h = Math.min(Hn - 1, Math.floor((p[2] - zmin) / Math.max(1, zmax - zmin) * Hn));
       const r = Math.hypot(p[0], p[1]);
-      if (r > rmax[a * Hn + h]) rmax[a * Hn + h] = r;
+      const i = a * Hn + h;
+      cnt[i]++;
+      if (r > rmax[i]) rmax[i] = r;
     }
-    // light smoothing (max-preserving average with neighbours)
-    const sm = new Float32Array(A * Hn).fill(-1);
-    for (let a = 0; a < A; a++) for (let h = 0; h < Hn; h++) {
-      if (rmax[a * Hn + h] < 0) continue;
-      let s = 0, w = 0;
-      for (let da = -1; da <= 1; da++) for (let dh = -1; dh <= 1; dh++) {
-        const aa = (a + da + A) % A, hh = h + dh;
-        if (hh < 0 || hh >= Hn) continue;
-        const v = rmax[aa * Hn + hh];
-        if (v < 0) continue;
-        const ww = (da === 0 && dh === 0) ? 2 : 1;
-        s += v * ww; w += ww;
+    for (let i = 0; i < N; i++) if (cnt[i] < 2) rmax[i] = -1;
+    // azimuth coverage: an arm with limited base yaw leaves a gap behind it
+    const colOk = new Uint8Array(A);
+    for (let a = 0; a < A; a++) { let k = 0; for (let h = 0; h < Hn; h++) if (rmax[a * Hn + h] > 0) k++; colOk[a] = k >= Hn * 0.3 ? 1 : 0; }
+    // fill holes inside each covered column, then smooth (3 passes, wrap in azimuth)
+    let cur = rmax;
+    for (let a = 0; a < A; a++) {
+      if (!colOk[a]) { for (let h = 0; h < Hn; h++) cur[a * Hn + h] = -1; continue; }
+      let lo = 0, hi = Hn - 1;
+      while (lo < Hn && cur[a * Hn + lo] < 0) lo++;
+      while (hi >= 0 && cur[a * Hn + hi] < 0) hi--;
+      for (let h = lo + 1; h < hi; h++) {
+        if (cur[a * Hn + h] >= 0) continue;
+        let u = h + 1; while (u < hi && cur[a * Hn + u] < 0) u++;
+        cur[a * Hn + h] = (cur[a * Hn + h - 1] + cur[a * Hn + u]) / 2;
       }
-      sm[a * Hn + h] = Math.max(s / w, rmax[a * Hn + h] * 0.96);
     }
+    for (let pass = 0; pass < 3; pass++) {
+      const nx = new Float32Array(N).fill(-1);
+      for (let a = 0; a < A; a++) for (let h = 0; h < Hn; h++) {
+        const i0 = a * Hn + h;
+        if (cur[i0] < 0) continue;
+        let s = 0, w = 0;
+        for (let da = -1; da <= 1; da++) for (let dh = -1; dh <= 1; dh++) {
+          const hh = h + dh;
+          if (hh < 0 || hh >= Hn) continue;
+          const v = cur[((a + da + A) % A) * Hn + hh];
+          if (v < 0) continue;
+          const ww = (da === 0 && dh === 0) ? 4 : (da === 0 || dh === 0 ? 2 : 1);
+          s += v * ww; w += ww;
+        }
+        nx[i0] = s / w;
+      }
+      cur = nx;
+    }
+    const sm = cur;
     const verts = [], idx = [], vid = new Int32Array(A * Hn).fill(-1);
     for (let a = 0; a < A; a++) for (let h = 0; h < Hn; h++) {
       const r = sm[a * Hn + h];
@@ -1735,9 +1795,13 @@ export class RobotViewer {
     this._dirty = true;
   }
 
-  clearOverlays() {
+  clearOverlays({ reframe = true } = {}) {
+    const had = !!(this._ws || this._traj);
     this._clearWorkspace();
     this._clearTraj();
+    // the overlay had pulled the camera back; return to the robot
+    if (reframe && had && this._overlayFramed && !this._userActive) this.frame(null, { ms: 900 });
+    this._overlayFramed = false;
     this._dirty = true;
   }
 
@@ -1784,7 +1848,7 @@ export class RobotViewer {
     const match = this._matcher(selector);
     const off = new THREE.Vector3();
     for (const r of this.model.parts) {
-      if (match ? !match(r) : (r.hidden || r.alphaStep < 0.05)) continue;
+      if (match ? !match(r) : (r._stepState === 'hidden' || (r._stepState == null && r.alphaStep < 0.05))) continue;
       off.copy(r.basePos).addScaledVector(r.explode, this._explode.target);
       if (!atRest) off.add(r.stepOffset);
       box.union(this.model.partBox(r, _box2, off));
@@ -1803,12 +1867,26 @@ export class RobotViewer {
     return this._flyTo(sphere.center, dist, dir, ms);
   }
 
+  // frame an arbitrary box given in robot base coordinates (mm, z-up)
+  frameBox(boxRobot, { ms = 900, minRadius = 0, dir = null, tight = 1 } = {}) {
+    if (!boxRobot || boxRobot.isEmpty()) return Promise.resolve(false);
+    const box = boxRobot.clone().applyMatrix4(this.robotFrame.matrixWorld);
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    return this._flyTo(sphere.center, this._fitDistance(Math.max(sphere.radius * tight, minRadius, 10)), dir, ms);
+  }
+
+  _robotBox() {
+    const box = new THREE.Box3();
+    if (this.model) for (const r of this.model.parts) box.union(this.model.partBox(r, _box2));
+    return box;
+  }
+
   _fitDistance(rad) {
     const fov = this.camera.fov * DEG;
     const aspect = this.camera.aspect || 1;
     const fh = rad / Math.sin(fov / 2);
     const fw = rad / Math.sin(Math.atan(Math.tan(fov / 2) * aspect));
-    return Math.max(fh, fw) * 1.08;
+    return Math.max(fh, fw) * (this.opts.fitMargin ?? 1.18);
   }
 
   _flyTo(target, dist, dir = null, ms = 900) {
@@ -1952,9 +2030,12 @@ export class RobotViewer {
     this._raf = requestAnimationFrame(this._loop);
     const dt = clamp((now - this._last) / 1000, 0, 0.1);
     this._last = now;
+    this._lastWall = this._lastWall ?? now;
     this._time += dt;
     if (!this._w || !this._h) return;
     let active = this._runTweens(performance.now());
+    this._wallDt = clamp((now - (this._lastWall ?? now)) / 1000, 0, 0.25);
+    this._lastWall = now;
     active = this._update(dt) || active;
     // auto-orbit: eased in after the intro / after the user has been idle for a while
     const ctl = this.controls;
@@ -1963,7 +2044,7 @@ export class RobotViewer {
       if (idle > (this._idleT ? this.opts.idleResumeMs : 0)) this._orbitK = Math.min(1, this._orbitK + dt * 0.35);
     } else if (this._tweens.has('camera')) this._orbitK = 0;
     ctl.autoRotate = this._orbitOn && this._orbitK > 0;
-    ctl.autoRotateSpeed = this.opts.orbitSpeed * Ease.inOutSine(this._orbitK) * 60;  // OrbitControls uses (2pi/60 * speed) * dt
+    ctl.autoRotateSpeed = this.opts.orbitSpeed * Ease.inOutSine(this._orbitK);  // OrbitControls: 2pi/60 * speed rad/s
     const changed = ctl.update(dt);
     if (active || changed || this._dirty || ctl.autoRotate) {
       this._render();
@@ -1977,7 +2058,7 @@ export class RobotViewer {
     // trajectory clock
     const T = this._traj;
     if (T && T.playing) {
-      T.t += dt * T.speed;
+      T.t += (this._wallDt || dt) * T.speed;
       if (T.t >= T.duration) {
         if (T.loop) T.t %= T.duration;
         else { T.t = T.duration; T.playing = false; T.resolve && T.resolve(true); this._emit('end', { t: T.t }); }
@@ -2066,7 +2147,7 @@ export class RobotViewer {
     for (const r of model.parts) {
       let target = 0, color = null, pulsing = false;
       if (r.hl > 0) { target = 0.85; color = r.hlColor; pulsing = true; }
-      else if (r.stepGlow > 0) { target = 0.9; color = _c1.set(this.opts.stepColor); pulsing = true; }
+      else if (r.stepGlow > 0) { target = 0.75; color = _c1.set(this.opts.stepColor); pulsing = true; }
       else if (r.forceGlow > 0.01) { target = 1.3 * r.forceGlow; color = _c1.set(HOT); }
       else if (r.motionGlow > 0) { target = 0.32; color = _c1.set(ACCENT); }
       else if (xr > 0 && ELEC_KINDS.has(r.kind)) { target = 0.28 * xr; color = _c1.set(GOOD); }

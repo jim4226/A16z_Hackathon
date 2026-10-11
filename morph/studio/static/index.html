@@ -13,7 +13,7 @@
   // The Studio server serves this page at / with assets under /static/; plain static hosting
   // (python -m http.server in the static dir, used for ?fixture=1) serves them next to the page.
   (function () {
-    var bases = /\/static\//.test(location.pathname) ? [''] : ['/static/', ''];
+    var bases = /\/static\//.test(location.pathname) ? [''] : /[?&]fixture=(?!0)/.test(location.search) ? ['', '/static/'] : ['/static/', ''];
     function css(i) {
       var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = bases[i] + 'style.css';
       l.onerror = function () { l.remove(); if (i + 1 < bases.length) css(i + 1); };
@@ -36,7 +36,9 @@
       <span class="logo"><svg viewBox="0 0 24 24"><path d="M5 18V6l7 6 7-6v12"/></svg></span>
       <span>Morph <span class="sub">Studio</span></span>
     </div>
-    <div class="crumb"><span class="sep">/</span><span class="proj"><i></i><span id="project">loading…</span></span></div>
+    <div class="crumb"><span class="sep">/</span>
+      <div class="projwrap"><button class="proj" id="projBtn" type="button" title="Project"><i></i><span id="project">loading…</span><svg class="i sm chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="menu glass" id="projMenu"></div></div></div>
     <div id="revs" class="revs"></div>
     <div class="grow"></div>
     <div id="tourPill" class="tourpill"></div>
@@ -54,7 +56,7 @@
         <div id="messages"></div>
         <div id="suggest"></div>
         <form id="form" autocomplete="off">
-          <textarea id="input" rows="1" placeholder="Ask for a change, e.g. “make it 6-DOF”"></textarea>
+          <textarea id="input" rows="1" placeholder="Ask for a change…"></textarea>
           <button id="send" type="submit" title="Send (Enter)"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
         </form>
       </section>
