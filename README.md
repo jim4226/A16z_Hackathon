@@ -10,6 +10,29 @@ Darwin handles purchasing and engineering help, finding agents that can quote an
 
 Keewano gives R Cubed observability and recursive self-improvement: every design, bench test and human minute is logged, and the measured results tune the next design's grip force.
 
+## Morph Studio: the whole-robot platform (the live demo)
+
+Morph Studio is R Cubed's platform for whole robots: a 5-axis arm with a force-sensing gripper, or an
+existing open-source robot (Hugging Face's SO-101, imported from its own URDF). One request generates
+the CAD, MuJoCo simulations, electronics (schematic, routed PCB, harness, firmware), manufacturing plan
+(prototype, pilot and production), BOM with sourcing, and an assembly manual. Every chat edit
+regenerates only what depends on it.
+
+```bash
+run_studio.bat                      # Windows: double-click. macOS/Linux: ./run_studio.sh
+python -m morph.cli studio egg-picker --open    # same thing by hand
+```
+
+- **Tabs:** Robot (3D, motion, X-ray, explode), Simulation (pick and place, payload, workspace,
+  shake), Electronics, Manufacturing, Assembly, and BOM & Sourcing. The **Darwin agents** view finds an
+  agent for every purchased part and every fabrication job.
+- **Inspector:** the time-saved card (cited by-hand hours vs measured time), metric deltas, the
+  grip-force window with Keewano calibration, and issues.
+- **Present** (button or `P`): the demo as 14 press-through steps with captions.
+  See [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+- Keys (optional): copy `env.example` to `.env`. See [docs/SPONSORS.md](docs/SPONSORS.md) for Keewano
+  and Darwin, and [docs/TIME_SAVED.md](docs/TIME_SAVED.md) for the time-saved sources.
+
 ## R Cubed Studio (gripper demo)
 
 ```bash
