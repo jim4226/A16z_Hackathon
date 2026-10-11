@@ -349,7 +349,8 @@ def test_molding_dfm_flags_missing_draft(built):
 
 def test_sheet_dfm_catches_short_flange_and_missing_relief():
     poly = box(0, 0, 40, 30).difference(Point(20, 5).buffer(1.7))
-    sheet = {"thickness": 2.0, "k_factor": 0.4, "bends": [{"line": [[0, 4], [30, 4]], "angle_deg": 90, "radius": 1.0}]}
+    sheet = {"thickness": 2.0, "k_factor": 0.4, "material": "Al5052",
+             "bends": [{"line": [[0, 4], [30, 4]], "angle_deg": 90, "radius": 0.6}]}      # 5052 needs R >= 0.5 T
     p = Part("bad_bracket", "base", components.trimesh_from_profile(poly, 2.0), profile=poly, profile_frame=np.eye(4),
              thickness=2.0, process="sheet_metal", meta={"sheet": sheet})
     msgs = " | ".join(manufacturing._sheet_dfm(manufacturing.Geo(p)))
@@ -447,3 +448,96 @@ def test_real_generator_if_available(tmp_path):
     b = manufacturing.bom(d, asm, mfg, mock_efinal())
     man = manual.build(d, asm, mfg, mock_efinal(), str(tmp_path / "manual"))
     assert mfg["parts"] and b["totals"]["total"] > 0 and man["steps"]
+
+
+# ------------------------------------------------------------------ generator conventions
+def test_generator_build_config_and_mold_payoff(tmp_path):
+    d = Design().with_changes({**EGG, "build.config": "pilot"})
+    asm = make_asm(d)
+    asm.meta["build_config"] = "pilot"                     # the generator built this geometry for the pilot config
+    for p in asm.parts:
+        if p.group == "finger_pad":                        # it chose molded pads; a mold cannot pay off at qty 1
+            p.process, p.process_options = "injection_mold", ("injection_mold", "fdm_print")
+        if p.name == "upper_arm_link":
+            p.process = "mjf_print"                        # its own pick, not the class default (cnc_mill)
+    mfg = manufacturing.plan(d, asm, str(tmp_path / "mfg"), None)
+    parts = {e["group"]: e for e in mfg["parts"]}
+    assert parts["upper_arm_link"]["process"] == "mjf_print"
+    assert parts["finger_pad"]["process"] == "fdm_print" and "injection molding" in parts["finger_pad"]["notes"]
+    assert mfg["configs"]["pilot"]["tooling_cost"] == 0
+    # other configs: that config's class defaults (a different generator geometry would be built there)
+    assert mfg["configs"]["production"]["tooling_cost"] > 0 and mfg["configs"]["prototype"]["tooling_cost"] == 0
+
+
+def test_purchased_hardware_horns_and_meta_qty():
+    d = Design().with_changes(EGG)
+    asm = make_asm(d)
+    cube = trimesh.creation.box((5, 5, 5))
+    asm.add_part(Part("base_feet", "base", cube.copy(), kind="visual", process="purchased", sku="rubber_foot_14x2.5",
+                      step=1, meta={"qty": 4, "label": "rubber feet (adhesive, 14 mm)"}))
+    for i in range(3):
+        asm.add_part(Part(f"standoff_{i}", "base", cube.copy(), process="purchased", sku="M3x6_brass_standoff", step=1,
+                          group="M3x6_brass_standoff"))
+    asm.add_part(Part("act_j1_horn2", "base", cube.copy(), kind="horn", process="purchased", sku="sts3215_horn",
+                      step=1, group="sts3215_horn_horn"))
+    rows = manufacturing.buy_rows(d, asm, None)
+    feet = [r for r in rows if "rubber" in r["item"].lower()]
+    assert len(feet) == 1 and feet[0]["qty"] == 4 and feet[0]["ext_price"] > 0
+    so = [r for r in rows if "standoff" in r["item"]]
+    assert len(so) == 1 and so[0]["category"] == "fastener" and so[0]["qty"] == 3
+    horn = [r for r in rows if "horn" in r["item"]]
+    assert len(horn) == 1 and horn[0]["ext_price"] == 0 and "included" in horn[0]["how"]
+
+
+def test_manual_folds_generator_wiring_step_and_uses_servo_ids(tmp_path):
+    d = Design().with_changes(EGG)
+    asm = make_asm(d)
+    asm.steps.append(Step(9, "Servo bus and sensor wiring", [], tools=["cable ties (2.5 mm)"],
+                          instructions="Daisy-chain the bus: controller to ID 1 to ID 2. Leave a service loop at every joint."))
+    asm.meta["servo_ids"] = [{"joint": "j1_base_yaw", "id": 1}, {"joint": "j2_shoulder", "id": 2},
+                             {"joint": "j2_shoulder", "id": 3}, {"joint": "j3_elbow", "id": 4},
+                             {"joint": "j4_wrist_pitch", "id": 5}, {"joint": "roll", "id": 6}, {"joint": "gripper", "id": 7}]
+    man = manual.build(d, asm, None, mock_efinal(), str(tmp_path), images=False)
+    titles = [s["title"] for s in man["steps"]]
+    assert "Servo bus and sensor wiring" not in titles
+    wiring = next(s for s in man["steps"] if s["kind"] == "wiring")
+    assert any(x.startswith("Daisy-chain the bus") for x in wiring["substeps"])
+    assert not any("PWM channel" in x for x in wiring["substeps"])           # bus robot: no PWM wording
+    fw = next(s for s in man["steps"] if s["kind"] == "firmware")
+    assert [x["id"] for x in fw["servo_ids"]] == [1, 2, 3, 4, 5, 6, 7]
+    assert fw["servo_ids"][5]["joint"] == "j5_wrist_roll"                    # "roll" resolved to the real joint
+    html = (tmp_path / "manual.html").read_text()
+    assert "J2 shoulder (2)" in html
+
+
+def test_gcode_slot_gets_inside_contour(tmp_path):
+    from shapely.geometry import LineString
+    plate = box(0, 0, 40, 120).difference(LineString([(20, 30), (20, 90)]).buffer(6, quad_segs=12)) \
+        .difference(Point(20, 10).buffer(4, quad_segs=16))
+    info = manufacturing.write_gcode(str(tmp_path / "p.nc"), plate, 4.0, "Al6061", "SLOT TEST")
+    nc = (tmp_path / "p.nc").read_text()
+    assert "( inside cut-out )" in nc and nc.count("helical hole") == 1 and info["tabs"] >= 2
+    ok, c, r = manufacturing._round_ring(list(plate.interiors)[0])
+    assert manufacturing.dfm_checks is not None and isinstance(ok, bool)
+
+
+def test_sources_parse_on_python310():
+    """The package supports Python >= 3.10: no PEP 701 f-strings (same-quote nesting, backslashes in expressions)."""
+    import io
+    import tokenize
+
+    for rel in ("morph/robot/manufacturing.py", "morph/robot/manual.py"):
+        src = open(os.path.join(os.path.dirname(__file__), "..", rel), encoding="utf-8").read()
+        stack, probs = [], []
+        for t in tokenize.generate_tokens(io.StringIO(src).readline):
+            name = tokenize.tok_name[t.type]
+            if name == "FSTRING_START":
+                q = t.string.lstrip("rRbBfFuU")
+                if any(q[0] == s[0] for s in stack):
+                    probs.append(t.start)
+                stack.append(q)
+            elif name == "FSTRING_END":
+                stack.pop()
+            elif stack and name == "STRING" and (t.string.lstrip("rRbBuU")[0] in [s[0] for s in stack] or "\\" in t.string):
+                probs.append(t.start)
+        assert not probs, (rel, probs)

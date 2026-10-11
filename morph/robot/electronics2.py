@@ -520,8 +520,8 @@ def custom_circuit(design, ep: dict) -> Circuit:
     cb = _part(c, "C1", "CBULK", "CP", [("1", "+", "V_SERVO"), ("2", "-", "GND")], "power",
                value=f"470u {'25V' if vin > 9 else '16V'}", place={"near": "Q2", "side": "below"})
     cb.mpn = f"470 uF {'25' if vin > 9 else '16'} V radial D10 low-ESR"
-    _part(c, "R5", "R100k", "R", [("1", "1", "V_SERVO"), ("2", "2", "VSERVO_SENSE")], "power", place={"near": "U1", "pin": "6"})
-    _part(c, "R6", "R22k", "R", [("1", "1", "VSERVO_SENSE"), ("2", "2", "GND")], "power", place={"near": "U1", "pin": "6"})
+    _part(c, "R5", "R100k", "R", [("1", "1", "V_SERVO"), ("2", "2", "VSERVO_SENSE")], "power", place={"near": "C1", "side": "right"})
+    _part(c, "R6", "R22k", "R", [("1", "1", "VSERVO_SENSE"), ("2", "2", "GND")], "power", place={"near": "R5"})
 
     # ---- logic supply: buck (VIN > 6.5 V) + diode-OR with USB VBUS + 3V3 LDO
     if vin > 6.5:
@@ -577,7 +577,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
     _part(c, "C9", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "2", "prio": 1})
     _part(c, "R11", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "EN")], "mcu", place={"near": "U1", "pin": "3"})
     _part(c, "C10", "C1u", "C", [("1", "1", "EN"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "3"})
-    _part(c, "SW1", "BTN", "SW", [("1", "1", "EN"), ("2", "2", "GND")], "mcu", value="RESET", place={"near": "U1", "side": "left"})
+    _part(c, "SW1", "BTN", "SW", [("1", "1", "EN"), ("2", "2", "GND")], "mcu", value="RESET", place={"near": "U1", "pin": "27", "prio": 2})
     _part(c, "SW2", "BTN", "SW", [("1", "1", "BOOT"), ("2", "2", "GND")], "mcu", value="BOOT", place={"near": "U1", "pin": "27"})
     _part(c, "R12", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "BOOT")], "mcu", place={"near": "U1", "pin": "27"})
     _part(c, "R13", "R1k", "R", [("1", "1", "LED_STAT"), ("2", "2", "LED_K")], "mcu", place={"near": "U1", "pin": "23"})

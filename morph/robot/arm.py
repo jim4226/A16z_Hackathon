@@ -388,6 +388,11 @@ class _JG:
     def z_cup(self):
         return -self.r_cut
 
+    @property
+    def r_sweep(self):
+        """The parent cradle's lip is scooped to this radius around the axis so the child clevis can fold far."""
+        return math.hypot(self.neck, self.z_b) + 4.5
+
 
 def _canon_box(Tc, b):
     corners = np.array([[x, y, z] for x in b[:, 0] for y in b[:, 1] for z in b[:, 2]])
@@ -444,7 +449,7 @@ def _jg(name, key, count=1) -> _JG:
                 conn.append(_canon_box(Tc, A.bounds[s]))
     return _JG(name=name, key=key, count=count, A=A, T_acts=T_acts, y_h=y_h, y_i=y_i, D2=D2, case_y=case_y, r_ch=r_ch,
                r_cut=r_cut, z_b=z_b, hw=hw, z_floor=z_low - FLOOR, z_body=(zb0, zb1), z_fing=z_fing,
-               neck=max(A.W / 2 - 1.5, A.horn_d / 2 + 0.5, 8.0), tongue=tongue, ear=ear, conn_box=conn)
+               neck=max(A.W / 2 - 2.5, A.horn_d / 2 - 0.5, 8.0), tongue=tongue, ear=ear, conn_box=conn)
 
 
 # ------------------------------------------------------------------ gripper (rack and pinion) plan
@@ -809,13 +814,15 @@ def _jg_parent_regions(j: _JG, beam_hw, beam_len):
     """Parent-side silhouettes of a pitch joint in its canonical frame (x, z)."""
     zb0, zb1 = j.z_body
     A = j.A
-    inner = unary_union([_rect(-A.W / 2, A.W / 2, zb0, zb1), _rect(-j.hw, j.hw, j.z_floor, j.z_cup),
+    scoop = Point(0, 0).buffer(j.r_sweep, quad_segs=32)
+    inner = unary_union([_rect(-A.W / 2, A.W / 2, zb0, zb1), _rect(-j.hw, j.hw, j.z_floor, j.z_cup).difference(scoop),
                          _rect(-j.hw, -A.W / 2, j.z_cup - 2, j.z_fing),
                          _rect(-beam_hw, beam_hw, j.z_floor - beam_len, j.z_floor)])
     if j.ear:
         inner = inner.union(_rect(-j.hw, j.hw, j.ear["z0"] - 1.5, j.ear["z1"] + 1.5).difference(
             _rect(-A.W / 2 - 0.3, A.W / 2 + 0.3, zb0 - 1, zb1 + 30)))
-    outer = unary_union([_rect(-j.hw, j.hw, j.z_floor, j.z_cup), _rect(-beam_hw, beam_hw, j.z_floor - beam_len, j.z_floor)])
+    outer = unary_union([_rect(-j.hw, j.hw, j.z_floor, j.z_cup).difference(scoop),
+                         _rect(-beam_hw, beam_hw, j.z_floor - beam_len, j.z_floor)])
     return inner, outer
 
 
@@ -1392,6 +1399,9 @@ class _Builder:
                 info["z1"] = z0
         hull_parts += list(extra)
         body = _hull(hull_parts)
+        scoop = [_xf(_ycyl(dd[1].r_sweep, -dd[1].D2 - 5, dd[1].D2 + 5, f=0.0, segs=72), dd[2]) for dd in dists if dd[0] == "jg"]
+        if scoop:
+            body = _D(body, scoop)
         if adds:
             body = _U(body, adds)
         # decorative pocket on both flat side faces of the beam
@@ -1906,6 +1916,7 @@ class _Builder:
         else:
             plat = _fcyl(R_t, t_p, f=2.2, segs=96)
             body = _hull(plat, _xf(self.cup_block(js), T))
+            body = _D(body, _xf(_ycyl(js.r_sweep, -js.D2 - 5, js.D2 + 5, f=0.0, segs=72), trans((0, 0, self.lay.h_s))))
             body = _U(body, [_xf(a, T) for a in self.cup_adds(js)])
             body = _D(body, [_xf(c, T) for c in self.cup_cuts(js)] + cuts)
             if cfg == "production":
@@ -2098,12 +2109,12 @@ class _Builder:
                 self.struct("base_shell", "base", body, "base", (0, 0, 0), role="shell", label="base housing (moulded PC)")
                 # moulded bay lid with a vent grille
                 lid_poly = bay.buffer(-0.4)
-                lid = _mv(_plate(lid_poly, 2.4, fillet=0.8), 0, 0, zd - 2.4)
+                lid = _mv(_plate(lid_poly, 2.4, fillet=0.8), 0, 0, self.z_rim - 2.4)
                 b = lid_poly.bounds
                 grille = []
                 for k in range(int((b[2] - b[0] - 24) // 7)):
                     xx = b[0] + 14 + k * 7.0
-                    grille.append(_rbox2(xx - 1.6, xx + 1.6, b[1] + 16, b[3] - 16, zd - 4, zd + 1, r=1.5, f=0.0))
+                    grille.append(_rbox2(xx - 1.6, xx + 1.6, b[1] + 16, b[3] - 16, self.z_rim - 4, self.z_rim + 1, r=1.5, f=0.0))
                 lid = _D(lid, grille)
                 self.struct("bay_lid", "base", lid, "electronics", (0, 0, 60), role="dark", kind="cover",
                             label="electronics bay lid (moulded, vented)")

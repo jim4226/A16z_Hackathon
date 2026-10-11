@@ -449,7 +449,7 @@ def _mech_steps(F: _Facts):
             nm, src = _sku_name(e["sku"])
             key = ("buy", e["sku"])
             table.setdefault(key, {"item": nm, "qty": 0, "source": src, "sku": e["sku"], "group": e["sku"]})
-            table[key]["qty"] += 1
+            table[key]["qty"] += e.get("n", 1)
         for p in fab:
             g = p.group or p.name
             me = F.mfg_by_group.get(g, {})
@@ -1056,7 +1056,9 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
                 continue
             n = sum(1 for p in asm.parts if (p.group or p.name) == g)
             fab_cards.append(f'<div class="k"><span class="q">×{n}</span>{_img(im)}<div class="nm">{_e(mf.pretty(g))}</div></div>')
-    cnt = Counter(e["sku"] for e in F.inst.values())
+    cnt = Counter()
+    for e in F.inst.values():
+        cnt[e["sku"]] += e.get("n", 1)
     for k, n in F.act_count.items():
         if k in catalog.ACTUATORS:
             cnt[k] = max(cnt.get(k, 0), n)

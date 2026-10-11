@@ -220,8 +220,10 @@ def _instances(asm) -> "OrderedDict[str, dict]":
             suffix = g[len(p.sku) + 1:]
             if p.name.endswith("_" + suffix):
                 prefix = p.name[: -len(suffix) - 1]
-        e = out.setdefault(prefix, {"sku": p.sku, "kind": p.kind, "parts": [], "step": p.step, "link": p.link})
+        e = out.setdefault(prefix, {"sku": p.sku, "kind": p.kind, "parts": [], "step": p.step, "link": p.link, "n": 1,
+                                    "label": p.meta.get("label", "")})
         e["parts"].append(p.name)
+        e["n"] = max(e["n"], int(p.meta.get("qty", 1) or 1))      # one mesh can stand for several pieces (4 feet)
         if p.kind in ("actuator", "electronics", "pcb", "bearing", "sensor"):
             e["kind"] = p.kind
     return out
@@ -448,6 +450,20 @@ def material_for(proc: str, cls: str, p) -> str:
 
 
 # ================================================================== geometry (per group, cached)
+def _round_ring(ring, min_pts=8):
+    """(is_round, centre, radius): a ring is a circle when its bounds are square and it fills that circle's area
+    (vertex-distance tests fail on obround slots, whose vertices cluster on the end arcs)."""
+    pts = np.asarray(ring.coords)
+    poly = Polygon(ring)
+    b = poly.bounds
+    w, h = b[2] - b[0], b[3] - b[1]
+    if len(pts) - 1 < min_pts or min(w, h) <= 0:
+        return False, (poly.centroid.x, poly.centroid.y), math.sqrt(max(poly.area, 0) / math.pi)
+    r = max(w, h) / 2
+    ok = min(w, h) / max(w, h) > 0.97 and poly.area / (math.pi * r * r) > 0.95
+    return ok, ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2), math.sqrt(poly.area / math.pi)
+
+
 def _rotz_to(axis) -> np.ndarray:
     """Rotation taking unit `axis` to +z."""
     a = np.asarray(axis, float)
@@ -570,24 +586,16 @@ class Geo:
         def calc():
             out = []
             for ring in self.profile.interiors:
-                poly = Polygon(ring)
-                c = poly.centroid
-                pts = np.asarray(ring.coords)[:-1]
-                rr = np.hypot(pts[:, 0] - c.x, pts[:, 1] - c.y)
-                rnd = len(pts) >= 8 and rr.std() < 0.03 * rr.mean()
-                out.append({"c": (c.x, c.y), "d": 2 * math.sqrt(poly.area / math.pi), "round": bool(rnd),
-                            "ring": pts})
+                rnd, c, r = _round_ring(ring)
+                out.append({"c": c, "d": 2 * r, "round": bool(rnd), "ring": np.asarray(ring.coords)[:-1]})
             return out
         return self._memo("holes", calc)
 
     @property
     def outer_round(self):
         def calc():
-            ext = self.profile.exterior
-            pts = np.asarray(ext.coords)[:-1]
-            c = Polygon(ext).centroid
-            rr = np.hypot(pts[:, 0] - c.x, pts[:, 1] - c.y)
-            return (c.x, c.y, float(rr.mean())) if len(pts) >= 16 and rr.std() < 0.01 * rr.mean() else None
+            rnd, c, r = _round_ring(self.profile.exterior, 16)
+            return (c[0], c[1], r) if rnd else None
         return self._memo("outer_round", calc)
 
     @property
@@ -1047,7 +1055,11 @@ def buy_rows(design, asm, efinal=None, elec_entries=None) -> list:
     """Every off-the-shelf line for one robot: assembly purchased parts (by sku) merged with the electronics
     stage's sourcing rows (deduped by sku), fasteners by spec, cables when no harness is planned."""
     inst = _instances(asm)
-    qty = Counter(e["sku"] for e in inst.values())
+    qty = Counter()
+    labels = {}
+    for e in inst.values():
+        qty[e["sku"]] += e["n"]
+        labels.setdefault(e["sku"], e.get("label") or "")
     for k, n in actuator_counts(asm).items():
         if k in catalog.ACTUATORS:
             qty[k] = max(qty[k], n)
@@ -1070,7 +1082,8 @@ def buy_rows(design, asm, efinal=None, elec_entries=None) -> list:
                 hardware[hw["key"]] += n
                 continue
             c = _GENERIC.get(next((g for g in _GENERIC if g in sku.lower()), ""), None) or \
-                {"name": pretty(sku), "vendors": [catalog.V("amazon", pretty(sku), 0.5, note="not in catalog: placeholder estimate")]}
+                {"name": labels.get(sku) or pretty(sku),
+                 "vendors": [catalog.V("amazon", labels.get(sku) or pretty(sku), 0.5, note="not in catalog: placeholder estimate")]}
         if sku == "morph_controller_pcba":
             how = "order PCBA from JLCPCB with jlc_bom.csv/jlc_cpl.csv"
         rows[sku] = _row(c.get("name", sku), _category_for(sku), n, [dict(v) for v in c.get("vendors", [])], how,
@@ -1225,7 +1238,14 @@ def _profile_svg(path, poly, title, bends=(), holes_round=(), sub="", w_px=520):
         s.append(f'<line x1="{u0:.2f}" y1="{-v0:.2f}" x2="{u1:.2f}" y2="{-v1:.2f}" stroke="#2b6cd4" '
                  f'stroke-width="{max(W, H) / 450:.3f}" stroke-dasharray="{max(W, H) / 60:.2f} {max(W, H) / 120:.2f}"/>')
         mx, my = (u0 + u1) / 2, (v0 + v1) / 2
-        s.append(f'<text x="{mx:.2f}" y="{-my - 1.2:.2f}" font-size="{max(W, H) / 38:.2f}" fill="#2b6cd4" text-anchor="middle">'
+        L = math.hypot(u1 - u0, v1 - v0) or 1.0
+        nx, ny = -(v1 - v0) / L, (u1 - u0) / L                 # label sits beside the line, rotated along it
+        off = max(W, H) / 70
+        ang = -math.degrees(math.atan2(v1 - v0, u1 - u0))
+        ang = ang + 180 if ang <= -90 or ang > 90 else ang
+        tx, ty = mx + nx * off, -(my + ny * off)
+        s.append(f'<text x="{tx:.2f}" y="{ty:.2f}" font-size="{max(W, H) / 40:.2f}" fill="#2b6cd4" text-anchor="middle" '
+                 f'dominant-baseline="middle" transform="rotate({ang:.1f} {tx:.2f} {ty:.2f})">'
                  f'B{i + 1} {"UP" if bd.get("angle_deg", 90) >= 0 else "DN"} {abs(bd.get("angle_deg", 90)):g}° R{bd.get("radius", 1):g}</text>')
     s.append(f'<text x="{b[0]:.2f}" y="{-b[1] + pad * 0.9:.2f}" font-size="{max(W, H) / 32:.2f}" fill="#36404c">{title}</text>')
     if sub:
@@ -1238,21 +1258,15 @@ def _profile_svg(path, poly, title, bends=(), holes_round=(), sub="", w_px=520):
 
 def write_profile_dxf(path, poly, label, bends=(), round_holes=True):
     dxf = DXF()
-    ext = poly.exterior
-    pts = np.asarray(ext.coords)
-    c = Polygon(ext).centroid
-    rr = np.hypot(pts[:-1, 0] - c.x, pts[:-1, 1] - c.y)
-    if round_holes and len(pts) > 24 and rr.std() < 0.01 * rr.mean():
-        dxf.circle((c.x, c.y), float(rr.mean()), "CUT")
+    rnd, c, r = _round_ring(poly.exterior, 24)
+    if round_holes and rnd:
+        dxf.circle(c, r, "CUT")
     else:
-        dxf.polyline(pts, "CUT")
+        dxf.polyline(np.asarray(poly.exterior.coords), "CUT")
     for ring in poly.interiors:
-        p = Polygon(ring)
-        q = np.asarray(ring.coords)[:-1]
-        cc = p.centroid
-        r = np.hypot(q[:, 0] - cc.x, q[:, 1] - cc.y)
-        if round_holes and len(q) >= 8 and r.std() < 0.03 * r.mean():
-            dxf.circle((cc.x, cc.y), math.sqrt(p.area / math.pi), "CUT")
+        rnd, cc, rh = _round_ring(ring)
+        if round_holes and rnd:
+            dxf.circle(cc, rh, "CUT")
         else:
             dxf.polyline(np.asarray(ring.coords), "CUT")
     for i, bd in enumerate(bends):
@@ -1326,15 +1340,14 @@ def write_gcode(nc_path, poly, thickness, material, label, svg_path=None):
     g.emit("( Fanuc/LinuxCNC/GRBL compatible: no canned cycles, tool changes as M0 pauses )")
     g.emit("G21 G90 G17 G94 G54")
     previews = []
-    holes = []
+    holes, slots = [], []
     for ring in part.interiors:
-        p = Polygon(ring)
-        c = p.centroid
-        holes.append((c.x, c.y, 2 * math.sqrt(p.area / math.pi), ring))
+        rnd, c, rr = _round_ring(ring)
+        (holes if rnd else slots).append((c[0], c[1], 2 * rr, ring))
     t2 = tools["T2"]
     t1 = tools["T1"]
     small = [h for h in holes if h[2] < t1["d"] + 0.5]
-    big = [h for h in holes if h[2] >= t1["d"] + 0.5]
+    big = [h for h in holes if h[2] >= t1["d"] + 0.5] + slots
 
     def start_tool(name, t):
         feed = t["rpm"] * t["flutes"] * t["chip"]
@@ -1386,9 +1399,7 @@ def write_gcode(nc_path, poly, thickness, material, label, svg_path=None):
             helix(cx, cy, d, t2)
     start_tool("T1", t1)
     for cx, cy, d, ring in big:
-        rnd = np.asarray(ring.coords)[:-1]
-        rr = np.hypot(rnd[:, 0] - cx, rnd[:, 1] - cy)
-        if rr.std() < 0.03 * rr.mean():
+        if _round_ring(ring)[0]:
             helix(cx, cy, d, t1)
         else:      # non-round cut-out: inside contour, conventional (CCW)
             cut = orient(Polygon(ring).buffer(-t1["d"] / 2, quad_segs=16), 1.0)
@@ -1436,8 +1447,9 @@ def write_gcode(nc_path, poly, thickness, material, label, svg_path=None):
         fh.write("%\n" + "\n".join(g.lines) + "\n%\n")
     if svg_path:
         sw = max(sx, sy) / 350
-        s = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 {-sy - 4:.1f} {sx + 8:.1f} {sy + 18:.1f}" '
-             f'width="{min(900, (sx + 8) * 3):.0f}" font-family="Helvetica, Arial, sans-serif">',
+        vw = max(sx + 8, 150.0)
+        s = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 {-sy - 4:.1f} {vw:.1f} {sy + 18:.1f}" '
+             f'width="{min(900, vw * 3):.0f}" font-family="Helvetica, Arial, sans-serif">',
              f'<rect x="0" y="{-sy:.2f}" width="{sx:.2f}" height="{sy:.2f}" fill="#e9edf1" stroke="#9aa4ae" stroke-width="{sw:.2f}"/>',
              f'<path d="{" ".join(_ring_d(rg.coords) for rg in [part.exterior, *part.interiors])}" fill="#b9c6d4" fill-rule="evenodd"/>']
         for rg in previews:
@@ -1445,8 +1457,7 @@ def write_gcode(nc_path, poly, thickness, material, label, svg_path=None):
         for t in tabs:
             p = LineString(contour.coords).interpolate(t)
             s.append(f'<rect x="{p.x - 2.5:.2f}" y="{-p.y - 2.5:.2f}" width="5" height="5" fill="#f2a516"/>')
-        s.append(f'<text x="0" y="{12:.1f}" font-size="{max(5.0, sx / 40):.1f}" fill="#36404c">{label} · {material} {thickness:g} mm · '
-                 f'{minutes:.0f} min · tabs orange</text></svg>')
+        s.append(f'<text x="0" y="{12:.1f}" font-size="{min(5.0, vw / 34):.1f}" fill="#36404c">{label} · {minutes:.0f} min</text></svg>')
         with open(svg_path, "w") as fh:
             fh.write("\n".join(s))
     return {"minutes": _r(minutes, 1), "blocks": len(g.lines), "tools": list(tools), "tabs": n_tabs, "passes": nl,
@@ -1601,7 +1612,8 @@ def _sheet_dfm(g: Geo) -> list:
         for h in g.holes:
             dist = ln.distance(Point(h["c"])) - h["d"] / 2
             if dist < 2.0 * t + R:
-                out.append(f"B{i + 1}: hole Ø{h['d']:.1f} sits {dist:.1f} mm from the bend (min {2 * t + R:.1f}): it will distort")
+                where = "crosses the bend line" if dist < 0 else f"sits {dist:.1f} mm from the bend (min {2 * t + R:.1f})"
+                out.append(f"B{i + 1}: hole Ø{h['d']:.1f} {where}: it will distort")
                 break
     return out
 

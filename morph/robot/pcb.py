@@ -1002,6 +1002,10 @@ class _Routing:
         fails = []
         for net in order:
             fails += self.route_net(net)
+        return self.repair(fails, max_rounds)
+
+    def repair(self, fails, max_rounds=24):
+        fails = list(fails)
         tries: dict = {}
         rounds = 0
         while fails and rounds < max_rounds:
@@ -1081,8 +1085,25 @@ def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=N
         span[n] = (max(x for x, _ in pts) - min(x for x, _ in pts) + max(y for _, y in pts) - min(y for _, y in pts)) if pts else 0
     rank = {"hc": 0, "pwr": 1, "sig": 2}
     order = sorted([n for n in net_names if n != "GND"], key=lambda n: (rank[net_class(n, hc_nets, pwr_nets)], span[n]))
+    import copy
+    snapshot = (copy.deepcopy(r.shapes), copy.deepcopy(r.traces), copy.deepcopy(r.vias))
+    best = None
+    for attempt in range(3):
+        if attempt:          # restart from the fan-out state with the hardest nets first
+            r.shapes, r.traces, r.vias = copy.deepcopy(snapshot[0]), copy.deepcopy(snapshot[1]), copy.deepcopy(snapshot[2])
+            r.rebuild()
+            first = list(dict.fromkeys(n_ for n_, _ in best[0]))
+            order = first + [n_ for n_ in order if n_ not in first]
+        rt = _Routing(r, terms, hc_nets, pwr_nets)
+        fails = rt.run(order)
+        if best is None or len(fails) < len(best[0]):
+            best = (fails, copy.deepcopy(r.shapes), copy.deepcopy(r.traces), copy.deepcopy(r.vias))
+        if not fails:
+            break
+    fails = best[0]
+    r.shapes, r.traces, r.vias = best[1], best[2], best[3]
+    r.rebuild()
     rt = _Routing(r, terms, hc_nets, pwr_nets)
-    fails = rt.run(order)
     for net, gk in fails:
         unrouted.append({"net": net, "pins": [f"{p['ref']}.{p['num']}" for p in terms[net][gk]]})
     # stitching vias on a 6 mm lattice where both planes have room
@@ -1096,42 +1117,81 @@ def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=N
             if ok and not r.novia[i, j] and not r.holeblock[i, j]:
                 r.add_via("GND", i * GRID, j * GRID, tag="stitch")
     board = _assemble(circuit, placed, pads, r, W, H, unrouted, name)
-    for _ in range(3):      # tie any GND island (e.g. a module's exposed pad under traces) back to the main plane
+    for _ in range(4):      # tie any GND island (e.g. a via in a pocket boxed in by traces) back to the main plane
         islands = _gnd_islands(board)
         if len(islands) < 2:
             break
         islands.sort(key=len, reverse=True)
-        main = islands[0]
-        tgt = set()
-        for v in board["vias"]:
-            if v["net"] == "GND" and ("v", v["x"], v["y"]) in main:
-                c = r.idx(int(round(v["x"] / GRID)), int(round(v["y"] / GRID)))
-                tgt |= {(0, c), (1, c)}
-        for p in pads:
-            if p["net"] == "GND" and p["drill"] and ("p", p["ref"], p["num"]) in main:
-                tgt |= {(l, c) for c in r.pad_cells(p) for l in (0, 1)}
-        fixed = False
-        for isl in islands[1:]:
-            src = set()
-            for v in board["vias"]:
-                if v["net"] == "GND" and ("v", v["x"], v["y"]) in isl:
-                    c = r.idx(int(round(v["x"] / GRID)), int(round(v["y"] / GRID)))
-                    src |= {(0, c), (1, c)}
-            for p in pads:
-                if p["net"] == "GND" and ("p", p["ref"], p["num"]) in isl:
-                    src |= {(0, c) for c in r.pad_cells(p)} | ({(1, c) for c in r.pad_cells(p)} if p["drill"] else set())
-            if not src or not tgt:
-                continue
-            gx = float(np.mean([r.ij(c)[0] for _, c in tgt]))
-            gy = float(np.mean([r.ij(c)[1] for _, c in tgt]))
-            path = r.astar("GND", "sig", list(src), tgt, (gx, gy), max_exp=120000)
-            if path:
-                r.commit_path("GND", path, CLASSES["sig"], tag="route", key="GND")
-                fixed = True
-        if not fixed:
+        if os.environ.get("PCB_DEBUG"):
+            print("ISLANDS", [sorted(i, key=str)[:4] for i in islands[1:]])
+        if not _bridge_islands(r, rt, pads, islands, fails):
             break
+        unrouted = [u for u in unrouted if u["net"] == "GND"] + \
+                   [{"net": n_, "pins": [f"{p['ref']}.{p['num']}" for p in terms[n_][gk]]} for n_, gk in fails]
         board = _assemble(circuit, placed, pads, r, W, H, unrouted, name)
     return board
+
+
+def _bridge_islands(r, rt, pads, islands, fails) -> bool:
+    """Route a GND bridge from each minor island to the main island; rip up whatever blocks it."""
+    main = islands[0]
+
+    def cells(isl):
+        out = set()
+        for v in r.vias:
+            if v["net"] == "GND" and ("v", v["x"], v["y"]) in isl:
+                c = r.idx(int(round(v["x"] / GRID)), int(round(v["y"] / GRID)))
+                out |= {(0, c), (1, c)}
+        for p in pads:
+            if p["net"] == "GND" and ("p", p["ref"], p["num"]) in isl:
+                out |= {(0, c) for c in r.pad_cells(p)} | ({(1, c) for c in r.pad_cells(p)} if p["drill"] else set())
+        return out
+    tgt = cells(main)
+    if not tgt:
+        return False
+    gx = float(np.mean([r.ij(c)[0] for _, c in tgt]))
+    gy = float(np.mean([r.ij(c)[1] for _, c in tgt]))
+    done = False
+    for isl in islands[1:]:
+        src = cells(isl)
+        if not src:
+            continue
+        path = r.astar("GND", "sig", list(src), tgt, (gx, gy), max_exp=150000)
+        if path is None:
+            rb = r.relaxed("GND")
+            path = rb.astar("GND", "sig", list(src), tgt, (gx, gy), max_exp=200000)
+            if path is None:
+                continue
+            pts = [(r.ij(c)[0] * GRID, r.ij(c)[1] * GRID, l) for l, c in path]
+            bl = set()
+            for t in r.traces:
+                if t["net"] == "GND" or t.get("_tag") != "route":
+                    continue
+                li = LAYERS.index(t["layer"])
+                lim = CLEAR + CLASSES["sig"] / 2 + t["width"] / 2 + 0.05
+                line = LineString(t["points"])
+                if any(l == li and line.distance(Point(x, y)) < lim for x, y, l in pts):
+                    bl.add(t["net"])
+            for v in r.vias:
+                if v["net"] != "GND" and v.get("_tag") == "route" and any(
+                        math.hypot(x - v["x"], y - v["y"]) < CLEAR + CLASSES["sig"] / 2 + VIA_D / 2 + 0.05 for x, y, _ in pts):
+                    bl.add(v["net"])
+            for b in bl:
+                r.rip(b)
+            r.rebuild()
+            if os.environ.get("PCB_DEBUG"):
+                print("GND bridge rips", bl)
+            r.commit_path("GND", path, CLASSES["sig"], tag="route", key="GND")
+            new = []
+            for b in sorted(bl):
+                new += rt.route_net(b)
+            fails[:] = [f for f in fails if f[0] not in bl] + new
+            if fails:
+                fails[:] = rt.repair(fails)
+        else:
+            r.commit_path("GND", path, CLASSES["sig"], tag="route", key="GND")
+        done = True
+    return done
 
 
 def _gnd_islands(board) -> list:
@@ -1754,7 +1814,7 @@ def _refkey(ref):
 
 def _cache_key(circuit, W, H, hc, pwr) -> str:
     import hashlib
-    blob = json.dumps({"v": 7, "W": W, "H": H, "hc": list(hc), "pwr": list(pwr),
+    blob = json.dumps({"v": 9, "W": W, "H": H, "hc": list(hc), "pwr": list(pwr),
                        "c": [(c.ref, c.value, c.footprint, sorted(c.place.items(), key=str), [(p.num, p.net) for p in c.pins])
                              for c in circuit.comps if c.board]}, sort_keys=True, default=str)
     return hashlib.sha1(blob.encode()).hexdigest()[:20]
