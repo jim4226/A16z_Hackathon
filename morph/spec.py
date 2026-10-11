@@ -46,6 +46,33 @@ class ElectronicsSpec:
     supply_v: float = 6.0
     pinion_radius_mm: float = 10.5   # pitch radius of the printed pinion (module 1.5, 14 teeth)
     target_force_n: float = 0.0      # 0 = derive from simulation + object fragility
+    config: str = "modules"          # modules (off-the-shelf boards) | custom_pcb (one controller PCBA)
+    extras: str = ""                 # comma list: wrist_camera, imu, estop, wifi
+
+
+@dataclass
+class ArmSpec:
+    dof: int = 5                     # arm joints before the gripper: 4 | 5 | 6
+    reach_mm: float = 320.0          # shoulder axis to tool centre point, fully stretched
+    base_height_mm: float = 95.0     # table to shoulder axis
+    actuator_family: str = "smart_bus"   # hobby_pwm | smart_bus | dynamixel
+    actuator_overrides: str = ""     # "j2=xm430_w350,j3=sts3215" to force specific actuators
+    payload_margin: float = 2.0      # torque safety factor at full stretch
+
+
+@dataclass
+class TaskSpec:
+    pick_x_mm: float = 220.0         # object position on the table, robot base frame (z up)
+    pick_y_mm: float = -80.0
+    place_x_mm: float = 160.0
+    place_y_mm: float = 170.0
+    cycle_time_s: float = 6.0
+
+
+@dataclass
+class BuildSpec:
+    config: str = "prototype"        # prototype (printed) | pilot (CNC + sheet metal + PCBA) | production (molded + PCBA)
+    quantity: int = 1
 
 
 @dataclass
@@ -63,6 +90,9 @@ class Design:
     gripper: GripperSpec = field(default_factory=GripperSpec)
     fab: FabSpec = field(default_factory=FabSpec)
     electronics: ElectronicsSpec = field(default_factory=ElectronicsSpec)
+    arm: ArmSpec = field(default_factory=ArmSpec)
+    task: TaskSpec = field(default_factory=TaskSpec)
+    build: BuildSpec = field(default_factory=BuildSpec)
     safety_factor: float = 2.0
 
     def to_dict(self) -> dict:
@@ -91,6 +121,9 @@ class Design:
             gripper=GripperSpec(**d.get("gripper", {})),
             fab=FabSpec(**d.get("fab", {})),
             electronics=ElectronicsSpec(**d.get("electronics", {})),
+            arm=ArmSpec(**d.get("arm", {})),
+            task=TaskSpec(**d.get("task", {})),
+            build=BuildSpec(**d.get("build", {})),
             safety_factor=d.get("safety_factor", 2.0),
         )
 
