@@ -499,6 +499,13 @@ function renderInspector(cur, prev) {
   if (!cur) return;
   const s = cur.summary || {}, ps = prev?.summary || {}, d = cur.design || {};
   const issues = [...(s.issues || [])];
+  for (const [name, sm] of Object.entries(cur.sims || {})) {
+    const m = sm.metrics || {};
+    if (m.success === false) {
+      const why = [m.dropped && 'object dropped', m.place_error_mm != null && `place error ${fmt(m.place_error_mm, 'mm', 0)}`, (m.slip_mm ?? m.max_slip_mm) != null && `slip ${fmt(m.slip_mm ?? m.max_slip_mm, 'mm')}`].filter(Boolean).slice(0, 2).join(', ');
+      issues.push(`Simulation · ${sm.title || name} failed${why ? ` (${why})` : ''}`);
+    }
+  }
   const warns = [...(cur.electronics?.warnings || []), ...(cur.manufacturing?.warnings || [])];
   const errs = Object.entries(cur.errors || {});
   const prov = Object.values(cur.provenance || {});
@@ -550,7 +557,7 @@ function renderInspector(cur, prev) {
       ${changes.length ? `<div class="chg">${changes.map(([k, [a, b]]) => `<div class="c"><div class="k">${esc(k)}</div><div class="vv"><span class="o">${esc(pretty(a, true))}</span>${I('arrow', 'sm')}<span class="n">${esc(pretty(b, true))}</span></div></div>`).join('')}</div>`
         : `<div class="muted" style="font-size:12px">${cur.parent ? 'No parameter changes.' : 'First revision: everything was generated from the request.'}</div>`}</div>
     <div class="isec"><div class="sec-t">Metrics${prev ? `<span class="r">Δ vs ${esc(prev.rev)}</span>` : ''}</div><table class="mt-table">${rows.join('')}</table></div>
-    ${force?.window_n ? `<div class="isec"><div class="sec-t">Grip force window<span class="r">per finger</span></div><div class="fw">${forceWindowSVG(force)}</div></div>` : ''}
+    ${force?.window_n && force.window_n[0] != null && force.window_n[1] != null ? `<div class="isec"><div class="sec-t">Grip force window<span class="r">per finger</span></div><div class="fw">${forceWindowSVG(force)}</div></div>` : ''}
     <div class="isec"><div class="sec-t">Issues &amp; warnings</div>
       ${errs.map(([n, e]) => `<div class="issue bad">${I('x', 'sm')}<span><b>${esc(n)}</b>: ${esc(e)}</span></div>`).join('')}
       ${issues.map((t) => `<div class="issue bad">${I('x', 'sm')}<span>${esc(t)}</span></div>`).join('')}

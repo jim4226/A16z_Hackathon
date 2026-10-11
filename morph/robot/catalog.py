@@ -159,3 +159,22 @@ def get(key: str) -> dict:
 def price(key: str) -> float:
     vs = get(key).get("vendors") or []
     return min(v["unit_price"] for v in vs) if vs else 0.0
+
+
+# ---------------------------------------------------------------- electronics2 additions (appended; keys are new)
+# Controller options and the generated custom controller board. `external` parts are not placed in the base bay.
+MODULES.update({
+    "morph_controller_pcba": dict(name="Morph controller PCBA (ESP32-S3-WROOM-1, generated)", role="controller",
+                                  dims=dict(l=92.0, w=66.0, h=14.0), logic_v=3.3, supply=(6.0, 14.0), current_a=0.35,
+                                  wireless="wifi+ble", mass_g=28.0, verify=True,
+                                  note="size comes from eplan.custom_pcb.size_mm; price from the generated JLCPCB BOM",
+                                  vendors=[V("jlcpcb", "PCBA", 24.0, "https://jlcpcb.com/quote", lead_days=10,
+                                             note="order with gerbers.zip + jlc_bom.csv + jlc_cpl.csv")]),
+    "openrb_150": dict(name="ROBOTIS OpenRB-150 (SAMD21, 4x DYNAMIXEL TTL ports)", role="controller",
+                       dims=dict(l=66.0, w=25.0, h=12.0), logic_v=3.3, supply=(5.0, 12.0), current_a=0.05,
+                       pwm_channels=8, uarts=2, adc=7, wireless="none", mass_g=9.0, verify=True,
+                       vendors=[V("robotis", "OpenRB-150", 39.9, "https://www.robotis.us/openrb-150/")]),
+    "fuse_inline": dict(name="Inline ATO blade-fuse holder, 16 AWG, with 10 A fuse", role="protection",
+                        dims=dict(l=60.0, w=20.0, h=12.0), mass_g=12.0, external=True,
+                        vendors=[V("amazon", "inline ATO fuse holder 16 AWG", 1.5), V("digikey", "Littelfuse 0FHA0001ZXJ", 4.2)]),
+})

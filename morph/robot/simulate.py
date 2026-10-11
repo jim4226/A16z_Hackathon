@@ -60,6 +60,7 @@ Public API:
   run_all(asm, design, outdir, scenarios=None, fast=False, **options)
       -> {"scenarios": {name: {"file", "title", "metrics"}}, "mjcf": "robot.xml"}
   render_frames(asm, design, sim, times, path_pattern, ...) -> [png paths]   (MUJOCO_GL=egl/osmesa when headless)
+  render_gif(asm, design, sim, path, fps=15, ...) -> path
 ``options`` are SimOptions fields (timestep, grip_force_n, object_xy, object_yaw, ...). ``fast`` uses a 2 ms
 step, fewer workspace samples and shorter tails.
 """
@@ -1261,6 +1262,14 @@ def _tangent(xy):
     return np.array([-math.sin(a), math.cos(a), 0.0])
 
 
+def _pick_axis(rob, pick):
+    """The object's long axis on the table: SimOptions.object_yaw if given, else tangential to the base."""
+    yaw = rob.opts.object_yaw
+    if yaw is None:
+        return _tangent(pick[:2])
+    return np.array([-math.sin(yaw), math.cos(yaw), 0.0])
+
+
 def _line(p0, p1):
     p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
     return lambda s: p0 + (p1 - p0) * _minjerk(s)
@@ -1301,7 +1310,8 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
         d.qpos[rob.obj_q + 3:rob.obj_q + 7] = _mat2quat(Ro)
     else:
         x0, y0 = obj_xy
-        yaw = obj_yaw if obj_yaw is not None else math.atan2(y0, x0)
+        yaw = obj_yaw if obj_yaw is not None else rob.opts.object_yaw
+        yaw = yaw if yaw is not None else math.atan2(y0, x0)
         d.qpos[rob.obj_q:rob.obj_q + 3] = [x0 * MM, y0 * MM, (rob.R + 0.2) * MM]
         d.qpos[rob.obj_q + 3:rob.obj_q + 7] = [math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]
     mj.mj_forward(m, d)
@@ -1457,19 +1467,32 @@ def _hover_mm(rob, p=None, ax=None):
 
 def _targets(rob, design):
     R = rob.R
-    pick = np.array([design.task.pick_x_mm, design.task.pick_y_mm, R])
+    px, py = rob.opts.object_xy if rob.opts.object_xy is not None else (design.task.pick_x_mm, design.task.pick_y_mm)
+    pick = np.array([px, py, R])
     place = np.array([design.task.place_x_mm, design.task.place_y_mm, R])
     return pick, place
 
 
-def _arc(p0, p1, inward, bump):
-    """Path around the base between two points: polar interpolation, pulled inward / lifted mid-way."""
-    r0, r1 = np.linalg.norm(p0[:2]), np.linalg.norm(p1[:2])
+def _rotz(v, a):
+    c, s_ = math.cos(a), math.sin(a)
+    return np.array([c * v[0] - s_ * v[1], s_ * v[0] + c * v[1], v[2]])
+
+
+def _arc_angles(p0, p1):
     a0, a1 = math.atan2(p0[1], p0[0]), math.atan2(p1[1], p1[0])
     if a1 - a0 > math.pi:
         a1 -= 2 * math.pi
     elif a0 - a1 > math.pi:
         a1 += 2 * math.pi
+    return a0, a1
+
+
+def _arc(p0, p1, inward, bump, ax0=None):
+    """Path around the base between two points: polar interpolation, pulled inward / lifted mid-way. The
+    object's axis (``ax0`` at the start, tangential by default) turns with the base."""
+    r0, r1 = np.linalg.norm(p0[:2]), np.linalg.norm(p1[:2])
+    a0, a1 = _arc_angles(p0, p1)
+    ax0 = _tangent(p0[:2]) if ax0 is None else np.asarray(ax0, float)
 
     def fn(u):
         e = _minjerk(u)
@@ -1477,13 +1500,13 @@ def _arc(p0, p1, inward, bump):
         r = (r0 + (r1 - r0) * e) * (1.0 - inward * b)
         a = a0 + (a1 - a0) * e
         z = p0[2] + (p1[2] - p0[2]) * e + bump * b
-        return np.array([r * math.cos(a), r * math.sin(a), z]), np.array([-math.sin(a), math.cos(a), 0.0])
+        return np.array([r * math.cos(a), r * math.sin(a), z]), _rotz(ax0, a - a0)
     return fn
 
 
-def _feasible_arc(rob, p0, p1, q0):
+def _feasible_arc(rob, p0, p1, q0, ax0=None):
     for inward, bump in ((0.06, 20.0), (0.12, 12.0), (0.2, 0.0), (0.3, 0.0)):
-        fn = _arc(p0, p1, inward, bump)
+        fn = _arc(p0, p1, inward, bump, ax0)
         q, ok = q0, True
         for u in np.linspace(0.05, 0.95, 10):
             p, ax = fn(u)
@@ -1494,12 +1517,12 @@ def _feasible_arc(rob, p0, p1, q0):
                 break
         if ok:
             return fn
-    return _arc(p0, p1, 0.3, 0.0)
+    return _arc(p0, p1, 0.3, 0.0, ax0)
 
 
 def _grasp_sequence(rob, plan, pick, s, hover):
     """approach (descend open), grasp, lift. Returns the q at the grasp."""
-    ax = _tangent(pick[:2])
+    ax = _pick_axis(rob, pick)
     above = pick + [0, 0, hover]
     plan.cart(lambda u: (_line(above, pick)(u), ax), NOMINAL["descend"] * s, "approach")
     plan.mark("at grasp height")
@@ -1522,7 +1545,9 @@ def _pick_place(rob: _Robot, design, fast=False):
     info = rob.info
     s = _cycle_scale(rob, design)
     pick, place = _targets(rob, design)
-    ax_pick, ax_place = _tangent(pick[:2]), _tangent(place[:2])
+    ax_pick = _pick_axis(rob, pick)
+    a0, a1 = _arc_angles(pick, place)
+    ax_place = _rotz(ax_pick, a1 - a0)               # the object turns with the base on the way over
     hover = min(_hover_mm(rob, pick, ax_pick), _hover_mm(rob, place, ax_place))
     q_hover, e1, _ = rob.ik_robust(pick + [0, 0, hover], ax_pick)
     _, e2, _ = rob.ik_robust(place + [0, 0, 1.5], ax_place, seeds=[q_hover])
@@ -1534,7 +1559,7 @@ def _pick_place(rob: _Robot, design, fast=False):
     plan.mark("lifted")
     above_pick, above_place = pick + [0, 0, hover], place + [0, 0, hover]
     t_move = plan.T
-    plan.cart(_feasible_arc(rob, above_pick, above_place, plan.qe), NOMINAL["move"] * s, "move")
+    plan.cart(_feasible_arc(rob, above_pick, above_place, plan.qe, ax_pick), NOMINAL["move"] * s, "move")
     plan.cart(lambda u: (_line(above_place, place + [0, 0, 1.5])(u), ax_place), NOMINAL["place"] * s, "place")
     plan.mark("set down")
     t_release = plan.T
@@ -1865,7 +1890,7 @@ def _shake(rob: _Robot, design, fast=False):
     info = rob.info
     s = 0.85
     pick, _ = _targets(rob, design)
-    ax = _tangent(pick[:2])
+    ax = _pick_axis(rob, pick)
     hover = _hover_mm(rob, pick, ax)
     above = pick + [0, 0, hover]
     q_above, e1, _ = rob.ik_robust(above, ax)
@@ -1967,7 +1992,13 @@ def _scenario_doc(rob, design, name, plan, run, metrics, points=None) -> dict:
         "info": {"timestep_s": rob.model.opt.timestep, "grip_force_n": round(info.grip_force_n, 3),
                  "efforts": {k: round(v, 3) for k, v in info.efforts.items()},
                  "collision_geoms": len(info.geoms), "object_excluded_parts": info.excluded,
-                 "dropped_parts": info.dropped_parts[:40], "units": "mm, rad, N, N*m; obj quat w,x,y,z"},
+                 "dropped_parts": info.dropped_parts[:40], "gripper": {
+                     "kind": info.grip_kind, "contact": round(info.grip_contact, 4), "open": round(info.grip_open, 4),
+                     "grasp_offset_mm": [round(float(v), 2) for v in info.grasp_offset],
+                     "fingertip_beyond_grasp_mm": round(info.tip_mm, 1)},
+                 "notes": list(info.notes),
+                 "units": "mm, rad, N, N*m; gripper value in the joint's unit (mm prismatic, rad hinge); "
+                          "obj = position mm + quaternion w,x,y,z with the object's long axis on local z"},
     }
     if points is not None:
         out["points"] = points
@@ -2042,12 +2073,9 @@ def run_all(asm, design, outdir: str, scenarios=None, fast: bool = False, **opts
 
 # ====================================================================== rendering (for checks and stills)
 
-def render_frames(asm, design, sim: dict | str, times, path_pattern: str, size=(640, 480), camera=None,
-                  fast=False) -> list:
-    """Render scenario frames to PNG with mujoco.Renderer (set MUJOCO_GL=egl or osmesa when headless).
-    ``sim`` is a scenario document or the path of a sim_<name>.json; ``path_pattern`` like 'out_{i}.png'."""
+def _render_iter(asm, design, sim, times, size, camera, fast):
+    """Yield (frame, RGB image) for the frames nearest to ``times`` (posed kinematically from the JSON)."""
     import mujoco
-    from PIL import Image
 
     if isinstance(sim, str):
         with open(sim) as fh:
@@ -2056,25 +2084,53 @@ def render_frames(asm, design, sim: dict | str, times, path_pattern: str, size=(
     m, d = rob.model, mujoco.MjData(rob.model)
     r = mujoco.Renderer(m, size[1], size[0])
     cam = mujoco.MjvCamera()
-    cam.lookat[:] = camera.get("lookat", [0.12, 0.0, 0.12]) if camera else [0.12, 0.0, 0.12]
-    cam.distance = camera.get("distance", 0.75) if camera else 0.75
-    cam.azimuth = camera.get("azimuth", 215) if camera else 215
-    cam.elevation = camera.get("elevation", -22) if camera else -22
+    camera = camera or {}
+    cam.lookat[:] = camera.get("lookat", [0.12, 0.0, 0.12])
+    cam.distance = camera.get("distance", 0.75)
+    cam.azimuth = camera.get("azimuth", 215)
+    cam.elevation = camera.get("elevation", -22)
     frames = sim["frames"]
     tt = np.array([f["t"] for f in frames])
+    try:
+        for t in times:
+            f = frames[int(np.argmin(np.abs(tt - t)))]
+            d.qpos[:] = 0
+            d.qpos[rob.qadr] = f["q"][:rob.n]
+            if rob.g_q:
+                rob.set_grip(d, f["q"][-1])
+            d.qpos[rob.obj_q:rob.obj_q + 3] = np.asarray(f["obj"][:3]) * MM
+            d.qpos[rob.obj_q + 3:rob.obj_q + 7] = _q_body(f["obj"][3:7])
+            mujoco.mj_forward(m, d)
+            r.update_scene(d, cam)
+            yield f, r.render()
+    finally:
+        r.close()
+
+
+def render_frames(asm, design, sim: dict | str, times, path_pattern: str, size=(640, 480), camera=None,
+                  fast=False) -> list:
+    """Render scenario frames to PNG with mujoco.Renderer (set MUJOCO_GL=egl or osmesa when headless).
+    ``sim`` is a scenario document or the path of a sim_<name>.json; ``path_pattern`` like 'out_{i}.png'
+    (``{t}`` is also available); ``camera`` = {"lookat": [x, y, z] m, "distance", "azimuth", "elevation"}."""
+    from PIL import Image
+
     outs = []
-    for i, t in enumerate(times):
-        f = frames[int(np.argmin(np.abs(tt - t)))]
-        d.qpos[:] = 0
-        d.qpos[rob.qadr] = f["q"][:rob.n]
-        if rob.g_q:
-            rob.set_grip(d, f["q"][-1])
-        d.qpos[rob.obj_q:rob.obj_q + 3] = np.asarray(f["obj"][:3]) * MM
-        d.qpos[rob.obj_q + 3:rob.obj_q + 7] = _q_body(f["obj"][3:7])
-        mujoco.mj_forward(m, d)
-        r.update_scene(d, cam)
+    for i, (f, img) in enumerate(_render_iter(asm, design, sim, times, size, camera, fast)):
         path = path_pattern.format(i=i, t=f["t"])
-        Image.fromarray(r.render()).save(path)
+        Image.fromarray(img).save(path)
         outs.append(path)
-    r.close()
     return outs
+
+
+def render_gif(asm, design, sim: dict | str, path: str, fps: float = 15.0, size=(480, 360), camera=None) -> str:
+    """Animated GIF of a scenario (every frame at ``fps``), for reports and quick previews."""
+    from PIL import Image
+
+    if isinstance(sim, str):
+        with open(sim) as fh:
+            sim = json.load(fh)
+    t_end = sim["frames"][-1]["t"]
+    times = np.arange(0.0, t_end + 1e-9, 1.0 / fps)
+    imgs = [Image.fromarray(img) for _, img in _render_iter(asm, design, sim, times, size, camera, False)]
+    imgs[0].save(path, save_all=True, append_images=imgs[1:], duration=int(1000 / fps), loop=0)
+    return path

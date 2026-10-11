@@ -555,12 +555,32 @@ export class RobotPanel {
 // ------------------------------------------------------------------ 2. Simulation
 const SCEN_ORDER = ['pick_place', 'payload_sweep', 'workspace', 'shake'];
 const SCEN_LABEL = { pick_place: 'Pick & place', payload_sweep: 'Payload sweep', workspace: 'Workspace', shake: 'Shake test' };
-const SCEN_CARDS = {
-  pick_place: [['cycle_time_s', 'Cycle time', 's'], ['payload_g', 'Payload', 'g'], ['reach_mm', 'Reach', 'mm'], ['@grip', 'Grip force', 'N']],
-  payload_sweep: [['max_payload_g', 'Max payload', 'g'], ['rated_payload_g', 'Task payload', 'g'], ['test_reach_mm', 'At reach', 'mm'], ['@tau1', 'Shoulder torque', 'N·m']],
-  workspace: [['reach_mm', 'Top-down reach', 'mm'], ['min_reach_mm', 'Min reach', 'mm'], ['volume_l', 'Volume', 'L'], ['yaw_deg', 'Base sweep', '°']],
-  shake: [['max_accel_ms2', 'Peak accel', 'm/s²'], ['max_slip_mm', 'Max slip', 'mm'], ['min_grip_n', 'Min grip', 'N'], ['@grip', 'Grip force', 'N']],
+const SCEN_CARDS = {  // [candidate metric keys, label, unit]; '@grip' / '@tau1' are live values at the playhead
+  pick_place: [[['cycle_time_s'], 'Cycle time', 's'], [['payload_g', 'place_error_mm'], null, null], [['reach_mm', 'grip_target_n', 'target_grip_n'], null, null], [['@grip'], 'Grip force', 'N']],
+  payload_sweep: [[['max_payload_g'], 'Max payload', 'g'], [['rated_payload_g'], 'Task payload', 'g'], [['test_reach_mm', 'far_radius_mm', 'payload_margin'], null, null], [['@tau1'], 'Shoulder torque', 'N·m']],
+  workspace: [[['reach_mm'], 'Reach', 'mm'], [['min_reach_mm', 'max_height_mm'], null, null], [['volume_l'], 'Volume', 'L'], [['yaw_deg', 'valid_fraction', 'samples'], null, null]],
+  shake: [[['max_accel_ms2', 'peak_accel_ms2'], 'Peak accel', 'm/s²'], [['max_slip_mm', 'slip_mm'], 'Slip', 'mm'], [['min_grip_n', 'grip_n_min'], 'Min grip', 'N'], [['@grip'], 'Grip force', 'N']],
 };
+const CARD_LABEL = { place_error_mm: 'Place error', grip_target_n: 'Grip target', target_grip_n: 'Grip target', far_radius_mm: 'At radius', payload_margin: 'Payload margin',
+  max_height_mm: 'Max height', valid_fraction: 'Valid poses', samples: 'Samples', yaw_deg: 'Base sweep', test_reach_mm: 'At reach', min_reach_mm: 'Min reach',
+  payload_g: 'Payload', reach_mm: 'Reach' };
+function simCards(scen, m) {
+  const out = [], used = new Set();
+  for (const [keys, label, unit] of SCEN_CARDS[scen] || []) {
+    const k = keys.find((x) => x.startsWith('@') || (typeof m[x] === 'number'));
+    if (!k) continue;
+    used.add(k);
+    const [lab, u] = metricLabel(k.replace(/^@/, ''));
+    out.push([k, label || CARD_LABEL[k] || lab, unit || (k === 'payload_margin' ? '×' : k === 'valid_fraction' ? '' : u)]);
+  }
+  for (const [k, v] of Object.entries(m)) {
+    if (out.length >= 4) break;
+    if (typeof v !== 'number' || used.has(k)) continue;
+    const [lab, u] = metricLabel(k);
+    out.push([k, CARD_LABEL[k] || lab, u]);
+  }
+  return out;
+}
 export class SimPanel {
   constructor(root, ctx) {
     this.ctx = ctx;
@@ -727,7 +747,8 @@ export class SimPanel {
     const side = this.root.querySelector('.side');
     if (!meta) { side.innerHTML = '<div class="empty"><p>No simulation results.</p></div>'; return; }
     const m = meta.metrics || {}, ok = m.success !== false, sim = this.sim;
-    const cards = (SCEN_CARDS[this.scen] || []).map(([k, l, u]) => {
+    const cardSpec = simCards(this.scen, m);
+    const cards = cardSpec.map(([k, l, u]) => {
       if (k.startsWith('@')) return `<div class="mcard live"><div class="l">${l} · live</div><div class="v" data-live="${k}">–<small>${u}</small></div><div class="s">${k === '@grip' && m.target_grip_n ? `target ${fmt(m.target_grip_n)} N` : 'at playhead'}</div></div>`;
       const v = m[k];
       return `<div class="mcard"><div class="l">${l}</div><div class="v">${v == null ? '–' : Array.isArray(v) ? v.join('–') : typeof v === 'number' ? fmt(v) : esc(v)}<small>${u}</small></div></div>`;
@@ -737,15 +758,15 @@ export class SimPanel {
       const cls = p > 85 ? 'bad' : p > 60 ? 'warn' : '';
       return `<div class="row" data-j="${esc(j)}"><span class="n" title="${esc(j)}">${esc(j)}</span><span class="meter"><b class="${cls}" style="width:${Math.min(p, 100)}%"></b><i></i></span><span class="p">${fmt(p, '', 0)}%</span></div>`;
     }).join('');
-    const shown = new Set(['success', 'max_torque_pct', 'curve', ...(SCEN_CARDS[this.scen] || []).map((c) => c[0])]);
+    const shown = new Set(['success', 'max_torque_pct', 'curve', ...cardSpec.map((c) => c[0])]);
     const extra = Object.entries(m).filter(([k, v]) => !shown.has(k) && (typeof v !== 'object' || v === null));
     const curve = Array.isArray(m.curve) ? `<div class="sec-t" style="margin-top:16px">Payload curve<span class="r">shoulder torque vs 2× margin</span></div>
       <div class="tbars">${m.curve.map((c) => `<div class="row"><span class="n">${fmt(c.payload_g, 'g', 0)}</span><span class="meter"><b class="${c.ok ? 'acc' : 'bad'}" style="width:${Math.min(c.shoulder_pct, 100)}%"></b></span><span class="p">${fmt(c.shoulder_pct, '', 0)}%</span></div>`).join('')}</div>` : '';
     side.innerHTML = `<div class="success${ok ? '' : ' fail'} fade-in"><div class="ic">${I(ok ? 'check' : 'x', 'lg')}</div><div><h4>${ok ? 'Success' : 'Failed'}</h4><p>${esc(sim?.title || meta.title || this.scen)}</p></div></div>
       <div class="mgrid">${cards}</div>
-      <div class="sec-t">Peak torque per joint<span class="r">% stall · ▏live</span></div><div class="tbars">${bars || '<div class="skel" style="height:90px"></div>'}</div>
+      ${bars || !sim ? `<div class="sec-t">Peak torque per joint<span class="r">% stall · ▏live</span></div><div class="tbars">${bars || '<div class="skel" style="height:90px"></div>'}</div>` : ''}
       ${curve}
-      ${extra.length ? `<div class="sec-t" style="margin-top:16px">All metrics</div><dl class="kv" style="margin-top:0">${extra.map(([k, v]) => { const [lab, u] = metricLabel(k); return `<dt>${esc(lab)}</dt><dd>${typeof v === 'boolean' ? (v ? '<span class="tag good">yes</span>' : '<span class="tag bad">no</span>') : typeof v === 'number' ? fmt(v, u) : esc(v)}</dd>`; }).join('')}</dl>` : ''}`;
+      ${extra.length ? `<div class="sec-t" style="margin-top:16px">All metrics</div><dl class="kv" style="margin-top:0">${extra.map(([k, v]) => { const [lab, u] = metricLabel(k); const bad = /drop|fail|crush|collid|collision|saturat|slipped|damage/.test(k); return `<dt>${esc(lab)}</dt><dd>${typeof v === 'boolean' ? (v !== bad ? `<span class="tag good">${v ? 'yes' : 'no'}</span>` : `<span class="tag bad">${v ? 'yes' : 'no'}</span>`) : typeof v === 'number' ? fmt(v, u) : esc(v)}</dd>`; }).join('')}</dl>` : ''}`;
     const lg = this.root.querySelector('.legend');
     const arm = sim ? sim.joints.filter((j) => !/^gripper/.test(j)) : Object.keys(pct);
     lg.innerHTML = arm.map((j, k) => `<span><i style="background:${SERIES[k % SERIES.length]}"></i>${esc(jname(j))} <b data-k="${k}">–</b></span>`).join('');
@@ -859,6 +880,7 @@ export class SimPanel {
 }
 const UNIT_SUFFIX = [['_ms2', 'm/s²'], ['_nm', 'N·m'], ['_mm', 'mm'], ['_pct', '%'], ['_deg', '°'], ['_n', 'N'], ['_g', 'g'], ['_s', 's'], ['_l', 'L'], ['_kg', 'kg']];
 function metricLabel(k) {
+  k = k.replace(/^(.*)_(n|mm|g|s|deg|pct)_(mean|max|min|avg)$/, '$1_$3_$2');
   let u = '';
   for (const [suf, unit] of UNIT_SUFFIX) if (k.endsWith(suf)) { u = unit; k = k.slice(0, -suf.length); break; }
   const lab = k.replace(/_/g, ' ');
