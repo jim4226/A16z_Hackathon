@@ -157,7 +157,13 @@ class RobotProject(Project):
                     from . import imported
                     cache["asm"] = imported.build(design, res["sizing"], res.get("eplan"))
                 else:
-                    cache["asm"] = arm.build(design, res["sizing"], res.get("eplan"))
+                    try:
+                        cache["asm"] = arm.build(design, res["sizing"], res.get("eplan"))
+                    except Exception as exc:  # never leave the user without a robot: fall back to the stub generator
+                        traceback.print_exc()
+                        from . import arm_stub
+                        res.setdefault("warnings", []).append(f"detailed arm generator failed ({exc}); showing the basic model")
+                        cache["asm"] = arm_stub.build(design, res["sizing"], res.get("eplan"))
             return cache["asm"]
 
         for node in ORDER:
@@ -212,7 +218,11 @@ class RobotProject(Project):
                 from . import imported
                 res["sizing"] = imported.size(design)
             else:
-                res["sizing"] = arm.size(design)
+                try:
+                    res["sizing"] = arm.size(design)
+                except Exception:
+                    from . import arm_stub
+                    res["sizing"] = arm_stub.size(design)
         elif node == "gripper" and design.arm.source:
             from . import imported
             res["gripper"] = imported.gripper_summary(design, imported.size(design))

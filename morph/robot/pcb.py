@@ -24,6 +24,7 @@ import json
 import math
 import os
 import zipfile
+from array import array
 
 import numpy as np
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
@@ -31,11 +32,11 @@ from shapely.ops import split, unary_union
 
 GRID = 0.25
 CLEAR = 0.2            # copper-to-copper, mm (JLCPCB 2-layer minimum is 0.127)
-MARGIN = 0.05          # rasterisation safety so diagonal steps never undercut CLEAR
+MARGIN = 0.04          # rasterisation safety so steps between cell centres never undercut CLEAR
 EDGE_CLEAR = 0.4       # copper to board edge
 POUR_CLEAR = 0.3       # pour to other nets
 VIA_D, VIA_DRILL = 0.6, 0.3
-CLASSES = {"sig": 0.25, "pwr": 0.6, "hc": 2.0}
+CLASSES = {"sig": 0.2, "pwr": 0.6, "hc": 2.0}
 LAYERS = ("F.Cu", "B.Cu")
 DIRS = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
 TURN_COST = {0: 0.0, 1: 0.35, 2: 2.0, 3: 8.0}
@@ -109,8 +110,17 @@ def footprint(name: str) -> dict:
         pads = [_pad(n, x, 0.0, w, 1.15) for n, x, w in sig]
         pads += [_pad("SH", sx * 4.32, y, 1.0, 1.8, "oval", 0.7) for sx in (-1, 1) for y in (1.66, 5.84)]
         pads += [_pad("", sx * 2.89, 1.15, 0.65, 0.65, "circle", 0.65, np_=True) for sx in (-1, 1)]
-        return {"pads": pads, "body": (-4.47, 0.75, 4.47, 8.1), "court": (-5.1, -0.75, 5.1, 8.1), "front": (0, 1),
-                "height": 3.2, "overhang": 0.6, "fcu_keepout": (-4.0, 0.9, 4.0, 8.1)}
+        # pre-routed D+/D- crossover (same idea as the vendor 2-layer footprints): D- (B7-A7) joined on F.Cu by a
+        # U below the row, D+ (A6-B6) bridged on B.Cu through two vias placed inside / beside that U.
+        pre = [{"pad": "B7", "layer": "F.Cu", "pts": [(-0.75, 0.0), (-0.75, -0.85), (-1.0, -1.1), (-1.0, -2.6), (0.5, -2.6),
+                                                      (0.5, -1.1), (0.25, -0.85), (0.25, 0.0)]},
+               {"pad": "A6", "layer": "F.Cu", "pts": [(-0.25, 0.0), (-0.25, -1.75)]},
+               {"pad": "B6", "layer": "F.Cu", "pts": [(0.75, 0.0), (0.75, -0.75), (1.2, -1.2), (1.2, -1.9)]},
+               {"pad": "A6", "layer": "B.Cu", "pts": [(-0.25, -1.75), (-0.1, -1.9), (1.2, -1.9)]}]
+        return {"pads": pads, "body": (-4.47, 0.75, 4.47, 8.1), "court": (-5.1, -2.9, 5.1, 8.1), "front": (0, 1),
+                "height": 3.2, "overhang": 0.6, "fcu_keepout": (-4.0, 0.9, 4.0, 8.1),
+                "ties": {"A6": "DP", "B6": "DP", "B7": "DM", "A7": "DM"}, "pre": pre,
+                "pre_vias": [("A6", -0.25, -1.75), ("A6", 1.2, -1.9)]}
     if name == "SW_SMD_5x5":
         pads = [_pad(1, -3.0, 1.85, 1.0, 0.8), _pad(1, 3.0, 1.85, 1.0, 0.8), _pad(2, -3.0, -1.85, 1.0, 0.8),
                 _pad(2, 3.0, -1.85, 1.0, 0.8)]
@@ -179,7 +189,7 @@ class Placed:
                 except KeyError:
                     pin = None
             self.pads.append({**p, "x": px + x, "y": py + y, "w": w, "h": h, "pin": pin,
-                              "net": pin.net if pin else None})
+                              "net": pin.net if pin else None, "tie": fp.get("ties", {}).get(p["num"])})
 
 
 def _label_w(c) -> float:
@@ -215,29 +225,25 @@ class Placer:
                    "top": (m, m, W - m, H + ov)}[edge]
             if court[0] < lim[0] or court[1] < lim[1] or court[2] > lim[2] or court[3] > lim[3]:
                 return False
-        band = self._band(c, court)
-        top = court[3] > H - 2.5
+        band = None if edge == "top" else self._band(c, court)
+        if band and (band[2] > W + 1.5 or band[3] > H - 0.2):
+            return False
         for r, ref, kind in self.rects:
-            if _overlap(court, r, 0.25):
-                return False
-            if not top and _overlap(band, r, 0.05) and kind != "band":
-                return False
-            if not top and kind == "band" and _overlap(band, r, 0.05):
-                return False
-            if kind == "band" and _overlap(court, r, 0.05):
+            if kind == "court":
+                if _overlap(court, r, 0.25) or (band and _overlap(band, r, 0.05)):
+                    return False
+            elif _overlap(court, r, 0.05) or (band and _overlap(band, r, 0.05)):
                 return False
         for k in self.keepouts:
-            if _overlap(court, k, 0.3):
+            if _overlap(court, k, 0.3) or (band and _overlap(band, k, 0.0)):
                 return False
-        if not top and band[2] > W + 1.5:
-            return False
         return True
 
-    def commit(self, c, fp, x, y, rot):
+    def commit(self, c, fp, x, y, rot, edge=None):
         p = Placed(c, fp, x, y, rot)
         self.placed[c.ref] = p
         self.rects.append((p.court, c.ref, "court"))
-        if p.court[3] < self.H - 2.5:
+        if edge != "top":
             self.rects.append((self._band(c, p.court), c.ref, "band"))
         if "keepout" in fp:
             self.keepouts.append(_rect_rot(fp["keepout"], rot, x, y))
@@ -261,6 +267,7 @@ class Placer:
     def spiral(self, c, fp, tx, ty, rots, edge=None, axis=None, cost=None, max_r=None):
         g = 0.5
         best = None
+        first = None
         max_r = max_r or max(self.W, self.H)
         r = 0.0
         while r <= max_r:
@@ -281,7 +288,9 @@ class Placer:
                         k = (cost(x, y, rot) if cost else 0.0) + math.hypot(x - tx, y - ty)
                         if best is None or k < best[0]:
                             best = (k, x, y, rot)
-            if best is not None and r > (best[0] - 0.0) * 0.5 + 1.5:
+                            if first is None:
+                                first = r
+            if first is not None and r > first + 2.0:
                 break
             r += g
         return best
@@ -329,7 +338,7 @@ class Placer:
             best = self.spiral(c, fp, x, y, [rot], edge=c.place["edge"], axis=axis)
             if best is None:
                 raise RuntimeError(f"cannot place {c.ref} on the {c.place['edge']} edge")
-            self.commit(c, fp, best[1], best[2], best[3])
+            self.commit(c, fp, best[1], best[2], best[3], edge=c.place["edge"])
         anchored = [c for c in comps if c.place.get("at_xy")]
         for c in anchored:
             fp = footprint(c.footprint)
@@ -338,7 +347,7 @@ class Placer:
             if best is None:
                 raise RuntimeError(f"cannot place {c.ref}")
             self.commit(c, fp, best[1], best[2], best[3])
-        rest = [c for c in comps if c.ref not in self.placed]
+        rest = sorted([c for c in comps if c.ref not in self.placed], key=lambda c: c.place.get("prio", 5))
         guard = 0
         while rest and guard < 1000:
             guard += 1
@@ -374,21 +383,58 @@ class Placer:
 # ------------------------------------------------------------------ router
 
 class Router:
+    """Per-(layer, width-class) clearance rasters plus a record of every copper shape, so routed nets can be
+    ripped up and the rasters rebuilt (rip-up and re-route)."""
+
     def __init__(self, W, H, nets: list):
         self.W, self.H = W, H
         self.nx, self.ny = int(round(W / GRID)) + 1, int(round(H / GRID)) + 1
         self.net_id = {n: i for i, n in enumerate(nets)}
-        self.own = {(l, k): np.full((self.nx, self.ny), -1, dtype=np.int32) for l in (0, 1) for k in CLASSES}
-        self.tree: dict = {}            # net id -> set of (layer, idx) copper centreline cells
         self.traces, self.vias = [], []
+        self.shapes = []                 # (layers, shape, net, tag)
         xs = np.arange(self.nx) * GRID
         ys = np.arange(self.ny) * GRID
         self.X, self.Y = np.meshgrid(xs, ys, indexing="ij")
-        # board edge keep-out (all classes, both layers)
-        for (l, k), arr in self.own.items():
+        self.novia = np.zeros((self.nx, self.ny), dtype=bool)
+        self._reset()
+
+    def _reset(self):
+        W, H = self.W, self.H
+        self.own = {(l, k): np.full((self.nx, self.ny), -1, dtype=np.int32) for l in (0, 1) for k in CLASSES}
+        for (l, k), arr in self.own.items():   # board edge keep-out (all classes, both layers)
             r = EDGE_CLEAR + CLASSES[k] / 2 + MARGIN
             m = (self.X < r) | (self.Y < r) | (self.X > W - r) | (self.Y > H - r)
             arr[m] = -2
+
+    def rebuild(self):
+        self._reset()
+        for layers, shape, net, tag in self.shapes:
+            self._raster(layers, shape, net)
+
+    def rip(self, net):
+        """Remove the routed copper (tag 'route') of `net`; call rebuild() afterwards."""
+        self.shapes = [sh for sh in self.shapes if not (sh[2] == net and sh[3] == "route")]
+        self.traces = [t for t in self.traces if not (t["net"] == net and t.get("_tag") == "route")]
+        self.vias = [v for v in self.vias if not (v["net"] == net and v.get("_tag") == "route")]
+
+    def copper_cells(self, net, key=None, tag=None):
+        out = set()
+        for t in self.traces:
+            if t["net"] == net and (key is None or t.get("_key") == key) and (tag is None or t.get("_tag") == tag):
+                out.update(t["_cells"])
+        for v in self.vias:
+            if v["net"] == net and (key is None or v.get("_key") == key) and (tag is None or v.get("_tag") == tag):
+                out.update({(0, v["_cell"]), (1, v["_cell"])})
+        return out
+
+    def relaxed(self, net):
+        """A copy whose rasters ignore every other net's routed copper (to find who blocks `net`)."""
+        rb = Router.__new__(Router)
+        rb.__dict__.update({k: v for k, v in self.__dict__.items() if k not in ("own", "shapes", "traces", "vias")})
+        rb.traces, rb.vias = [], []
+        rb.shapes = [sh for sh in self.shapes if sh[3] != "route" or sh[2] == net]
+        rb.rebuild()
+        return rb
 
     def nid(self, net):
         if net not in self.net_id:
@@ -401,7 +447,11 @@ class Router:
     def ij(self, idx):
         return divmod(idx, self.ny)
 
-    def mark(self, layers, shape, net):
+    def mark(self, layers, shape, net, tag="fixed"):
+        self.shapes.append((tuple(layers), shape, net, tag))
+        self._raster(layers, shape, net)
+
+    def _raster(self, layers, shape, net):
         """Mark cells where a trace of each class would come within CLEAR of this copper."""
         k = self.nid(net) if net is not None else -2
         kind = shape[0]
@@ -465,7 +515,8 @@ class Router:
         return out
 
     def astar(self, net, cls, sources, targets, goal, layers=(0, 1), allow_via=True, window=None, goal_fn=None,
-              max_cost=None, bias_b=1.25):
+              max_cost=None, bias_b=1.3, max_exp=250000):
+        """A* over (cell, layer); 8 directions, 45-degree bends cheap, 90 expensive, vias cost VIA_COST."""
         k = self.nid(net)
         n = self.nx * self.ny
         free = [None, None]
@@ -475,7 +526,7 @@ class Router:
         via_ok = None
         if allow_via:
             va, vb = self.own[(0, "pwr")], self.own[(1, "pwr")]
-            via_ok = (((va == -1) | (va == k)) & ((vb == -1) | (vb == k))).ravel().tobytes()
+            via_ok = (((va == -1) | (va == k)) & ((vb == -1) | (vb == k)) & ~self.novia).ravel().tobytes()
         ny = self.ny
         if window:
             wi0, wj0, wi1, wj1 = window
@@ -483,115 +534,129 @@ class Router:
             wi0, wj0, wi1, wj1 = 1, 1, self.nx - 2, ny - 2
         gx, gy = goal
         tset = set(targets) if targets else set()
+        tcells = [set(), set()]
+        for l, c in tset:
+            tcells[l].add(c)
         steps = [(di * ny + dj, di, dj, 1.414 if di and dj else 1.0) for di, dj in DIRS]
-        best = {}
-        prev = {}
+        INF = 1e18
+        best = array("d", [INF]) * (2 * n)
+        prev = array("l", [-1]) * (2 * n)
+        dirs = bytearray(b"\x08" * (2 * n))
+        hw = 1.0 if goal_fn else 1.3
         pq = []
         for (l, c) in sources:
             if l not in layers:
                 continue
-            key = (c * 2 + l) * 9 + 8
+            key = c * 2 + l
             best[key] = 0.0
             i, j = divmod(c, ny)
-            h = 0.0 if goal_fn else max(abs(i - gx), abs(j - gy)) + 0.414 * min(abs(i - gx), abs(j - gy))
-            heapq.heappush(pq, (h * 1.15, 0.0, c, l, 8))
+            dx, dy = abs(i - gx), abs(j - gy)
+            h = 0.0 if goal_fn else (dx + dy - 0.586 * min(dx, dy))
+            heapq.heappush(pq, (h * hw, 0.0, key))
         exp = 0
+        pop, push = heapq.heappop, heapq.heappush
         while pq:
-            f, g, c, l, d = heapq.heappop(pq)
-            key = (c * 2 + l) * 9 + d
-            if g > best.get(key, 1e18):
+            f, g, key = pop(pq)
+            if g > best[key]:
                 continue
+            c, l = key >> 1, key & 1
             exp += 1
-            if exp > 600000:
+            if exp > max_exp:
                 return None
-            if (goal_fn and goal_fn(c, l)) or (l, c) in tset:
+            if (goal_fn and goal_fn(c, l)) or c in tcells[l]:
                 path = [(l, c)]
-                while key in prev:
+                while prev[key] >= 0:
                     key = prev[key]
-                    ll = (key // 9) % 2
-                    path.append((ll, key // 18))
+                    path.append((key & 1, key >> 1))
                 return path[::-1]
             if max_cost and g > max_cost:
                 continue
             i, j = divmod(c, ny)
             mult = bias_b if l == 1 else 1.0
             fl = free[l]
-            for nd, (off, di, dj, base) in enumerate(steps):
+            d = dirs[key]
+            tl = tcells[l]
+            for nd in range(8):
+                off, di, dj, base = steps[nd]
                 ni, nj = i + di, j + dj
                 if ni < wi0 or nj < wj0 or ni > wi1 or nj > wj1:
                     continue
                 nc = c + off
-                if (l, nc) not in tset and not fl[nc]:
+                if not fl[nc] and nc not in tl:
                     continue
                 if di and dj and (not fl[c + di * ny] or not fl[c + dj]):
                     continue
                 if d != 8:
-                    t = abs(nd - d)
-                    t = min(t, 8 - t)
+                    t = nd - d
+                    if t < 0:
+                        t = -t
+                    if t > 4:
+                        t = 8 - t
                     if t == 4:
                         continue
-                    tc = TURN_COST[t]
+                    ng = g + base * mult + TURN_COST[t]
                 else:
-                    tc = 0.0
-                ng = g + base * mult + tc
-                nkey = (nc * 2 + l) * 9 + nd
-                if ng < best.get(nkey, 1e18):
+                    ng = g + base * mult
+                nkey = nc * 2 + l
+                if ng < best[nkey]:
                     best[nkey] = ng
                     prev[nkey] = key
-                    h = 0.0 if goal_fn else max(abs(ni - gx), abs(nj - gy)) + 0.414 * min(abs(ni - gx), abs(nj - gy))
-                    heapq.heappush(pq, (ng + h * 1.15, ng, nc, l, nd))
-            if allow_via and via_ok[c] and len(layers) == 2:
+                    dirs[nkey] = nd
+                    if goal_fn:
+                        push(pq, (ng, ng, nkey))
+                    else:
+                        dx, dy = abs(ni - gx), abs(nj - gy)
+                        push(pq, (ng + (dx + dy - 0.586 * (dx if dx < dy else dy)) * hw, ng, nkey))
+            if via_ok is not None and via_ok[c] and len(layers) == 2:
                 ol = 1 - l
                 if free[ol][c]:
                     ng = g + VIA_COST
-                    nkey = (c * 2 + ol) * 9 + 8
-                    if ng < best.get(nkey, 1e18):
+                    nkey = c * 2 + ol
+                    if ng < best[nkey]:
                         best[nkey] = ng
                         prev[nkey] = key
-                        h = 0.0 if goal_fn else max(abs(i - gx), abs(j - gy)) + 0.414 * min(abs(i - gx), abs(j - gy))
-                        heapq.heappush(pq, (ng + h * 1.15, ng, c, ol, 8))
+                        dirs[nkey] = 8
+                        dx, dy = abs(i - gx), abs(j - gy)
+                        push(pq, (ng + (0 if goal_fn else (dx + dy - 0.586 * min(dx, dy)) * hw), ng, nkey))
         return None
 
-    def commit_path(self, net, path, width, start_xy=None, end_xy=None):
-        """Turn a cell path into traces (+ vias at layer changes) and mark the rasters."""
-        k = self.nid(net)
+    def commit_path(self, net, path, width, start_xy=None, end_xy=None, tag="route", key=None):
+        """Turn a cell path into traces (+ vias at layer changes), mark the rasters, return the copper cells."""
         runs, cur = [], [path[0]]
+        cells = set()
         for a, b in zip(path, path[1:]):
             if b[0] != a[0]:
                 runs.append(cur)
                 cur = [b]
                 v = self.ij(b[1])
-                self.add_via(net, v[0] * GRID, v[1] * GRID)
+                self.add_via(net, v[0] * GRID, v[1] * GRID, tag=tag, key=key)
+                cells.update({(0, b[1]), (1, b[1])})
             else:
                 cur.append(b)
         runs.append(cur)
-        made = []
         for ri, run in enumerate(runs):
-            pts = [self.ij(c) for _, c in run]
-            pts = _simplify_ij(pts)
+            pts = _simplify_ij([self.ij(c) for _, c in run])
             xy = [[round(i * GRID, 4), round(j * GRID, 4)] for i, j in pts]
             if ri == 0 and start_xy is not None:
                 xy = [list(start_xy)] + xy
             if ri == len(runs) - 1 and end_xy is not None:
                 xy = xy + [list(end_xy)]
             xy = _dedupe(xy)
-            layer = LAYERS[run[0][0]]
+            li = run[0][0]
+            rc = {(l, c) for l, c in run}
+            cells |= rc
             if len(xy) >= 2:
-                t = {"net": net, "layer": layer, "width": width, "points": xy}
-                self.traces.append(t)
-                made.append(t)
+                self.traces.append({"net": net, "layer": LAYERS[li], "width": width, "points": xy, "_tag": tag,
+                                    "_key": key, "_cells": rc})
                 for (x0, y0), (x1, y1) in zip(xy, xy[1:]):
-                    self.mark([run[0][0]], ("seg", x0, y0, x1, y1, width / 2), net)
-            for l, c in run:
-                self.tree.setdefault(k, set()).add((l, c))
-        return made
+                    self.mark([li], ("seg", x0, y0, x1, y1, width / 2), net, tag)
+        return cells
 
-    def add_via(self, net, x, y):
-        self.vias.append({"x": round(x, 4), "y": round(y, 4), "d": VIA_D, "drill": VIA_DRILL, "net": net})
-        self.mark([0, 1], ("circle", x, y, VIA_D / 2), net)
-        k = self.nid(net)
+    def add_via(self, net, x, y, tag="route", key=None):
         c = self.idx(int(round(x / GRID)), int(round(y / GRID)))
-        self.tree.setdefault(k, set()).update({(0, c), (1, c)})
+        self.vias.append({"x": round(x, 4), "y": round(y, 4), "d": VIA_D, "drill": VIA_DRILL, "net": net, "_tag": tag,
+                          "_key": key, "_cell": c})
+        self.mark([0, 1], ("circle", x, y, VIA_D / 2), net, tag)
 
 
 def _simplify_ij(pts):
@@ -645,19 +710,310 @@ def net_class(net: str, hc_nets=(), pwr_nets=()) -> str:
     return "sig"
 
 
-def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=None, name="board", seed_order=None) -> dict:
+def _centre(group):
+    return (float(np.mean([p["x"] for p in group])), float(np.mean([p["y"] for p in group])))
+
+
+def _gkey(p):
+    return (p["ref"], p.get("tie") or p["num"])
+
+
+def _seg_cells(r, pts):
+    out = set()
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        n = max(int(math.hypot(x1 - x0, y1 - y0) / GRID), 1)
+        for k in range(n + 1):
+            out.add(r.idx(int(round((x0 + (x1 - x0) * k / n) / GRID)), int(round((y0 + (y1 - y0) * k / n) / GRID))))
+    return out
+
+
+def _pre_copper(r, placed):
+    """Footprint-defined copper (e.g. the USB-C D+/D- crossover): committed before routing, nets from its pads."""
+    for ref, pl in placed.items():
+        fp = pl.fp
+        nets = {p["num"]: p["net"] for p in pl.pads}
+        ties = fp.get("ties", {})
+        for t in fp.get("pre", []):
+            net = nets.get(t["pad"])
+            if not net:
+                continue
+            pts = [_rot(x, y, pl.rot) for x, y in t["pts"]]
+            pts = [[round(x + pl.x, 4), round(y + pl.y, 4)] for x, y in pts]
+            li = LAYERS.index(t["layer"])
+            key = (ref, ties.get(t["pad"]) or t["pad"])
+            r.traces.append({"net": net, "layer": t["layer"], "width": CLASSES["sig"], "points": pts, "_tag": "pre",
+                             "_key": key, "_cells": {(li, c) for c in _seg_cells(r, pts)}})
+            for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+                r.mark([li], ("seg", x0, y0, x1, y1, CLASSES["sig"] / 2), net, "pre")
+        for num, x, y in fp.get("pre_vias", []):
+            net = nets.get(num)
+            if net:
+                vx, vy = _rot(x, y, pl.rot)
+                r.add_via(net, vx + pl.x, vy + pl.y, tag="pre", key=(ref, ties.get(num) or num))
+
+
+def _escape_fanout(r, placed, hc_nets, pwr_nets):
+    """Reserve a short private escape stub straight out of every used pad of ICs and fine-pitch connectors,
+    so later nets cannot run across the pad row and wall it in."""
+    for ref, pl in placed.items():
+        smd = [p for p in pl.pads if not p["drill"] and not p["np"]]
+        if len(smd) < 3:
+            continue
+        xs = sorted({round(p["x"], 3) for p in smd})
+        ys = sorted({round(p["y"], 3) for p in smd})
+        pitch = min([b - a for a, b in zip(xs, xs[1:])] + [b - a for a, b in zip(ys, ys[1:])] + [9.9])
+        for p in smd:
+            if not p["net"] or p["net"] == "GND" or (p["w"] >= 3.0 and p["h"] >= 3.0) or p.get("tie"):
+                continue
+            dx, dy = p["x"] - pl.x, p["y"] - pl.y
+            if abs(dx) * (pl.court[3] - pl.court[1]) >= abs(dy) * (pl.court[2] - pl.court[0]):
+                ux, uy, ext = (1 if dx > 0 else -1), 0, p["w"] / 2
+            else:
+                ux, uy, ext = 0, (1 if dy > 0 else -1), p["h"] / 2
+            L = ext + (0.75 if pitch < 1.0 else 0.6)
+            cls = net_class(p["net"], hc_nets, pwr_nets)
+            w = 0.6 if cls in ("hc", "pwr") and min(p["w"], p["h"]) >= 0.65 else CLASSES["sig"]
+            cls = "pwr" if w >= 0.6 else "sig"
+            i1, j1 = int(round((p["x"] + ux * L) / GRID)), int(round((p["y"] + uy * L) / GRID))
+            x1, y1 = i1 * GRID, j1 * GRID
+            k = r.nid(p["net"])
+            n = max(abs(int(round((x1 - p["x"]) / GRID))), abs(int(round((y1 - p["y"]) / GRID))), 1)
+            ok = True
+            for t in range(n + 1):
+                xi, yj = p["x"] + (x1 - p["x"]) * t / n, p["y"] + (y1 - p["y"]) * t / n
+                ci, cj = int(round(xi / GRID)), int(round(yj / GRID))
+                if not (0 < ci < r.nx - 1 and 0 < cj < r.ny - 1):
+                    ok = False
+                    break
+                inside = abs(xi - p["x"]) <= p["w"] / 2 and abs(yj - p["y"]) <= p["h"] / 2
+                if r.own[(0, cls)][ci, cj] not in (-1, k) and not inside:
+                    ok = False
+                    break
+            if ok:
+                r.commit_path(p["net"], [(0, r.idx(i1, j1))], w, (round(p["x"], 4), round(p["y"], 4)), None,
+                              tag="stub", key=_gkey(p))
+
+
+def _gnd_fanout(r, pads, unrouted):
+    """Every SMD GND pad gets a short stub to a via into the B.Cu plane (done before signal routing)."""
+    k_g = r.nid("GND")
+    for p in pads:
+        if p["net"] != "GND" or p["np"] or p["drill"]:
+            continue
+        if p["w"] >= 3.0 and p["h"] >= 3.0:          # exposed pad: via-in-pad array (tented)
+            for dx in (-0.9, 0.9):
+                for dy in (-0.9, 0.9):
+                    r.add_via("GND", round((p["x"] + dx) / GRID) * GRID, round((p["y"] + dy) / GRID) * GRID,
+                              tag="gndfan", key=_gkey(p))
+            continue
+        reach = max(p["w"], p["h"]) / 2 + VIA_D / 2 + 0.2
+        va, vb = r.own[(0, "pwr")], r.own[(1, "pwr")]
+        flat = (((va == -1) | (va == k_g)) & ((vb == -1) | (vb == k_g)) & ~r.novia).ravel()
+        px, py = p["x"], p["y"]
+
+        def goal_fn(c, l, px=px, py=py, reach=reach, flat=flat):
+            if l != 0 or not flat[c]:
+                return False
+            i, j = divmod(c, r.ny)
+            return math.hypot(i * GRID - px, j * GRID - py) >= reach
+
+        src = [(0, c) for c in r.pad_cells(p)]
+        path, width = None, CLASSES["sig"]
+        for cl in (("pwr", "sig") if min(p["w"], p["h"]) >= 0.6 else ("sig",)):
+            path = r.astar("GND", cl, src, None, (0, 0), layers=(0,), allow_via=False, goal_fn=goal_fn, max_cost=28,
+                           max_exp=20000)
+            if path:
+                width = 0.5 if cl == "pwr" else CLASSES["sig"]
+                break
+        if path is None:
+            unrouted.append({"net": "GND", "pins": [f"{p['ref']}.{p['num']}"], "note": "no room for a GND via"})
+            continue
+        r.commit_path("GND", path, width, (round(px, 4), round(py, 4)), None, tag="gndfan", key=_gkey(p))
+        i, j = r.ij(path[-1][1])
+        r.add_via("GND", i * GRID, j * GRID, tag="gndfan", key=_gkey(p))
+
+
+class _Routing:
+    def __init__(self, r, terms, hc_nets, pwr_nets):
+        self.r, self.terms, self.hc, self.pwr = r, terms, hc_nets, pwr_nets
+
+    def pad_cells(self, g):
+        out = set()
+        for p in g:
+            for c in self.r.pad_cells(p):
+                out.add((0, c))
+                if p["drill"]:
+                    out.add((1, c))
+        return out
+
+    def group_cells(self, net, gk, g):
+        return self.pad_cells(g) | self.r.copper_cells(net, key=gk, tag=None) - self.r.copper_cells(net, tag="route")
+
+    def entry_ok(self, g, cls, net):
+        """Cells of group g a trace of class cls may end in: free in the raster, or deep enough inside a pad."""
+        r, w = self.r, CLASSES[cls]
+        k = r.nid(net)
+        out = set()
+        for p in g:
+            for c in r.pad_cells(p):
+                i, j = r.ij(c)
+                x, y = i * GRID, j * GRID
+                if p["shape"] == "circle":
+                    deep = math.hypot(x - p["x"], y - p["y"]) <= p["w"] / 2 - w / 2 + 0.01
+                else:
+                    deep = abs(x - p["x"]) <= p["w"] / 2 - w / 2 + 0.01 and abs(y - p["y"]) <= p["h"] / 2 - w / 2 + 0.01
+                for l in ((0, 1) if p["drill"] else (0,)):
+                    if deep or r.own[(l, cls)][i, j] in (-1, k):
+                        out.add((l, c))
+        return out
+
+    def route_net(self, net):
+        r = self.r
+        groups = list(self.terms.get(net, {}).items())
+        if len(groups) < 2:
+            return []
+        cls0 = net_class(net, self.hc, self.pwr)
+        k = r.nid(net)
+        cen = np.mean([_centre(g) for _, g in groups], axis=0)
+        groups.sort(key=lambda kg: math.hypot(_centre(kg[1])[0] - cen[0], _centre(kg[1])[1] - cen[1]))
+        tree = set(self.group_cells(net, *groups[0]))
+        done, todo, fails = [groups[0]], groups[1:], []
+        while todo:
+            arr = np.array([r.ij(c) for _, c in tree]) * GRID
+            todo.sort(key=lambda kg: float(np.min(np.abs(arr[:, 0] - _centre(kg[1])[0]) + np.abs(arr[:, 1] - _centre(kg[1])[1]))))
+            gk, g = todo.pop(0)
+            m = max(min(p["w"], p["h"]) for p in g)
+            cls = cls0
+            if cls == "hc" and m < 1.0:
+                cls = "pwr"
+            if cls == "pwr" and m < 0.6:
+                cls = "sig"
+            path, cls = self.search(net, cls, tree, gk, g)
+            if path is None:
+                fails.append((net, gk))
+                continue
+            sxy = exy = None
+            end_c = path[-1][1]
+            for p in g:
+                if end_c in r.pad_cells(p):
+                    exy = (round(p["x"], 4), round(p["y"], 4))
+                    break
+            st_l, st_c = path[0]
+            for _, gg in done:
+                for p in gg:
+                    if st_c in r.pad_cells(p) and (st_l == 0 or p["drill"]):
+                        sxy = (round(p["x"], 4), round(p["y"], 4))
+                        break
+            tree |= r.commit_path(net, path, CLASSES[cls], sxy, exy, tag="route", key=net)
+            tree |= self.group_cells(net, gk, g)
+            done.append((gk, g))
+        return fails
+
+    def search(self, net, cls, tree, gk, g, router=None):
+        r = router or self.r
+        k = r.nid(net)
+        gx, gy = _centre(g)
+        for attempt_cls in ([cls, "sig"] if cls != "sig" else ["sig"]):
+            need = {"hc": 1.0, "pwr": 0.6, "sig": 0.0}[attempt_cls]
+            okf = [r.own[(0, attempt_cls)].ravel(), r.own[(1, attempt_cls)].ravel()]
+            srcs = [(l, c) for l, c in tree if okf[l][c] in (-1, k)]
+            for _, gg in self.terms.get(net, {}).items():
+                for p in gg:
+                    if min(p["w"], p["h"]) >= need:
+                        srcs += [lc for lc in self.pad_cells([p]) if lc in tree]
+            if not srcs:
+                srcs = list(tree)
+            tgt = self.entry_ok(g, attempt_cls, net) | (self.group_cells(net, gk, g) - self.pad_cells(g))
+            if not tgt:
+                tgt = self.group_cells(net, gk, g)
+            allp = [r.ij(c) for _, c in srcs] + [r.ij(c) for _, c in tgt]
+            pad_i = 32
+            win = (max(min(a for a, _ in allp) - pad_i, 1), max(min(b for _, b in allp) - pad_i, 1),
+                   min(max(a for a, _ in allp) + pad_i, r.nx - 2), min(max(b for _, b in allp) + pad_i, r.ny - 2))
+            path = r.astar(net, attempt_cls, srcs, tgt, (gx / GRID, gy / GRID), window=win, max_exp=50000)
+            if path is None:
+                path = r.astar(net, attempt_cls, srcs, tgt, (gx / GRID, gy / GRID), max_exp=90000)
+            if path is not None:
+                return path, attempt_cls
+        return None, cls
+
+    def blockers(self, net, gk):
+        """Nets whose routed copper sits on the path this connection would take on an otherwise empty board."""
+        r = self.r
+        rb = r.relaxed(net)
+        groups = self.terms.get(net, {})
+        g = groups[gk]
+        tree = set()
+        for ok, og in groups.items():
+            if ok != gk:
+                tree |= self.group_cells(net, ok, og)
+        tree |= r.copper_cells(net, tag="route")
+        cls = net_class(net, self.hc, self.pwr)
+        path, cls = self.search(net, cls, tree, gk, g, router=rb)
+        if path is None:
+            return None
+        w = CLASSES[cls]
+        pts = [(r.ij(c)[0] * GRID, r.ij(c)[1] * GRID, l) for l, c in path]
+        out = set()
+        for t in r.traces:
+            if t["net"] == net or t.get("_tag") != "route":
+                continue
+            li = LAYERS.index(t["layer"])
+            lim = CLEAR + w / 2 + t["width"] / 2 + 0.05
+            line = LineString(t["points"]) if len(t["points"]) > 1 else Point(t["points"][0])
+            for x, y, l in pts:
+                if l == li and line.distance(Point(x, y)) < lim:
+                    out.add(t["net"])
+                    break
+        for v in r.vias:
+            if v["net"] == net or v.get("_tag") != "route":
+                continue
+            for x, y, l in pts:
+                if math.hypot(x - v["x"], y - v["y"]) < CLEAR + w / 2 + VIA_D / 2 + 0.05:
+                    out.add(v["net"])
+                    break
+        return out
+
+    def run(self, order, max_rounds=14):
+        fails = []
+        for net in order:
+            fails += self.route_net(net)
+        tries: dict = {}
+        rounds = 0
+        while fails and rounds < max_rounds:
+            rounds += 1
+            net, gk = fails.pop(0)
+            tries[(net, gk)] = tries.get((net, gk), 0) + 1
+            if tries[(net, gk)] > 3:
+                fails.append((net, gk))
+                if all(tries.get(f, 0) > 3 for f in fails):
+                    break
+                continue
+            bl = self.blockers(net, gk)
+            if not bl:
+                fails.append((net, gk))
+                continue
+            for b in bl | {net}:
+                self.r.rip(b)
+            self.r.rebuild()
+            new = self.route_net(net)
+            for b in sorted(bl):
+                new += self.route_net(b)
+            fails = [f for f in fails if f[0] not in bl and f[0] != net] + new
+        return fails
+
+
+def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=None, name="board") -> dict:
     """Place and route `circuit` (board parts only) on a W x H mm 2-layer board."""
     holes = mount_holes or [(3.5, 3.5), (W - 3.5, 3.5), (3.5, H - 3.5), (W - 3.5, H - 3.5)]
-    placer = Placer(circuit, W, H, holes)
-    placed = placer.run()
-    nets = circuit.nets(board_only=True)
-    net_names = sorted(nets)
-    r = Router(W, H, net_names)
+    placed = Placer(circuit, W, H, holes).run()
+    net_names = sorted(circuit.nets(board_only=True))
     pads = []
     for ref, pl in placed.items():
         for p in pl.pads:
             p["ref"] = ref
             pads.append(p)
+    r = Router(W, H, net_names)
     nc = 0
     for p in pads:
         if p["np"]:
@@ -668,6 +1024,11 @@ def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=N
             nc += 1
             net = p["net_uid"] = f"~nc{nc}"
         r.mark([0, 1] if p["drill"] else [0], _pad_shape(p), net)
+        if not p["drill"]:    # no via-in-pad (vias must sit clear of SMD pads: VIA_D/2 + CLEAR)
+            ex = VIA_D / 2 + 0.05
+            i0, i1 = int(math.floor((p["x"] - p["w"] / 2 - ex) / GRID)), int(math.ceil((p["x"] + p["w"] / 2 + ex) / GRID))
+            j0, j1 = int(math.floor((p["y"] - p["h"] / 2 - ex) / GRID)), int(math.ceil((p["y"] + p["h"] / 2 + ex) / GRID))
+            r.novia[max(i0, 0):max(i1 + 1, 0), max(j0, 0):max(j1 + 1, 0)] = True
     for pl in placed.values():   # antenna keep-out (both layers) + no F.Cu routing under module bodies
         fp = pl.fp
         if "keepout" in fp:
@@ -676,143 +1037,34 @@ def generate(circuit, W: float, H: float, hc_nets=(), pwr_nets=(), mount_holes=N
         if "fcu_keepout" in fp:
             k = _rect_rot(fp["fcu_keepout"], pl.rot, pl.x, pl.y)
             r.mark([0], ("area", k[0], k[1], k[2], k[3]), None)
-
-    # terminals: pads grouped by (ref, num) = internally connected
     terms: dict = {}
     for p in pads:
         if p["net"] and not p["np"]:
-            terms.setdefault(p["net"], {}).setdefault((p["ref"], p["num"]), []).append(p)
-
-    def term_cells(group):
-        out = []
-        for p in group:
-            for c in r.pad_cells(p):
-                out.append((0, c))
-                if p["drill"]:
-                    out.append((1, c))
-        return out
-
-    def term_min(group):
-        return max(min(p["w"], p["h"]) for p in group)
-
-    def centre(group):
-        return (float(np.mean([p["x"] for p in group])), float(np.mean([p["y"] for p in group])))
-
+            terms.setdefault(p["net"], {}).setdefault(_gkey(p), []).append(p)
     unrouted = []
-    order = [n for n in net_names if n != "GND"]
+    _pre_copper(r, placed)
+    _escape_fanout(r, placed, hc_nets, pwr_nets)
+    _gnd_fanout(r, pads, unrouted)
     span = {}
-    for n in order:
-        cs = [centre(g) for g in terms.get(n, {}).values()]
-        span[n] = (max(x for x, _ in cs) - min(x for x, _ in cs) + max(y for _, y in cs) - min(y for _, y in cs)) if cs else 0
+    for n in net_names:
+        pts = [(p["x"], p["y"]) for p in pads if p["net"] == n]
+        span[n] = (max(x for x, _ in pts) - min(x for x, _ in pts) + max(y for _, y in pts) - min(y for _, y in pts)) if pts else 0
     rank = {"hc": 0, "pwr": 1, "sig": 2}
-    order.sort(key=lambda n: (rank[net_class(n, hc_nets, pwr_nets)], span[n]))
-    if seed_order:
-        order = [n for n in seed_order if n in order] + [n for n in order if n not in seed_order]
-
-    for net in order:
-        groups = list(terms.get(net, {}).values())
-        if len(groups) < 2:
-            continue
-        cls0 = net_class(net, hc_nets, pwr_nets)
-        cen = np.mean([centre(g) for g in groups], axis=0)
-        groups.sort(key=lambda g: math.hypot(centre(g)[0] - cen[0], centre(g)[1] - cen[1]))
-        first = groups[0]
-        k = r.nid(net)
-        for c in term_cells(first):
-            r.tree.setdefault(k, set()).add(c)
-        done = [first]
-        todo = groups[1:]
-        while todo:
-            # nearest remaining terminal to the connected tree
-            tc = [(r.ij(c)) for _, c in r.tree.get(k, set())]
-            arr = np.array(tc) * GRID
-            todo.sort(key=lambda g: float(np.min(np.abs(arr[:, 0] - centre(g)[0]) + np.abs(arr[:, 1] - centre(g)[1]))))
-            g = todo.pop(0)
-            m = term_min(g)
-            cls = cls0
-            if cls == "hc" and (m < 1.0 or (len(done) == 1 and term_min(done[0]) < 1.0)):
-                cls = "pwr"
-            if cls == "pwr" and (m < 0.6 or (len(done) == 1 and term_min(done[0]) < 0.6)):
-                cls = "sig"
-            width = CLASSES[cls]
-            tgt = term_cells(g)
-            gx, gy = centre(g)
-            goal = (gx / GRID, gy / GRID)
-            srcs = list(r.tree.get(k, set()))
-            allp = [r.ij(c) for _, c in srcs] + [r.ij(c) for _, c in tgt]
-            pad_i = 32
-            win = (max(min(a for a, _ in allp) - pad_i, 1), max(min(b for _, b in allp) - pad_i, 1),
-                   min(max(a for a, _ in allp) + pad_i, r.nx - 2), min(max(b for _, b in allp) + pad_i, r.ny - 2))
-            layers = (0, 1)
-            path = r.astar(net, cls, srcs, tgt, goal, layers=layers, window=win)
-            if path is None:
-                path = r.astar(net, cls, srcs, tgt, goal, layers=layers)
-            if path is None and cls != "sig":
-                cls, width = "sig", CLASSES["sig"]
-                path = r.astar(net, cls, srcs, tgt, goal, layers=layers)
-            if path is None:
-                unrouted.append({"net": net, "pins": [f"{p['ref']}.{p['num']}" for p in g]})
-                continue
-            # snap ends to pad centres when they land in a pad
-            sxy = exy = None
-            end_l, end_c = path[-1]
-            for p in g:
-                if end_c in r.pad_cells(p):
-                    exy = (round(p["x"], 4), round(p["y"], 4))
-                    break
-            st_l, st_c = path[0]
-            for gg in done:
-                for p in gg:
-                    if st_c in r.pad_cells(p) and (st_l == 0 or p["drill"]):
-                        sxy = (round(p["x"], 4), round(p["y"], 4))
-                        break
-            r.commit_path(net, path, width, sxy, exy)
-            for c in term_cells(g):
-                r.tree[k].add(c)
-            done.append(g)
-
-    # GND: TH pads join both layers; every SMD GND pad gets a short stub to a via into the B.Cu plane
-    gnd_pads = [p for p in pads if p["net"] == "GND" and not p["np"]]
-    k_g = r.nid("GND")
-    for p in gnd_pads:
-        if p["drill"]:
-            continue
-        if p["w"] >= 3.0 and p["h"] >= 3.0:          # exposed pad: via-in-pad array
-            for dx in (-0.9, 0.9):
-                for dy in (-0.9, 0.9):
-                    r.add_via("GND", round((p["x"] + dx) / GRID) * GRID, round((p["y"] + dy) / GRID) * GRID)
-            continue
-        reach = max(p["w"], p["h"]) / 2 + VIA_D / 2 + 0.25
-        via_ok = None
-        va, vb = r.own[(0, "pwr")], r.own[(1, "pwr")]
-        via_ok = ((va == -1) | (va == k_g)) & ((vb == -1) | (vb == k_g))
-        flat = via_ok.ravel()
-        px, py = p["x"], p["y"]
-
-        def goal_fn(c, l, px=px, py=py, reach=reach):
-            if l != 0 or not flat[c]:
-                return False
-            i, j = divmod(c, r.ny)
-            return math.hypot(i * GRID - px, j * GRID - py) >= reach
-
-        src = [(0, c) for c in r.pad_cells(p)]
-        path = r.astar("GND", "sig", src, None, (0, 0), layers=(0,), allow_via=False, goal_fn=goal_fn, max_cost=40)
-        if path is None:
-            unrouted.append({"net": "GND", "pins": [f"{p['ref']}.{p['num']}"], "note": "no room for a GND via"})
-            continue
-        r.commit_path("GND", path, 0.4 if min(p["w"], p["h"]) >= 0.6 else CLASSES["sig"], (round(px, 4), round(py, 4)), None)
-        i, j = r.ij(path[-1][1])
-        r.add_via("GND", i * GRID, j * GRID)
+    order = sorted([n for n in net_names if n != "GND"], key=lambda n: (rank[net_class(n, hc_nets, pwr_nets)], span[n]))
+    rt = _Routing(r, terms, hc_nets, pwr_nets)
+    fails = rt.run(order)
+    for net, gk in fails:
+        unrouted.append({"net": net, "pins": [f"{p['ref']}.{p['num']}" for p in terms[net][gk]]})
     # stitching vias on a 6 mm lattice where both planes have room
+    k_g = r.nid("GND")
     hc0, hc1 = r.own[(0, "hc")], r.own[(1, "hc")]
     for x in np.arange(6.0, W - 3.0, 6.0):
         for y in np.arange(6.0, H - 3.0, 6.0):
             i, j = int(round(x / GRID)), int(round(y / GRID))
             ok = all(a[i0, j0] in (-1, k_g) for a in (hc0, hc1)
                      for i0 in (i - 2, i, i + 2) for j0 in (j - 2, j, j + 2) if 0 <= i0 < r.nx and 0 <= j0 < r.ny)
-            if ok:
-                r.add_via("GND", i * GRID, j * GRID)
-
+            if ok and not r.novia[i, j]:
+                r.add_via("GND", i * GRID, j * GRID, tag="stitch")
     board = _assemble(circuit, placed, pads, r, W, H, unrouted, name)
     return board
 
@@ -830,10 +1082,10 @@ def _copper_items(board):
     for t in board["traces"]:
         g = LineString(t["points"]).buffer(t["width"] / 2, quad_segs=8) if len(t["points"]) > 1 else Point(t["points"][0]).buffer(t["width"] / 2)
         items.append((t["net"], t["layer"], g, "trace", None))
-    for v in board["vias"]:
+    for i, v in enumerate(board["vias"]):
         g = Point(v["x"], v["y"]).buffer(v["d"] / 2, quad_segs=12)
         for l in LAYERS:
-            items.append((v["net"], l, g, "via", None))
+            items.append((v["net"], l, g, "via", ("~via", i)))
     return items
 
 
@@ -852,7 +1104,7 @@ def _pours(board, W, H):
         obst = [g.buffer(POUR_CLEAR, quad_segs=6) for n, l, g, kind, _ in items if l == layer and n != "GND"]
         fk = [box(*k) for k in board.get("fcu_keepouts", [])] if layer == "F.Cu" else []
         area = outline.difference(unary_union(obst + keep + fk))
-        area = area.buffer(-0.12, join_style=2).buffer(0.12, join_style=2)   # drop slivers narrower than ~0.25 mm
+        area = area.buffer(-0.12, join_style=1).buffer(0.12, join_style=1)   # drop slivers narrower than ~0.25 mm
         polys = [area] if isinstance(area, Polygon) else [g for g in getattr(area, "geoms", []) if isinstance(g, Polygon)]
         gnd = [g for n, l, g, kind, _ in items if l == layer and n == "GND"]
         gu = unary_union(gnd) if gnd else None
@@ -880,7 +1132,7 @@ def _uf_connectivity(board, pours):
         by_net.setdefault(it[0], []).append(i)
     pad_key: dict = {}
     for i, it in enumerate(items):
-        if it[3] == "pad":
+        if it[3] in ("pad", "via"):
             pad_key.setdefault(it[4], []).append(i)
     for ids in pad_key.values():          # same pad on both layers / same pin number = internally connected
         for a in ids[1:]:
@@ -1003,8 +1255,10 @@ def _assemble(circuit, placed, pads, r, W, H, unrouted, name):
             rats.append({"net": n, "a": list(a), "b": list(b)})
             inn.append(b)
             rest.remove(b)
+    traces = [{**{k: v for k, v in t.items() if not k.startswith("_")}, "kind": t.get("_tag", "route")} for t in r.traces]
+    vias = [{**{k: v for k, v in v.items() if not k.startswith("_")}, "kind": v.get("_tag", "route")} for v in r.vias]
     board = {"name": name, "size_mm": [round(W, 2), round(H, 2)], "layers": 2, "thickness_mm": 1.6, "copper_oz": 1,
-             "components": comps, "nets": nets, "traces": r.traces, "vias": r.vias, "ratsnest": rats,
+             "components": comps, "nets": nets, "traces": traces, "vias": vias, "ratsnest": rats,
              "keepouts": [list(map(float, k)) for k in keepouts], "fcu_keepouts": [list(map(float, k)) for k in fk],
              "unrouted": unrouted, "grid_mm": GRID}
     pours = _pours(board, W, H)
@@ -1017,8 +1271,8 @@ def _assemble(circuit, placed, pads, r, W, H, unrouted, name):
     board["drc"] = drc(board, pours)
     board["stats"] = {"components": len(comps), "smd": sum(1 for c in comps if c["smd"] and c["kind"] != "MH"),
                       "tht": sum(1 for c in comps if not c["smd"] and c["kind"] != "MH"),
-                      "pads": sum(len(c["pads"]) for c in comps), "traces": len(r.traces), "vias": len(r.vias),
-                      "nets": len(nets), "trace_len_mm": round(sum(LineString(t["points"]).length for t in r.traces), 1)}
+                      "pads": sum(len(c["pads"]) for c in comps), "traces": len(traces), "vias": len(vias),
+                      "nets": len(nets), "trace_len_mm": round(sum(LineString(t["points"]).length for t in traces), 1)}
     board["_pour_geoms"] = pours
     return board
 

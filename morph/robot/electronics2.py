@@ -54,8 +54,8 @@ STD_FUSES = [1, 2, 3, 5, 7.5, 10, 15, 20, 25, 30]
 
 # pin maps: logical signal -> controller pin name (as printed on the board / module pinout)
 PINMAP = {
-    "esp32_s3_wroom": {"BUS_TX": "IO17", "BUS_RX": "IO18", "BUS_DIR": "IO16", "SDA": "IO8", "SCL": "IO9", "PWM_OE": "IO7",
-                       "FSR_L": "IO4", "FSR_R": "IO5", "VSERVO_SENSE": "IO6", "SERVO_EN": "IO15", "LED": "IO21",
+    "esp32_s3_wroom": {"BUS_TX": "IO17", "BUS_RX": "IO18", "BUS_DIR": "IO16", "SDA": "IO42", "SCL": "IO41", "PWM_OE": "IO7",
+                       "FSR_L": "IO1", "FSR_R": "IO2", "VSERVO_SENSE": "IO6", "SERVO_EN": "IO15", "LED": "IO21",
                        "USB_DM": "IO19", "USB_DP": "IO20", "ESTOP": "IO6"},
     "esp32_s3_devkit": {"BUS_TX": "GPIO17", "BUS_RX": "GPIO18", "BUS_DIR": "GPIO16", "SDA": "GPIO8", "SCL": "GPIO9",
                         "PWM_OE": "GPIO7", "FSR_L": "GPIO4", "FSR_R": "GPIO5", "ESTOP": "GPIO6", "5V": "5V", "3V3": "3V3"},
@@ -69,8 +69,8 @@ PINMAP = {
 }
 # Arduino pin expressions for firmware (same signals)
 ARDUINO_PIN = {
-    "esp32_s3_wroom": {"BUS_TX": "17", "BUS_RX": "18", "BUS_DIR": "16", "SDA": "8", "SCL": "9", "PWM_OE": "7", "FSR_L": "4",
-                       "FSR_R": "5", "VSERVO_SENSE": "6", "SERVO_EN": "15", "LED": "21", "ESTOP": "-1"},
+    "esp32_s3_wroom": {"BUS_TX": "17", "BUS_RX": "18", "BUS_DIR": "16", "SDA": "42", "SCL": "41", "PWM_OE": "7", "FSR_L": "1",
+                       "FSR_R": "2", "VSERVO_SENSE": "6", "SERVO_EN": "15", "LED": "21", "ESTOP": "-1"},
     "esp32_s3_devkit": {"BUS_TX": "17", "BUS_RX": "18", "BUS_DIR": "16", "SDA": "8", "SCL": "9", "PWM_OE": "7", "FSR_L": "4",
                         "FSR_R": "5", "ESTOP": "6", "LED": "-1", "VSERVO_SENSE": "-1", "SERVO_EN": "-1"},
     "esp32_devkit": {"BUS_TX": "17", "BUS_RX": "16", "BUS_DIR": "4", "SDA": "21", "SCL": "22", "PWM_OE": "25", "FSR_L": "34",
@@ -486,7 +486,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
 
     # ---- power input, protection, servo rail switch
     _part(c, "J1", "XT30", "conn", [("1", "+", "VIN_RAW"), ("2", "-", "GND")], "power", value=f"{vin:g}V IN",
-          place={"edge": "left", "at": 0.36}, note=f"{vin:g} V in from {ep['supply']['key']}")
+          place={"edge": "left", "at": 0.47}, note=f"{vin:g} V in from {ep['supply']['key']}")
     c.add("F1", f"{fuse_a:g}A", "F", [("1", "1", "VIN_RAW"), ("2", "2", "V_FUSED")], footprint="FUSE_2410",
           mpn=f"Littelfuse 0456{int(round(fuse_a)):03d}.ER (NANO2, fast)", lcsc="verify", price=0.6, block="power",
           place={"near": "J1", "side": "right"})
@@ -509,7 +509,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
     _part(c, "R4", "R100k", "R", [("1", "1", "SERVO_EN"), ("2", "2", "GND")], "power", place={"near": "Q3"})
     if "estop" in extras:
         _part(c, "J9", "XH2", "conn", [("1", "1", "Q2_G"), ("2", "2", "ESTOP_LOOP")], "power", value="E-STOP",
-              place={"edge": "left", "at": 0.12}, note="E-stop NC loop (opens = servo power off)")
+              place={"edge": "left", "at": 0.17}, note="E-stop NC loop (opens = servo power off)")
     cb = _part(c, "C1", "CBULK", "CP", [("1", "+", "V_SERVO"), ("2", "-", "GND")], "power",
                value=f"470u {'25V' if vin > 9 else '16V'}", place={"near": "Q2", "side": "below"})
     cb.mpn = f"470 uF {'25' if vin > 9 else '16'} V radial D10 low-ESR"
@@ -521,7 +521,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
         _part(c, "U3", "TPS563201", "box", [("3", "VIN", "V_IN", "L", "power_in"), ("5", "EN", "BUCK_EN", "L", "input"),
                                             ("1", "GND", "GND", "B", "power_in"), ("6", "VBST", "BST", "R", "passive"),
                                             ("2", "SW", "SW", "R", "output"), ("4", "VFB", "FB", "R", "input")], "regs",
-              place={"at_xy": (0.27, 0.70)})
+              place={"at_xy": (0.15, 0.78)})
         _part(c, "R7", "R100k", "R", [("1", "1", "V_IN"), ("2", "2", "BUCK_EN")], "regs", place={"near": "U3"})
         _part(c, "C2", "C10u", "C", [("1", "1", "V_IN"), ("2", "2", "GND")], "regs", place={"near": "U3"})
         _part(c, "C3", "C100n", "C", [("1", "1", "BST"), ("2", "2", "SW")], "regs", place={"near": "U3"})
@@ -536,7 +536,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
     _part(c, "D3", "SS34", "DS", [("1", "K", "VSYS"), ("2", "A", src)], "regs", place={"near": "U4", "side": "left"})
     _part(c, "D4", "SS34", "DS", [("1", "K", "VSYS"), ("2", "A", "VBUS")], "regs", place={"near": "U4", "side": "left"})
     _part(c, "U4", "AMS1117", "box", [("3", "VI", "VSYS", "L", "power_in"), ("1", "GND", "GND", "B", "power_in"),
-                                      ("2", "VO", "3V3", "R", "power_out")], "regs", place={"at_xy": (0.47, 0.62)})
+                                      ("2", "VO", "3V3", "R", "power_out")], "regs", place={"at_xy": (0.34, 0.52)})
     _part(c, "C6", "C10u", "C", [("1", "1", "VSYS"), ("2", "2", "GND")], "regs", place={"near": "U4"})
     _part(c, "C7", "C22u", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "regs", place={"near": "U4"})
     _part(c, "R10", "R1k", "R", [("1", "1", "3V3"), ("2", "2", "LED_PWR")], "regs", place={"near": "U4"})
@@ -565,14 +565,14 @@ def custom_circuit(design, ep: dict) -> Circuit:
             side = "B"
         et = "power_in" if name in ("GND", "3V3", "EPAD") else "bidir"
         pins.append((num, name, net, side, et))
-    _part(c, "U1", "ESP32S3", "box", pins, "mcu", place={"edge": "top", "at": 0.70, "rot": 0, "keepout": "antenna"})
-    _part(c, "C8", "C10u", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "2"})
-    _part(c, "C9", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "2"})
+    _part(c, "U1", "ESP32S3", "box", pins, "mcu", place={"edge": "top", "at": 0.74, "rot": 0, "keepout": "antenna"})
+    _part(c, "C8", "C10u", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "2", "prio": 1})
+    _part(c, "C9", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "2", "prio": 1})
     _part(c, "R11", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "EN")], "mcu", place={"near": "U1", "pin": "3"})
     _part(c, "C10", "C1u", "C", [("1", "1", "EN"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "3"})
     _part(c, "SW1", "BTN", "SW", [("1", "1", "EN"), ("2", "2", "GND")], "mcu", value="RESET", place={"near": "U1", "side": "left"})
-    _part(c, "SW2", "BTN", "SW", [("1", "1", "BOOT"), ("2", "2", "GND")], "mcu", value="BOOT", place={"near": "U1", "side": "left"})
-    _part(c, "R12", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "BOOT")], "mcu", place={"near": "SW2"})
+    _part(c, "SW2", "BTN", "SW", [("1", "1", "BOOT"), ("2", "2", "GND")], "mcu", value="BOOT", place={"near": "U1", "pin": "27"})
+    _part(c, "R12", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "BOOT")], "mcu", place={"near": "U1", "pin": "27"})
     _part(c, "R13", "R1k", "R", [("1", "1", "LED_STAT"), ("2", "2", "LED_K")], "mcu", place={"near": "U1", "pin": "23"})
     _part(c, "D6", "LED_R", "LED", [("1", "K", "GND"), ("2", "A", "LED_K")], "mcu", value="STAT", place={"near": "R13"})
 
@@ -582,12 +582,12 @@ def custom_circuit(design, ep: dict) -> Circuit:
                                     ("B6", "D+", "USB_DP", "R"), ("A7", "D-", "USB_DM", "R"), ("B7", "D-", "USB_DM", "R"),
                                     ("A8", "SBU1", None, "R"), ("B8", "SBU2", None, "R"), ("B4A9", "VBUS", "VBUS", "L", "power_out"),
                                     ("B1A12", "GND", "GND", "L", "power_in"), ("SH", "SHIELD", "GND", "L", "passive")], "usb",
-          place={"edge": "top", "at": 0.30}, note="USB 2.0 FS (native ESP32-S3 USB)")
-    _part(c, "R14", "R5k1", "R", [("1", "1", "CC1"), ("2", "2", "GND")], "usb", place={"near": "J2", "side": "below"})
-    _part(c, "R15", "R5k1", "R", [("1", "1", "CC2"), ("2", "2", "GND")], "usb", place={"near": "J2", "side": "below"})
+          place={"edge": "top", "at": 0.44}, note="USB 2.0 FS (native ESP32-S3 USB)")
+    _part(c, "R14", "R5k1", "R", [("1", "1", "CC1"), ("2", "2", "GND")], "usb", place={"near": "J2", "side": "below", "prio": 0})
+    _part(c, "R15", "R5k1", "R", [("1", "1", "CC2"), ("2", "2", "GND")], "usb", place={"near": "J2", "side": "below", "prio": 0})
     _part(c, "U5", "USBLC6", "box", [("1", "IO1", "USB_DP", "L"), ("6", "IO1", "USB_DP", "R"), ("3", "IO2", "USB_DM", "L"),
                                      ("4", "IO2", "USB_DM", "R"), ("5", "VBUS", "VBUS", "T", "power_in"),
-                                     ("2", "GND", "GND", "B", "power_in")], "usb", place={"near": "J2", "side": "below"})
+                                     ("2", "GND", "GND", "B", "power_in")], "usb", place={"near": "J2", "side": "below", "prio": 0})
 
     # ---- servo interface
     if pwm:
@@ -618,7 +618,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
                                            ("6", "1Y", "UART_RX", "L", "output"), ("2", "1A", "BUS_DATA", "R", "input"),
                                            ("3", "2Y", "BUS_DATA", "R", "output"), ("4", "GND", "GND", "B", "power_in")], "bus",
               place={"at_xy": (0.50, 0.30)})
-        _part(c, "C11", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "bus", place={"near": "U2", "pin": "8"})
+        _part(c, "C11", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "bus", place={"near": "U2", "pin": "8", "prio": 1})
         _part(c, "R16", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "BUS_DATA")], "bus", place={"near": "U2", "pin": "2"})
         _part(c, "R17", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "UART_RX")], "bus", place={"near": "U2", "pin": "6"})
         ports = bus_ports(acts, "ttl")
@@ -626,7 +626,7 @@ def custom_circuit(design, ep: dict) -> Circuit:
             ids = [a["id"] for a in chain]
             _part(c, f"J{3 + i}", key, "conn", [("1", "GND", "GND"), ("2", "V+", "V_SERVO"), ("3", "DATA", "BUS_DATA")], "bus",
                   value=f"BUS {chr(65 + i)}",
-                  place={"edge": "bottom", "at": 0.30 + 0.17 * i}, note=f"bus port {chr(65 + i)} → ID {ids[0]}" +
+                  place={"edge": "bottom", "at": 0.33 + 0.17 * i}, note=f"bus port {chr(65 + i)} → ID {ids[0]}" +
                   (f"-{ids[-1]}" if len(ids) > 1 else ""))
         if "imu" in extras:
             _part(c, "R18", "R4k7", "R", [("1", "1", "3V3"), ("2", "2", "SDA")], "sensors", place={"near": "J8"})
