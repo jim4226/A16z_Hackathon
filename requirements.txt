@@ -1,0 +1,13 @@
+numpy
+shapely>=2
+manifold3d
+trimesh
+scipy
+mujoco>=3
+pydantic>=2
+anthropic
+pillow
+pytest
+# optional, for driving real machines
+pyserial
+requests

@@ -1,0 +1,9 @@
+Morph
+Copyright 2026 jim4226 and Morph contributors.
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party content:
+- robots/so101/: SO-101 URDF, MJCF and meshes from TheRobotStudio/SO-ARM100
+  (https://github.com/TheRobotStudio/SO-ARM100), Apache License 2.0.
+- morph/studio/static/vendor/: three.js r160 and example modules (MIT License, see THREE_LICENSE).
