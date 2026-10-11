@@ -91,12 +91,34 @@ def rev_payload(p: RobotProject, rev: str) -> dict:
 
 
 class Studio:
-    def __init__(self, project: RobotProject):
+    def __init__(self, project: RobotProject, home: str | None = None):
         self.p, self.hub, self.busy = project, Hub(), threading.Lock()
+        self.home = home or os.path.dirname(project.root)
+
+    def projects(self) -> list:
+        out = []
+        for name in sorted(os.listdir(self.home)) if os.path.isdir(self.home) else []:
+            root = os.path.join(self.home, name)
+            meta = os.path.join(root, "meta.json")
+            if os.path.isfile(meta) and RobotProject(root).revs():
+                m = json.load(open(meta))
+                if m.get("kind") == "robot":
+                    out.append({"name": name, "source": m.get("source") or "", "need": m.get("need", "")})
+        return out
+
+    def switch(self, name: str) -> bool:
+        root = os.path.join(self.home, name)
+        if not RobotProject(root).revs() or self.busy.locked():
+            return False
+        self.p = RobotProject(root)
+        self.hub.history.clear()
+        self.hub.send({"type": "project", "project": name})
+        return True
 
     def state(self):
         rev = self.p.latest()
-        out = {"project": os.path.basename(self.p.root), "revs": self.p.revs(), "history": self.hub.history}
+        out = {"project": os.path.basename(self.p.root), "projects": self.projects(), "revs": self.p.revs(),
+               "history": self.hub.history}
         if rev:
             out["current"] = rev_payload(self.p, rev)
             parent = out["current"]["parent"]
@@ -230,6 +252,9 @@ def make_handler(studio: Studio):
                 if msg:
                     threading.Thread(target=studio.chat, args=(msg,), daemon=True).start()
                 return self._send(202, b'{"ok":true}')
+            if u.path == "/api/project":
+                ok = studio.switch(str(body.get("name", "")))
+                return self._send(200 if ok else 409, json.dumps({"ok": ok}).encode())
             if u.path == "/api/params":
                 changes = body.get("changes") or {}
                 if changes:
@@ -240,10 +265,10 @@ def make_handler(studio: Studio):
     return H
 
 
-def serve(project: RobotProject, host="127.0.0.1", port=8765):
+def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None):
     if not project.revs():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
-    studio = Studio(project)
+    studio = Studio(project, home)
     httpd = ThreadingHTTPServer((host, port), make_handler(studio))
     httpd.daemon_threads = True
     print(f"Morph Studio: http://{host}:{port}  (project {project.root}; Ctrl+C to stop)")

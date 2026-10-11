@@ -199,11 +199,17 @@ def cmd_studio(a):
     p = RobotProject(os.path.join(HOME, a.name))
     if not p.revs():
         print(f"no project {a.name} yet: generating the first robot (about a minute)...")
-        cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[]))
+        cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
+                                     source="so101" if a.name == "so101" else None))
+    other = "so101" if a.name != "so101" else "egg-picker"
+    if not RobotProject(os.path.join(HOME, other)).revs():
+        print(f"also preparing the {other} project for the project switcher...")
+        cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
+                                     source="so101" if other == "so101" else None))
     if a.open:
         import threading
         threading.Timer(1.5, open_app_window, args=(f"http://{a.host}:{a.port}",)).start()
-    serve(p, a.host, a.port)
+    serve(p, a.host, a.port, home=HOME)
 
 
 EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
@@ -228,13 +234,16 @@ def cmd_robot(a):
     if a.action == "new":
         if p.revs():
             sys.exit(f"{p.root} already exists")
-        design = Design().with_changes({**EGG_ROBOT, "name": a.name})
+        source = getattr(a, "source", None) or ("so101" if a.name == "so101" else "")
+        design = Design().with_changes({**EGG_ROBOT, "name": a.name, "arm.source": source})
         if a.need:
             from .studio.intent import interpret
             it = interpret(a.need, design)
             design = design.with_changes(it["changes"])
             print(it["reply"])
-        json.dump({"kind": "robot", "need": a.need or "Pick a raw egg and place it without cracking it."},
+        json.dump({"kind": "robot", "source": source,
+                   "need": a.need or ("Imported open-source SO-101 arm: edit its electronics, sims and build."
+                                      if source else "Pick a raw egg and place it without cracking it.")},
                   open(os.path.join(p.root, "meta.json"), "w"))
         rev = p.run(design, label="first design", n_trials=a.trials, fast_sim=a.fast)
         _robot_summary(p, rev)
@@ -375,6 +384,7 @@ def main(argv=None):
     s.add_argument("name", nargs="?", default="egg-picker")
     s.add_argument("changes", nargs="*", help="dotted.key=value (change)")
     s.add_argument("--need", help="natural-language request applied to the default robot (new)")
+    s.add_argument("--source", help="start from an imported open-source robot in robots/<source>/ (e.g. so101)")
     s.add_argument("--from", dest="base")
     s.add_argument("--trials", type=int, default=4)
     s.add_argument("--fast", action="store_true", help="shorter simulations")
