@@ -125,8 +125,11 @@ def handoffs(rev_dir: str, results: dict) -> list:
     out = []
     gerbers = os.path.join(rev_dir, "electronics", "board", "gerbers", "gerbers.zip")
     if os.path.exists(gerbers):
-        out.append(("pcb_fab", "PCB fabrication quote from Gerber files",
-                    [os.path.relpath(gerbers, rev_dir)]))
+        files = [os.path.relpath(gerbers, rev_dir).replace(os.sep, "/")]
+        kicad_zip = os.path.join(rev_dir, "electronics", "board", "kicad", "board-kicad.zip")
+        if os.path.exists(kicad_zip):   # the KiCad project, for a fab that wants sources (adds solder mask)
+            files.append(os.path.relpath(kicad_zip, rev_dir).replace(os.sep, "/"))
+        out.append(("pcb_fab", "PCB fabrication quote from Gerber files", files))
     fab_dir = os.path.join(rev_dir, "fab")
     stls = sorted(f for f in os.listdir(fab_dir) if f.endswith(".stl")) if os.path.isdir(fab_dir) else []
     if stls:
@@ -173,7 +176,7 @@ def robot_handoffs(rev_dir: str, results: dict) -> list:
     out = []
     gerbers = os.path.join(rev_dir, "electronics", "board", "gerbers", "gerbers.zip")
     if os.path.exists(gerbers):
-        out.append(("pcb_fab", "PCB fabrication quote from Gerber files", [os.path.relpath(gerbers, rev_dir)]))
+        out.append(("pcb_fab", "PCB fabrication quote from Gerber files", [os.path.relpath(gerbers, rev_dir).replace(os.sep, "/")]))
     by_proc = {}
     for g in (results.get("manufacturing") or {}).get("parts") or []:
         files = [f"mfg/{f}" for f in g.get("files") or [] if isinstance(f, str)]
@@ -181,7 +184,7 @@ def robot_handoffs(rev_dir: str, results: dict) -> list:
     mfg = os.path.join(rev_dir, "mfg")
     if not by_proc and os.path.isdir(mfg):
         for root, _, fns in os.walk(mfg):
-            by_proc.setdefault("fdm_print", []).extend(os.path.relpath(os.path.join(root, f), rev_dir)
+            by_proc.setdefault("fdm_print", []).extend(os.path.relpath(os.path.join(root, f), rev_dir).replace(os.sep, "/")
                                                        for f in fns if f.endswith(".stl"))
     prints = [f for k, fs in by_proc.items() if k.endswith("_print") for f in fs if f.endswith((".stl", ".3mf"))]
     if prints:

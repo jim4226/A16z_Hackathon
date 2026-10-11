@@ -11,6 +11,7 @@ before redistributing data or training a commercial model.
 | Material datasheets (typical E, density, yield, $/kg) | `morph/materials.py` | built-in typical values. Replace with measured coupons as data comes in |
 | [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) | real gripper/arm models to replace our box hand | stretch goal. Per-model licenses |
 | YCB object set (standard grasping benchmark objects with meshes and masses) | object dimensions and masses by name (cans, boxes, fruit, tools) | stretch goal: object library for `morph new` |
+| [BoardRepo](https://boardrepo.com) (about 8,000 public KiCad/Altium boards) | open reference circuits with schematic, PCB and BOM views; a place to publish Morph's board | **built**: `morph boardrepo` reads checked boards from their public `.md` pages (no account); `morph kicad` zips a revision for upload. Licence per board: some show none, so link to those, don't copy them |
 
 ## Useful next (beyond today)
 
