@@ -11,9 +11,9 @@
     "bom": "computed"
   },
   "timings_s": {
-    "cad": 0.12,
+    "cad": 0.16,
     "analysis": 0.0,
-    "sim": 7.57,
+    "sim": 7.51,
     "fab": 0.01,
     "bom": 0.0
   },

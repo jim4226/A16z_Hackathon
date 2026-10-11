@@ -40,6 +40,7 @@ To see a finished run without installing anything, open
 | 5. "laser cut Delrin" | material and process change | CAD and sim reused; new kerf-compensated `cut.svg`, 3.3 min instead of 15 min |
 | 6. fabricate | `finger.stl`/`plate.stl` (print), `cut.svg` (laser), `job.nc` (GRBL CNC with tabs) | `morph send` streams to GRBL or uploads to OctoPrint |
 | 7. measure | `morph measure … --grasp 9/10 --fab-minutes 18` | ledger stores the prediction error |
+| 8. time saved | `morph time can r004` | by hand ≈ 520 min (baseline estimates, 6 variants) vs. 0.5 min of Morph compute + 15 min printing, **before** human review/test minutes are logged with `morph clock` |
 
 ## Commands
 
@@ -52,6 +53,8 @@ morph compare can r001 r004 r006        # HTML side by side
 morph gif can r004                      # grasp animation (needs MUJOCO_GL=egl or osmesa on Linux)
 morph send can r006 --grbl COM3         # stream G-code to a GRBL router/laser (--dry-run first)
 morph measure can r004 --fab-minutes 17 --grasp 10/10 --length 63.1 --min-force 3.0
+morph clock can review 6               # log human minutes (spec | review | test | corrections)
+morph time can r004                     # before/after time study (also in the report)
 morph research "parallel gripper under $300 with 25 N grip and M3 finger mounts"
 ```
 
@@ -69,7 +72,8 @@ For Claude-backed `new`/`research`, set `ANTHROPIC_API_KEY`. Everything else run
 | `explore.py` | screens hundreds of variants closed-form, then simulates the best of each pad style |
 | `fab.py` | process choice, DFM checks (tool-radius corners, sheet thickness, laser-safe materials), print time and cost, laser SVG, GRBL G-code (pecked holes, multi-pass climb contour, holding tabs), BOM |
 | `pipeline.py` | dependency graph, partial recompute, revision directories, `ledger.jsonl` |
-| `report.py` | the comparison page |
+| `report.py` | the comparison page, led by the before/after time card |
+| `timestudy.py` | before/after time study: auto-logged command time, logged human minutes, overridable manual baseline |
 | `agent.py` | Claude structured output for need → spec, and Claude web search for component research |
 | `machine.py` | GRBL serial streaming and OctoPrint upload |
 

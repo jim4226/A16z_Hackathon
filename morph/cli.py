@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from . import agent, report
 from .explore import explore
@@ -57,7 +58,7 @@ def cmd_new(a):
         design, need, src = agent.propose(a.need)
         rationale = need.rationale
         print(f"spec from {src}: {need.model_dump_json(indent=1)}")
-    name = a.name or design.name
+    name = a.name = a.name or design.name
     p = _project(name)
     if p.revs():
         sys.exit(f"project {name} already exists at {p.root}")
@@ -136,6 +137,26 @@ def cmd_send(a):
         print(f"machine files in {fab_dir}: {os.listdir(fab_dir)}")
 
 
+def cmd_clock(a):
+    p = _project(a.name)
+    p.log({"type": "human_time", "step": a.step, "minutes": a.minutes, "note": a.note or ""})
+    print(f"logged {a.minutes} min of human time for '{a.step}'")
+
+
+def cmd_time(a):
+    from .timestudy import study
+
+    t = study(_project(a.name), a.rev)
+    print(f"{'step':<48}{'before (min)':>14}{'after (min)':>13}")
+    for r in t["rows"]:
+        print(f"{r['step']:<48}{r['before_min']:>14}{r['after_min']:>13}")
+    mult = f"{t['speedup']}x, " if t["human_logged"] else ""
+    print(f"{'total':<48}{t['before_min']:>14}{t['after_min']:>13}   -> {mult}"
+          f"{t['saved_min']} min saved over {t['variants_evaluated']} evaluated variants")
+    if not t["human_logged"]:
+        print("note: no human time logged yet; use `morph clock NAME review 5` etc. so the claim counts it")
+
+
 def cmd_research(a):
     print(agent.research(a.query))
 
@@ -150,6 +171,12 @@ def cmd_gif(a):
         print(out)
 
 
+def _timed(name, cmd, fn, ns):
+    t0 = time.time()
+    fn(ns)
+    _project(name).log({"type": "tool_time", "cmd": cmd, "seconds": round(time.time() - t0, 2)})
+
+
 def cmd_demo(a):
     need = a.need
     name = a.name
@@ -158,15 +185,17 @@ def cmd_demo(a):
         sys.exit(f"{p.root} exists; pick another --name or delete it")
     print(f"== 1. need -> spec\n{need}")
     a2 = argparse.Namespace(need=need, spec=None, name=name, trials=a.trials)
-    cmd_new(a2)
+    _timed(name, "new", cmd_new, a2)
     print("\n== 2. explore pad styles and section sizes")
-    cmd_explore(argparse.Namespace(name=name, base="r001", trials=a.trials))
+    _timed(name, "explore", cmd_explore, argparse.Namespace(name=name, base="r001", trials=a.trials))
     best = [e for e in p.entries() if e["type"] == "exploration"][-1]["recommended"]
     print(f"\n== 3. what if the can is full and heavier? (only analysis + sim should rerun)")
-    cmd_change(argparse.Namespace(name=name, base=best, changes=["object.mass_g=520"], label="heavier object", trials=a.trials))
+    _timed(name, "change", cmd_change, argparse.Namespace(name=name, base=best, changes=["object.mass_g=520"],
+                                                          label="heavier object", trials=a.trials))
     print(f"\n== 4. what if we laser cut it from Delrin instead? (geometry and sim reused)")
-    cmd_change(argparse.Namespace(name=name, base=best, changes=["finger.material=Delrin", "fab.process=laser_cut"],
-                                  label="laser cut Delrin", trials=a.trials))
+    _timed(name, "change", cmd_change, argparse.Namespace(name=name, base=best,
+                                                          changes=["finger.material=Delrin", "fab.process=laser_cut"],
+                                                          label="laser cut Delrin", trials=a.trials))
     revs = p.revs()
     _report(p, ["r001", best] + revs[-2:], "report.html")
 
@@ -227,6 +256,18 @@ def main(argv=None):
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(fn=cmd_send)
 
+    s = sub.add_parser("clock", help="log human minutes: spec | review | test | corrections")
+    s.add_argument("name")
+    s.add_argument("step", choices=["spec", "review", "test", "corrections"])
+    s.add_argument("minutes", type=float)
+    s.add_argument("--note")
+    s.set_defaults(fn=cmd_clock)
+
+    s = sub.add_parser("time", help="before/after time study for the project")
+    s.add_argument("name")
+    s.add_argument("rev", nargs="?", help="revision that was fabricated")
+    s.set_defaults(fn=cmd_time)
+
     s = sub.add_parser("research", help="web research via Claude (components, tooling, suppliers)")
     s.add_argument("query")
     s.set_defaults(fn=cmd_research)
@@ -244,7 +285,11 @@ def main(argv=None):
     s.set_defaults(fn=cmd_demo)
 
     a = ap.parse_args(argv)
+    t0 = time.time()
     a.fn(a)
+    # every pipeline command's wall-clock goes into the time study
+    if a.cmd in ("new", "explore", "change") and getattr(a, "name", None):
+        _project(a.name).log({"type": "tool_time", "cmd": a.cmd, "seconds": round(time.time() - t0, 2)})
 
 
 if __name__ == "__main__":

@@ -160,12 +160,35 @@ def build(project: Project, revs, path: str, title: str = "") -> str:
     gifs = "".join(f'<figure style="margin:0"><img src="{r}/sim/grasp.gif" style="width:100%;border-radius:8px" alt="grasp simulation {r}">'
                    f'<figcaption class="sub" style="margin:4px 0 0">{r}: close, lift 80 mm, shake</figcaption></figure>'
                    for r in revs if os.path.exists(os.path.join(project.rev_dir(r), "sim", "grasp.gif")))
+    from .timestudy import study
+
+    explored = [e["recommended"] for e in project.entries() if e["type"] == "exploration"]
+    fab_rev = explored[-1] if explored and explored[-1] in revs else revs[-1]
+    ts = study(project, fab_rev)
+    # a multiplier without the human minutes would overstate the claim
+    speed = f" · {ts['speedup']}×" if ts["speedup"] and ts["human_logged"] else ""
+    trows = "".join(f"<tr><th>{html.escape(r['step'])}</th><td>{_fmt(r['before_min'], 'min')}</td>"
+                    f"<td>{_fmt(r['after_min'], 'min')}</td></tr>" for r in ts["rows"])
+    caveat = ("Before = estimates for a CAD-fluent engineer doing this grasp test by hand"
+              + (" (overridden by baseline.json)" if ts["baseline_overridden"] else "; time one step yourself and put it in baseline.json")
+              + f". After = measured: Morph command wall-clock ({ts['tool_minutes']} min), machine time "
+              + ("measured" if ts["fab_measured"] else "predicted")
+              + ", and human minutes logged with <code>morph clock</code>"
+              + (f" ({', '.join(ts['human_logged'])})." if ts["human_logged"] else " (none logged yet, so the comparison is incomplete)."))
+    timecard = (f'<div class="card"><h2>Time: before vs after ({ts["variants_evaluated"]} design variants fully evaluated; fabricating {fab_rev})</h2>'
+                f'<div class="grid" style="margin-bottom:12px"><div><div class="sub" style="margin:0">by hand</div><div style="font-size:28px;font-weight:700">{_fmt(ts["before_min"], "min")}</div></div>'
+                f'<div><div class="sub" style="margin:0">with Morph</div><div style="font-size:28px;font-weight:700">{_fmt(ts["after_min"], "min")}</div></div>'
+                f'<div><div class="sub" style="margin:0">saved</div><div style="font-size:28px;font-weight:700;color:var(--good)">{_fmt(ts["saved_min"], "min")}'
+                f'{speed}</div></div></div>'
+                f'<table><tr><th>step</th><th>by hand</th><th>with Morph</th></tr>{trows}</table>'
+                f'<p class="sub" style="margin:10px 0 0">{caveat}</p></div>')
     title = title or f"Morph · {des[revs[0]].name}"
     need = f'<p class="sub">Need: “{html.escape(meta["need"])}”</p>' if meta.get("need") else ""
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(title)}</title><style>{CSS}</style></head><body><main>
 <h1>{html.escape(title)}</h1>{need}
 <p class="sub">Object: {html.escape(des[revs[0]].object.name)} · Ø{des[revs[0]].object.diameter_mm} mm · {des[revs[0]].object.mass_g} g · μ≈{des[revs[0]].object.friction}</p>
+{timecard}
 <div class="grid" style="margin-bottom:16px"><div class="card" style="margin:0"><h2>Finger profiles (dashed: object as gripped)</h2>{_overlay_svg(project, revs)}</div>
 {'<div class="card" style="margin:0"><h2>Simulation</h2>' + gifs + '</div>' if gifs else ''}</div>
 <div class="card"><h2>Predicted performance</h2><table><tr><th></th>{head}</tr>{''.join(rows)}</table></div>

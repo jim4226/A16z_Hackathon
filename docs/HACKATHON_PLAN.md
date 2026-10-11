@@ -6,6 +6,29 @@
 validated, fabricated part in under an hour instead of days. Today we prove it once, on
 real hardware, with measured numbers.
 
+## Judging rubric → what we show
+
+| criterion | weight | our evidence |
+|---|---|---|
+| Problem & time saved | **40** | one person, one task, measured before/after: `morph time` + the report's time card. Human setup/review/corrections are logged with `morph clock`, so they count, per the rules |
+| Technical execution | 25 | it runs live: CAD → MuJoCo → G-code/STL in ~30 s, 8 passing tests, partial recompute |
+| Market & path forward | 15 | every robotics team, lab, and hardware startup makes custom end effectors and brackets; the ledger dataset compounds; next part types + real-robot sim |
+| Originality | 10 | the change-propagation graph + measured-vs-predicted ledger (no public dataset links design → fab → test) |
+| Product quality & demo | 10 | printed fingers in hand, flat vs contour lift on video/live, report on screen |
+
+**Pick a person:** a robotics engineer (or grad student in a manipulation lab) whose arm keeps dropping one object.
+**Frustrating task:** design, check, simulate and fabricate custom gripper fingers for it, which today takes a day across 4 tools.
+**Show the difference:** the time card. Before = baseline estimates per step (`morph/timestudy.py`), **replace at least one with a real timed manual run today**: have a teammate model the contour finger in Fusion/Onshape with a stopwatch, put the minutes in `projects/<name>/baseline.json` as `{"cad_first": <min>}`.
+After = Morph wall-clock (auto-logged) + machine time + every human minute logged:
+
+```bash
+morph clock can spec 2          # typing the need
+morph clock can review 6        # reading the report, picking a design
+morph clock can test 10         # bolting on + 10 lifts
+morph clock can corrections 18  # e.g. one reprint after measuring hole spacing
+morph time can r004             # prints the before/after table
+```
+
 ## The one use case
 
 Stock parallel-gripper fingers vs. a 66 mm soda can lying on its side. Morph:
@@ -57,9 +80,10 @@ driven by hand or a servo. Measure the M3 hole spacing on the real jaw first, th
 ## 3-minute demo script
 
 1. **Pain (20 s).** "Custom fingers for one object: CAD, sim, CAM, slicer, test. That's days, and every change starts the loop over."
-2. **Live (90 s).** Type the need → `morph demo` → open the report: baseline fails, explorer finds contour, sim GIF, the change-propagation chips ("only analysis + sim reran").
+2. **Live (70 s).** Type the need → `morph demo` → open the report: baseline fails, explorer finds contour, sim GIF, the change-propagation chips ("only analysis + sim reran").
 3. **Physical (45 s).** Hold up the printed fingers. Show the video or do it live: flat fingers drop the can, contour fingers hold it. Show the measured-vs-predicted row.
-4. **Why it compounds (25 s).** Every revision records design → prediction → measured outcome. That dataset doesn't exist publicly, and it's what lets Morph's predictions improve over time.
+4. **Time card (20 s).** Before vs after, with our own review/test/correction minutes counted. Say which "before" numbers were timed today and which are estimates.
+5. **Why it compounds (15 s).** Every revision records design → prediction → measured outcome. That dataset doesn't exist publicly, and it's what lets Morph's predictions improve over time.
 
 ## Stretch goals (in order)
 
@@ -77,9 +101,11 @@ move to Rust and expose via PyO3); Burn is an option if we train a surrogate mod
 
 ## Sponsor prizes
 
-The partner list (Alike, Darwin, Dial, Keewano, Sparta) has no public product details
-we could verify. Ask at kickoff what each offers and where it fits. Candidate slots: the
-need-intake step (voice/chat), the research step, or the measurement/ledger step.
+Five "best use" awards, $1,000 each: Alike, Darwin, Dial, Keewano, Sparta. Partner tools
+are optional for the overall prize, and meaningful use can win more than one award. We
+couldn't verify what each product does online. Ask each partner at their table, then
+plug the ones that fit into a real step (need intake, research, review/approval, or the
+measurement ledger) rather than bolting them on.
 
 ## Risks and fallbacks
 
