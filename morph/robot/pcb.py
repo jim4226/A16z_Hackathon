@@ -990,6 +990,8 @@ class _Routing:
                     break
                 continue
             bl = self.blockers(net, gk)
+            if os.environ.get("PCB_DEBUG"):
+                print("RRR", net, gk, "blockers:", bl, "pending:", fails)
             if not bl:
                 fails.append((net, gk))
                 continue

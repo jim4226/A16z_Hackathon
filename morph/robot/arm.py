@@ -1810,3 +1810,459 @@ class _Builder:
         out = {k: (round(lo, 3), round(hi, 3)) for k, (lo, hi) in out.items()}
         self.lay.lim = out
         return out
+
+    # ------------------------------------------------------------ base yaw + turret
+    def turret(self):
+        L = self.lay
+        js = L.jg["j2_shoulder"]
+        T = self.T["j2_par"]
+        A1 = L.A1
+        R_t, t_p = 54.0, 7.0
+        self.R_t = R_t
+        cfg = self.cfg
+        # base yaw actuator (in the base), its horn on the turret underside
+        self.comp(components.actuator(A1.key, horn=False), "j1_servo", "base", self.T["j1_act"], "base",
+                  explode=(0, 0, -40), kind="actuator", skip=("wire_",), meta={"drives": "j1_base_yaw"})
+        self.comp(components.horn(A1.key), "j1_horn", "turret", trans((0, 0, -A1.ht)), "turret", explode=(0, 0, -16),
+                  kind="horn")
+        hd = A1.horn_holes[0][2] if A1.horn_holes else 2.0
+        fr = [_seat((hx, hy, 3.5), (0, 0, 1)) for hx, hy, _ in A1.horn_holes[:8]]
+        fr = fr[::2] if len(fr) > 4 else fr
+        self.bolts("j1_horn_screws", "turret", f"{_screw_size(hd)}x6", "shcs", fr, "turret")
+        # turntable bearing (lower ring on the base deck, upper ring under the turret)
+        brg = components.bearing("lazy_susan_100")
+        Bb = float(catalog.BEARINGS["lazy_susan_100"]["B"])
+        self.comp(brg, "turntable", "base", trans((0, 0, L.z_deck + Bb / 2)), "base", explode=(0, 0, 14), kind="bearing")
+        ri, ro = 30.0, 50.0
+        rb = (ri + ro) / 2 + 2.5
+        hw = (Bb / 4) * 1.6
+        lh, uh = (rb + hw + ro) / 2, (ri + rb - hw) / 2
+        self.bolts("turntable_base_screws", "base", "M4x10", "bhcs",
+                   [_seat((lh * math.cos(a), lh * math.sin(a), L.z_deck + 1.0), (0, 0, 1)) for a in np.radians([45, 135, 225, 315])],
+                   "base")
+        self.bolts("turntable_turret_screws", "turret", "M4x10", "bhcs",
+                   [_seat((uh * math.cos(a), uh * math.sin(a), -1.0), (0, 0, -1)) for a in np.radians([0, 90, 180, 270])],
+                   "turret", explode_len=-26.0)
+        # body
+        cable_hole = _tube(np.array([-12.0, 18.0, -2.0]), _pt(T, (-2.0, js.D2 + 2.0, js.z_cup - 9.0)), 5.0)
+        cuts = [_cyl(2.7, 40, 3.5, xy=(hx, hy), segs=16) for hx, hy, _ in A1.horn_holes[:8]] + [cable_hole]
+        cuts += [_cyl(2.2, 12, -2, xy=(uh * math.cos(a), uh * math.sin(a)), segs=16) for a in np.radians([0, 90, 180, 270])]
+        if cfg == "pilot":
+            self.turret_pilot(js, T, R_t, t_p, cuts)
+        else:
+            plat = _fcyl(R_t, t_p, f=2.2, segs=96)
+            body = _hull(plat, _xf(self.cup_block(js), T))
+            body = _U(body, [_xf(a, T) for a in self.cup_adds(js)])
+            body = _D(body, [_xf(c, T) for c in self.cup_cuts(js)] + cuts)
+            if cfg == "production":
+                inner = _hull(_cyl(R_t - MOLD_T, t_p - MOLD_T, MOLD_T),
+                              _xf(_box2(-js.hw + MOLD_T, js.hw - MOLD_T, -js.D2 + MOLD_T, js.D2 - MOLD_T, js.z_floor + MOLD_T,
+                                        js.z_cup - MOLD_T), T))
+                inner = _D(inner, _xf(_box2(-200, 200, -200, 200, js.z_floor - 50, js.z_floor + FLOOR + 1.0), T))
+                body = _D(body, inner)
+                self.struct("turret_shell", "turret", body, "turret", (0, 0, 10), role="shell", label="turret housing (moulded PC)")
+                disc = Point(0, 0).buffer(R_t - MOLD_T - 0.4, quad_segs=32)
+                for a in np.radians([0, 90, 180, 270]):
+                    disc = disc.difference(Point(uh * math.cos(a), uh * math.sin(a)).buffer(2.2, quad_segs=8))
+                disc = disc.difference(Point(0, 0).buffer(8, quad_segs=16)).difference(Point(-12, 18).buffer(5.5, quad_segs=12))
+                self.add("turret_plate", "turret", _mv(_ext(disc, 0, SHEET_T * 1.33), 0, 0, 0.0), "structural", "turret",
+                         (0, 0, -10), material="Steel", color=C_SHEET_RAW, process="sheet_metal",
+                         process_options=("sheet_metal", "laser_cut"), profile=disc, profile_frame=np.eye(4),
+                         thickness=SHEET_T * 1.33, sheet={"thickness": SHEET_T * 1.33, "bends": [], "k_factor": 0.44},
+                         label="turret plate (stamped steel)")
+            else:
+                self.struct("turret_body", "turret", body, "turret", (0, 0, 10), role="shell", label="turret (printed)")
+        # skirt ring hiding the bearing's upper ring
+        skirt = _D(_fcyl(R_t + 1.2, 6.0, f=1.2, z0=-3.5, segs=96), _cyl(R_t - 3.0, 10, -5, segs=96))
+        self.struct("turret_skirt", "turret", skirt, "turret", (0, 0, 6), role="dark", kind="cover", label="turntable skirt")
+
+    def turret_pilot(self, js, T, R_t, t_p, cuts):
+        """Pilot turret: CNC 6061 platform + two CNC yoke plates + sheet-metal cradle for the shoulder servo."""
+        disc = Point(0, 0).buffer(R_t, quad_segs=48)
+        A1 = self.lay.A1
+        for hx, hy, hd in A1.horn_holes[:8]:
+            disc = disc.difference(Point(hx, hy).buffer(1.5, quad_segs=8))
+        disc = disc.difference(Point(-12, 18).buffer(5.5, quad_segs=12))
+        ri, ro, Bb = 30.0, 50.0, 8.0
+        uh = (ri + (ri + ro) / 2 + 2.5 - Bb / 4 * 1.6) / 2
+        for a in np.radians([0, 90, 180, 270]):
+            disc = disc.difference(Point(uh * math.cos(a), uh * math.sin(a)).buffer(2.2, quad_segs=8))
+        plat = _plate(disc, t_p, chamfer=0.6)
+        self.add("turret_platform", "turret", plat, "structural", "turret", (0, 0, -8), material="Al6061", color=C_ANOD,
+                 process="cnc_mill", process_options=("cnc_mill",), profile=disc, profile_frame=np.eye(4), thickness=t_p,
+                 label="turret platform (6061)")
+        # yoke plates: xz outline = hull(platform top band, shoulder cup block)
+        pts = [(x, z) for x in (-30.0, 30.0) for z in (t_p, t_p + 2)]
+        for x in (-js.hw, js.hw):
+            for z in (js.z_floor, js.z_cup):
+                p = _pt(T, (x, 0, z))
+                pts.append((p[0], p[2]))
+        from shapely.geometry import MultiPoint
+        sil = MultiPoint(pts).convex_hull
+        zs = sil.bounds
+        win = sil.buffer(-9.0, join_style=1).intersection(box(-500, t_p + 6, 500, zs[3] - 14))
+        if not win.is_empty and win.area > 80:
+            sil = sil.difference(win.buffer(-2, join_style=1).buffer(2, join_style=1))
+        hz = t_p + 8.0
+        for x in (-20.0, 20.0):
+            sil = sil.difference(Point(x, hz).buffer(1.7, quad_segs=8))
+        for side, y0, y1 in (("l", -js.D2, -js.D2 + PLATE_T), ("r", js.D2 - PLATE_T, js.D2)):
+            man = _xf(_plate(sil, PLATE_T, chamfer=0.45), _xz_frame(y1))
+            self.add(f"turret_yoke_{side}", "turret", man, "structural", "turret", (0, 30 * (1 if side == "r" else -1), 10),
+                     material="Al6061", color=C_ANOD, process="cnc_mill", process_options=("cnc_mill", "laser_cut"),
+                     profile=sil, profile_frame=_xz_frame(y1), thickness=PLATE_T, label="turret yoke plate (6061)")
+            # angle brackets to the platform
+            fr = [_seat((x, (y0 - 0.0) if side == "l" else y1, hz), (0, -1 if side == "l" else 1, 0)) for x in (-20.0, 20.0)]
+            self.bolts(f"turret_yoke_{side}_screws", "turret", "M3x8", "bhcs", fr, "turret")
+        # sheet cradle under the shoulder servo body
+        bx = np.array([_pt(T, (x, y, z)) for x in (-js.A.W / 2, js.A.W / 2) for y in js.case_y for z in js.z_body])
+        self.u_bracket("turret_cradle", "turret", np.eye(4), (bx[:, 0].min() - 1, bx[:, 0].max() + 1),
+                       (-js.D2 + PLATE_T, js.D2 - PLATE_T), max(bx[:, 2].min() - SHEET_T - 0.2, t_p + 0.2),
+                       min(18.0, js.z_cup + self.lay.h_s - t_p - 4), +1, "turret", holes_z=t_p + 12.0, base_holes=True)
+
+    # ------------------------------------------------------------ base + electronics bay
+    def bay_layout(self):
+        """Pack the electronics bay (behind the turntable). Returns placements and the base outline."""
+        L = self.lay
+        R_f = 72.0
+        ep = self.eplan or {}
+        mods, panel = [], []
+        custom = ep.get("custom_pcb") if (ep.get("config") == "custom_pcb" or ep.get("custom_pcb")) else None
+        for m in ep.get("modules") or []:
+            spec = catalog.MODULES.get(m.get("key"))
+            if spec is None or spec.get("external"):
+                continue
+            role = spec.get("role")
+            if role in ("sensor",):
+                continue
+            if role == "safety":
+                self.extras.add("estop")
+                continue
+            if role == "connector" or m["key"] in ("usb_c_breakout", "xt30_inlet"):
+                continue
+            if custom and role in ("controller", "servo_driver", "power"):
+                continue
+            d = spec["dims"]
+            mods.append(dict(ref=m.get("ref", m["key"]).lower(), key=m["key"], l=float(d["l"]), w=float(d["w"]),
+                             h=float(d["h"]), custom=False))
+        if custom:
+            w, h = (custom.get("size_mm") or [70, 50])[:2]
+            mods.append(dict(ref="pcb", key="custom_pcb", l=float(w), w=float(h), h=12.0, custom=True,
+                             name=custom.get("name", "Morph controller")))
+        avail = 2 * (R_f - WALL - 6.0)
+        gap = 7.0
+        mods.sort(key=lambda m: -max(m["l"], m["w"]))
+        rows, cur, cw = [], [], 0.0
+        for m in mods:
+            l, w = m["l"], m["w"]
+            if l > w and l <= avail:
+                dx, dy, rz = w, l, math.pi / 2
+            else:
+                dx, dy, rz = l, w, 0.0
+            if cur and cw + dy > avail:
+                rows.append(cur)
+                cur, cw = [], 0.0
+            cur.append((m, dx, dy, rz))
+            cw += dy + gap
+        if cur:
+            rows.append(cur)
+        x = -(50.0 + 7.0)
+        place = []
+        for row in rows:
+            depth = max(r[1] for r in row)
+            tot = sum(r[2] for r in row) + gap * (len(row) - 1)
+            y = -tot / 2
+            for m, dx, dy, rz in row:
+                place.append(dict(m, x=x - depth / 2, y=y + dy / 2, rz=rz, dx=dx, dy=dy))
+                y += dy + gap
+            x -= depth + gap
+        panel_depth = 46.0
+        x_back = min(x - panel_depth, -(50.0 + 7.0) - 60.0)
+        return R_f, x_back, place
+
+    def base(self):
+        L = self.lay
+        cfg = self.cfg
+        R_f, x_back, place = self.bay_layout()
+        self.base_dims = dict(R_f=R_f, x_back=x_back)
+        foot, floor = 2.5, 3.5
+        z_fl = foot + floor
+        zd = L.z_deck
+        deck_t = 4.0
+        x_bay = -(50.0 + 6.0)
+        if cfg == "pilot":
+            fp = Polygon(_rr_pts(R_f - x_back, 2 * R_f, 18.0, 8) + np.array([(R_f + x_back) / 2, 0.0]))
+        else:
+            fp = unary_union([Point(0, 0).buffer(R_f, quad_segs=48),
+                              Polygon(_rr_pts(-x_back + 10, 2 * R_f, 26.0, 8) + np.array([(x_back + 10) / 2 - 5, 0.0]))])
+            fp = fp.buffer(4, join_style=1).buffer(-4, join_style=1)
+        self.footprint = fp
+        inner = fp.buffer(-WALL, join_style=2)
+        bay = inner.intersection(box(x_back - 10, -500, x_bay, 500))
+        A1 = L.A1
+        holes_deck = [Point(0, 0).buffer(28.0, quad_segs=32)]
+        ri, ro, Bb = 30.0, 50.0, 8.0
+        rb = (ri + ro) / 2 + 2.5
+        lh = (rb + Bb / 4 * 1.6 + ro) / 2
+        clamps = [(R_f - 11) * np.array([math.cos(a), math.sin(a)]) for a in np.radians([35, -35, 128, -128])]
+        if cfg == "pilot":
+            clamps = [np.array([R_f - 12, sy * (R_f - 12)]) for sy in (-1, 1)] + [np.array([x_back + 12, sy * (R_f - 12)]) for sy in (-1, 1)]
+        self.clamps = clamps
+        if cfg == "pilot":
+            self.base_pilot(fp, bay, zd, deck_t, foot, z_fl, x_back, R_f, lh, clamps)
+        else:
+            body = _mv(_plate(fp, zd - foot, fillet=3.0), 0, 0, foot)
+            cav = _ext(inner, z_fl, zd - deck_t)
+            opening = _ext(bay.buffer(-0.01), z_fl, zd + 5)
+            cuts = [cav, opening, _cyl(28.0, deck_t + 4, zd - deck_t - 2, segs=72)]
+            cuts += [_cyl(2.2, deck_t + 4, zd - deck_t - 2, xy=(lh * math.cos(a), lh * math.sin(a)), segs=16)
+                     for a in np.radians([45, 135, 225, 315])]
+            for c in clamps:
+                cuts += [_cyl(3.3, zd + 5, -1, xy=c, segs=20), _cyl(5.6, 6, zd - 4.0, xy=c, segs=28)]
+            # clamp bosses (solid columns around the clamp holes inside the cavity)
+            bosses = [_cyl(6.8, zd - foot - 1.0, foot + 0.5, xy=c, segs=32) for c in clamps]
+            # vent slots on both sides of the bay
+            for sy in (-1, 1):
+                for k in range(5):
+                    xx = x_bay - 14 - k * 9.0
+                    if xx < x_back + 20:
+                        break
+                    sl = _xf(_rbox(3.2, 20.0, 12.0, (0, 0, 0), r=1.5, f=0.0), trans((xx, sy * (R_f - 1.0), (z_fl + zd) / 2 + 2)))
+                    cuts.append(sl)
+            body = _D(_U(body, bosses), cuts)
+            body = _D(body, [_cyl(3.3, zd + 5, -1, xy=c, segs=20) for c in clamps] +
+                      [_cyl(5.6, 6, zd - 4.0, xy=c, segs=28) for c in clamps])
+            if cfg == "production":
+                self.struct("base_shell", "base", body, "base", (0, 0, 0), role="shell", label="base housing (moulded PC)")
+                # moulded bay lid with a vent grille
+                lid_poly = bay.buffer(-0.4)
+                lid = _mv(_plate(lid_poly, 2.4, fillet=0.8), 0, 0, zd - 2.4)
+                b = lid_poly.bounds
+                grille = []
+                for k in range(int((b[2] - b[0] - 24) // 7)):
+                    xx = b[0] + 14 + k * 7.0
+                    grille.append(_rbox2(xx - 1.6, xx + 1.6, b[1] + 16, b[3] - 16, zd - 4, zd + 1, r=1.5, f=0.0))
+                lid = _D(lid, grille)
+                self.struct("bay_lid", "base", lid, "electronics", (0, 0, 60), role="dark", kind="cover",
+                            label="electronics bay lid (moulded, vented)")
+            else:
+                self.struct("base_shell", "base", body, "base", (0, 0, 0), role="shell", label="base (printed)")
+        # rubber feet
+        feet = []
+        for p in [np.array([R_f * 0.62, sy * R_f * 0.62]) for sy in (-1, 1)] + \
+                 [np.array([x_back + 16, sy * (R_f - 16)]) for sy in (-1, 1)]:
+            feet.append(_mv(_fcyl(7.0, foot, f=0.8, segs=40), p[0], p[1], 0.0))
+        self.add("base_feet", "base", _U(feet), "visual", "base", (0, 0, -12), material="Rubber", color=C_RUBBER,
+                 process="purchased", sku="rubber_foot_14x2.5", group="rubber_foot", mass_g=4 * 0.6, qty=4,
+                 label="rubber feet (adhesive, Ø14)")
+        # yaw actuator mount
+        self.yaw_mount(z_fl)
+        # electronics
+        self.bay(place, z_fl, zd, x_back, R_f)
+        self.back_panel(x_back, R_f, z_fl, zd)
+
+    def base_pilot(self, fp, bay, zd, deck_t, foot, z_fl, x_back, R_f, lh, clamps):
+        """Pilot base: folded sheet-metal tray + CNC 6061 deck plate."""
+        t = SHEET_T
+        b = fp.bounds
+        lx, ly = b[2] - b[0], b[3] - b[1]
+        cx = (b[0] + b[2]) / 2
+        H = zd - deck_t - foot
+        tray = _mv(_ext(Polygon(_rr_pts(lx, ly, 2.0, 2)), 0, t), cx, 0, foot)
+        walls = []
+        for sx in (-1, 1):
+            walls.append(_box2(cx + sx * lx / 2 - (t if sx > 0 else 0), cx + sx * lx / 2 + (0 if sx > 0 else t), -ly / 2,
+                               ly / 2, foot, foot + H))
+        for sy in (-1, 1):
+            walls.append(_box2(cx - lx / 2 + t, cx + lx / 2 - t, sy * ly / 2 - (t if sy > 0 else 0),
+                               sy * ly / 2 + (0 if sy > 0 else t), foot, foot + H))
+        tray = _U(tray, walls)
+        vents = []
+        for sy in (-1, 1):
+            for k in range(6):
+                xx = x_back + 22 + k * 8.0
+                if xx > -60:
+                    break
+                vents.append(_xf(_rbox(3.0, 10.0, 14.0, (0, 0, 0), r=1.4, f=0.0), trans((xx, sy * ly / 2, foot + H / 2))))
+        tray = _D(tray, vents + [_cyl(3.3, 10, foot - 1, xy=c, segs=20) for c in clamps])
+        Rb = 1.0
+        ba = math.pi / 2 * (Rb + 0.44 * t)
+        flat = Polygon([(-H, 0), (0, 0), (0, -H), (lx, -H), (lx, 0), (lx + H, 0), (lx + H, ly), (lx, ly), (lx, ly + H),
+                        (0, ly + H), (0, ly), (-H, ly)])
+        bends = [{"line": [[0, 0], [0, ly]], "angle_deg": 90.0, "radius": Rb},
+                 {"line": [[lx, 0], [lx, ly]], "angle_deg": 90.0, "radius": Rb},
+                 {"line": [[0, 0], [lx, 0]], "angle_deg": 90.0, "radius": Rb},
+                 {"line": [[0, ly], [lx, ly]], "angle_deg": 90.0, "radius": Rb}]
+        self.add("base_tray", "base", tray, "structural", "base", (0, 0, -20), material="Al5052", color=C_SHEET,
+                 process="sheet_metal", process_options=("sheet_metal",), profile=flat, profile_frame=np.eye(4),
+                 thickness=t, sheet={"thickness": t, "bends": bends, "k_factor": 0.44, "relief": "corner 2 mm"},
+                 label="base tray (folded 5052, black powder coat)")
+        deck = fp.difference(bay.buffer(-4.0, join_style=1)).difference(Point(0, 0).buffer(28.0, quad_segs=32))
+        for a in np.radians([45, 135, 225, 315]):
+            deck = deck.difference(Point(lh * math.cos(a), lh * math.sin(a)).buffer(2.2, quad_segs=8))
+        for c in clamps:
+            deck = deck.difference(Point(*c).buffer(3.3, quad_segs=10))
+        deck = deck.buffer(0)
+        self.add("base_deck", "base", _mv(_plate(deck, deck_t, chamfer=0.6), 0, 0, zd - deck_t), "structural", "base",
+                 (0, 0, 30), material="Al6061", color=C_ANOD_DK, process="cnc_mill", process_options=("cnc_mill", "laser_cut"),
+                 profile=deck, profile_frame=trans((0, 0, zd - deck_t)), thickness=deck_t, label="base deck (6061, dark anodised)")
+        fr = []
+        for p in (np.array([cx + sx * (lx / 2 - 8), sy * (ly / 2 - 8)]) for sx in (-1, 1) for sy in (-1, 1)):
+            fr.append(_seat((p[0], p[1], zd), (0, 0, 1)))
+        self.bolts("base_deck_screws", "base", "M3x8", "fhcs", fr, "base")
+
+    def yaw_mount(self, z_fl):
+        L = self.lay
+        A = L.A1
+        T = self.T["j1_act"]
+        x0, x1 = -A.so - A.L / 2, -A.so + A.L / 2
+        zbot = _pt(T, (0, 0, min(A.zb, A.zi)))[2]
+        top = _pt(T, (0, 0, A.zb + 0.55 * (A.zt - A.zb)))[2]
+        blk = _rbox2(x0 - WALL, x1 + WALL, -A.W / 2 - WALL, A.W / 2 + WALL, z_fl - 0.01, top, r=3.0, f=1.2)
+        if A.hobby and "ears" in A.bounds:
+            eb = A.bounds["ears"]
+            top = _pt(T, (0, 0, eb[0][2]))[2] - 0.05
+            blk = _rbox2(eb[0][0] - 2.5, eb[1][0] + 2.5, -A.W / 2 - WALL, A.W / 2 + WALL, z_fl - 0.01, top, r=3.0, f=1.0)
+        cut = [_xf(_box2(x0 - 0.3, x1 + 0.3, -A.W / 2 - 0.3, A.W / 2 + 0.3, A.zb - 0.3, 80), T)]
+        if not A.hobby:
+            cut.append(_xf(_cyl(11.5, 5, A.zi - 2.0, segs=40), T))
+            cut.append(_box2(x0 + 4, x1 - 4, -A.W / 2 - WALL - 1, A.W / 2 + WALL + 1, z_fl + 3.5, zbot - 2.0))
+        for s in ("connectors", "grommet"):
+            if s in A.bounds:
+                b = A.bounds[s]
+                cut.append(_xf(_box2(b[0][0] - 1.5, b[1][0] + 1.5, b[0][1] - 1.5, b[1][1] + 1.5, -200, b[1][2] + 1), T))
+        for hx, hy, hz in (A.holes.get("side") or []):
+            if hy > A.W / 2 - 0.5 and _pt(T, (0, 0, hz))[2] < top - 3:
+                cut.append(_xf(_U(_cyl(1.45, WALL + 2, -0.5, segs=16), _cyl(2.9, 3.0, WALL - 1.0, segs=20)),
+                               T @ _frame((hx, hy, hz), (0, 1, 0), (1, 0, 0))))
+        blk = _D(blk, cut)
+        role = "dark" if self.cfg != "pilot" else "dark"
+        mat, col, proc, opts = self.look[role]
+        if self.cfg == "pilot":
+            mat, col, proc, opts = "Al6061", C_ANOD_DK, "cnc_mill", ("cnc_mill", "mjf_print")
+        self.add("yaw_mount", "base", blk, "structural", "base", (0, 0, -24), material=mat, color=col, process=proc,
+                 process_options=opts, label="base-yaw servo mount")
+        fr = []
+        if A.hobby and A.holes.get("ears"):
+            for hx, hy, hz, hd in A.holes["ears"]:
+                fr.append(_seat(_pt(T, (hx, hy, hz + float(A.spec["dims"].get("ear_t", 2.5)))), (0, 0, 1)))
+            self.bolts("yaw_mount_screws", "base", "M3x12" if A.W > 15 else "M2x8", "shcs", fr, "base")
+        else:
+            for hx, hy, hz in (A.holes.get("side") or []):
+                if hy > A.W / 2 - 0.5 and _pt(T, (0, 0, hz))[2] < top - 3:
+                    fr.append(_seat(_pt(T, (hx, hy + WALL - 1.0, hz)), _vec(T, (0, 1, 0))))
+            self.bolts("yaw_mount_screws", "base", "M2.5x6", "bhcs", fr[:4], "base")
+        fr = [_seat((x, y, z_fl + 3.5), (0, 0, 1)) for x in (x0 - WALL + 3.5, x1 + WALL - 3.5) for y in (0.0,)]
+        self.bolts("yaw_mount_floor_screws", "base", "M3x8", "fhcs", fr, "base")
+
+    def bay(self, place, z_fl, zd, x_back, R_f):
+        self.mod_frames = {}
+        so_h = 6.0
+        for pl in place:
+            T = trans((pl["x"], pl["y"], z_fl + so_h)) @ rot((0, 0, 1), pl["rz"])
+            ref = pl["ref"]
+            if pl["custom"]:
+                comp = self.custom_pcb(pl)
+                self.comp(comp, f"pcb_{ref}", "base", T, "electronics", explode=(0, 0, 70), kind="pcb", sku="custom_pcb",
+                          meta={"ref": "PCB1"})
+                for p in self.asm.parts:
+                    if p.name.startswith(f"pcb_{ref}_"):
+                        p.process = "pcb_assembly"
+                        p.process_options = ("pcb_assembly",)
+                        p.meta["size_mm"] = [pl["l"], pl["w"]]
+            else:
+                comp = components.module(pl["key"])
+                self.comp(comp, f"mod_{ref}", "base", T, "electronics", explode=(0, 0, 70), kind=comp.kind,
+                          meta={"ref": ref.upper()})
+            fr_all = comp.frames
+            self.mod_frames[ref.upper()] = {k: T @ np.asarray(F) for k, F in fr_all.items()}
+            # standoffs at the board corners
+            l, w = pl["l"], pl["w"]
+            n = 4 if min(l, w) > 20 else 2
+            pts = [(sx * (l / 2 - 3.2), sy * (w / 2 - 3.2)) for sx in (-1, 1) for sy in (-1, 1)] if n == 4 else \
+                [(sx * (l / 2 - 3.2), 0.0) for sx in (-1, 1)]
+            so = []
+            fr = []
+            for px, py in pts:
+                p = _pt(T, (px, py, 0))
+                hexm = _man(components.hex_prism(5.0, so_h, 0.0, 0.3, hole=2.5))
+                so.append(_mv(hexm, p[0], p[1], z_fl))
+                fr.append(_seat((p[0], p[1], z_fl + so_h + 1.6), (0, 0, 1)))
+            self.add(f"mod_{ref}_standoffs", "base", _U(so), "structural", "electronics", (0, 0, 40), material="Copper",
+                     color=C_BRASS, process="purchased", sku="M3x6_brass_standoff", group="M3x6_brass_standoff",
+                     qty=len(pts), label="M3×6 brass standoffs")
+            self.bolts(f"mod_{ref}_screws", "base", "M2.5x5" if min(l, w) < 20 else "M3x5", "bhcs", fr, "electronics",
+                       explode_len=80.0)
+
+    def custom_pcb(self, pl):
+        """The custom controller PCBA (single board replacing the modules): ESP32-S3 module, bus transceiver,
+        buck converter, servo / sensor connectors, mounting holes. Black solder mask, ENIG."""
+        l, w = pl["l"], pl["w"]
+        t = 1.6
+        parts = []
+        brd = Polygon(_rr_pts(l, w, 2.5, 6))
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                brd = brd.difference(Point(sx * (l / 2 - 3.2), sy * (w / 2 - 3.2)).buffer(1.6, quad_segs=10))
+        parts.append(("board", _tri(_ext(brd, 0, t)), C_FR4_BLACK, "FR4"))
+        rings = unary_union([Point(sx * (l / 2 - 3.2), sy * (w / 2 - 3.2)).buffer(2.8, quad_segs=12).difference(
+            Point(sx * (l / 2 - 3.2), sy * (w / 2 - 3.2)).buffer(1.6, quad_segs=10)) for sx in (-1, 1) for sy in (-1, 1)])
+        parts.append(("pads", _tri(_ext(rings, t, t + 0.04)), "#d4aa45", "Copper"))
+        # module: shield can + antenna strip
+        mx = -l / 2 + 13.0
+        can = _rbox2(mx - 9, mx + 9, -w / 2 + 6, -w / 2 + 6 + 16, t, t + 2.4, r=0.6, f=0.3)
+        ant = _box2(mx - 9, mx + 9, -w / 2 + 22.5, -w / 2 + 27.5, t, t + 0.9)
+        parts.append(("module", _tri(can), "#c9ccd1", "Stainless"))
+        parts.append(("antenna", _tri(ant), "#1c1d20", "FR4"))
+        # ICs / passives
+        chips = [_rbox2(x - 3, x + 3, y - 3, y + 3, t, t + 1.0, r=0.3, f=0.2) for x, y in ((l * 0.05, w * 0.12), (l * 0.18, -w * 0.18))]
+        parts.append(("ics", _tri(_U(chips)), "#17181b", "PC"))
+        caps = [_cyl(3.2, 7.0, t, xy=(l * 0.32, w * 0.25), segs=24), _cyl(2.5, 5.5, t, xy=(l * 0.32, -w * 0.05), segs=20)]
+        parts.append(("caps", _tri(_U(caps)), "#1b1c20", "PC"))
+        ind = _rbox2(l * 0.12 - 3.5, l * 0.12 + 3.5, -w * 0.38 - 3.5, -w * 0.38 + 3.5, t, t + 4.0, r=0.8, f=0.4)
+        parts.append(("inductor", _tri(ind), "#26282c", "PC"))
+        # connectors: 2x bus (JST-PH style), power terminal, USB-C
+        con = [_rbox2(l / 2 - 9, l / 2 - 1, y - 3.5, y + 3.5, t, t + 6.0, r=0.4, f=0.2) for y in (-w * 0.22, w * 0.05)]
+        parts.append(("connectors", _tri(_U(con)), "#ebe2c9", "PA12"))
+        term = _rbox2(l / 2 - 9, l / 2 - 0.5, w / 2 - 14, w / 2 - 3, t, t + 9.0, r=0.5, f=0.3)
+        parts.append(("terminal", _tri(term), "#2a78c8", "PA12"))
+        usb = _rbox2(-l / 2 - 1.0, -l / 2 + 6.5, w / 2 - 14, w / 2 - 5, t, t + 3.2, r=1.4, f=0.3)
+        parts.append(("usb", _tri(usb), "#c9ccd1", "Stainless"))
+        try:
+            txt = components.text_mesh("MORPH", 3.0, relief=0.03)
+            txt.apply_translation((l * 0.05, w * 0.36, t))
+            parts.append(("silk", txt, "#f3f3ef", "PC"))
+        except Exception:  # noqa: BLE001
+            pass
+        frames = {"mount": np.eye(4), "connector_a": trans((l / 2 - 1, -w * 0.22, t + 3)) @ rot((0, 1, 0), math.pi / 2),
+                  "connector_servo_a": trans((l / 2 - 1, -w * 0.22, t + 3)) @ rot((0, 1, 0), math.pi / 2),
+                  "connector_b": trans((l / 2 - 1, w * 0.05, t + 3)) @ rot((0, 1, 0), math.pi / 2),
+                  "connector_power": trans((l / 2 - 1, w / 2 - 8.5, t + 4)) @ rot((0, 1, 0), math.pi / 2),
+                  "connector_usb": trans((-l / 2 - 1, w / 2 - 9.5, t + 1.6)) @ rot((0, 1, 0), -math.pi / 2)}
+        return components.Component("custom_pcb", pl.get("name", "custom PCBA"), "pcb", parts, frames,
+                                    {"l": l, "w": w, "h": 12.0}, {"mass_g": 0.0019 * l * w * 1.6 * 1.85 * 10 + 8})
+
+    def back_panel(self, x_back, R_f, z_fl, zd):
+        zc = z_fl + 7.0
+        for key, y, off in (("usb_c_breakout", R_f * 0.38, None), ("xt30_inlet", -R_f * 0.38, None)):
+            comp = components.module(key)
+            panel = np.asarray(comp.frames.get("panel", np.eye(4)))
+            port = np.asarray(comp.frames.get("port", np.eye(4)))
+            xp = panel[0, 3]
+            T = trans((x_back - xp + (WALL if key == "usb_c_breakout" else 0.0), y, zc - port[2, 3]))
+            self.comp(comp, f"panel_{'usb' if 'usb' in key else 'dc'}", "base", T, "electronics", explode=(-30, 0, 0),
+                      kind="electronics", meta={"ref": "J_USB" if "usb" in key else "J_PWR"})
+            self.mod_frames["J_USB" if "usb" in key else "J_PWR"] = {k: T @ np.asarray(F) for k, F in comp.frames.items()}
+            # cut the panel hole in the back wall
+            p = _pt(T, port[:3, 3])
+            hole = _xf(_rbox(14.0, 6.0 if "usb" in key else 10.6, 4.0 if "usb" in key else 10.6, (0, 0, 0), r=1.8, f=0.0) if
+                       "usb" in key else _cyl(4.1, 14, -7, segs=32), trans((x_back + 2.0, p[1], p[2])) @ R_ZX)
+            for part in self.asm.parts:
+                if part.name in ("base_shell", "base_tray"):
+                    part.mesh = _tri(_D(_man(part.mesh), hole))
+        if "estop" in self.extras:
+            comp = components.module("estop")
+            T = trans((x_back + 34, -(R_f + 40), 0.0)) @ rot((0, 0, 1), math.pi / 2)
+            self.comp(comp, "estop", "base", T, "electronics", explode=(0, -40, 0), kind="electronics",
+                      meta={"ref": "S1"})
+            self.mod_frames["S1"] = {k: T @ np.asarray(F) for k, F in comp.frames.items()}
