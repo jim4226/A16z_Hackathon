@@ -2,6 +2,7 @@
 
 Morph designs and programs. After a revision is built, `morph source` asks Darwin Search
 (no account needed) for:
+  - quote and order agents that work for any part (part-lookup, store_buy, ...)
   - every purchased BOM line: an agent that can quote and sell it (servo, MCU, FSR, supply...)
   - engineering handoffs: PCB fab from the Gerbers, printing the STLs, a design review
 
@@ -28,6 +29,30 @@ from urllib.request import Request, urlopen
 API = "https://api.darwin.so/api/v3/search"
 AGENT_PAGE = "https://index.darwin.so/agent/{agent}?capability={cap}"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "morph", "darwin")
+
+# The agents we route each kind of work to, by Darwin agent id (names are not unique).
+# Picked from live searches on 2026-10-11; Search still runs, these just go first and are
+# the ones `morph source` shows. Others found are kept in the JSON.
+QUOTE = {"cmv08cln8001t06nyw4bux80d": "Request a quote from matching suppliers",
+         "cmuzoyi2j00lj06ovdhroor86": "upload_rfq_file"}  # accepts Gerber zips, STL, STEP
+PREFERRED = {
+    "part": {"cmuds975i00op0agm4ievg1pe": "shopping_search",
+             "cmudup4lk00eg0agmi6cusm2t": "Buy a Listing",
+             "cmudqk7iu023z0agmkk5b7fiw": "Price shipping"},
+    "pcb_fab": QUOTE,
+    "print": QUOTE,
+    "design_review": {"cmuzr1sh100ib06pbyy3kq62p": "Design Review Orchestrator"},
+    # Generic across parts, so looked up once per run (ROLES) rather than per BOM line.
+    # part-lookup: live stock + price breaks across DigiKey/Mouser/Farnell/RS/Arrow from an MPN,
+    #   $0.04 USDC per call via x402 (a Darwin payment request the user approves).
+    "quote": {"cmud0999x004b09gml2r8q5zf": "part-lookup",
+              "cmv04e1l1007f06mh94n2o7m0": "Get component marketplace products"},  # ElectroGen kits
+    # store_buy hands back a Stripe checkout_url for the human to pay; Quick buy is instant checkout.
+    "order": {"cmudvaa8f01dl0agm69qoso01": "store_buy", "cmudseo52018i0agmp89pntne": "Quick buy"},
+}
+ROLES = [("quote", "look up live distributor stock and price for a manufacturer part number"),  # part-lookup
+         ("quote", "get a price quote for electronic components"),  # kits / modules
+         ("order", "buy and checkout a product online for me")]
 
 
 def _cache_path(query: str) -> str:
@@ -78,7 +103,9 @@ def search(query: str, max_results: int = 5, retries: int = 1, timeout: float = 
 
 
 def part_query(item: str) -> str:
-    return f"buy {item}; quote unit price, stock and shipping to the US"
+    # Darwin 500s on longer phrasings ("...; quote unit price, stock and shipping to the US");
+    # this short form is the one that searched reliably on 2026-10-11.
+    return f"buy {item}, price and shipping"
 
 
 def is_purchased(row: dict) -> bool:
@@ -96,13 +123,14 @@ def handoffs(rev_dir: str, results: dict) -> list:
         kicad_zip = os.path.join(rev_dir, "electronics", "board", "kicad", "board-kicad.zip")
         if os.path.exists(kicad_zip):   # the KiCad project, for a fab that wants sources (adds solder mask)
             files.append(os.path.relpath(kicad_zip, rev_dir))
-        out.append(("pcb_fab", "PCB fabrication and assembly quote from Gerber files, 2-layer through-hole", files))
+        out.append(("pcb_fab", "PCB fabrication quote from Gerber files", files))
     fab_dir = os.path.join(rev_dir, "fab")
     stls = sorted(f for f in os.listdir(fab_dir) if f.endswith(".stl")) if os.path.isdir(fab_dir) else []
     if stls:
         mat = ((results.get("fab") or {}).get("material") or "PETG")
-        out.append(("print", f"3D printing service quote for STL files in {mat}", [f"fab/{f}" for f in stls]))
-    out.append(("design_review", "mechanical design review of a servo-driven robot gripper with force sensing", []))
+        # "3D printing service ..." 500s on Darwin; this wording reaches the RFQ agents, which take STL
+        out.append(("print", f"upload STL design file for a 3D printed parts quote, {mat}", [f"fab/{f}" for f in stls]))
+    out.append(("design_review", "mechanical design review of a robot gripper", []))
     return out
 
 
@@ -110,7 +138,8 @@ def source(project, rev: str, max_results: int = 3, workers: int = 4) -> dict:
     """Shortlist Darwin agents for every purchased part and handoff of `rev`; log each lookup."""
     results = project.load_results(rev)
     rev_dir = project.rev_dir(rev)
-    tasks = [("part", r["item"], part_query(r["item"]), []) for r in results.get("bom") or [] if is_purchased(r)]
+    tasks = [(kind, kind, q, []) for kind, q in ROLES]
+    tasks += [("part", r["item"], part_query(r["item"]), []) for r in results.get("bom") or [] if is_purchased(r)]
     tasks += [(kind, kind, q, files) for kind, q, files in handoffs(rev_dir, results)]
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -118,20 +147,25 @@ def source(project, rev: str, max_results: int = 3, workers: int = 4) -> dict:
 
     rows, gaps = [], []
     for (kind, label, query, files), res in zip(tasks, found):
-        agents = res["agents"]
+        want = PREFERRED.get(kind, {})
+        agents = sorted(res["agents"], key=lambda a: a["agent_id"] not in want)  # stable: picks first
+        picked = [a for a in agents if a["agent_id"] in want]
         gap = None
         if not res["ok"]:
             gap = "darwin_unavailable"
         elif not agents:
             gap = "no_agent"
-        elif not any(a["can_start"] for a in agents):
-            gap = "not_executable"  # listed, but Darwin can't start work with it yet
+        # Anonymous Search skips Darwin's readiness check, so "unavailable" there means
+        # unverified, not missing: found, but startable only after the user signs in to Act.
+        verified = any(a["can_start"] for a in agents)
         if gap:
             gaps.append({"kind": kind, "item": label, "gap": gap, "reason": res.get("no_match_reason")})
         rows.append({"kind": kind, "item": label, "query": query, "files": files, "agents": agents,
+                     "readiness_verified": verified, "picked": picked,
                      "cached": res.get("cached", False), "error": res.get("error"), "gap": gap})
         project.log({"type": "sourcing", "rev": rev, "kind": kind, "part": label, "found": len(agents),
                      "top_agent": agents[0]["name"] if agents else None, "gap": gap})
+        # top_agent is a picked agent whenever one was found, since picks sort first
 
     report = {"rev": rev, "source": "darwin search", "rows": rows, "gaps": gaps,
               "note": "Shortlist only. Ordering needs the user's Darwin account (Act) and their approval."}
