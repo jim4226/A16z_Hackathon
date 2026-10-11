@@ -1,0 +1,1 @@
+{"need": "Our robot needs to pick up a raw egg (44 mm wide, 57 mm long, 60 g) lying on its side without cracking it, using our MG996R gripper. Print the fingers in PETG today.", "source": "heuristic", "rationale": "parsed offline (no Claude credentials): numbers and keywords only"}

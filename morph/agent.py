@@ -29,6 +29,12 @@ class NeedSpec(BaseModel):
     friction: float = Field(description="estimated friction coefficient finger/object, 0.2-1.0")
     gripper_force_n: Optional[float] = Field(default=None, description="per-finger grip force if stated")
     material: Optional[str] = Field(default=None, description=f"one of {list(MATERIALS)} if implied")
+    max_force_n: float = Field(default=0.0, description="per-finger squeeze force that damages the object; "
+                                                         "0 if robust. Estimate for fragile items")
+    force_sensor: bool = Field(default=False, description="true if the object is fragile or the user asks for "
+                                                           "force sensing / gentle grip / feedback")
+    servo: Optional[Literal["sg90", "mg90s", "mg996r", "ds3218"]] = Field(
+        default=None, description="servo model if the user names one")
     process: Optional[Literal["fdm_print", "laser_cut", "cnc_router"]] = None
     rationale: str = Field(description="one or two sentences on the assumptions made")
 
@@ -52,6 +58,13 @@ def _to_design(n: NeedSpec) -> Design:
         changes["finger.material"] = n.material
     if n.process:
         changes["fab.process"] = n.process
+    if n.max_force_n:
+        changes["object.max_force_n"] = n.max_force_n
+    if n.force_sensor:
+        changes.update({"finger.sensor": "fsr402", "finger.width_mm": 20.0, "finger.material": "PETG",
+                        "fab.process": "fdm_print"})
+    if n.servo:
+        changes["electronics.servo"] = n.servo
     d = d.with_changes(changes)
     # size the finger so the pad centre reaches the object's centre line
     r = n.diameter_mm / 2
@@ -74,8 +87,14 @@ def heuristic(need: str) -> NeedSpec:
         material, process = "Al6061", "cnc_router"
     elif "print" in text:
         material, process = "PETG", "fdm_print"
-    friction = 0.35 if any(w in text for w in ("glass", "metal", "can", "smooth", "wet")) else 0.6
-    obj = re.search(r"(?:pick up|grab|grip|grasp|hold)\s+(?:an?\s+|the\s+)?([a-z0-9 .\-]+?)(?:,|\.\s|\s+(?:that|which|with|weighing|of|about|lying|standing|on|in)\b|$)", text)
+    friction = 0.35 if any(w in text for w in ("glass", "metal", "can", "smooth", "wet", "egg")) else 0.6
+    # rough damage thresholds per finger (estimates; check with a kitchen scale)
+    fragile = {"egg": 25.0, "strawberry": 3.0, "tomato": 8.0, "chip": 1.0, "paper cup": 4.0, "grape": 2.0,
+               "bulb": 15.0, "banana": 6.0}
+    max_force = next((v for k, v in fragile.items() if k in text), 0.0)
+    sensor = bool(max_force) or any(w in text for w in ("sensor", "force feedback", "gentle", "electronics"))
+    servo = next((k for k in ("sg90", "mg90s", "mg996r", "ds3218") if k in text.replace(" ", "")), None)
+    obj = re.search(r"(?:pick up|grab|grip|grasp|hold)\s+(?:an?\s+|the\s+)?([a-z0-9 .\-]+?)(?:,|\(|\.\s|\s+(?:that|which|with|weighing|of|about|lying|standing|on|in)\b|$)", text)
     name = re.sub(r"\d+(?:\.\d+)?\s*(?:mm|cm|kg|g)\b", "", obj.group(1)).strip() if obj else "object"
     name = re.sub(r"\s+", " ", name) or "object"
     return NeedSpec(project_name=re.sub(r"[^a-z0-9]+", "-", name)[:24].strip("-") or "project",
@@ -83,6 +102,7 @@ def heuristic(need: str) -> NeedSpec:
                     diameter_mm=nums_mm[0] if nums_mm else 60.0,
                     length_mm=nums_mm[1] if len(nums_mm) > 1 else 100.0,
                     mass_g=mass_g, friction=friction, material=material, process=process,
+                    max_force_n=max_force, force_sensor=sensor, servo=servo,
                     rationale="parsed offline (no Claude credentials): numbers and keywords only")
 
 
@@ -95,8 +115,9 @@ def propose(need: str) -> tuple[Design, NeedSpec, str]:
                 max_tokens=16000,
                 output_config={"effort": "medium"},
                 system=("You turn a robotics engineer's request into a grasp-design spec for custom "
-                        "parallel-gripper fingers. Use stated numbers exactly; estimate anything missing "
-                        "from typical real-world values and say so in the rationale."),
+                        "parallel-gripper fingers, optionally with a force sensor and servo electronics. "
+                        "Use stated numbers exactly; estimate anything missing (including how much squeeze "
+                        "damages a fragile object) from typical real-world values and say so in the rationale."),
                 messages=[{"role": "user", "content": need}],
                 output_format=NeedSpec,
             )

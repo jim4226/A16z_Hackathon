@@ -20,6 +20,11 @@ METRICS = [
     ("tip_deflection_mm", "Finger tip deflection", "mm", "lo"),
     ("bending_sf", "Bending safety factor", "", "hi"),
     ("finger_mass_g", "Finger mass", "g", "lo"),
+    ("target_force_n", "Grip force target (firmware)", "N", None),
+    ("servo", "Servo", "", None),
+    ("servo_stall_force_n", "Servo force at stall, open loop", "N", None),
+    ("open_loop_crushes", "Open-loop servo would damage object", "", None),
+    ("bom_cost", "Total BOM (fab + electronics)", "$", "lo"),
     ("fab_process", "Process", "", None),
     ("fab_minutes", "Fabrication time (2 fingers)", "min", "lo"),
     ("fab_cost", "Fabrication cost", "$", "lo"),
@@ -182,6 +187,12 @@ def build(project: Project, revs, path: str, title: str = "") -> str:
                 f'{speed}</div></div></div>'
                 f'<table><tr><th>step</th><th>by hand</th><th>with Morph</th></tr>{trows}</table>'
                 f'<p class="sub" style="margin:10px 0 0">{caveat}</p></div>')
+    ecards = []
+    for i, r in enumerate(revs):
+        ep = res[r].get("electronics")
+        if not ep or ep.get("sensor") == "none":
+            continue
+        ecards.append(_electronics_card(project, r, ep, COLORS[i % len(COLORS)]))
     title = title or f"Morph · {des[revs[0]].name}"
     need = f'<p class="sub">Need: “{html.escape(meta["need"])}”</p>' if meta.get("need") else ""
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -194,6 +205,7 @@ def build(project: Project, revs, path: str, title: str = "") -> str:
 <div class="card"><h2>Predicted performance</h2><table><tr><th></th>{head}</tr>{''.join(rows)}</table></div>
 <div class="card"><h2>Design parameters</h2><table><tr><th></th>{head}</tr>{''.join(prow)}</table></div>
 {'<div class="card"><h2>Change propagation</h2>' + ''.join(prop) + '</div>' if prop else ''}
+{'<h2 style="margin:20px 0 12px">Electronics + live bench</h2>' + ''.join(ecards) if ecards else ''}
 <h2 style="margin:20px 0 12px">Fabrication</h2><div class="grid">{''.join(fabcards)}</div>
 {'<div class="card" style="margin-top:16px"><h2>Measured vs predicted</h2><table><tr><th>rev</th><th>actual</th><th>error vs prediction</th></tr>' + mrows + '</table></div>' if mrows else ''}
 <div class="card" style="margin-top:16px"><details><summary>Simulation trials (randomized offset, friction, mass; lift 80 mm + 0.5 g shake)</summary>{''.join(trials)}</details></div>
@@ -201,3 +213,77 @@ def build(project: Project, revs, path: str, title: str = "") -> str:
     with open(path, "w") as fh:
         fh.write(doc)
     return path
+
+
+def _window_svg(ep: dict) -> str:
+    lo, hi = ep["window_n"]
+    stall, target = ep["servo_stall_force_n"], ep["target_force_n"]
+    lim = ep.get("object_limit_n")
+    top = max(stall, lim or 0, target * 3) * 1.05
+    W, H = 640, 64
+    x = lambda f: 8 + (W - 16) * min(f, top) / top  # noqa: E731
+    parts = [f'<svg viewBox="0 0 {W} {H}" width="100%" xmlns="http://www.w3.org/2000/svg" font-size="11" fill="currentColor">',
+             f'<rect x="8" y="18" width="{W-16}" height="14" rx="3" fill="currentColor" fill-opacity=".08"/>',
+             f'<rect x="{x(0):.1f}" y="18" width="{x(lo)-x(0):.1f}" height="14" fill="#b42318" fill-opacity=".35"/>']
+    if hi:
+        parts.append(f'<rect x="{x(lo):.1f}" y="18" width="{x(hi)-x(lo):.1f}" height="14" fill="#1f7a4d" fill-opacity=".45"/>')
+    if lim:
+        parts.append(f'<rect x="{x(lim):.1f}" y="18" width="{x(top)-x(lim):.1f}" height="14" fill="#b42318" fill-opacity=".55"/>')
+    for f, label, dy in ((target, f"target {target} N", 12), (stall, f"servo stall {stall} N", 50)) + (((lim, f"damage {lim} N", 50),) if lim else ()):
+        parts.append(f'<line x1="{x(f):.1f}" x2="{x(f):.1f}" y1="14" y2="36" stroke="currentColor" stroke-width="1.5"/>'
+                     f'<text x="{min(x(f), W-90):.1f}" y="{dy}">{label}</text>')
+    parts.append(f'<text x="8" y="50">slips &lt; {lo} N</text></svg>')
+    return "".join(parts)
+
+
+def _trace_svg(project, rev: str, ep: dict) -> str:
+    import csv
+
+    bdir = os.path.join(project.rev_dir(rev), "bench")
+    if not os.path.isdir(bdir):
+        return ""
+    runs = sorted(f for f in os.listdir(bdir) if f.endswith(".csv"))
+    if not runs:
+        return ""
+    rows = list(csv.DictReader(open(os.path.join(bdir, runs[-1]))))
+    if not rows:
+        return ""
+    ts = [float(r["t_s"]) for r in rows]
+    fs = [float(r["force_n"]) for r in rows]
+    W, H, pad = 640, 180, 28
+    tmax = max(ts) or 1.0
+    fmax = max(max(fs), ep["target_force_n"] * 1.6, 0.5)
+    X = lambda t: pad + (W - pad - 8) * t / tmax  # noqa: E731
+    Y = lambda f: H - pad - (H - pad - 8) * f / fmax  # noqa: E731
+    pts = " ".join(f"{X(t):.1f},{Y(f):.1f}" for t, f in zip(ts, fs))
+    tgt = ep["target_force_n"]
+    sim = "SIMULATED" in runs[-1]
+    return (f'<svg viewBox="0 0 {W} {H}" width="100%" xmlns="http://www.w3.org/2000/svg" font-size="11" fill="currentColor">'
+            f'<line x1="{pad}" x2="{W-8}" y1="{Y(0):.1f}" y2="{Y(0):.1f}" stroke="currentColor" stroke-opacity=".3"/>'
+            f'<line x1="{pad}" x2="{W-8}" y1="{Y(tgt):.1f}" y2="{Y(tgt):.1f}" stroke="#1f7a4d" stroke-dasharray="4 3"/>'
+            f'<text x="{W-120}" y="{Y(tgt)-4:.1f}" fill="#1f7a4d">predicted target {tgt} N</text>'
+            f'<polyline points="{pts}" fill="none" stroke="#2f6fdf" stroke-width="1.8"/>'
+            f'<text x="{pad}" y="14">{html.escape(runs[-1])} · force (N) vs time (s, 0–{tmax:.1f})'
+            f'{" · SIMULATED rehearsal trace, not hardware" if sim else " · measured on hardware"}</text></svg>')
+
+
+def _electronics_card(project, rev: str, ep: dict, color: str) -> str:
+    wiring = "".join(f"<tr><td>{html.escape(a)}</td><td>{html.escape(b)}</td></tr>" for a, b in ep["wiring"])
+    parts = "".join(f"<tr><td>{html.escape(p['item'])}</td><td>{p['qty']}</td><td>${p['cost']:.2f}</td></tr>" for p in ep["parts"])
+    sens = ep.get("sensing") or {}
+    notes = "".join(f'<div class="warn">✗ {html.escape(w)}</div>' for w in ep["issues"])
+    notes += "".join(f'<div class="sub" style="margin:4px 0">• {html.escape(w)}</div>' for w in ep["warnings"])
+    crush = (f'<p><b>Open-loop {ep["servo"]} squeezes up to {ep["servo_stall_force_n"]} N</b> — above the '
+             f'{ep["object_limit_n"]} N damage limit. The generated firmware closes on the force sensor instead and '
+             f'stops at {ep["target_force_n"]} N (hard cutoff {ep["limit_n"]} N).</p>') if ep.get("open_loop_crushes") else ""
+    fw = ep.get("firmware")
+    return (f'<div class="card"><h2><span class="dot" style="background:{color}"></span>{rev} · {html.escape(ep["mcu"])} + '
+            f'{html.escape(ep["servo"])} + {html.escape(ep["sensor"])}</h2>{crush}'
+            f'<div class="sub" style="margin:0 0 4px">Grip-force window (green = holds without damage)</div>{_window_svg(ep)}'
+            f'{_trace_svg(project, rev, ep)}'
+            f'<div class="grid" style="margin-top:8px"><div><h2>Wiring</h2><table>{wiring}</table>'
+            f'<p class="sub">Divider {sens.get("divider_ohm", "–")} Ω · {sens.get("v_at_target", "–")} V at target · '
+            f'~{sens.get("resolution_n_per_lsb", "–")} N per ADC step</p></div>'
+            f'<div><h2>Electronics BOM</h2><table>{parts}</table>'
+            f'{f"<p><a href={chr(34)}{rev}/{fw}{chr(34)}>morph_grip.ino</a> (generated firmware)</p>" if fw else ""}</div></div>'
+            f'{notes}</div>')

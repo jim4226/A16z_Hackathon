@@ -40,7 +40,7 @@ def _fmt(vals):
 
 def _pad_pieces(geom: FingerGeometry, design: Design):
     f = design.finger
-    u0 = f.length_mm - min(f.pad_height_mm, f.length_mm)
+    u0 = f.length_mm - min(geom.pad_height_mm or f.pad_height_mm, f.length_mm)
     pieces = []
     u = u0
     while u < f.length_mm - 1e-6:

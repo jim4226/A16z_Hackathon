@@ -1,87 +1,89 @@
-# Morph: from "I need to grab this" to fabricated robot fingers
+# Morph: from "pick this up without breaking it" to printed, wired, force-controlled fingers
 
 **SpeedHacks, SF Tech Week, Oct 11 2026.** Challenge: *give people their time back.*
 
-Designing one custom part for a robot today means hopping between CAD, a simulator, a
-spreadsheet, CAM, and a slicer. Every change means redoing each step by hand. Morph
-connects those steps into one workflow:
+Adding a custom gripper for one tricky object today means bouncing between CAD, a
+simulator, hand calcs, a slicer, a parts list, a wiring diagram and firmware. Every
+change sends you around the loop again. Morph connects the whole loop:
 
 ```
 describe a need → spec → parametric CAD → closed-form checks → MuJoCo grasp sim
-      → compare variants → DFM + machine files (print / laser / CNC) → fabricate → measure
+   → electronics (servo, force sensor, MCU, wiring, firmware) → machine files
+   → fabricate → live bench test → measured vs predicted
 ```
 
-When you change a parameter, Morph reruns **only the artifacts that depend on it** and
-carries over the rest. It also logs each revision (design, predictions, measured results)
-to a ledger. That ledger becomes the dataset none of the public sources provide.
+Changing a parameter reruns **only the artifacts that depend on it**. Every revision
+(design → prediction → fab → measured result) is logged, building a dataset no public
+source has.
 
-**Demo slice:** custom parallel-gripper fingers for an object the robot can't grasp
-well with stock fingers (default: a 66 mm, 370 g soda can lying on its side).
+**Demo use case: picking up a raw egg without cracking it.** A typical MG996R hobby gripper
+squeezes up to about 54 N per finger at stall, while an egg's side can crack around 25 N (estimate). Morph:
+
+- designs fingers with a curved pad and a **force-sensor pocket**, where the pad's dovetail tail bears on an FSR 402;
+- simulates the grasp to find the force that actually holds the egg (≈0.8 N);
+- sets a grip-force window: slips below 1.2 N, damage-limited at 16 N;
+- generates the **Arduino firmware** that closes until 2.3 N and never exceeds 19 N;
+- sizes the sensor divider resistor and produces the wiring table and electronics BOM;
+- emits print files (4 parts, about 31 min).
 
 ## Quick start
 
 ```bash
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m morph.cli demo                                # ~30 s, writes projects/soda-can/report.html
+python -m morph.cli demo           # ~25 s → projects/raw-egg/report.html
 ```
 
-To see a finished run without installing anything, open
-`examples/soda-can/report.html`. It is committed.
+To see a finished run without installing, open the committed example at `examples/raw-egg/report.html`.
 
-## What the demo shows (real output from `examples/soda-can`)
-
-| step | what happens | result |
-|---|---|---|
-| 1. need → spec | Claude (or the offline parser) turns one sentence into a design spec | 66 mm cylinder, 370 g, μ≈0.35, PETG print |
-| 2. baseline | first proposal is evaluated | **fails**: bending SF 0.9, 4.1 mm tip deflection |
-| 3. explore | 324 variants screened closed-form in about 1 s, best per pad style simulated (8 randomized trials each) | contour pad holds the can with **2.3 N** of grip force; V-groove needs 5.5 N, flat needs 6.3 N |
-| 4. "can is heavier" | `object.mass_g=520` | only analysis and sim rerun; CAD, fab and BOM are reused |
-| 5. "laser cut Delrin" | material and process change | CAD and sim reused; new kerf-compensated `cut.svg`, 3.3 min instead of 15 min |
-| 6. fabricate | `finger.stl`/`plate.stl` (print), `cut.svg` (laser), `job.nc` (GRBL CNC with tabs) | `morph send` streams to GRBL or uploads to OctoPrint |
-| 7. measure | `morph measure … --grasp 9/10 --fab-minutes 18` | ledger stores the prediction error |
-| 8. time saved | `morph time can r004` | by hand ≈ 520 min (baseline estimates, 6 variants) vs. 0.5 min of Morph compute + 15 min printing, **before** human review/test minutes are logged with `morph clock` |
-
-## Commands
+## Live hardware loop
 
 ```bash
-morph new can --need "pick up a 66 mm soda can lying on its side, 370 g, print in PETG"
-morph explore can                       # search pad styles × sections, simulate, rank
-morph change can object.mass_g=520      # recompute only what's affected
-morph change can finger.material=Delrin fab.process=laser_cut
-morph compare can r001 r004 r006        # HTML side by side
-morph gif can r004                      # grasp animation (needs MUJOCO_GL=egl or osmesa on Linux)
-morph send can r006 --grbl COM3         # stream G-code to a GRBL router/laser (--dry-run first)
-morph measure can r004 --fab-minutes 17 --grasp 10/10 --length 63.1 --min-force 3.0
-morph clock can review 6               # log human minutes (spec | review | test | corrections)
-morph time can r004                     # before/after time study (also in the report)
-morph research "parallel gripper under $300 with 25 N grip and M3 finger mounts"
+morph new egg --need "pick up a raw egg (44 mm wide, 57 mm long, 60 g) on its side without cracking it, MG996R gripper"
+morph explore egg                                   # pad styles × sections, simulated, ranked
+# print  projects/egg/r00X/fab/plate.stl            (finger + pad, ×2)
+# flash  projects/egg/r00X/electronics/morph_grip/morph_grip.ino   (Arduino IDE; set OPEN_DEG/CLOSED_DEG)
+morph bench egg r00X --port COM5                    # live force bar in the terminal; trace + result logged
+morph bench egg r00X --simulate                     # rehearsal without hardware (labelled SIMULATED everywhere)
+morph clock egg test 12                             # log human minutes so the time claim counts them
+morph time egg r00X                                 # before/after time study
 ```
 
-Run `pip install -e .` to get the `morph` command. Without it, use `python -m morph.cli …`.
-For Claude-backed `new`/`research`, set `ANTHROPIC_API_KEY`. Everything else runs offline.
+Other commands:
 
-## How it works
+```bash
+morph change egg electronics.servo=sg90             # only electronics + BOM rerun
+morph change egg object.max_force_n=3               # e.g. a strawberry; window and firmware update
+morph compare egg r001 r004 r005
+morph send egg r00X --grbl COM3                     # CNC/laser parts (non-sensor fingers)
+morph research "FSR 402 vs load cell for a hobby gripper"
+```
+
+Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli …`.
+`new` and `research` use Claude when `ANTHROPIC_API_KEY` is set; everything else runs offline.
+
+## Modules
 
 | module | job |
 |---|---|
-| `spec.py` | one `Design` dataclass. Every artifact derives from it; changes are dotted keys |
-| `design.py` | 2.5D finger profile (shapely) → watertight solid (manifold3d) → STL. Pads: flat, V-groove, or contour matched to the object |
-| `analysis.py` | grip-force budget with wedge gain, cantilever deflection and stress, layer-adhesion derate for prints |
-| `sim.py` | MuJoCo: close, lift 80 mm, shake at about 0.5 g. Randomized offset, friction and mass. Bisection finds the minimum holding force. The pad is sliced into convex strips so concave contours collide correctly |
-| `explore.py` | screens hundreds of variants closed-form, then simulates the best of each pad style |
-| `fab.py` | process choice, DFM checks (tool-radius corners, sheet thickness, laser-safe materials), print time and cost, laser SVG, GRBL G-code (pecked holes, multi-pass climb contour, holding tabs), BOM |
-| `pipeline.py` | dependency graph, partial recompute, revision directories, `ledger.jsonl` |
-| `report.py` | the comparison page, led by the before/after time card |
-| `timestudy.py` | before/after time study: auto-logged command time, logged human minutes, overridable manual baseline |
-| `agent.py` | Claude structured output for need → spec, and Claude web search for component research |
-| `machine.py` | GRBL serial streaming and OctoPrint upload |
+| `spec.py` | one `Design` (object, finger, gripper, electronics, fab); changes are dotted keys |
+| `design.py` | 2.5D profiles → watertight solids. Pads: flat, V, or contour. With `finger.sensor=fsr402`, a two-part finger: a dovetail socket plus a sliding pad whose tail presses on the FSR |
+| `analysis.py` | grip-force budget, cantilever deflection and stress, print derate |
+| `sim.py` | MuJoCo close → lift → shake over randomized trials, plus a bisection for the minimum holding force |
+| `electronics.py` | grip-force window, servo choice and stall-force check, divider sizing and resolution, supply and wiring, BOM, generated firmware |
+| `bench.py` | serial driver for the firmware, live terminal bar, CSV trace, measured-vs-predicted |
+| `explore.py` | closed-form screening, then simulate the best of each pad style |
+| `fab.py` | DFM, print plate, laser SVG, GRBL G-code, time and cost |
+| `pipeline.py` | dependency graph, partial recompute, revisions, ledger |
+| `timestudy.py` | before/after time study (auto-logged tool time, logged human minutes, overridable baseline) |
+| `report.py` | the comparison page |
+| `agent.py` | Claude need → spec (fragility, sensor, servo inferred), web research |
 
 ## Honest limits
 
-- The simulation treats the finger as rigid. Compliance is checked closed-form (deflection), not in MuJoCo.
-- The can is modeled as a capsule (MuJoCo's cylinder collisions were unreliable with mesh pads).
-- Print time is an estimate until a slicer runs. If `prusa-slicer` is on PATH, Morph slices automatically.
-- Material values are typical datasheet numbers. Measured results in the ledger are what calibrate them.
+- The FSR is calibrated with one known mass (`c<grams>` over serial). Its absolute accuracy is about ±10–25%, so the window margins absorb that error.
+- The egg damage force and servo stall torques are typical values. Check them with a kitchen scale.
+- The sim treats fingers as rigid and models the egg as a capsule.
+- The firmware assumes a position servo and a 0.5° step. Set `OPEN_DEG`/`CLOSED_DEG` for your gripper.
 
-See `docs/HACKATHON_PLAN.md` for today's plan and pitch, and `docs/DATA_SOURCES.md` for data sources.
+Plan, schedule and demo script: `docs/HACKATHON_PLAN.md`. Data sources: `docs/DATA_SOURCES.md`.

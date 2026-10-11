@@ -15,19 +15,22 @@ import os
 import shutil
 import time
 
-from . import analysis, design as cad, fab, sim
+from . import analysis, design as cad, electronics, fab, sim
 from .spec import Design, diff
 
 # node: (parameter patterns it reads, upstream nodes)
 GRAPH = {
     "cad": (["finger.length_mm", "finger.thickness_mm", "finger.width_mm", "finger.pad*",
              "finger.mount_*", "object.shape", "object.diameter_mm"], []),
-    "analysis": (["finger.*", "object.*", "gripper.*", "safety_factor", "fab.process"], ["cad"]),
-    "sim": (["object.*", "gripper.*"], ["cad"]),
+    "analysis": (["finger.*", "object.shape", "object.diameter_mm", "object.mass_g", "object.friction",
+                  "gripper.*", "safety_factor", "fab.process"], ["cad"]),
+    "sim": (["object.shape", "object.diameter_mm", "object.length_mm", "object.mass_g", "object.friction",
+             "gripper.*"], ["cad"]),
+    "electronics": (["electronics.*", "object.max_force_n", "finger.sensor"], ["analysis", "sim"]),
     "fab": (["fab.*", "finger.material", "finger.width_mm"], ["cad"]),
-    "bom": (["gripper.name", "fab.quantity"], ["fab"]),
+    "bom": (["gripper.name", "fab.quantity"], ["fab", "electronics"]),
 }
-ORDER = ["cad", "analysis", "sim", "fab", "bom"]
+ORDER = ["cad", "analysis", "sim", "electronics", "fab", "bom"]
 
 
 def dirty_nodes(changed_keys) -> list:
@@ -129,10 +132,15 @@ class Project:
                 with open(os.path.join(nd, "scene.xml"), "w") as fh:
                     fh.write(sim.build_mjcf(design, geom))
                 results["sim"] = sim.simulate(design, geom, n_trials)
+            elif node == "electronics":
+                results["electronics"] = electronics.plan(design, results["analysis"], results["sim"])
+                if results["electronics"]["sensor"] != "none":
+                    electronics.write_firmware(design, results["electronics"], nd)
+                    results["electronics"]["firmware"] = "electronics/morph_grip/morph_grip.ino"
             elif node == "fab":
                 results["fab"] = fab.plan(design, geom, nd)
             elif node == "bom":
-                results["bom"] = fab.bom(design, results["fab"])
+                results["bom"] = fab.bom(design, results["fab"]) + results["electronics"]["parts"]
             results["provenance"][node] = "computed"
             results["timings_s"][node] = round(time.time() - t0, 2)
             if verbose:
@@ -150,7 +158,7 @@ class Project:
         pred = self.load_results(rev)["summary"]
         errors = {}
         for key, pkey in (("fab_minutes", "fab_minutes"), ("grasp_success_rate", "sim_success_rate"),
-                          ("min_hold_force_n", "min_hold_force_n")):
+                          ("min_hold_force_n", "min_hold_force_n"), ("hold_force_n", "target_force_n")):
             if key in actual and pred.get(pkey) not in (None, float("inf")):
                 errors[key] = round(actual[key] - pred[pkey], 3)
         if "measured_length_mm" in actual:
@@ -163,7 +171,8 @@ class Project:
 
 def summarize(r: dict) -> dict:
     a, s, f = r.get("analysis") or {}, r.get("sim") or {}, r.get("fab") or {}
-    feasible = bool(a.get("pass")) and s.get("success_rate", 0) >= 0.875
+    e = r.get("electronics") or {}
+    feasible = bool(a.get("pass")) and s.get("success_rate", 0) >= 0.875 and e.get("pass", True)
     return {
         "feasible": feasible,
         "sim_success_rate": s.get("success_rate"),
@@ -178,5 +187,10 @@ def summarize(r: dict) -> dict:
         "fab_minutes": f.get("minutes"),
         "fab_cost": f.get("total_cost"),
         "dfm_warnings": len(f.get("dfm_warnings", [])),
-        "issues": a.get("issues", []),
+        "target_force_n": e.get("target_force_n"),
+        "servo": e.get("servo"),
+        "servo_stall_force_n": e.get("servo_stall_force_n"),
+        "open_loop_crushes": e.get("open_loop_crushes"),
+        "bom_cost": round(sum(i.get("cost", 0) for i in r.get("bom") or []), 2),
+        "issues": a.get("issues", []) + e.get("issues", []),
     }

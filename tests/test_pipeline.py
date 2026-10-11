@@ -16,9 +16,11 @@ def test_profile_and_mesh_are_valid(tmp_path):
 
 
 def test_dirty_propagation():
-    assert dirty_nodes(["object.mass_g"]) == ["analysis", "sim"]
-    assert dirty_nodes(["finger.material"]) == ["analysis", "fab", "bom"]
-    assert dirty_nodes(["finger.length_mm"]) == ["cad", "analysis", "sim", "fab", "bom"]
+    assert dirty_nodes(["object.mass_g"]) == ["analysis", "sim", "electronics", "bom"]
+    assert dirty_nodes(["finger.material"]) == ["analysis", "electronics", "fab", "bom"]
+    assert dirty_nodes(["electronics.servo"]) == ["electronics", "bom"]
+    assert dirty_nodes(["object.max_force_n"]) == ["electronics", "bom"]
+    assert dirty_nodes(["finger.length_mm"]) == ["cad", "analysis", "sim", "electronics", "fab", "bom"]
 
 
 def test_analysis_flags_weak_finger():
@@ -75,3 +77,44 @@ def test_time_study_counts_human_time(tmp_path):
     assert rows["review"]["after_min"] == 6.0 and rows["design"]["after_min"] == 0.5
     assert rows["corrections"]["before_min"] > rows["corrections"]["after_min"]
     assert t["after_min"] < t["before_min"]
+
+
+EGG = {"object.name": "raw egg", "object.diameter_mm": 44.0, "object.length_mm": 57.0, "object.mass_g": 60.0,
+       "object.friction": 0.35, "object.max_force_n": 25.0, "finger.sensor": "fsr402", "finger.width_mm": 20.0,
+       "finger.length_mm": 52.0, "finger.thickness_mm": 6.0, "finger.pad_depth_mm": 5.5, "electronics.servo": "mg996r"}
+
+
+def test_sensor_finger_is_two_printable_parts(tmp_path):
+    d = Design().with_changes(EGG)
+    g = cad.build_profile(d)
+    assert set(g.parts) == {"finger", "pad"} and g.profile.geom_type == "Polygon"
+    info = cad.export_stl(g, str(tmp_path / "f.stl"))
+    assert all(p["watertight"] for p in info["parts"].values())
+
+
+def test_electronics_window_and_firmware(tmp_path):
+    from morph import electronics
+
+    p = Project(str(tmp_path / "egg"))
+    rev = p.run(Design().with_changes(EGG), n_trials=1, verbose=False)
+    ep = p.load_results(rev)["electronics"]
+    lo, hi = ep["window_n"]
+    assert lo < ep["target_force_n"] < hi < 25.0
+    assert ep["open_loop_crushes"] and ep["servo_stall_force_n"] > 25.0
+    assert ep["sensing"]["divider_ohm"] in [r * 10 ** k for r in electronics.E12 for k in range(2, 6)]
+    fw = (tmp_path / "egg" / rev / ep["firmware"]).read_text()
+    assert f"TARGET_N = {ep['target_force_n']}" in fw and "LIMIT_N" in fw
+
+    # an object softer than the holding force needs to be flagged, not silently accepted
+    rev2 = p.run(Design().with_changes({**EGG, "object.max_force_n": 0.5}), parent=rev, n_trials=1, verbose=False)
+    assert not p.load_results(rev2)["electronics"]["pass"]
+
+
+def test_simulated_bench_logs_measurement(tmp_path):
+    from morph import bench
+
+    p = Project(str(tmp_path / "egg"))
+    rev = p.run(Design().with_changes(EGG), n_trials=1, verbose=False)
+    entry = bench.run(p, rev, None, seconds=3.0, simulate=True)
+    assert entry["actual"]["simulated"] and entry["actual"]["held_at_end"]
+    assert "hold_force_n" in entry["error_vs_prediction"]

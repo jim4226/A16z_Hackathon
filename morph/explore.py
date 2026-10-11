@@ -9,6 +9,8 @@ from .spec import Design
 
 
 def _widths(design: Design):
+    if design.finger.sensor != "none":
+        return [20.0, 24.0]  # the force sensor disc has to fit across the finger
     if choose_process(design) == "fdm_print":
         return [6.0, 8.0, 10.0, 12.0]
     return [w for w in SHEET_THICKNESSES if w >= 3.0]

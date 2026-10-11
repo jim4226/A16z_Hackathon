@@ -1,0 +1,42 @@
+{
+  "name": "raw-egg",
+  "object": {
+    "name": "raw egg",
+    "shape": "cylinder",
+    "diameter_mm": 44.0,
+    "length_mm": 57.0,
+    "mass_g": 60.0,
+    "friction": 0.35,
+    "max_force_n": 25.0
+  },
+  "finger": {
+    "length_mm": 52.0,
+    "thickness_mm": 5.5,
+    "width_mm": 20.0,
+    "pad": "flat",
+    "pad_height_mm": 19.8,
+    "pad_depth_mm": 5.5,
+    "material": "PETG",
+    "mount_hole_d_mm": 3.4,
+    "mount_hole_spacing_mm": 12.0,
+    "sensor": "fsr402"
+  },
+  "gripper": {
+    "name": "generic parallel gripper",
+    "force_n": 25.0,
+    "stroke_mm": 85.0
+  },
+  "fab": {
+    "process": "fdm_print",
+    "tool_d_mm": 3.175,
+    "quantity": 2
+  },
+  "electronics": {
+    "mcu": "auto",
+    "servo": "mg996r",
+    "supply_v": 6.0,
+    "pinion_radius_mm": 12.0,
+    "target_force_n": 0.0
+  },
+  "safety_factor": 2.0
+}

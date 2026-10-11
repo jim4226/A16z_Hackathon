@@ -40,18 +40,22 @@ def choose_process(design: Design) -> str:
 
 
 def nest(geom: FingerGeometry, qty: int):
-    """Place qty copies in a row; returns translated polygons and stock size (x, y)."""
-    minx, miny, maxx, maxy = geom.profile.bounds
-    w, h = maxx - minx, maxy - miny
-    parts = []
-    for i in range(qty):
-        parts.append(affinity.translate(geom.profile, MARGIN - minx, MARGIN - miny + i * (h + GAP)))
-    return parts, (w + 2 * MARGIN, qty * h + (qty - 1) * GAP + 2 * MARGIN)
+    """Stack qty copies of every part in a column; returns translated polygons and stock size (x, y)."""
+    polys = [p for _ in range(qty) for p in geom.part_polys().values()]
+    parts, y, w_max = [], MARGIN, 0.0
+    for p in polys:
+        minx, miny, maxx, maxy = p.bounds
+        parts.append(affinity.translate(p, MARGIN - minx, y - miny))
+        y += (maxy - miny) + GAP
+        w_max = max(w_max, maxx - minx)
+    return parts, (w_max + 2 * MARGIN, y - GAP + MARGIN)
 
 
 def dfm(design: Design, geom: FingerGeometry, process: str) -> list:
     f = design.finger
     warn = []
+    if geom.sensor != "none" and f.width_mm < 19.5:
+        warn.append(f"width {f.width_mm} mm cannot seat the {geom.sensor} (needs >= 19.5 mm)")
     if process in ("laser_cut", "cnc_router") and not any(abs(f.width_mm - s) < 0.05 for s in SHEET_THICKNESSES):
         warn.append(f"width {f.width_mm} mm is not a stock sheet thickness {SHEET_THICKNESSES}")
     if process == "cnc_router":
@@ -88,14 +92,21 @@ def plan_print(design: Design, geom: FingerGeometry, outdir: str) -> dict:
     qty = design.fab.quantity
     stl = os.path.join(outdir, "finger.stl")
     info = export_stl(geom, stl)
-    mesh = to_mesh(geom)
-    plate = [mesh.copy().apply_translation([0, i * (mesh.extents[1] + GAP), 0]) for i in range(qty)]
+    plate, y = [], 0.0
+    for _ in range(qty):
+        for poly in geom.part_polys().values():
+            m = to_mesh(poly, geom.width_mm)
+            m.apply_translation([0, y - m.bounds[0][1], 0])
+            y += m.extents[1] + GAP
+            plate.append(m)
     trimesh.util.concatenate(plate).export(os.path.join(outdir, "plate.stl"))
 
     vol = geom.volume_mm3 * qty
     minutes = vol * PRINT_FILL_FRACTION / PRINT_FLOW_MM3_S / 60.0 * 1.3 + 4.0
     grams = vol * PRINT_FILL_FRACTION / 1000.0 * mat.density_g_cc
     files = ["finger.stl", "plate.stl"]
+    for name in (geom.parts or {}):
+        files.append(f"finger_{name}.stl")
     sliced = None
     slicer = find_slicer()
     if slicer and "prusa" in os.path.basename(slicer).lower():

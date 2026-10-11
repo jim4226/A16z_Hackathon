@@ -157,6 +157,16 @@ def cmd_time(a):
         print("note: no human time logged yet; use `morph clock NAME review 5` etc. so the claim counts it")
 
 
+def cmd_bench(a):
+    from . import bench
+
+    p = _project(a.name)
+    if not a.port and not a.simulate:
+        sys.exit("give --port COM5 (or /dev/ttyUSB0), or --simulate for a rehearsal")
+    bench.run(p, a.rev, a.port, a.seconds, a.simulate)
+    _report(p, [a.rev], f"{a.rev}.html")
+
+
 def cmd_research(a):
     print(agent.research(a.query))
 
@@ -189,13 +199,15 @@ def cmd_demo(a):
     print("\n== 2. explore pad styles and section sizes")
     _timed(name, "explore", cmd_explore, argparse.Namespace(name=name, base="r001", trials=a.trials))
     best = [e for e in p.entries() if e["type"] == "exploration"][-1]["recommended"]
-    print(f"\n== 3. what if the can is full and heavier? (only analysis + sim should rerun)")
-    _timed(name, "change", cmd_change, argparse.Namespace(name=name, base=best, changes=["object.mass_g=520"],
-                                                          label="heavier object", trials=a.trials))
-    print(f"\n== 4. what if we laser cut it from Delrin instead? (geometry and sim reused)")
-    _timed(name, "change", cmd_change, argparse.Namespace(name=name, base=best,
-                                                          changes=["finger.material=Delrin", "fab.process=laser_cut"],
-                                                          label="laser cut Delrin", trials=a.trials))
+    print(f"\n== 3. what if we use a smaller SG90 servo? (only electronics + BOM should rerun)")
+    _timed(name, "change", cmd_change, argparse.Namespace(name=name, base=best, changes=["electronics.servo=sg90"],
+                                                          label="SG90 servo", trials=a.trials))
+    print(f"\n== 4. what if the object is a strawberry-soft 3 N limit? (only electronics + BOM rerun)")
+    _timed(name, "change", cmd_change, argparse.Namespace(name=name, base=best, changes=["object.max_force_n=3"],
+                                                          label="3 N damage limit", trials=a.trials))
+    print(f"\n== 5. bench rehearsal (SIMULATED trace; use --port on real hardware)")
+    from . import bench
+    bench.run(p, best, None, 6.0, simulate=True)
     revs = p.revs()
     _report(p, ["r001", best] + revs[-2:], "report.html")
 
@@ -256,6 +268,14 @@ def main(argv=None):
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(fn=cmd_send)
 
+    s = sub.add_parser("bench", help="run the force-limited grip on real hardware and log the trace")
+    s.add_argument("name")
+    s.add_argument("rev")
+    s.add_argument("--port", help="serial port of the board running morph_grip.ino")
+    s.add_argument("--seconds", type=float, default=8.0)
+    s.add_argument("--simulate", action="store_true", help="synthetic trace for rehearsal (labelled SIMULATED)")
+    s.set_defaults(fn=cmd_bench)
+
     s = sub.add_parser("clock", help="log human minutes: spec | review | test | corrections")
     s.add_argument("name")
     s.add_argument("step", choices=["spec", "review", "test", "corrections"])
@@ -278,9 +298,10 @@ def main(argv=None):
     s.set_defaults(fn=cmd_gif)
 
     s = sub.add_parser("demo", help="scripted end-to-end run")
-    s.add_argument("--name", default="soda-can")
-    s.add_argument("--need", default="Our robot arm needs to pick up a 66 mm soda can lying on its side, "
-                                      "370 g, and we want to 3D print the fingers in PETG today.")
+    s.add_argument("--name", default="raw-egg")
+    s.add_argument("--need", default="Our robot needs to pick up a raw egg (44 mm wide, 57 mm long, 60 g) lying on "
+                                      "its side without cracking it, using our MG996R gripper. Print the fingers "
+                                      "in PETG today.")
     s.add_argument("--trials", type=int, default=8)
     s.set_defaults(fn=cmd_demo)
 

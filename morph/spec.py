@@ -15,6 +15,7 @@ class ObjectSpec:
     length_mm: float = 120.0         # extent along finger width axis
     mass_g: float = 370.0
     friction: float = 0.5
+    max_force_n: float = 0.0         # per-finger force that damages the object; 0 = robust
 
 
 @dataclass
@@ -28,6 +29,7 @@ class FingerParams:
     material: str = "PETG"
     mount_hole_d_mm: float = 3.4     # M3 clearance
     mount_hole_spacing_mm: float = 12.0
+    sensor: str = "none"             # none | fsr402 (force sensor seated under the pad)
 
 
 @dataclass
@@ -35,6 +37,15 @@ class GripperSpec:
     name: str = "generic parallel gripper"
     force_n: float = 25.0            # max grip force per finger
     stroke_mm: float = 85.0          # total opening
+
+
+@dataclass
+class ElectronicsSpec:
+    mcu: str = "auto"                # auto | arduino_nano | esp32_devkit | rp2040_pico
+    servo: str = "auto"              # auto | sg90 | mg90s | mg996r | ds3218
+    supply_v: float = 6.0
+    pinion_radius_mm: float = 12.0   # servo horn/pinion radius driving the jaws
+    target_force_n: float = 0.0      # 0 = derive from simulation + object fragility
 
 
 @dataclass
@@ -51,6 +62,7 @@ class Design:
     finger: FingerParams = field(default_factory=FingerParams)
     gripper: GripperSpec = field(default_factory=GripperSpec)
     fab: FabSpec = field(default_factory=FabSpec)
+    electronics: ElectronicsSpec = field(default_factory=ElectronicsSpec)
     safety_factor: float = 2.0
 
     def to_dict(self) -> dict:
@@ -78,6 +90,7 @@ class Design:
             finger=FingerParams(**d.get("finger", {})),
             gripper=GripperSpec(**d.get("gripper", {})),
             fab=FabSpec(**d.get("fab", {})),
+            electronics=ElectronicsSpec(**d.get("electronics", {})),
             safety_factor=d.get("safety_factor", 2.0),
         )
 

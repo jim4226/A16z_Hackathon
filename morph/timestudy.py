@@ -20,12 +20,14 @@ BASELINE = {
     "sim_setup": (180, "build MuJoCo/Isaac scene, import meshes, script close-lift-shake, debug contacts"),
     "per_variant": (40, "edit CAD, re-export, re-run calc and sim, record results"),
     "machine_files": (20, "slice / CAM, check DFM, export, per process tried"),
+    "electronics": (90, "pick servo/sensor/MCU, size the divider, wire, write + debug force-limited firmware"),
 }
 
 STEPS = [
     ("spec", "Spec the need"),
     ("design", "CAD + checks + simulate every evaluated variant"),
     ("machine_files", "Machine files + DFM"),
+    ("electronics", "Electronics: parts, wiring, firmware"),
     ("review", "Engineer reviews results"),
     ("fab", "Fabricate (machine time)"),
     ("test", "Assemble + physical test"),
@@ -60,11 +62,13 @@ def study(project, fab_rev: str | None = None) -> dict:
     fab_meas = next((m["actual"]["fab_minutes"] for m in reversed(meas) if "fab_minutes" in m["actual"]), None)
     fab = fab_meas if fab_meas is not None else fab_pred
     tool_min = sum(e["seconds"] for e in tool) / 60.0
+    has_sensor = bool(fab_rev) and project.load_design(fab_rev).finger.sensor != "none"
 
     before = {
         "spec": b["spec"],
         "design": b["cad_first"] + b["calc_first"] + b["sim_setup"] + b["per_variant"] * (n - 1),
         "machine_files": b["machine_files"] * max(len(processes), 1),
+        "electronics": b["electronics"] if has_sensor else 0.0,
         "review": human.get("review", 0.0),
         "fab": fab,
         "test": human.get("test", 0.0),
@@ -75,6 +79,7 @@ def study(project, fab_rev: str | None = None) -> dict:
         "spec": human.get("spec", 0.0),
         "design": tool_min,
         "machine_files": 0.0,  # produced inside the same commands
+        "electronics": 0.0,    # likewise; flashing and wiring time goes in `morph clock ... test`
         "review": human.get("review", 0.0),
         "fab": fab,
         "test": human.get("test", 0.0),

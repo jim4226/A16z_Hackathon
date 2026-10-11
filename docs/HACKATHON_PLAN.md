@@ -16,81 +16,86 @@ real hardware, with measured numbers.
 | Originality | 10 | the change-propagation graph + measured-vs-predicted ledger (no public dataset links design → fab → test) |
 | Product quality & demo | 10 | printed fingers in hand, flat vs contour lift on video/live, report on screen |
 
-**Pick a person:** a robotics engineer (or grad student in a manipulation lab) whose arm keeps dropping one object.
-**Frustrating task:** design, check, simulate and fabricate custom gripper fingers for it, which today takes a day across 4 tools.
+**Pick a person:** a robotics engineer (or grad student in a manipulation lab) who needs their gripper to handle one fragile object.
+**Frustrating task:** design, simulate and fabricate custom fingers for it, and add force sensing and firmware. Today that takes a day or more across CAD, a simulator, a slicer and the Arduino IDE.
 **Show the difference:** the time card. Before = baseline estimates per step (`morph/timestudy.py`), **replace at least one with a real timed manual run today**: have a teammate model the contour finger in Fusion/Onshape with a stopwatch, put the minutes in `projects/<name>/baseline.json` as `{"cad_first": <min>}`.
 After = Morph wall-clock (auto-logged) + machine time + every human minute logged:
 
 ```bash
-morph clock can spec 2          # typing the need
-morph clock can review 6        # reading the report, picking a design
-morph clock can test 10         # bolting on + 10 lifts
-morph clock can corrections 18  # e.g. one reprint after measuring hole spacing
-morph time can r004             # prints the before/after table
+morph clock egg spec 2          # typing the need
+morph clock egg review 6        # reading the report, picking a design
+morph clock egg test 10         # bolting on + 10 lifts
+morph clock egg corrections 18  # e.g. one reprint after measuring hole spacing
+morph time egg r004             # prints the before/after table
 ```
 
-## The one use case
+## The one use case: pick up a raw egg without cracking it
 
-Stock parallel-gripper fingers vs. a 66 mm soda can lying on its side. Morph:
+A hobby MG996R gripper squeezes ~54 N per finger at stall; an egg's side cracks around 25 N.
+Morph turns one sentence into fingers with a force-sensor pocket, the electronics, and
+firmware that grips at 2.3 N. Then we prove it on camera.
 
-1. reads one sentence and writes the spec,
-2. rejects its own first design (too flexible, SF 0.9),
-3. screens 324 variants and simulates three pad styles,
-4. picks a contour pad that needs **~2.7× less grip force** than flat fingers in simulation (2.3 N vs 6.3 N),
-5. emits the print file, which we **print at the venue**, bolt on, and
-6. test flat vs. contour on the real gripper. The measured result goes back into the ledger.
+Before / after on camera:
+1. **Open-loop (stock behaviour):** the servo closes to its end stop. Either use stock fingers, or send `t19` to the firmware to show the max-force grip. Use a hard-boiled egg if you don't want the mess. The bench trace shows the force spike.
+2. **Morph:** `morph bench egg r00X --port COM5`. The live bar climbs to the green target line and holds. Lift the egg, then put it down whole.
 
-The software pipeline already works (`python -m morph.cli demo`, about 30 s). The rest of the day goes to the
-physical loop and the pitch.
+## Hardware (mix and match; Morph re-plans if you change it)
 
-## Hardware path (decide by 11:00)
+| need | default | swap-ins (`morph change …`) |
+|---|---|---|
+| MCU | Arduino Nano/Uno | `electronics.mcu=esp32_devkit` / `rp2040_pico` |
+| servo / gripper | MG996R gripper kit | `electronics.servo=sg90 / mg90s / ds3218` |
+| force sensor | Interlink FSR 402 | (any round FSR ≥ 18 mm; a load cell + HX711 is a later extension) |
+| divider resistor | value from the report (≈3.9 kΩ) | any 3.3–4.7 kΩ works; recalibrate with `c<grams>` |
+| power | 6 V ≥3 A supply or 2S LiPo + UBEC, 470 µF cap | never the board's 5 V pin |
+| printer | any FDM, PETG or PLA | `fab.process=…` for non-sensor parts |
+| objects | raw + hard-boiled eggs, kitchen scale for calibration | `object.max_force_n=3` (strawberry), etc. |
 
-| option | needs | fab time | notes |
-|---|---|---|---|
-| **A. FDM print (default)** | any desktop printer (team-owned Bambu/Prusa) + PETG/PLA | ~15–20 min for 2 fingers | `r004/fab/plate.stl`. Print flat, no supports |
-| B. Laser cut Delrin/acrylic | access to a CO2 laser | ~3–4 min | `cut.svg`, kerf already compensated. Useful as the "what-if" slide even without a laser |
-| C. Desktop CNC (GRBL) | router + 6 mm Delrin/Al plate | 7 min (Delrin) / 23 min (Al) | `job.nc` + `morph send --grbl PORT`. Always `--dry-run` first |
+Measure your jaw's mount hole spacing first: `morph change egg finger.mount_hole_spacing_mm=<value>`.
 
-Gripper to mount on, from best to fallback: an SO-100/SO-101 or similar hobby arm's
-gripper; a servo parallel-gripper kit; a 3D-printed rack-and-pinion jaw on a stand,
-driven by hand or a servo. Measure the M3 hole spacing on the real jaw first, then
-`morph change can finger.mount_hole_spacing_mm=<value>` and reprint.
+## Live-recorded demo (3 min, single take)
 
-## Measurement protocol (what makes the demo credible)
+1. **0:00 Pain (15 s).** "One fragile object costs a day of CAD, sim, wiring and firmware."
+2. **0:15 Type the need (30 s).** `morph new` then `morph explore`. Open the report: sensor-pocket finger, sim GIF, force window (54 N stall vs 25 N crack vs 2.3 N target).
+3. **0:45 Change something live (20 s).** `morph change egg electronics.servo=sg90`. The chips show only electronics + BOM reran.
+4. **1:05 Hardware (60 s).** Printed fingers on the gripper. Run the open-loop squeeze (force spike), then `morph bench --port …`: the bar holds at target, lift the egg.
+5. **2:05 Measured vs predicted + time card (35 s).** The report shows the measured hold force next to the prediction, and before/after minutes including our logged review and test time.
+6. **2:40 Why it compounds (20 s).** Every run feeds the ledger.
 
-- **Dimensional:** calipers on finger length and pad depth → `--length`.
-- **Fabrication time:** printer's reported time → `--fab-minutes`.
-- **Grasp:** 10 lift attempts each for flat and contour fingers, same gripper, same can → `--grasp 9/10`.
-- **Holding force (optional):** with the can gripped, pull down with a luggage scale until it slips. Or lower servo torque step by step → `--min-force`.
-- Run `morph measure` live. The report shows predicted vs. measured.
+Recording tips:
+- Split screen: terminal plus a phone camera on the gripper.
+- Increase the terminal font size; the live bar is the visual.
+- Do one full rehearsal with `--simulate`, then record on hardware.
+- Keep a fallback take recorded early in the afternoon.
+
+## Measurement protocol
+
+- **Calibrate:** rest a known mass (e.g. a 100 g weight) on the pad and send `c100` over serial.
+- **Grip:** 10 grip-lift-hold cycles on a hard-boiled egg, each with `morph bench`. Count the holds.
+- **Force:** the bench logs hold force vs the predicted target, peak force, and time to target.
+- **Damage:** one open-loop squeeze on camera (hard-boiled egg or a cheap one).
+- **Time:** `morph clock` for spec, review, test and corrections. Fab time comes from the printer.
 
 ## Schedule (Pacific)
 
 | time | who | what |
 |---|---|---|
 | 10:30–11:00 | all | confirm printer and gripper. Measure jaw mount. Set `ANTHROPIC_API_KEY` |
-| 11:00–11:30 | HW | `morph change` mount spacing → print **flat** baseline (r002) and **contour** (r004) |
-| 11:00–13:00 | SW | stretch goal 1 (below). Keep `demo` green, `pytest -q` |
-| 12:00–13:30 | HW | assemble, run grasp trials, log with `morph measure` |
-| 13:30–15:00 | all | second iteration: apply what measurement taught us (e.g. add friction tape, adjust pad depth). Reprint once |
+| 11:30–12:15 | HW | `morph change` mount spacing → start printing r004 plate (~31 min) |
+| 11:30–12:30 | HW | wire Nano + FSR + divider + servo supply; flash `morph_grip.ino`; set OPEN/CLOSED_DEG |
+| 12:30–13:30 | HW | assemble, calibrate (`c100`), `morph bench` runs, log with `morph clock` |
+| 11:30–13:30 | SW | stretch goal 1 (below). Keep `demo` green, `pytest -q` |
+| 13:30–15:00 | all | second iteration from measurements (pad depth, friction tape, target). Reprint once if needed |
 | 15:00–17:00 | SW | stretch goal 2. Polish report. Record a backup video of the physical test |
 | 17:00–18:30 | all | pitch deck (5 slides) + 3-min demo rehearsals ×3 |
 | 18:30– | | submit, demo |
-
-## 3-minute demo script
-
-1. **Pain (20 s).** "Custom fingers for one object: CAD, sim, CAM, slicer, test. That's days, and every change starts the loop over."
-2. **Live (70 s).** Type the need → `morph demo` → open the report: baseline fails, explorer finds contour, sim GIF, the change-propagation chips ("only analysis + sim reran").
-3. **Physical (45 s).** Hold up the printed fingers. Show the video or do it live: flat fingers drop the can, contour fingers hold it. Show the measured-vs-predicted row.
-4. **Time card (20 s).** Before vs after, with our own review/test/correction minutes counted. Say which "before" numbers were timed today and which are estimates.
-5. **Why it compounds (15 s).** Every revision records design → prediction → measured outcome. That dataset doesn't exist publicly, and it's what lets Morph's predictions improve over time.
 
 ## Stretch goals (in order)
 
 1. **Agent loop:** Claude tool-use driving `new / explore / change / compare`, so "make it lighter but still hold 500 g" iterates by itself.
 2. **Real robot in sim:** swap our box hand for a MuJoCo Menagerie gripper/arm model (license varies per model).
 3. **Object library:** pick objects by name from YCB-style dimension and mass tables instead of typing numbers.
-4. **Second part type** (e.g. a sensor bracket) to show the graph generalizes.
+4. **Load cell + HX711 option** for absolute force accuracy, and slip detection from the force trace.
 
 ## Rust
 
@@ -111,7 +116,9 @@ measurement ledger) rather than bolting them on.
 
 | risk | fallback |
 |---|---|
-| no printer at venue | laser/CNC files as artifacts + pre-recorded print. State plainly that preparation ≠ fabrication |
+| no printer at venue | print at a nearby makerspace, or tape the FSR to stock fingers to still demo the force loop; state plainly what was and wasn't fabricated |
+| no FSR | `morph change egg finger.sensor=none` → passive contour fingers; demo slip/force with a luggage scale instead |
+| no hardware at all | `morph bench --simulate` for the flow, but say it's simulated: judges want the live recording |
 | gripper force unknown | measure with luggage scale. `morph change can gripper.force_n=<N>` |
 | no Claude credentials | offline parser runs automatically; `research` is the only thing lost |
 | sim/real mismatch | that's the pitch: the ledger records the error, and the next design uses it |
