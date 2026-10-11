@@ -404,3 +404,424 @@ def plan(design, sizing: dict) -> dict:
         "base_bay_mm": [110.0, 80.0],
         "power_budget": pb, "issues": issues, "warnings": warnings,
     }
+
+
+# ------------------------------------------------------------------ circuits
+# Parts library for the custom PCBA: (value, mpn, lcsc | "verify", unit price USD @ qty 10, footprint)
+P = {
+    "R10k": ("10k", "0603WAF1002T5E", "C25804", 0.002, "R0603"),
+    "R100k": ("100k", "0603WAF1003T5E", "C25803", 0.002, "R0603"),
+    "R22k": ("22k", "0603WAF2202T5E", "C31850", 0.002, "R0603"),
+    "R5k1": ("5.1k", "0603WAF5101T5E", "C23186", 0.002, "R0603"),
+    "R4k7": ("4.7k", "0603WAF4701T5E", "C23162", 0.002, "R0603"),
+    "R1k": ("1k", "0603WAF1001T5E", "C21190", 0.002, "R0603"),
+    "R56k": ("56k", "0603WAF5602T5E", "verify", 0.002, "R0603"),
+    "R220": ("220", "0603WAF2200T5E", "verify", 0.002, "R0603"),
+    "C100n": ("100n", "CC0603KRX7R9BB104", "C14663", 0.003, "C0603"),
+    "C1u": ("1u", "CL10A105KB8NNNC", "C15849", 0.004, "C0603"),
+    "C10u": ("10u 25V", "CL21A106KAYNNNE", "C15850", 0.012, "C0805"),
+    "C22u": ("22u 25V", "CL21A226MAQNNNE", "C45783", 0.02, "C0805"),
+    "SS34": ("SS34", "SS34", "C8678", 0.03, "SMA"),
+    "2N7002": ("2N7002", "2N7002", "C8545", 0.02, "SOT23"),
+    "AOD4185": ("AOD4185", "AOD4185 (P-ch 40 V 40 A)", "verify", 0.45, "TO252"),
+    "AMS1117": ("AMS1117-3.3", "AMS1117-3.3", "C6186", 0.12, "SOT223"),
+    "TPS563201": ("TPS563201", "TPS563201DDCR", "verify", 0.35, "SOT23_6"),
+    "L4u7": ("4.7uH", "SWPA4030S4R7MT (2.2 A)", "verify", 0.08, "L_4x4"),
+    "ESP32S3": ("ESP32-S3-WROOM-1", "ESP32-S3-WROOM-1-N8R8", "verify", 4.3, "ESP32S3_WROOM1"),
+    "USBC": ("USB-C", "TYPE-C-31-M-12", "C165948", 0.25, "USBC_16P"),
+    "USBLC6": ("USBLC6-2SC6", "USBLC6-2SC6", "C7519", 0.1, "SOT23_6"),
+    "LVC2G241": ("74LVC2G241", "SN74LVC2G241DCTR", "verify", 0.18, "SSOP8"),
+    "PCA9685": ("PCA9685PW", "PCA9685PW,118", "verify", 1.6, "TSSOP28"),
+    "BTN": ("SW_Push", "TS-1187A-B-A-B", "C318884", 0.03, "SW_SMD_5x5"),
+    "LED_R": ("RED", "KT-0603R", "C2286", 0.01, "LED0603"),
+    "LED_G": ("GREEN", "KT-0603G", "verify", 0.01, "LED0603"),
+    "XT30": ("XT30PW-M", "Amass XT30PW-M", "verify", 0.55, "XT30PW"),
+    "PH2": ("JST-PH 2p", "B2B-PH-K-S(LF)(SN)", "verify", 0.03, "JST_PH_2"),
+    "XH2": ("JST-XH 2p", "B2B-XH-A(LF)(SN)", "verify", 0.03, "JST_XH_2"),
+    "SH4": ("Qwiic 4p", "SM04B-SRSS-TB(LF)(SN)", "verify", 0.08, "JST_SH_4"),
+    "BUS_FT": ("5264 3p", "A2501WV-3P (Molex 5264 compatible)", "verify", 0.04, "CONN_2P5_3"),
+    "BUS_DXL": ("JST EH 3p", "B3B-EH-A(LF)(SN)", "verify", 0.05, "CONN_2P5_3"),
+    "CBULK": ("470u", "470 uF 25 V radial 10x16 low-ESR", "verify", 0.3, "CP_D10"),
+    "MH": ("M3", "M3 mounting hole (NPTH 3.2 mm)", "", 0.0, "MH_M3"),
+}
+
+
+def _part(c: Circuit, ref, key, kind, pins, block, value=None, place=None, note="", **kw) -> object:
+    val, mpn, lcsc, price, fp = P[key]
+    return c.add(ref, value or val, kind, pins, footprint=fp, mpn=mpn, lcsc=lcsc, price=price, block=block,
+                 place=place or {}, note=note, **kw)
+
+
+def _tvs_for(v: float) -> str:
+    standoff = next(x for x in (5.0, 6.0, 6.5, 7.0, 8.5, 10.0, 12.0, 13.0, 15.0, 18.0, 20.0, 24.0) if x >= v * 1.1)
+    return f"SMBJ{standoff:g}A"
+
+
+def bus_ports(acts: list, bus: str) -> list:
+    """Split the actuators into daisy chains, one per board port: [base yaw], [shoulder], [elbow ... gripper]."""
+    if bus == "pwm":
+        return [[a] for a in acts]
+    if len(acts) <= 3:
+        return [acts]
+    return [acts[:1], acts[1:2], acts[2:]]
+
+
+def custom_circuit(design, ep: dict) -> Circuit:
+    vin = ep["supply"]["v"]
+    pwm = ep["bus"] == "pwm"
+    proto = ep["protocol"]
+    extras = ep["extras"]
+    acts = ep["actuators"]
+    fsr = ep["grip"]["sensor"] == "fsr402"
+    pm = PINMAP["esp32_s3_wroom"]
+    blocks = [("power", "POWER INPUT · PROTECTION · SERVO RAIL SWITCH"), ("regs", "LOGIC SUPPLY"),
+              ("mcu", "ESP32-S3 CONTROLLER"), ("usb", "USB-C (PROGRAMMING · HOST LINK)"),
+              ("pwm", f"PWM SERVO DRIVER · {len(acts)} CHANNELS") if pwm else
+              ("bus", f"SERVO BUS · {'FEETECH SCS' if proto == 'feetech_scs' else 'DYNAMIXEL 2.0'} TTL HALF-DUPLEX"),
+              ("sensors", "FORCE SENSORS · EXPANSION"), ("mech", "MECHANICAL")]
+    c = Circuit("Morph controller PCBA", subtitle=f"{design.name} · {ep['family']} · {len(acts)} actuators · {vin:g} V in",
+                blocks=blocks)
+    W, H = ep["custom_pcb"]["size_mm"] if ep.get("custom_pcb") else board_size(design, ep["family"], len(acts), extras)
+    fuse_a = ep["power_budget"]["fuse_a"]
+
+    # ---- power input, protection, servo rail switch
+    _part(c, "J1", "XT30", "conn", [("1", "+", "VIN_RAW"), ("2", "-", "GND")], "power",
+          place={"edge": "left", "at": 0.36}, note=f"{vin:g} V in from {ep['supply']['key']}")
+    c.add("F1", f"{fuse_a:g}A", "F", [("1", "1", "VIN_RAW"), ("2", "2", "V_FUSED")], footprint="FUSE_2410",
+          mpn=f"Littelfuse 0456{int(round(fuse_a)):03d}.ER (NANO2, fast)", lcsc="verify", price=0.6, block="power",
+          place={"near": "J1", "side": "right"})
+    tvs = _tvs_for(vin)
+    c.add("D1", tvs, "TVS", [("1", "K", "V_FUSED"), ("2", "A", "GND")], footprint="SMB", mpn=tvs, lcsc="verify",
+          price=0.08, block="power", place={"near": "F1", "side": "below"})
+    _part(c, "Q1", "AOD4185", "QP", [("1", "G", "Q1_G"), ("2", "D", "V_FUSED"), ("3", "S", "V_IN")], "power",
+          place={"near": "F1", "side": "right"}, note="reverse-polarity")
+    _part(c, "R1", "R10k", "R", [("1", "1", "Q1_G"), ("2", "2", "GND")], "power", place={"near": "Q1", "side": "below"})
+    if vin > 9:
+        c.add("D2", "BZT52C12", "DZ", [("1", "K", "V_IN"), ("2", "A", "Q1_G")], footprint="SOD123", mpn="BZT52C12",
+              lcsc="verify", price=0.01, block="power", place={"near": "Q1", "side": "below"})
+    _part(c, "Q2", "AOD4185", "QP", [("1", "G", "Q2_G"), ("2", "D", "V_SERVO"), ("3", "S", "V_IN")], "power",
+          place={"near": "Q1", "side": "right"}, note="servo rail switch")
+    _part(c, "R2", "R10k", "R", [("1", "1", "V_IN"), ("2", "2", "Q2_G")], "power", place={"near": "Q2", "side": "below"})
+    loop_net = "ESTOP_LOOP" if "estop" in extras else "Q2_G"
+    _part(c, "Q3", "2N7002", "QN", [("1", "G", "SERVO_EN"), ("2", "S", "GND"), ("3", "D", loop_net)], "power",
+          place={"near": "Q2", "side": "below"})
+    _part(c, "R3", "R1k", "R", [("1", "1", "SERVO_EN_MCU"), ("2", "2", "SERVO_EN")], "power", place={"near": "Q3"})
+    _part(c, "R4", "R100k", "R", [("1", "1", "SERVO_EN"), ("2", "2", "GND")], "power", place={"near": "Q3"})
+    if "estop" in extras:
+        _part(c, "J9", "XH2", "conn", [("1", "1", "Q2_G"), ("2", "2", "ESTOP_LOOP")], "power",
+              place={"edge": "left", "at": 0.12}, note="E-stop NC loop (opens = servo power off)")
+    cb = _part(c, "C1", "CBULK", "CP", [("1", "+", "V_SERVO"), ("2", "-", "GND")], "power",
+               value=f"470u {'25V' if vin > 9 else '16V'}", place={"near": "Q2", "side": "below"})
+    cb.mpn = f"470 uF {'25' if vin > 9 else '16'} V radial D10 low-ESR"
+    _part(c, "R5", "R100k", "R", [("1", "1", "V_SERVO"), ("2", "2", "VSERVO_SENSE")], "power", place={"near": "U1", "pin": "6"})
+    _part(c, "R6", "R22k", "R", [("1", "1", "VSERVO_SENSE"), ("2", "2", "GND")], "power", place={"near": "U1", "pin": "6"})
+
+    # ---- logic supply: buck (VIN > 6.5 V) + diode-OR with USB VBUS + 3V3 LDO
+    if vin > 6.5:
+        _part(c, "U3", "TPS563201", "box", [("3", "VIN", "V_IN", "L", "power_in"), ("5", "EN", "BUCK_EN", "L", "input"),
+                                            ("1", "GND", "GND", "B", "power_in"), ("6", "VBST", "BST", "R", "passive"),
+                                            ("2", "SW", "SW", "R", "output"), ("4", "VFB", "FB", "R", "input")], "regs",
+              place={"at_xy": (0.27, 0.70)})
+        _part(c, "R7", "R100k", "R", [("1", "1", "V_IN"), ("2", "2", "BUCK_EN")], "regs", place={"near": "U3"})
+        _part(c, "C2", "C10u", "C", [("1", "1", "V_IN"), ("2", "2", "GND")], "regs", place={"near": "U3"})
+        _part(c, "C3", "C100n", "C", [("1", "1", "BST"), ("2", "2", "SW")], "regs", place={"near": "U3"})
+        _part(c, "L1", "L4u7", "L", [("1", "1", "SW"), ("2", "2", "5V")], "regs", place={"near": "U3", "side": "right"})
+        _part(c, "C4", "C22u", "C", [("1", "1", "5V"), ("2", "2", "GND")], "regs", place={"near": "L1"})
+        _part(c, "C5", "C22u", "C", [("1", "1", "5V"), ("2", "2", "GND")], "regs", place={"near": "L1"})
+        _part(c, "R8", "R56k", "R", [("1", "1", "5V"), ("2", "2", "FB")], "regs", place={"near": "U3"})
+        _part(c, "R9", "R10k", "R", [("1", "1", "FB"), ("2", "2", "GND")], "regs", place={"near": "U3"})
+        src = "5V"
+    else:
+        src = "V_IN"
+    _part(c, "D3", "SS34", "DS", [("1", "K", "VSYS"), ("2", "A", src)], "regs", place={"near": "U4", "side": "left"})
+    _part(c, "D4", "SS34", "DS", [("1", "K", "VSYS"), ("2", "A", "VBUS")], "regs", place={"near": "U4", "side": "left"})
+    _part(c, "U4", "AMS1117", "box", [("3", "VI", "VSYS", "L", "power_in"), ("1", "GND", "GND", "B", "power_in"),
+                                      ("2", "VO", "3V3", "R", "power_out")], "regs", place={"at_xy": (0.47, 0.62)})
+    _part(c, "C6", "C10u", "C", [("1", "1", "VSYS"), ("2", "2", "GND")], "regs", place={"near": "U4"})
+    _part(c, "C7", "C22u", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "regs", place={"near": "U4"})
+    _part(c, "R10", "R1k", "R", [("1", "1", "3V3"), ("2", "2", "LED_PWR")], "regs", place={"near": "U4"})
+    _part(c, "D5", "LED_G", "LED", [("1", "K", "GND"), ("2", "A", "LED_PWR")], "regs", value="PWR", place={"near": "R10"})
+
+    # ---- MCU
+    used = {"BUS_TX": not pwm, "BUS_RX": not pwm, "BUS_DIR": not pwm, "SDA": pwm or "imu" in extras,
+            "SCL": pwm or "imu" in extras, "PWM_OE": pwm, "FSR_L": fsr, "FSR_R": fsr, "VSERVO_SENSE": True,
+            "SERVO_EN": True, "LED": True, "USB_DM": True, "USB_DP": True}
+    sig_net = {"BUS_TX": "UART_TX", "BUS_RX": "UART_RX", "BUS_DIR": "BUS_DIR", "SDA": "SDA", "SCL": "SCL", "PWM_OE": "PWM_OE",
+               "FSR_L": "FSR_L", "FSR_R": "FSR_R", "VSERVO_SENSE": "VSERVO_SENSE", "SERVO_EN": "SERVO_EN_MCU",
+               "LED": "LED_STAT", "USB_DM": "USB_DM", "USB_DP": "USB_DP"}
+    gpio_net = {pm[s]: sig_net[s] for s, u in used.items() if u}
+    wroom = [("1", "GND"), ("2", "3V3"), ("3", "EN"), ("4", "IO4"), ("5", "IO5"), ("6", "IO6"), ("7", "IO7"), ("8", "IO15"),
+             ("9", "IO16"), ("10", "IO17"), ("11", "IO18"), ("12", "IO8"), ("13", "IO19"), ("14", "IO20"), ("15", "IO3"),
+             ("16", "IO46"), ("17", "IO9"), ("18", "IO10"), ("19", "IO11"), ("20", "IO12"), ("21", "IO13"), ("22", "IO14"),
+             ("23", "IO21"), ("24", "IO47"), ("25", "IO48"), ("26", "IO45"), ("27", "IO0"), ("28", "IO35"), ("29", "IO36"),
+             ("30", "IO37"), ("31", "IO38"), ("32", "IO39"), ("33", "IO40"), ("34", "IO41"), ("35", "IO42"), ("36", "RXD0"),
+             ("37", "TXD0"), ("38", "IO2"), ("39", "IO1"), ("40", "GND"), ("41", "EPAD")]
+    pins = []
+    for num, name in wroom:
+        net = {"GND": "GND", "EPAD": "GND", "3V3": "3V3", "EN": "EN", "IO0": "BOOT"}.get(name) or gpio_net.get(name)
+        n = int(num)
+        side = "L" if n <= 14 or name in ("GND", "3V3", "EN") else "R"
+        if name in ("GND", "EPAD"):
+            side = "B"
+        et = "power_in" if name in ("GND", "3V3", "EPAD") else "bidir"
+        pins.append((num, name, net, side, et))
+    _part(c, "U1", "ESP32S3", "box", pins, "mcu", place={"edge": "top", "at": 0.70, "rot": 0, "keepout": "antenna"})
+    _part(c, "C8", "C10u", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "2"})
+    _part(c, "C9", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "2"})
+    _part(c, "R11", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "EN")], "mcu", place={"near": "U1", "pin": "3"})
+    _part(c, "C10", "C1u", "C", [("1", "1", "EN"), ("2", "2", "GND")], "mcu", place={"near": "U1", "pin": "3"})
+    _part(c, "SW1", "BTN", "SW", [("1", "1", "EN"), ("2", "2", "GND")], "mcu", value="RESET", place={"near": "U1", "side": "left"})
+    _part(c, "SW2", "BTN", "SW", [("1", "1", "BOOT"), ("2", "2", "GND")], "mcu", value="BOOT", place={"near": "U1", "side": "left"})
+    _part(c, "R12", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "BOOT")], "mcu", place={"near": "SW2"})
+    _part(c, "R13", "R1k", "R", [("1", "1", "LED_STAT"), ("2", "2", "LED_K")], "mcu", place={"near": "U1", "pin": "23"})
+    _part(c, "D6", "LED_R", "LED", [("1", "K", "GND"), ("2", "A", "LED_K")], "mcu", value="STAT", place={"near": "R13"})
+
+    # ---- USB-C
+    _part(c, "J2", "USBC", "conn", [("A1B12", "GND", "GND", "L", "power_in"), ("A4B9", "VBUS", "VBUS", "L", "power_out"),
+                                    ("A5", "CC1", "CC1", "R"), ("B5", "CC2", "CC2", "R"), ("A6", "D+", "USB_DP", "R"),
+                                    ("B6", "D+", "USB_DP", "R"), ("A7", "D-", "USB_DM", "R"), ("B7", "D-", "USB_DM", "R"),
+                                    ("A8", "SBU1", None, "R"), ("B8", "SBU2", None, "R"), ("B4A9", "VBUS", "VBUS", "L", "power_out"),
+                                    ("B1A12", "GND", "GND", "L", "power_in"), ("SH", "SHIELD", "GND", "L", "passive")], "usb",
+          place={"edge": "top", "at": 0.30}, note="USB 2.0 FS (native ESP32-S3 USB)")
+    _part(c, "R14", "R5k1", "R", [("1", "1", "CC1"), ("2", "2", "GND")], "usb", place={"near": "J2", "side": "below"})
+    _part(c, "R15", "R5k1", "R", [("1", "1", "CC2"), ("2", "2", "GND")], "usb", place={"near": "J2", "side": "below"})
+    _part(c, "U5", "USBLC6", "box", [("1", "IO1", "USB_DP", "L"), ("6", "IO1", "USB_DP", "R"), ("3", "IO2", "USB_DM", "L"),
+                                     ("4", "IO2", "USB_DM", "R"), ("5", "VBUS", "VBUS", "T", "power_in"),
+                                     ("2", "GND", "GND", "B", "power_in")], "usb", place={"near": "J2", "side": "below"})
+
+    # ---- servo interface
+    if pwm:
+        n = len(acts)
+        led_num = lambda k: str(6 + k if k < 8 else 7 + k)  # noqa: E731  (TSSOP-28: LED0-7 = 6-13, LED8-15 = 15-22)
+        pins = [(led_num(k), f"LED{k}", f"PWM{k}" if k < n else None, "R", "output") for k in range(16)]
+        pins += [(num, f"A{i}", "GND", "L", "input") for i, num in enumerate(("1", "2", "3", "4", "5", "24"))]
+        pins += [("23", "~OE", "PWM_OE", "L", "input"), ("25", "EXTCLK", "GND", "L", "input"), ("26", "SCL", "SCL", "L", "input"),
+                 ("27", "SDA", "SDA", "L", "bidir"), ("28", "VDD", "3V3", "T", "power_in"), ("14", "VSS", "GND", "B", "power_in")]
+        _part(c, "U2", "PCA9685", "box", pins, "pwm", place={"at_xy": (0.55, 0.36)})
+        _part(c, "C11", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "pwm", place={"near": "U2", "pin": "28"})
+        _part(c, "R16", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "PWM_OE")], "pwm", place={"near": "U2", "pin": "23"})
+        _part(c, "R17", "R4k7", "R", [("1", "1", "3V3"), ("2", "2", "SDA")], "pwm", place={"near": "U2", "pin": "27"})
+        _part(c, "R18", "R4k7", "R", [("1", "1", "3V3"), ("2", "2", "SCL")], "pwm", place={"near": "U2", "pin": "26"})
+        hp = []
+        for k, a in enumerate(acts):
+            _part(c, f"R{20 + k}", "R220", "R", [("1", "1", f"PWM{k}"), ("2", "2", f"SERVO{k + 1}")], "pwm",
+                  place={"near": "J3", "pin": str(3 * k + 1), "side": "above"})
+            hp += [(str(3 * k + 1), f"S{k + 1}", f"SERVO{k + 1}", "R", "output"), (str(3 * k + 2), f"V{k + 1}", "V_SERVO", "R", "power_out"),
+                   (str(3 * k + 3), f"G{k + 1}", "GND", "R", "power_in")]
+        c.add("J3", f"SERVO 3x{n}", "conn", hp, footprint=f"HDR_3x{n}", mpn=f"2.54 mm pin header 3x{n}, vertical",
+              lcsc="verify", price=0.15, block="pwm", place={"edge": "bottom", "at": 0.64},
+              note="ch " + ", ".join(f"{k}:{a['joint'].replace('_', ' ')}" for k, a in enumerate(acts)))
+    else:
+        key = "BUS_FT" if proto == "feetech_scs" else "BUS_DXL"
+        _part(c, "U2", "LVC2G241", "box", [("8", "VCC", "3V3", "T", "power_in"), ("1", "~1OE", "BUS_DIR", "L", "input"),
+                                           ("7", "2OE", "BUS_DIR", "L", "input"), ("5", "2A", "UART_TX", "L", "input"),
+                                           ("6", "1Y", "UART_RX", "L", "output"), ("2", "1A", "BUS_DATA", "R", "input"),
+                                           ("3", "2Y", "BUS_DATA", "R", "output"), ("4", "GND", "GND", "B", "power_in")], "bus",
+              place={"at_xy": (0.50, 0.30)})
+        _part(c, "C11", "C100n", "C", [("1", "1", "3V3"), ("2", "2", "GND")], "bus", place={"near": "U2", "pin": "8"})
+        _part(c, "R16", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "BUS_DATA")], "bus", place={"near": "U2", "pin": "2"})
+        _part(c, "R17", "R10k", "R", [("1", "1", "3V3"), ("2", "2", "UART_RX")], "bus", place={"near": "U2", "pin": "6"})
+        ports = bus_ports(acts, "ttl")
+        for i, chain in enumerate(ports):
+            ids = [a["id"] for a in chain]
+            _part(c, f"J{3 + i}", key, "conn", [("1", "GND", "GND"), ("2", "V+", "V_SERVO"), ("3", "DATA", "BUS_DATA")], "bus",
+                  place={"edge": "bottom", "at": 0.30 + 0.17 * i}, note=f"bus port {chr(65 + i)} → ID {ids[0]}" +
+                  (f"-{ids[-1]}" if len(ids) > 1 else ""))
+        if "imu" in extras:
+            _part(c, "R18", "R4k7", "R", [("1", "1", "3V3"), ("2", "2", "SDA")], "sensors", place={"near": "J8"})
+            _part(c, "R19", "R4k7", "R", [("1", "1", "3V3"), ("2", "2", "SCL")], "sensors", place={"near": "J8"})
+
+    # ---- force sensors + expansion
+    if fsr:
+        rdiv = ep["grip"]["fsr_divider_ohm"]
+        for j, (net, at, where) in enumerate((("FSR_L", 0.30, "left"), ("FSR_R", 0.12, "right"))):
+            _part(c, f"J{6 + j}", "PH2", "conn", [("1", "1", "3V3"), ("2", "2", net)], "sensors",
+                  place={"edge": "right", "at": at}, note=f"FSR 402 on the {where} jaw")
+            r = c.add(f"R{40 + j}", ohm_str(rdiv), "R", [("1", "1", net), ("2", "2", "GND")], footprint="R0603",
+                      mpn=f"0603 1% {ohm_str(rdiv)}", lcsc="verify" if rdiv != 10000 else "C25804", price=0.002,
+                      block="sensors", place={"near": f"J{6 + j}", "side": "left"})
+            _part(c, f"C{40 + j}", "C100n", "C", [("1", "1", net), ("2", "2", "GND")], "sensors",
+                  place={"near": f"J{6 + j}", "side": "left"})
+    if "imu" in extras:
+        _part(c, "J8", "SH4", "conn", [("1", "GND", "GND"), ("2", "3V3", "3V3"), ("3", "SDA", "SDA"), ("4", "SCL", "SCL")],
+              "sensors", place={"edge": "right", "at": 0.48}, note="Qwiic / STEMMA QT → BNO085 IMU")
+    for i, (fx, fy) in enumerate(((0, 0), (1, 0), (0, 1), (1, 1))):
+        _part(c, f"H{i + 1}", "MH", "MH", [("1", "1", None)], "mech", place={"hole": i})
+    c.notes = [f"Servo rail V_SERVO = input ({vin:g} V) switched by Q2; firmware enables it with SERVO_EN"
+               + (", the e-stop loop (J9) cuts it in hardware" if "estop" in extras else ""),
+               f"Input protection: {fuse_a:g} A fuse F1, {tvs} TVS D1, P-FET Q1 against reverse polarity",
+               "Logic: " + ("TPS563201 buck 5 V, " if vin > 6.5 else "") + "diode-OR with USB VBUS, AMS1117 3.3 V LDO",
+               "ESP32-S3 native USB on IO19/IO20; hold BOOT, tap RESET to enter the bootloader"]
+    return c
+
+
+# module pinouts for the wiring diagram (header pin name lists, top view)
+MODULE_PINS = {
+    "esp32_s3_devkit": (["3V3", "3V3", "RST", "GPIO4", "GPIO5", "GPIO6", "GPIO7", "GPIO15", "GPIO16", "GPIO17", "GPIO18",
+                         "GPIO8", "GPIO3", "GPIO46", "GPIO9", "GPIO10", "GPIO11", "GPIO12", "GPIO13", "GPIO14", "5V", "GND"],
+                        ["GND", "TX", "RX", "GPIO1", "GPIO2", "GPIO42", "GPIO41", "GPIO40", "GPIO39", "GPIO38", "GPIO37",
+                         "GPIO36", "GPIO35", "GPIO0", "GPIO45", "GPIO48", "GPIO47", "GPIO21", "GPIO20", "GPIO19", "GND", "GND"]),
+    "esp32_devkit": (["3V3", "EN", "VP", "VN", "IO34", "IO35", "IO32", "IO33", "IO25", "IO26", "IO27", "IO14", "IO12", "GND",
+                      "IO13", "SD2", "SD3", "CMD", "5V"],
+                     ["GND", "IO23", "IO22", "TX", "RX", "IO21", "GND", "IO19", "IO18", "IO5", "IO17", "IO16", "IO4", "IO0",
+                      "IO2", "IO15", "SD1", "SD0", "CLK"]),
+    "rp2040_pico": (["GP0", "GP1", "GND", "GP2", "GP3", "GP4", "GP5", "GND", "GP6", "GP7", "GP8", "GP9", "GND", "GP10", "GP11",
+                     "GP12", "GP13", "GND", "GP14", "GP15"],
+                    ["VBUS", "VSYS", "GND", "3V3_EN", "3V3", "ADC_VREF", "GP28", "AGND", "GP27", "GP26", "RUN", "GP22", "GND",
+                     "GP21", "GP20", "GP19", "GP18", "GND", "GP17", "GP16"]),
+    "arduino_nano": (["D13", "3V3", "AREF", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "5V", "RST", "GND", "VIN"],
+                     ["D12", "D11", "D10", "D9", "D8", "D7", "D6", "D5", "D4", "D3", "D2", "GND", "RST", "RX0", "TX1"]),
+    "openrb_150": (["AREF", "A0", "A1", "A2", "A3", "A4", "A5", "A6", "D0", "D1", "D2", "D3", "D4", "D5"],
+                   ["5V", "VIN", "VCC", "GND", "RESET", "D14/TX", "D13/RX", "D12/SCL", "D11/SDA", "D10", "D9", "D8", "D7", "D6"]),
+}
+
+
+def _module_box(c: Circuit, ref: str, key: str, nets: dict, block: str, value=None, extra=(), note=""):
+    """Box symbol for a dev-board module: every header pin, nets by pin name (first match for duplicates)."""
+    left, right = MODULE_PINS[key]
+    pins, seen = [], set()
+    for side, names, hdr in (("L", left, "J1"), ("R", right, "J3" if key == "esp32_s3_devkit" else "J2")):
+        for i, nm in enumerate(names):
+            label = nm.replace("D12/SCL", "D12/SCL")
+            net = None
+            for k in (nm, nm.split("/")[-1]):
+                if k in nets:
+                    net = nets[k]
+            if nm in ("GND", "AGND"):
+                net = "GND"
+            if nm in ("3V3", "VCC") and "3V3" in nets.values() and (nm, side) not in seen:
+                net = "3V3" if any(v == "3V3" for v in nets.values()) else None
+            seen.add((nm, side))
+            et = "power_in" if nm in ("GND", "AGND", "5V", "VIN", "VSYS", "VBUS") else "bidir"
+            pins.append((f"{hdr}-{i + 1}", label, net, side, et))
+    pins += list(extra)
+    return c.add(ref, value or MODULES[key]["name"].split(" (")[0], "box", pins, board=False, block=block,
+                 mpn=MODULES[key]["name"], note=note, meta={"key": key})
+
+
+def modules_circuit(design, ep: dict) -> Circuit:
+    pwm = ep["bus"] == "pwm"
+    extras = ep["extras"]
+    acts = ep["actuators"]
+    ctrl = ep["controller"]
+    sup = ep["supply"]
+    fsr = ep["grip"]["sensor"] == "fsr402"
+    pm = PINMAP[ctrl]
+    drv_title = {"hobby_pwm": "PWM SERVO DRIVER", "dynamixel": "DYNAMIXEL TTL BUS (OpenRB-150 ports)"}.get(
+        ep["family"], "SERIAL BUS SERVO ADAPTER")
+    c = Circuit("Morph robot wiring (off-the-shelf modules)",
+                subtitle=f"{design.name} · {ep['family']} · {len(acts)} actuators · {sup['v']:g} V {sup['a']:g} A supply",
+                blocks=[("power", "SUPPLY · FUSE · E-STOP · REGULATORS"), ("ctrl", "CONTROLLER"), ("drive", drv_title),
+                        ("act", "ACTUATORS"), ("sense", "SENSORS"), ("host", "HOST PC")])
+    fuse = ep["power_budget"]["fuse_a"]
+    c.add("PS1", f"{sup['v']:g} V {sup['a']:g} A", "box", [("1", "+V", "VIN_RAW", "R", "power_out"),
+                                                        ("2", "-V", "GND", "R", "power_out")],
+          board=False, block="power", mpn=MODULES[sup["key"]]["name"], note="external supply, 5.5 mm barrel")
+    c.add("F1", f"{fuse:g}A", "F", [("1", "1", "VIN_RAW"), ("2", "2", "V_FUSED")], board=False, block="power",
+          mpn=f"inline ATO fuse holder + {fuse:g} A fuse")
+    servo_in = "V_FUSED"
+    if "estop" in extras:
+        c.add("SW1", "E-STOP", "box", [("11", "NC.1", "V_FUSED", "L", "passive"), ("12", "NC.2", "V_ESTOP", "R", "passive"),
+                                       ("23", "NO.1", "ESTOP", "R", "passive"), ("24", "NO.2", "GND", "R", "passive")],
+              board=False, block="power", mpn="22 mm latching mushroom, 1NC + 1NO", note="NC cuts servo power, NO tells the MCU")
+        servo_in = "V_ESTOP"
+    if sup["servo_buck"]:
+        c.add("U4", f"BUCK {sup['servo_v']:g} V", "box", [("1", "IN+", servo_in, "L", "power_in"), ("2", "IN-", "GND", "L", "power_in"),
+                                                        ("3", "OUT+", "V_SERVO", "R", "power_out"), ("4", "OUT-", "GND", "R", "power_out")],
+              board=False, block="power", mpn=MODULES["buck_servo"]["name"], note=f"set to {sup['servo_v']:g} V before connecting")
+        servo_net = "V_SERVO"
+    else:
+        servo_net = servo_in
+    logic5 = "5V"
+    if ctrl != "openrb_150" and sup["v"] >= 6.0:
+        c.add("U3", "BUCK 5V", "box", [("1", "VIN", "V_FUSED", "L", "power_in"), ("2", "GND", "GND", "L", "power_in"),
+                                       ("3", "VOUT", "5V", "R", "power_out"), ("4", "EN", None, "L", "input"),
+                                       ("5", "PG", None, "R", "output")],
+              board=False, block="power", mpn=MODULES["buck_5v"]["name"], note="logic stays powered when the e-stop is hit")
+    elif ctrl != "openrb_150":
+        logic5 = "V_FUSED"
+
+    # controller
+    nets = {"GND": "GND", "3V3": "3V3"}
+    if ctrl == "openrb_150":
+        nets.update({"VIN": "V_FUSED"})
+        if fsr:
+            nets.update({pm["FSR_L"]: "FSR_L", pm["FSR_R"]: "FSR_R"})
+        if "imu" in extras:
+            nets.update({"SDA": "SDA", "SCL": "SCL"})
+        if "estop" in extras:
+            nets.update({pm["ESTOP"]: "ESTOP"})
+        extra = [("DXL-G", "DXL GND", "GND", "T", "power_out"), ("DXL-V", "DXL VDD", servo_net, "T", "power_out"),
+                 ("DXL-D", "DXL DATA", "BUS_DATA", "T", "bidir"), ("USB", "USB", "USB_CTRL", "T", "bidir")]
+        _module_box(c, "U1", ctrl, nets, "ctrl", value="OpenRB-150", extra=extra,
+                    note="DYNAMIXEL power = VIN terminal (switched by the e-stop)" if "estop" in extras else "")
+        # the e-stop must cut the DXL power: VIN terminal carries servo power on the OpenRB-150
+        if "estop" in extras:
+            c.comp("U1").pin("VIN").net = servo_in
+            c.comp("U1").pin("DXL-V").net = servo_in
+    else:
+        nets[pm["5V"]] = logic5
+        if pwm:
+            nets.update({pm["SDA"]: "SDA", pm["SCL"]: "SCL", pm["PWM_OE"]: "PWM_OE"})
+        else:
+            nets.update({pm["BUS_TX"]: "UART_TX", pm["BUS_RX"]: "UART_RX"})
+            if "imu" in extras:
+                nets.update({pm["SDA"]: "SDA", pm["SCL"]: "SCL"})
+        if fsr:
+            nets.update({pm["FSR_L"]: "FSR_L", pm["FSR_R"]: "FSR_R"})
+        if "estop" in extras:
+            nets[pm["ESTOP"]] = "ESTOP"
+        _module_box(c, "U1", ctrl, nets, "ctrl", extra=[("USB", "USB", "USB_CTRL", "T", "bidir")])
+    # driver
+    if pwm:
+        n = len(acts)
+        pins = [("1", "GND", "GND", "L", "power_in"), ("2", "OE", "PWM_OE", "L", "input"), ("3", "SCL", "SCL", "L", "input"),
+                ("4", "SDA", "SDA", "L", "bidir"), ("5", "VCC", "3V3", "L", "power_in"), ("6", "V+", servo_net, "L", "power_in"),
+                ("T1", "V+ (term)", servo_net, "L", "power_in"), ("T2", "GND (term)", "GND", "L", "power_in")]
+        pins += [(f"P{k}", f"PWM{k}", f"PWM{k}" if k < n else None, "R", "output") for k in range(16)]
+        c.add("U2", "PCA9685 16-ch", "box", pins, board=False, block="drive", mpn=MODULES["pca9685_board"]["name"],
+              note="I2C 0x40 · 50 Hz · V+ terminal feeds the servo headers")
+        c.add("C1", "470u", "CP", [("1", "+", servo_net), ("2", "-", "GND")], board=False, block="drive",
+              mpn="470 uF 16 V electrolytic (into the PCA9685 board's C2 footprint)")
+    elif ctrl != "openrb_150":
+        c.add("U2", "BUS ADAPTER", "box", [("1", "VIN+", servo_net, "L", "power_in"), ("2", "VIN-", "GND", "L", "power_in"),
+                                           ("3", "RXD", "UART_TX", "L", "input"), ("4", "TXD", "UART_RX", "L", "output"),
+                                           ("5", "GND", "GND", "L", "power_in"), ("6", "BUS-G", "GND", "R", "power_out"),
+                                           ("7", "BUS-V", servo_net, "R", "power_out"), ("8", "BUS-D", "BUS_DATA", "R", "bidir")],
+              board=False, block="drive", mpn=MODULES["bus_servo_adapter"]["name"],
+              note="jumper in UART (ESP32) mode; verify the header labels on your revision")
+    # actuators
+    for k, a in enumerate(acts):
+        s = ACTUATORS[a["key"]]
+        jn = a["joint"].replace("_", " ")
+        if pwm:
+            c.add(f"M{k + 1}", a["key"].upper(), "box", [("1", "SIG", f"PWM{k}", "L", "input"), ("2", "V+", servo_net, "L", "power_in"),
+                                                        ("3", "GND", "GND", "L", "power_in")],
+                  board=False, block="act", mpn=s["name"], note=f"{jn} · ch {a['channel']}")
+        else:
+            c.add(f"M{k + 1}", a["key"].upper(), "box", [("1", "GND", "GND", "L", "power_in"), ("2", "V+", servo_net, "L", "power_in"),
+                                                        ("3", "DATA", "BUS_DATA", "L", "bidir")],
+                  board=False, block="act", mpn=s["name"], note=f"{jn} · ID {a['id']}")
+    # sensors
+    if fsr:
+        rdiv = ohm_str(ep["grip"]["fsr_divider_ohm"])
+        vref = "3V3" if LOGIC_V.get(ctrl, 3.3) < 4 else "5V"
+        for j, (net, where) in enumerate((("FSR_L", "left jaw"), ("FSR_R", "right jaw"))):
+            c.add(f"S{j + 1}", "FSR 402", "box", [("1", "1", vref, "R", "passive"), ("2", "2", net, "R", "passive")], board=False,
+                  block="sense", mpn=MODULES["fsr402"]["name"], note=where)
+            c.add(f"R{j + 1}", rdiv, "R", [("1", "1", net), ("2", "2", "GND")], board=False, block="sense",
+                  mpn=f"{rdiv} 1% divider (perfboard / inline)")
+    if "imu" in extras:
+        c.add("IMU1", "BNO085", "box", [("1", "VIN", "3V3", "L", "power_in"), ("2", "GND", "GND", "L", "power_in"),
+                                        ("3", "SDA", "SDA", "L", "bidir"), ("4", "SCL", "SCL", "L", "input")],
+              board=False, block="sense", mpn=MODULES["imu"]["name"], note="STEMMA QT · 0x4A · wrist")
+    host = [("1", "USB1", "USB_CTRL", "L", "bidir")]
+    if "wrist_camera" in extras:
+        c.add("CAM1", "USB CAMERA", "box", [("1", "USB", "USB_CAM", "R", "bidir")], board=False, block="host",
+              mpn=MODULES["wrist_camera"]["name"], note="UVC 1080p at the wrist")
+        host.append(("2", "USB2", "USB_CAM", "L", "bidir"))
+    c.add("H1", "HOST PC", "box", host, board=False, block="host", mpn="Host computer (LeRobot / ROS / Studio)",
+          note="serial commands + camera stream")
+    c.notes = [f"All grounds common at the supply; fuse {fuse:g} A on the supply lead",
+               "Servo power and logic power are separate branches: the e-stop (if fitted) only opens the servo branch"]
+    return c
