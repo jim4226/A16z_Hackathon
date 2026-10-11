@@ -167,6 +167,29 @@ def cmd_bench(a):
     _report(p, [a.rev], f"{a.rev}.html")
 
 
+def open_app_window(url: str):
+    """Open the Studio in its own app-style window (Edge/Chrome --app), falling back to a browser tab."""
+    import shutil
+    import subprocess
+    import webbrowser
+
+    cands = []
+    if sys.platform.startswith("win"):
+        pf = [os.environ.get(k, "") for k in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA")]
+        cands = [os.path.join(b, *rel) for b in pf if b for rel in
+                 (("Microsoft", "Edge", "Application", "msedge.exe"), ("Google", "Chrome", "Application", "chrome.exe"))]
+    elif sys.platform == "darwin":
+        cands = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                 "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
+    else:
+        cands = [shutil.which(x) or "" for x in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge")]
+    for exe in cands:
+        if exe and os.path.exists(exe):
+            subprocess.Popen([exe, f"--app={url}", "--window-size=1600,900"])
+            return
+    webbrowser.open(url)
+
+
 def cmd_studio(a):
     from .robot.pipeline2 import RobotProject
     from .studio.server import serve
@@ -179,8 +202,7 @@ def cmd_studio(a):
         cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[]))
     if a.open:
         import threading
-        import webbrowser
-        threading.Timer(1.5, webbrowser.open, args=(f"http://{a.host}:{a.port}",)).start()
+        threading.Timer(1.5, open_app_window, args=(f"http://{a.host}:{a.port}",)).start()
     serve(p, a.host, a.port)
 
 
