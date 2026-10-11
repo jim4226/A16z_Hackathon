@@ -173,7 +173,15 @@ def cmd_studio(a):
 
     if os.environ.get("MUJOCO_GL") is None and sys.platform.startswith("linux"):
         os.environ["MUJOCO_GL"] = "egl"
-    serve(RobotProject(os.path.join(HOME, a.name)), a.host, a.port)
+    p = RobotProject(os.path.join(HOME, a.name))
+    if not p.revs():
+        print(f"no project {a.name} yet: generating the first robot (about a minute)...")
+        cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[]))
+    if a.open:
+        import threading
+        import webbrowser
+        threading.Timer(1.5, webbrowser.open, args=(f"http://{a.host}:{a.port}",)).start()
+    serve(p, a.host, a.port)
 
 
 EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
@@ -352,6 +360,7 @@ def main(argv=None):
 
     s = sub.add_parser("studio", help="web UI: chat with / edit the robot, watch everything regenerate")
     s.add_argument("name", nargs="?", default="egg-picker")
+    s.add_argument("--open", action="store_true", help="open the browser when the server is up")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.set_defaults(fn=cmd_studio)
