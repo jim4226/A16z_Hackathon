@@ -79,9 +79,9 @@ def rev_payload(p: RobotProject, rev: str) -> dict:
     grip = res.get("gripper") or {}
     try:
         from ..robot import timestudy2
-        base = timestudy2.load_baseline()
-        time_card = {"revision": timestudy2.revision(res, base), "project": timestudy2.project(p, base),
-                     "placeholder": "PLACEHOLDER" in str(base.get("status", ""))}
+        tbase = timestudy2.load_baseline()
+        time_card = {"revision": timestudy2.revision(res, tbase), "project": timestudy2.project(p, tbase),
+                     "placeholder": "PLACEHOLDER" in str(tbase.get("status", ""))}
     except Exception as exc:  # the time card must never break the payload
         time_card = {"error": str(exc)}
     return {

@@ -206,6 +206,12 @@ def cmd_studio(a):
         print(f"also preparing the {other} project for the project switcher...")
         cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if other == "so101" else None))
+    from .robot.pipeline2 import pipeline_version
+    for proj in (p, RobotProject(os.path.join(HOME, other))):
+        last = proj.latest()
+        if last and proj.load_results(last).get("pipeline_version") != pipeline_version():
+            print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
+            proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
     if a.open:
         import threading
         threading.Timer(1.5, open_app_window, args=(f"http://{a.host}:{a.port}",)).start()

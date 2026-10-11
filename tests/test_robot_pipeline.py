@@ -49,3 +49,13 @@ def test_robot_chat_rules():
     assert rules("Add a wrist camera", d)[0] == {"electronics.extras": "wrist_camera"}
     assert rules("Pilot build: CNC + sheet metal", d)[0] == {"build.config": "pilot"}
     assert rules("Increase reach to 380 mm", d)[0] == {"arm.reach_mm": 380.0}
+
+
+def test_payload_urls_point_at_revision_files(tmp_path):
+    from morph.studio.server import rev_payload
+
+    p = RobotProject(str(tmp_path / "egg"))
+    r1 = p.run(Design().with_changes(EGG_ROBOT), n_trials=1, verbose=False, fast_sim=True)
+    rev = rev_payload(p, r1)
+    assert rev["robot"]["json"] == f"/files/{r1}/cad/robot.json"
+    assert "time_study" in rev and "error" not in rev["time_study"]

@@ -108,6 +108,20 @@ def gripper_actuator(design: Design) -> str:
     return "sts3215" if fam == "smart_bus" else "xl430_w250"
 
 
+def pipeline_version() -> str:
+    """Hash of the platform code: results built by older code are rebuilt when the Studio starts."""
+    import hashlib
+
+    h = hashlib.sha1()
+    here = os.path.dirname(os.path.abspath(__file__))
+    for root in (here, os.path.dirname(here)):
+        for fn in sorted(os.listdir(root)):
+            if fn.endswith(".py"):
+                with open(os.path.join(root, fn), "rb") as fh:
+                    h.update(fn.encode() + fh.read())
+    return h.hexdigest()[:12]
+
+
 def _mod(name):
     try:
         return importlib.import_module(f"morph.robot.{name}")
@@ -177,6 +191,7 @@ class RobotProject(Project):
                 print(f"  {node:<14} {status} ({res['timings_s'][node]:.2f}s)")
 
         res["summary"] = summarize(res)
+        res["pipeline_version"] = pipeline_version()
         with open(os.path.join(out, "results.json"), "w") as fh:
             json.dump(res, fh, indent=1, default=_jsonable)
         self.log({"type": "revision", "rev": rev, "parent": parent, "label": label, "changes": res["changes"],
