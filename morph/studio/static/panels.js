@@ -1427,14 +1427,14 @@ export class BomPanel {
     const head = (sub, btn) => `<div class="dw-h"><div class="dw-logo">${I('spark')}</div><div class="grow"><div class="t">Darwin · agents that can supply and build this robot</div><div class="s">${sub}</div></div>${btn}</div>`;
     if (live) {
       const pct = live.total ? live.done / live.total * 100 : 4;
-      el.innerHTML = head(`Searching the agentic web for ${live.total || '…'} jobs: every purchased part, the PCB, the prints, a design review`, `<span class="tag acc"><span class="spin"></span>${live.done}/${live.total || '…'}</span>`) +
+      el.innerHTML = head(`Searching the agentic web for ${live.total || '…'} jobs: every purchased part and bulk material, plus the PCB, prints and machined parts`, `<span class="tag acc"><span class="spin"></span>${live.done}/${live.total || '…'}</span>`) +
         `<div class="dw-prog"><b style="width:${pct}%"></b></div><div class="dw-list">` +
         live.rows.map((r) => `<div class="dw-row fade-in"><div class="l">${kindTag(r.kind)}<span class="it">${esc(['part', 'material'].includes(r.kind) ? r.item : (KIND[r.kind] || [r.kind])[0])}</span></div><div class="r">${r.found ? `<span class="tag good">${r.found} agent${r.found === 1 ? '' : 's'} found</span>` : '<span class="tag warn">no agent yet</span>'}${r.cached ? '<span class="tag neutral">cached</span>' : ''}</div></div>`).join('') + '</div>';
       return;
     }
     if (!sc) {
       el.innerHTML = head('Morph designs and programs the robot; Darwin finds the agents that sell each part and fabricate the rest.', `<button class="btn primary" data-a="darwin">${I('spark', 'sm')}Find agents</button>`) +
-        emptyHTML('spark', 'Not searched yet', 'One click asks Darwin Search for an agent per purchased BOM line, plus PCB fab from the Gerbers, prints from the STLs, CNC from the DXFs and a design review.');
+        emptyHTML('spark', 'Not searched yet', 'One click asks Darwin Search for an agent per purchased BOM line and bulk material, plus PCB fab from the Gerbers, prints from the STLs and CNC from the DXFs.');
       el.querySelector('[data-a="darwin"]').onclick = () => this.findAgents();
       return;
     }
