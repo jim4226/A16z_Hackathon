@@ -2,8 +2,8 @@
 
 **Event:** Sun Oct 11, 9:00am to 9:00pm, 1025 Sansome St. Finalists demo live.
 **Theme:** *Give people their time back.*
-**Our claim:** a robotics engineer goes from "my gripper can't hold this" to a
-validated, fabricated part in under an hour instead of days. Today we prove it once, on
+**Our claim:** a robotics engineer goes from "my gripper crushes or drops this" to a
+validated, fabricated, force-controlled gripper in under an hour of their time instead of days. Today we prove it once, on
 real hardware, with measured numbers.
 
 ## Judging rubric → what we show
@@ -11,7 +11,7 @@ real hardware, with measured numbers.
 | criterion | weight | our evidence |
 |---|---|---|
 | Problem & time saved | **40** | one person, one task, measured before/after: `morph time` + the report's time card. Human setup/review/corrections are logged with `morph clock`, so they count, per the rules |
-| Technical execution | 25 | it runs live: CAD → MuJoCo → G-code/STL in ~30 s, 8 passing tests, partial recompute |
+| Technical execution | 25 | it runs live: CAD → MuJoCo → firmware + wiring + print files in ~25 s, live hardware bench, 11 passing tests, partial recompute |
 | Market & path forward | 15 | every robotics team, lab, and hardware startup makes custom end effectors and brackets; the ledger dataset compounds; next part types + real-robot sim |
 | Originality | 10 | the change-propagation graph + measured-vs-predicted ledger (no public dataset links design → fab → test) |
 | Product quality & demo | 10 | printed fingers in hand, flat vs contour lift on video/live, report on screen |
