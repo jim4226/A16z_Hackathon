@@ -1,7 +1,8 @@
 """Carrier board for the force-limited gripper: netlist -> placement -> routing -> pour -> Gerbers.
 
 Through-hole parts on a 0.1" grid, so the same layout can be hand-soldered on
-perfboard today or sent to a PCB fab as Gerbers. The MCU module plugs into
+perfboard today, sent to a PCB fab as Gerbers, or opened in KiCad (morph/kicad.py
+writes the project next to the Gerbers). The MCU module plugs into
 female headers. Routing is a grid maze router (bend-penalised Dijkstra) on two
 layers; through-hole pads exist on both, so no vias are needed. A GND pour fills
 the bottom layer. Every step is recorded in order so the UI can replay the
@@ -18,6 +19,8 @@ import zipfile
 
 from shapely.geometry import LineString, Point, box
 from shapely.ops import unary_union
+
+from . import kicad
 
 P = 2.54            # pin pitch
 G = 1.27            # routing grid
@@ -365,6 +368,10 @@ def build(ep: dict, outdir: str) -> dict:
         json.dump(board, fh)
     with open(os.path.join(outdir, "board.svg"), "w") as fh:
         fh.write(to_svg(board))
-    files = write_gerbers(board, os.path.join(outdir, "gerbers"))
-    return {"size_mm": board["size_mm"], "traces": len(board["traces"]), "drc": board["drc"],
-            "files": ["board.json", "board.svg"] + [f"gerbers/{f}" for f in files]}
+    files = ["board.json", "board.svg"] + [f"gerbers/{f}" for f in write_gerbers(board, os.path.join(outdir, "gerbers"))]
+    try:  # KiCad project + BoardRepo-ready zip; a writer bug must not cost the Gerbers
+        kc = kicad.export(board, os.path.join(outdir, "kicad"), "board", {"MCU": MODULES[ep["mcu"]]["label"]})
+        files += [f"kicad/{f}" for f in kc["files"] + [kc["zip"]]]
+    except Exception as exc:
+        kc = {"error": f"{exc.__class__.__name__}: {exc}"}
+    return {"size_mm": board["size_mm"], "traces": len(board["traces"]), "drc": board["drc"], "kicad": kc, "files": files}

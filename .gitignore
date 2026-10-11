@@ -3,3 +3,6 @@ __pycache__/
 *.egg-info/
 .venv/
 .snap_*/
+# API keys (e.g. keewano.env): never commit
+*.env
+.env
