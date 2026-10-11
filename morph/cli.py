@@ -18,7 +18,7 @@ import os
 import sys
 import time
 
-from . import agent, darwin, keewano, report
+from . import agent, boardrepo, darwin, keewano, kicad, report
 from .explore import explore
 from .pipeline import Project
 from .spec import Design
@@ -285,6 +285,54 @@ def cmd_ask(a):
           else json.dumps(rows, indent=2, default=str))
 
 
+def cmd_kicad(a):
+    p = _project(a.name)
+    rev = a.rev or p.latest()
+    src = os.path.join(p.rev_dir(rev), "electronics", "board", "board.json")
+    if not os.path.exists(src):
+        sys.exit(f"{a.name} {rev} has no carrier board (it is built when finger.sensor is set)")
+    with open(src) as fh:
+        brd = json.load(fh)
+    results = p.load_results(rev)
+    design, summary = p.load_design(rev).to_dict(), results.get("summary") or {}
+    o = design.get("object") or {}
+    about = {"Morph project": f"{a.name} {rev}", "Object": o.get("name"), "Servo": summary.get("servo"),
+             "Grip target": f"{summary['target_force_n']} N" if summary.get("target_force_n") else None}
+    refs = boardrepo.related(boardrepo.keys_for(design, summary, robot="sizing" in results))
+    name = f"{a.name}-{rev}"
+    out = os.path.join(p.rev_dir(rev), "boardrepo", name)
+    kc = kicad.export(brd, out, name, about, boardrepo.notes_md(refs))
+    chk = kicad.check(out, name)
+    zpath = os.path.join(out, kc["zip"])
+    print(f"KiCad project: {out}/{name}.kicad_pro (+ .kicad_pcb, .kicad_sch, README.md)")
+    if chk is None:
+        print("kicad-cli not found: open the project in KiCad 8/9 to run DRC")
+    elif "error" in chk:
+        print(f"kicad-cli failed: {chk['error']}")
+    else:
+        print(f"KiCad {chk['kicad']}: DRC {chk['violations']} violations, {chk['unconnected']} unconnected, "
+              f"{chk['parity']} schematic-parity issues; ERC {chk['erc_errors']} errors")
+    if refs:
+        print("\nrelated open designs (in the README):")
+        for r in refs:
+            print(f"  {boardrepo.page(r['board'])}  ({r['license'] or 'no licence recognised'})")
+    print(f"\npublish on BoardRepo: {zpath}")
+    print("\n".join("  " + s for s in boardrepo.publish_steps(zpath)))
+    p.log({"type": "board_export", "rev": rev, "zip": os.path.relpath(zpath, p.root), "kicad_check": chk})
+
+
+def cmd_boardrepo(a):
+    if a.board:
+        print(json.dumps(boardrepo.fetch(a.board), indent=2))
+        return
+    for r in boardrepo.related({k for ref in boardrepo.REFERENCES for k in ref["for"]}, live=True):
+        info = r["live"]
+        state = "cached" if info.get("cached") else ("live" if info.get("ok") else f"offline ({info.get('error')})")
+        print(f"{r['board']}  [{info.get('license') or r['license'] or 'no licence recognised'}; {state}]")
+        print(f"  {r['why']}")
+        print(f"  for: {', '.join(r['for'])}  views: {', '.join(info.get('contents') or []) or '?'}  {r.get('live', {}).get('url')}")
+
+
 def cmd_research(a):
     print(agent.research(a.query))
 
@@ -437,6 +485,15 @@ def main(argv=None):
     s = sub.add_parser("ask", help="run SQL against the project's Keewano events")
     s.add_argument("sql")
     s.set_defaults(fn=cmd_ask)
+
+    s = sub.add_parser("kicad", help="KiCad project of the carrier board + BoardRepo-ready zip (DRC with kicad-cli if present)")
+    s.add_argument("name")
+    s.add_argument("rev", nargs="?")
+    s.set_defaults(fn=cmd_kicad)
+
+    s = sub.add_parser("boardrepo", help="open reference boards on BoardRepo (live licence/views), or one board's page")
+    s.add_argument("board", nargs="?", help="owner/slug, e.g. evroc/robotic-gripper")
+    s.set_defaults(fn=cmd_boardrepo)
 
     s = sub.add_parser("research", help="web research via Claude (components, tooling, suppliers)")
     s.add_argument("query")

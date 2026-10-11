@@ -91,6 +91,8 @@ Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli �
 |---|---|
 | `mechanism.py` | printable rack-and-pinion parallel gripper sized to the servo and object: involute pinion, slotted racks, back plate with servo/guide/arm holes, jaw travel, servo angles |
 | `board.py` | carrier board: real module pinouts, placement, two-layer maze router, GND pour, DRC, Gerbers + drill, perfboard-ready |
+| `kicad.py` | the same board as a KiCad 8/9 project (PCB, schematic, project file) + a BoardRepo-ready zip; pure Python, `kicad-cli` DRC/ERC when installed |
+| `boardrepo.py` | checked open reference boards on BoardRepo (gripper carrier, servo bus, PWM, load cell), read live from their public pages |
 | `studio/` | Morph Studio web app (stdlib server + SSE, three.js viewer, PCB build animation, chat → changes) |
 | `spec.py` | one `Design` (object, finger, gripper, electronics, fab); changes are dotted keys |
 | `design.py` | 2.5D profiles → watertight solids. Pads: flat, V, or contour. With `finger.sensor=fsr402`, a two-part finger: a dovetail socket plus a sliding pad whose tail presses on the FSR |
@@ -127,6 +129,20 @@ handoffs (PCB fab from the Gerbers, printing the STLs, a design review), writes
 shortlist: ordering is Darwin Act, which needs the user's own account and approval.
 
 With no keys set, both integrations are no-ops and everything runs offline.
+
+**BoardRepo: the board in KiCad, and open boards to learn from** (not a sponsor). Every carrier
+board is also written as a KiCad project next to its Gerbers (`electronics/board/kicad/`), with
+the same copper. KiCad 9 reports 0 DRC violations, 0 unconnected items, 0 PCB-vs-schematic
+mismatches and 0 ERC errors for every MCU. Darwin's PCB-fab handoff includes it. `morph kicad`
+packages a revision for [BoardRepo](https://boardrepo.com), which takes a zipped KiCad project and
+renders schematic, PCB, 3D and BOM. The README inside the zip lists related open designs.
+
+```bash
+morph kicad raw-egg r004      # projects/raw-egg/r004/boardrepo/raw-egg-r004/*-kicad.zip + upload steps
+morph boardrepo               # reference boards with live licence and views
+```
+
+Uploading needs your own BoardRepo sign-in, so Morph stops at the zip. More in `docs/BOARDREPO.md`.
 
 ## Honest limits
 

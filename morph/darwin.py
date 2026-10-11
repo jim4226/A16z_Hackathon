@@ -92,8 +92,11 @@ def handoffs(rev_dir: str, results: dict) -> list:
     out = []
     gerbers = os.path.join(rev_dir, "electronics", "board", "gerbers", "gerbers.zip")
     if os.path.exists(gerbers):
-        out.append(("pcb_fab", "PCB fabrication and assembly quote from Gerber files, 2-layer through-hole",
-                    [os.path.relpath(gerbers, rev_dir)]))
+        files = [os.path.relpath(gerbers, rev_dir)]
+        kicad_zip = os.path.join(rev_dir, "electronics", "board", "kicad", "board-kicad.zip")
+        if os.path.exists(kicad_zip):   # the KiCad project, for a fab that wants sources (adds solder mask)
+            files.append(os.path.relpath(kicad_zip, rev_dir))
+        out.append(("pcb_fab", "PCB fabrication and assembly quote from Gerber files, 2-layer through-hole", files))
     fab_dir = os.path.join(rev_dir, "fab")
     stls = sorted(f for f in os.listdir(fab_dir) if f.endswith(".stl")) if os.path.isdir(fab_dir) else []
     if stls:

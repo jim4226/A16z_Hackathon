@@ -1,54 +1,84 @@
-# BoardRepo for Morph
+# BoardRepo and Morph
 
-[BoardRepo](https://boardrepo.com/) hosts 8,263 public KiCad and Altium boards (count as of Oct 11 2026). Each board
-has schematic, PCB and BOM views, and you can search by keyword (`/browse?q=servo`), MCU
-(`/browse?component=esp32`) or maker (`/browse?q=author%3Aadafruit`). It also runs a **remote MCP server**
-at `https://boardrepo.com/mcp`. The server uses Streamable HTTP and browser OAuth with dynamic client
-registration, so you don't need an API key. Through it an assistant can:
+[BoardRepo](https://boardrepo.com/) hosts 8,263 public KiCad and Altium boards (count as of Oct 11 2026). Each
+board has schematic, PCB, 3D and BOM views. It is run by Flintt, Inc. and is not a hackathon sponsor.
 
-- search public boards;
-- read schematics, nets, component values, BOMs and source files;
-- trace signals and run design checks;
-- compare revisions;
-- with explicit write consent, save a new version of a KiCad board you own.
+Morph uses it two ways. Neither needs an account or a key.
 
-A read connection can't publish.
+## 1. The carrier board as a KiCad project
+
+`morph/kicad.py` turns `board.json` into a KiCad 8/9 project. `board.build()` writes it on every revision,
+next to the Gerbers, in `<rev>/electronics/board/kicad/`. The project contains:
+
+- **PCB:** one inline footprint per part (no library links), every trace as a segment, and the GND pour as a
+  zone that KiCad refills. Pads cover both mask layers, so fab outputs KiCad generates include solder mask,
+  which Morph's own Gerbers don't.
+- **Schematic:** one box symbol per part. Each connected pin has a net label and each unused pin has a
+  no-connect flag, so KiCad's PCB-vs-schematic check passes.
+- **Project file and README.**
+
+The writer is pure Python, so the demo laptop needs no KiCad. When `kicad-cli` is installed, `kicad.check()`
+runs DRC (with schematic parity) and ERC.
+
+Results with KiCad 9.0.9:
+
+- Morph builds the Arduino Nano, Raspberry Pi Pico and ESP32 boards at 3.9k, 10k and 22k dividers, plus the
+  committed `examples/raw-egg/r004` board.
+- Every one has 0 DRC violations, 0 unconnected items, 0 parity issues and 0 ERC errors.
+- `tests/test_boardrepo.py` repeats the per-MCU check whenever `kicad-cli` is present.
+
+Darwin's PCB-fab handoff (`morph source`) lists `kicad/board-kicad.zip` next to `gerbers.zip`. The search query
+is unchanged, so Darwin's cache still hits.
+
+## 2. Publishing a revision
+
+```bash
+morph kicad raw-egg r004
+```
+
+This command:
+
+- writes `projects/raw-egg/r004/boardrepo/raw-egg-r004/` (the project, plus a README with the design facts and
+  related open designs);
+- zips it as `raw-egg-r004-kicad.zip`;
+- runs KiCad's checks if `kicad-cli` is installed;
+- prints the upload steps;
+- logs a `board_export` ledger row. Keewano ignores this row type, so nothing is sent.
+
+BoardRepo takes a zipped KiCad project folder at <https://boardrepo.com/upload>. Signing in with GitHub or
+Google creates the account. Gerber-only uploads are stored, but BoardRepo doesn't render them, which is why
+the KiCad project exists.
+
+Uploading needs the user's own sign-in, so Morph stops at the zip. After processing,
+`https://boardrepo.com/<you>/<board>.md` lists "PCB layout" under Contents. A public GitHub repo can also be
+imported by URL.
+
+## 3. Reference designs
+
+`morph boardrepo` lists a short set of checked boards. For each one it reads the board's public markdown page
+(`https://boardrepo.com/<owner>/<slug>.md`, no auth) for the live licence and views, with a disk cache.
+`morph boardrepo owner/slug` shows any single board. `morph kicad` adds the boards that match the design
+(gripper, sensor, servo family) to the published README.
+
+| board | what it is | used for | licence on BoardRepo |
+|---|---|---|---|
+| [evroc/robotic-gripper](https://boardrepo.com/evroc/robotic-gripper) | 3D-printed servo gripper with its own carrier board (Seeeduino, USB-C, DC jack), no force sensor | every gripper: the closest open analog | MIT |
+| [pollen-robotics/elec-rpi-robot-hat](https://boardrepo.com/pollen-robotics/elec-rpi-robot-hat) | Dynamixel/Feetech over TTL and RS-485, IMU, 5–28 V in | robot revisions with `smart_bus` / `dynamixel` servos | none recognised: link only |
+| [c-ake/pca9685-rpi-hat](https://boardrepo.com/c-ake/pca9685-rpi-hat) | 16-channel PCA9685 PWM, through-hole | `hobby_pwm` arms | GPL-3.0 |
+| [szbeni/forcegauge](https://boardrepo.com/szbeni/forcegauge) | load cell + HX711 + ESP32-C3 | FSR designs: the absolute-force upgrade | GPL-3.0 |
+| [solderedelectronics/load-cell-ampfilier-hx711-board-hardware-design](https://boardrepo.com/solderedelectronics/load-cell-ampfilier-hx711-board-hardware-design) | HX711 breakout, 22 × 22 mm | same | none recognised: link only |
+
+GPL-3.0 boards are fine to learn from, but copying their layout makes a derivative work. Boards with no
+recognised licence keep all rights, so link to them and don't copy them.
+
+## Not used: the MCP server
+
+BoardRepo's MCP server (`https://boardrepo.com/mcp`) can search, read nets and BOMs, and save versions of
+your own boards. Every call needs a browser OAuth token, public boards included, and the only advertised
+scope is `read:public`. Morph therefore reads the public `.md` pages instead.
+
+For interactive use from Claude Code:
 
 ```bash
 claude mcp add --scope user --transport http boardrepo https://boardrepo.com/mcp   # then /mcp to sign in
 ```
-
-In claude.ai, go to Settings → Connectors → Add custom connector and paste the same URL.
-
-## Where it plugs into Morph
-
-File paths refer to the robot-platform branch (`claude/determined-keller-or95aa`).
-
-| # | where | what to add | effort |
-|---|---|---|---|
-| 1 | `docs/DATA_SOURCES.md`, "Used or directly usable today" | a BoardRepo row: open reference circuits with netlists and BOMs, read via MCP, licensed per board | 2 min |
-| 2 | `morph/robot/catalog.py` `MODULES` | an optional `reference_designs: [url, ...]` key on `pca9685_board`, `bus_servo_adapter`, `u2d2` and `fsr402`, filled from the table below. The contract allows adding keys. Keep these links out of `search()`/`V()`, which are priced vendor rows | 10 min |
-| 3 | `electronics2.plan/finalize`, `custom_pcb` with `bus: ttl_half_duplex` | Pollen's HAT already drives Dynamixel and Feetech servos over TTL and RS-485. Read its nets and BOM through the MCP and reuse the bus interface instead of inventing one | when that module is built |
-| 4 | Stretch goal 4: load cell + HX711 | two HX711 reference boards below, one of them with an ESP32 | when attempted |
-| 5 | Publishing Morph's carrier board | **This is the main gap.** BoardRepo saves KiCad projects, but `morph/board.py` only writes Gerbers and Morph's own `board.json`. Adding a `.kicad_pcb` writer (plus `.kicad_sch` if possible) would let each Morph revision (r001…r00N) become a BoardRepo version with a shareable link | 1–2 h |
-| 6 | `morph/agent.py` `research` | Calling the MCP from the Claude API would mean getting and passing a BoardRepo OAuth token yourself. For today, use it interactively from Claude Code or claude.ai instead of wiring it into the CLI | skip today |
-
-## Reference boards worth reading
-
-Each of these was opened on BoardRepo on Oct 11 2026, and the license is the one its page shows. Check the license before
-you copy a layout or redistribute files. GPL-3.0 boards are fine to learn from, but copying them makes
-your board a derivative work.
-
-| board | what it is | maps to | license |
-|---|---|---|---|
-| [evroc/robotic-gripper](https://boardrepo.com/evroc/robotic-gripper) | 3D-printed servo gripper for robot arms (shown on a UR3e), with a Seeeduino carrier, USB-C and a DC jack. 29.75 × 57 mm, 2 layers | closest analog to Morph's gripper carrier board; prior art for the pitch | MIT |
-| [pollen-robotics/elec-rpi-robot-hat](https://boardrepo.com/pollen-robotics/elec-rpi-robot-hat) | Pi HAT driving Dynamixel/Feetech over TTL and RS-485, with IMU, 5–28 V in. 65 × 30.9 mm, 4 layers, KiCad 9 | `smart_bus` / `dynamixel` families on a `custom_pcb` | not shown |
-| [c-ake/pca9685-rpi-hat](https://boardrepo.com/c-ake/pca9685-rpi-hat) | 16-channel PCA9685 PWM HAT, through-hole for hand soldering. 65 × 30 mm | `hobby_pwm` + `pca9685_board` on a `custom_pcb` | GPL-3.0 |
-| [szbeni/forcegauge](https://boardrepo.com/szbeni/forcegauge) | HX711 + ESP32-C3 load-cell force gauge that streams force over WiFi. 60 × 40 mm | stretch goal 4 | GPL-3.0 |
-| [solderedelectronics/load-cell-ampfilier-hx711-board-hardware-design](https://boardrepo.com/solderedelectronics/load-cell-ampfilier-hx711-board-hardware-design) | HX711 breakout. 22 × 22 mm | stretch goal 4 | not shown |
-
-Seen in search results but not opened yet: `adamb314/servoproject` (closed-loop hobby servo),
-`marginallyclever/sixi-2`, `sensagroup/roboticarm`, `jorgehsm/scara-arm`, and
-`twisted-fields/rp2040-motor-controller`. Searches run: `robot` (476 boards), `servo` (225), `load cell` (339),
-`robot arm` (60), `pca9685` (45), `feetech` (3) and `dynamixel` (3). Search sometimes answers "Search is busy
-right now"; retrying works.
