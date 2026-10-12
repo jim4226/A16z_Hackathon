@@ -7,7 +7,7 @@ recursive-include data/darwin-cache *.json
 recursive-include morph/studio/static *
 include morph/robot/*.json
 recursive-include docs *.md
-recursive-include tools *.py *.html *.txt
+recursive-include tools *.py *.html *.in
 recursive-include tests *.py *.h
 recursive-include examples *
 prune morph/_assets

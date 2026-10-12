@@ -1,0 +1,127 @@
+# Tests on every supported OS and Python, lint, and a check that the wheel works once installed.
+# Tests run without keys and offline: tests/conftest.py removes API keys and fails any test that opens a
+# non-loopback connection. Python 3.14 cells are required too: every pin in constraints.txt has 3.14 wheels on
+# all three systems (python tools/check_constraints.py).
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  ANTHROPIC_API_KEY: ""
+  KEEWANO_API_KEY: ""
+  KEEWANO_PAT: ""
+  KEEWANO_PROJECT_ID: ""
+  SUBQ_API_KEY: ""
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    env:
+      MUJOCO_GL: ${{ startsWith(matrix.os, 'ubuntu') && 'osmesa' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            constraints.txt
+      - name: OSMesa for headless MuJoCo
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - name: Install the tested packages
+        run: python -m pip install -r requirements.txt -c constraints.txt pytest-xdist pytest-timeout
+      - name: Tests (no keys, no network)
+        run: python -m pytest -q -p no:cacheprovider -n auto --timeout 900 --durations 15
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: ruff (undefined names, unused imports, syntax errors)
+        run: |
+          python -m pip install ruff -c constraints.txt
+          ruff check --select F,E9 morph tests tools setup.py
+      - name: node --check every Studio script
+        run: for f in morph/studio/static/*.js morph/studio/static/vendor/*.js; do node --check "$f" || exit 1; done
+      - name: shellcheck the launcher
+        run: shellcheck run_studio.sh
+
+  package:
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      MUJOCO_GL: ${{ startsWith(matrix.os, 'ubuntu') && 'osmesa' || '' }}
+      MORPH_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: OSMesa for headless MuJoCo
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - name: Build the sdist and the wheel
+        run: |
+          python -m pip install build -c constraints.txt
+          python -m build
+      - name: Install the wheel into a fresh venv outside the checkout
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/morph-venv"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$RUNNER_TEMP/morph-venv/Scripts/python.exe"; else PY="$RUNNER_TEMP/morph-venv/bin/python"; fi
+          echo "PY=$PY" >> "$GITHUB_ENV"
+          "$PY" -m pip install dist/*.whl -c constraints.txt
+      - name: Check the installed wheel, then build both demo robots with it
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        env:
+          MORPH_HOME: ${{ runner.temp }}/morph-projects
+        run: |
+          "$PY" -m morph.cli doctor --offline
+          "$PY" -I "$GITHUB_WORKSPACE/tools/package_smoke.py"
+          "$PY" -m morph.cli robot new egg-picker --fast
+          "$PY" -m morph.cli robot new so101 --fast
+          "$PY" - <<'PY'
+          import json, os
+          from morph.robot.pipeline2 import ORDER
+          for name in ("egg-picker", "so101"):
+              with open(os.path.join(os.environ["MORPH_HOME"], name, "r001", "results.json"), encoding="utf-8") as fh:
+                  status = json.load(fh)["stage_status"]
+              assert status == {stage: "computed" for stage in ORDER}, (name, status)
+              print(f"{name}: all {len(ORDER)} stages computed")
+          PY
