@@ -6,6 +6,8 @@ import ast
 import http.client
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -128,6 +130,42 @@ def test_doctor_points_wheel_users_at_the_morph_command(tmp_path, monkeypatch, c
     cli.cmd_doctor(argparse.Namespace(offline=True))
     out = capsys.readouterr().out
     assert "All good: run `morph studio --open`." in out and "run_studio" not in out and "(not a git checkout)" in out
+
+
+# ------------------------------------------------------------------ launchers
+
+def _launcher(name: str) -> str:
+    return (REPO / name).read_bytes().decode("utf-8")
+
+
+def test_launchers_install_tested_pins_and_never_pull():
+    for name in ("run_studio.bat", "run_studio.sh"):
+        text = _launcher(name)
+        assert "-r requirements.txt -c constraints.txt" in text, name
+        assert "git pull" not in text and "--update" in text, name
+        assert "studio egg-picker --open" in text and "python.org/downloads" in text, name
+    bat = _launcher("run_studio.bat")
+    assert "for %%v in (3.13 3.12 3.11 3.10 3.14) do" in bat and "py -%%v" in bat
+    assert "sys.version_info[:2] <= (3, 14)" in bat and "activate.bat" in bat
+    sh = _launcher("run_studio.sh")
+    assert "for c in python3.13 python3.12 python3.11 python3.10 python3.14 python3; do" in sh
+    assert "sys.version_info[:2] <= (3, 14)" in sh and ".venv/bin/activate" in sh
+    assert not [n for n in (REPO / "constraints.txt").read_text(encoding="utf-8").splitlines() if n.startswith("-")]
+
+
+def test_launcher_line_endings():
+    assert "\r" not in _launcher("run_studio.sh")
+    lines = _launcher("run_studio.bat").split("\n")
+    assert all(line.endswith("\r") for line in lines[:-1]) and lines[-1] == "", "run_studio.bat needs CRLF"
+    if shutil.which("git") and (REPO / ".git").exists():
+        out = subprocess.run(["git", "-C", str(REPO), "check-attr", "eol", "--", "run_studio.bat", "run_studio.sh"],
+                             capture_output=True, text=True).stdout
+        assert "run_studio.bat: eol: crlf" in out and "run_studio.sh: eol: lf" in out
+
+
+@pytest.mark.skipif(not shutil.which("bash") or os.name == "nt", reason="needs bash")
+def test_shell_launcher_parses():
+    assert subprocess.run(["bash", "-n", str(REPO / "run_studio.sh")], capture_output=True).returncode == 0
 
 
 # ------------------------------------------------------------------ constraints
