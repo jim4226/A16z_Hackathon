@@ -10,5 +10,5 @@ if not exist .venv (
 call .venv\Scripts\activate.bat
 python -m pip install -q -r requirements.txt
 set PYTHONUTF8=1
-python -m morph.cli studio egg-picker --open
+python -m morph.cli studio egg-picker --open %*
 if errorlevel 1 pause

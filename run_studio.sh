@@ -6,4 +6,4 @@ git pull --ff-only || true
 [ -d .venv ] || python3 -m venv .venv
 . .venv/bin/activate
 pip install -q --upgrade pip && pip install -q -r requirements.txt
-PYTHONUTF8=1 python -m morph.cli studio egg-picker --open
+PYTHONUTF8=1 python -m morph.cli studio egg-picker --open "$@"

@@ -52,6 +52,31 @@ for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIP
 - The right panel (time card, grip force) is hidden when the window is narrower than 1280 px, as at
   150 % Windows display scaling: press **Ctrl** and **-** once.
 
+## Bring your own compute
+
+Morph runs entirely on the computer that starts it. CAD, simulations, PCB routing, the BOM and the
+manual are all computed there; only the optional API calls (Claude, Keewano, Darwin) leave the machine,
+and no GPU is needed. To do the work on a stronger computer (a desktop, a workstation or a cloud VM)
+and use it from a laptop, start Morph on that computer with `--remote` and open it in the laptop's browser:
+
+```bash
+run_studio.bat --remote         # Windows, on the stronger computer
+./run_studio.sh --remote        # macOS / Linux, including a server without a screen
+```
+
+The terminal prints a private link with an access code, such as `http://192.168.1.20:8765/?token=...`.
+Open it on the laptop. That browser stays signed in (for 30 days, or until Morph restarts with a new
+code); anyone without the code gets a page asking for it. To keep the same link across restarts, put
+`MORPH_TOKEN=` and a code of your choice (8 or more letters and digits) in `.env`. Keys added with the
+**Keys** button are saved on the computer running Morph, and the header reads **Live on** that
+computer's name, so it is clear which machine does the work. `python -m morph.cli doctor` shows each
+machine's CPU cores.
+
+The link is plain HTTP, so use it on a network you trust or over a VPN such as Tailscale. From
+anywhere else, use an SSH tunnel, which needs no `--remote`: start Morph normally on the server, run
+`ssh -L 8765:127.0.0.1:8765 you@server` on the laptop, and open http://127.0.0.1:8765. On a cloud VM,
+keep port 8765 closed to the internet and use the tunnel.
+
 ## Morph Studio: the whole-robot platform
 
 Morph Studio is R Cubed's platform for whole robots: a 5-axis arm with a force-sensing gripper, or an

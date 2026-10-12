@@ -278,6 +278,7 @@ async function reloadProject() {
   S.labels = {}; S.robotKey = null; S.justAdded = null;
   $('#messages').innerHTML = '';
   S.integrations = st.integrations || S.integrations;
+  S.compute = st.compute || S.compute;
   renderKeysDot();
   for (const m of st.history || []) addMsg(m.type, m.text, m.changes);
   if (!(st.history || []).length && st.current) addMsg('assistant', `Switched to ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`);
@@ -330,9 +331,10 @@ async function openRev(r) {
   } catch (e) { toast(`Couldn't load ${r}`); console.warn(e); }
 }
 function setConn(kind, text) {
-  const c = $('#conn');
+  const c = $('#conn'), cp = S.compute;
   c.className = 'conn ' + (kind === 'live' ? '' : kind);
-  $('span', c).textContent = text || { live: 'Live', off: 'Reconnecting', busy: 'Regenerating', fixture: 'Offline demo' }[kind] || kind;
+  $('span', c).textContent = text || { live: cp?.remote ? `Live on ${cp.host}` : 'Live', off: 'Reconnecting', busy: 'Regenerating', fixture: 'Offline demo' }[kind] || kind;
+  if (cp) c.title = cp.remote ? `Morph runs on ${cp.host} (${cp.cores} CPU cores); this browser only shows it` : `Morph runs on this computer (${cp.cores} CPU cores)`;
 }
 
 // ------------------------------------------------------------------ chat
@@ -866,6 +868,7 @@ async function boot() {
     S.projects = st.projects || [];
     S.revs = st.revs || [];
     S.integrations = st.integrations || {};
+    S.compute = st.compute || null;
     renderKeysDot();
     renderProjects();
     S.latest = st.current?.rev || null;
@@ -885,6 +888,7 @@ async function boot() {
     if (QS.get('present')) presenter.open();
   } catch (e) {
     console.error(e);
+    if (/^401/.test(e.message)) { location.href = '/'; return; }  // a remote Studio restarted with a new access code
     setConn('off', 'Offline');
     $('#insp').innerHTML = `<div class="empty"><div><div class="ill">${I('alert', 'lg')}</div><h4>Can't reach the Studio server</h4><p>Start it with <span class="mono">python -m morph.cli studio &lt;project&gt;</span>, or open <span class="mono">?fixture=1</span> for the offline demo data.</p></div></div>`;
   }

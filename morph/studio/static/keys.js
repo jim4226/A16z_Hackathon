@@ -46,7 +46,7 @@ export class KeysDialog {
     const kw = d.integrations?.keewano || {};
     this.el.innerHTML = `<div class="glass dlg" role="dialog" aria-label="API keys">
       <div class="dlg-h"><div class="kicon">${KEY_ICON}</div><div class="grow"><div class="t">API keys</div>
-        <div class="s">Optional: everything works without them. Saved only on this computer, in the <span class="mono">${esc(d.file || '.env')}</span> file next to <span class="mono">run_studio.bat</span> (git-ignored). Values are never shown again or sent anywhere except the service they belong to.</div></div>
+        <div class="s">Optional: everything works without them. Saved only on ${d.compute?.remote ? `<b>${esc(d.compute.host)}</b>, the computer running Morph Studio,` : 'this computer,'} in the <span class="mono">${esc(d.file || '.env')}</span> file next to <span class="mono">run_studio.bat</span> (git-ignored). Values are never shown again or sent anywhere except the service they belong to.</div></div>
         <button class="btn icon ghost" type="button" data-a="close" title="Close (Esc)">${I('x', 'sm')}</button></div>
       ${services.map((sv) => `<section class="ksec"><div class="ks-h"><b>${esc(sv)}</b>${keys.filter((k) => k.service === sv).every((k) => k.set) ? '<span class="tag good">set up</span>' : '<span class="tag neutral">not set up</span>'}</div>
         <div class="ks-n">${esc(SERVICE_NOTE[sv] || '')}</div>${keys.filter((k) => k.service === sv).map(field).join('')}</section>`).join('')}

@@ -206,15 +206,24 @@ def _set_aside_cut_off(proj):
 
 def cmd_studio(a):
     from .robot.pipeline2 import RobotProject
-    from .studio.server import serve
+    from .studio.server import access_token, is_loopback, serve
 
+    import re
     import socket
+    if getattr(a, "remote", False) and is_loopback(a.host):
+        a.host = "0.0.0.0"  # bring your own compute: other computers may use this Studio, with its access link
+    fixed = os.environ.get("MORPH_TOKEN", "").strip()
+    if fixed and not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", fixed):
+        sys.exit("MORPH_TOKEN must be 8 to 128 letters, digits, - or _ (it goes in the access link).")
+    token = access_token(a.host, fixed or None)
+    local = "127.0.0.1" if a.host in ("0.0.0.0", "") else a.host
+    link = f"http://{local}:{a.port}/" + (f"?token={token}" if token else "")
     with socket.socket() as sock:  # a Studio left running in another window would share the port on Windows
         sock.settimeout(1)
-        if sock.connect_ex((a.host, a.port)) == 0:
+        if sock.connect_ex((local, a.port)) == 0:
             if a.open:
-                open_app_window(f"http://{a.host}:{a.port}")
-            sys.exit(f"Morph Studio is already running at http://{a.host}:{a.port}. "
+                open_app_window(f"http://{local}:{a.port}")
+            sys.exit(f"Morph Studio is already running at http://{local}:{a.port}. "
                      "To restart it, close its CMD window first.")
     if os.environ.get("MUJOCO_GL") is None and sys.platform.startswith("linux"):
         os.environ["MUJOCO_GL"] = "egl"
@@ -250,10 +259,11 @@ def cmd_studio(a):
         if last and proj.load_results(last).get("pipeline_version") != pipeline_version():
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
             proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
-    if a.open:
+    headless = sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if a.open and not headless:  # a server without a screen: the link printed below is opened from another computer
         import threading
-        threading.Timer(1.5, open_app_window, args=(f"http://{a.host}:{a.port}",)).start()
-    serve(p, a.host, a.port, home=HOME)
+        threading.Timer(1.5, open_app_window, args=(link,)).start()
+    serve(p, a.host, a.port, home=HOME, token=token)
 
 
 EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
@@ -457,6 +467,8 @@ def cmd_doctor(a):
         print(f"[{mark}] {text}" + (f"\n         -> {fix}" if fix and ok is False else ""))
 
     print(f"Morph doctor ({platform.system()} {platform.release()}, {platform.machine()})\n")
+    line(None, f"this computer: {socket.gethostname()}, {os.cpu_count()} CPU cores (Morph's pipeline runs here; on a slow "
+               "laptop, run it on a stronger computer: README, 'Bring your own compute')")
     v = sys.version_info
     line((3, 10) <= v[:2] <= (3, 14), f"Python {platform.python_version()}",
          "install Python 3.10 to 3.14 from python.org, then run the launcher again")
@@ -613,6 +625,8 @@ def main(argv=None):
     s.add_argument("--open", action="store_true", help="open the browser when the server is up")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--remote", action="store_true",
+                   help="bring your own compute: let other computers use this Studio through a private access link")
     s.set_defaults(fn=cmd_studio)
 
     s = sub.add_parser("source", help="Darwin: shortlist agents that sell each part / build the PCB and prints")

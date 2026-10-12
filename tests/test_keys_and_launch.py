@@ -27,11 +27,12 @@ def env(tmp_path, monkeypatch):
 
 
 def _rev(root, rev, provenance=None, errors=None):
+    from morph.robot.pipeline2 import pipeline_version
     from morph.spec import Design
 
     (root / rev).mkdir(parents=True)
     (root / "meta.json").write_text(json.dumps({"kind": "robot"}))
-    res = {"parent": None, "label": "", "provenance": provenance or {}, "timings_s": {}}
+    res = {"parent": None, "label": "", "provenance": provenance or {}, "timings_s": {}, "pipeline_version": pipeline_version()}
     if errors:
         res["errors"] = errors
     (root / rev / "results.json").write_text(json.dumps(res))
@@ -98,17 +99,20 @@ def test_key_check_reports_a_rejected_key_without_raising(env, monkeypatch):
     assert not keys.check(["Keewano"])["Keewano"]["ok"]
 
 
-@pytest.fixture
-def studio_server(tmp_path, env):
+def _start(tmp_path, token=None):
+    """A real Studio server on a free port: local (Host allowlist) or remote (access token)."""
     from morph.robot.pipeline2 import RobotProject
     from morph.studio import server
 
     egg = tmp_path / "projects" / "egg-picker"
-    _rev(egg, "r001")
+    if not egg.exists():
+        _rev(egg, "r001")
     st = server.Studio(RobotProject(str(egg)), str(tmp_path / "projects"))
-    httpd = server._Server(("127.0.0.1", 0), server.make_handler(st, None))
+    st.remote = bool(token)
+    httpd = server._Server(("127.0.0.1", 0), server.make_handler(st, None, token))
     port = httpd.server_address[1]
-    httpd.RequestHandlerClass = server.make_handler(st, {f"127.0.0.1:{port}", f"localhost:{port}"})
+    if not token:
+        httpd.RequestHandlerClass = server.make_handler(st, {f"127.0.0.1:{port}", f"localhost:{port}"})
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
     def call(method, path, body=None, headers=None):
@@ -116,11 +120,17 @@ def studio_server(tmp_path, env):
         data = body if isinstance(body, (bytes, type(None))) else json.dumps(body).encode()
         conn.request(method, path, body=data, headers={"Content-Type": "application/json", **(headers or {})})
         r = conn.getresponse()
-        out = r.status, r.read()
+        out = r.status, r.read(), dict(r.getheaders())
         conn.close()
         return out
 
-    yield call, port
+    return call, port, httpd
+
+
+@pytest.fixture
+def studio_server(tmp_path, env):
+    call, port, httpd = _start(tmp_path)
+    yield (lambda *a, **k: call(*a, **k)[:2]), port
     httpd.shutdown()
     httpd.server_close()
 
@@ -186,3 +196,69 @@ def test_doctor_names_the_failed_stage_and_never_prints_keys(tmp_path, env, monk
     assert "egg-picker r001: electronics error (UnicodeEncodeError" in out
     assert "so101: not built yet" in out
     assert out.rstrip().endswith("Fix the lines marked FIX, then run this again.")
+
+
+def test_only_a_studio_other_computers_can_reach_needs_a_token():
+    from morph.studio.server import access_token
+
+    assert access_token("127.0.0.1") is None and access_token("localhost") is None
+    assert access_token("127.0.0.1", "fixed-code-1") is None  # local Studio: never a sign-in page
+    t = access_token("0.0.0.0")
+    assert len(t) >= 16 and t != access_token("0.0.0.0")      # a fresh code each start
+    assert access_token("192.168.1.20", "fixed-code-1") == "fixed-code-1"
+
+
+def test_remote_studio_only_serves_browsers_with_its_access_link(tmp_path, env):
+    call, port, httpd = _start(tmp_path, token="test-code-0123456")
+    try:
+        code, body, _ = call("GET", "/")
+        assert code == 401 and b"Access code" in body              # sign-in page, not the app
+        assert call("GET", "/api/state")[0] == 401
+        assert call("GET", "/static/app.js")[0] == 401
+        assert call("POST", "/api/keys", {"values": {"ANTHROPIC_API_KEY": "sk-ant-x"}})[0] == 401
+        assert not env.exists() and "ANTHROPIC_API_KEY" not in os.environ
+        code, body, _ = call("GET", "/?token=wrong-code")
+        assert code == 401 and b"did not match" in body
+        code, _, headers = call("GET", "/?token=test-code-0123456&tour=0")
+        assert code == 302 and headers["Location"] == "/?tour=0"   # the code leaves the address bar
+        cookie = headers["Set-Cookie"]
+        assert cookie.startswith(f"morph_access_{port}=test-code-0123456;") and "HttpOnly" in cookie and "SameSite=Lax" in cookie
+        signed_in = {"Cookie": cookie.split(";")[0], "Host": f"gpu-box.local:{port}"}  # any name the laptop uses
+        code, body, _ = call("GET", "/api/state", headers=signed_in)
+        assert code == 200 and json.loads(body)["compute"]["remote"] is True
+        assert call("GET", "/", headers=signed_in)[0] == 200
+        assert call("GET", "/api/keys", headers={"X-Morph-Token": "test-code-0123456"})[0] == 200  # scripts
+        code, body, _ = call("POST", "/api/keys", {"values": {"KEEWANO_PROJECT_ID": "p1"}},
+                             headers={**signed_in, "Origin": f"https://gpu-box.local:{port}"})  # behind an HTTPS proxy
+        assert code == 200 and json.loads(body)["changed"] == ["KEEWANO_PROJECT_ID"]
+        assert call("POST", "/api/reset", {}, headers={**signed_in, "Origin": "http://attacker.example"})[0] == 403
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def _robots(home):
+    for name in ("egg-picker", "so101"):
+        _rev(home / name, "r001")
+
+
+def test_remote_flag_opens_the_studio_to_other_computers(tmp_path, env, monkeypatch):
+    from morph.studio import server
+
+    _robots(tmp_path / "projects")
+    monkeypatch.setattr(cli, "HOME", str(tmp_path / "projects"))
+    got = {}
+    monkeypatch.setattr(server, "serve", lambda p, host, port, home=None, token=None: got.update(host=host, token=token))
+    monkeypatch.delenv("MORPH_TOKEN", raising=False)
+    a = lambda **k: argparse.Namespace(**{"name": "egg-picker", "host": "127.0.0.1", "port": _free_port(), "open": False,
+                                          "remote": False, **k})
+    cli.cmd_studio(a())
+    assert got == {"host": "127.0.0.1", "token": None}               # the default stays local-only
+    cli.cmd_studio(a(remote=True))
+    assert got["host"] == "0.0.0.0" and len(got["token"]) >= 16
+    monkeypatch.setenv("MORPH_TOKEN", "team-code-2026")
+    cli.cmd_studio(a(remote=True))
+    assert got["token"] == "team-code-2026"                         # same link after a restart
+    monkeypatch.setenv("MORPH_TOKEN", "a b;c")
+    with pytest.raises(SystemExit):
+        cli.cmd_studio(a(remote=True))
