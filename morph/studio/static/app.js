@@ -511,8 +511,20 @@ function markTabs(cur) {
   const n = Object.values(cur?.provenance || {}).filter((p) => p === 'computed').length;
   const tot = nodesOf(cur).length;
   const secs = Object.values(cur?.timings || {}).reduce((a, b) => a + (+b || 0), 0);
-  $('#tabsInfo').innerHTML = cur ? `<span class="chip mono">${esc(cur.rev)}</span><span title="${fmtSec(secs)} of compute">${n}/${tot} rebuilt</span>` : '';
+  $('#tabsInfo').innerHTML = cur ? `<span class="chip mono">${esc(cur.rev)}</span><span title="${fmtSec(secs)} of compute">${n}/${tot} rebuilt</span>` +
+    (FIXTURE ? '' : `<button class="btn ghost xport" type="button" data-export="${esc(cur.rev)}" title="Download ${esc(cur.rev)} as a ZIP: CAD, simulations, electronics and firmware, manufacturing files and the manual, with a manifest of which stages completed">${I('download', 'sm')}Export</button>`) : '';
   return regen;
+}
+async function exportRev(rev) {  // ask first, so a refusal is a message rather than a broken download
+  const url = `/api/export?rev=${encodeURIComponent(rev)}`;
+  const r = await fetch(`${url}&check=1`, { cache: 'no-store' }).catch(() => null);
+  const out = r ? await r.json().catch(() => ({})) : {};
+  if (!r?.ok) { toast(out.error || "Couldn't reach the Studio server"); return; }
+  const a = Object.assign(document.createElement('a'), { href: url, download: '' });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast(`Downloading ${rev} as a ZIP`);
 }
 
 // ------------------------------------------------------------------ inspector
@@ -844,6 +856,7 @@ async function boot() {
   };
   viewer.onState = () => panels.robot.sync();
   $$('#tabs .tab').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+  $('#tabsInfo').addEventListener('click', (e) => { const b = e.target.closest('[data-export]'); if (b) exportRev(b.dataset.export); });
   document.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
     const i = +e.key;

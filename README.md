@@ -95,6 +95,9 @@ regenerates only what depends on it.
   links, and the **Darwin agents** view, which finds an agent for every part and fabrication job).
 - **Inspector:** the time-saved card (cited by-hand hours vs measured time), metric deltas, the
   grip-force window (with the optional Keewano calibration), and issues.
+- **Export** (next to the revision number above the tabs): the revision as a ZIP of its CAD,
+  simulations, electronics and firmware, manufacturing files and manual, with a manifest of which stages
+  completed and the firmware marked unverified. Keys, settings, chat and the ledger are never included.
 - **Present** (button or `P`): the demo as 14 press-through steps with captions.
 - More: [docs/SPONSORS.md](docs/SPONSORS.md) (Keewano and Darwin), [docs/TIME_SAVED.md](docs/TIME_SAVED.md)
   (time-saved sources), [docs/PLATFORM_CONTRACTS.md](docs/PLATFORM_CONTRACTS.md) (how the stages fit together).

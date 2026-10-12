@@ -590,6 +590,26 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 self.end_headers()
                 shutil.copyfileobj(fh, self.wfile, 1 << 16)
 
+        def _export(self, rev, full: bool, check: bool):
+            from . import export
+            try:
+                if check:  # the button asks first, so a refusal is a message rather than a broken download
+                    export.check(studio.p, rev, full=full)
+                    return self._json(200, {"ok": True})
+                archive, filename = export.build_export(studio.p, rev, full=full)
+            except export.ExportError as exc:
+                return self._error(exc.status, str(exc))
+            with archive:
+                size = archive.seek(0, os.SEEK_END)
+                archive.seek(0)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Content-Length", str(size))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                shutil.copyfileobj(archive, self.wfile, 1 << 16)
+
         def _keys_state(self):
             from .. import keys, settings
             return {"keys": keys.status(), "integrations": integrations(), "settings": settings.load(),
@@ -625,6 +645,9 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 if rev not in studio.p.revs():
                     return self._error(404, "unknown rev")
                 return self._json(200, rev_payload(studio.p, rev))
+            if u.path == "/api/export":
+                q = parse_qs(u.query)
+                return self._export(q.get("rev", [None])[0], q.get("full", [""])[0] in ("1", "true", "yes"), "check" in q)
             if u.path == "/api/events":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")

@@ -769,3 +769,6 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .kt b { font-weight: 600; }
 .kt small { display: block; color: var(--dim); font-size: 11px; margin-top: 2px; line-height: 1.4; }
 .kt input:disabled + i { opacity: .5; }
+
+/* ---- export ---- */
+#tabs .tinfo .xport { height: 22px; padding: 0 8px; font-size: 11.5px; gap: 4px; }
