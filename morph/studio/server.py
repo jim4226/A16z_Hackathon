@@ -12,16 +12,21 @@ revision.
 
 from __future__ import annotations
 
+import hmac
+import html
 import json
 import mimetypes
 import os
 import queue
+import secrets
 import shutil
+import socket
 import threading
 import time
 import traceback
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from ..robot.pipeline2 import LABELS, RobotProject, params_for, pipeline_version
 from ..spec import Design
@@ -128,6 +133,48 @@ def integrations() -> dict:
             "darwin": {"search": True}}
 
 
+def is_loopback(host: str) -> bool:
+    return host in ("localhost", "::1") or host.startswith("127.")
+
+
+def access_token(host: str, token: str | None = None) -> str | None:
+    """Bring your own compute: a Studio that other computers can reach (any address but loopback) only
+    serves browsers that opened its access link; `token` keeps the link the same across restarts.
+    Local-only Studios need no token."""
+    return None if is_loopback(host) else (token or secrets.token_urlsafe(12))
+
+
+def lan_address() -> str | None:
+    """The address other computers reach this one by, or None (no network)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("10.255.255.255", 1))  # UDP: nothing is sent, it only picks the outgoing interface
+            ip = sock.getsockname()[0]
+        return None if ip.startswith("127.") else ip
+    except OSError:
+        return None
+
+
+def compute_info(remote: bool) -> dict:
+    """Where the pipeline runs: shown in the header, so a laptop browser shows which machine does the work."""
+    return {"host": socket.gethostname(), "cores": os.cpu_count() or 0, "remote": remote}
+
+
+SIGN_IN = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Morph Studio: access code</title><style>
+:root { color-scheme: dark; } body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #08090c; color: #e9ecf2;
+  font: 14px/1.5 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { width: min(440px, calc(100vw - 32px)); padding: 22px; border: 1px solid #262c38; border-radius: 14px; background: #0d0f14; }
+h1 { font-size: 17px; margin: 0 0 6px; } p { color: #b9c0cd; margin: 0 0 14px; } .bad { color: #ff6b6b; }
+form { display: flex; gap: 8px; } input { flex: 1; min-width: 0; height: 36px; border-radius: 8px; border: 1px solid #343b49; background: #08090c;
+  color: #e9ecf2; padding: 0 10px; font: 13px ui-monospace, Menlo, Consolas, monospace; }
+button { height: 36px; border: 0; border-radius: 8px; padding: 0 14px; background: #7091ff; color: #fff; font-weight: 600; cursor: pointer; }
+</style></head><body><main><h1>Morph Studio on HOST</h1>
+<p>This Studio runs on another computer. Open the link printed in the terminal where it was started, or paste its access code.</p>BAD
+<form method="get" action="/"><input name="token" autocomplete="off" spellcheck="false" placeholder="Access code" aria-label="Access code" autofocus>
+<button type="submit">Open</button></form></main></body></html>"""
+
+
 def rev_payload(p: RobotProject, rev: str) -> dict:
     res, d = p.load_results(rev), p.load_design(rev)
     base = f"/files/{rev}"
@@ -175,6 +222,7 @@ class Studio:
         self.home = home or os.path.dirname(project.root)
         self.start = os.path.basename(project.root)
         self.sourcing = threading.Lock()
+        self.remote = False  # set by serve() when other computers may use this Studio
 
     def projects(self) -> list:
         out = []
@@ -201,7 +249,7 @@ class Studio:
     def state(self):
         rev = self.p.latest()
         out = {"project": os.path.basename(self.p.root), "projects": self.projects(), "revs": self.p.revs(),
-               "history": self.hub.history, "integrations": integrations()}
+               "history": self.hub.history, "integrations": integrations(), "compute": compute_info(self.remote)}
         if rev:
             out["current"] = rev_payload(self.p, rev)
             parent = out["current"]["parent"]
@@ -323,7 +371,7 @@ class Studio:
         self.apply(changes, f"edit: {desc}", reply=f"Parameter edit: {desc}.")
 
 
-def make_handler(studio: Studio, allowed_hosts: set | None = None):
+def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -337,8 +385,44 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None):
                 return False
             if post:
                 origin = self.headers.get("Origin")
-                if origin and origin.lower() != f"http://{host}":
+                if origin and origin.lower() not in (f"http://{host}", f"https://{host}"):
                     return False
+            return True
+
+        def _cookie_name(self) -> str:
+            return f"morph_access_{self.server.server_address[1]}"  # cookies ignore the port
+
+        def _signed_in(self) -> bool:
+            """Remote Studios: the browser opened the access link (its cookie), or a script sends the token."""
+            if not token:
+                return True
+            jar = SimpleCookie()
+            try:
+                jar.load(self.headers.get("Cookie") or "")
+            except Exception:  # noqa: BLE001  (a malformed cookie header is just "not signed in")
+                pass
+            got = jar[self._cookie_name()].value if self._cookie_name() in jar else (self.headers.get("X-Morph-Token") or "")
+            return hmac.compare_digest(got.encode(), token.encode())
+
+        def _sign_in_page(self, bad=False):
+            page = SIGN_IN.replace("HOST", html.escape(socket.gethostname())).replace(
+                "BAD", '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
+            return self._send(401, page.encode(), "text/html; charset=utf-8")
+
+        def _access_link(self, u) -> bool:
+            """GET /?token=...: a correct code signs this browser in (a cookie) and drops the code from the URL."""
+            q = parse_qs(u.query)
+            if not token or "token" not in q or u.path not in ("/", "/index.html"):
+                return False
+            if not hmac.compare_digest(q["token"][0].strip().encode(), token.encode()):
+                self._sign_in_page(bad=True)
+                return True
+            rest = urlencode([(k, v) for k, vs in q.items() if k != "token" for v in vs])
+            self.send_response(302)
+            self.send_header("Location", "/" + (f"?{rest}" if rest else ""))
+            self.send_header("Set-Cookie", f"{self._cookie_name()}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return True
 
         def _send(self, code, body: bytes, ctype="application/json"):
@@ -370,6 +454,12 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None):
             u = urlparse(self.path)
             if not self._trusted(post=False):
                 return self._send(403, b"forbidden", "text/plain")
+            if self._access_link(u):
+                return None
+            if not self._signed_in():
+                if u.path in ("/", "/index.html"):
+                    return self._sign_in_page()
+                return self._send(401, b'{"ok":false,"error":"open the access link printed where Morph Studio was started"}')
             if u.path in ("/", "/index.html"):
                 return self._file(os.path.join(STATIC, "index.html"))
             if u.path.startswith("/static/"):
@@ -383,7 +473,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None):
             if u.path == "/api/keys":
                 from .. import keys
                 return self._send(200, json.dumps({"keys": keys.status(), "integrations": integrations(),
-                                                   "file": os.path.basename(keys.ENV_PATH)}).encode())
+                                                   "file": os.path.basename(keys.ENV_PATH),
+                                                   "compute": compute_info(studio.remote)}).encode())
             if u.path == "/api/rev":
                 rev = parse_qs(u.query).get("rev", [None])[0]
                 if rev not in studio.p.revs():
@@ -414,6 +505,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None):
             u = urlparse(self.path)
             if not self._trusted(post=True):
                 return self._send(403, b"forbidden", "text/plain")
+            if not self._signed_in():
+                return self._send(401, b'{"ok":false,"error":"open the access link printed where Morph Studio was started"}')
             n = int(self.headers.get("Content-Length", 0))
             try:
                 body = json.loads(self.rfile.read(n) or b"{}")
@@ -472,19 +565,30 @@ class _Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None):
+def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None, token: str | None = None):
     if not project.revs():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     studio = Studio(project, home)
-    # requests must name this server: 127.0.0.1/localhost, or the bind address if it was given explicitly
-    allowed = None if host in ("0.0.0.0", "::", "") else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}
+    token = access_token(host, token)
+    studio.remote = bool(token)
+    # local Studio: requests must name this server (127.0.0.1/localhost); remote Studio: the access token decides
+    allowed = None if token else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}
     try:
-        httpd = _Server((host, port), make_handler(studio, allowed))
+        httpd = _Server((host, port), make_handler(studio, allowed, token))
     except OSError as exc:
         raise SystemExit(f"Port {port} is busy ({exc}): Morph Studio is probably already running. "
                          "Close its CMD window, then start again.")
     httpd.daemon_threads = True
-    print(f"Morph Studio: http://{host}:{port}  (project {project.root}; Ctrl+C to stop)")
+    if token:
+        where = lan_address() if host in ("0.0.0.0", "") else host
+        print(f"Morph Studio is running on {socket.gethostname()} ({os.cpu_count()} CPU cores) for other computers too.")
+        print("Open this link in a browser on any computer that can reach this one (it signs that browser in):")
+        for h in [x for x in (where,) if x]:
+            print(f"    http://{h}:{port}/?token={token}")
+        print(f"    http://127.0.0.1:{port}/?token={token}   (on this computer)")
+        print(f"Access code: {token}   Project {project.root}; Ctrl+C to stop.")
+    else:
+        print(f"Morph Studio: http://{host}:{port}  (project {project.root}; Ctrl+C to stop)")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
