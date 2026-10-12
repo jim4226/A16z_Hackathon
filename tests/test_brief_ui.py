@@ -156,5 +156,82 @@ def test_refused(page):
     assert pg.locator('[data-a="build"], [data-a="nearest"]').count() == 0
 
 
+def test_refused_by_a_service_says_what_was_sent(page):
+    """Only the local filter refuses before anything leaves the computer; a SubQ or Claude refusal says so honestly."""
+    pg = page
+    pg.goto(pg.base)
+    pg.click(".nr-headbtn")
+    pg.fill("#nr-text", "help me sort socks")
+    with pg.expect_response(lambda r: r.url.endswith("/api/brief") and r.request.method == "POST") as resp:
+        pg.click('[data-a="start"]')
+    ev = [e for e in resp.value.json()["_events"] if e["type"] == "brief"][-1]
+    pg.wait_for_selector(".nr-q", timeout=15000)
+    ev = dict(ev, status="refused", questions=[], updated=ev["updated"] + 1, flags=dict(ev["flags"], harm="subq harm 0.91", harm_by="subq"),
+              scope={"status": "out_of_scope", "notes": ["Morph doesn't design that."], "nearest": None})
+    pg.evaluate("ev => window.newrobot.emit(ev)", ev)
+    pg.wait_for_selector(".nr-note.bad", timeout=5000)
+    t = pg.inner_text(".nr-note.bad")
+    assert "Nothing was designed, and nothing more was sent to SubQ Snap (AI)." in t and "sent anywhere" not in t
+
+
+def test_late_older_copy_is_ignored(page):
+    """A brief event or poll reply older than what the dialog shows (a slow GET, a replayed stream) changes nothing."""
+    pg = page
+    pg.goto(pg.base)
+    pg.click(".nr-headbtn")
+    pg.fill("#nr-text", "help me sort socks")
+    with pg.expect_response(lambda r: r.url.endswith("/api/brief") and r.request.method == "POST") as resp:
+        pg.click('[data-a="start"]')
+    old = [e for e in resp.value.json()["_events"] if e["type"] == "brief"][-1]
+    assert old["status"] == "asking"
+    pg.wait_for_selector(".nr-q", timeout=15000)
+    pg.click('[data-a="defaults"]')
+    pg.wait_for_selector(".nr-summary", timeout=15000)
+    pg.evaluate("ev => window.newrobot.emit(ev)", old)
+    assert pg.locator(".nr-summary").count() == 1 and pg.locator(".nr-q").count() == 0
+
+
+def test_events_that_beat_the_reply(page):
+    """On the Studio a first turn's events can arrive before the 202 reply names the brief: they are kept, not lost."""
+    pg = page
+    pg.goto(pg.base)
+    pg.evaluate("""() => {
+      const s = window.newrobot.studio;
+      s.api.get = () => new Promise(() => {});                    // no poll to fall back on
+      s.api.post = async (path, body) => {
+        const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await r.json();
+        for (const ev of data._events || []) window.newrobot.emit(ev);   // the stream wins the race
+        delete data._events;
+        return { ...data, status: 202, busy: true, ok: true };
+      };
+    }""")
+    pg.click(".nr-headbtn")
+    pg.fill("#nr-text", "something to pick strawberries")
+    pg.click('[data-a="start"]')
+    pg.wait_for_selector(".nr-q", timeout=5000)
+    assert "feasibility" in pg.inner_text(".nr-agents-mini")
+
+
+def test_stylesheet_loads_once(page):
+    """newrobot.css loads itself unless its section was appended to style.css (the --nr-css marker)."""
+    pg = page
+
+    def appended(route):
+        resp = route.fetch()
+        route.fulfill(response=resp, body=resp.text() + "\n:root { --nr-css: 1; }\n")
+
+    pg.route("**/static/style.css", appended)
+    try:
+        pg.goto(pg.base)
+        pg.wait_for_selector(".nr-headbtn")
+        assert pg.locator('link[href$="newrobot.css"]').count() == 0
+    finally:
+        pg.unroute("**/static/style.css")
+    pg.goto(pg.base)
+    pg.wait_for_selector(".nr-headbtn")
+    assert pg.locator('link[href$="newrobot.css"]').count() == 1
+
+
 def test_no_script_errors(page):
     assert page.errors == []

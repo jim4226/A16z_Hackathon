@@ -21,6 +21,7 @@ const ICON = {  // used when studio.I has no such icon
 let studio = null;
 let root = null;
 let st = null;
+let reqSeq = 0;  // every POST gets an id; a poll only answers for the request that started it
 const timers = new Set();
 
 const esc = (s) => (studio?.esc ? studio.esc(s) : String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
@@ -31,14 +32,16 @@ function I(name, size = '') {
 }
 const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
 const fresh = () => ({ view: 'describe', text: '', brief: null, id: null, busy: false, agents: {}, sel: {}, error: '', name: '',
-  build: null, project: null, stages: {}, done: null, started: 0, waitedSince: 0, notice: '' });
+  build: null, project: null, stages: {}, done: null, started: 0, waitedSince: 0, notice: '', req: 0, early: {} });
+const stopTimers = () => { for (const t of timers) clearTimeout(t); timers.clear(); };
 
 // ------------------------------------------------------------------ public
 export function init(s) {
   studio = s;
   st = fresh();
   const css = new URL('./newrobot.css', import.meta.url).href;
-  if (!document.querySelector(`link[href="${css}"]`)) {
+  const inStyle = getComputedStyle(document.documentElement).getPropertyValue('--nr-css').trim();  // appended to style.css
+  if (!inStyle && !document.querySelector(`link[href="${css}"]`)) {
     const l = document.createElement('link');
     l.rel = 'stylesheet';
     l.href = css;
@@ -100,8 +103,7 @@ function mount() {
 }
 
 function close() {
-  for (const t of timers) clearTimeout(t);
-  timers.clear();
+  stopTimers();
   if (studio.modal?.close) studio.modal.close();
   else root?.closest('.modal')?.remove();
 }
@@ -137,39 +139,47 @@ async function start(text) {
   st.busy = true;
   st.agents = {};
   st.view = 'thinking';
+  const req = (st.req = ++reqSeq);
   render();
   const out = await post({ text });
+  if (req !== st.req) return;
   if (!out) { st.view = 'describe'; render(); return; }
-  accept(out);
+  accept(out, req);
 }
 
 async function send(body) {
   if (st.busy || !st.id) return;
   st.busy = true;
+  const req = (st.req = ++reqSeq);
   render();
   const out = await post({ brief_id: st.id, ...body });
-  if (out) accept(out);
+  if (out && req === st.req) accept(out, req);
 }
 
-function accept(out) {  // a POST reply: 202 while the turn runs (events follow), 200 when the server ran it inline
+function accept(out, req) {  // a POST reply: 202 while the turn runs (events follow), 200 when the server ran it inline
   st.id = out.brief_id || st.id;
+  const held = st.early[st.id] || [];
+  st.early = {};
+  for (const ev of held) (ev.type === 'brief' ? onBrief : onAgent)(ev);
   if (out.build) return;
-  if (out.busy) { st.waitedSince = Date.now(); later(poll, 2500); return; }
+  if (out.busy) { st.waitedSince = Date.now(); later(() => poll(req), 2500); return; }
   if (out.brief) update(out.brief);
 }
 
-async function poll() {  // the brief event is the fast path; GET covers a dropped event stream
-  if (!alive() || !st.busy || !st.id) return;
+async function poll(req) {  // the brief event is the fast path; GET covers a dropped event stream
+  if (!alive() || !st.busy || !st.id || req !== st.req) return;
   try {
     const res = await call(studio.api.get('/api/brief', { id: st.id }));
+    if (req !== st.req) return;
     if (res.ok && res.data?.brief && !res.data.busy) { update(res.data.brief); return; }
   } catch (e) { /* keep waiting for the event */ }
-  if (Date.now() - st.waitedSince < 90000) later(poll, 1500);
+  if (Date.now() - st.waitedSince < 90000) later(() => poll(req), 1500);
   else { st.busy = false; st.error = 'No answer from the Studio server. Try again.'; render(); }
 }
 
 function update(b) {
   if (!b || (st.id && b.id && b.id !== st.id)) return;
+  if (st.brief && st.brief.id === b.id && (b.updated || 0) < (st.brief.updated || 0)) return;  // an older copy, late
   st.brief = b;
   st.id = b.id;
   st.busy = !!b.busy;
@@ -183,14 +193,21 @@ function update(b) {
 }
 
 // ------------------------------------------------------------------ events
+function hold(id, ev) {  // a first turn is in flight: its events can beat the reply that names the brief, so keep them
+  if (st.id || st.view !== 'thinking' || !id) return false;
+  const q = (st.early[id] ||= []);
+  if (q.length < 40) q.push(ev);
+  return true;
+}
+
 function onBrief(ev) {
-  if (!st || !ev || ev.id !== st.id) return;
+  if (!st || !ev || hold(ev.id, ev) || ev.id !== st.id) return;
   if (ev.status === 'cancelled') return;
   update(ev);
 }
 
 function onAgent(ev) {
-  if (!st || !ev) return;
+  if (!st || !ev || (ev.brief && hold(ev.brief, ev))) return;
   if (ev.brief && ev.brief !== st.id) return;
   if (!ev.brief && !(st.project && (ev.project === st.project || !ev.project))) return;
   st.agents[ev.role] = ev;
@@ -539,7 +556,9 @@ function oosView() {
 
 function refusedView() {
   const n = (st.brief?.scope?.notes || [])[0] || '';
-  return `${requestBubble()}<div class="nr-note bad">${I('alert', 'sm')}<div><b>Nothing was designed or sent anywhere.</b><p>${esc(n)}</p>
+  const by = st.brief?.flags?.harm_by || 'rules';  // the local filter refuses before any request leaves this computer
+  const what = by === 'rules' ? 'Nothing was designed or sent anywhere.' : `Nothing was designed, and nothing more was sent to ${PROVIDER[by] || by}.`;
+  return `${requestBubble()}<div class="nr-note bad">${I('alert', 'sm')}<div><b>${esc(what)}</b><p>${esc(n)}</p>
     <p>Describe a handling, sorting, lab, kitchen or hobby task instead.</p></div></div>`;
 }
 
@@ -636,7 +655,9 @@ async function act(a, el) {
   if (a === 'defaults' || a === 'nearest') { await send({ action: 'defaults' }); return; }
   if (a === 'buildnow' || a === 'build') { await build(); return; }
   if (a === 'restart' || a === 'rephrase') {
-    if (st.id) post({ brief_id: st.id, action: 'cancel' });
+    stopTimers();
+    const id = st.id;  // fire and forget: a failed cancel only leaves a draft that expires in 7 days
+    if (id) Promise.resolve().then(() => call(studio.api.post('/api/brief', { brief_id: id, action: 'cancel' }))).catch(() => {});
     const t = st.brief?.request || st.text;
     st = fresh();
     st.text = t;
@@ -653,10 +674,12 @@ async function act(a, el) {
 async function build() {
   if (st.busy || !st.id) return;
   st.busy = true;
+  const req = (st.req = ++reqSeq);
   render();
   const body = { brief_id: st.id, action: 'build' };
   if (NAME_RE.test(st.name || '')) body.name = st.name;
   const out = await post(body);
+  if (req !== st.req) return;
   st.busy = false;
   if (!out) return;
   st.build = out.build;

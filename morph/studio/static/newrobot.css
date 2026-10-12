@@ -1,4 +1,5 @@
-/* ---- newrobot ---- New robot dialog (newrobot.js loads this file; it only uses style.css tokens) */
+/* ---- newrobot ---- New robot dialog (newrobot.js loads this file unless it is appended to style.css; style.css tokens only) */
+:root { --nr-css: 1; }
 .nr-dlg { width: min(960px, calc(100vw - 32px)) !important; max-height: 90vh; display: flex; flex-direction: column; padding: 0 !important; overflow: hidden; }
 .nr-dlg > .nr.nr-inner, .nr-dlg.nr { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .nr { color: var(--ink); }
