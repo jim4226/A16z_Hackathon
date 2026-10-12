@@ -12,12 +12,16 @@ revision.
 
 from __future__ import annotations
 
+import base64
+import errno
+import hashlib
 import hmac
 import html
 import json
 import mimetypes
 import os
 import queue
+import re
 import secrets
 import shutil
 import socket
@@ -28,20 +32,25 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
-from ..robot.pipeline2 import LABELS, RobotProject, params_for, pipeline_version
+from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline_version
 from ..spec import Design
-from .intent import OBJECTS, interpret, object_changes
+from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
+from .security import (MAX_BODY, MAX_MESSAGE, BodyError, contained_path, content_length, json_object, looks_like_secret,
+                       param_changes, project_name)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 
 class Hub:
+    MAX_EVENTS = 500    # per open tab: a tab that stops reading loses its oldest events (then reloads), never the build
+    MAX_HISTORY = 500   # chat messages replayed to a new tab
+
     def __init__(self):
         self.clients, self.lock = [], threading.Lock()
         self.history = []
 
     def subscribe(self):
-        q = queue.Queue()
+        q = queue.Queue(maxsize=self.MAX_EVENTS)
         with self.lock:
             self.clients.append(q)
         return q
@@ -52,11 +61,21 @@ class Hub:
                 self.clients.remove(q)
 
     def send(self, event: dict):
-        if event.get("type") in ("user", "assistant"):
-            self.history.append(event)
         with self.lock:
+            if event.get("type") in ("user", "assistant"):
+                self.history.append(event)
+                del self.history[:-self.MAX_HISTORY]
             for q in self.clients:
-                q.put(event)
+                try:
+                    q.put_nowait(event)
+                except queue.Full:  # drop the oldest and tell the tab to reload its state
+                    for _ in range(2):
+                        try:
+                            q.get_nowait()
+                        except queue.Empty:
+                            break
+                    q.put_nowait({"type": "resync"})
+                    q.put_nowait(event)
 
 
 def _url(base: str, rel: str | None) -> str | None:
@@ -126,11 +145,17 @@ def is_robot_project(root: str) -> bool:
 
 
 def integrations() -> dict:
-    """Which services are configured on this machine (keys come from the environment)."""
-    env = os.environ.get
-    return {"claude": {"chat": bool(env("ANTHROPIC_API_KEY"))},
-            "keewano": {"send": bool(env("KEEWANO_API_KEY")), "query": bool(env("KEEWANO_PAT") and env("KEEWANO_PROJECT_ID"))},
-            "darwin": {"search": True}}
+    """Which services are configured on this machine (keys come from the environment) and switched on in
+    the settings: `configured` means the keys are there, the other flags mean Morph will actually call it."""
+    from .. import settings
+    env, s, net = os.environ.get, settings.load(), settings.network_allowed()
+    claude = bool(env("ANTHROPIC_API_KEY"))
+    send, query = bool(env("KEEWANO_API_KEY")), bool(env("KEEWANO_PAT") and env("KEEWANO_PROJECT_ID"))
+    return {"claude": {"configured": claude, "chat": claude and net},
+            "keewano": {"configured": send and query, "send": send and net and settings.telemetry_enabled(),
+                        "query": query and net, "calibration": query and net and s["calibration_enabled"]},
+            "darwin": {"search": net and s["sourcing_enabled"]},
+            "network": net}
 
 
 def is_loopback(host: str) -> bool:
@@ -219,41 +244,60 @@ def rev_payload(p: RobotProject, rev: str) -> dict:
 class Studio:
     def __init__(self, project: RobotProject, home: str | None = None):
         self.p, self.hub, self.busy = project, Hub(), threading.Lock()
-        self.home = home or os.path.dirname(project.root)
+        self.home = os.path.realpath(home or os.path.dirname(project.root))
         self.start = os.path.basename(project.root)
         self.sourcing = threading.Lock()
         self.remote = False  # set by serve() when other computers may use this Studio
 
+    def _root(self, name) -> str | None:
+        """The folder of an existing robot project called `name`, or None. Checked before anything is
+        created: RobotProject() makes its folder, so it must never see a name that came from a request."""
+        try:
+            name = project_name(name)
+        except ValueError:
+            return None
+        root = contained_path(self.home, name, decode=False)
+        if not root or not os.path.isdir(root) or not is_robot_project(root):
+            return None
+        return root
+
     def projects(self) -> list:
         out = []
         for name in sorted(os.listdir(self.home)) if os.path.isdir(self.home) else []:
-            root = os.path.join(self.home, name)
-            meta = os.path.join(root, "meta.json")
-            if os.path.isfile(meta) and is_robot_project(root) and RobotProject(root).revs():
-                m = json.load(open(meta, encoding="utf-8"))
-                if m.get("kind") == "robot":
-                    rp = RobotProject(root)
-                    out.append({"name": name, "source": m.get("source") or "", "need": m.get("need", ""),
-                                "at_start": rp.latest() == baseline(rp)})
+            root = self._root(name)  # skips .folders, odd names and links that point out of the projects folder
+            if not root or not RobotProject(root).revs():
+                continue
+            try:
+                with open(os.path.join(root, "meta.json"), encoding="utf-8") as fh:
+                    m = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            rp = RobotProject(root)
+            out.append({"name": name, "source": m.get("source") or "", "need": m.get("need", ""),
+                        "at_start": rp.latest() == baseline(rp)})
         return out
 
     def switch(self, name: str) -> bool:
-        root = os.path.join(self.home, name)
-        if not RobotProject(root).revs() or self.busy.locked():
+        root = self._root(name)
+        if not root or not RobotProject(root).revs() or not self.busy.acquire(blocking=False):
             return False
-        self.p = RobotProject(root)
-        self.hub.history.clear()
-        self.hub.send({"type": "project", "project": name})
-        return True
+        try:
+            self.p = RobotProject(root)
+            self.hub.history.clear()
+            self.hub.send({"type": "project", "project": name})
+            return True
+        finally:
+            self.busy.release()
 
     def state(self):
-        rev = self.p.latest()
-        out = {"project": os.path.basename(self.p.root), "projects": self.projects(), "revs": self.p.revs(),
-               "history": self.hub.history, "integrations": integrations(), "compute": compute_info(self.remote)}
+        p = self.p
+        rev = p.latest()
+        out = {"project": os.path.basename(p.root), "projects": self.projects(), "revs": p.revs(),
+               "history": list(self.hub.history), "integrations": integrations(), "compute": compute_info(self.remote)}
         if rev:
-            out["current"] = rev_payload(self.p, rev)
+            out["current"] = rev_payload(p, rev)
             parent = out["current"]["parent"]
-            out["previous"] = rev_payload(self.p, parent) if parent else None
+            out["previous"] = rev_payload(p, parent) if parent else None
         return out
 
     def _expand(self, changes: dict) -> dict:
@@ -299,6 +343,7 @@ class Studio:
         base = self.p.latest()
         cur = self.p.load_design(base)
         it = interpret(msg, cur, (self.p.load_results(base).get("summary") or {}).get("grip_target_n"))
+        it["changes"] = {k: v for k, v in (it.get("changes") or {}).items() if k not in CHAT_FORBIDDEN}
         if not it["changes"]:
             self.hub.send({"type": "user", "text": msg})
             self.hub.send({"type": "assistant", "text": it["reply"], "noop": True})
@@ -336,8 +381,8 @@ class Studio:
             return False
         try:
             for name in sorted(os.listdir(self.home)):
-                root = os.path.join(self.home, name)
-                if not is_robot_project(root):
+                root = self._root(name)
+                if not root:
                     continue
                 p = RobotProject(root)
                 keep = baseline(p)
@@ -371,10 +416,50 @@ class Studio:
         self.apply(changes, f"edit: {desc}", reply=f"Parameter edit: {desc}.")
 
 
+SECURITY_HEADERS = (("X-Content-Type-Options", "nosniff"), ("X-Frame-Options", "DENY"), ("Referrer-Policy", "no-referrer"),
+                    ("Cross-Origin-Resource-Policy", "same-origin"))
+DEFAULT_CSP = "frame-ancestors 'none'"
+# generated files (manual.html, schematic.svg, files from imported robots) never run script with the Studio's origin
+ARTIFACT_CSP = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'none'"
+SIGN_IN_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+
+
+def _sha256(text: str) -> str:
+    return "'sha256-" + base64.b64encode(hashlib.sha256(text.encode("utf-8")).digest()).decode() + "'"
+
+
+def app_csp(page: str | None = None) -> str:
+    """The Studio page's policy: scripts only from the Studio itself plus index.html's inline loader (by hash,
+    worked out from the file so an edit can't silently break the page), three.js blob/data textures allowed."""
+    if page is None:
+        with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as fh:
+            page = fh.read()
+    scripts = [_sha256(s) for s in re.findall(r"<script>(.*?)</script>", page, re.S)]
+    handlers = [_sha256(h) for h in re.findall(r"\son[a-z]+=\"([^\"]*)\"", page)]
+    script_src = " ".join(["'self'", *scripts, *(["'unsafe-hashes'", *handlers] if handlers else [])])
+    return (f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' data: blob:; "
+            "worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+
+
+def artifact_path(p: RobotProject, rel: str) -> str | None:
+    """/files/<rev>/...: a file inside one of the current project's revision folders, or None."""
+    rev = unquote(rel).split("/", 1)[0]
+    return contained_path(p.root, rel) if rev in p.revs() else None
+
+
 def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None):
     class H(BaseHTTPRequestHandler):
+        timeout = 30  # a client that stops sending or reading frees its thread; the event stream pings every 15 s
+
         def log_message(self, *a):
             pass
+
+        def end_headers(self):
+            for k, v in SECURITY_HEADERS:
+                self.send_header(k, v)
+            self.send_header("Content-Security-Policy", getattr(self, "csp", None) or DEFAULT_CSP)
+            super().end_headers()
 
         def _trusted(self, post: bool) -> bool:
             """Only this computer's Studio page may use the API. The Host check stops DNS rebinding
@@ -407,7 +492,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
         def _sign_in_page(self, bad=False):
             page = SIGN_IN.replace("HOST", html.escape(socket.gethostname())).replace(
                 "BAD", '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
-            return self._send(401, page.encode(), "text/html; charset=utf-8")
+            return self._send(401, page.encode(), "text/html; charset=utf-8", csp=SIGN_IN_CSP)
 
         def _access_link(self, u) -> bool:
             """GET /?token=...: a correct code signs this browser in (a cookie) and drops the code from the URL."""
@@ -425,7 +510,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             self.end_headers()
             return True
 
-        def _send(self, code, body: bytes, ctype="application/json"):
+        def _send(self, code, body: bytes, ctype="application/json", csp=None):
+            self.csp = csp
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
@@ -433,9 +519,56 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             self.end_headers()
             self.wfile.write(body)
 
-        def _file(self, path):
-            if not os.path.isfile(path):
-                return self._send(404, b"not found", "text/plain")
+        def _json(self, code, value):
+            return self._send(code, json.dumps(value).encode())
+
+        def _error(self, code, message):
+            self._drain()
+            return self._json(code, {"ok": False, "error": message})
+
+        def _drain(self):
+            """Read and drop a small request body refused before it was read, so the browser gets the answer
+            instead of a connection reset. Bounded: at most MAX_BODY bytes, for a quarter of a second."""
+            if self.command not in ("POST", "PUT", "DELETE") or getattr(self, "_read", False):
+                return
+            self._read = True
+            try:
+                n = content_length(self.headers, MAX_BODY)
+            except BodyError:
+                return
+            deadline, old = time.monotonic() + 0.25, self.connection.gettimeout()
+            try:
+                while n > 0 and time.monotonic() < deadline:
+                    self.connection.settimeout(max(0.01, deadline - time.monotonic()))
+                    chunk = self.rfile.read1(min(n, 1 << 16))
+                    if not chunk:
+                        break
+                    n -= len(chunk)
+            except OSError:
+                pass
+            finally:
+                try:
+                    self.connection.settimeout(old)
+                except OSError:
+                    pass
+
+        def _body(self):
+            """The request's JSON object, or None after answering 400, 413 or 415 itself (sizes are checked
+            before anything is read)."""
+            try:
+                n = content_length(self.headers, MAX_BODY)
+                if n and self.headers.get_content_type() != "application/json":
+                    raise BodyError(415, "Send JSON, with Content-Type: application/json.")
+                self._read = True
+                raw = self.rfile.read(n) if n else b""
+                if len(raw) != n:
+                    raise BodyError(400, "The request body was cut off.")
+                return json_object(raw)
+            except BodyError as exc:
+                self._error(exc.status, str(exc))
+                return None
+
+        def _file(self, path, csp=None):
             ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
             if path.endswith((".js", ".mjs")):
                 ctype = "text/javascript"
@@ -443,43 +576,54 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 ctype = "model/gltf-binary"
             elif path.endswith((".ino", ".nc", ".gbr", ".drl", ".csv", ".urdf", ".xml", ".dxf")):
                 ctype = "text/plain; charset=utf-8"
-            with open(path, "rb") as fh:
-                self._send(200, fh.read(), ctype)
+            try:
+                fh = open(path, "rb")
+            except OSError:  # missing, a folder, or unreadable
+                return self._error(404, "Not found.")
+            with fh:
+                self.csp = csp
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(os.fstat(fh.fileno()).st_size))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                shutil.copyfileobj(fh, self.wfile, 1 << 16)
 
-        def _safe(self, root, rel):
-            full = os.path.normpath(os.path.join(root, unquote(rel)))
-            return full if full.startswith(os.path.normpath(root)) else None
+        def _keys_state(self):
+            from .. import keys, settings
+            return {"keys": keys.status(), "integrations": integrations(), "settings": settings.load(),
+                    "file": os.path.basename(keys.ENV_PATH), "compute": compute_info(studio.remote)}
 
         def do_GET(self):
             u = urlparse(self.path)
             if not self._trusted(post=False):
-                return self._send(403, b"forbidden", "text/plain")
+                return self._error(403, "This Studio only answers its own page.")
             if self._access_link(u):
                 return None
             if not self._signed_in():
                 if u.path in ("/", "/index.html"):
                     return self._sign_in_page()
-                return self._send(401, b'{"ok":false,"error":"open the access link printed where Morph Studio was started"}')
+                return self._error(401, "open the access link printed where Morph Studio was started")
             if u.path in ("/", "/index.html"):
-                return self._file(os.path.join(STATIC, "index.html"))
+                return self._file(os.path.join(STATIC, "index.html"), csp=app_csp())
             if u.path.startswith("/static/"):
-                full = self._safe(STATIC, u.path[len("/static/"):])
-                return self._file(full) if full else self._send(403, b"", "text/plain")
+                full = contained_path(STATIC, u.path[len("/static/"):])
+                return self._file(full) if full else self._error(404, "Not found.")
             if u.path.startswith("/files/"):
-                full = self._safe(studio.p.root, u.path[len("/files/"):])
-                return self._file(full) if full else self._send(403, b"", "text/plain")
+                full = artifact_path(studio.p, u.path[len("/files/"):])
+                return self._file(full, csp=ARTIFACT_CSP) if full else self._error(404, "Not found.")
             if u.path == "/api/state":
-                return self._send(200, json.dumps(studio.state()).encode())
+                return self._json(200, studio.state())
             if u.path == "/api/keys":
-                from .. import keys
-                return self._send(200, json.dumps({"keys": keys.status(), "integrations": integrations(),
-                                                   "file": os.path.basename(keys.ENV_PATH),
-                                                   "compute": compute_info(studio.remote)}).encode())
+                return self._json(200, self._keys_state())
+            if u.path == "/api/settings":
+                from .. import settings
+                return self._json(200, {"settings": settings.load(), "integrations": integrations()})
             if u.path == "/api/rev":
                 rev = parse_qs(u.query).get("rev", [None])[0]
                 if rev not in studio.p.revs():
-                    return self._send(404, b'{"error":"unknown rev"}')
-                return self._send(200, json.dumps(rev_payload(studio.p, rev)).encode())
+                    return self._error(404, "unknown rev")
+                return self._json(200, rev_payload(studio.p, rev))
             if u.path == "/api/events":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -494,60 +638,92 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                         except queue.Empty:
                             self.wfile.write(b": ping\n\n")
                         self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):  # tab closed (Windows: 10053)
+                except OSError:  # tab closed (Windows: 10053) or stopped reading for `timeout` seconds
                     pass
                 finally:
                     studio.hub.unsubscribe(q)
                 return
-            self._send(404, b"not found", "text/plain")
+            self._error(404, "Not found.")
 
         def do_POST(self):
+            self._read = False
             u = urlparse(self.path)
             if not self._trusted(post=True):
-                return self._send(403, b"forbidden", "text/plain")
+                return self._error(403, "This Studio only answers its own page.")
             if not self._signed_in():
-                return self._send(401, b'{"ok":false,"error":"open the access link printed where Morph Studio was started"}')
-            n = int(self.headers.get("Content-Length", 0))
-            try:
-                body = json.loads(self.rfile.read(n) or b"{}")
-            except ValueError:
-                body = None
-            if not isinstance(body, dict):
-                return self._send(400, b'{"ok":false,"error":"expected a JSON object"}')
+                return self._error(401, "open the access link printed where Morph Studio was started")
+            body = self._body()
+            if body is None:
+                return None
             if u.path == "/api/chat":
-                msg = (body.get("message") or "").strip()
-                if msg:
-                    threading.Thread(target=studio.chat, args=(msg,), daemon=True).start()
-                return self._send(202, b'{"ok":true}')
+                msg = body.get("message")
+                if not isinstance(msg, str) or not msg.strip():
+                    return self._error(400, "Type a message first.")
+                if len(msg) > MAX_MESSAGE:
+                    return self._error(400, f"That message is too long: {MAX_MESSAGE:,} characters at most.")
+                if looks_like_secret(msg):
+                    return self._error(400, "That looks like an API key. Paste keys in the Keys dialog, never in "
+                                            "chat; this message was not sent or saved.")
+                threading.Thread(target=studio.chat, args=(msg.strip(),), daemon=True).start()
+                return self._json(202, {"ok": True})
             if u.path == "/api/project":
-                ok = studio.switch(str(body.get("name", "")))
-                return self._send(200 if ok else 409, json.dumps({"ok": ok}).encode())
+                name = body.get("name")
+                try:
+                    project_name(name)
+                except ValueError as exc:
+                    return self._error(400, str(exc))
+                if name not in {p["name"] for p in studio.projects()}:
+                    return self._error(404, f"There is no robot project called {name}.")
+                if not studio.switch(name):
+                    return self._error(409, "Still regenerating: switch projects when the pipeline is idle.")
+                return self._json(200, {"ok": True})
             if u.path == "/api/source":
-                threading.Thread(target=studio.source, args=(body.get("rev"),), daemon=True).start()
-                return self._send(202, b'{"ok":true}')
+                rev = body.get("rev")
+                if rev is not None and (not isinstance(rev, str) or rev not in studio.p.revs()):
+                    return self._error(400, "unknown rev")
+                threading.Thread(target=studio.source, args=(rev,), daemon=True).start()
+                return self._json(202, {"ok": True})
             if u.path == "/api/reset":
-                ok = studio.reset(rebuild=bool(body.get("rebuild")))
-                return self._send(200 if ok else 409, json.dumps({"ok": ok}).encode())
+                ok = studio.reset(rebuild=body.get("rebuild") is True)
+                return self._json(200 if ok else 409, {"ok": ok})
             if u.path == "/api/keys":
                 from .. import keewano, keys
+                values = body.get("values") or {}
+                if not isinstance(values, dict):
+                    return self._error(400, "Send the keys as {\"values\": {\"NAME\": \"key\"}}.")
                 try:
-                    changed = keys.save(body.get("values") or {})
+                    changed = keys.save(values)
                 except ValueError as exc:
-                    return self._send(400, json.dumps({"ok": False, "error": str(exc)}).encode())
+                    return self._error(400, str(exc))
+                except OSError as exc:
+                    return self._error(500, f"Couldn't save the keys: Morph can't write {os.path.basename(keys.ENV_PATH)} "
+                                            f"here ({exc.strerror or exc.__class__.__name__}). Set them as environment "
+                                            "variables instead, or move Morph to a folder you can write to.")
                 if any(k.startswith("KEEWANO") for k in changed):
                     keewano._ratio_cache.clear()  # re-query the calibration with the new project
-                return self._send(200, json.dumps({"ok": True, "changed": changed, "keys": keys.status(),
-                                                   "integrations": integrations()}).encode())
+                return self._json(200, {"ok": True, "changed": changed, **self._keys_state()})
             if u.path == "/api/keys/check":  # POST: it calls the services with the person's keys
                 from .. import keys
                 services = body.get("services")
-                return self._send(200, json.dumps({"checks": keys.check(services if isinstance(services, list) else None)}).encode())
+                return self._json(200, {"checks": keys.check(services if isinstance(services, list) else None)})
+            if u.path == "/api/settings":
+                from .. import keewano, settings
+                try:
+                    values = settings.save(body.get("values"))
+                except ValueError as exc:
+                    return self._error(400, str(exc))
+                except OSError as exc:
+                    return self._error(500, f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).")
+                keewano._ratio_cache.clear()
+                return self._json(200, {"ok": True, "settings": values, "integrations": integrations()})
             if u.path == "/api/params":
-                changes = body.get("changes") or {}
-                if changes:
-                    threading.Thread(target=studio.params, args=(changes,), daemon=True).start()
-                return self._send(202, b'{"ok":true}')
-            self._send(404, b"not found", "text/plain")
+                try:
+                    changes = param_changes(body.get("changes"), PARAMS)
+                except ValueError as exc:
+                    return self._error(400, str(exc))
+                threading.Thread(target=studio.params, args=(changes,), daemon=True).start()
+                return self._json(202, {"ok": True})
+            self._error(404, "Not found.")
 
     return H
 
@@ -576,8 +752,10 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     try:
         httpd = _Server((host, port), make_handler(studio, allowed, token))
     except OSError as exc:
-        raise SystemExit(f"Port {port} is busy ({exc}): Morph Studio is probably already running. "
-                         "Close its CMD window, then start again.")
+        if exc.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", errno.EADDRINUSE)):
+            raise SystemExit(f"Port {port} is busy ({exc}): Morph Studio is probably already running. Stop it "
+                             "(Ctrl+C in its terminal, or close that window), then start again.") from None
+        raise SystemExit(f"Morph Studio couldn't listen on {host}:{port} ({exc}).") from None
     httpd.daemon_threads = True
     if token:
         where = lan_address() if host in ("0.0.0.0", "") else host

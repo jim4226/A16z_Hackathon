@@ -92,6 +92,7 @@ async function getFresh(url) {
 }
 function post(url, body) {
   return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(async (r) => { if (!r.ok && r.status !== 409) toast((await r.json().catch(() => ({}))).error || `The Studio refused that (${r.status})`); return r; })
     .catch((e) => toast(`Couldn't reach the Studio server (${e.message})`));
 }
 
@@ -726,7 +727,7 @@ function onEvent(ev) {
       panels.bom.onSourcing(ev);
       if (ev.status === 'done' && S.current?.rev === ev.rev) S.current.sourcing = ev.sourcing;
       break;
-    case 'project': reloadProject().catch((e) => console.warn(e)); break;
+    case 'project': case 'resync': reloadProject().catch((e) => console.warn(e)); break;
     case 'done': {
       typing(false);
       const cur = ev.current;

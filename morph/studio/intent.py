@@ -13,6 +13,7 @@ import re
 from ..spec import Design
 
 MODEL = "claude-opus-5-5"
+CHAT_FORBIDDEN = {"name", "arm.source"}  # the project name and robot source come from the user, never from chat
 
 OBJECTS = {  # rough real-world values; max_force_n = per-finger squeeze that damages it (0 = robust)
     "raw egg": dict(shape="cylinder", diameter_mm=44, length_mm=57, mass_g=60, friction=0.35, max_force_n=25),
@@ -200,7 +201,8 @@ def _target(d: Design) -> float:
 TOOL = {
     "name": "apply_design_changes",
     "description": "Apply parameter changes to the gripper design. Every key must be one of the dotted keys in "
-                   "the current design JSON. Keep changes minimal but complete: when the object changes, also set "
+                   "the current design JSON, except name and arm.source, which never change here. "
+                   "Keep changes minimal but complete: when the object changes, also set "
                    "its shape, diameter_mm, length_mm, mass_g, friction and max_force_n (per-finger squeeze that "
                    "damages it, 0 if robust), and resize finger.length_mm (~radius+30), finger.pad_height_mm and "
                    "finger.pad_depth_mm (~radius/4). A force sensor (finger.sensor=fsr402) needs finger.width_mm=20 "
@@ -224,10 +226,26 @@ TOOL = {
 }
 
 
+def _from_tool(args) -> dict:
+    """Claude's tool call as {changes, reply}: only plain values, and never the keys chat may not touch."""
+    args = args if isinstance(args, dict) else {}
+    raw = args.get("changes") if isinstance(args.get("changes"), dict) else {}
+    changes = {k: v for k, v in raw.items() if isinstance(k, str) and k not in CHAT_FORBIDDEN
+               and isinstance(v, (str, int, float)) and not isinstance(v, bool)}
+    reply = str(args.get("reply") or "")
+    if any(k in CHAT_FORBIDDEN for k in raw):
+        reply = (reply + " (The project name and robot source stay as they are: chat can't change them.)").strip()
+    return {"changes": changes, "reply": reply, "source": "claude"}
+
+
 def interpret(msg: str, d: Design, last_target: float | None = None) -> dict:
+    from .. import settings
+
     if last_target:
         _LAST_TARGET["value"] = last_target
     try:
+        if not settings.network_allowed():
+            raise RuntimeError("network lookups are off")
         import anthropic
 
         client = anthropic.Anthropic()
@@ -242,8 +260,7 @@ def interpret(msg: str, d: Design, last_target: float | None = None) -> dict:
         if resp.stop_reason != "refusal":
             for block in resp.content:
                 if block.type == "tool_use" and block.name == TOOL["name"]:
-                    return {"changes": block.input.get("changes", {}), "reply": block.input.get("reply", ""),
-                            "source": "claude"}
+                    return _from_tool(block.input)
     except Exception:
         pass
     ch, said = rules(msg, d)

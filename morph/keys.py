@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -79,13 +80,33 @@ def load_env(path: str | None = None) -> list:
     return loaded
 
 
+def _write_private(path: str, text: str):
+    """Replace `path` with `text`, readable by this user only (0600): written to a fresh private temp file
+    next to it, then renamed over it, so a crash never leaves half a file. Raises OSError (read-only folder)."""
+    fd, tmp = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:
+        os.chmod(path, 0o600)  # mkstemp already made it 0600; this also covers a umask or an older file
+    except OSError:
+        pass
+
+
 def ensure_env_file(path: str | None = None) -> bool:
     """Create .env from env.example on first run, so there is one obvious place to put keys."""
     path = path or ENV_PATH
     if os.path.exists(path) or not os.path.isfile(TEMPLATE):
         return False
-    with open(TEMPLATE, encoding="utf-8") as src, open(path, "w", encoding="utf-8", newline="\n") as dst:
-        dst.write(src.read())
+    with open(TEMPLATE, encoding="utf-8") as src:
+        _write_private(path, src.read())
     return True
 
 
@@ -95,14 +116,19 @@ def status() -> list:
 
 
 def save(updates: dict, path: str | None = None) -> list:
-    """Write keys into .env (other lines and comments kept) and apply them to this process at once.
-    An empty value removes the key. Returns the names changed."""
+    """Write keys into .env (other lines and comments kept; the file readable by this user only) and apply them
+    to this process at once. An empty value removes the key. Returns the names changed. Raises ValueError for
+    anything that is not a key, OSError when .env can't be written."""
     path = path or ENV_PATH
     clean = {}
+    if not isinstance(updates or {}, dict):
+        raise ValueError("send the keys as {NAME: value}")
     for k, v in (updates or {}).items():
         if k not in NAMES:
             raise ValueError(f"unknown key {k}")
-        v = str(v if v is not None else "").strip()
+        if v is not None and not isinstance(v, str):
+            raise ValueError(f"{k}: that does not look like a key")
+        v = (v or "").strip()
         if len(v) > 500 or any(c in v for c in "\r\n\x00\"'"):
             raise ValueError(f"{k}: that does not look like a key")
         clean[k] = v
@@ -126,10 +152,7 @@ def save(updates: dict, path: str | None = None) -> list:
                 continue  # drop duplicate lines for the same key
             out.append(line)
         out += [f"{k}={v}" for k, v in clean.items() if k not in done]
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write("\n".join(out).rstrip("\n") + "\n")
-        os.replace(tmp, path)
+        _write_private(path, "\n".join(out).rstrip("\n") + "\n")
         for k, v in clean.items():
             if v:
                 os.environ[k] = v
