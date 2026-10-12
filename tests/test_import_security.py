@@ -532,6 +532,32 @@ def test_xacro_sandbox_blocks_env_includes_and_runaway_macros(tmp_path, monkeypa
         xacro_sandbox.expand(str(tmp_path / "bomb.xacro"), str(tmp_path), timeout=3)
 
 
+def test_xacro_expressions_are_checked_before_they_run(tmp_path, monkeypatch):
+    _with_xacro(monkeypatch)
+    ns = 'xmlns:xacro="http://www.ros.org/wiki/xacro"'
+    refused = {   # one probe per rule: frames, builtins in $(eval), "_" names, str.format, type/vars, walrus, lambda
+        "frame.xacro": "${(x for x in [1]).gi_frame}",
+        "exec.xacro": "$(eval exec('1'))",
+        "getattr.xacro": "$(eval getattr(1, 'real'))",
+        "dunder.xacro": "${().__class__}",
+        "format.xacro": "${'{0}'.format(1)}",
+        "type.xacro": "${python.type(1)}",
+        "walrus.xacro": "${(y := 1)}",
+        "lambda.xacro": "${(lambda: 1)()}",
+    }
+    for name, expr in refused.items():
+        (tmp_path / name).write_text(f'<robot {ns} name="r"><xacro:property name="p" value="{expr}"/><link name="${{p}}"/></robot>',
+                                     encoding="utf-8")
+        with pytest.raises(ImportFailed):
+            xacro_sandbox.expand(str(tmp_path / name), str(tmp_path))
+    (tmp_path / "ok.xacro").write_text(
+        f'<robot {ns} name="r"><xacro:arg name="flag" default="true"/><xacro:property name="n" value="$(eval 2 * 3)"/>'
+        '<xacro:property name="half" value="${pi / 2}"/><link name="l${n}_${int(degrees(half))}_${\'a\' + str(len([1, 2]))}"/>'
+        '<xacro:if value="$(arg flag)"><link name="flagged"/></xacro:if></robot>', encoding="utf-8")
+    out = xacro_sandbox.expand(str(tmp_path / "ok.xacro"), str(tmp_path))
+    assert '<link name="l6_90_a2"/>' in out and '<link name="flagged"/>' in out
+
+
 def test_xacro_find_resolves_inside_the_bundle(tmp_path, monkeypatch):
     _with_xacro(monkeypatch)
     pkg = tmp_path / "my_robot_description"

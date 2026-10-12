@@ -8,6 +8,10 @@ xacro evaluates expressions and reads files, so it never runs in the Studio proc
   can't read API keys; the child also answers them with "" itself;
 * $(find pkg), <xacro:include> and xacro.load_yaml only reach files inside the bundle (package.xml <name> or a
   folder named pkg); a missing package becomes a placeholder path and a warning;
+* ${...} and $(eval ...) expressions are parsed first and refused unless they are plain arithmetic, names,
+  calls, subscripts and attributes that don't start with "_" or reach frames or code (gi_frame, f_globals...),
+  and they run without Python builtins. xacro's own $(eval) runs with all builtins (exec, getattr), and ${...}
+  can reach module globals through a generator's frame, so neither is left as shipped;
 * 20 s timeout, 1 GB address space (RLIMIT_AS, POSIX), 20 MB output cap, DOCTYPE/ENTITY refused.
 """
 
@@ -108,6 +112,47 @@ def parse(inp, filename=None):
         return _parse(text, filename)
     return _parse(inp, filename)
 xacro.parse = parse
+import ast, math
+BAD_ATTR = re.compile(r"^(_|gi_|cr_|ag_|f_|tb_|co_|func_|im_)|^(mro|format|format_map)$")
+OK = (ast.Expression, ast.Constant, ast.Name, ast.Load, ast.Store, ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare,
+      ast.IfExp, ast.Call, ast.keyword, ast.Attribute, ast.Subscript, ast.Slice, ast.Tuple, ast.List, ast.Dict,
+      ast.Set, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp, ast.comprehension, ast.JoinedStr,
+      ast.FormattedValue, ast.Starred, ast.operator, ast.unaryop, ast.boolop, ast.cmpop, ast.expr_context)
+def checked(expr):
+    try:
+        tree = ast.parse(str(expr).strip(), "<expression>", "eval")
+    except (SyntaxError, ValueError):
+        raise xacro.XacroException("invalid expression: %s" % str(expr)[:120])
+    for node in ast.walk(tree):
+        if not isinstance(node, OK) or (isinstance(node, ast.Attribute) and BAD_ATTR.search(node.attr)) or \
+                (isinstance(node, ast.Name) and node.id.startswith("_")):
+            raise xacro.XacroException("not allowed in an imported xacro (%s): %s" % (type(node).__name__, str(expr)[:120]))
+    return compile(tree, "<expression>", "eval")
+def safe_eval(expr, globals, locals=None):
+    code = checked(expr)
+    globals.update(__builtins__={})
+    return eval(code, globals, locals)
+xacro.safe_eval = safe_eval
+for ns in (xacro._global_symbols.get("python"), xacro._global_symbols):
+    if isinstance(ns, dict):
+        for k in ("type", "vars"):
+            dict.pop(ns, k, None)
+SAFE = {"True": True, "False": False, "None": None, "int": int, "float": float, "str": str, "bool": bool,
+        "abs": abs, "min": min, "max": max, "round": round, "len": len, "pi": math.pi}
+def sa_eval(s, context):
+    if "arg" not in context:
+        context["arg"] = {}
+    functions = dict(SAFE)
+    functions.update((k, v) for k, v in sa._eval_dict.items() if not k.startswith("_"))
+    functions["arg"] = lambda name: sa.convert_value(sa._eval_arg(name, args=context["arg"]), "auto")
+    functions["dirname"] = lambda: sa._eval_dirname(context.get("filename"))
+    return str(eval(checked(s), {"__builtins__": {}}, sa._DictWrapper(context["arg"], functions)))
+if all(hasattr(sa, n) for n in ("_eval", "_eval_dict", "convert_value", "_eval_arg", "_eval_dirname", "_DictWrapper")):
+    sa._eval = sa_eval
+else:
+    def no_eval(s, context):
+        raise xacro.XacroException("$(eval ...) is not supported in imported xacro files with this xacro version")
+    sa._eval = no_eval
 try:
     doc = xacro.process_file(src, mappings={})
     text = doc.toprettyxml(indent="  ")
