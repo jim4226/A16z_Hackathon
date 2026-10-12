@@ -169,8 +169,11 @@ def test_releases_answer_with_the_gate_and_downloads_are_gated_and_logged(site):
     base, jar, ids, root, home = site["base"], site["jar"], site["ids"], site["root"], site["home"]
     s, out, _ = call(base, "POST", "/api/releases", {"tag": "Proto 1", "rev": "r001"}, cookie=jar["Ana"])
     assert s == 409 and out["gate"]["short"] == "needs 1 approval: prototype" and not out["ok"]
+    s, _, _ = call(base, "POST", "/api/me", {"watch": True}, cookie=jar["Vic"])   # a viewer watching everything
+    assert s == 200
     s, rv, _ = call(base, "POST", "/api/reviews", {"rev": "r001"}, cookie=jar["Ana"])
     assert s == 200 and rv["review"]["target"]["rev"] == "r001"
+    assert any(i["kind"] == "watch" and "asked for review of r001" in i["text"] for i in activity.inbox(home, ids["Vic"])["items"])
     s, dec, _ = call(base, "POST", "/api/reviews/decide", {"review": rv["review"]["id"], "decision": "approve"}, cookie=jar["Raj"])
     assert s == 200 and dec["gate"]["ok"]
     s, out, _ = call(base, "POST", "/api/releases", {"tag": "Proto 1", "rev": "r001"}, cookie=jar["Ana"])

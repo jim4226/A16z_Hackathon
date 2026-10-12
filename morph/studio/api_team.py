@@ -26,7 +26,7 @@ from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 from .teams import activity, audit, auth, collab, roles
-from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing
+from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing, watching
 from .teams.store import TeamStore, exists
 
 CONFIG = {"home": None, "secure": False, "enabled": False}
@@ -666,6 +666,8 @@ def reviews_post(req):
     asked = sorted({x for r in rv["requested_from"] for x in r["members"]})
     _notify(req, asked, "review_request", f"{m['name']} asks for your review of {what}: "
             + ", ".join(LABELS[d] for d in rv["disciplines"]), {"review": rv["id"], "rev": rv["target"]["rev"]})
+    watchers = [mid for mid, x in members.items() if not x.get("revoked") and watching(x) and mid not in asked]
+    _notify(req, watchers, "watch", f"{m['name']} asked for review of {what}", {"review": rv["id"], "rev": rv["target"]["rev"]})
     _emit(req, {"type": "review", "action": "request", "review": rv})
     return 200, {"ok": True, "review": rv}
 

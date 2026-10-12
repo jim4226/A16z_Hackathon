@@ -8,6 +8,8 @@
 // ---- constants
 const LEVEL = { prototype: 'Prototype', pilot: 'Pilot', production: 'Production' };
 const KIND = { rev: 'Revision', stage: 'Stage', bom: 'BOM line', param: 'Parameter', file: 'File' };
+const NODES = [['sizing', 'Sizing'], ['gripper', 'Gripper + grasp'], ['electronics', 'Electronics plan'], ['cad', 'Robot CAD'],
+  ['sim', 'Simulation'], ['wiring', 'Schematic · PCB · FW'], ['manufacturing', 'Manufacturing'], ['bom', 'BOM + sourcing'], ['manual', 'Assembly manual']];
 const ROLE_HELP = {
   viewer: 'Sees everything; comments and proposes changes',
   editor: 'Also edits, builds, imports, reviews, applies change requests and releases',
@@ -62,7 +64,7 @@ export class Team {
     this.tab = 'comments';
     this.data = { team: null, comments: [], proposals: [], reviews: [], gate: null, branches: [], feed: [], inbox: { items: [], unread: 0 } };
     this.anchor = { kind: 'rev', key: '' };
-    this.draft = { changes: {}, title: '', note: '' };
+    this.draft = { changes: {}, title: '', note: '', stage: '' };
     this.showResolved = false;
   }
 
@@ -214,6 +216,8 @@ export class Team {
       this.ownModal.className = 'modal on';
       this.ownModal.appendChild(this.shareEl);
       this.ownModal.addEventListener('click', (e) => { if (e.target === this.ownModal) this.closeShare(); });
+      const esc = (e) => { if (e.key === 'Escape') { this.closeShare(); document.removeEventListener('keydown', esc); } };
+      document.addEventListener('keydown', esc);
       document.body.appendChild(this.ownModal);
     }
     this.loadTeam();
@@ -421,8 +425,7 @@ export class Team {
   }
   anchors() {
     const cur = this.s.S?.current || {}, esc = this.esc;
-    const nodes = cur.nodes || [['sizing', 'Sizing'], ['gripper', 'Gripper + grasp'], ['electronics', 'Electronics plan'], ['cad', 'Robot CAD'],
-      ['sim', 'Simulation'], ['wiring', 'Schematic · PCB · FW'], ['manufacturing', 'Manufacturing'], ['bom', 'BOM + sourcing'], ['manual', 'Assembly manual']];
+    const nodes = cur.nodes || NODES;
     const rows = (cur.bom?.rows || []).slice(0, 80);
     const params = (cur.params || []).slice(0, 60);
     const opt = (v, label) => `<option value="${esc(v)}">${esc(label)}</option>`;
@@ -717,7 +720,8 @@ export class Team {
   changesHtml() {
     const esc = this.esc, list = this.data.proposals || [];
     const params = this.s.S?.current?.params || [];
-    const draft = Object.entries(this.draft.changes);
+    const draft = Object.entries(this.draft.changes), ready = draft.length || this.draft.stage;
+    const nodes = this.s.S?.current?.nodes || NODES;
     const card = (p) => {
       const rv = p.review, per = rv?.per_discipline || [];
       const mine = p.status === 'open' ? this.myCover(rv, p.level) : [];
@@ -741,15 +745,18 @@ export class Team {
           ${p.by === this.me.member.id || this.can('edit') ? `<button class="btn ghost" type="button" data-close="${esc(p.id)}">Close</button>` : ''}</div>` : ''}</div>`;
     };
     return `<div class="tm-sec">
-      ${this.can('propose') ? `<details class="tm-new"${draft.length ? ' open' : ''}><summary>${icon('plus')}Propose a change</summary>
+      ${this.can('propose') ? `<details class="tm-new"${ready ? ' open' : ''}><summary>${icon('plus')}Propose a change</summary>
         <div class="tm-form"><span class="sel grow"><select data-a="param" aria-label="Parameter">${params.map((p) => `<option value="${esc(p.key)}">${esc(p.group)} · ${esc(p.label)}</option>`).join('')}</select></span><span class="tm-val"></span>
           <button class="btn" type="button" data-a="add">${icon('plus')}Add</button></div>
         <div class="tm-draft">${draft.map(([k, v]) => `<span class="tm-chip">${esc(k)} = <b>${esc(v)}</b><button type="button" data-del="${esc(k)}" title="Remove">${icon('x')}</button></span>`).join('')}</div>
+        <label class="tm-f"><span>Or a change that isn't a parameter, about a stage (the manual's wording, a drawing)</span>
+          <span class="sel"><select data-a="stage"><option value="">No stage</option>${nodes.map(([k, l]) => `<option value="${esc(k)}"${this.draft.stage === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></span></label>
         <input class="tm-in" data-a="title" maxlength="120" placeholder="Title (optional)" value="${esc(this.draft.title)}">
         <textarea rows="2" maxlength="4000" data-a="note" placeholder="Why? @name to notify someone">${esc(this.draft.note)}</textarea>
+        <div class="tm-mention"></div>
         <div class="tm-preview"></div>
         <div class="tm-row"><span class="dim">${this.can('edit') ? 'Reviewers are asked by discipline; anyone with edit rights applies it.' : 'An editor applies it once reviewers agree.'}</span><span class="grow"></span>
-          <button class="btn" type="button" data-a="preview" ${draft.length ? '' : 'disabled'}>Preview</button><button class="btn primary" type="button" data-a="submit" ${draft.length ? '' : 'disabled'}>Open change request</button></div></details>` : ''}
+          <button class="btn" type="button" data-a="preview" ${ready ? '' : 'disabled'}>Preview</button><button class="btn primary" type="button" data-a="submit" ${ready ? '' : 'disabled'}>Open change request</button></div></details>` : ''}
       <div class="tm-row tm-filter"><b>Change requests</b><span class="grow"></span><span class="dim">${list.filter((p) => p.status === 'open').length} open</span></div>
       ${list.length ? list.map(card).join('') : '<div class="tm-empty">No change requests yet. Propose one above: Morph shows what it affects and asks the right people.</div>'}</div>`;
   }
@@ -778,13 +785,16 @@ export class Team {
       this.renderBody();
     };
     b.querySelectorAll('[data-del]').forEach((x) => (x.onclick = () => { keep(); delete this.draft.changes[x.dataset.del]; this.renderBody(); }));
+    const stage = b.querySelector('[data-a="stage"]');
+    if (stage) stage.onchange = () => { keep(); this.draft.stage = stage.value; this.renderBody(); };
     const note = b.querySelector('[data-a="note"]');
-    if (note) this.mentions(note, b.querySelector('.tm-preview'));
+    if (note) this.mentions(note, b.querySelector('.tm-new .tm-mention'));
+    const body = () => ({ changes: this.draft.changes, stages: this.draft.stage ? [this.draft.stage] : [], base_rev: this.rev() });
     const pv = b.querySelector('[data-a="preview"]');
     if (pv) pv.onclick = async () => {
       keep();
       try {
-        const r = await this.call('POST', '/api/proposals', { preview: true, changes: this.draft.changes });
+        const r = await this.call('POST', '/api/proposals', { preview: true, ...body() });
         const esc = this.esc;
         b.querySelector('.tm-preview').innerHTML = `<div class="tm-aff">Recomputes ${esc(r.preview.stage_titles.join(', ') || 'nothing')}</div>
           <div class="tm-needs">needs: ${r.routing.routes.map((x) => `<span class="tm-chip">${esc(x.label)}: ${x.members.map((m) => esc(m.name)).join(', ') || 'nobody yet'}${x.via === 'generalist' ? ' (generalist)' : ''}</span>`).join('')}</div>`;
@@ -795,8 +805,8 @@ export class Team {
       keep();
       sub.disabled = true;
       try {
-        const r = await this.call('POST', '/api/proposals', { changes: this.draft.changes, title: this.draft.title || undefined, note: this.draft.note || undefined, base_rev: this.rev() });
-        this.draft = { changes: {}, title: '', note: '' };
+        const r = await this.call('POST', '/api/proposals', { ...body(), title: this.draft.title || undefined, note: this.draft.note || undefined });
+        this.draft = { changes: {}, title: '', note: '', stage: '' };
         this.toast(`Opened change request #${r.proposal.n}: ${r.proposal.routing.text}`);
         await this.loadProposals();
         this.renderBody();

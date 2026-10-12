@@ -117,8 +117,6 @@ def state_for(root, rev):
 
 @pytest.fixture
 def demo(tmp_path):
-    if not os.path.exists(CHROME):
-        pytest.skip("no Chromium for Playwright")
     auth.THROTTLE.clear()
     home = str(tmp_path / "projects")
     root = os.path.join(home, "egg-picker")
@@ -150,7 +148,12 @@ def demo(tmp_path):
     shots = os.environ.get("MORPH_SHOTS") or str(tmp_path / "shots")
     os.makedirs(shots, exist_ok=True)
     with pw.sync_playwright() as p:
-        browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])
+        try:  # this machine's Chromium, else Playwright's own download
+            browser = p.chromium.launch(executable_path=CHROME if os.path.exists(CHROME) else None, args=["--no-sandbox"])
+        except Exception as exc:  # noqa: BLE001
+            httpd.shutdown()
+            httpd.server_close()
+            pytest.skip(f"no Chromium for Playwright ({exc.__class__.__name__})")
         yield {"home": home, "root": root, "ids": ids, "base": base, "browser": browser, "shots": shots, "room": room}
         browser.close()
     httpd.shutdown()
@@ -283,6 +286,17 @@ def test_a_viewer_proposes_a_change_and_sees_who_it_will_ask(demo):
     page.wait_for_function("[...document.querySelectorAll('.tm-pr b')].some((b) => b.textContent.includes('classroom'))")
     p = collab.proposals(demo["root"])[0]
     assert p["by"] == demo["ids"]["Vic"] and p["changes"] == {"arm.actuator_family": "hobby_pwm"}
+    page.click(".tm-new summary")                                # a change to the manual only: documentation reviews it
+    page.select_option("[data-a=stage]", "manual")
+    page.fill("[data-a=title]", "Torque spec for the base screws in step 4")
+    page.click("[data-a=preview]")
+    page.wait_for_selector(".tm-preview .tm-chip")
+    assert page.inner_text(".tm-preview .tm-aff") == "Recomputes Assembly manual"
+    assert [c.strip() for c in page.locator(".tm-preview .tm-chip").all_inner_texts()] == ["Documentation: Jim (generalist)"]
+    page.click("[data-a=submit]")
+    page.wait_for_function("[...document.querySelectorAll('.tm-pr b')].some((b) => b.textContent.includes('Torque spec'))")
+    doc = collab.proposals(demo["root"])[0]
+    assert doc["disciplines"] == ["documentation"] and doc["changes"] == {}
     page.click(".tm-tabs [data-tab=review]")
     page.wait_for_selector(".tm-gate")
     assert page.locator("[data-decide]").count() == 0 and page.locator("[data-a=release]").count() == 0
