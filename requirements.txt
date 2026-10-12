@@ -5,7 +5,7 @@ trimesh
 scipy
 mujoco>=3
 pydantic>=2
-anthropic
+anthropic>=1.13  # the design chat uses output_config (effort)
 pillow
 pytest
 # optional, for driving real machines

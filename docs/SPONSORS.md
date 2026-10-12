@@ -14,9 +14,13 @@ both still work: Darwin Search needs no account, and Keewano switches itself off
 Every revision, chat edit, Darwin lookup and bench measurement is sent to Keewano as typed events
 (`Project.log()` → `morph/keewano.py`).
 
-## Keys (Keewano only)
+## Keys (Keewano only; Darwin needs none)
 
-Copy `env.example` to `.env` in the repo folder and fill in:
+Easiest: click **Keys** (top right of the Studio), paste the three Keewano values and click **Save
+keys**. The dialog then tests them (a read-only query) and says whether they work. They are written
+to `.env` in the repo folder (git-ignored), apply at once, and are never shown again.
+
+Or edit `.env` yourself (the first launch creates it from `env.example`):
 
 | Variable | What it is | Where in Keewano |
 |---|---|---|
@@ -24,18 +28,20 @@ Copy `env.example` to `.env` in the repo folder and fill in:
 | `KEEWANO_PAT` | personal access token (`kwpat-...`) | Settings → Personal → Security |
 | `KEEWANO_PROJECT_ID` | project UUID | Settings → Details → Project ID |
 
-`.env` is git-ignored and read at every start (`run_studio.bat` needs nothing else). Keys set in the
-terminal win over the file.
+`.env` is read at every start (`run_studio.bat` needs nothing else). Keys set in the terminal win
+over the file.
 
-Check: `python -m morph.cli ask "SELECT count(*) FROM events"` prints a number.
+Check: `python -m morph.cli doctor` tests every key that is set, or
+`python -m morph.cli ask "SELECT count(*) FROM events"` prints a number.
 
 **If the keys are for a project other than R cubed**, it has no build history yet. Load it once and
 wait about 5 minutes before demoing: `python tools/keewano_backfill.py --send`. The backfilled
 projects are named `synthetic-*`, and their force ratios are invented: say so if asked. The R cubed
 project's history is the same kind of seeded data.
 
-After setting keys for the first time, close the Studio, delete the `projects` folder and start it
-again, so the gripper stage reruns and picks up the calibration (Reset demo keeps the existing build).
+The grip calibration is applied when a robot is generated, so after adding keys for the first time
+click **Reset demo and rebuild** in the Keys dialog (it deletes chat edits and regenerates both robots
+in about a minute). Deleting the `projects` folder and starting again does the same.
 
 ## Darwin when its API is down
 

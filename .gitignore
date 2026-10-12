@@ -1,8 +1,12 @@
 projects/
 __pycache__/
 *.egg-info/
+/build/
+/dist/
 .venv/
 .snap_*/
-# API keys (e.g. keewano.env): never commit
+# API keys (e.g. keewano.env, .env and its .env.tmp while saving): never commit
 *.env
 .env
+.env.*
+!.env.example

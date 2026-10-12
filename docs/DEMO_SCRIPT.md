@@ -54,8 +54,8 @@ it: the pipeline strip and the auto-tour are the visual.
   what failed.
 - Darwin is slow or down: its rows are labelled **cached** and come from the last good search
   (shipped with the repo). Move on whenever you like; the search finishes in the background.
-- Keewano isn't connected: the caption and the right panel both say so honestly. Keys go in `.env`
-  (see `docs/SPONSORS.md`).
+- Keewano isn't connected: the caption and the right panel both say so honestly. Add the keys with
+  **Keys** (top right; see `docs/SPONSORS.md`), then **Reset demo and rebuild** before the next take.
 - The 3D view is slow: press → past the X-ray step, or turn **X-ray** and **Labels** off.
 - Anything else: **Esc**, fix it by hand, **P**, then click the step's dot in the progress bar to
   jump back in.

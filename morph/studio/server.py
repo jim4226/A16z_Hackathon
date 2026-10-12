@@ -121,9 +121,10 @@ def is_robot_project(root: str) -> bool:
 
 
 def integrations() -> dict:
-    """Which sponsor services are configured on this machine (keys come from the environment)."""
+    """Which services are configured on this machine (keys come from the environment)."""
     env = os.environ.get
-    return {"keewano": {"send": bool(env("KEEWANO_API_KEY")), "query": bool(env("KEEWANO_PAT") and env("KEEWANO_PROJECT_ID"))},
+    return {"claude": {"chat": bool(env("ANTHROPIC_API_KEY"))},
+            "keewano": {"send": bool(env("KEEWANO_API_KEY")), "query": bool(env("KEEWANO_PAT") and env("KEEWANO_PROJECT_ID"))},
             "darwin": {"search": True}}
 
 
@@ -278,10 +279,11 @@ class Studio:
         finally:
             self.sourcing.release()
 
-    def reset(self) -> bool:
+    def reset(self, rebuild: bool = False) -> bool:
         """Demo reset: every project goes back to a clean build of its original design (see baseline());
         the revisions after it are deleted, like deleting the projects folder but keeping the first
-        build. If that build is from older code it is rebuilt now (about 30 s per robot)."""
+        build. If that build is from older code, or `rebuild` is set (new API keys: the Keewano grip
+        calibration only applies to a fresh build), it is rebuilt now (about 30 s per robot)."""
         if not self.busy.acquire(blocking=False):
             return False
         try:
@@ -299,7 +301,7 @@ class Studio:
                     if not _remove_rev(p, r):
                         complete = False  # a file in it is open (Excel, a viewer): keep the rest intact
                         break
-                if complete and (self._results(p, keep) or {}).get("pipeline_version") != pipeline_version():
+                if complete and (rebuild or (self._results(p, keep) or {}).get("pipeline_version") != pipeline_version()):
                     keep = p.run(p.load_design(keep), parent=None, label="rebuilt with latest Morph", verbose=False)
                 p.log({"type": "demo_reset", "rev": keep, "complete": complete})
             self.p = RobotProject(os.path.join(self.home, self.start))
@@ -321,10 +323,23 @@ class Studio:
         self.apply(changes, f"edit: {desc}", reply=f"Parameter edit: {desc}.")
 
 
-def make_handler(studio: Studio):
+def make_handler(studio: Studio, allowed_hosts: set | None = None):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
+
+        def _trusted(self, post: bool) -> bool:
+            """Only this computer's Studio page may use the API. The Host check stops DNS rebinding
+            (a web page that resolves its own name to 127.0.0.1); the Origin check stops another
+            site's page from POSTing to the Studio (changing keys, resetting the demo)."""
+            host = (self.headers.get("Host") or "").lower()
+            if allowed_hosts is not None and host not in allowed_hosts:
+                return False
+            if post:
+                origin = self.headers.get("Origin")
+                if origin and origin.lower() != f"http://{host}":
+                    return False
+            return True
 
         def _send(self, code, body: bytes, ctype="application/json"):
             self.send_response(code)
@@ -353,6 +368,8 @@ def make_handler(studio: Studio):
 
         def do_GET(self):
             u = urlparse(self.path)
+            if not self._trusted(post=False):
+                return self._send(403, b"forbidden", "text/plain")
             if u.path in ("/", "/index.html"):
                 return self._file(os.path.join(STATIC, "index.html"))
             if u.path.startswith("/static/"):
@@ -363,6 +380,10 @@ def make_handler(studio: Studio):
                 return self._file(full) if full else self._send(403, b"", "text/plain")
             if u.path == "/api/state":
                 return self._send(200, json.dumps(studio.state()).encode())
+            if u.path == "/api/keys":
+                from .. import keys
+                return self._send(200, json.dumps({"keys": keys.status(), "integrations": integrations(),
+                                                   "file": os.path.basename(keys.ENV_PATH)}).encode())
             if u.path == "/api/rev":
                 rev = parse_qs(u.query).get("rev", [None])[0]
                 if rev not in studio.p.revs():
@@ -391,8 +412,15 @@ def make_handler(studio: Studio):
 
         def do_POST(self):
             u = urlparse(self.path)
+            if not self._trusted(post=True):
+                return self._send(403, b"forbidden", "text/plain")
             n = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(n) or b"{}")
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                return self._send(400, b'{"ok":false,"error":"expected a JSON object"}')
             if u.path == "/api/chat":
                 msg = (body.get("message") or "").strip()
                 if msg:
@@ -405,8 +433,22 @@ def make_handler(studio: Studio):
                 threading.Thread(target=studio.source, args=(body.get("rev"),), daemon=True).start()
                 return self._send(202, b'{"ok":true}')
             if u.path == "/api/reset":
-                ok = studio.reset()
+                ok = studio.reset(rebuild=bool(body.get("rebuild")))
                 return self._send(200 if ok else 409, json.dumps({"ok": ok}).encode())
+            if u.path == "/api/keys":
+                from .. import keewano, keys
+                try:
+                    changed = keys.save(body.get("values") or {})
+                except ValueError as exc:
+                    return self._send(400, json.dumps({"ok": False, "error": str(exc)}).encode())
+                if any(k.startswith("KEEWANO") for k in changed):
+                    keewano._ratio_cache.clear()  # re-query the calibration with the new project
+                return self._send(200, json.dumps({"ok": True, "changed": changed, "keys": keys.status(),
+                                                   "integrations": integrations()}).encode())
+            if u.path == "/api/keys/check":  # POST: it calls the services with the person's keys
+                from .. import keys
+                services = body.get("services")
+                return self._send(200, json.dumps({"checks": keys.check(services if isinstance(services, list) else None)}).encode())
             if u.path == "/api/params":
                 changes = body.get("changes") or {}
                 if changes:
@@ -434,8 +476,10 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     if not project.revs():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     studio = Studio(project, home)
+    # requests must name this server: 127.0.0.1/localhost, or the bind address if it was given explicitly
+    allowed = None if host in ("0.0.0.0", "::", "") else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}
     try:
-        httpd = _Server((host, port), make_handler(studio))
+        httpd = _Server((host, port), make_handler(studio, allowed))
     except OSError as exc:
         raise SystemExit(f"Port {port} is busy ({exc}): Morph Studio is probably already running. "
                          "Close its CMD window, then start again.")

@@ -5,6 +5,7 @@ import {
   RobotPanel, SimPanel, ElecPanel, MfgPanel, AsmPanel, BomPanel, forceWindowSVG,
 } from './panels.js';
 import { Presenter } from './present.js';
+import { KeysDialog } from './keys.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -66,8 +67,8 @@ class ServerBackend {
   chat(message) { return post('/api/chat', { message }); }
   params(changes) { return post('/api/params', { changes }); }
   source(rev) { return post('/api/source', { rev }); }
-  async reset() {
-    const r = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  async reset(rebuild) {
+    const r = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rebuild: !!rebuild }) });
     return r.ok;
   }
   async project(name) {
@@ -232,7 +233,7 @@ function toast(text) {
 
 // ------------------------------------------------------------------ app state
 const S = { project: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null, integrations: {}, busy: false };
-let backend, viewer, panels, presenter;
+let backend, viewer, panels, presenter, keysDlg;
 
 const ctx = {
   resolve, join, getJSON, getText, toast, fixture: FIXTURE,
@@ -277,6 +278,7 @@ async function reloadProject() {
   S.labels = {}; S.robotKey = null; S.justAdded = null;
   $('#messages').innerHTML = '';
   S.integrations = st.integrations || S.integrations;
+  renderKeysDot();
   for (const m of st.history || []) addMsg(m.type, m.text, m.changes);
   if (!(st.history || []).length && st.current) addMsg('assistant', `Switched to ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`);
   renderProjects();
@@ -285,6 +287,11 @@ async function reloadProject() {
   for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
 }
 
+function renderKeysDot() {
+  const i = S.integrations || {}, on = [i.claude?.chat, i.keewano?.send && i.keewano?.query].filter(Boolean).length;
+  const d = $('#keysBtn .kdot');
+  if (d) { d.className = `kdot ${on === 2 ? 'on' : on ? 'some' : ''}`; $('#keysBtn').title = `API keys: ${on === 2 ? 'Claude and Keewano connected' : on ? 'partly connected' : 'none set (optional)'}`; }
+}
 function renderHeader() {
   $('#project').textContent = S.project || '—';
   const d = S.current?.design || {}, pd = S.previous?.design || {};
@@ -767,9 +774,9 @@ function presentApi() {
       if (ok) await until(() => S.project === name && (S.reloads || 0) > n, 30000);
       return ok;
     },
-    async reset() {
+    async reset(rebuild) {
       const n = S.reloads || 0;
-      const ok = await backend.reset?.().catch(() => false);
+      const ok = await backend.reset?.(rebuild).catch(() => false);
       if (ok) await until(() => (S.reloads || 0) > n, 30000);
       return ok;
     },
@@ -839,6 +846,12 @@ async function boot() {
   $('#tour').addEventListener('change', (e) => { if (!e.target.checked) stopTour(); });
   presenter = new Presenter(presentApi());
   $('#presentBtn').onclick = () => presenter.toggle();
+  keysDlg = new KeysDialog({
+    toast,
+    reset: (rebuild) => presentApi().reset(rebuild),
+    onChanged(integrations) { S.integrations = integrations || S.integrations; renderKeysDot(); if (S.current) renderInspector(S.current, S.previous); },
+  });
+  $('#keysBtn').onclick = () => keysDlg.open();
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'p' || e.key === 'P') && !e.target.closest('input, textarea, select') && !e.metaKey && !e.ctrlKey && !e.altKey) presenter.toggle();
   });
@@ -853,12 +866,13 @@ async function boot() {
     S.projects = st.projects || [];
     S.revs = st.revs || [];
     S.integrations = st.integrations || {};
+    renderKeysDot();
     renderProjects();
     S.latest = st.current?.rev || null;
     for (const m of st.history || []) addMsg(m.type, m.text, m.changes);
     if (!(st.history || []).length) {
       addMsg('assistant', st.current
-        ? `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.`
+        ? `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`
         : 'Describe the robot you need, e.g. “a desktop arm that picks a raw egg without cracking it”.');
     }
     if (st.current) await show(st.current, st.previous, { tour: false });

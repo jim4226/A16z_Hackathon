@@ -1,10 +1,10 @@
 [project]
 name = "morph"
 version = "0.1.0"
-description = "Describe a need -> CAD -> simulate -> compare -> fabricate -> measure (robot gripper fingers slice)"
+description = "Morph Studio: generate and edit a whole robot (CAD, simulation, electronics, manufacturing, sourcing, assembly)"
 requires-python = ">=3.10"
 dependencies = [
-  "numpy", "shapely>=2", "manifold3d", "trimesh", "mujoco>=3", "pydantic>=2", "anthropic", "pillow",
+  "numpy", "scipy", "shapely>=2", "manifold3d", "trimesh", "mujoco>=3", "pydantic>=2", "anthropic>=1.13", "pillow",
 ]
 
 [project.optional-dependencies]
@@ -18,5 +18,9 @@ morph = "morph.cli:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["morph"]
+[tool.setuptools.packages.find]
+include = ["morph*"]
+
+[tool.setuptools.package-data]
+"morph.studio" = ["static/*", "static/vendor/*", "static/fixtures/**/*"]
+"morph.robot" = ["*.json"]
