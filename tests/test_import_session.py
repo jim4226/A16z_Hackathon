@@ -383,3 +383,13 @@ def test_api_busy_sessions_and_unapplied_objects(home, tmp_path):
     api_import._release(sid)                                        # the job ends: its files go now
     assert not os.path.exists(os.path.join(home, ".imports", sid))
     assert api_import.dispatch(_req(st, "GET", f"/api/import/{sid}"))[0] == 404
+
+
+def test_cli_output_survives_a_narrow_console():
+    from morph import importers
+
+    raw = io.BytesIO()
+    console = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
+    importers._printer(console)("12 x \u8235\u673a STS3215 \u2713 caf\u00e9")      # a Windows console can't show all of it
+    console.flush()
+    assert raw.getvalue().decode("cp1252") == "12 x ?? STS3215 ? caf\u00e9\n"

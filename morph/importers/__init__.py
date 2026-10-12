@@ -48,11 +48,23 @@ def add_arguments(p):
     p.add_argument("--json", action="store_true", help="print the result as JSON")
 
 
+def _printer(stream):
+    """print() for text that may hold names from the imported files: characters the console can't show become ?."""
+    enc = getattr(stream, "encoding", None) or "ascii"
+
+    def out(text=""):
+        print(str(text).encode(enc, "replace").decode(enc, "replace"), file=stream)
+    return out
+
+
 def run_cli(a) -> int:
-    """`morph import`; returns the exit code. Output is plain ASCII."""
+    """`morph import`; returns the exit code. Morph's own text is ASCII; names from the files are printed in the
+    console's encoding, with ? for what it can't show."""
     import json
     import os
     import sys
+
+    say_line, err_line = _printer(sys.stdout), _printer(sys.stderr)
 
     answers = {k: v for k, v in (("gripper", a.gripper), ("family", a.family), ("units", a.units)) if v}
     if a.actuators:
@@ -62,7 +74,7 @@ def run_cli(a) -> int:
 
     def say(ev):
         if not a.json and ev.get("type") == "import" and ev.get("status") in ("done", "warn", "error"):
-            print(f"  {ev['status']:<5} {ev.get('text', '')}")
+            say_line(f"  {ev['status']:<5} {ev.get('text', '')}")
 
     try:
         out = cli_import(a.source, name=a.name, as_=a.as_, answers=answers, dry_run=a.dry_run, on_event=say,
@@ -77,36 +89,36 @@ def run_cli(a) -> int:
                                label=out["result"]["label"], verbose=False, fast_sim=a.fast)
             out["project"] = a.project
     except ImportFailed as exc:
-        print(f"Import failed: {exc}", file=sys.stderr)
+        err_line(f"Import failed: {exc}")
         return 1
     if a.json:
-        print(json.dumps(out, indent=1, default=str))
+        say_line(json.dumps(out, indent=1, default=str, ensure_ascii=True))
         return 0
     c = out["candidate"]
-    print(f"{c['kind']}: {c['file']}")
+    say_line(f"{c['kind']}: {c['file']}")
     if c["kind"] == "robot" and not c.get("error"):
         g = c.get("gripper") or {}
-        print(f"  gripper {g.get('joint')} ({', '.join(g.get('why') or [])}); tool point: {(c.get('tcp') or {}).get('how')}")
+        say_line(f"  gripper {g.get('joint')} ({', '.join(g.get('why') or [])}); tool point: {(c.get('tcp') or {}).get('how')}")
         for j, info in (c.get("actuators") or {}).items():
-            print(f"  {j:<16} {info.get('key') or 'unknown':<14} {info.get('basis', '')}")
+            say_line(f"  {j:<16} {info.get('key') or 'unknown':<14} {info.get('basis', '')}")
     for w in out.get("warnings", [])[:8]:
-        print(f"  note: {w}")
+        say_line(f"  note: {w}")
     if out.get("dry_run"):
         need = c.get("needs") or []
-        print("Dry run: nothing saved." + (f" To build it, pass --family or --actuators ({', '.join(need)} needed)." if need else ""))
+        say_line("Dry run: nothing saved." + (f" To build it, pass --family or --actuators ({', '.join(need)} needed)." if need else ""))
         return 0
     r = out.get("result") or {}
     if out.get("project"):
         s = out.get("summary") or {}
-        print(f"Built {out['project']} {out.get('rev')}: feasible={s.get('feasible')} pick_place={s.get('pick_place_success')}")
+        say_line(f"Built {out['project']} {out.get('rev')}: feasible={s.get('feasible')} pick_place={s.get('pick_place_success')}")
         for i in (s.get("issues") or [])[:6]:
-            print(f"  issue: {i}")
+            say_line(f"  issue: {i}")
     elif r.get("kind") == "object":
-        print("Object keys (apply with --project NAME, or `morph robot change NAME ...`):")
-        print("  " + " ".join(f"{k}={v}" for k, v in r["changes"].items()))
+        say_line("Object keys (apply with --project NAME, or `morph robot change NAME ...`):")
+        say_line("  " + " ".join(f"{k}={v}" for k, v in r["changes"].items()))
     elif r.get("kind") in ("bom", "board"):
         rows = r.get("rows") or []
-        print(f"{len(rows)} parts" + (f", total {r.get('total')} {r.get('currency') or ''}" if r.get("total") is not None else ""))
+        say_line(f"{len(rows)} parts" + (f", total {r.get('total')} {r.get('currency') or ''}" if r.get("total") is not None else ""))
         for row in rows[:12]:
-            print(f"  {row.get('qty', 1):>4} x {row['item'][:70]}")
+            say_line(f"  {row.get('qty', 1):>4} x {row['item'][:70]}")
     return 0
