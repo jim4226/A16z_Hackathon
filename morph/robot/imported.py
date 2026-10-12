@@ -10,7 +10,6 @@ PCB, onboard computer + battery), the wrist-camera variant, and cabling.
 from __future__ import annotations
 
 import json
-import math
 import os
 
 import numpy as np

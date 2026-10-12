@@ -33,7 +33,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline_version
-from ..spec import Design
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .security import (MAX_BODY, MAX_MESSAGE, BodyError, contained_path, content_length, json_object, looks_like_secret,
                        param_changes, project_name)

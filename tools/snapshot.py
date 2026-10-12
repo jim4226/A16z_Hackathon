@@ -9,7 +9,6 @@ Playwright default). One PNG per view: out.png, out_2.png, ...
 
 import argparse
 import asyncio
-import functools
 import http.server
 import os
 import shutil

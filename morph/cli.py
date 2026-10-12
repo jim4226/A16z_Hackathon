@@ -458,13 +458,13 @@ def cmd_demo(a):
     print("\n== 2. explore pad styles and section sizes")
     _timed(name, "explore", cmd_explore, argparse.Namespace(name=name, base="r001", trials=a.trials))
     best = [e for e in p.entries() if e["type"] == "exploration"][-1]["recommended"]
-    print(f"\n== 3. what if we use a smaller SG90 servo? (only electronics + BOM should rerun)")
+    print("\n== 3. what if we use a smaller SG90 servo? (only electronics + BOM should rerun)")
     _timed(name, "change", cmd_change, argparse.Namespace(name=name, base=best, changes=["electronics.servo=sg90"],
                                                           label="SG90 servo", trials=a.trials))
-    print(f"\n== 4. what if the object is a strawberry-soft 3 N limit? (only electronics + BOM rerun)")
+    print("\n== 4. what if the object is a strawberry-soft 3 N limit? (only electronics + BOM rerun)")
     _timed(name, "change", cmd_change, argparse.Namespace(name=name, base=best, changes=["object.max_force_n=3"],
                                                           label="3 N damage limit", trials=a.trials))
-    print(f"\n== 5. bench rehearsal (SIMULATED trace; use --port on real hardware)")
+    print("\n== 5. bench rehearsal (SIMULATED trace; use --port on real hardware)")
     from . import bench
     bench.run(p, best, None, 6.0, simulate=True)
     revs = p.revs()

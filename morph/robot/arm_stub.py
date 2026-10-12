@@ -30,7 +30,6 @@ from __future__ import annotations
 import math
 
 import numpy as np
-import trimesh
 
 from . import catalog, components
 from .assembly import Assembly, Cable, Joint, Part, Step, rot, trans

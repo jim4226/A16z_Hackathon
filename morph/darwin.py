@@ -24,7 +24,6 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from . import settings

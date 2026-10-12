@@ -1515,7 +1515,6 @@ def _xml(s):
 def dfm_checks(entry: dict, g: Geo) -> list:
     proc = entry["process"]
     out = []
-    ext = g.extents
     if proc in PRINT_PROCESSES:
         pose = g.print_pose
         bed = {"fdm_print": FDM_BED, "sla_print": SLA_BED, "mjf_print": MJF_BED}[proc]
@@ -1786,7 +1785,6 @@ def _harness_svg(harness, title):
     s = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" font-family="Helvetica, Arial, sans-serif">',
          f'<rect width="{W}" height="{H}" fill="#fbfbfc"/>',
          f'<text x="20" y="32" font-size="18" font-weight="600" fill="#1d2430">{_xml(title)} — formboard (1 row per wire)</text>']
-    pal = {2: "#c0392b", 3: "#2c3e50", 4: "#16a085"}
     for i, h in enumerate(harness):
         y = 64 + i * rowh
         L = float(h.get("length_mm", 100) or 100)
@@ -1940,7 +1938,7 @@ def _how(e, design) -> str:
         lh = pr.get("layer_height_mm", 0.2)
         return (f"print on any FDM printer ({e['material']}, {lh:g} mm, 4 walls, 25 % gyroid"
                 + (", tree supports" if pr.get("supports", "none") != "none" else "") + f") from {f('.3mf') or 'the 3MF'}"
-                + (f" or order from JLC3DP" if e["vendor"].startswith("In-house") else f"; order from {e['vendor']}"))
+                + (" or order from JLC3DP" if e["vendor"].startswith("In-house") else f"; order from {e['vendor']}"))
     if proc == "sla_print":
         return f"upload {f('.stl') or 'the STL'} to {e['vendor']} (tough resin) or print on a Formlabs-class SLA"
     if proc == "mjf_print":
