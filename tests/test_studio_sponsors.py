@@ -123,11 +123,12 @@ def test_demo_reset_returns_to_the_original_design(tmp_path):
         _rev(arm, r, parent)
     assert baseline(RobotProject(str(egg))) == "r001"
     st = Studio(RobotProject(str(egg)), str(home))
-    st.p = RobotProject(str(arm))  # the presenter had switched to so101
+    sent = []
+    st.room("so101").hub.send = sent.append       # a tab presenting so101
     assert st.reset()
     assert RobotProject(str(egg)).revs() == ["r001"]
     assert RobotProject(str(arm)).revs() == ["r001"]
-    assert os.path.basename(st.p.root) == "egg-picker"
+    assert sent == [{"type": "project", "project": "so101", "reset": True}]  # that tab reloads
 
 
 def test_demo_reset_rebuilds_a_stale_baseline(tmp_path, monkeypatch):

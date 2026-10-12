@@ -118,7 +118,8 @@ def _start(tmp_path, token=None):
     def call(method, path, body=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         data = body if isinstance(body, (bytes, type(None))) else json.dumps(body).encode()
-        conn.request(method, path, body=data, headers={"Content-Type": "application/json", **(headers or {})})
+        base = {"Content-Type": "application/json", **({"X-Morph-Client": "1"} if method != "GET" else {})}
+        conn.request(method, path, body=data, headers={**base, **(headers or {})})
         r = conn.getresponse()
         out = r.status, r.read(), dict(r.getheaders())
         conn.close()

@@ -60,39 +60,50 @@ function fetchOnce(url, kind) {
 const getJSON = (u) => fetchOnce(u, 'json');
 const getText = (u) => fetchOnce(u, 'text');
 
+// Every request names this tab's project (?project=); changes also carry X-Morph-Client, which the server requires
+// on POST, PUT and DELETE (another site's page can't send it).
 class ServerBackend {
   label = 'Live';
-  async state() { return getFresh('/api/state'); }
-  async rev(r) { return getFresh(`/api/rev?rev=${encodeURIComponent(r)}`); }
-  chat(message) { return post('/api/chat', { message }); }
-  params(changes) { return post('/api/params', { changes }); }
-  source(rev) { return post('/api/source', { rev }); }
-  async reset(rebuild) {
-    const r = await fetch('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rebuild: !!rebuild }) });
-    return r.ok;
+  constructor(project) { this.name = project || ''; this.gen = 0; this.es = null; }
+  q(path, params = {}) {
+    const u = new URL(path, location.origin);
+    for (const [k, v] of Object.entries(params || {})) if (v != null) u.searchParams.set(k, v);
+    if (this.name && !u.searchParams.has('project')) u.searchParams.set('project', this.name);
+    return u.pathname + u.search;
   }
-  async project(name) {
-    const r = await fetch('/api/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-    return r.ok;
-  }
+  async state() { return getFresh(this.q('/api/state')); }
+  async rev(r) { return getFresh(this.q('/api/rev', { rev: r })); }
+  chat(message, base_rev) { return post(this.q('/api/chat'), { message, base_rev }); }
+  params(changes, base_rev) { return post(this.q('/api/params'), { changes, base_rev }); }
+  source(rev) { return post(this.q('/api/source'), { rev }); }
+  resolve(job, action) { return post(this.q('/api/jobs/resolve'), { job, action }); }
+  async reset(rebuild) { const r = await send('POST', '/api/reset', { rebuild: !!rebuild }); return r.ok; }
+  setProject(name) { this.name = name; if (this.onEvent) this.connect(this.onEvent, this.onStatus); }
   connect(onEvent, onStatus) {
+    this.onEvent = onEvent; this.onStatus = onStatus;
+    const gen = ++this.gen;
+    this.es?.close();
     const go = () => {
-      const es = new EventSource('/api/events');
+      if (gen !== this.gen) return;
+      const es = this.es = new EventSource(this.q('/api/events'));
       es.onopen = () => onStatus('live');
       es.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (e) { console.warn('bad event', e); } };
-      es.onerror = () => { es.close(); onStatus('off'); setTimeout(go, 1500); };
+      es.onerror = () => { es.close(); if (gen !== this.gen) return; onStatus('off'); setTimeout(go, 1500); };
     };
     go();
   }
 }
 async function getFresh(url) {
   const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
+  if (!r.ok) throw Object.assign(new Error(`${r.status} ${url}`), { status: r.status });
   return r.json();
 }
+function send(method, url, body) {
+  return fetch(url, { method, headers: { 'Content-Type': 'application/json', 'X-Morph-Client': '1' }, body: body === undefined ? undefined : JSON.stringify(body) });
+}
 function post(url, body) {
-  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    .then(async (r) => { if (!r.ok && r.status !== 409) toast((await r.json().catch(() => ({}))).error || `The Studio refused that (${r.status})`); return r; })
+  return send('POST', url, body)
+    .then(async (r) => { if (!r.ok && r.status !== 409) toast((await r.clone().json().catch(() => ({}))).error || `The Studio refused that (${r.status})`); return r; })
     .catch((e) => toast(`Couldn't reach the Studio server (${e.message})`));
 }
 
@@ -233,7 +244,7 @@ function toast(text) {
 }
 
 // ------------------------------------------------------------------ app state
-const S = { project: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null, integrations: {}, busy: false };
+const S = { project: '', start: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null, integrations: {}, busy: false, queue: [] };
 let backend, viewer, panels, presenter, keysDlg;
 
 const ctx = {
@@ -248,43 +259,86 @@ const ctx = {
 
 function applyChanges(changes) {
   if (!backend) return;
-  backend.params(changes);
+  backend.params(changes, S.current?.rev);
   // pills show a busy shimmer until the next revision lands; clear it if the server declined the change
   setTimeout(() => $$('.pills button.busy').forEach((b) => b.classList.remove('busy')), 20000);
 }
 
 // ------------------------------------------------------------------ header
+// The project menu switches this tab only (?project= in its address); other tabs and people stay where they are.
 function renderProjects() {
   const list = S.projects || [];
   $('#projBtn').classList.toggle('multi', list.length > 1);
-  $('#projMenu').innerHTML = `<div class="mh">Projects</div>` + list.map((p) => `<button type="button" data-p="${esc(p.name)}" class="${p.name === S.project ? 'on' : ''}"><b>${esc(p.name)}</b>${p.source ? `<span class="tag acc">imported · ${esc(p.source)}</span>` : '<span class="tag neutral">generated</span>'}${p.need ? `<small>${esc(p.need)}</small>` : ''}</button>`).join('');
-  $$('#projMenu button[data-p]').forEach((b) => (b.onclick = async () => {
+  $('#projMenu').innerHTML = `<div class="mh">Projects</div>` + list.map((p) => `<button type="button" data-p="${esc(p.name)}" class="${p.name === S.project ? 'on' : ''}"><b>${esc(p.name)}</b>${p.source ? `<span class="tag acc">imported · ${esc(p.source)}</span>` : '<span class="tag neutral">generated</span>'}${p.busy ? '<span class="tag warn">building</span>' : ''}${p.need ? `<small>${esc(p.need)}</small>` : ''}</button>`).join('');
+  $$('#projMenu button[data-p]').forEach((b) => (b.onclick = () => {
     $('#projMenu').classList.remove('on');
-    if (b.dataset.p === S.project || !backend.project) return;
-    toast(`Switching to ${b.dataset.p}…`);
-    const ok = await backend.project(b.dataset.p).catch(() => false);
-    if (!ok) toast('Still regenerating; switch projects when the pipeline is idle');
+    openProject(b.dataset.p);
   }));
 }
 function setupProjects() {
-  $('#projBtn').onclick = (e) => { e.stopPropagation(); if ((S.projects || []).length > 1) $('#projMenu').classList.toggle('on'); };
+  $('#projBtn').onclick = (e) => { e.stopPropagation(); $('#projMenu').classList.toggle('on'); };
   document.addEventListener('click', (e) => { if (!e.target.closest('#projMenu')) $('#projMenu').classList.remove('on'); });
 }
-async function reloadProject() {
-  memo.clear();
-  clearCaches();
-  for (const p of Object.values(panels)) p.resetCache?.();
-  const st = await backend.state();
-  S.project = st.project; S.projects = st.projects || S.projects; S.revs = st.revs || []; S.latest = st.current?.rev || null;
-  S.labels = {}; S.robotKey = null; S.justAdded = null;
-  $('#messages').innerHTML = '';
+function setUrlProject(name) { try { history.replaceState(null, '', urlWith({ project: name })); } catch (e) { /* file:// */ } }
+async function openProject(name) {
+  if (!name || !backend?.setProject) return false;
+  if (name === S.project) return true;
+  const prev = S.project;
+  stopTour(); typing(false); sysMsg = null; liveProv = null; S.busy = false; S.queue = [];
+  S.project = name;
+  backend.setProject(name);
+  setUrlProject(name);
+  try { await reloadProject(); return true; } catch (e) {
+    console.warn(e);
+    toast(`Couldn't open ${name}${e.status === 404 ? ': it no longer exists' : ''}`);
+    if (prev && prev !== name) { S.project = prev; backend.setProject(prev); setUrlProject(prev); await reloadProject().catch(() => {}); }
+    return false;
+  }
+}
+let reloading = null, reloadAgain = false;
+function reloadProject() {  // one at a time; a request during a reload runs once more after it
+  if (reloading) { reloadAgain = true; return reloading; }
+  reloading = (async () => {
+    try {
+      do { reloadAgain = false; await loadState(await backend.state(), { fresh: true }); } while (reloadAgain);
+    } finally { reloading = null; }
+  })();
+  return reloading;
+}
+async function loadState(st, { fresh = false } = {}) {
+  if (fresh) {
+    memo.clear();
+    clearCaches();
+    for (const p of Object.values(panels)) p.resetCache?.();
+    S.labels = {}; S.robotKey = null; S.justAdded = null;
+    $('#messages').innerHTML = '';
+    typing(false); sysMsg = null; liveProv = null; S.busy = false;
+  }
+  S.project = st.project; S.start = st.start || S.start; S.projects = st.projects || S.projects; S.revs = st.revs || [];
+  S.latest = st.current?.rev || null; S.queue = st.queue || [];
   S.integrations = st.integrations || S.integrations;
   S.compute = st.compute || S.compute;
+  if (backend?.setProject && backend.name !== st.project) backend.name = st.project;
+  setUrlProject(st.project);
   renderKeysDot();
-  for (const m of st.history || []) addMsg(m.type, m.text, m.changes);
-  if (!(st.history || []).length && st.current) addMsg('assistant', `Switched to ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`);
   renderProjects();
+  for (const m of st.history || []) addMsg(m.type, m.text, m);
+  if (!(st.history || []).length) {
+    addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : ''}.`
+      : fresh ? `Opened ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`
+        : `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`);
+  }
   if (st.current) await show(st.current, st.previous, { tour: false });
+  else { renderHeader(); renderPipeline(null); $('#insp').innerHTML = '<div class="empty"><p>No finished revision yet.</p></div>'; }
+  renderQueue();
+  if (st.building) {  // opened mid-build: show the run so far; its events continue the strip
+    const nodes = nodesOf(S.current);
+    liveProv = Object.fromEntries(nodes.map(([k]) => [k, st.building.nodes?.[k] || 'queued']));
+    renderPipeline(S.current, liveProv);
+    S.busy = true;
+    setConn('busy', 'Regenerating');
+    renderRevs(st.building.rev);
+  }
   S.reloads = (S.reloads || 0) + 1;
   for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
 }
@@ -339,9 +393,11 @@ function setConn(kind, text) {
 }
 
 // ------------------------------------------------------------------ chat
-function addMsg(role, text, changes) {
+// opts: {changes, job, conflict, noop, live} (a chat event); a conflict asks, with buttons, while it is live
+function addMsg(role, text, opts = {}) {
   const el = document.createElement('div');
   el.className = `msg ${role}`;
+  const changes = opts.noop ? null : opts.changes;
   if (role === 'assistant') {
     el.innerHTML = `<div class="av"><svg viewBox="0 0 24 24"><path d="M5 18V6l7 6 7-6v12"/></svg></div><div><div class="b"></div></div>`;
     $('.b', el).textContent = text;
@@ -350,12 +406,22 @@ function addMsg(role, text, changes) {
       c.innerHTML = Object.entries(changes).map(([k, v]) => `<span class="chip mono">${esc(k)} = <b>${esc(pretty(Array.isArray(v) ? v[1] : v, true))}</b></span>`).join('');
       el.lastElementChild.appendChild(c);
     }
+    if (opts.conflict && opts.live && backend?.resolve) {
+      const c = h('div', 'qacts');
+      c.innerHTML = `<button class="btn primary" type="button" data-q="apply">Apply to ${esc(opts.conflict.rev)}</button><button class="btn ghost" type="button" data-q="drop">Drop it</button>`;
+      $$('button', c).forEach((b) => (b.onclick = () => {
+        $$('button', c).forEach((x) => (x.disabled = true));
+        backend.resolve(opts.conflict.job, b.dataset.q);
+      }));
+      el.lastElementChild.appendChild(c);
+    }
   } else if (role === 'system') {
     el.innerHTML = `<div class="b"><span class="spin"></span><span class="t"></span></div>`;
     $('.t', el).textContent = text;
   } else {
     el.innerHTML = '<div class="b"></div>';
     $('.b', el).textContent = text;
+    if (opts.job) el.dataset.job = opts.job;
   }
   $('#messages').appendChild(el);
   scrollChat();
@@ -373,7 +439,20 @@ function typing(on) {
 }
 function sendChat(text) {
   if (!text.trim() || !backend) return;
-  backend.chat(text.trim());
+  backend.chat(text.trim(), S.current?.rev);
+}
+// queued requests: the user's bubble says where it waits; a job's last state comes in the event after it ends
+const QSTATE = { conflict: 'needs an answer', cancelled: 'cancelled', dropped: 'dropped' };
+function renderQueue(jobs = S.queue) {
+  for (const j of jobs || []) {
+    const el = $(`#messages .msg.user[data-job="${CSS.escape(j.id)}"]`);
+    if (!el) continue;
+    const text = j.status === 'queued' ? `queued · ${j.position === 1 ? 'next' : `#${j.position}`}` : QSTATE[j.status] || '';
+    let tag = $('.qtag', el);
+    if (!text) { tag?.remove(); continue; }
+    if (!tag) { tag = h('span', 'qtag'); el.appendChild(tag); }
+    tag.textContent = text;
+  }
 }
 function setupChat() {
   const input = $('#input');
@@ -516,7 +595,7 @@ function markTabs(cur) {
   return regen;
 }
 async function exportRev(rev) {  // ask first, so a refusal is a message rather than a broken download
-  const url = `/api/export?rev=${encodeURIComponent(rev)}`;
+  const url = backend.q ? backend.q('/api/export', { rev }) : `/api/export?rev=${encodeURIComponent(rev)}`;
   const r = await fetch(`${url}&check=1`, { cache: 'no-store' }).catch(() => null);
   const out = r ? await r.json().catch(() => ({})) : {};
   if (!r?.ok) { toast(out.error || "Couldn't reach the Studio server"); return; }
@@ -715,10 +794,19 @@ const tabName = (t) => $(`#tabs .tab[data-tab="${t}"]`)?.textContent.trim() || t
 
 // ------------------------------------------------------------------ live events
 let sysMsg = null, startT = 0, liveProv = null;
+const GLOBAL_EVENTS = new Set(['project_created', 'project_deleted']);  // about other projects: every tab gets them
 function onEvent(ev) {
+  if (ev.project && S.project && ev.project !== S.project && !GLOBAL_EVENTS.has(ev.type)) return;  // a stream we just left
   switch (ev.type) {
-    case 'user': addMsg('user', ev.text); typing(true); break;
-    case 'assistant': typing(false); addMsg('assistant', ev.text, ev.noop ? null : ev.changes); if (/^(Error|Couldn't apply)/.test(ev.text || '')) { S.busy = false; S.errorAt = performance.now(); } if (ev.noop) S.noopAt = performance.now(); break;
+    case 'user': addMsg('user', ev.text, ev); if (!S.busy) typing(true); break;
+    case 'assistant': typing(false); addMsg('assistant', ev.text, { ...ev, live: true }); if (/^(Error|Couldn't apply)/.test(ev.text || '')) { S.busy = false; S.errorAt = performance.now(); } if (ev.noop) S.noopAt = performance.now(); break;
+    case 'queue': {
+      S.queue = (ev.jobs || []).filter((j) => j.position != null);
+      renderQueue(ev.jobs);
+      const run = (ev.jobs || []).find((j) => j.status === 'running');
+      if (run?.kind === 'chat' && $(`#messages .msg.user[data-job="${CSS.escape(run.id)}"]`)) typing(true);
+      break;
+    }
     case 'start': {
       typing(false);
       stopTour();
@@ -742,6 +830,10 @@ function onEvent(ev) {
       if (ev.status === 'done' && S.current?.rev === ev.rev) S.current.sourcing = ev.sourcing;
       break;
     case 'project': case 'resync': reloadProject().catch((e) => console.warn(e)); break;
+    case 'project_created': case 'project_deleted':
+      if (ev.type === 'project_deleted' && ev.project === S.project) { toast(`${ev.project} was deleted`); openProject(S.start); break; }
+      backend.state?.().then((st) => { S.projects = st.projects || S.projects; renderProjects(); }).catch(() => {});
+      break;
     case 'done': {
       typing(false);
       const cur = ev.current;
@@ -786,16 +878,10 @@ function presentApi() {
     chat: (t) => sendChat(t),
     params: (c) => applyChanges(c),
     tourOn: () => $('#tour').checked,
-    async project(name) {
-      const n = S.reloads || 0;
-      const ok = await backend.project?.(name).catch(() => false);
-      if (ok) await until(() => S.project === name && (S.reloads || 0) > n, 30000);
-      return ok;
-    },
-    async reset(rebuild) {
-      const n = S.reloads || 0;
+    project: (name) => openProject(name),  // this tab only
+    async reset(rebuild) {  // back to the start project, in this tab
       const ok = await backend.reset?.(rebuild).catch(() => false);
-      if (ok) await until(() => (S.reloads || 0) > n, 30000);
+      if (ok) { if (S.start && S.project !== S.start) await openProject(S.start); else await reloadProject().catch(() => {}); }
       return ok;
     },
     robot(o) {
@@ -879,28 +965,17 @@ async function boot() {
   showTab(TABS.includes(start) ? start : 'robot');
 
   try {
-    if (FIXTURE) { backend = new FixtureBackend(); await backend.load(); } else backend = new ServerBackend();
-    const st = await backend.state();
-    S.project = st.project;
-    S.projects = st.projects || [];
-    S.revs = st.revs || [];
-    S.integrations = st.integrations || {};
-    S.compute = st.compute || null;
-    renderKeysDot();
-    renderProjects();
-    S.latest = st.current?.rev || null;
-    for (const m of st.history || []) addMsg(m.type, m.text, m.changes);
-    if (!(st.history || []).length) {
-      addMsg('assistant', st.current
-        ? `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`
-        : 'Describe the robot you need, e.g. “a desktop arm that picks a raw egg without cracking it”.');
+    if (FIXTURE) { backend = new FixtureBackend(); await backend.load(); } else backend = new ServerBackend(QS.get('project'));
+    let st;
+    try { st = await backend.state(); } catch (e) {
+      if (![400, 404].includes(e.status) || !backend.name) throw e;
+      toast(`There is no project called ${backend.name}; opening the start project`);  // a deleted project's link
+      backend.name = '';
+      st = await backend.state();
     }
-    if (st.current) await show(st.current, st.previous, { tour: false });
-    else { renderPipeline(null); $('#insp').innerHTML = '<div class="empty"><p>No revisions yet.</p></div>'; }
+    await loadState(st);
     backend.connect(onEvent, (k) => setConn(k));
     if (FIXTURE) setConn('fixture');
-    // labels for older revisions (shown on the timeline chips), fetched in the background
-    for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
     if (QS.get('demo')) setTimeout(() => sendChat(QS.get('demo')), 600);
     if (QS.get('present')) presenter.open();
   } catch (e) {

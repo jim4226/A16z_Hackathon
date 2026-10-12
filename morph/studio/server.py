@@ -17,9 +17,11 @@ import errno
 import hashlib
 import hmac
 import html
+import importlib
 import json
 import mimetypes
 import os
+import pkgutil
 import queue
 import re
 import secrets
@@ -32,49 +34,17 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
+from ..pipeline import REV
 from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline_version
+from ..spec import diff
+from . import routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
+from .rooms import Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
+from .routes import HTTPError, route
 from .security import (MAX_BODY, MAX_MESSAGE, BodyError, contained_path, content_length, json_object, looks_like_secret,
                        param_changes, project_name)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-
-
-class Hub:
-    MAX_EVENTS = 500    # per open tab: a tab that stops reading loses its oldest events (then reloads), never the build
-    MAX_HISTORY = 500   # chat messages replayed to a new tab
-
-    def __init__(self):
-        self.clients, self.lock = [], threading.Lock()
-        self.history = []
-
-    def subscribe(self):
-        q = queue.Queue(maxsize=self.MAX_EVENTS)
-        with self.lock:
-            self.clients.append(q)
-        return q
-
-    def unsubscribe(self, q):
-        with self.lock:
-            if q in self.clients:
-                self.clients.remove(q)
-
-    def send(self, event: dict):
-        with self.lock:
-            if event.get("type") in ("user", "assistant"):
-                self.history.append(event)
-                del self.history[:-self.MAX_HISTORY]
-            for q in self.clients:
-                try:
-                    q.put_nowait(event)
-                except queue.Full:  # drop the oldest and tell the tab to reload its state
-                    for _ in range(2):
-                        try:
-                            q.get_nowait()
-                        except queue.Empty:
-                            break
-                    q.put_nowait({"type": "resync"})
-                    q.put_nowait(event)
 
 
 def _url(base: str, rel: str | None) -> str | None:
@@ -199,9 +169,11 @@ button { height: 36px; border: 0; border-radius: 8px; padding: 0 14px; backgroun
 <button type="submit">Open</button></form></main></body></html>"""
 
 
-def rev_payload(p: RobotProject, rev: str) -> dict:
+def rev_payload(p: RobotProject, rev: str, project: str | None = None) -> dict:
+    """A revision for the page. File URLs are /files/<project>/<rev>/... (/files/<rev>/... without a project: the
+    Studio's start project)."""
     res, d = p.load_results(rev), p.load_design(rev)
-    base = f"/files/{rev}"
+    base = f"/files/{project}/{rev}" if project else f"/files/{rev}"
     cad = res.get("cad") or {}
     sims = {}
     for name, s in ((res.get("sims") or {}).get("scenarios") or {}).items():
@@ -241,13 +213,34 @@ def rev_payload(p: RobotProject, rev: str) -> dict:
     }
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name) or default))
+    except ValueError:
+        return default
+
+
 class Studio:
-    def __init__(self, project: RobotProject, home: str | None = None):
-        self.p, self.hub, self.busy = project, Hub(), threading.Lock()
+    """Every project the Studio serves, one Room each (rooms.py), created on first use. Requests name their project
+    with ?project= (default: `start`, the project the Studio was started on), so switching projects in one tab
+    moves nobody else. `builds` limits how many pipeline builds run at once across rooms (MORPH_MAX_BUILDS, 1)."""
+
+    def __init__(self, project: RobotProject, home: str | None = None, max_builds: int | None = None):
         self.home = os.path.realpath(home or os.path.dirname(project.root))
         self.start = os.path.basename(project.root)
-        self.sourcing = threading.Lock()
         self.remote = False  # set by serve() when other computers may use this Studio
+        self.builds = threading.BoundedSemaphore(max_builds or _env_int("MORPH_MAX_BUILDS", 1))
+        self.rooms = {self.start: Room(self.start, project)}
+        self._rooms = threading.Lock()
+
+    @property
+    def p(self) -> RobotProject:
+        """The start project (rooms[start].p)."""
+        return self.rooms[self.start].p
+
+    @property
+    def hub(self) -> Hub:
+        return self.rooms[self.start].hub
 
     def _root(self, name) -> str | None:
         """The folder of an existing robot project called `name`, or None. Checked before anything is
@@ -261,6 +254,29 @@ class Studio:
             return None
         return root
 
+    def room(self, name: str | None = None) -> Room:
+        """The room of robot project `name` (default: the start project). ValueError for a name that can't be a
+        project, UnknownProject (a LookupError) when there is no such robot project."""
+        if name is None or name == "" or name == self.start:
+            return self.rooms[self.start]
+        project_name(name)
+        room = self.rooms.get(name)
+        if room is not None and os.path.isdir(room.p.root):
+            return room
+        root = self._root(name)
+        if not root:
+            raise UnknownProject(f"There is no robot project called {name}.")
+        with self._rooms:
+            room = self.rooms.get(name)
+            if room is None or not os.path.isdir(room.p.root):
+                room = self.rooms[name] = Room(name, root)
+            return room
+
+    def broadcast(self, event: dict):
+        """An event for every open tab, whatever project it is on (a project was created or deleted)."""
+        for room in list(self.rooms.values()):
+            room.hub.send(event)
+
     def projects(self) -> list:
         out = []
         for name in sorted(os.listdir(self.home)) if os.path.isdir(self.home) else []:
@@ -273,32 +289,40 @@ class Studio:
             except (OSError, ValueError):
                 continue
             rp = RobotProject(root)
+            room = self.rooms.get(name)
             out.append({"name": name, "source": m.get("source") or "", "need": m.get("need", ""),
-                        "at_start": rp.latest() == baseline(rp)})
+                        "at_start": rp.latest() == baseline(rp), "busy": bool(room and room.jobs.busy())})
         return out
 
-    def switch(self, name: str) -> bool:
-        root = self._root(name)
-        if not root or not RobotProject(root).revs() or not self.busy.acquire(blocking=False):
-            return False
-        try:
-            self.p = RobotProject(root)
-            self.hub.history.clear()
-            self.hub.send({"type": "project", "project": name})
-            return True
-        finally:
-            self.busy.release()
-
-    def state(self):
-        p = self.p
-        rev = p.latest()
-        out = {"project": os.path.basename(p.root), "projects": self.projects(), "revs": p.revs(),
-               "history": list(self.hub.history), "integrations": integrations(), "compute": compute_info(self.remote)}
-        if rev:
-            out["current"] = rev_payload(p, rev)
+    def state(self, room: Room | None = None) -> dict:
+        room = room or self.room()
+        revs = room.completed()
+        out = {"project": room.name, "start": self.start, "projects": self.projects(), "revs": revs,
+               "history": list(room.hub.history), "integrations": integrations(), "compute": compute_info(self.remote),
+               "queue": room.jobs.snapshot(), "building": room.building()}
+        if revs:
+            out["current"] = rev_payload(room.p, revs[-1], room.name)
             parent = out["current"]["parent"]
-            out["previous"] = rev_payload(p, parent) if parent else None
+            out["previous"] = rev_payload(room.p, parent, room.name) if parent in revs else None
         return out
+
+    def artifact(self, rel: str) -> str | None:
+        """/files/<project>/<rev>/... (or /files/<rev>/... for the start project): a file inside one of a robot
+        project's revision folders, or None."""
+        text = unquote(rel)
+        head, _, rest = text.partition("/")
+        start = self.rooms[self.start]
+        if REV.fullmatch(head) and head in start.p.revs():
+            return artifact_path(start.p, rel)
+        if not head or not rest:
+            return None
+        try:
+            room = self.room(head)
+        except (ValueError, LookupError):
+            return None
+        if rest.split("/", 1)[0] not in room.p.revs():
+            return None
+        return contained_path(room.p.root, rest, decode=False)
 
     def _expand(self, changes: dict) -> dict:
         """Object presets fan out into dims/mass/friction/damage force + finger fit."""
@@ -307,84 +331,217 @@ class Studio:
             return object_changes(name)
         return changes
 
-    def apply(self, changes: dict, label: str, user_text: str | None = None, reply: str | None = None, source=""):
-        if not self.busy.acquire(blocking=False):
-            self.hub.send({"type": "assistant", "text": "Still regenerating the last change; one moment."})
-            return
-        try:
-            if user_text:
-                self.hub.send({"type": "user", "text": user_text})
-            base = self.p.latest()
-            cur = self.p.load_design(base)
-            changes = self._expand(changes)
+    @staticmethod
+    def _tag(job) -> dict:
+        return {"job": job.id, **({"by": job.by} if job.by else {})} if job is not None else {}
+
+    def _say(self, room: Room, job, status: str, text: str, **extra):
+        """An assistant message that ends a job without a new revision (noop, error)."""
+        if job is not None:
+            job.status = status
+            if status == "error":
+                job.error = text
+        room.emit({"type": "assistant", "text": text, **extra, **self._tag(job)})
+
+    def _conflict(self, room: Room, job, base: str, changes: dict) -> bool:
+        """A queued change whose keys were changed by someone else after it was asked for (on job.base_rev) is not
+        applied over them: the job is marked conflict and the room is asked to apply it on `base` or drop it."""
+        if job is None or not job.base_rev or job.base_rev == base:
+            return False
+        since = None
+        if job.base_rev in room.completed():
             try:
-                design = cur.with_changes(changes)
-            except (KeyError, ValueError) as exc:
-                self.hub.send({"type": "assistant", "text": f"Couldn't apply that: {exc}"})
-                return
-            if design.to_dict() == cur.to_dict():
-                self.hub.send({"type": "assistant", "noop": True, "changes": changes,
-                               "text": f"Nothing to change: {base} already has that, so nothing was regenerated."})
-                return
-            if reply:
-                self.hub.send({"type": "assistant", "text": reply, "changes": changes, "source": source})
-            t0 = time.time()
-            rev = self.p.run(design, parent=base, label=label[:48], verbose=False, on_event=self.hub.send)
-            self.p.log({"type": "tool_time", "cmd": "studio", "seconds": round(time.time() - t0, 2)})
-            self.hub.send({"type": "done", "current": rev_payload(self.p, rev),
-                           "previous": rev_payload(self.p, base), "seconds": round(time.time() - t0, 1)})
-        except Exception as exc:
-            traceback.print_exc()
-            self.hub.send({"type": "assistant", "text": f"Error: {exc}"})
-        finally:
-            self.busy.release()
+                since = set(diff(room.p.load_design(job.base_rev), room.p.load_design(base)))
+            except (OSError, ValueError, KeyError, TypeError):
+                since = None
+        keys = sorted(set(changes) & since) if since is not None else sorted(changes)
+        if not keys:
+            return False
+        job.status = "conflict"
+        job.conflict = {"keys": keys, "base_rev": job.base_rev, "rev": base}
+        why = (f"{', '.join(keys)} changed after {job.base_rev}, which this request was based on" if since is not None
+               else f"{job.base_rev}, which this request was based on, no longer exists")
+        room.emit({"type": "assistant", "text": f"Not applied yet: {why}. Apply it to {base} anyway, or drop it?",
+                   "changes": changes, "conflict": {"job": job.id, **job.conflict}, **self._tag(job)})
+        return True
 
-    def chat(self, msg: str):
-        base = self.p.latest()
-        cur = self.p.load_design(base)
-        it = interpret(msg, cur, (self.p.load_results(base).get("summary") or {}).get("grip_target_n"))
-        it["changes"] = {k: v for k, v in (it.get("changes") or {}).items() if k not in CHAT_FORBIDDEN}
-        if not it["changes"]:
-            self.hub.send({"type": "user", "text": msg})
-            self.hub.send({"type": "assistant", "text": it["reply"], "noop": True})
-            return
-        self.apply(it["changes"], msg, user_text=msg, reply=it["reply"], source=it["source"])
+    def apply(self, changes: dict, label: str, user_text: str | None = None, reply: str | None = None, source="",
+              room: Room | None = None, job=None) -> str | None:
+        """Apply `changes` to the room's latest revision and build it; returns the new revision. Runs in the caller's
+        thread: the room's queue calls it for queued jobs (`job`), tests and scripts call it directly."""
+        room = room or self.room()
+        with room.lock:
+            try:
+                if user_text and job is None:
+                    room.emit({"type": "user", "text": user_text})
+                base = room.latest()
+                if base is None:
+                    return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing "
+                                                         "to change. Wait for its first build.")
+                cur = room.p.load_design(base)
+                changes = self._expand(changes)
+                try:
+                    design = cur.with_changes(changes)
+                except (KeyError, ValueError) as exc:
+                    return self._say(room, job, "error", f"Couldn't apply that: {exc}")
+                if job is not None:
+                    job.data.update(changes=changes, label=label, reply=reply, source=source)
+                    if self._conflict(room, job, base, changes):
+                        return None
+                if design.to_dict() == cur.to_dict():
+                    return self._say(room, job, "noop", f"Nothing to change: {base} already has that, so nothing was "
+                                                        "regenerated.", noop=True, changes=changes)
+                if reply:
+                    room.emit({"type": "assistant", "text": reply, "changes": changes, "source": source, **self._tag(job)})
+                t0 = time.time()
+                with self.builds:
+                    rev = room.p.run(design, parent=base, label=label[:48], verbose=False, on_event=room.emit,
+                                     by=job.by if job is not None else None)
+                room.p.log({"type": "tool_time", "cmd": "studio", "seconds": round(time.time() - t0, 2)})
+                if job is not None:
+                    job.result = rev
+                room.emit({"type": "done", "current": rev_payload(room.p, rev, room.name),
+                           "previous": rev_payload(room.p, base, room.name), "seconds": round(time.time() - t0, 1),
+                           **self._tag(job)})
+                return rev
+            except Exception as exc:  # noqa: BLE001  (shown in the chat; the room keeps working)
+                traceback.print_exc()
+                self._say(room, job, "error", f"Error: {exc}")
+                return None
+            finally:
+                room.live = None
 
-    def source(self, rev: str | None = None):
+    def chat(self, msg: str, room: Room | None = None, job=None) -> str | None:
+        """Interpret a chat message against the room's newest design and apply it. A queued job's user message was
+        sent when it was queued; a direct call sends it here."""
+        room = room or self.room()
+        with room.lock:
+            try:
+                if job is None:
+                    room.emit({"type": "user", "text": msg})
+                base = room.latest()
+                if base is None:
+                    return self._say(room, job, "error", "This project has no finished revision yet, so there is "
+                                                         "nothing to change. Wait for its first build.")
+                cur = room.p.load_design(base)
+                it = interpret(msg, cur, ((self._results(room.p, base) or {}).get("summary") or {}).get("grip_target_n"))
+                it["changes"] = {k: v for k, v in (it.get("changes") or {}).items() if k not in CHAT_FORBIDDEN}
+                if not it["changes"]:
+                    return self._say(room, job, "noop", it["reply"], noop=True)
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                return self._say(room, job, "error", f"Error: {exc}")
+            return self.apply(it["changes"], msg, reply=it["reply"], source=it["source"], room=room, job=job)
+
+    def params(self, changes: dict, room: Room | None = None, job=None) -> str | None:
+        desc = ", ".join(f"{k.split('.')[-1].replace('_', ' ')} → {v}" for k, v in changes.items())
+        return self.apply(changes, f"edit: {desc}", reply=f"Parameter edit: {desc}.", room=room, job=job)
+
+    def build(self, design, room: Room | None = None, label: str = "first design", job=None) -> str | None:
+        """Build `design` as a revision with no parent: a new project's first revision."""
+        room = room or self.room()
+        with room.lock:
+            try:
+                t0 = time.time()
+                with self.builds:
+                    rev = room.p.run(design, parent=None, label=label[:48], verbose=False, on_event=room.emit,
+                                     by=job.by if job is not None else None)
+                room.p.log({"type": "tool_time", "cmd": "studio", "seconds": round(time.time() - t0, 2)})
+                if job is not None:
+                    job.result = rev
+                room.emit({"type": "done", "current": rev_payload(room.p, rev, room.name), "previous": None,
+                           "seconds": round(time.time() - t0, 1), **self._tag(job)})
+                return rev
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                self._say(room, job, "error", f"Error: {exc}")
+                return None
+            finally:
+                room.live = None
+
+    # -- the queue: what /api/chat, /api/params and new projects use
+    def queue_chat(self, room: Room, msg: str, *, base_rev: str | None = None, by: str | None = None):
+        """Queue a chat message; it is interpreted when its turn comes, against the newest design. The user's message
+        is shown at once. Raises QueueFull."""
+        say = lambda job: room.hub.send({"type": "user", "text": msg, "job": job.id, **({"by": by} if by else {})})  # noqa: E731
+        return room.jobs.submit("chat", lambda job: self.chat(msg, room=room, job=job), by=by, label=msg,
+                                base_rev=base_rev or room.latest(), announce=say)
+
+    def queue_changes(self, room: Room, changes: dict, *, label: str, reply: str | None = None, source: str = "",
+                      user_text: str | None = None, base_rev: str | None = None, by: str | None = None, kind="change"):
+        """Queue design changes (parameter edits, applied video findings, a resolved conflict). Raises QueueFull."""
+        say = (lambda job: room.hub.send({"type": "user", "text": user_text, "job": job.id, **({"by": by} if by else {})})
+               ) if user_text else None
+        return room.jobs.submit(kind, lambda job: self.apply(changes, label, reply=reply, source=source, room=room, job=job),
+                                by=by, label=label, base_rev=base_rev or room.latest(), announce=say)
+
+    def queue_params(self, room: Room, changes: dict, *, base_rev: str | None = None, by: str | None = None):
+        desc = ", ".join(f"{k.split('.')[-1].replace('_', ' ')} → {v}" for k, v in changes.items())
+        return self.queue_changes(room, changes, label=f"edit: {desc}", reply=f"Parameter edit: {desc}.",
+                                  base_rev=base_rev, by=by, kind="params")
+
+    def queue_build(self, room: Room, design, *, label: str = "first design", by: str | None = None):
+        """Queue a parentless build of `design` (a new project's first revision). Raises QueueFull."""
+        return room.jobs.submit("build", lambda job: self.build(design, room=room, label=label, job=job), by=by,
+                                label=label)
+
+    def resolve(self, room: Room, job_id, action: str, by: str | None = None):
+        """Answer a conflict: "apply" queues the same changes on the newest revision (checked again when they run),
+        "drop" forgets them. Returns the new job (apply) or None (drop); LookupError when there is no such conflict."""
+        job = room.jobs.get(job_id)
+        if job is None or job.status != "conflict":
+            raise LookupError("That change is no longer waiting for an answer.")
+        if action == "drop":
+            job.status = "dropped"
+            room.jobs.publish(job)
+            room.emit({"type": "assistant", "text": f"Dropped: {job.label[:80]}", "noop": True, **self._tag(job)})
+            return None
+        d = job.data
+        new = self.queue_changes(room, d["changes"], label=d["label"], reply=d.get("reply"), source=d.get("source", ""),
+                                 base_rev=room.latest(), by=by or job.by, kind=job.kind)
+        job.status = "resolved"
+        room.jobs.publish(job)
+        return new
+
+    def source(self, rev: str | None = None, room: Room | None = None):
         """Darwin: shortlist agents for every purchased part and fab handoff of a revision, streamed."""
         from .. import darwin
-        if not self.sourcing.acquire(blocking=False):
+        room = room or self.room()
+        if not room.sourcing.acquire(blocking=False):
             return
-        p = self.p
-        rev = rev if rev in p.revs() else p.latest()
+        p, name = room.p, room.name
         try:
-            self.hub.send({"type": "sourcing", "status": "start", "rev": rev, "project": os.path.basename(p.root)})
-            name = os.path.basename(p.root)
-            prog = lambda n, tot, t: self.hub.send({"type": "sourcing", "status": "progress", "rev": rev, "project": name,
-                                                     "done": n, "total": tot, **t})
+            revs = room.completed()
+            rev = rev if rev in revs else (revs[-1] if revs else None)
+            if rev is None:
+                return
+            room.hub.send({"type": "sourcing", "status": "start", "rev": rev, "project": name})
+            prog = lambda n, tot, t: room.hub.send({"type": "sourcing", "status": "progress", "rev": rev, "project": name,  # noqa: E731
+                                                    "done": n, "total": tot, **t})
             # one 15 s try per lookup, then the cached answer: the Studio never hangs on a slow Darwin
             darwin.source(p, rev, workers=6, on_progress=prog, timeout=15, retries=0)
-            self.hub.send({"type": "sourcing", "status": "done", "rev": rev, "project": os.path.basename(p.root),
-                           "sourcing": _sourcing(p, rev)})
-        except Exception as exc:
+            room.hub.send({"type": "sourcing", "status": "done", "rev": rev, "project": name, "sourcing": _sourcing(p, rev)})
+        except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
-            self.hub.send({"type": "sourcing", "status": "error", "rev": rev, "project": os.path.basename(p.root), "error": str(exc)})
+            room.hub.send({"type": "sourcing", "status": "error", "rev": rev, "project": name, "error": str(exc)})
         finally:
-            self.sourcing.release()
+            room.sourcing.release()
 
     def reset(self, rebuild: bool = False) -> bool:
-        """Demo reset: every project goes back to a clean build of its original design (see baseline());
-        the revisions after it are deleted, like deleting the projects folder but keeping the first
-        build. If that build is from older code, or `rebuild` is set (new API keys: the Keewano grip
-        calibration only applies to a fresh build), it is rebuilt now (about 30 s per robot)."""
-        if not self.busy.acquire(blocking=False):
-            return False
+        """Demo reset: every robot project goes back to a clean build of its original design (see baseline()); the
+        revisions after it are deleted, like deleting the projects folder but keeping the first build. If that build
+        is from older code, or `rebuild` is set (new API keys: the Keewano grip calibration only applies to a fresh
+        build), it is rebuilt now (about 30 s per robot). False when one of them is still building."""
+        names = [n for n in sorted(os.listdir(self.home)) if self._root(n)] if os.path.isdir(self.home) else []
+        rooms = [self.room(n) for n in names]
+        held = []
         try:
-            for name in sorted(os.listdir(self.home)):
-                root = self._root(name)
-                if not root:
-                    continue
-                p = RobotProject(root)
+            for room in rooms:
+                if room.jobs.busy() or not room.lock.acquire(blocking=False):
+                    return False
+                held.append(room)
+            for room in rooms:
+                p = room.p
                 keep = baseline(p)
                 if not keep:
                     continue
@@ -396,14 +553,16 @@ class Studio:
                         break
                 if complete and (rebuild or (self._results(p, keep) or {}).get("pipeline_version")
                                  != pipeline_version(p.load_design(keep).arm.source)):
-                    keep = p.run(p.load_design(keep), parent=None, label="rebuilt with latest Morph", verbose=False)
+                    with self.builds:
+                        keep = p.run(p.load_design(keep), parent=None, label="rebuilt with latest Morph", verbose=False)
                 p.log({"type": "demo_reset", "rev": keep, "complete": complete})
-            self.p = RobotProject(os.path.join(self.home, self.start))
-            self.hub.history.clear()
-            self.hub.send({"type": "project", "project": self.start})
+                room.hub.clear_history()
+            for room in rooms:
+                room.hub.send({"type": "project", "project": room.name, "reset": True})
             return True
         finally:
-            self.busy.release()
+            for room in held:
+                room.lock.release()
 
     @staticmethod
     def _results(p, r):
@@ -412,10 +571,6 @@ class Studio:
         except (OSError, ValueError):
             return None
 
-    def params(self, changes: dict):
-        desc = ", ".join(f"{k.split('.')[-1].replace('_', ' ')} → {v}" for k, v in changes.items())
-        self.apply(changes, f"edit: {desc}", reply=f"Parameter edit: {desc}.")
-
 
 SECURITY_HEADERS = (("X-Content-Type-Options", "nosniff"), ("X-Frame-Options", "DENY"), ("Referrer-Policy", "no-referrer"),
                     ("Cross-Origin-Resource-Policy", "same-origin"))
@@ -423,6 +578,7 @@ DEFAULT_CSP = "frame-ancestors 'none'"
 # generated files (manual.html, schematic.svg, files from imported robots) never run script with the Studio's origin
 ARTIFACT_CSP = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'none'"
 SIGN_IN_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+CLIENT_HEADER = "X-Morph-Client"
 
 
 def _sha256(text: str) -> str:
@@ -444,7 +600,7 @@ def app_csp(page: str | None = None) -> str:
 
 
 def artifact_path(p: RobotProject, rel: str) -> str | None:
-    """/files/<rev>/...: a file inside one of the current project's revision folders, or None."""
+    """/files/<rev>/...: a file inside one of `p`'s revision folders, or None."""
     rev = unquote(rel).split("/", 1)[0]
     return contained_path(p.root, rel) if rev in p.revs() else None
 
@@ -455,6 +611,10 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
 
         def log_message(self, *a):
             pass
+
+        def send_response(self, *a, **k):
+            self._responded = True
+            super().send_response(*a, **k)
 
         def end_headers(self):
             for k, v in SECURITY_HEADERS:
@@ -553,22 +713,6 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 except OSError:
                     pass
 
-        def _body(self):
-            """The request's JSON object, or None after answering 400, 413 or 415 itself (sizes are checked
-            before anything is read)."""
-            try:
-                n = content_length(self.headers, MAX_BODY)
-                if n and self.headers.get_content_type() != "application/json":
-                    raise BodyError(415, "Send JSON, with Content-Type: application/json.")
-                self._read = True
-                raw = self.rfile.read(n) if n else b""
-                if len(raw) != n:
-                    raise BodyError(400, "The request body was cut off.")
-                return json_object(raw)
-            except BodyError as exc:
-                self._error(exc.status, str(exc))
-                return None
-
         def _file(self, path, csp=None):
             ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
             if path.endswith((".js", ".mjs")):
@@ -592,32 +736,44 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 self.end_headers()
                 shutil.copyfileobj(fh, self.wfile, 1 << 16)
 
-        def _export(self, rev, full: bool, check: bool):
-            from . import export
+        def _route(self, u):
+            """Dispatch to the route table (routes.py): body size, role, JSON body, handler, answer."""
+            r = routes.find(self.command, u.path)
+            if r is None:
+                return self._error(404, "Not found.")
             try:
-                if check:  # the button asks first, so a refusal is a message rather than a broken download
-                    export.check(studio.p, rev, full=full)
-                    return self._json(200, {"ok": True})
-                archive, filename = export.build_export(studio.p, rev, full=full)
-            except export.ExportError as exc:
+                n = content_length(self.headers, r.max_body)  # from the header alone: nothing is read yet
+                if n and not r.raw_body and self.headers.get_content_type() != "application/json":
+                    raise BodyError(415, "Send JSON, with Content-Type: application/json.")
+            except BodyError as exc:
                 return self._error(exc.status, str(exc))
-            with archive:
-                size = archive.seek(0, os.SEEK_END)
-                archive.seek(0)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/zip")
-                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
-                self.send_header("Content-Length", str(size))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                shutil.copyfileobj(archive, self.wfile, 1 << 16)
-
-        def _keys_state(self):
-            from .. import keys, settings
-            return {"keys": keys.status(), "integrations": integrations(), "settings": settings.load(),
-                    "file": os.path.basename(keys.ENV_PATH), "compute": compute_info(studio.remote)}
+            req = routes.Request(self, studio, self.command, u.path, parse_qs(u.query), n)
+            try:
+                req.member = routes.authorize(req, r.role)
+                if not r.raw_body and self.command != "GET":
+                    self._read = True
+                    raw = self.rfile.read(n) if n else b""
+                    if len(raw) != n:
+                        raise BodyError(400, "The request body was cut off.")
+                    req.body = json_object(raw)
+                out = r.fn(req)
+            except HTTPError as exc:
+                return self._error(exc.status, exc.message)
+            except BodyError as exc:
+                return self._error(exc.status, str(exc))
+            except Exception as exc:  # noqa: BLE001  (a bug in one route answers 500 instead of dropping the connection)
+                traceback.print_exc()
+                if getattr(self, "_responded", False):
+                    return None
+                return self._error(500, f"The Studio hit an error: {exc.__class__.__name__}: {exc}")
+            if out is None:
+                return None
+            if len(out) == 2:
+                return self._json(out[0], out[1])
+            return self._send(out[0], out[1], out[2])
 
         def do_GET(self):
+            self._read = False
             u = urlparse(self.path)
             if not self._trusted(post=False):
                 return self._error(403, "This Studio only answers its own page.")
@@ -632,126 +788,256 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             if u.path.startswith("/static/"):
                 full = contained_path(STATIC, u.path[len("/static/"):])
                 return self._file(full) if full else self._error(404, "Not found.")
-            if u.path.startswith("/files/"):
-                full = artifact_path(studio.p, u.path[len("/files/"):])
-                return self._file(full, csp=ARTIFACT_CSP) if full else self._error(404, "Not found.")
-            if u.path == "/api/state":
-                return self._json(200, studio.state())
-            if u.path == "/api/keys":
-                return self._json(200, self._keys_state())
-            if u.path == "/api/settings":
-                from .. import settings
-                return self._json(200, {"settings": settings.load(), "integrations": integrations()})
-            if u.path == "/api/rev":
-                rev = parse_qs(u.query).get("rev", [None])[0]
-                if rev not in studio.p.revs():
-                    return self._error(404, "unknown rev")
-                return self._json(200, rev_payload(studio.p, rev))
-            if u.path == "/api/export":
-                q = parse_qs(u.query)
-                return self._export(q.get("rev", [None])[0], q.get("full", [""])[0] in ("1", "true", "yes"), "check" in q)
-            if u.path == "/api/events":
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                q = studio.hub.subscribe()
-                try:
-                    while True:
-                        try:
-                            ev = q.get(timeout=15)
-                            self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
-                        except queue.Empty:
-                            self.wfile.write(b": ping\n\n")
-                        self.wfile.flush()
-                except OSError:  # tab closed (Windows: 10053) or stopped reading for `timeout` seconds
-                    pass
-                finally:
-                    studio.hub.unsubscribe(q)
-                return
-            self._error(404, "Not found.")
+            return self._route(u)
 
-        def do_POST(self):
+        def _change(self):
+            """POST, PUT and DELETE: also need the X-Morph-Client header, which another site's page can't send
+            without the Studio agreeing first (a CORS preflight it never answers)."""
             self._read = False
             u = urlparse(self.path)
             if not self._trusted(post=True):
                 return self._error(403, "This Studio only answers its own page.")
             if not self._signed_in():
                 return self._error(401, "open the access link printed where Morph Studio was started")
-            body = self._body()
-            if body is None:
-                return None
-            if u.path == "/api/chat":
-                msg = body.get("message")
-                if not isinstance(msg, str) or not msg.strip():
-                    return self._error(400, "Type a message first.")
-                if len(msg) > MAX_MESSAGE:
-                    return self._error(400, f"That message is too long: {MAX_MESSAGE:,} characters at most.")
-                if looks_like_secret(msg):
-                    return self._error(400, "That looks like an API key. Paste keys in the Keys dialog, never in "
-                                            "chat; this message was not sent or saved.")
-                threading.Thread(target=studio.chat, args=(msg.strip(),), daemon=True).start()
-                return self._json(202, {"ok": True})
-            if u.path == "/api/project":
-                name = body.get("name")
-                try:
-                    project_name(name)
-                except ValueError as exc:
-                    return self._error(400, str(exc))
-                if name not in {p["name"] for p in studio.projects()}:
-                    return self._error(404, f"There is no robot project called {name}.")
-                if not studio.switch(name):
-                    return self._error(409, "Still regenerating: switch projects when the pipeline is idle.")
-                return self._json(200, {"ok": True})
-            if u.path == "/api/source":
-                rev = body.get("rev")
-                if rev is not None and (not isinstance(rev, str) or rev not in studio.p.revs()):
-                    return self._error(400, "unknown rev")
-                threading.Thread(target=studio.source, args=(rev,), daemon=True).start()
-                return self._json(202, {"ok": True})
-            if u.path == "/api/reset":
-                ok = studio.reset(rebuild=body.get("rebuild") is True)
-                return self._json(200 if ok else 409, {"ok": ok})
-            if u.path == "/api/keys":
-                from .. import keewano, keys
-                values = body.get("values") or {}
-                if not isinstance(values, dict):
-                    return self._error(400, "Send the keys as {\"values\": {\"NAME\": \"key\"}}.")
-                try:
-                    changed = keys.save(values)
-                except ValueError as exc:
-                    return self._error(400, str(exc))
-                except OSError as exc:
-                    return self._error(500, f"Couldn't save the keys: Morph can't write {os.path.basename(keys.ENV_PATH)} "
-                                            f"here ({exc.strerror or exc.__class__.__name__}). Set them as environment "
-                                            "variables instead, or move Morph to a folder you can write to.")
-                if any(k.startswith("KEEWANO") for k in changed):
-                    keewano._ratio_cache.clear()  # re-query the calibration with the new project
-                return self._json(200, {"ok": True, "changed": changed, **self._keys_state()})
-            if u.path == "/api/keys/check":  # POST: it calls the services with the person's keys
-                from .. import keys
-                services = body.get("services")
-                return self._json(200, {"checks": keys.check(services if isinstance(services, list) else None)})
-            if u.path == "/api/settings":
-                from .. import keewano, settings
-                try:
-                    values = settings.save(body.get("values"))
-                except ValueError as exc:
-                    return self._error(400, str(exc))
-                except OSError as exc:
-                    return self._error(500, f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).")
-                keewano._ratio_cache.clear()
-                return self._json(200, {"ok": True, "settings": values, "integrations": integrations()})
-            if u.path == "/api/params":
-                try:
-                    changes = param_changes(body.get("changes"), PARAMS)
-                except ValueError as exc:
-                    return self._error(400, str(exc))
-                threading.Thread(target=studio.params, args=(changes,), daemon=True).start()
-                return self._json(202, {"ok": True})
-            self._error(404, "Not found.")
+            if not self.headers.get(CLIENT_HEADER):
+                return self._error(403, f"Send the header {CLIENT_HEADER}: 1 with every POST, PUT and DELETE "
+                                        "(the Studio page does).")
+            return self._route(u)
+
+        do_POST = do_PUT = do_DELETE = _change
 
     return H
+
+
+# ------------------------------------------------------------------ routes (feature routes: morph/studio/api_*.py)
+
+def _by(req) -> str | None:
+    return (req.member or {}).get("id")
+
+
+def _queued(room: Room, job) -> dict:
+    """A job as the queue shows it (with its position) right after it was queued."""
+    return next((j for j in room.jobs.snapshot() if j["id"] == job.id), job.info())
+
+
+def _base_rev(req, room: Room) -> str | None:
+    """The revision the tab was showing when the person asked (body "base_rev"), if it still exists."""
+    b = (req.body or {}).get("base_rev")
+    return b if isinstance(b, str) and b in room.completed() else None
+
+
+@route("GET", "/api/state", role="viewer")
+def _api_state(req):
+    return 200, req.studio.state(req.room)
+
+
+@route("GET", "/api/rev", role="viewer")
+def _api_rev(req):
+    room, rev = req.room, req.arg("rev")
+    if rev not in room.completed():
+        raise HTTPError(404, "unknown rev")
+    return 200, rev_payload(room.p, rev, room.name)
+
+
+@route("GET", "/api/events", role="viewer")
+def _api_events(req):
+    room, h = req.room, req.handler
+    h.send_response(200)
+    h.send_header("Content-Type", "text/event-stream")
+    h.send_header("Cache-Control", "no-store")
+    h.end_headers()
+    q = room.hub.subscribe(_by(req))
+    try:
+        while True:
+            try:
+                ev = q.get(timeout=15)
+                h.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+            except queue.Empty:
+                h.wfile.write(b": ping\n\n")
+            h.wfile.flush()
+    except OSError:  # tab closed (Windows: 10053) or stopped reading for `timeout` seconds
+        pass
+    finally:
+        room.hub.unsubscribe(q)
+    return None
+
+
+@route("GET", "/files/*", role="viewer")
+def _files(req):
+    full = req.studio.artifact(req.path[len("/files/"):])
+    if not full:
+        raise HTTPError(404, "Not found.")
+    return req.handler._file(full, csp=ARTIFACT_CSP)
+
+
+@route("GET", "/api/jobs", role="viewer")
+def _api_jobs(req):
+    return 200, {"jobs": req.room.jobs.snapshot()}
+
+
+@route("POST", "/api/chat")
+def _api_chat(req):
+    msg = req.body.get("message")
+    if not isinstance(msg, str) or not msg.strip():
+        raise HTTPError(400, "Type a message first.")
+    if len(msg) > MAX_MESSAGE:
+        raise HTTPError(400, f"That message is too long: {MAX_MESSAGE:,} characters at most.")
+    if looks_like_secret(msg):
+        raise HTTPError(400, "That looks like an API key. Paste keys in the Keys dialog, never in chat; this message "
+                             "was not sent or saved.")
+    room = req.room
+    try:
+        job = req.studio.queue_chat(room, msg.strip(), base_rev=_base_rev(req, room), by=_by(req))
+    except QueueFull as exc:
+        raise HTTPError(429, str(exc)) from None
+    return 202, {"ok": True, "job": _queued(room, job)}
+
+
+@route("POST", "/api/params")
+def _api_params(req):
+    try:
+        changes = param_changes(req.body.get("changes"), PARAMS)
+    except ValueError as exc:
+        raise HTTPError(400, str(exc)) from None
+    room = req.room
+    try:
+        job = req.studio.queue_params(room, changes, base_rev=_base_rev(req, room), by=_by(req))
+    except QueueFull as exc:
+        raise HTTPError(429, str(exc)) from None
+    return 202, {"ok": True, "job": _queued(room, job)}
+
+
+@route("POST", "/api/jobs/cancel")
+def _api_jobs_cancel(req):
+    job = req.room.jobs.cancel(req.body.get("job"))
+    if job is None:
+        raise HTTPError(409, "That change has already started, or is not in the queue.")
+    return 200, {"ok": True, "job": job.info()}
+
+
+@route("POST", "/api/jobs/resolve")
+def _api_jobs_resolve(req):
+    action = req.body.get("action")
+    if action not in ("apply", "drop"):
+        raise HTTPError(400, 'Send {"job": id, "action": "apply" | "drop"}.')
+    room = req.room
+    try:
+        job = req.studio.resolve(room, req.body.get("job"), action, by=_by(req))
+    except LookupError as exc:
+        raise HTTPError(409, str(exc)) from None
+    except QueueFull as exc:
+        raise HTTPError(429, str(exc)) from None
+    return 202, {"ok": True, "job": _queued(room, job) if job else None}
+
+
+@route("POST", "/api/source")
+def _api_source(req):
+    rev, room = req.body.get("rev"), req.room
+    if rev is not None and (not isinstance(rev, str) or rev not in room.completed()):
+        raise HTTPError(400, "unknown rev")
+    threading.Thread(target=req.studio.source, args=(rev, room), daemon=True).start()
+    return 202, {"ok": True}
+
+
+@route("POST", "/api/project", role="viewer")
+def _api_project(req):
+    """Older pages switched every tab here. A tab now chooses its project with ?project= and this only checks the
+    name, so it moves nobody."""
+    name = req.body.get("name")
+    try:
+        project_name(name)
+    except ValueError as exc:
+        raise HTTPError(400, str(exc)) from None
+    if not req.studio._root(name) and name != req.studio.start:
+        raise HTTPError(404, f"There is no robot project called {name}.")
+    return 200, {"ok": True, "project": name}
+
+
+@route("POST", "/api/reset", role="owner")
+def _api_reset(req):
+    ok = req.studio.reset(rebuild=req.body.get("rebuild") is True)
+    return (200 if ok else 409), {"ok": ok, "project": req.studio.start}
+
+
+@route("GET", "/api/export", role="viewer")
+def _api_export(req):
+    from . import export
+    room, rev, h = req.room, req.arg("rev"), req.handler
+    full = req.arg("full", "") in ("1", "true", "yes")
+    try:
+        if "check" in req.query:  # the button asks first, so a refusal is a message rather than a broken download
+            export.check(room.p, rev, full=full)
+            return 200, {"ok": True}
+        archive, filename = export.build_export(room.p, rev, full=full)
+    except export.ExportError as exc:
+        raise HTTPError(exc.status, str(exc)) from None
+    with archive:
+        size = archive.seek(0, os.SEEK_END)
+        archive.seek(0)
+        h.send_response(200)
+        h.send_header("Content-Type", "application/zip")
+        h.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        h.send_header("Content-Length", str(size))
+        h.send_header("Cache-Control", "no-store")
+        h.end_headers()
+        shutil.copyfileobj(archive, h.wfile, 1 << 16)
+    return None
+
+
+def _keys_state(studio: Studio) -> dict:
+    from .. import keys, settings
+    return {"keys": keys.status(), "integrations": integrations(), "settings": settings.load(),
+            "file": os.path.basename(keys.ENV_PATH), "compute": compute_info(studio.remote)}
+
+
+@route("GET", "/api/keys", role="owner")
+def _api_keys(req):
+    return 200, _keys_state(req.studio)
+
+
+@route("POST", "/api/keys", role="owner")
+def _api_keys_save(req):
+    from .. import keewano, keys
+    values = req.body.get("values") or {}
+    if not isinstance(values, dict):
+        raise HTTPError(400, "Send the keys as {\"values\": {\"NAME\": \"key\"}}.")
+    try:
+        changed = keys.save(values)
+    except ValueError as exc:
+        raise HTTPError(400, str(exc)) from None
+    except OSError as exc:
+        raise HTTPError(500, f"Couldn't save the keys: Morph can't write {os.path.basename(keys.ENV_PATH)} here "
+                             f"({exc.strerror or exc.__class__.__name__}). Set them as environment variables instead, "
+                             "or move Morph to a folder you can write to.") from None
+    if any(k.startswith("KEEWANO") for k in changed):
+        keewano._ratio_cache.clear()  # re-query the calibration with the new project
+    return 200, {"ok": True, "changed": changed, **_keys_state(req.studio)}
+
+
+@route("POST", "/api/keys/check", role="owner")
+def _api_keys_check(req):  # POST: it calls the services with the person's keys
+    from .. import keys
+    services = req.body.get("services")
+    return 200, {"checks": keys.check(services if isinstance(services, list) else None)}
+
+
+@route("GET", "/api/settings", role="viewer")
+def _api_settings(req):
+    from .. import settings
+    return 200, {"settings": settings.load(), "integrations": integrations()}
+
+
+@route("POST", "/api/settings", role="owner")
+def _api_settings_save(req):
+    from .. import keewano, settings
+    try:
+        values = settings.save(req.body.get("values"))
+    except ValueError as exc:
+        raise HTTPError(400, str(exc)) from None
+    except OSError as exc:
+        raise HTTPError(500, f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).") from None
+    keewano._ratio_cache.clear()
+    return 200, {"ok": True, "settings": values, "integrations": integrations()}
 
 
 class _Server(ThreadingHTTPServer):
@@ -797,3 +1083,13 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+
+
+def _load_feature_routes():
+    """Feature modules (morph/studio/api_<feature>.py) register their routes when imported."""
+    for m in sorted(pkgutil.iter_modules([os.path.dirname(__file__)]), key=lambda m: m.name):
+        if m.name.startswith("api_"):
+            importlib.import_module(f"{__package__}.{m.name}")
+
+
+_load_feature_routes()

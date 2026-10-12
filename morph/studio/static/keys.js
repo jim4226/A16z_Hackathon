@@ -4,6 +4,7 @@
 // switches (network, Keewano events, Keewano calibration) are non-secret settings (/api/settings).
 import { I, esc, sleep } from './panels.js';
 
+const JSON_POST = { 'Content-Type': 'application/json', 'X-Morph-Client': '1' };  // the server refuses changes without X-Morph-Client
 const KEY_ICON = '<svg class="i sm" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M16 7l3 3M13.5 9.5l2 2"/></svg>';
 const SERVICE_NOTE = {
   Claude: 'Free-form chat. Without a key, the suggestion chips and common phrasings still work.',
@@ -85,7 +86,7 @@ export class KeysDialog {
   }
   async setting(name, on, inp) {
     inp.disabled = true;
-    const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values: { [name]: on } }) })
+    const r = await fetch('/api/settings', { method: 'POST', headers: JSON_POST, body: JSON.stringify({ values: { [name]: on } }) })
       .catch((e) => ({ ok: false, json: async () => ({ error: `Couldn't reach the Studio server (${e.message})` }) }));
     const out = await r.json().catch(() => ({}));
     if (!r.ok || !out.ok) {
@@ -117,7 +118,7 @@ export class KeysDialog {
     if (!Object.keys(values).length) { this.a.toast('Paste a key first'); return; }
     const btn = this.el.querySelector('[data-a="save"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-    const r = await fetch('/api/keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) })
+    const r = await fetch('/api/keys', { method: 'POST', headers: JSON_POST, body: JSON.stringify({ values }) })
       .catch((e) => ({ ok: false, json: async () => ({ error: `Couldn't reach the Studio server (${e.message})` }) }));
     const out = await r.json().catch(() => ({}));
     if (!r.ok || !out.ok) {
@@ -144,7 +145,7 @@ export class KeysDialog {
   }
   async test(services, before = '') {
     this.note(before + this.row('busy', `Checking ${services ? esc(services.join(' and ')) : 'your keys'}…`));
-    const r = await fetch('/api/keys/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ services: services || null }) })
+    const r = await fetch('/api/keys/check', { method: 'POST', headers: JSON_POST, body: JSON.stringify({ services: services || null }) })
       .catch(() => null);
     const out = r?.ok ? await r.json().catch(() => ({})) : null;
     const rows = Object.entries(out?.checks || {});

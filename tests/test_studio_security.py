@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 
+from urllib.parse import quote
+
 import pytest
 
 from morph import keys
@@ -54,7 +56,7 @@ def local(tmp_path, monkeypatch):
     httpd.RequestHandlerClass = server.make_handler(st, {f"127.0.0.1:{port}", f"localhost:{port}"})
 
     def request(path="/", method="GET", body=None, headers=None):
-        hdrs = {}
+        hdrs = {"X-Morph-Client": "1"} if method != "GET" else {}
         if body is not None and not isinstance(body, (str, bytes)):
             body = json.dumps(body)
             hdrs["Content-Type"] = "application/json"
@@ -147,17 +149,22 @@ def test_names_are_validated():
 
 # ------------------------------------------------------------------ projects
 
-def test_switching_to_a_bad_name_creates_nothing(local, tmp_path):
+def test_opening_a_bad_name_creates_nothing(local, tmp_path):
     st, request, _ = local
     home = tmp_path / "projects"
     before = sorted(os.listdir(home))
-    for name in ("../pwned", str(tmp_path / "abs"), "Egg", "../egg", "nope", 7, None):
+    for name in ("../pwned", str(tmp_path / "abs"), "Egg", "../egg", "nope", 7, ["egg"]):
         code, _, body = request("/api/project", "POST", {"name": name})
         assert code in (400, 404) and json.loads(body)["ok"] is False
-        assert not st.switch(name)
+        with pytest.raises((ValueError, LookupError)):
+            st.room(name)
+        if isinstance(name, str):
+            for path in ("/api/state", "/api/events", "/api/rev?rev=r001"):
+                code, _, body = request(f"{path}{'&' if '?' in path else '?'}project={quote(name, safe='')}")
+                assert code in (400, 404) and json.loads(body)["ok"] is False, (path, name)
     assert sorted(os.listdir(home)) == before
     assert not (tmp_path / "pwned").exists() and not (tmp_path / "abs").exists()
-    assert os.path.basename(st.p.root) == "egg"
+    assert os.path.basename(st.p.root) == "egg" and list(st.rooms) == ["egg"]
 
 
 def test_projects_list_only_real_robot_projects_inside_home(local, tmp_path):
@@ -172,19 +179,21 @@ def test_projects_list_only_real_robot_projects_inside_home(local, tmp_path):
     except (OSError, NotImplementedError):
         pass
     assert [p["name"] for p in st.projects()] == ["egg", "so101"]
-    assert not st.switch(".trash") and not st.switch("linked") and not st.switch("Bad_Name")
+    for name in (".trash", "linked", "Bad_Name"):
+        with pytest.raises((ValueError, LookupError)):
+            st.room(name)
     assert request("/api/project", "POST", {"name": "so101"})[0] == 200
-    assert os.path.basename(st.p.root) == "so101"
+    assert os.path.basename(st.p.root) == "egg"   # a tab picks its project with ?project=; nobody else moves
+    code, _, body = request("/api/state?project=so101")
+    assert code == 200 and json.loads(body)["project"] == "so101" and json.loads(body)["start"] == "egg"
 
 
-def test_switch_waits_for_a_running_build(local):
+def test_opening_another_project_never_waits_for_a_build(local):
     st, request, _ = local
     make_project(Path(st.home), "so101")
-    st.busy.acquire()
-    try:
-        assert request("/api/project", "POST", {"name": "so101"})[0] == 409
-    finally:
-        st.busy.release()
+    with st.room().lock:  # egg is building
+        assert request("/api/project", "POST", {"name": "so101"})[0] == 200
+        assert json.loads(request("/api/state?project=so101")[2])["project"] == "so101"
 
 
 # ------------------------------------------------------------------ request bodies
@@ -200,7 +209,7 @@ def test_content_length_is_checked_before_reading(local, headers, code):
     _, _, port = local
     head = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
     started = time.monotonic()
-    answer = raw(port, f"POST /api/chat HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{head}\r\n".encode())
+    answer = raw(port, f"POST /api/chat HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Morph-Client: 1\r\n{head}\r\n".encode())
     assert answer.startswith(f"HTTP/1.0 {code}".encode())
     assert time.monotonic() - started < 2  # answered at once: nothing waited for a body that never comes
     assert b'"ok": false' in answer
@@ -210,8 +219,13 @@ def test_two_content_lengths_or_chunked_are_refused(local):
     _, _, port = local
     for extra in ("Content-Length: 2\r\nContent-Length: 2\r\n", "Transfer-Encoding: chunked\r\n"):
         answer = raw(port, f"POST /api/chat HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n"
-                           f"{extra}\r\n{{}}".encode())
+                           f"X-Morph-Client: 1\r\n{extra}\r\n{{}}".encode())
         assert answer.startswith(b"HTTP/1.0 400")
+
+
+class _Job:
+    def info(self):
+        return {"id": "j1", "status": "queued"}
 
 
 @pytest.mark.parametrize("body,ctype,code", [
@@ -221,13 +235,13 @@ def test_two_content_lengths_or_chunked_are_refused(local):
 ])
 def test_json_bodies_must_be_objects(local, monkeypatch, body, ctype, code):
     st, request, _ = local
-    monkeypatch.setattr(st, "chat", lambda msg: pytest.fail("must not dispatch"))
+    monkeypatch.setattr(st, "queue_chat", lambda *a, **k: pytest.fail("must not dispatch"))
     assert request("/api/chat", "POST", body, {"Content-Type": ctype})[0] == code
 
 
 def test_a_body_at_the_limit_is_read(local, monkeypatch):
     st, request, _ = local
-    monkeypatch.setattr(st, "chat", lambda msg: None)
+    monkeypatch.setattr(st, "queue_chat", lambda *a, **k: _Job())
     msg = json.dumps({"message": "hi", "pad": "x" * (MAX_BODY - 40)})
     assert len(msg) <= MAX_BODY
     assert request("/api/chat", "POST", msg, {"Content-Type": "application/json"})[0] == 202
@@ -235,7 +249,7 @@ def test_a_body_at_the_limit_is_read(local, monkeypatch):
 
 def test_refused_posts_answer_instead_of_resetting(local, monkeypatch):
     st, request, port = local
-    monkeypatch.setattr(st, "chat", lambda msg: pytest.fail("must not dispatch"))
+    monkeypatch.setattr(st, "queue_chat", lambda *a, **k: pytest.fail("must not dispatch"))
     for _ in range(30):
         assert request("/api/chat", "POST", {"message": "hello" * 200}, {"Origin": "https://attacker.example"})[0] == 403
         assert request("/api/chat", "POST", "x" * 2000, {"Content-Type": "text/plain"})[0] == 415
@@ -258,7 +272,7 @@ def test_chat_messages_are_checked(local, monkeypatch):
 def test_params_are_known_editor_keys_with_plain_values(local, monkeypatch):
     st, request, _ = local
     got = []
-    monkeypatch.setattr(st, "params", got.append)
+    monkeypatch.setattr(st, "queue_params", lambda room, changes, **k: (got.append(changes), _Job())[1])
     bad = [[1, 2], "arm.dof=6", {}, {"arm.source": "../../etc"}, {"name": "x"}, {"arm.dof": 7}, {"arm.dof": [6]},
            {"arm.reach_mm": 900}, {"arm.reach_mm": "far"}, {"arm.reach_mm": True}, {"object.name": "anvil"},
            {"finger.pad": {"$gt": ""}}, {"arm.reach_mm": None}]
@@ -284,7 +298,7 @@ def test_param_changes_keep_numbers_numbers():
 
 def test_source_takes_only_a_known_revision(local, monkeypatch):
     st, request, _ = local
-    monkeypatch.setattr(st, "source", lambda rev=None: None)
+    monkeypatch.setattr(st, "source", lambda rev=None, room=None: None)
     for rev in ("../r001", "r999", 5, ["r001"]):
         assert request("/api/source", "POST", {"rev": rev})[0] == 400
     assert request("/api/source", "POST", {"rev": "r001"})[0] == 202
