@@ -139,6 +139,26 @@ def test_egg_clip_resolves_to_the_raw_egg_preset():
     assert vision.describe(m).startswith("From the video: object raw egg; pick (230, -90) mm, place (170, 160) mm")
 
 
+def test_egg_clip_changes_run_through_all_nine_stages(tmp_path):
+    """Acceptance: the egg clip resolves to the raw egg preset, all 9 stages run, and the simulation uses the clip's
+    pick and place spots."""
+    from morph.robot.pipeline2 import ORDER, RobotProject
+    from morph.studio.intent import object_changes
+
+    base = Design().with_changes({**EGG_ROBOT, **object_changes("tomato")})
+    m = vision.map_to_changes(result(), base)
+    assert m["changes"]["object.name"] == "raw egg"
+    p = RobotProject(str(tmp_path / "egg"))
+    rev = p.run(base.with_changes(m["changes"]), n_trials=1, verbose=False, fast_sim=True)
+    res = p.load_results(rev)
+    assert set(res["provenance"]) == set(ORDER) and not res.get("errors")
+    d = p.load_design(rev)
+    assert (d.task.pick_x_mm, d.task.pick_y_mm, d.task.place_x_mm, d.task.place_y_mm) == (230, -90, 170, 160)
+    assert d.object.max_force_n == 25 and d.object.friction == 0.35 and d.task.cycle_time_s == 6.5
+    pp = res["sims"]["scenarios"]["pick_place"]["metrics"]
+    assert pp["reachable"] and pp["cycle_target_s"] == 6.5
+
+
 def test_a_preset_beats_the_models_guesses():
     m = vision.map_to_changes(result(object__fragility="robust", object__surface="dry", object__mass_g=95, object__name="Eggs"), Design())
     assert m["changes"]["object.max_force_n"] == 25 and m["changes"]["object.friction"] == 0.35 and m["changes"]["object.mass_g"] == 60
@@ -435,7 +455,7 @@ def test_subq_agreement(claude, monkeypatch):
     c = calls[0]
     assert len(c["images"]) == 4 and c["cache"] is False and c["timeout"] == vision.SUBQ_TIMEOUT_S
     assert all(set(i) == {"mediaType", "base64"} and not i["base64"].startswith("data:") for i in c["images"])
-    assert [f["role"] for f in c["state"]["frames"]] == ["overview", "grasp", "carrying", "release"]
+    assert [f["role"] for f in c["state"]["frames"]] == ["overview", "grasp", "frame", "release"]  # only what is known
     assert [f["i"] for f in c["state"]["frames"]] == [1, 4, 5, 6]  # the marked grasp and release frames
     assert set(c["questions"]) == {"task_type", "fragility", "object_visible", "hand_for_scale", "other_people", "food", "repeats"}
     assert not [q for q in vision.map_to_changes(res, Design())["questions"] if q["why"] == "second opinion"]

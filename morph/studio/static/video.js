@@ -1165,9 +1165,11 @@ function injectCSS() {
 
 // Feature contract: init(studio) -> { open(files?), onSlots(fn) }. onSlots receives {slots, result, answers, changes}
 // when the person uses a video with no project open (the brief engine's hook); without a handler the same detail goes
-// out as a window "morph:video-slots" event.
+// out as a window "morph:video-slots" event. Other features open the dialog with a window "morph:video-open" event
+// (detail: {files?}), so they never import this file.
 export function init(studio) {
   injectCSS();
   const job = new VideoJob(studio);
+  window.addEventListener('morph:video-open', (e) => job.open(e.detail?.files));
   return { open: (files) => job.open(files), onSlots: (fn) => job.onSlots(fn), job };
 }

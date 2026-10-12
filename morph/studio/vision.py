@@ -500,12 +500,25 @@ def subq_frames(frames: list, marks: dict | None) -> list:
     return sorted(out[:4])
 
 
-def _ask_subq(frames: list, idx: list, kind: str):
+def subq_roles(frames: list, idx: list, marks: dict | None) -> list:
+    """What each chosen frame shows, as far as Morph knows: the first is the overview, the ones nearest the person's
+    grasp and release marks are those; the rest are just frames (no guessing)."""
+    ts = [frames[i].get("t_s") for i in idx]
+    roles = ["overview"] + ["frame"] * (len(idx) - 1)
+    for t, name in (((marks or {}).get("grasp_s"), "grasp"), ((marks or {}).get("release_s"), "release")):
+        if t is not None and None not in ts:
+            k = min(range(len(idx)), key=lambda j: abs(ts[j] - t))
+            if roles[k] == "frame":
+                roles[k] = name
+    return roles
+
+
+def _ask_subq(frames: list, idx: list, kind: str, marks=None):
     imgs, state = [], {"frames": []}
-    for k, i in enumerate(idx):
+    roles = ["photo"] * len(idx) if kind == "photo" else subq_roles(frames, idx, marks)
+    for i, role in zip(idx, roles):
         small = prepare_image(frames[i]["jpeg"], long_edge=SUBQ_EDGE, quality=80)
         imgs.append({"mediaType": "image/jpeg", "base64": _b64(small["jpeg"])})
-        role = ("overview", "grasp", "carrying", "release")[k] if kind != "photo" and len(idx) == 4 else "photo" if kind == "photo" else "frame"
         state["frames"].append({"i": i + 1, "t_s": frames[i].get("t_s"), "role": role})
     if kind == "photo":
         state["note"] = "One photo of an object a desk robot arm should pick up. Judge only what is visible."
@@ -800,7 +813,7 @@ def analyze_frames(frames: list, *, marks=None, crop=None, use_subq: bool = Fals
     if subq_on:
         idx = subq_frames(prepared, marks)
         emit(type="agent", role="vision", provider="subq", status="start", text=f"SubQ second opinion on {len(idx)} frames")
-        jobs["subq"] = _in_thread(_ask_subq, prepared, idx, kind)
+        jobs["subq"] = _in_thread(_ask_subq, prepared, idx, kind, marks)
     elif use_subq:
         emit(type="agent", role="vision", provider="subq", status="skipped", text="SubQ is not set up on this computer")
     late = _wait(jobs, emit, f"Reading {n} frames", t0)

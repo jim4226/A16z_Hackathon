@@ -465,6 +465,9 @@ def test_no_project_hands_the_slots_to_the_brief_engine(server, browser, media, 
     page.click("[data-a='review']")
     slots = page.evaluate("demo.slots[0].slots")
     assert slots["object"]["value"]["key"] == "raw egg" and slots["object"]["source"] == "video" and "layout" not in slots
+    # the brief engine can open the dialog without importing video.js
+    page.evaluate("window.dispatchEvent(new CustomEvent('morph:video-open'))")
+    page.wait_for_selector(".vjob .vj-pickbig")
     assert not page.errors, page.errors
 
 
