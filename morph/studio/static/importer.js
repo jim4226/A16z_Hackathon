@@ -420,7 +420,7 @@ export class Importer {
     if (!this.el) return;
     const E = this.esc;
     const head = `<div class="dlg-h"><div class="kicon">${UPLOAD_ICON}</div><div class="grow"><div class="t">Import</div>
-      <div class="imp-sub">A robot (URDF, xacro, MuJoCo XML), the object to grasp (STL, OBJ, GLB, STEP), a parts list (CSV, XLSX, Markdown), a KiCad board or a Morph project. Files stay on ${this.s.S?.compute?.remote ? 'the computer running Morph' : 'this computer'}; nothing from them is run.</div></div>
+      <div class="imp-sub">A robot (URDF, xacro, MuJoCo XML), the object to grasp (STL, OBJ, GLB, STEP), a parts list (CSV, XLSX, Markdown), a KiCad board or a Morph project. Files stay on ${this.s.S?.compute?.remote ? 'the computer running Morph' : 'this computer'}; no program in them is run (xacro macros are expanded in a sandbox).</div></div>
       <button class="btn icon ghost" type="button" data-a="close" title="Close (Esc)">${this.I('x', 'sm')}</button></div>`;
     let body = '', foot = '';
     const err = this.error ? `<div class="imp-err" role="alert">${E(this.error)}</div>` : '';
@@ -432,7 +432,7 @@ export class Importer {
         <div class="imp-or">or paste a link</div>
         <form class="imp-url" data-a="url"><input type="url" name="url" placeholder="https://github.com/owner/repo  or  https://huggingface.co/owner/repo" aria-label="GitHub or Hugging Face link" autocomplete="off" spellcheck="false">
           <button class="btn primary" type="submit">Fetch</button></form>
-        <div class="imp-note">github.com, raw.githubusercontent.com and huggingface.co only. Public repositories; nothing is run.</div>
+        <div class="imp-note">github.com, raw.githubusercontent.com and huggingface.co only (public repositories).</div>
         <input type="file" data-in="files" multiple hidden><input type="file" data-in="folder" webkitdirectory multiple hidden>${err}`;
       foot = '<span class="grow"></span><button class="btn" type="button" data-a="close">Cancel</button>';
     } else if (this.view === 'working') {

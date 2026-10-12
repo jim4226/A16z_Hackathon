@@ -164,7 +164,7 @@ def test_legged_robots_and_tiny_chains_are_out_of_scope(tmp_path):
     p = tmp_path / "hex.urdf"
     p.write_text("".join(L), encoding="utf-8")
     rep0 = urdf.normalize(str(p), str(tmp_path), str(tmp_path / "o"))
-    with pytest.raises(ImportFailed, match="18-joint robot with 6 limbs"):
+    with pytest.raises(ImportFailed, match="18 joints in 6 limbs"):
         autoprofile.derive(rep0["urdf"], str(tmp_path / "o"))
 
 

@@ -330,11 +330,16 @@ class Session:
         stems = {re.sub(r"\.urdf$", "", os.path.splitext(f["path"])[0]) for f in urdfs}
         xacros = [f for f in xacros if re.sub(r"(\.urdf)?\.xacro$", "", f["path"]) not in stems]
         mj = by.get("mjcf", [])
-        inc = set()
+        bodies = {}
         for f in mj:
-            inc |= includes_of(os.path.join(self.files, *f["path"].split("/")))
-        scenes = {f["path"] for f in mj if includes_of(os.path.join(self.files, *f["path"].split("/")))}
-        mj = [f for f in mj if f["path"] not in scenes or not inc]
+            p = os.path.join(self.files, *f["path"].split("/"))
+            try:
+                with open(p, encoding="utf-8", errors="replace") as fh:
+                    bodies[os.path.realpath(p)] = "<body" in fh.read(2_000_000)
+            except OSError:
+                pass
+        # a scene.xml that includes the robot's own file is the same robot plus a floor and lights
+        mj = [f for f in mj if not any(bodies.get(r) for r in includes_of(os.path.join(self.files, *f["path"].split("/"))))]
         ranked = []
         for f in urdfs + xacros + mj:
             try:
@@ -345,6 +350,8 @@ class Session:
             links = len(re.findall(r"<(link|body)\b", text))
             if f["format"] == "xacro" and not links and "<xacro:include" not in text:
                 continue                      # a macro library (ros2_control, gazebo, materials): not a robot
+            if f["format"] == "mjcf" and not links and "<include" not in text:
+                continue                      # assets or defaults only
             side = bool(re.search(r"camera|gazebo|ros2_control|transmission|test|example", f["path"], re.I))
             ranked.append(((side, {"urdf": 0, "mjcf": 1, "xacro": 2}[f["format"]], -min(links, 50),
                             f["path"].count("/"), f["path"]), f))
@@ -779,9 +786,16 @@ def build(plan: dict, home_dir: str | None = None, on_event=None, fast_sim: bool
     if home_dir and os.path.abspath(home_dir) != home():
         set_home(home_dir)                 # the pipeline resolves arm.source against MORPH_HOME/.robots
     os.makedirs(root_home, exist_ok=True)
-    name = unique_project(plan.get("project") or plan.get("source") or "robot", root_home)
-    root = os.path.join(root_home, name)
-    os.makedirs(root)
+    for _ in range(20):                    # two imports may race for the same name: the first makedirs wins
+        name = unique_project(plan.get("project") or plan.get("source") or "robot", root_home)
+        root = os.path.join(root_home, name)
+        try:
+            os.makedirs(root)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise ImportFailed("Couldn't create the project folder; try another name.")
     if plan["kind"] == "robot":
         try:
             from ..cli import EGG_ROBOT

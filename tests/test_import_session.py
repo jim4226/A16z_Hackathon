@@ -304,3 +304,22 @@ def test_macro_libraries_are_not_robots_and_complete_robots_come_first(home, tmp
     _upload_dir(s, str(src), "repo")
     files = [c["file"] for c in s.detect()["candidates"]]
     assert files == ["repo/urdf/good/good.urdf", "repo/urdf/partial/partial.urdf"]
+
+
+def test_mjcf_scene_and_asset_includes(home, tmp_path):
+    from test_import_fixtures import stl
+
+    src = tmp_path / "mj"
+    stl(str(src / "m.stl"), (0.02, 0.02, 0.02))
+    (src / "assets.xml").write_text('<mujoco><asset><mesh name="m" file="m.stl"/></asset></mujoco>', encoding="utf-8")
+    (src / "robot.xml").write_text(
+        '<mujoco model="r"><compiler angle="radian"/><include file="assets.xml"/><worldbody><body name="base"><geom type="mesh" mesh="m"/>'
+        '<body name="l1" pos="0 0 0.05"><joint name="j1" axis="0 0 1" range="-1 1"/><geom type="box" size="0.01 0.01 0.03"/>'
+        '</body></body></worldbody></mujoco>', encoding="utf-8")
+    (src / "scene.xml").write_text('<mujoco><include file="robot.xml"/><worldbody><geom type="plane" size="1 1 0.1"/>'
+                                   '</worldbody></mujoco>', encoding="utf-8")
+    s = sess.Session.create(home)
+    _upload_dir(s, str(src), "mj")
+    cands = [c for c in s.detect()["candidates"] if c["kind"] == "robot"]
+    assert [c["file"] for c in cands] == ["mj/robot.xml"]
+    assert "arm joints before the gripper" in cands[0]["error"]     # converted fine; one joint is not an arm

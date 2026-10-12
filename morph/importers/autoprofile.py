@@ -482,7 +482,7 @@ def derive(src_urdf: str, out_dir: str, bundle: str | None = None, answers: dict
                            "to grasp instead.")
     legs = limbs(J)
     if len(legs) >= 3 or (len(movable) > 12 and len(legs) >= 2):
-        raise ImportFailed(f"This is a {len(movable)}-joint robot with {len(legs)} limbs (legged or multi-arm); "
+        raise ImportFailed(f"This robot has {len(movable)} joints in {len(legs)} limbs (legged or multi-arm); "
                            "Morph builds single tabletop arms.")
     chain = main_chain(J)
     scores = score_gripper(J, chain)
@@ -509,8 +509,9 @@ def derive(src_urdf: str, out_dir: str, bundle: str | None = None, answers: dict
               "gripper": {"joint": gripper, "score": None, "why": [], "alternatives": []}}
     sc = {n: (s, w) for s, n, w in scores}
     if gripper:
-        report["gripper"].update(score=sc.get(gripper, (None, []))[0], why=sc.get(gripper, (None, ["you picked it"]))[1]
-                                 if gripper in sc else ["you picked it"])
+        picked = bool(answers.get("gripper"))
+        report["gripper"].update(score=sc.get(gripper, (None, []))[0],
+                                 why=["you picked it"] if picked or gripper not in sc else sc[gripper][1])
     report["gripper"]["alternatives"] = [{"joint": n, "score": s, "why": w} for s, n, w in scores if n != gripper][:4]
     if gripper is None:
         report.update(scope="needs_answers", warnings=warnings + ["No gripper joint found; pick the joint that opens "
