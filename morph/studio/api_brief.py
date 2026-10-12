@@ -98,8 +98,11 @@ def _send_for(req):
 
 
 def event(b: B.Brief, busy: bool = False) -> dict:
-    """The SSE `brief` event: {id, status, round, questions, slots, assumptions, scope, preflight, ...}."""
-    return {"type": "brief", **b.to_dict(), "busy": busy}
+    """The SSE `brief` event: {id, status, round, questions, slots, assumptions, scope, preflight, ...}. `project` is
+    left for the room the conversation runs in (section 3); the project a build created is `built_project`."""
+    d = b.to_dict()
+    d["built_project"] = d.pop("project", None)
+    return {"type": "brief", **d, "busy": busy}
 
 
 def _valid_answers(answers) -> tuple[dict | None, str]:
@@ -155,6 +158,7 @@ def post(req, send=None, *, home: str | None = None, open_project: dict | None =
             return _err(404, "no such brief (drafts are kept for 7 days)")
         fresh = False
     if action == "cancel":
+        b.flags["cancelled"] = True        # a turn still running on this brief must not save it back
         STORE.drop(home, b.id)
         send({"type": "brief", "id": b.id, "status": "cancelled"})
         return 200, {"ok": True, "brief_id": b.id, "status": "cancelled"}
@@ -176,9 +180,12 @@ def post(req, send=None, *, home: str | None = None, open_project: dict | None =
             traceback.print_exc()
             b.flags.setdefault("notes", []).append(f"Something went wrong reading that ({exc.__class__.__name__}); try again.")
         finally:
-            STORE.put(home, b)
+            live = not b.flags.get("cancelled")
+            if live:
+                STORE.put(home, b)
             STORE.release(b.id)
-            send(event(b))
+            if live:
+                send(event(b))
 
     STORE.put(home, b)
     if sync:
@@ -244,12 +251,14 @@ def on_built(home: str, brief_id: str, project: str, rev: str | None = None, pro
     return b
 
 
-def register(route, *, home_for=None, send_for=None, create_project=None, open_project_for=None):
-    """Register both routes with the W0b router decorator: route(method, path, role=...)."""
+def register(route, *, home_for=None, send_for=None, create_project=None, create_project_for=None, open_project_for=None):
+    """Register both routes with the W0b router decorator: route(method, path, role=...). The project service hook
+    for action "build" is `create_project(payload)`, or `create_project_for(req)` returning one for this request."""
     @route("POST", "/api/brief", role="editor")
     def _post(req):
         return post(req, (send_for or _send_for)(req), home=home_for(req) if home_for else None,
-                    open_project=open_project_for(req) if open_project_for else None, create_project=create_project)
+                    open_project=open_project_for(req) if open_project_for else None,
+                    create_project=create_project_for(req) if create_project_for else create_project)
 
     @route("GET", "/api/brief", role="viewer")
     def _get(req):

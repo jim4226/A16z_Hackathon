@@ -61,6 +61,7 @@ def test_conversation_to_build(tmp_path):
     assert st == 200 and out["build"]["name"] == "berry-bot" and out["project"] == "berry-bot"
     assert calls[0]["meta"]["origin"] == "brief" and calls[0]["meta"]["demo"] is False and calls[0]["changes"]["name"] == "berry-bot"
     assert ev[-1]["type"] == "brief" and ev[-1]["status"] == "building"
+    assert ev[-1]["project"] == "egg-picker" and ev[-1]["built_project"] == "berry-bot"   # the room, then what was built
     st, out, _ = post(tmp_path, {"brief_id": bid, "answers": {"layout": "short_hop"}})
     assert st == 409                                    # a building brief is final
     b = api_brief.on_built(str(tmp_path), bid, "berry-bot", "r001", project_root=str(tmp_path))
@@ -165,6 +166,30 @@ def test_turns_run_off_the_request_thread_and_one_at_a_time(tmp_path, monkeypatc
     assert api_brief.get(r3, home=str(tmp_path))[1]["busy"] is False
 
 
+def test_cancel_during_a_turn_leaves_nothing_behind(tmp_path, monkeypatch):
+    gate = threading.Event()
+    real = agents.run_turn
+
+    def slow(*a, **kw):
+        gate.wait(5)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(agents, "run_turn", slow)
+    r, hub = req(tmp_path, {"text": "help me sort socks"})
+    st, out = api_brief.post(r, home=str(tmp_path))
+    bid = out["brief_id"]
+    assert st == 202 and post(tmp_path, {"brief_id": bid, "action": "cancel"})[0] == 200
+    gate.set()
+    for _ in range(100):
+        if bid not in api_brief.STORE.busy:
+            break
+        time.sleep(0.05)
+    r2, _ = req(tmp_path, query={"id": [bid]})
+    assert bid not in api_brief.STORE.busy and api_brief.get(r2, home=str(tmp_path))[0] == 404
+    assert not os.path.exists(os.path.join(os.path.realpath(tmp_path), ".briefs", bid + ".json"))
+    assert not [e for e in hub.events if e["type"] == "brief"]          # no result for a cancelled turn
+
+
 def test_register_with_a_router(tmp_path):
     table = {}
 
@@ -174,7 +199,9 @@ def test_register_with_a_router(tmp_path):
             return fn
         return deco
 
-    api_brief.register(route, home_for=lambda r: str(tmp_path))
+    made = []
+    api_brief.register(route, home_for=lambda r: str(tmp_path),
+                       create_project_for=lambda r: lambda pay: made.append((r.room.name, pay["name"])) or {"project": pay["name"]})
     assert table[("POST", "/api/brief")][0] == "editor" and table[("GET", "/api/brief")][0] == "viewer"
     r, hub = req(tmp_path, {"text": "help me sort socks"})
     st, out = table[("POST", "/api/brief")][1](r)
@@ -184,3 +211,6 @@ def test_register_with_a_router(tmp_path):
             break
         time.sleep(0.05)
     assert hub.events[-1]["status"] == "asking" and hub.events[-1]["project"] == "egg-picker"
+    r2, _ = req(tmp_path, {"brief_id": out["brief_id"], "action": "build"}, project="lab")
+    st, out = table[("POST", "/api/brief")][1](r2)           # build runs inline: defaults, preflight, the project hook
+    assert st == 200 and out["project"] == "sock-sorter" and made == [("lab", "sock-sorter")]
