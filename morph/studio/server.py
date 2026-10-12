@@ -437,8 +437,8 @@ def app_csp(page: str | None = None) -> str:
     scripts = [_sha256(s) for s in re.findall(r"<script>(.*?)</script>", page, re.S)]
     handlers = [_sha256(h) for h in re.findall(r"\son[a-z]+=\"([^\"]*)\"", page)]
     script_src = " ".join(["'self'", *scripts, *(["'unsafe-hashes'", *handlers] if handlers else [])])
-    return (f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' data: blob:; "
+    return (f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' data: blob:; "
             "worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 
@@ -574,6 +574,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 ctype = "text/javascript"
             elif path.endswith(".glb"):
                 ctype = "model/gltf-binary"
+            elif path.endswith(".woff2"):  # Python's own table only knows it from 3.14
+                ctype = "font/woff2"
             elif path.endswith((".ino", ".nc", ".gbr", ".drl", ".csv", ".urdf", ".xml", ".dxf")):
                 ctype = "text/plain; charset=utf-8"
             try:
