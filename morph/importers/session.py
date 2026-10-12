@@ -286,7 +286,12 @@ class Session:
         for f in (by.get("kicad_pcb") or by.get("kicad_sch") or [])[:3]:
             cands.append(self._board_candidate(len(cands), f))
         order = {"robot": 0, "project": 1, "object": 2, "board": 3, "bom": 4}
-        cands.sort(key=lambda c: (order.get(c["kind"], 9), not c.get("ok"), c["index"]))
+        def rank(c):
+            ms = c.get("meshes") or {}
+            found = ms["found"] / ms["total"] if ms.get("total") else 1.0
+            return (order.get(c["kind"], 9), bool(c.get("error")), not c.get("ok"), "gripper" in (c.get("needs") or []),
+                    -round(found, 2), c["index"])
+        cands.sort(key=rank)
         for i, c in enumerate(cands):
             c["index"] = i
             wd = os.path.join(self.work, f"cand{c.pop('_slot')}") if "_slot" in c else None
@@ -330,8 +335,20 @@ class Session:
             inc |= includes_of(os.path.join(self.files, *f["path"].split("/")))
         scenes = {f["path"] for f in mj if includes_of(os.path.join(self.files, *f["path"].split("/")))}
         mj = [f for f in mj if f["path"] not in scenes or not inc]
-        allr = urdfs + xacros + mj
-        return sorted(allr, key=lambda f: (f["path"].count("/"), "camera" in f["path"].lower(), f["path"]))
+        ranked = []
+        for f in urdfs + xacros + mj:
+            try:
+                with open(os.path.join(self.files, *f["path"].split("/")), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read(2_000_000)
+            except OSError:
+                continue
+            links = len(re.findall(r"<(link|body)\b", text))
+            if f["format"] == "xacro" and not links and "<xacro:include" not in text:
+                continue                      # a macro library (ros2_control, gazebo, materials): not a robot
+            side = bool(re.search(r"camera|gazebo|ros2_control|transmission|test|example", f["path"], re.I))
+            ranked.append(((side, {"urdf": 0, "mjcf": 1, "xacro": 2}[f["format"]], -min(links, 50),
+                            f["path"].count("/"), f["path"]), f))
+        return [f for _, f in sorted(ranked, key=lambda t: t[0])]
 
     def _robot_candidate(self, index: int, f: dict, emit, used_meshes: set, answers: dict | None = None,
                          slot: int | None = None) -> dict:
