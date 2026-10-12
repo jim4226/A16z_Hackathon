@@ -12,21 +12,29 @@ Keewano gives R Cubed observability: with event sending on, every design, bench 
 
 ## Run it
 
-You need **Git**, **Python 3.10 to 3.14** ([python.org](https://www.python.org/downloads/); on Windows tick
-"Add python.exe to PATH") and, for the app window, **Chrome or Edge** (any browser works at
-http://127.0.0.1:8765).
+You need **Python 3.10 to 3.14** (3.13 recommended: [python.org](https://www.python.org/downloads/); on Windows
+tick "Add python.exe to PATH"), **Git**, and for the app window **Chrome or Edge** (any browser works at
+http://127.0.0.1:8765). Morph runs on Windows 10 and 11, macOS 12 or newer on Apple silicon, and 64-bit Linux.
+Step by step, updating, uninstalling and fixes for common problems: [docs/INSTALL.md](docs/INSTALL.md).
 
 ```bash
 git clone https://github.com/jim4226/A16z_Hackathon
 cd A16z_Hackathon
-run_studio.bat          # Windows: or double-click run_studio.bat in Explorer
-./run_studio.sh         # macOS / Linux
+run_studio.bat --update     # Windows (later, double-click run_studio.bat in Explorer)
+./run_studio.sh --update    # macOS / Linux (later, ./run_studio.sh)
 ```
 
-The first launch takes a few minutes: it creates `.venv`, installs `requirements.txt`, then **builds
-two robots** (the generated egg-picker arm and the imported SO-101), printing each pipeline stage in
-the terminal. The Morph Studio window opens when they are ready. Later launches pull the latest code
-and open in seconds (after an update, both robots are rebuilt once, about two minutes).
+`--update` switches the clone to the latest release (the newest `v` tag) and starts it; use it whenever you want
+to update. Without it, the launcher never runs git, and after the first install it starts offline. No Git?
+Download *Source code (zip)* from the [latest release](https://github.com/jim4226/A16z_Hackathon/releases) and run
+the launcher in the unzipped folder.
+
+The first launch takes a few minutes. The launcher looks for Python 3.13, 3.12, 3.11, 3.10, then 3.14 (and says what
+to install if none is there), creates `.venv`, and installs the tested package versions (`requirements.txt` with
+`constraints.txt`), showing pip's progress. Then it **builds two robots** (the generated egg-picker arm and the
+imported SO-101), printing each pipeline stage in the terminal, and the Morph Studio window opens when they are
+ready. Later launches open in seconds (after an update that changes the pipeline, both robots are rebuilt once,
+about two minutes).
 
 **API keys are optional.** Everything runs without them. Click **Keys** (top right of the Studio) to
 paste your own; they are saved only on your computer, in the git-ignored `.env` (created from
@@ -42,7 +50,9 @@ each one, so a mistyped key shows up at once.
 **Privacy and network** (at the bottom of the Keys dialog) has three switches, saved in
 `projects/.settings.json` (never any keys): *Allow network lookups (Darwin, SubQ, Claude)* is on; off keeps
 everything on this computer. *Send build events to Keewano* and *Use Keewano calibration* are off until you
-turn them on. `MORPH_OFFLINE=1` turns every network call off whatever the switches say.
+turn them on. `MORPH_OFFLINE=1` turns every network call off whatever the switches say. What each service
+receives, and when anything leaves your computer: [docs/PRIVACY.md](docs/PRIVACY.md). To report a security problem:
+[SECURITY.md](SECURITY.md).
 
 **Present the demo:** click **Present** (or press `P`), then **Reset demo** and **Start**; press `→`
 for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
@@ -54,15 +64,17 @@ for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIP
 - A stage marked *error* in the pipeline strip leaves its tab empty; the other stages still work.
   Delete the `projects` folder and start again to rebuild everything from scratch.
 - "Morph Studio is already running": close the other terminal window first.
+- Packages broken or half-installed: delete the `.venv` folder and run the launcher again.
 - The right panel (time card, grip force) is hidden when the window is narrower than 1280 px, as at
   150 % Windows display scaling: zoom out once (**Ctrl** and **-**, or **Cmd** and **-** on a Mac).
 
 ## Bring your own compute
 
 Morph runs entirely on the computer that starts it. CAD, simulations, PCB routing, the BOM and the
-manual are all computed there; only the optional API calls (Claude, Keewano, Darwin) leave the machine,
-and no GPU is needed. To do the work on a stronger computer (a desktop, a workstation or a cloud VM)
-and use it from a laptop, start Morph on that computer with `--remote` and open it in the laptop's browser:
+manual are all computed there; only the optional services (Claude, Keewano, Darwin, SubQ) are called over
+the network ([docs/PRIVACY.md](docs/PRIVACY.md)), and no GPU is needed. To do the work on a stronger computer
+(a desktop, a workstation or a cloud VM) and use it from a laptop, start Morph on that computer with
+`--remote` and open it in the laptop's browser:
 
 ```bash
 run_studio.bat --remote         # Windows, on the stronger computer
@@ -77,8 +89,8 @@ code); anyone without the code gets a page asking for it. To keep the same link 
 computer's name, so it is clear which machine does the work. `python -m morph.cli doctor` shows each
 machine's CPU cores.
 
-The link is plain HTTP, so use it on a network you trust or over a VPN such as Tailscale. From
-anywhere else, use an SSH tunnel, which needs no `--remote`: start Morph normally on the server, run
+The link is plain HTTP ([SECURITY.md](SECURITY.md)), so use it on a network you trust or over a VPN such as
+Tailscale. From anywhere else, use an SSH tunnel, which needs no `--remote`: start Morph normally on the server, run
 `ssh -L 8765:127.0.0.1:8765 you@server` on the laptop, and open http://127.0.0.1:8765. On a cloud VM,
 keep port 8765 closed to the internet and use the tunnel.
 
@@ -100,7 +112,8 @@ regenerates only what depends on it.
   completed and the firmware marked unverified. Keys, settings, chat and the ledger are never included.
 - **Present** (button or `P`): the demo as 14 press-through steps with captions.
 - More: [docs/SPONSORS.md](docs/SPONSORS.md) (Keewano and Darwin), [docs/TIME_SAVED.md](docs/TIME_SAVED.md)
-  (time-saved sources), [docs/PLATFORM_CONTRACTS.md](docs/PLATFORM_CONTRACTS.md) (how the stages fit together).
+  (time-saved sources), [docs/internal/PLATFORM_CONTRACTS.md](docs/internal/PLATFORM_CONTRACTS.md) (how the stages fit
+  together), [CHANGELOG.md](CHANGELOG.md) (what changed in each release), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## The gripper-only prototype (command line)
 
@@ -208,4 +221,4 @@ Uploading needs your own BoardRepo sign-in, so R Cubed stops at the zip. More in
 - The sim treats fingers as rigid and models the egg as a capsule.
 - The firmware assumes a position servo and a 0.5° step. Set `OPEN_DEG`/`CLOSED_DEG` for your gripper.
 
-Demo script (Present mode): `docs/DEMO_SCRIPT.md`. The original hackathon plan, from the gripper prototype: `docs/HACKATHON_PLAN.md`. Data sources: `docs/DATA_SOURCES.md`.
+Demo script (Present mode): `docs/DEMO_SCRIPT.md`. The original hackathon plan, from the gripper prototype: `docs/internal/HACKATHON_PLAN.md`. Data sources: `docs/DATA_SOURCES.md`.

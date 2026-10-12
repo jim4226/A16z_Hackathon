@@ -193,3 +193,20 @@ def test_constraints_pin_everything_that_gets_installed():
         wanted.add(_norm(re.match(r"[A-Za-z0-9._-]+", dep)[0]))
     assert sorted(wanted - set(pins)) == []
     assert len(pins["numpy"]) == 3  # 3.10, 3.11 and 3.12+ each need their own numpy
+
+
+# ------------------------------------------------------------------ release docs
+
+def test_release_docs_exist_link_correctly_and_name_this_version():
+    changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## {morph.__version__} " in changelog
+    docs = ["README.md", "SECURITY.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "docs/INSTALL.md", "docs/PRIVACY.md",
+            "docs/RELEASE_CHECKLIST.md", "docs/BOARDREPO.md", "docs/SPONSORS.md", "docs/DEMO_SCRIPT.md"]
+    for doc in docs:
+        text = (REPO / doc).read_text(encoding="utf-8")
+        for link in re.findall(r"\]\(([^)\s]+)\)", text):
+            path = link.split("#", 1)[0]
+            if path and not re.match(r"[a-z]+:", path):
+                assert (REPO / doc).parent.joinpath(path).resolve().exists(), (doc, link)
+    assert not (REPO / "docs" / "HACKATHON_PLAN.md").exists() and (REPO / "docs" / "internal" / "HACKATHON_PLAN.md").exists()
+    assert "github.com/jim4226/A16z_Hackathon/security/advisories/new" in (REPO / "SECURITY.md").read_text(encoding="utf-8")

@@ -1,7 +1,7 @@
 """Whole-robot MuJoCo simulation: pick-and-place, payload sweep, workspace, shake.
 
 The model is generated from the Assembly alone (kinematic contract in
-docs/PLATFORM_CONTRACTS.md: links / joints / parts / meta, ``Part.profile`` for
+docs/internal/PLATFORM_CONTRACTS.md: links / joints / parts / meta, ``Part.profile`` for
 pads), so it follows whatever the arm generator builds:
 
 * one body per link, placed by the joint origins (mm -> m); revolute -> hinge,
