@@ -248,6 +248,26 @@ def test_torque_repair_takes_the_cheaper_arm_and_flags_the_budget():
     assert b.changes["arm.actuator_family"] == "smart_bus" and len(over) == 1 and over[0].endswith("above your $285 budget.")  # no reason
 
 
+def test_custom_objects_are_named_and_their_gaps_are_assumptions():
+    b = agents.run_turn(text="a robot that picks up 450 g jars")
+    o = b.get("object")
+    assert (o["name"], o["key"], o["mass_g"]) == ("jar", None, 450.0) and B.suggest_name(b) == "jar-mover"
+    row = next(r for r in b.to_dict()["card"] if r["slot"] == "object")
+    assert row["text"] == "Jars (Ø45 mm, 450 g); width assumed" and row["badge"] == "you said"
+    names = [B.parse(t)["slots"]["object"]["name"] for t in ("move jars weighing 300 g", "pick up 70 mm glass jars",
+                                                              "pick up 120 g potatoes", "pick up 200 g items at 10 per minute")]
+    assert names == ["jar", "glass jar", "potato", "object"]
+    b = agents.run_turn(b, action="defaults")
+    gap = [a for a in b.assumptions if a["slot"] == "object" and a["kind"] == "default"]
+    assert gap[0]["text"] == "I assumed the jars are 45 mm wide where the fingers close."   # only the weight was given
+    assert [x["label"] for x in gap[0]["options"]] == ["30 mm wide", "55 mm wide", "70 mm wide"]
+    b = agents.run_turn(b, answers={"object": gap[0]["options"][2]["value"]})                # the confirm card's chip
+    assert b.status == "ready" and b.get("object")["diameter_mm"] == 70.0 and b.get("object")["name"] == "jar"
+    assert not [a for a in b.assumptions if a["slot"] == "object" and a["kind"] == "default"]
+    b = agents.run_turn(agents.run_turn(text="pick up 70 mm glass jars"), action="defaults")
+    assert "I assumed the glass jars weigh 100 g each." in [a["text"] for a in b.assumptions]
+
+
 def test_printer_bed_repair():
     b = agents.run_turn(text="a 6 axis dynamixel arm with a custom pcb that moves eggs")
     b = agents.run_turn(b, action="defaults")

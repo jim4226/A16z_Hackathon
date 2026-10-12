@@ -321,6 +321,37 @@ def _plural(w: str) -> str:
     return w[:-1] + "ies" if re.search(r"[^aeiou]y$", w) else w + "s"
 
 
+def _singular(w: str) -> str:
+    if re.search(r"(?:ch|sh|x|ss)es$", w) or (len(w) > 5 and w.endswith("oes")):
+        return w[:-2]
+    if w.endswith("ies") and len(w) > 4:
+        return w[:-3] + "y"
+    return w[:-1] if w.endswith("s") and not w.endswith("ss") and len(w) > 3 else w
+
+
+_NOUN_STOP = {"each", "per", "and", "the", "for", "with", "from", "into", "onto", "that", "than", "less", "more", "max", "maximum",
+              "minimum", "min", "object", "objects", "thing", "things", "item", "items", "stuff", "piece", "pieces", "part", "parts",
+              "load", "loads", "payload", "weight", "weights", "every", "one", "ones", "robot", "arm", "gripper", "budget", "total",
+              "heavy", "light", "wide", "long", "tall", "high", "thick", "across", "diameter", "maybe", "about", "around"}
+_MATERIAL = r"(?:glass |plastic |metal |wooden |paper )?"
+_NOUN_PATTERNS = (  # the thing a custom object is called: "450 g jars", "jars of 450 g", "picks up glass jars"
+    r"\d(?:\.\d+)?\s*(?:g|mm)\s+(?:(?:heavy|light|wide|big|small|large|full|empty)\s+)?(" + _MATERIAL + r"[a-z][a-z-]{2,20})\b",
+    r"\b([a-z][a-z-]{2,20})\s+(?:of|weighing|that weigh)\s+(?:about |around |up to )?\d+(?:\.\d+)?\s*(?:g|mm)\b",
+    r"\b(?:pick(?:s|ing)?(?: up)?|move[sd]?|moving|handles?|carr(?:y|ies)|sorts?|stacks?|lifts?|grabs?)\s+(?:up\s+)?"
+    r"(?:the |some |my |our |small |big )?(" + _MATERIAL + r"[a-z][a-z-]{2,20})\b",
+)
+
+
+def _noun(t: str) -> str | None:
+    """What an object the presets don't know is called, singular ("450 g jars" -> "jar"), or None."""
+    for pat in _NOUN_PATTERNS:
+        for m in re.finditer(pat, t):
+            words = m.group(1).split()
+            if words[-1] not in _NOUN_STOP and not words[-1].isdigit():
+                return " ".join(words[:-1] + [_singular(words[-1])])[:24]
+    return None
+
+
 def _object_label(o: dict, short: bool = False) -> str:
     k = o.get("key")
     base = (PRESET_INFO.get(k, (None, None))[1] if k in OBJECTS else (CATALOG.get(k) or {}).get("label")) or \
@@ -459,7 +490,8 @@ def parse(text: str) -> dict:
                                         "this gripper handles: 26 to 75 mm wide, up to 500 g.", "alt": None})
         obj = None
     dia = None
-    m = re.search(r"(?:ø|⌀|diameter(?: of)?|dia\.?)\s*(\d+(?:\.\d+)?)\s*mm|(\d+(?:\.\d+)?)\s*mm\s*(?:wide|across|diameter|dia\b|thick|"
+    m = re.search(r"(?:ø|⌀|diameter(?: of)?|dia\.?)\s*(\d+(?:\.\d+)?)\s*mm|(\d+(?:\.\d+)?)\s*mm\s*(?:(?:glass|plastic|metal|wooden|paper)\s+)?"
+                  r"(?:wide|across|diameter|dia\b|thick|"
                   r"ball|sphere|cube|box(?:es)?|block|brick|cylinder|tubes?|objects?|cans?|bottles?|jars?|cups?|parts?)|"
                   r"\b(?:about|around|roughly|approximately|~)\s*(\d+(?:\.\d+)?)\s*mm\b(?!\s*(?:away|apart|from|reach|long|high|tall))", t)
     if m and not re.search(r"reach|finger|hole|mount|spacing|longer|shorter|apart|away|from the base", t[max(0, m.start() - 24):m.end()]):
@@ -478,6 +510,9 @@ def parse(text: str) -> dict:
                 obj.update(shape="sphere", name="ball")
             elif re.search(r"\b(dumbbells?|weights?)\b", t):
                 obj.update(name="dumbbell")
+            noun = _noun(t)
+            if noun:
+                obj["name"] = noun
         obj = dict(obj)
         if dia is not None:
             obj["diameter_mm"] = dia
@@ -1337,8 +1372,29 @@ def assumptions_for(b: Brief, ch: dict) -> list:
                 alts.append({"label": c["label"], "changes": d})
         out.append({"slot": slot, "text": text, "kind": kind, "options": opts[:3], "alternatives": alts[:3]})
 
+    def object_gap(o):
+        """A custom object the user gave only some numbers for: the rest is an assumption too ("450 g jars" -> 45 mm)."""
+        st = o.get("stated")
+        if o.get("key") or not st:
+            return
+        clean = {k: v for k, v in o.items() if k != "stated"}
+        x = _plural(str(o.get("name") or "object")).lower()
+        if "diameter_mm" not in st:
+            choices = [(f"{d} mm wide", dict(clean, diameter_mm=float(d), length_mm=max(float(clean.get("length_mm", d)), float(d))))
+                       for d in (30, 55, 70) if d != clean["diameter_mm"]]
+            text = f"I assumed the {x} are {clean['diameter_mm']:g} mm wide where the fingers close."
+        else:
+            choices = [(f"{m} g each", dict(clean, mass_g=float(m))) for m in (50, 200, 450) if m != clean["mass_g"]]
+            text = f"I assumed the {x} weigh {clean['mass_g']:g} g each."
+        alts = [{"label": lab, "changes": d} for lab, d in ((lab, alt_changes("object", v)) for lab, v in choices) if d]
+        out.append({"slot": "object", "text": text, "kind": "default", "options": [{"label": lab, "value": v} for lab, v in choices][:3],
+                    "alternatives": alts[:3]})
+
     for slot in ("object", "layout", "throughput", "people_nearby", "perception", "budget", "quantity"):
         s = b.slots.get(slot)
+        if slot == "object" and s is not None and s.source in ("user", "video", "photo"):
+            object_gap(s.value)
+            continue
         if s is not None and s.source in ("user", "video", "photo") or (s is not None and s.source == "memory"):
             continue
         kind = "inferred" if s is not None and s.source == "inferred" else "default"
@@ -1427,6 +1483,9 @@ def card(b: Brief) -> list:
             v = value(b, slot)
             if slot == "object":
                 txt = _object_label(v) + (f", damaged above {v['max_force_n']:g} N" if v.get("max_force_n") else "")
+                gaps = [w for k, w in (("diameter_mm", "width"), ("mass_g", "weight")) if v.get("stated") and not v.get("key")
+                        and k not in v["stated"]]
+                txt += f"; {' and '.join(gaps)} assumed" if gaps else ""
             elif slot == "task":
                 txt = TASKS.get(v, v).capitalize()
             elif slot == "layout":
