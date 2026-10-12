@@ -457,14 +457,15 @@ function setupParams() {
 
 // ------------------------------------------------------------------ pipeline strip
 function nodesOf(rev) { return rev?.nodes?.length ? rev.nodes : DEFAULT_NODES; }
+const STAGE_BAD = { error: 'failed', blocked: 'not built', preview: 'preview only', pending: 'not computed' };  // shown red
 function renderPipeline(rev, live) {
   const nodes = nodesOf(rev);
   const prov = rev?.provenance || {}, tim = rev?.timings || {}, errs = rev?.errors || {};
   $('#pipeline').innerHTML = nodes.map(([k, label], i) => {
     let cls = '', sub = '—';
     const p = live ? live[k] : prov[k];
-    if (live) { cls = p || 'queued'; sub = { queued: 'queued', computing: 'running…', reused: 'reused', computed: 'rebuilt' }[cls] || ''; }
-    else if (errs[k]) { cls = 'error'; sub = 'error'; }
+    if (live) { cls = p || 'queued'; sub = { queued: 'queued', computing: 'running…', reused: 'reused', computed: 'rebuilt', ...STAGE_BAD }[cls] || ''; if (STAGE_BAD[cls]) cls = 'error'; }
+    else if (errs[k] || STAGE_BAD[p]) { cls = 'error'; sub = STAGE_BAD[p] || 'failed'; }
     else if (p === 'computed') { cls = 'computed'; sub = tim[k] >= 0.005 ? `rebuilt ${fmtSec(tim[k])}` : 'rebuilt'; }
     else if (p && p.startsWith('reused')) { cls = 'reused'; sub = 'reused'; }
     const long = String(label).split(/\s+/).some((w) => w.length >= 12) ? ' long' : '';
@@ -476,8 +477,8 @@ const fmtSec = (s) => (s < 0.1 ? `${Math.round(s * 1000)}ms` : `${(+s).toFixed(s
 function nodeEvent(ev) {
   const d = $(`#pipeline .node[data-node="${CSS.escape(ev.node)}"]`);
   if (!d) return;
-  d.className = `node ${ev.status}${ev.status === 'computed' ? ' just' : ''}`;
-  $('.ns span', d).textContent = ev.status === 'computing' ? 'running…' : ev.status === 'computed' ? (ev.seconds >= 0.005 ? `rebuilt ${fmtSec(ev.seconds)}` : 'rebuilt') : 'reused';
+  d.className = `node ${STAGE_BAD[ev.status] ? 'error' : ev.status}${ev.status === 'computed' ? ' just' : ''}`;
+  $('.ns span', d).textContent = ev.status === 'computing' ? 'running…' : ev.status === 'computed' ? (ev.seconds >= 0.005 ? `rebuilt ${fmtSec(ev.seconds)}` : 'rebuilt') : STAGE_BAD[ev.status] || 'reused';
   const link = d.previousElementSibling;
   $$('#pipeline .link').forEach((l) => l.classList.remove('flow'));
   if (ev.status === 'computing' && link?.classList.contains('link')) link.classList.add('flow');
@@ -567,7 +568,7 @@ function renderInspector(cur, prev) {
   const force = cur.gripper?.force;
   $('#insp').innerHTML = `
     <div class="revcard fade-in">
-      <div class="top"><span class="rv">${esc(cur.rev)}</span>${feasible ? '<span class="tag good">' + I('check', 'sm') + 'all checks pass</span>' : `<span class="tag bad">${issues.length + errs.length} issue${issues.length + errs.length === 1 ? '' : 's'}</span>`}
+      <div class="top"><span class="rv">${esc(cur.rev)}</span>${feasible ? '<span class="tag good">' + I('check', 'sm') + 'software checks pass</span>' : `<span class="tag bad">${issues.length + errs.length} issue${issues.length + errs.length === 1 ? '' : 's'}</span>`}
         <span class="grow"></span>${cur.rev !== S.latest && S.latest ? '<span class="tag neutral">history</span>' : '<span class="tag acc">latest</span>'}</div>
       <div class="lb">${esc(cur.label || 'Revision ' + cur.rev)}</div>
       <div class="mt">${cur.parent ? `from <span class="mono">${esc(cur.parent)}</span> · ` : 'first revision · '}${nComp}/${prov.length || nodesOf(cur).length} stages regenerated</div>
@@ -736,9 +737,10 @@ function onEvent(ev) {
       S.latest = cur.rev;
       S.justAdded = cur.rev;
       const n = Object.values(cur.provenance || {}).filter((p) => p === 'computed').length;
+      const bad = Object.keys(cur.errors || {}).length;
       if (sysMsg) {
         sysMsg.classList.add('ok');
-        $('.b', sysMsg).innerHTML = `${I('check', 'sm')}<span>${esc(cur.rev)} ready in ${ev.seconds ?? ((performance.now() - startT) / 1000).toFixed(1)} s · ${n} of ${nodesOf(cur).length} stages regenerated</span>`;
+        $('.b', sysMsg).innerHTML = `${I(bad ? 'alert' : 'check', 'sm')}<span>${esc(cur.rev)} ${bad ? `finished with ${bad} stage${bad === 1 ? '' : 's'} not built` : 'ready'} in ${ev.seconds ?? ((performance.now() - startT) / 1000).toFixed(1)} s · ${n} of ${nodesOf(cur).length} stages regenerated</span>`;
         sysMsg = null;
       }
       liveProv = null;
@@ -757,7 +759,7 @@ async function until(cond, timeout = 20000, onProgress) {
   while (performance.now() - t0 < timeout) {
     if (cond()) return true;
     if (onProgress && liveProv) {
-      const v = Object.values(liveProv), done = v.filter((x) => x === 'computed' || x === 'reused').length;
+      const v = Object.values(liveProv), done = v.filter((x) => x && x !== 'queued' && x !== 'computing').length;
       onProgress(`Regenerating… ${done}/${v.length} stages`);
     }
     await sleep(200);

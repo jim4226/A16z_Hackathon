@@ -23,6 +23,7 @@ from .. import sim as grip_sim
 from ..design import build_profile
 from ..pipeline import Project
 from ..spec import Design, diff
+from . import catalog_extra  # noqa: F401  (imported robots' parts, needed even when their sizing is reused)
 
 # node: (parameter patterns it reads, upstream nodes, output directory)
 GRAPH = {
@@ -132,6 +133,65 @@ def _mod(name):
         return None
 
 
+OUTPUT_KEYS = {"sizing": "sizing", "gripper": "gripper", "electronics": "eplan", "cad": "cad", "sim": "sims",
+               "wiring": "electronics", "manufacturing": "manufacturing", "bom": "bom", "manual": "manual"}
+INVALID = {"pending": "not computed: its module is not available", "error": "failed", "blocked": "not built",
+           "preview": "preview only"}
+
+
+def _preview(results: dict) -> bool:
+    return bool(results.get("preview_only") or (results.get("cad") or {}).get("preview_only"))
+
+
+def stage_problem(results: dict, node: str) -> str | None:
+    """Why this stage's result can't be used (an error, a missing output, a preview-only stand-in), or None.
+    Reads the outputs themselves, so it also judges revisions saved before stage_status existed."""
+    error = (results.get("errors") or {}).get(node)
+    if error:
+        return error
+    status = (results.get("stage_status") or {}).get(node) or (results.get("provenance") or {}).get(node)
+    if status in INVALID:
+        return INVALID[status]
+    if not results.get(OUTPUT_KEYS[node]):
+        return "missing required output"
+    if node == "cad" and _preview(results):
+        return "the basic model is a preview only; manufacturing needs the detailed robot CAD"
+    return None
+
+
+def artifact_problem(results: dict, node: str, revision_dir: str) -> str | None:
+    """A saved result can't stand in for files that are gone: every file the stage reports must exist
+    inside the revision folder."""
+    value = results.get(OUTPUT_KEYS[node]) or {}
+    paths = []
+    if node == "cad":
+        paths = ["cad/robot.glb", "cad/robot.json", value.get("urdf")]
+    elif node == "sim":
+        scenarios = value.get("scenarios") or {}
+        if not scenarios or any(not s.get("file") or (s.get("metrics") or {}).get("error") for s in scenarios.values()):
+            return "a simulation scenario failed or wrote no output"
+        paths = ["sim/" + str(value.get("mjcf") or "")] + ["sim/" + s["file"] for s in scenarios.values()]
+    elif node == "wiring":
+        paths = ["electronics/" + str(value.get(k) or "") for k in ("schematic_svg", "schematic_json", "harness_csv", "firmware")]
+    elif node == "manufacturing":
+        paths = ["mfg/manufacturing.json", "mfg/" + str(value.get("package") or "")]
+        paths += ["mfg/" + f for part in value.get("parts", []) for f in part.get("files", [])]
+    elif node == "manual":
+        paths = ["manual/" + str(value.get(k) or "") for k in ("json", "html")]
+    base = os.path.realpath(revision_dir)
+    for path in paths:
+        if not path or path.endswith("/"):
+            return f"missing required artifact reference for {node}"
+        target = os.path.realpath(os.path.join(base, path))
+        try:
+            ok = os.path.commonpath([base, target]) == base and os.path.isfile(target)
+        except ValueError:
+            ok = False
+        if not ok:
+            return f"missing required artifact for {node}: {path}"
+    return None
+
+
 class RobotProject(Project):
     def run(self, design: Design, parent: str | None = None, label: str = "", n_trials: int = 4,
             verbose: bool = True, on_event=None, fast_sim: bool = False) -> str:
@@ -150,7 +210,7 @@ class RobotProject(Project):
         else:
             changes, todo, prev = {}, list(ORDER), {}
         res = {"rev": rev, "parent": parent, "label": label, "kind": "robot",
-               "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "timings_s": {}}
+               "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "stage_status": {}, "timings_s": {}}
         emit({"type": "start", "rev": rev, "parent": parent, "changes": res["changes"], "dirty": todo})
         cache = {}
 
@@ -162,10 +222,12 @@ class RobotProject(Project):
                 else:
                     try:
                         cache["asm"] = arm.build(design, res["sizing"], res.get("eplan"))
-                    except Exception as exc:  # never leave the user without a robot: fall back to the stub generator
+                    except Exception as exc:  # show a basic model to look at, but never manufacture the stand-in
                         traceback.print_exc()
                         from . import arm_stub
-                        res.setdefault("warnings", []).append(f"detailed arm generator failed ({exc}); showing the basic model")
+                        res.setdefault("warnings", []).append(f"detailed arm generator failed ({exc}); showing the basic "
+                                                              "model as a preview only, not for manufacturing")
+                        res["preview_only"] = True
                         cache["asm"] = arm_stub.build(design, res["sizing"], res.get("eplan"))
             return cache["asm"]
 
@@ -174,12 +236,31 @@ class RobotProject(Project):
             if node not in todo:
                 for key in self._keys(node):
                     res[key] = prev.get(key)
-                res["provenance"][node] = f"reused from {parent}"
+                # a failed, incomplete or preview-only stage stays that way: an unrelated edit never launders it
+                problem = stage_problem(prev, node) or artifact_problem(prev, node, self.rev_dir(parent))
+                preview = node == "cad" and _preview(prev)
+                if preview:
+                    res["preview_only"] = True
+                elif problem:
+                    res.setdefault("errors", {})[node] = f"{problem} (carried over from {parent})"
+                status = "preview" if preview else "error" if problem else "reused"
+                res["provenance"][node] = f"reused from {parent}" if status == "reused" else status
+                res["stage_status"][node] = status
                 if sub and os.path.isdir(os.path.join(self.rev_dir(parent), sub)):
                     shutil.copytree(os.path.join(self.rev_dir(parent), sub), os.path.join(out, sub))
-                emit({"type": "node", "node": node, "status": "reused"})
+                emit({"type": "node", "node": node, "status": status})
                 if verbose:
-                    print(f"  {node:<14} reused")
+                    print(f"  {node:<14} {status if status == 'reused' else status + ' (carried over)'}")
+                continue
+            blocked = [up for up in GRAPH[node][1] if stage_problem(res, up)]
+            if blocked:  # never build on an invalid input
+                why = ("needs the detailed robot CAD, not the basic preview" if "cad" in blocked and _preview(res)
+                       else "needs " + ", ".join(blocked) + ", which did not complete")
+                res.setdefault("errors", {})[node] = f"not built: {why}"
+                res["provenance"][node] = res["stage_status"][node] = "blocked"
+                emit({"type": "node", "node": node, "status": "blocked"})
+                if verbose:
+                    print(f"  {node:<14} blocked ({', '.join(blocked)})")
                 continue
             emit({"type": "node", "node": node, "status": "computing"})
             t0 = time.time()
@@ -189,11 +270,19 @@ class RobotProject(Project):
             try:
                 if self._compute(node, design, res, nd, asm, n_trials, fast_sim) is False:
                     status = "pending"          # module not available yet: say so, never fake "computed"
+                elif node == "cad" and _preview(res):
+                    status = "preview"          # the basic model: shown, never manufactured
+                else:
+                    problem = stage_problem(res, node) or artifact_problem(res, node, out)
+                    if problem:
+                        res.setdefault("errors", {})[node] = problem
+                        status = "error"
             except Exception as exc:  # keep the rest of the pipeline alive; surface the error
                 traceback.print_exc()
                 res.setdefault("errors", {})[node] = f"{exc.__class__.__name__}: {exc}"
                 status = "error"
             res["provenance"][node] = status
+            res["stage_status"][node] = status
             res["timings_s"][node] = round(time.time() - t0, 2)
             emit({"type": "node", "node": node, "status": status, "seconds": res["timings_s"][node]})
             if verbose:
@@ -223,9 +312,11 @@ class RobotProject(Project):
             else:
                 try:
                     res["sizing"] = arm.size(design)
-                except Exception:
+                except Exception as exc:  # basic numbers to show, but nothing downstream may build on them
                     from . import arm_stub
                     res["sizing"] = arm_stub.size(design)
+                    res.setdefault("errors", {})["sizing"] = f"detailed sizing failed ({exc.__class__.__name__}: {exc}); " \
+                                                             "the basic estimate is a preview only"
         elif node == "gripper" and design.arm.source:
             from . import imported
             res["gripper"] = imported.gripper_summary(design, imported.size(design))
@@ -256,6 +347,7 @@ class RobotProject(Project):
                           "validate": errs, "urdf": os.path.relpath(urdf, os.path.dirname(nd)),
                           "groups": len({p.group or p.name for p in a.parts}),
                           "source": a.meta.get("source") or "generated", "title": a.meta.get("title"),
+                          "preview_only": bool(res.get("preview_only")),
                           "license": a.meta.get("license"), "source_url": a.meta.get("source_url"),
                           "issues": a.meta.get("issues", []),
                           "redesign": [p.meta["needs_redesign"] for p in a.parts if p.meta.get("needs_redesign")]}
@@ -314,9 +406,11 @@ def summarize(r: dict) -> dict:
         issues.append(f"{node} stage error: {err}")
     if pp.get("success") is False:
         issues.append(f"pick-and-place failed in simulation ({pp.get('failure') or pp.get('reason') or 'object not delivered'})")
-    pending = [n for n, v in (r.get("provenance") or {}).items() if v in ("pending", "error")]
+    pending = [n for n in ORDER if stage_problem(r, n)]
     if pending:
         issues.append("not computed: " + ", ".join(pending))
+    if _preview(r):
+        issues.append("preview only: the basic model stands in for the detailed robot CAD and is not valid for manufacturing")
     return {
         "dof": len(joints), "reach_mm": sz.get("reach_mm"), "payload_g": sz.get("payload_g"),
         "actuators": ", ".join(sorted({j["actuator"] for j in joints})),

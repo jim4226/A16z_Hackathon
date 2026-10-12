@@ -229,7 +229,8 @@ def rev_payload(p: RobotProject, rev: str) -> dict:
         time_card = {"error": str(exc)}
     return {
         "rev": rev, "label": res.get("label"), "parent": res.get("parent"), "changes": res.get("changes") or {},
-        "provenance": res.get("provenance") or {}, "timings": res.get("timings_s") or {},
+        "provenance": res.get("provenance") or {}, "stage_status": res.get("stage_status") or {},
+        "timings": res.get("timings_s") or {},
         "nodes": [list(x) for x in LABELS], "design": d.flat(), "params": params_for(d),
         "summary": res.get("summary") or {}, "errors": res.get("errors") or {},
         "robot": {"json": f"{base}/cad/robot.json", "glb": f"{base}/cad/robot.glb",

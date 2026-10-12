@@ -27,11 +27,15 @@ def test_pipeline_runs_and_reuses(tmp_path):
     r1 = p.run(d, n_trials=1, verbose=False, fast_sim=True)
     res = p.load_results(r1)
     assert set(res["provenance"]) == set(ORDER)
+    assert not res.get("errors"), res.get("errors")
+    assert set(res["stage_status"].values()) == {"computed"}
     assert res["cad"]["validate"] == [] and res["cad"]["parts"] > 10
     assert (tmp_path / "egg" / r1 / "cad" / "robot.glb").exists()
     r2 = p.run(d.with_changes({"task.cycle_time_s": 8.0}), parent=r1, n_trials=1, verbose=False, fast_sim=True)
-    prov = p.load_results(r2)["provenance"]
+    res2 = p.load_results(r2)
+    prov = res2["provenance"]
     assert prov["sim"] == "computed" and prov["cad"].startswith("reused")
+    assert not res2.get("errors") and res2["stage_status"]["cad"] == "reused"
 
 
 def test_server_payload_shape(tmp_path):
