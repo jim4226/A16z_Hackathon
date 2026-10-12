@@ -273,6 +273,20 @@ members; a member can hold several.
 | pilot | every affected discipline's owner; the author never counts |
 | production | every affected discipline's owner plus the owner |
 
+**Approvals are per discipline and tied to the exact revision.**
+- An approval records `{rev, design_sha256, discipline, stage_artifact_hashes}`.
+- On a later revision, a discipline's approval carries forward only if every stage that discipline owns
+  was reused unchanged (provenance "reused from rNNN"). Otherwise it is stale and that discipline must
+  approve again. This is GitHub's "dismiss stale reviews", scoped to the affected work.
+
+**Flagship acceptance workflow** (the release demo, and an end-to-end test):
+1. An editor proposes a servo substitution.
+2. The proposal previews what it affects: geometry, torques, wiring, firmware and BOM.
+3. Review is routed to the owning disciplines: mechanical, electronics, manufacturing, sourcing; a
+   generalist covers any discipline with no specialist.
+4. Approvals are recorded against the exact revision, and the approved revision is exported.
+5. A later edit makes only the affected disciplines' approvals stale and requires fresh ones.
+
 **Identity.**
 - Invite links: single-use, 7-day expiry, 128-bit code stored hashed.
 - Signed session cookies: `id.issued.HMAC(secret, id|issued|epoch)`. Revoking bumps the epoch.
@@ -328,3 +342,28 @@ Telemetry is opt-in (W0a).
 | F3 | `morph/studio/vision.py`, `morph/studio/api_video.py`, `morph/studio/ffmpeg.py`, `static/video.js`, `tests/test_video*.py` |
 | F4 | `morph/studio/teams/` (package), `morph/studio/api_team.py`, `static/team.js`, `tests/test_team*.py` |
 | F5 | `morph/studio/worlds.py`, `morph/studio/api_world.py`, `static/world.js`, the vendored three r160 examples (PointerLockControls, Octree, Capsule, TransformControls) in `static/vendor/`, `simulate.py` world support, `tests/test_world*.py` |
+
+## 12. Correctness fixes from the external review (owner: W0c, after Wave 0)
+
+1. **Protocol validation (P1).**
+   - **Bug:** `electronics2.plan()` checks only the electrical interface. Feetech and Dynamixel servos are
+     both `ttl_half_duplex` but speak different protocols, so `arm.actuator_overrides=j2=xm430_w350`
+     passes validation and the firmware drives a Dynamixel servo with Feetech SCServo commands.
+   - **Fix:** validate the protocol of every selected actuator. Reject mixed-protocol buses with a clear
+     issue, or implement them. Add tests.
+2. **Moving accessories (P2).**
+   - **Bug:** `electronics.extras` (wrist_camera, imu) ride on the moving gripper and change the hand
+     mass, but `dirty_nodes` excludes sizing and sim, so stale sizing and simulations are reused.
+   - **Fix:** include moving accessories in the sizing hand mass, and make `electronics.extras` dirty
+     sizing and sim. Teams routing then asks the simulation reviewers too.
+3. **Refresh during a build (P2).**
+   - **Bug:** `Studio.state()` reads `latest()` while a revision is still being built (design.json
+     without results.json), raising FileNotFoundError. The page then shows offline and never subscribes
+     to events.
+   - **Fix:** publish only completed revisions, plus an explicit build status (rev in progress, current
+     node). The front end subscribes to events even if loading state fails, and retries.
+4. **Pending chat follows the project switch (P1).** A chat interpreted before a project switch must
+   apply to the project it was sent from. Rooms capture the room at enqueue time and interpret inside
+   the room's worker (W0b), with a test.
+5. **Stage reuse hides failures (P1).** A failed stage is never laundered into feasible by a later
+   unrelated edit (W0a-1 ports the fix), with a test.
