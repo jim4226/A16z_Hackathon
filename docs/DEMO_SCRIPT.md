@@ -16,7 +16,7 @@ until the pipeline has finished, so you can't skip ahead mid-build.
 ## Before each take
 
 1. Double-click `run_studio.bat`. Wait for the Morph Studio window. The first start after an update
-   rebuilds both robots in CMD for about two minutes. Maximize the window.
+   rebuilds both robots in its terminal window for about two minutes. Maximize the window.
 2. Click **Present**, then **Reset demo** on the start card. This deletes the chat edits from the
    last take; both robots go back to their original design in a few seconds (up to a minute right
    after an update, when they are rebuilt). If the start card says the window is too narrow for the

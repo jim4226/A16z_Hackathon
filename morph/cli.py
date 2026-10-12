@@ -40,7 +40,7 @@ def _print_summary(p: Project, rev: str):
     print(f"  deflection={s['tip_deflection_mm']} mm  bending SF={s['bending_sf']}  "
           f"fab={s['fab_process']} {s['fab_minutes']} min ${s['fab_cost']}  DFM warnings={s['dfm_warnings']}")
     for issue in s["issues"]:
-        print(f"  ✗ {issue}")
+        print(f"  x {issue}")
 
 
 def _report(p: Project, revs, name="report.html") -> str:
@@ -215,6 +215,11 @@ def cmd_studio(a):
     fixed = os.environ.get("MORPH_TOKEN", "").strip()
     if fixed and not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", fixed):
         sys.exit("MORPH_TOKEN must be 8 to 128 letters, digits, - or _ (it goes in the access link).")
+    from .studio.security import project_name
+    try:
+        project_name(a.name)
+    except ValueError as exc:
+        sys.exit(f"{a.name}: {exc}")
     token = access_token(a.host, fixed or None)
     local = "127.0.0.1" if a.host in ("0.0.0.0", "") else a.host
     link = f"http://{local}:{a.port}/" + (f"?token={token}" if token else "")
@@ -223,8 +228,8 @@ def cmd_studio(a):
         if sock.connect_ex((local, a.port)) == 0:
             if a.open:
                 open_app_window(f"http://{local}:{a.port}")
-            sys.exit(f"Morph Studio is already running at http://{local}:{a.port}. "
-                     "To restart it, close its CMD window first.")
+            sys.exit(f"Morph Studio is already running at http://{local}:{a.port}. To restart it, stop it first "
+                     "(Ctrl+C in its terminal, or close that window).")
     if os.environ.get("MUJOCO_GL") is None and sys.platform.startswith("linux"):
         os.environ["MUJOCO_GL"] = "egl"
     meta = os.path.join(HOME, a.name, "meta.json")
@@ -272,23 +277,42 @@ EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cy
              "finger.pad_depth_mm": 5.5, "finger.pad_height_mm": 19.8, "electronics.servo": "sts3215"}
 
 
-def _robot_summary(p, rev):
-    s = p.load_results(rev)["summary"]
+def _robot_summary(p, rev) -> list:
+    """Print a revision's summary and issues; returns the stages that did not complete."""
+    from .robot.pipeline2 import ORDER, stage_problem
+
+    res = p.load_results(rev)
+    s = res["summary"]
     keys = ["dof", "reach_mm", "actuators", "min_torque_margin", "parts", "robot_mass_kg", "pick_place_success",
             "cycle_time_s", "max_payload_g", "electronics_config", "pcb", "build_config", "unit_cost", "assembly_steps"]
     print(f"\n{rev}: " + "  ".join(f"{k}={s.get(k)}" for k in keys))
     for i in s.get("issues", []):
-        print(f"  ✗ {i}")
+        print(f"  x {i}")
+    return [n for n in ORDER if stage_problem(res, n)]
 
 
-def cmd_robot(a):
-    from .robot.pipeline2 import RobotProject
+def cmd_robot(a) -> int:
+    """Exit status: 1 when the new revision has stages that did not complete (show never fails)."""
+    from .robot.pipeline2 import ORDER, RobotProject
+    from .studio.security import project_name
 
-    p = RobotProject(os.path.join(HOME, a.name))
+    root = os.path.join(HOME, a.name)
+    source = getattr(a, "source", None) or ("so101" if a.name == "so101" else "")
+    if a.action == "new":  # checked before RobotProject() creates the folder
+        try:
+            project_name(a.name)
+            if source:
+                from .robot import imported
+                imported.robot_dir(source)
+        except ValueError as exc:
+            sys.exit(f"{a.name}: {exc}")
+    elif not os.path.isdir(root):
+        sys.exit(f"no project {a.name} in {os.path.abspath(HOME)}")
+    p = RobotProject(root)
+    failed = []
     if a.action == "new":
         if p.revs():
             sys.exit(f"{p.root} already exists")
-        source = getattr(a, "source", None) or ("so101" if a.name == "so101" else "")
         design = Design().with_changes({**EGG_ROBOT, "name": a.name, "arm.source": source})
         if a.need:
             from .studio.intent import interpret
@@ -300,16 +324,19 @@ def cmd_robot(a):
                                       if source else "Pick a raw egg and place it without cracking it.")},
                   open(os.path.join(p.root, "meta.json"), "w", encoding="utf-8"))
         rev = p.run(design, label="first design", n_trials=a.trials, fast_sim=a.fast)
-        _robot_summary(p, rev)
+        failed = _robot_summary(p, rev)
     elif a.action == "change":
         base = a.base or p.latest()
         changes = dict(kv.split("=", 1) for kv in a.changes)
         rev = p.run(p.load_design(base).with_changes(changes), parent=base, label=" ".join(a.changes)[:48],
                     n_trials=a.trials, fast_sim=a.fast)
-        _robot_summary(p, rev)
+        failed = _robot_summary(p, rev)
     elif a.action == "show":
         for r in ([a.base] if a.base else p.revs()):
             _robot_summary(p, r)
+    if failed:
+        print(f"\n{len(failed)} of {len(ORDER)} stages did not complete: {', '.join(failed)} (details above)")
+    return 1 if failed else 0
 
 
 def cmd_source(a):
@@ -451,6 +478,26 @@ def load_env(path=None):
     return keys.load_env(path)
 
 
+def _git_sha() -> str | None:
+    """The checkout's commit, noting local changes; None outside a git checkout or without git."""
+    import shutil
+    import subprocess
+
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    git = shutil.which("git")
+    if not git or not os.path.exists(os.path.join(repo, ".git")):
+        return None
+    try:
+        run = lambda *args: subprocess.run([git, "-C", repo, *args], capture_output=True, text=True, timeout=10)  # noqa: E731
+        head = run("rev-parse", "--short=12", "HEAD")
+        if head.returncode != 0 or not head.stdout.strip():
+            return None
+        dirty = run("status", "--porcelain", "--untracked-files=no")
+        return head.stdout.strip() + (" with local changes" if dirty.returncode == 0 and dirty.stdout.strip() else "")
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def cmd_doctor(a):
     """Check that this machine can run Morph Studio, and say exactly what to fix if not."""
     import importlib
@@ -466,7 +513,10 @@ def cmd_doctor(a):
         mark = {True: "  OK  ", False: " FIX  ", None: " info "}[ok]
         print(f"[{mark}] {text}" + (f"\n         -> {fix}" if fix and ok is False else ""))
 
+    from . import __version__
     print(f"Morph doctor ({platform.system()} {platform.release()}, {platform.machine()})\n")
+    sha = _git_sha()
+    line(None, f"Morph {__version__}" + (f", git {sha}" if sha else " (not a git checkout)"))
     line(None, f"this computer: {socket.gethostname()}, {os.cpu_count()} CPU cores (Morph's pipeline runs here; on a slow "
                "laptop, run it on a stronger computer: README, 'Bring your own compute')")
     v = sys.version_info
@@ -509,7 +559,7 @@ def cmd_doctor(a):
         except (OSError, ValueError):
             line(False, f"{name} {last}: results missing (a build was cut off)", "start the launcher again; it sets cut-off builds aside")
             continue
-        bad = {n: st for n, st in (res.get("provenance") or {}).items() if st in ("error", "pending")}
+        bad = {n: st for n, st in (res.get("provenance") or {}).items() if st in ("error", "pending", "blocked", "preview")}
         errs = res.get("errors") or {}
         line(not bad, f"{name} {last}: " + ("all stages built" if not bad else
              "; ".join(f"{n} {st}" + (f" ({errs[n][:120]})" if n in errs else "") for n, st in bad.items())),
@@ -533,7 +583,18 @@ def cmd_doctor(a):
           else "\nFix the lines marked FIX, then run this again.")
 
 
-def main(argv=None):
+def _console_safe():
+    """A console that can't show a character (cp1252 on Windows, output redirected without PYTHONUTF8) prints
+    "?" instead of stopping the command with UnicodeEncodeError."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+def main(argv=None) -> int:
+    _console_safe()
     load_env()
     ap = argparse.ArgumentParser(prog="morph", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -676,11 +737,12 @@ def main(argv=None):
 
     a = ap.parse_args(argv)
     t0 = time.time()
-    a.fn(a)
+    rc = a.fn(a)
     # every pipeline command's wall-clock goes into the time study
     if a.cmd in ("new", "explore", "change") and getattr(a, "name", None):
         _project(a.name).log({"type": "tool_time", "cmd": a.cmd, "seconds": round(time.time() - t0, 2)})
+    return rc if isinstance(rc, int) else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -5,6 +5,7 @@
 import { I, esc, fmt, sleep } from './panels.js';
 
 const $ = (s, r = document) => r.querySelector(s);
+const ZOOM_OUT = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? 'Cmd and -' : 'Ctrl and -';
 
 // Steps mirror docs/DEMO_SCRIPT.md. `say` may be a function of the app state (for live numbers).
 const STEPS = [
@@ -107,7 +108,7 @@ export class Presenter {
     document.addEventListener('keydown', this.onKey, true);
     this.i = -1;
     this.render();
-    if (this.narrow()) this.a.toast('The window is too narrow for the right panel: press Ctrl and - (minus) once');
+    if (this.narrow()) this.a.toast(`The window is too narrow for the right panel: zoom out once (${ZOOM_OUT})`);
   }
   narrow() { const el = document.querySelector('#inspector'); return !!el && getComputedStyle(el).display === 'none'; }
   close() {
@@ -183,7 +184,7 @@ export class Presenter {
         <button class="btn${dirty.length ? ' primary' : ''}" data-a="reset" title="Delete the chat edits from earlier takes and go back to each robot's original design">${I('replay', 'sm')}Reset demo</button>
         <button class="btn${dirty.length ? '' : ' primary'}" data-a="next">Start ${I('arrow', 'sm')}</button>
 <button class="btn icon ghost" data-a="close" title="Exit (Esc)">${I('x', 'sm')}</button></div>
-        ${narrow ? `<div class="pr-warn">${I('alert', 'sm')}<span>The window is too narrow to show the right panel (time card, grip force). Press <b>Ctrl</b> and <b>-</b> (minus) once, then open Present again.</span></div>` : ''}
+        ${narrow ? `<div class="pr-warn">${I('alert', 'sm')}<span>The window is too narrow to show the right panel (time card, grip force). Zoom out once (${ZOOM_OUT}), then open Present again.</span></div>` : ''}
         ${dirty.length ? `<div class="pr-warn">${I('alert', 'sm')}<span>${dirty.map(esc).join(' and ')} ${dirty.length === 1 ? 'has' : 'have'} edits from an earlier take. Click <b>Reset demo</b> first so every step changes something.</span></div>` : ''}
         <div class="pr-say">Press <kbd>→</kbd>, <kbd>Space</kbd> or a presentation clicker for each step; <kbd>←</kbd> goes back, <kbd>C</kbd> hides the caption, <kbd>Esc</kbd> exits. Steps that change the robot wait for the pipeline before you can move on.</div>
         <div class="pr-dots">${dots}</div>`;

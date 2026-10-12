@@ -55,7 +55,7 @@ for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIP
   Delete the `projects` folder and start again to rebuild everything from scratch.
 - "Morph Studio is already running": close the other terminal window first.
 - The right panel (time card, grip force) is hidden when the window is narrower than 1280 px, as at
-  150 % Windows display scaling: press **Ctrl** and **-** once.
+  150 % Windows display scaling: zoom out once (**Ctrl** and **-**, or **Cmd** and **-** on a Mac).
 
 ## Bring your own compute
 
