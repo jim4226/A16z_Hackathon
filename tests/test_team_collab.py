@@ -180,6 +180,7 @@ GATE_CASES = [
     # (level, decisions, revision authors, policy, ok, short text starts with)
     ("prototype", [], {"ana"}, {}, False, "needs 1 approval: prototype"),
     ("prototype", [ap("ana", "electronics")], {"ana"}, {}, True, "ready to release: prototype"),          # the author may approve
+    ("prototype", [{**ap("raj", "manufacturing"), "carried": True}], {"ana"}, {}, False, "needs 1 approval: prototype"),
     ("prototype", [ap("ana", "electronics"), ap("raj", "manufacturing", decision="request_changes")], {"ana"}, {}, False,
      "changes requested: Manufacturing (Raj)"),
     ("prototype", [ap("vic", "documentation")], {"ana"}, {}, False, "needs 1 approval"),                     # viewers can't

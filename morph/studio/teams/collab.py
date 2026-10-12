@@ -875,7 +875,7 @@ def can_release(level: str, decisions, members, *, authors=(), required=None, po
     {"by", "decision": "approve" | "request_changes", "disciplines": [...], "authors"?: authors of the work it covers}.
     authors: who made the revision; work_authors: {discipline: who made the work it reviews} (default: authors).
     Rules:
-      prototype   1 approval; the author may approve
+      prototype   1 approval made on this revision (not only carried from an earlier one); the author may approve
       pilot       every required discipline approved by an eligible member who didn't author that work, and at
                   least 1 approver who isn't the revision's author
       production  as pilot, with at least 2 distinct approvers who aren't the author, one of them an owner
@@ -905,8 +905,8 @@ def can_release(level: str, decisions, members, *, authors=(), required=None, po
                 chg.append(_pub(m, b, via))
             elif level == "prototype" or b not in work:
                 appr.append({**_pub(m, b, via), "anchor": dec.get("anchor"), "carried": bool(dec.get("carried"))})
-        if level == "prototype":
-            any_ok |= {a["id"] for a in appr}
+        if level == "prototype":  # someone looked at this revision: an approval carried from an earlier one isn't enough
+            any_ok |= {a["id"] for a in appr if not a["carried"]}
         counted |= {a["id"] for a in appr}
         blockers += [(d, c) for c in chg]
         state = "changes_requested" if chg else "approved" if appr else "missing"
