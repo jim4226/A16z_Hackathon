@@ -8,7 +8,7 @@ R Cubed puts that whole loop in one place: tell it "pick up a raw egg without cr
 
 Darwin handles purchasing and engineering help, finding agents that can quote and sell every part, fabricate the PCB and prints, and review the design.
 
-Keewano gives R Cubed observability and recursive self-improvement: every design, bench test and human minute is logged, and the measured results tune the next design's grip force.
+Keewano gives R Cubed observability: with event sending on, every design, bench test and human minute is logged, and with calibration on, logged results tune the next design's grip force. Both are off by default, and the R Cubed demo history in Keewano is seeded data, not real builds.
 
 ## Run it
 
@@ -36,8 +36,13 @@ each one, so a mistyped key shows up at once.
 | Key | What it adds | Where to get it |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Free-form chat requests (without it, the suggestion chips and common phrasings work) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
-| `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: every revision and measurement logged, grip force calibrated from real builds | Keewano settings ([docs/SPONSORS.md](docs/SPONSORS.md)) |
+| `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: revisions and measurements logged once event sending is on, and an optional grip-force calibration from that history (seeded demo data unless your project holds real bench results) | Keewano settings ([docs/SPONSORS.md](docs/SPONSORS.md)) |
 | Darwin | Nothing to add: Darwin Search is public | |
+
+**Privacy and network** (at the bottom of the Keys dialog) has three switches, saved in
+`projects/.settings.json` (never any keys): *Allow network lookups (Darwin, SubQ, Claude)* is on; off keeps
+everything on this computer. *Send build events to Keewano* and *Use Keewano calibration* are off until you
+turn them on. `MORPH_OFFLINE=1` turns every network call off whatever the switches say.
 
 **Present the demo:** click **Present** (or press `P`), then **Reset demo** and **Start**; press `â†’`
 for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
@@ -89,7 +94,7 @@ regenerates only what depends on it.
   shake), Electronics, Manufacturing, Assembly, and BOM & Sourcing (parts, bulk materials with buy
   links, and the **Darwin agents** view, which finds an agent for every part and fabrication job).
 - **Inspector:** the time-saved card (cited by-hand hours vs measured time), metric deltas, the
-  grip-force window with Keewano calibration, and issues.
+  grip-force window (with the optional Keewano calibration), and issues.
 - **Present** (button or `P`): the demo as 14 press-through steps with captions.
 - More: [docs/SPONSORS.md](docs/SPONSORS.md) (Keewano and Darwin), [docs/TIME_SAVED.md](docs/TIME_SAVED.md)
   (time-saved sources), [docs/PLATFORM_CONTRACTS.md](docs/PLATFORM_CONTRACTS.md) (how the stages fit together).
@@ -155,16 +160,19 @@ Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli â
 
 ## Sponsor integrations
 
-**Keewano: the build memory.** Every ledger entry (revision, bench measurement, human minutes,
-Darwin lookup) is sent to Keewano as typed events from `Project.log()` (`morph/keewano.py`).
-Before choosing the grip-force target, `electronics.plan()` asks Keewano how much more holding
-force real builds with the same pad and material needed than the simulation predicted, and
-scales the target by that ratio. Remove Keewano and the firmware ships the uncalibrated number.
+**Keewano: the build memory.** With **Send build events to Keewano** on (Keys, Privacy and network;
+off by default), every ledger entry (revision, bench measurement, human minutes, Darwin lookup) is
+sent to Keewano as typed events from `Project.log()` (`morph/keewano.py`). With **Use Keewano
+calibration** on (also off by default), `electronics.plan()` asks Keewano how much more holding force
+logged builds with the same pad and material needed than the simulation predicted, and scales the
+target by that ratio: only from 3 or more builds, and never from `synthetic-*` projects. The ratio is
+only as real as the project's history; the R Cubed demo project is seeded. With calibration off, the
+firmware ships the simulation-based number.
 
 ```bash
 export KEEWANO_API_KEY=...                       # send (Settings -> Project -> API Keys)
 export KEEWANO_PAT=kwpat-... KEEWANO_PROJECT_ID=<uuid>   # query (Settings -> Personal -> Security)
-python tools/keewano_backfill.py --send          # 2 weeks of synthetic-* builds, labelled
+python tools/keewano_backfill.py --send          # 2 weeks of synthetic-* builds for dashboards (calibration ignores them)
 morph ask 'SELECT "PadStyle", avg("HoldForceRatioPct") FROM events GROUP BY "PadStyle"'
 ```
 

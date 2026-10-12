@@ -40,6 +40,10 @@ class NeedSpec(BaseModel):
 
 
 def _client():
+    from . import settings
+
+    if not settings.network_allowed():  # Keys, Privacy and network: everything stays on this computer
+        return None
     try:
         import anthropic
         return anthropic.Anthropic()
@@ -133,7 +137,8 @@ def research(query: str, max_searches: int = 5) -> str:
     """Web research for components, tooling or suppliers, returned with source URLs."""
     client = _client()
     if client is None:
-        return "Research needs Claude credentials (ANTHROPIC_API_KEY or `ant auth login`)."
+        return ("Research needs Claude credentials (ANTHROPIC_API_KEY or `ant auth login`) and network lookups "
+                "turned on (Keys, Privacy and network).")
     messages = [{"role": "user", "content": (
         "Research this for a robotics hardware build and answer concisely with specific part numbers, "
         "specs, prices and links where available:\n\n" + query)}]

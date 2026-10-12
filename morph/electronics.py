@@ -76,12 +76,12 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
         hold = analysis["required_grip_n"] / design.safety_factor  # closed-form fallback
         warnings.append("no simulated holding force; using closed-form estimate")
     calibration = None
-    if not e.target_force_n:
+    if not e.target_force_n:  # opt-in (Keys: Use Keewano calibration); None unless enough logged, non-synthetic builds
         calibration = keewano.hold_ratio(f.pad, f.material)
         if calibration:
             hold *= calibration["ratio"]
-            warnings.append(f"holding force scaled x{calibration['ratio']:.2f} from {calibration['n']} measured "
-                            f"{f.pad}/{f.material} builds in Keewano")
+            warnings.append(f"holding force scaled x{calibration['ratio']:.2f} by Keewano calibration from {calibration['n']} "
+                            f"logged {f.pad}/{f.material} builds (seeded demo data unless your project has real bench results)")
     lo = hold * HOLD_MARGIN
     hi = (o.max_force_n / CRUSH_MARGIN) if o.max_force_n > 0 else float("inf")
     if sensor:

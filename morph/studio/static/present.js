@@ -53,8 +53,8 @@ const STEPS = [
     say: (a) => {
       const cal = a.state.current?.gripper?.force?.hold_calibration;
       return cal
-        ? `Keewano logs every revision, chat edit and bench measurement. Its build history for these pads (seeded for this demo) says they need ×${fmt(cal.ratio, '', 2)} the simulated holding force over ${cal.n} builds, so the grip target is raised before the firmware ships.`
-        : 'With Keewano connected, every revision, chat edit and bench measurement is logged, and measured builds calibrate the simulated grip force before the firmware ships.';
+        ? `With event sending on, Keewano logs each revision, chat edit and bench measurement. Its build history for these pads (seeded for this demo, not measured) puts them at ×${fmt(cal.ratio, '', 2)} the simulated holding force over ${cal.n} builds, so with calibration on the grip target is raised before the firmware ships.`
+        : 'With event sending on (Keys), Keewano logs each revision, chat edit and bench measurement. With calibration on, logged builds of the same pad and material adjust the simulated grip force before the firmware ships; here the target is the simulation value.';
     },
     run: async (a) => { a.tab('sim'); a.spotlight('.fw'); },
   },

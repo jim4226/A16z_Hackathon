@@ -276,6 +276,7 @@ def test_keewano_emit_never_waits_on_the_network(monkeypatch):
     import time
 
     monkeypatch.setenv("KEEWANO_API_KEY", "k")
+    monkeypatch.setenv("MORPH_TELEMETRY_ENABLED", "1")  # events are opt-in
     calls = []
     monkeypatch.setattr(keewano, "send", lambda name, evs, ts=None, key=None: (time.sleep(2), calls.append(name)))
     t0 = time.time()

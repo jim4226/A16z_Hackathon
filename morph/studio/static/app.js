@@ -290,7 +290,7 @@ async function reloadProject() {
 }
 
 function renderKeysDot() {
-  const i = S.integrations || {}, on = [i.claude?.chat, i.keewano?.send && i.keewano?.query].filter(Boolean).length;
+  const i = S.integrations || {}, on = [i.claude?.configured ?? i.claude?.chat, i.keewano?.configured ?? (i.keewano?.send && i.keewano?.query)].filter(Boolean).length;
   const d = $('#keysBtn .kdot');
   if (d) { d.className = `kdot ${on === 2 ? 'on' : on ? 'some' : ''}`; $('#keysBtn').title = `API keys: ${on === 2 ? 'Claude and Keewano connected' : on ? 'partly connected' : 'none set (optional)'}`; }
 }
@@ -610,9 +610,10 @@ function timeCard(cur) {
 }
 function keewanoLine(cur) {
   const f = cur.gripper?.force || {}, cal = f.hold_calibration, kw = S.integrations?.keewano || {};
-  const pad = cur.design?.['finger.pad'], mat = cur.design?.['finger.material'];
-  if (cal) return `<div class="kw on">${I('spark', 'sm')}<span><b>Keewano</b>: holding force ×${fmt(cal.ratio, '', 2)} from ${cal.n} measured ${esc(pretty(pad))} · ${esc(mat || '')} builds</span></div>`;
-  if (kw.query) return `<div class="kw">${I('spark', 'sm')}<span><b>Keewano</b>: no measured ${esc(pretty(pad))} · ${esc(mat || '')} builds yet; simulation value</span></div>`;
+  const what = `${esc(pretty(cur.design?.['finger.pad']))} · ${esc(cur.design?.['finger.material'] || '')}`;
+  if (cal) return `<div class="kw on">${I('spark', 'sm')}<span><b>Keewano calibration</b>: holding force ×${fmt(cal.ratio, '', 2)} from ${cal.n} logged ${what} builds. Seeded demo data unless your Keewano project holds real bench results.</span></div>`;
+  if (kw.calibration) return `<div class="kw">${I('spark', 'sm')}<span><b>Keewano calibration</b> is on but not in this revision: it needs 3 or more logged ${what} builds and applies when a robot is generated</span></div>`;
+  if (kw.query) return `<div class="kw off">${I('spark', 'sm')}<span>Keewano calibration off (Keys): simulation-only target</span></div>`;
   return `<div class="kw off">${I('spark', 'sm')}<span>Keewano not connected: simulation-only target</span></div>`;
 }
 function inspectorSkeleton() {
@@ -876,7 +877,7 @@ async function boot() {
     for (const m of st.history || []) addMsg(m.type, m.text, m.changes);
     if (!(st.history || []).length) {
       addMsg('assistant', st.current
-        ? `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`
+        ? `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`
         : 'Describe the robot you need, e.g. “a desktop arm that picks a raw egg without cracking it”.');
     }
     if (st.current) await show(st.current, st.previous, { tour: false });

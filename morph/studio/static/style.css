@@ -762,3 +762,10 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .btn.warnbtn { border-color: var(--bad); color: #ffc4c4; background: var(--bad-bg); }
 .dlg-f { display: flex; align-items: center; gap: 8px; position: sticky; bottom: -14px; z-index: 1; margin: 16px -18px -14px;
   padding: 12px 18px 14px; background: var(--bg2); border-top: 1px solid var(--line2); }  /* buttons stay in view while the fields scroll */
+
+/* ---- keys: privacy and network switches ---- */
+.kt { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; cursor: pointer; font-size: 12.5px; color: var(--ink2); }
+.kt .switch { flex: none; margin-top: 1px; }
+.kt b { font-weight: 600; }
+.kt small { display: block; color: var(--dim); font-size: 11px; margin-top: 2px; line-height: 1.4; }
+.kt input:disabled + i { opacity: .5; }

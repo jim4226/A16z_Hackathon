@@ -23,10 +23,10 @@ KEYS = [
      "what": "Understands free-form chat requests. Without it the suggestion chips and common phrasings still work.",
      "where": "console.anthropic.com, Settings, API Keys", "url": "https://console.anthropic.com/settings/keys"},
     {"name": "KEEWANO_API_KEY", "service": "Keewano", "label": "Project key (type SDK)",
-     "what": "Sends every revision, edit and bench measurement to your Keewano project.",
+     "what": "Sends revisions, edits and bench measurements to your Keewano project, once Send build events to Keewano is on below.",
      "where": "Keewano, Settings, Project, API Keys (choose type SDK)", "url": "https://keewano.com"},
     {"name": "KEEWANO_PAT", "service": "Keewano", "label": "Personal access token (kwpat-...)",
-     "what": "Reads the build history that calibrates the grip force.",
+     "what": "Reads the project's build history: for Test keys and the optional grip-force calibration.",
      "where": "Keewano, Settings, Personal, Security", "url": "https://keewano.com"},
     {"name": "KEEWANO_PROJECT_ID", "service": "Keewano", "label": "Project ID",
      "what": "Which Keewano project to read.", "where": "Keewano, Settings, Details, Project ID", "url": "https://keewano.com"},
@@ -205,6 +205,9 @@ def check(services=None) -> dict:
         jobs["Keewano"] = _check_keewano
     if not jobs:
         return {}
+    from . import settings
+    if not settings.network_allowed():
+        return {name: {"ok": False, "detail": "not checked: network lookups are off (Keys, Privacy and network)"} for name in jobs}
     with ThreadPoolExecutor(len(jobs)) as pool:
         futures = {name: pool.submit(fn) for name, fn in jobs.items()}
         return {name: f.result() for name, f in futures.items()}

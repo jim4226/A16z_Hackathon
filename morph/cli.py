@@ -493,6 +493,9 @@ def cmd_doctor(a):
     for k in keys.status():
         line(None, f"{k['service']}: {k['label']} {'is set' if k['set'] else 'not set (optional)'}")
     line(None, "Darwin: no key needed")
+    from . import settings
+    line(None, f"settings ({settings.path()}): {settings.describe()}"
+               + (" (MORPH_OFFLINE=1: network off whatever the settings say)" if settings.offline() else ""))
     for name in ("egg-picker", "so101"):
         root = os.path.join(HOME, name)
         from .robot.pipeline2 import RobotProject
@@ -511,7 +514,9 @@ def cmd_doctor(a):
         line(not bad, f"{name} {last}: " + ("all stages built" if not bad else
              "; ".join(f"{n} {st}" + (f" ({errs[n][:120]})" if n in errs else "") for n, st in bad.items())),
              "send this output to the team; delete the projects folder and start again to rebuild")
-    if not getattr(a, "offline", False):
+    if not getattr(a, "offline", False) and not settings.network_allowed():
+        line(None, "network checks skipped: network lookups are off (Keys, Privacy and network)")
+    elif not getattr(a, "offline", False):
         try:
             r = darwin.search("PCB fabrication quote from Gerber files", 2, retries=0, timeout=15)
             line(None, "Darwin Search: " + ("reachable" if r["ok"] and not r.get("cached") else

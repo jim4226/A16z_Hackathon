@@ -1,18 +1,22 @@
 # Sponsor integrations: Keewano and Darwin
 
 Both integrations use only the Python standard library, so nothing new to install. With no keys,
-both still work: Darwin Search needs no account, and Keewano switches itself off.
+both still work: Darwin Search needs no account, and Keewano switches itself off. Both follow the
+**Privacy and network** switches in the Keys dialog: with network lookups off, Darwin shows saved
+answers only; Keewano receives events only with **Send build events to Keewano** on, and tunes the
+grip force only with **Use Keewano calibration** on. Both Keewano switches are off by default.
 
 ## In the Studio
 
 | Where | What it shows |
 |---|---|
 | **BOM & Sourcing → Darwin agents** | One click (**Find agents on Darwin**) asks Darwin Search for an agent per purchased BOM line (servos, controller, supply, sensors, a fastener kit, servo cables), plus the fabrication handoffs: PCB fab from the Gerbers (custom PCB builds), 3D printing from the STLs, CNC from the DXFs and sheet metal from the flat patterns (pilot builds), and a design review. ★ marks the agent Morph routes that work to (`PREFERRED` in `morph/darwin.py`). Results stream in as each search returns and are saved to `<rev>/sourcing_darwin.json`. |
-| **Inspector → Grip force window** | The Keewano line. With Keewano connected and measured builds for the robot's pad and material, the simulated holding force is scaled by measured/predicted (for example ×1.12 from 8 contour/PETG builds) before the grip target and firmware limit are set. |
+| **Inspector → Grip force window** | The Keewano line. With **Use Keewano calibration** on and at least 3 logged builds for the robot's pad and material (`synthetic-*` projects never count), the simulated holding force is scaled by logged/predicted (for example ×1.12 from 8 contour/PETG builds) before the grip target and firmware limit are set. The line calls the history seeded demo data unless your project holds real bench results. |
 | **Present mode, steps 8 and 9** | Darwin and Keewano each get a step with a caption. |
 
-Every revision, chat edit, Darwin lookup and bench measurement is sent to Keewano as typed events
-(`Project.log()` → `morph/keewano.py`).
+With **Send build events to Keewano** on, every revision, chat edit, Darwin lookup and bench
+measurement is sent to Keewano as typed events (`Project.log()` → `morph/keewano.py`). Scripts can opt
+in with `MORPH_TELEMETRY_ENABLED=1`; keys alone never send anything.
 
 ## Keys (Keewano only; Darwin needs none)
 
@@ -34,14 +38,16 @@ over the file.
 Check: `python -m morph.cli doctor` tests every key that is set, or
 `python -m morph.cli ask "SELECT count(*) FROM events"` prints a number.
 
-**If the keys are for a project other than R cubed**, it has no build history yet. Load it once and
-wait about 5 minutes before demoing: `python tools/keewano_backfill.py --send`. The backfilled
-projects are named `synthetic-*`, and their force ratios are invented: say so if asked. The R cubed
-project's history is the same kind of seeded data.
+**If the keys are for a project other than R cubed**, it has no build history yet, so calibration has
+nothing to use until builds are logged (`morph measure`, or `morph bench` on real hardware).
+`python tools/keewano_backfill.py --send` loads two weeks of `synthetic-*` builds for dashboards; their
+force ratios are invented and the calibration never uses them. The R cubed project's history is seeded
+demo data too, which is why the Studio calls it logged, not measured.
 
-The grip calibration is applied when a robot is generated, so after adding keys for the first time
-click **Reset demo and rebuild** in the Keys dialog (it deletes chat edits and regenerates both robots
-in about a minute). Deleting the `projects` folder and starting again does the same.
+The grip calibration is applied when a robot is generated, so after turning it on click **Reset demo
+and rebuild** in the Keys dialog (shown when calibration is on and the Keewano keys are set; it deletes
+chat edits and regenerates both robots in about a minute). Deleting the `projects` folder and starting
+again does the same.
 
 ## Darwin when its API is down
 

@@ -26,6 +26,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.request import Request, urlopen
 
+from . import settings
+
 BASE = "https://boardrepo.com"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "morph", "boardrepo")
 
@@ -92,6 +94,8 @@ def fetch(board: str, timeout: float = 15) -> dict:
         return {"board": board, "url": None, "ok": False, "error": "not a BoardRepo board (expected owner/slug)"}
     board, out = bid, {"board": bid, "url": page(bid)}
     try:
+        if not settings.network_allowed():
+            raise RuntimeError("network lookups are off in the settings: showing saved board details only")
         req = Request(f"{page(board)}.md", headers={"Accept": "text/markdown", "User-Agent": "morph"})
         with urlopen(req, timeout=timeout) as resp:
             info = {**out, **parse_md(resp.read(1 << 20).decode("utf-8", "replace")), "ok": True}

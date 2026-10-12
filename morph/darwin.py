@@ -27,6 +27,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from . import settings
+
 API = "https://api.darwin.so/api/v3/search"
 AGENT_PAGE = "https://index.darwin.so/agent/{agent}?capability={cap}"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "morph", "darwin")
@@ -87,8 +89,10 @@ def _normalize(query: str, raw: dict) -> dict:
 def search(query: str, max_results: int = 5, retries: int = 1, timeout: float = 45) -> dict:
     """Darwin Search -> {"query", "ok", "agents": [...], "cached"?, "error"?}. Never raises."""
     body = json.dumps({"query": query, "maxResults": max_results}).encode()
-    err = None
-    for attempt in range(retries + 1):
+    err, online = None, settings.sourcing_enabled()
+    if not online:  # network lookups or Darwin sourcing are off in the settings: saved answers only
+        err = "Darwin lookups are off in Keys, Privacy and network: showing saved answers only"
+    for attempt in range(retries + 1 if online else 0):
         try:
             req = Request(API, data=body, headers={"Content-Type": "application/json"})
             with urlopen(req, timeout=timeout) as resp:
