@@ -121,7 +121,8 @@ def test_a_viewers_change_request_is_applied_with_attribution(team):
     build(root, "r002", "r001", {"arm.actuator_family": "dynamixel"}, by=ids["Raj"], proposed_by=ids["Vic"])
     done = collab.proposal_done(root, p["id"], rev="r002")
     assert done["status"] == "applied" and done["applied_rev"] == "r002" and done["applied_by"] == ids["Raj"]
-    assert collab.authors(root, "r002") == {ids["Raj"], ids["Vic"]}
+    assert collab.authors(root, "r002") == {ids["Vic"]}          # the author, not whoever applied it
+    assert collab.rev_by(root, "r002")["by"] == ids["Raj"] and collab.rev_by(root, "r002")["proposed_by"] == ids["Vic"]
     with pytest.raises(collab.CollabError):
         collab.close_proposal(root, p["id"], ids["Raj"])
 

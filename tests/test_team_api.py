@@ -204,6 +204,25 @@ def test_presence_branches_and_errors(site):
     assert s == 400
 
 
+def test_wrong_links_are_throttled_and_a_refused_build_reopens_the_change_request(site):
+    base, root, ids = site["base"], site["root"], site["ids"]
+    for _ in range(auth.THROTTLE.limit):
+        assert call(base, "GET", "/?invite=mi_" + "x" * 22)[0] == 400
+    s, page, _ = call(base, "GET", "/?link=ml_" + "y" * 22)
+    assert s == 429 and "Too many wrong links" in page
+    auth.THROTTLE.clear()
+    p = collab.create_proposal(root, ids["Vic"], "CNC it", {"fab.process": "cnc_router"}, members=members(site["home"]))
+
+    def full(job):
+        raise RuntimeError("the room's queue is full (10 jobs)")
+
+    site["room"].enqueue = full
+    s, out, _ = call(base, "POST", "/api/proposals/apply", {"id": p["id"]}, cookie=site["jar"]["Ana"])
+    assert s == 409 and "queue is full" in out["error"]
+    got = collab.get_proposal(root, p["id"])
+    assert got["status"] == "open" and "queue is full" in got["last_error"]
+
+
 def test_handlers_never_leak_a_traceback(tmp_path):
     home = str(tmp_path / "projects")
     ids, _ = make_team(home)

@@ -173,12 +173,19 @@ def landing(handler, home: str | None = None) -> bool:
     if handler.command not in ("GET", "HEAD") or u.path not in ("/", "/index.html"):
         return False
     q = parse_qs(u.query)
+    if "invite" not in q and "link" not in q:
+        return False
+    ip = _ip(handler)
+    if auth.THROTTLE.wait(ip) > 0:  # the page tells a valid code from a wrong one, so wrong ones count
+        _write(handler, 429, _page("Morph Studio", "<h1>Morph Studio</h1><p class=\"bad\">Too many wrong links from this address. "
+                                                   "Wait a few minutes, then open the link again.</p>"), "text/html; charset=utf-8", csp=JOIN_CSP)
+        return True
     if "invite" in q:
         status, page = join_page(q["invite"][0].strip(), home=home)
-    elif "link" in q:
-        status, page = link_page(q["link"][0].strip(), home=home)
     else:
-        return False
+        status, page = link_page(q["link"][0].strip(), home=home)
+    if status == 400 or (status == 410 and "link" in q):
+        auth.THROTTLE.fail(ip)
     _write(handler, status, page, "text/html; charset=utf-8", csp=JOIN_CSP)
     return True
 
@@ -341,7 +348,10 @@ def signout(req):
     m = getattr(req, "member", None)
     b = _body(req)
     if m and b.get("everywhere") is True:
-        auth.sign_out_everywhere(m["id"], home=_home(req))
+        try:
+            auth.sign_out_everywhere(m["id"], home=_home(req))
+        except (auth.AuthError, OSError, TimeoutError):
+            pass  # this browser's cookie is cleared either way
     _write(req.handler, 200, json.dumps({"ok": True}).encode(), headers=[("Set-Cookie", auth.clear_cookie(_port(req.handler), CONFIG["secure"]))])
     return None
 
@@ -580,7 +590,14 @@ def _enqueue(req, job: dict) -> bool:
 def proposals_apply(req):
     m, b, root, members = _me(req), _body(req), _root(req), _members(req)
     job = collab.apply_proposal(root, str(b.get("id") or ""), m["id"], members=members)
-    queued = _enqueue(req, job)
+    try:
+        queued = _enqueue(req, job)
+    except Exception as exc:  # noqa: BLE001  (a full queue, a stopped room: reopen the request and say why)
+        collab.proposal_done(root, job["proposal"], error=f"couldn't queue the build ({exc})")
+        return _err(getattr(exc, "status", 409), f"Couldn't queue change request #{job['n']}: {exc}")
+    if not queued:
+        collab.proposal_done(root, job["proposal"], error="this Studio can't build edits")
+        return _err(503, "This Studio can't build edits right now, so the change request stays open.")
     p = collab.get_proposal(root, job["proposal"])
     _notify(req, [p["by"]], "proposal", f"{m['name']} applied your change request #{p['n']}: {p['title']}", {"proposal": p["id"]})
     _emit(req, {"type": "proposal", "action": "apply", "proposal": _decorate_proposal(root, p, members, _policy(req)), "job": job})

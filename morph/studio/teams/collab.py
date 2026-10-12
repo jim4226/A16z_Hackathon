@@ -220,15 +220,17 @@ def _ledger(root: str) -> dict:
 
 
 def authors(root: str, rev: str) -> set:
-    """Who made a revision: its `by` and, for an applied change request, `proposed_by` (ledger first, then
-    results.json). Unknown (a launcher rebuild, a solo Studio) is an empty set."""
+    """Who made a revision (ledger first, then results.json): for an applied change request its author
+    (`proposed_by`), since applying it adds nothing of the applier's, the way merging a pull request doesn't make
+    you its author; otherwise `by`. Unknown (a launcher rebuild, a solo Studio) is an empty set."""
     info = rev_info(root, rev)
     if info is None:
         return set()
     entries = _ledger(root).get(rev) or []
     match = [e for e in entries if e["sha"] == info["design_sha256"]] or entries
     src = match[-1] if match else {"by": info.get("by"), "proposed_by": info.get("proposed_by")}
-    return {a for a in (src.get("by"), src.get("proposed_by")) if isinstance(a, str) and a}
+    who = src.get("proposed_by") or src.get("by")
+    return {who} if isinstance(who, str) and who else set()
 
 
 def discipline_authors(root: str, rev: str, discipline: str) -> set:
@@ -543,7 +545,7 @@ def _proposal_state(root: str) -> "collections.OrderedDict":
             continue
         if kind == "apply":
             p.update(status="applied", applied_by=op.get("by"), applied_ts=op.get("ts"), job=op.get("job"), last_error=None)
-        elif kind == "done":
+        elif kind == "done" and p.get("status") == "applied":
             if op.get("error"):
                 p.update(status="open", last_error=op.get("error"), applied_rev=None)
             else:
