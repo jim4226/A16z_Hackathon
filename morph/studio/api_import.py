@@ -1,0 +1,292 @@
+"""Import routes for the Studio (contracts section 2). Not registered here: server.py calls register().
+
+  POST   /api/import {url?}                         -> {id, fetching}
+  GET    /api/import/<id>                           -> {id, files, bytes, fetch, detected}
+  PUT    /api/import/<id>/file?path=<rel>           raw body, <= 300 MB -> {path, size, files, bytes}
+  POST   /api/import/<id>/detect                    -> {candidates, checklist, warnings, errors, refused, catalog}
+  GET    /api/import/<id>/preview.glb?candidate=n   -> model/gltf-binary (robot at its ready pose + TCP marker)
+  GET    /api/import/<id>/preview.png?candidate=n   -> image/png thumbnail (no WebGL needed)
+  POST   /api/import/<id>/commit {candidate, name, answers} -> 202 {kind, ...}; progress as SSE
+  DELETE /api/import/<id>
+
+SSE: {"type": "import", "id", "stage", "status", "text", "project"} while fetching, detecting, saving and building,
+then the pipeline's own start/node events (tagged with the new project) and
+{"type": "project_created", "project", "origin": "import"} when the robot is built.
+Errors are {"ok": false, "error": "<what to do>"} with 400 (bad input), 404 (no session), 409 (busy).
+"""
+
+from __future__ import annotations
+
+import re
+import threading
+import traceback
+
+from ..importers import ImportFailed, session as sess
+from ..importers.common import LIMITS, set_home
+
+_busy: dict = {}
+_busy_lock = threading.Lock()
+_cleaned: set = set()
+PATH_RX = re.compile(r"^/api/import/([a-f0-9]{16})(?:/(file|detect|commit|preview\.glb|preview\.png))?/?$")
+
+
+def _home(req) -> str:
+    home = getattr(req.studio, "home", None)
+    if home:
+        set_home(home)
+        if home not in _cleaned:
+            _cleaned.add(home)
+            try:
+                sess.cleanup(home)
+            except OSError:
+                pass
+    return home
+
+
+def _emitter(req, project=None):
+    room = getattr(req, "room", None)
+    hub = getattr(room, "hub", None) or getattr(req.studio, "hub", None)
+    proj = project or getattr(room, "name", None) or _room_project(req)
+
+    def emit(ev: dict):
+        if hub is None:
+            return
+        ev = dict(ev)
+        ev.setdefault("project", proj)
+        member = getattr(req, "member", None)
+        if member:
+            ev.setdefault("by", {"id": member.get("id"), "name": member.get("name"), "color": member.get("color")})
+        try:
+            hub.send(ev)
+        except Exception:  # noqa: BLE001  (SSE clients come and go)
+            pass
+    return emit
+
+
+def _room_project(req):
+    import os
+    p = getattr(getattr(req, "room", None), "p", None) or getattr(req.studio, "p", None)
+    return os.path.basename(p.root) if p is not None else None
+
+
+def _allow_url(studio) -> bool:
+    remote = bool(getattr(studio, "remote", False) or getattr(studio, "team", None))
+    return (not remote) or bool(getattr(studio, "allow_url_import", False))
+
+
+def _err(status: int, msg: str):
+    return status, {"ok": False, "error": msg}
+
+
+def _claim(sid: str) -> bool:
+    with _busy_lock:
+        if _busy.get(sid):
+            return False
+        _busy[sid] = True
+        return True
+
+
+def _release(sid: str):
+    with _busy_lock:
+        _busy.pop(sid, None)
+
+
+def _open(req, sid):
+    return sess.Session.open(sid, _home(req))
+
+
+# ------------------------------------------------------------------------------------- handlers
+def create(req):
+    """POST /api/import {url?}: a new session; with a url, the download starts in the background."""
+    body = req.body or {}
+    url = body.get("url")
+    if url is not None and (not isinstance(url, str) or not url.strip()):
+        return _err(400, "Paste a GitHub or Hugging Face link.")
+    home = _home(req)
+    if url:
+        from ..importers import fetch
+        try:
+            fetch.plan(url.strip())                  # refuse bad links before creating anything
+            if not _allow_url(req.studio):
+                raise ImportFailed("Importing from a link is off on this shared Studio. Ask its owner to start it with "
+                                   "--allow-url-import, or download the files and drop them here.")
+        except ImportFailed as exc:
+            return _err(400, str(exc))
+    s = sess.Session.create(home, url=url.strip() if url else None)
+    if not url:
+        return 200, {"ok": True, "id": s.id, "fetching": False}
+    emit = _emitter(req)
+    _set_fetch(s, "running")
+    _claim(s.id)
+
+    def run():
+        try:
+            s.fetch(url.strip(), emit, allow=_allow_url(req.studio))
+            _set_fetch(s, "done")
+        except ImportFailed as exc:
+            _set_fetch(s, "error", str(exc))
+            emit({"type": "import", "id": s.id, "stage": "fetch", "status": "error", "text": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            _set_fetch(s, "error", f"The download failed ({exc.__class__.__name__}).")
+            emit({"type": "import", "id": s.id, "stage": "fetch", "status": "error", "text": "The download failed."})
+        finally:
+            _release(s.id)
+
+    threading.Thread(target=run, daemon=True, name=f"import-fetch-{s.id}").start()
+    return 200, {"ok": True, "id": s.id, "fetching": True}
+
+
+def _set_fetch(s, status, error=None):
+    with sess._lock(s.id):
+        st = s.state()
+        st["fetch"] = {"status": status, "error": error}
+        s._save(st)
+
+
+def status(req, sid):
+    s = _open(req, sid)
+    st = s.state()
+    det = None
+    try:
+        det = sess._public(s.detection())
+    except ImportFailed:
+        pass
+    return 200, {"ok": True, "id": sid, "files": len(st.get("files") or {}), "bytes": st.get("bytes", 0),
+                 "fetch": st.get("fetch"), "status": st.get("status"), "detected": det}
+
+
+def upload(req, sid):
+    """PUT /api/import/<id>/file?path=<rel>: the raw body is the file, streamed in 1 MiB chunks."""
+    s = _open(req, sid)
+    rel = (req.query.get("path") or [""])[0]
+    raw = req.handler.headers.get("Content-Length")
+    if raw is None or not raw.isdigit():
+        return _err(411, "Send the file with a Content-Length header.")
+    length = int(raw)
+    if length > LIMITS["upload_file"]:
+        return _err(413, f"That file is {length / (1 << 20):.0f} MB; the limit is {LIMITS['upload_file'] >> 20} MB.")
+    out = s.add_file(rel, req.handler.rfile, length)
+    st = s.state()
+    return 200, {"ok": True, **out, "files": len(st["files"]), "bytes": st["bytes"]}
+
+
+def detect(req, sid):
+    s = _open(req, sid)
+    if (s.state().get("fetch") or {}).get("status") == "running":
+        return _err(409, "Still downloading; detection starts when the download finishes.")
+    if not _claim(sid):
+        return _err(409, "This import is busy; try again in a moment.")
+    try:
+        return 200, {"ok": True, **s.detect(_emitter(req))}
+    finally:
+        _release(sid)
+
+
+def preview(req, sid, fmt):
+    s = _open(req, sid)
+    try:
+        idx = int((req.query.get("candidate") or ["0"])[0])
+    except ValueError:
+        return _err(400, "candidate must be a number.")
+    data, ctype = s.preview(idx, fmt)
+    return 200, data, ctype
+
+
+def commit(req, sid):
+    """POST /api/import/<id>/commit {candidate, name, answers}. Robots and projects are saved, then built in the
+    background (202); an object is applied to this tab's project; a parts list or board comes back as data."""
+    body = req.body or {}
+    s = _open(req, sid)
+    name = body.get("name")
+    if name is not None and (not isinstance(name, str) or len(name) > 80):
+        return _err(400, "The name must be text of at most 80 characters.")
+    if not _claim(sid):
+        return _err(409, "This import is busy; try again in a moment.")
+    emit = _emitter(req)
+    try:
+        plan = s.commit(body.get("candidate", 0), name, body.get("answers") or {}, emit)
+    except BaseException:
+        _release(sid)
+        raise
+    if plan["kind"] in ("robot", "project"):
+        home = _home(req)
+        project = sess.unique_project(plan.get("project") or plan.get("source") or "robot", home)
+        plan["project"] = project
+
+        def run():
+            ev = _emitter(req, project)
+            try:
+                out = sess.build(plan, home, on_event=ev, fast_sim=False, n_trials=2)
+                ev({"type": "import", "id": sid, "stage": "build", "status": "done",
+                    "text": f"Built {out['project']} ({out['rev']})"})
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                ev({"type": "import", "id": sid, "stage": "build", "status": "error",
+                    "text": f"The build failed ({exc.__class__.__name__}: {str(exc)[:200]}). The robot is saved; "
+                            "try New project from it again."})
+            finally:
+                _release(sid)
+                s.delete()
+
+        threading.Thread(target=run, daemon=True, name=f"import-build-{sid}").start()
+        return 202, {"ok": True, **{k: v for k, v in plan.items() if k not in ("design", "history")}}
+    _release(sid)
+    if plan["kind"] == "object" and (body.get("apply", True) is not False):
+        _apply_async(req, plan["changes"], plan.get("label") or "imported object")
+        return 202, {"ok": True, **plan, "applied": True}
+    return 200, {"ok": True, **plan}
+
+
+def _apply_async(req, changes: dict, label: str):
+    """Object keys go through the room's normal edit path (one pipeline run at a time)."""
+    target = getattr(getattr(req, "room", None), "apply", None) or getattr(req.studio, "apply", None)
+    if target is None:
+        return
+    threading.Thread(target=lambda: target(changes, label), daemon=True, name="import-apply").start()
+
+
+def delete(req, sid):
+    s = sess.Session(sid, _home(req))
+    s.delete()
+    return 200, {"ok": True}
+
+
+def dispatch(req):
+    """One handler for the /api/import/* prefix (all methods)."""
+    path = req.path.split("?", 1)[0]
+    try:
+        if path.rstrip("/") == "/api/import":
+            if req.method == "POST":
+                return create(req)
+            return _err(405, "Use POST to start an import.")
+        m = PATH_RX.match(path)
+        if not m:
+            return _err(404, "Unknown import route.")
+        sid, sub = m.group(1), m.group(2)
+        routes = {("GET", None): status, ("DELETE", None): delete, ("PUT", "file"): upload,
+                  ("POST", "detect"): detect, ("POST", "commit"): commit}
+        if sub in ("preview.glb", "preview.png") and req.method == "GET":
+            return preview(req, sid, sub.split(".")[1])
+        fn = routes.get((req.method, sub))
+        if fn is None:
+            return _err(405, "That method isn't supported here.")
+        return fn(req, sid)
+    except ImportFailed as exc:
+        msg = str(exc)
+        return _err(404 if "expired" in msg or "Unknown import session" in msg else 400, msg)
+    except Exception as exc:  # noqa: BLE001  (never leak a traceback to the browser)
+        traceback.print_exc()
+        return _err(500, f"The import failed ({exc.__class__.__name__}); see the Studio's terminal for details.")
+
+
+def register(route=None):
+    """Register the import routes with W0b's router: api_import.register() from server.py."""
+    if route is None:
+        from .routes import route  # noqa: F811  (W0b)
+    route("POST", "/api/import", role="editor")(dispatch)
+    route("GET", "/api/import/*", role="editor")(dispatch)
+    route("POST", "/api/import/*", role="editor")(dispatch)
+    route("DELETE", "/api/import/*", role="editor")(dispatch)
+    route("PUT", "/api/import/*", role="editor", raw_body=True, max_body=LIMITS["upload_file"])(dispatch)
+    return dispatch

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import dialog demo</title>
+<link rel="icon" href="data:,">
+<!-- Standalone demo of morph/studio/static/importer.js with a mocked studio object (contracts section 4).
+     Served by tools/importer_demo/run.py, which also generates the fixtures (real detection results and
+     thumbnails from morph.importers) under /fixtures/. Nothing here talks to a Studio server. -->
+<link rel="stylesheet" href="../../morph/studio/static/style.css">
+<style>
+  body { overflow: auto; }
+  .demo-head { height: 50px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line2); background: var(--bg1); }
+  .demo-head .logo { font-weight: 700; letter-spacing: -.01em; }
+  .demo-head .proj { color: var(--muted); font-size: 12px; }
+  .demo-head .grow { flex: 1; }
+  .demo-head .btn { height: 28px; }
+  .demo-body { padding: 24px; color: var(--muted); font-size: 13px; }
+  .demo-body code { color: var(--ink2); }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--bg4); color: var(--ink); padding: 8px 14px;
+    border-radius: 9px; font-size: 12.5px; opacity: 0; transition: opacity .2s; z-index: 70; }
+  #toast.on { opacity: 1; }
+  .pm { position: absolute; top: 46px; left: 120px; display: none; }
+</style>
+</head>
+<body>
+<div class="demo-head"><span class="logo">Morph Studio</span><span class="proj">egg-picker</span><span class="grow"></span><div id="mountHeader" style="display:flex;gap:8px"></div></div>
+<div class="demo-body">Demo host for <code>importer.js</code>: the studio object, its API and its live events are mocked in this page.
+  Scenario: <code id="scn"></code></div>
+<div id="projMenu" class="pm"></div>
+<div id="toast"></div>
+<script type="module">
+import { init } from '../../morph/studio/static/importer.js';
+import { I, esc } from '../../morph/studio/static/panels.js';
+
+const params = new URLSearchParams(location.search);
+const fixtures = await (await fetch('/fixtures/fixtures.json')).json();
+window.scenario = params.get('scenario') || 'robot_ask';
+document.getElementById('scn').textContent = window.scenario;
+const handlers = {};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const emit = (ev) => (handlers[ev.type] || []).forEach((f) => f(ev));
+window.emit = emit;
+window.log = [];
+const SID = '0123456789abcdef';
+const ALLOW = /^https:\/\/(github\.com|raw\.githubusercontent\.com|huggingface\.co)\//;
+
+async function detect() {
+  const fx = fixtures[window.scenario];
+  const slow = Number(params.get('slow') || 250);
+  for (const ev of fx.events) { await sleep(slow); emit({ ...ev, id: SID }); }
+  await sleep(slow);
+  return { ok: true, ...fx.detect };
+}
+
+async function commit(body) {
+  window.log.push(['commit', body]);
+  const fx = fixtures[window.scenario];
+  const c = fx.detect.candidates[body.candidate];
+  if (c.kind === 'object') return { ok: true, kind: 'object', changes: c.changes, mass: c.mass, applied: true };
+  if (c.kind === 'bom') return { ok: true, kind: 'bom', rows: c.rows, total: c.total, currency: c.currency, darwin_parts: c.rows.map((r) => [r.item, r.item]) };
+  const name = (body.name || c.name || 'robot').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const project = name;
+  (async () => {   // the background build, as the Studio streams it
+    const stages = ['sizing', 'gripper', 'electronics', 'cad', 'sim', 'wiring', 'manufacturing', 'bom', 'manual'];
+    const hold = Number(params.get('build') || 350);
+    for (const st of stages) {
+      emit({ type: 'node', node: st, status: 'computing', project });
+      await sleep(hold);
+      emit({ type: 'node', node: st, status: 'computed', project });
+      if (window.stopAt === st) return;
+    }
+    emit({ type: 'import', id: SID, stage: 'build', status: 'done', text: `Built ${project} (r001)`, project });
+    emit({ type: 'project_created', project, origin: 'import' });
+  })();
+  return { ok: true, kind: 'robot', source: name, project, title: c.title };
+}
+
+const studio = {
+  S: { compute: { remote: false } },
+  project: () => 'egg-picker',
+  esc, I,
+  api: {
+    async get(path) { return { ok: true, id: SID }; },
+    async post(path, body) {
+      window.log.push(['post', path, body]);
+      if (path === '/api/import') {
+        if (body.url && !ALLOW.test(body.url)) return { ok: false, error: `${new URL(body.url).host} is not on the import list. Morph imports from github.com, raw.githubusercontent.com and huggingface.co; download other files and drop them here.` };
+        if (body.url) setTimeout(async () => { emit({ type: 'import', id: SID, stage: 'fetch', status: 'done', text: 'Fetched 14 files (3.0 MB)' }); }, 600);
+        return { ok: true, id: SID, fetching: !!body.url };
+      }
+      if (path.endsWith('/detect')) return detect();
+      if (path.endsWith('/commit')) return commit(body);
+      return { ok: true };
+    },
+    async put(path, blob, params) { window.log.push(['put', path, params]); await sleep(60); return { ok: true, path: params.path, size: blob.size }; },
+    async del(path) { window.log.push(['del', path]); return { ok: true }; },
+    url(path, q) {
+      if (path.endsWith('preview.png')) return `/fixtures/${window.scenario}_${q.candidate}.png`;
+      if (path.endsWith('preview.glb')) return `/fixtures/${window.scenario}_${q.candidate}.glb`;
+      return path;
+    },
+  },
+  on(type, fn) { (handlers[type] ||= []).push(fn); return () => { handlers[type] = handlers[type].filter((f) => f !== fn); }; },
+  toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.classList.add('on'); setTimeout(() => el.classList.remove('on'), 1800); },
+  openProject(name) { window.log.push(['open', name]); },
+  mount: { header: document.getElementById('mountHeader'), projMenu: document.getElementById('projMenu') },
+};
+window.importer = init(studio);
+window.ready = true;
+</script>
+</body>
+</html>
