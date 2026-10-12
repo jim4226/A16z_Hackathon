@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import trimesh
 
+from ..studio.security import inside
 from .assembly import Assembly, Joint, Part, Step, rpy, trans
 
 
@@ -43,25 +44,32 @@ def _safe(name: str) -> str:
     return re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_") or "part"
 
 
-def _resolve(path: str, urdf_dir: str, mesh_dirs: list) -> str | None:
-    p = path
-    for prefix in ("package://", "file://"):
-        if p.startswith(prefix):
-            p = p[len(prefix):]
-    cands = [os.path.join(urdf_dir, p), p] + [os.path.join(d, os.path.basename(p)) for d in mesh_dirs]
-    parts = p.split("/")
+def _resolve(path: str, urdf_dir: str, mesh_dirs: list, bundle: str) -> str | None:
+    """A mesh file inside the robot's folder `bundle`, or None. Absolute paths, file:// and other URLs, drive
+    letters and ../ that climbs out of the folder (symlinks included) are never followed."""
+    p = (path or "").strip().replace("\\", "/")
+    if p.startswith("package://"):
+        p = p[len("package://"):]
+    elif re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", p) or p.startswith("/"):
+        return None
+    parts = [s for s in p.split("/") if s not in ("", ".")]
+    if not parts:
+        return None
+    cands = [os.path.join(urdf_dir, *parts)] + [os.path.join(d, parts[-1]) for d in mesh_dirs]
     for i in range(1, len(parts)):  # package://pkg/meshes/x.stl -> try meshes/x.stl relative to the urdf
         cands.append(os.path.join(urdf_dir, *parts[i:]))
-    return next((c for c in cands if os.path.isfile(c)), None)
+    return next((c for c in cands if os.path.isfile(c) and inside(bundle, c)), None)
 
 
-def load_urdf(urdf_path: str, profile: dict | None = None, mesh_dirs: list | None = None) -> Assembly:
-    """profile keys (all optional):
+def load_urdf(urdf_path: str, profile: dict | None = None, mesh_dirs: list | None = None, bundle: str | None = None) -> Assembly:
+    """Meshes load only from inside `bundle` (the robot's folder; default: the URDF's folder).
+       profile keys (all optional):
        name, root, color, material, process, part_overrides {regex: {kind, material, process, color, sku}},
        actuators {joint: catalog_key}, arm_joints [...], gripper_joint, tcp {link, xyz}, home {joint: value},
        ready {...}, steps [{title, parts_regex, instructions, fasteners, tools}], electronics {...}, meta {...}"""
     profile = profile or {}
     urdf_dir = os.path.dirname(os.path.abspath(urdf_path))
+    bundle = bundle or urdf_dir
     mesh_dirs = mesh_dirs or [os.path.join(urdf_dir, "meshes"), os.path.join(urdf_dir, "assets")]
     root_el = ET.parse(urdf_path).getroot()
     materials = {}
@@ -109,7 +117,7 @@ def load_urdf(urdf_path: str, profile: dict | None = None, mesh_dirs: list | Non
             mesh_el = g.find("mesh") if g is not None else None
             mesh = None
             if mesh_el is not None:
-                path = _resolve(mesh_el.get("filename"), urdf_dir, mesh_dirs)
+                path = _resolve(mesh_el.get("filename"), urdf_dir, mesh_dirs, bundle)
                 if path is None:
                     continue
                 mesh = trimesh.load(path, force="mesh")

@@ -15,6 +15,7 @@ import os
 
 import numpy as np
 
+from ..studio.security import contained_path, robot_source
 from . import catalog, catalog_extra  # noqa: F401  (registers extra catalog keys)
 from . import components
 from .assembly import Cable, Part, trans
@@ -31,8 +32,33 @@ FAMILY_SWAPS = {  # stock smart-bus robot -> other families, by joint position (
 }
 
 
+def roots() -> list:
+    """Where an arm.source name is looked up, in order: the robots shipped with Morph, then robots the user
+    imported (MORPH_HOME/.robots). Nowhere else: a design names a robot, never a folder."""
+    user = os.path.join(os.environ.get("MORPH_HOME") or "projects", ".robots")
+    return [ROOT] + ([user] if os.path.isdir(user) else [])
+
+
+def robot_dir(source: str) -> str:
+    """The bundle folder for arm.source; ValueError for anything but the name of a robot in roots()."""
+    name = robot_source(source)
+    for root in roots():
+        d = contained_path(root, name, decode=False)
+        if d and os.path.isfile(os.path.join(d, "morph_profile.json")):
+            return d
+    raise ValueError(f"no robot called {name}: arm.source must name a folder in robots/ (or an imported robot)")
+
+
+def bundle_file(d: str, rel) -> str:
+    """A file the profile names (its URDF), inside the robot's own folder."""
+    path = contained_path(d, rel, decode=False) if isinstance(rel, str) else None
+    if not path or not os.path.isfile(path):
+        raise ValueError(f"{rel!r} is not a file inside the robot folder {os.path.basename(d)}")
+    return path
+
+
 def load_profile(source: str) -> tuple[dict, str]:
-    d = os.path.join(ROOT, source)
+    d = robot_dir(source)
     with open(os.path.join(d, "morph_profile.json"), encoding="utf-8") as fh:
         return json.load(fh), d
 
@@ -71,7 +97,7 @@ def _subtree(asm, link) -> list:
 
 def size(design) -> dict:
     prof, d = load_profile(design.arm.source)
-    asm = load_urdf(os.path.join(d, prof["urdf"]), prof)
+    asm = load_urdf(bundle_file(d, prof["urdf"]), prof, bundle=d)
     acts = actuator_plan(design, prof)
     q0 = {j: 0.0 for j in prof["arm_joints"]}           # zero pose = arm stretched out (worst case for SO-101)
     T = asm.world_transforms(q0)
@@ -133,7 +159,7 @@ def build(design, sizing, eplan=None):
     prof, d = load_profile(design.arm.source)
     extras = _extras(design)
     urdf = prof["urdf_camera"] if "wrist_camera" in extras and prof.get("urdf_camera") else prof["urdf"]
-    asm = load_urdf(os.path.join(d, urdf), prof)
+    asm = load_urdf(bundle_file(d, urdf), prof, bundle=d)
     issues = []
     acts = {j["name"]: j["actuator"] for j in sizing["joints"]}
     acts[prof["gripper_joint"]] = sizing["gripper_actuator"]
