@@ -44,3 +44,8 @@ FFmpeg's own licence (LGPL or GPL, depending on the build); `morph[cad]` install
 Open CASCADE Technology (LGPL-2.1 with an exception); `morph[xacro]` installs xacro (BSD-3-Clause) and PyYAML (MIT).
 Morph doesn't ship any of them.
 
+## What Morph generates
+
+Designs, firmware, boards and documents that Morph generates for you are yours. Morph doesn't put its own licence
+on them: `morph kicad` adds a LICENSE file to a board export only when you ask for one (`--license apache-2.0` or
+`--license <your file>`).

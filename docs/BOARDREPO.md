@@ -17,8 +17,9 @@ next to the Gerbers, in `<rev>/electronics/board/kicad/`. The project contains:
   don't.
 - **Schematic:** one box symbol per part. Each connected pin has a net label and each unused pin has a
   no-connect flag, so KiCad's PCB-vs-schematic check passes.
-- **Project file, README and LICENSE** (Apache-2.0, like the repo). Without a licence file, BoardRepo shows a
-  board as all rights reserved.
+- **Project file and README.** The board is the user's design, so no licence is added unless they pick one:
+  `morph kicad <project> <rev> --license apache-2.0` (or `--license <their own licence file>`) puts a LICENSE in
+  the project and the zip. Without a licence file, BoardRepo shows a board as all rights reserved.
 
 The writer is pure Python, so the demo laptop needs no KiCad. When `kicad-cli` is installed, `kicad.check()`
 runs DRC (with schematic parity) and ERC.

@@ -382,6 +382,10 @@ def cmd_kicad(a):
     src = os.path.join(p.rev_dir(rev), "electronics", "board", "board.json")
     if not os.path.exists(src):
         sys.exit(f"{a.name} {rev} has no carrier board (Morph builds one for sensor fingers, finger.sensor=fsr402)")
+    try:
+        lic = kicad.license_text(a.license) if a.license else None
+    except (OSError, ValueError) as exc:
+        sys.exit(str(exc))
     with open(src, encoding="utf-8") as fh:
         brd = json.load(fh)
     results = p.load_results(rev)
@@ -392,7 +396,7 @@ def cmd_kicad(a):
     refs = boardrepo.related(boardrepo.keys_for(design, summary, robot="sizing" in results))
     name = f"{os.path.basename(os.path.normpath(p.root))}-{rev}"
     out = os.path.join(p.rev_dir(rev), "boardrepo", name)
-    kc = kicad.export(brd, out, name, about, boardrepo.notes_md(refs))
+    kc = kicad.export(brd, out, name, about, boardrepo.notes_md(refs), license=lic)
     chk = kicad.check(out, name)
     zpath = os.path.join(out, kc["zip"])
     print(f"KiCad project: {out}/{name}.kicad_pro (+ .kicad_pcb, .kicad_sch, README.md)")
@@ -407,6 +411,9 @@ def cmd_kicad(a):
         print("\nrelated open designs (in the README):")
         for r in refs:
             print(f"  {boardrepo.page(r['board'])}  ({r['license'] or 'no licence recognised'})")
+    if not lic:
+        print("\nNo licence file in the export: the board is your design. Add one with --license apache-2.0 or "
+              "--license <your licence file> (BoardRepo shows a board without a licence as all rights reserved).")
     print(f"\npublish on BoardRepo: {zpath}")
     print("\n".join("  " + s for s in boardrepo.publish_steps(zpath)))
     p.log({"type": "board_export", "rev": rev, "zip": os.path.relpath(zpath, p.root).replace(os.sep, "/"),
@@ -715,6 +722,8 @@ def main(argv=None) -> int:
     s = sub.add_parser("kicad", help="KiCad project of the carrier board + BoardRepo-ready zip (DRC with kicad-cli if present)")
     s.add_argument("name")
     s.add_argument("rev", nargs="?")
+    s.add_argument("--license", metavar="apache-2.0|FILE",
+                   help="put a licence in the export: apache-2.0, or your own licence file (none by default)")
     s.set_defaults(fn=cmd_kicad)
 
     s = sub.add_parser("boardrepo", help="open reference boards on BoardRepo (live licence/views), or one board's page")

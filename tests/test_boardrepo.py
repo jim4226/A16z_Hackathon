@@ -72,9 +72,32 @@ def test_export_is_deterministic_and_zips_the_folder(tmp_path):
         assert (tmp_path / "a" / f).read_bytes() == (tmp_path / "b" / f).read_bytes()
     with zipfile.ZipFile(tmp_path / "a" / r1["zip"]) as z:
         assert sorted(z.namelist()) == sorted(f"egg-r004/{f}" for f in r1["files"])
-    assert "LICENSE" in r1["files"] and "Apache License" in (tmp_path / "a" / "LICENSE").read_text()
+    assert "LICENSE" not in r1["files"] and not (tmp_path / "a" / "LICENSE").exists()  # the board is the user's design
     readme = (tmp_path / "a" / "README.md").read_text()
     assert "| Servo | mg996r |" in readme and "## Related" in readme and "Morph DRC | pass" in readme
+    assert "No licence is included" in readme and "Apache" not in readme
+
+
+def test_a_licence_is_added_only_when_the_user_picks_one(tmp_path):
+    b = _example()
+    r = kicad.export(b, str(tmp_path / "a"), "egg-r004", license=kicad.license_text("apache-2.0"))
+    assert "LICENSE" in r["files"] and "Apache License" in (tmp_path / "a" / "LICENSE").read_text(encoding="utf-8")
+    assert "Licensed under Apache-2.0 (LICENSE)." in (tmp_path / "a" / "README.md").read_text(encoding="utf-8")
+    with zipfile.ZipFile(tmp_path / "a" / r["zip"]) as z:
+        assert "egg-r004/LICENSE" in z.namelist()
+    own = tmp_path / "MY-LICENSE.txt"
+    own.write_text("CERN-OHL-S-2.0 text", encoding="utf-8")
+    kicad.export(b, str(tmp_path / "b"), "egg-r004", license=kicad.license_text(str(own)))
+    assert (tmp_path / "b" / "LICENSE").read_text(encoding="utf-8") == "CERN-OHL-S-2.0 text"
+    with pytest.raises(ValueError):
+        kicad.license_text("gpl-please")
+
+
+def test_pipeline_board_exports_carry_no_morph_licence(tmp_path):
+    out = board.build({"mcu": "arduino_nano", "sensing": {"divider_ohm": 3900}}, str(tmp_path))
+    assert "kicad/LICENSE" not in out["files"] and not (tmp_path / "kicad" / "LICENSE").exists()
+    with zipfile.ZipFile(tmp_path / "kicad" / "board-kicad.zip") as z:
+        assert not [n for n in z.namelist() if n.endswith("LICENSE")]
 
 
 def test_board_build_writes_kicad_next_to_the_gerbers(tmp_path):
@@ -209,6 +232,18 @@ def test_morph_kicad_checks_project_and_revision(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="no carrier board"):
         cli.main(["kicad", "egg", "r001"])
 
+
+
+def test_morph_kicad_refuses_an_unknown_licence_before_writing(tmp_path, monkeypatch):
+    from morph import keys
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    monkeypatch.setattr(cli, "HOME", str(tmp_path))
+    board_dir = tmp_path / "egg" / "r001" / "electronics" / "board"
+    board_dir.mkdir(parents=True)
+    (board_dir / "board.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(SystemExit, match="--license takes apache-2.0 or the path of a licence file"):
+        cli.main(["kicad", "egg", "r001", "--license", "gpl-please"])
+    assert not (tmp_path / "egg" / "r001" / "boardrepo").exists()
 
 def test_darwin_pcb_handoff_carries_the_kicad_zip(tmp_path):
     bdir = tmp_path / "electronics" / "board"

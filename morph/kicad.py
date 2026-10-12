@@ -25,6 +25,8 @@ import tempfile
 import uuid
 import zipfile
 
+from . import resources
+
 PAD_D, DRILL_D = 1.6, 0.9          # mirror morph/board.py
 CLEAR = 0.25
 _NS = uuid.UUID("6d6f7270-6800-4b69-8361-645f77726974")
@@ -240,7 +242,7 @@ def to_kicad_pro(name: str) -> str:
     }, indent=2)
 
 
-def readme(board: dict, name: str, about: dict | None = None, notes: str = "") -> str:
+def readme(board: dict, name: str, about: dict | None = None, notes: str = "", license: str | None = None) -> str:
     """README for the project folder; BoardRepo shows it on the board page."""
     about = about or {}
     W, H = board["size_mm"]
@@ -258,20 +260,37 @@ def readme(board: dict, name: str, about: dict | None = None, notes: str = "") -
              "The GND pour is stored filled with Morph's own polygon (B in KiCad's PCB editor refills it). "
              "Solder it on perfboard following the layout, or have KiCad generate fab outputs (they include "
              "solder mask).", "",
-             "Licensed under Apache-2.0, like the Morph repository (LICENSE)."]
+             f"Licensed under {license} (LICENSE)." if license else
+             "No licence is included: this board is your design, so choose one before you publish it. "
+             "BoardRepo shows a board without a licence as all rights reserved."]
     return "\n".join(lines) + "\n" + (f"\n{notes}" if notes else "")
 
 
-def export(board: dict, outdir: str, name: str = "board", about: dict | None = None, notes: str = "") -> dict:
+def license_text(choice: str) -> tuple[str, str]:
+    """(name for the README, licence text) for `morph kicad --license`: "apache-2.0" (Morph's own Apache License 2.0
+    text) or the path of a licence file the user picked. ValueError for anything else."""
+    if choice.strip().lower() in ("apache-2.0", "apache"):
+        with open(resources.path("LICENSE"), encoding="utf-8") as fh:
+            return "Apache-2.0", fh.read()
+    if not os.path.isfile(choice):
+        raise ValueError(f"--license takes apache-2.0 or the path of a licence file; {choice} is neither")
+    with open(choice, encoding="utf-8", errors="replace") as fh:
+        return "the licence in LICENSE", fh.read()
+
+
+def export(board: dict, outdir: str, name: str = "board", about: dict | None = None, notes: str = "",
+           license: tuple[str, str] | None = None) -> dict:
     """Write <outdir>/<name>.kicad_{pro,pcb,sch} + README.md, and <outdir>/<name>-kicad.zip (the folder,
-    zipped: what boardrepo.com/upload takes). Returns paths relative to outdir."""
+    zipped: what boardrepo.com/upload takes). Returns paths relative to outdir.
+
+    The board is the user's design, so no LICENSE is added unless they pick one: license=(name, text), e.g.
+    license_text("apache-2.0"). Morph's own licence covers Morph's code, not the boards it generates."""
     os.makedirs(outdir, exist_ok=True)
     files = {f"{name}.kicad_pro": to_kicad_pro(name), f"{name}.kicad_pcb": to_kicad_pcb(board, name),
-             f"{name}.kicad_sch": to_kicad_sch(board, name), "README.md": readme(board, name, about, notes)}
-    lic = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LICENSE")
-    if os.path.exists(lic):   # BoardRepo shows a board with no licence file as all rights reserved
-        with open(lic, encoding="utf-8") as fh:
-            files["LICENSE"] = fh.read()
+             f"{name}.kicad_sch": to_kicad_sch(board, name),
+             "README.md": readme(board, name, about, notes, license[0] if license else None)}
+    if license:
+        files["LICENSE"] = license[1]
     for fn, text in files.items():
         with open(os.path.join(outdir, fn), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
