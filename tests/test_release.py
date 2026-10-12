@@ -128,3 +128,30 @@ def test_doctor_points_wheel_users_at_the_morph_command(tmp_path, monkeypatch, c
     cli.cmd_doctor(argparse.Namespace(offline=True))
     out = capsys.readouterr().out
     assert "All good: run `morph studio --open`." in out and "run_studio" not in out and "(not a git checkout)" in out
+
+
+# ------------------------------------------------------------------ constraints
+
+def _norm(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def test_constraints_pin_everything_that_gets_installed():
+    pins = {}
+    for line in (REPO / "constraints.txt").read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            m = re.fullmatch(r"([A-Za-z0-9._-]+)==([0-9][^\s;]*)(\s*;\s*\S.*)?", line)
+            assert m, line
+            pins.setdefault(_norm(m[1]), []).append(m[2])
+    wanted = set()
+    for src in ("requirements.txt", "tools/constraints.in"):
+        for line in (REPO / src).read_text(encoding="utf-8").splitlines():
+            line = line.split("#", 1)[0].strip()
+            if line:
+                wanted.add(_norm(re.match(r"[A-Za-z0-9._-]+", line)[0]))
+    meta = _pyproject()["project"]
+    for dep in meta["dependencies"] + [d for deps in meta["optional-dependencies"].values() for d in deps]:
+        wanted.add(_norm(re.match(r"[A-Za-z0-9._-]+", dep)[0]))
+    assert sorted(wanted - set(pins)) == []
+    assert len(pins["numpy"]) == 3  # 3.10, 3.11 and 3.12+ each need their own numpy

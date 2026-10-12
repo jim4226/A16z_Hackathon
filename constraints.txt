@@ -1,0 +1,69 @@
+# Tested versions of everything the launchers install (python -m pip install -r requirements.txt -c constraints.txt),
+# plus the optional extras (morph[video], morph[cad], morph[xacro]) and the tools CI uses. A package listed here is
+# only installed when something asks for it. Every pin has wheels for CPython 3.10 to 3.14 on Windows x64, macOS 12+
+# on Apple silicon and Linux x64 (glibc 2.28+), so nothing compiles; the markers pick versions per Python where a
+# package dropped 3.10 or 3.11. Check: python tools/check_constraints.py --extras. Regenerate (PyPI as of the date):
+#   uv pip compile requirements.txt tools/constraints.in --universal --python-version 3.10 \
+#     --exclude-newer 2026-10-12T00:00:00Z --no-annotate --no-header -o constraints.txt
+absl-py==2.5.1
+annotated-types==0.8.0
+anthropic==1.13.0
+anyio==4.15.1
+build==1.6.1
+cascadio==0.1.1
+certifi==2026.7.22
+charset-normalizer==3.5.2
+colorama==0.4.6 ; os_name == 'nt' or sys_platform == 'win32'
+docstring-parser==0.18.0
+etils==1.13.0 ; python_full_version < '3.11'
+etils==1.14.0 ; python_full_version >= '3.11'
+exceptiongroup==1.3.1 ; python_full_version < '3.11'
+execnet==2.1.2
+fsspec==2026.9.0
+glfw==2.10.2
+h11==0.16.0 ; sys_platform != 'emscripten'
+httpcore2==2.13.1 ; sys_platform != 'emscripten'
+httpx2==2.13.1
+httpx2-jsfetch==1.0 ; python_full_version >= '3.12' and sys_platform == 'emscripten'
+idna==3.20
+imageio-ffmpeg==0.6.0
+importlib-metadata==9.0.1 ; python_full_version < '3.10.2'
+importlib-resources==7.1.0 ; python_full_version < '3.11'
+iniconfig==2.3.1
+jiter==0.17.0
+manifold3d==3.5.4
+mujoco==3.15.0
+numpy==2.2.6 ; python_full_version < '3.11'
+numpy==2.4.6 ; python_full_version == '3.11.*'
+numpy==2.5.4 ; python_full_version >= '3.12'
+packaging==26.3
+pillow==12.3.0
+pluggy==1.6.0
+pydantic==2.14.1
+pydantic-core==2.50.1
+pygments==2.21.0
+pyopengl==3.1.10
+pyproject-hooks==1.3.3
+pyserial==3.5
+pytest==9.1.1
+pytest-timeout==2.4.0
+pytest-xdist==3.8.0
+pyyaml==6.0.3
+requests==2.34.2
+ruff==0.17.0
+scipy==1.15.3 ; python_full_version < '3.11'
+scipy==1.17.1 ; python_full_version == '3.11.*'
+scipy==1.18.1 ; python_full_version >= '3.12'
+shapely==2.1.2 ; python_full_version < '3.11'
+shapely==2.2.0 ; python_full_version >= '3.11'
+sniffio==1.3.1
+tomli==2.5.0 ; python_full_version < '3.11'
+trimesh==5.1.1
+truststore==0.10.4 ; sys_platform != 'emscripten'
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.8.0
+websockets==16.1.1 ; python_full_version < '3.11'
+websockets==17.2 ; python_full_version >= '3.11'
+xacro==2.1.1
+zipp==4.1.1
