@@ -279,6 +279,11 @@ function setupProjects() {
   $('#projBtn').onclick = (e) => { e.stopPropagation(); $('#projMenu').classList.toggle('on'); };
   document.addEventListener('click', (e) => { if (!e.target.closest('#projMenu')) $('#projMenu').classList.remove('on'); });
 }
+async function refreshProjects() {
+  if (!backend?.q) return;
+  const out = await getFresh(backend.q('/api/projects')).catch(() => null);
+  if (out) { S.projects = out.projects || S.projects; S.start = out.start || S.start; renderProjects(); }
+}
 function setUrlProject(name) { try { history.replaceState(null, '', urlWith({ project: name })); } catch (e) { /* file:// */ } }
 async function openProject(name) {
   if (!name || !backend?.setProject) return false;
@@ -546,7 +551,7 @@ function renderPipeline(rev, live) {
     if (live) { cls = p || 'queued'; sub = { queued: 'queued', computing: 'running…', reused: 'reused', computed: 'rebuilt', ...STAGE_BAD }[cls] || ''; if (STAGE_BAD[cls]) cls = 'error'; }
     else if (errs[k] || STAGE_BAD[p]) { cls = 'error'; sub = STAGE_BAD[p] || 'failed'; }
     else if (p === 'computed') { cls = 'computed'; sub = tim[k] >= 0.005 ? `rebuilt ${fmtSec(tim[k])}` : 'rebuilt'; }
-    else if (p && p.startsWith('reused')) { cls = 'reused'; sub = 'reused'; }
+    else if (p && (p.startsWith('reused') || p.startsWith('copied'))) { cls = 'reused'; sub = p.startsWith('copied') ? 'copied' : 'reused'; }
     const long = String(label).split(/\s+/).some((w) => w.length >= 12) ? ' long' : '';
     return `${i ? '<span class="link"></span>' : ''}<div class="node ${cls}${long}" data-node="${esc(k)}" title="${esc(label)}${errs[k] ? ' — ' + esc(errs[k]) : ''}"><div class="nt"><span>${esc(label)}</span></div><div class="ns"><i class="dot"></i><span>${esc(sub)}</span></div><div class="bar"></div></div>`;
   }).join('');
@@ -832,7 +837,7 @@ function onEvent(ev) {
     case 'project': case 'resync': reloadProject().catch((e) => console.warn(e)); break;
     case 'project_created': case 'project_deleted':
       if (ev.type === 'project_deleted' && ev.project === S.project) { toast(`${ev.project} was deleted`); openProject(S.start); break; }
-      backend.state?.().then((st) => { S.projects = st.projects || S.projects; renderProjects(); }).catch(() => {});
+      refreshProjects();
       break;
     case 'done': {
       typing(false);

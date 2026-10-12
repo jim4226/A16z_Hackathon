@@ -1,0 +1,277 @@
+"""Robot projects in MORPH_HOME: list, create, fork and delete them, pick their names, keep their meta.json.
+
+One place for the Studio, the CLI and feature modules (a brief, an import) to make projects. Nothing here builds:
+the Studio queues a new project's first build in its room, the CLI runs it directly.
+
+    meta.json  {"kind": "robot", "source", "need", "origin": "default" | "brief" | "import" | "fork",
+                "demo": bool, "created_utc", "created_by"?, "forked_from"?: {"project", "rev"}, ...}
+
+Only projects marked demo (the launcher's egg-picker and so101) are touched by Reset demo. Deleting a project moves
+it to MORPH_HOME/.trash/<name>-<UTC time>/; nothing is erased.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import re
+import shutil
+import tempfile
+import threading
+import time
+import unicodedata
+
+from ..pipeline import REV, utc_now
+from ..robot.pipeline2 import ORDER, PARAMS, RobotProject, artifact_problem, pipeline_version, stage_problem
+from ..spec import Design
+from .security import WINDOWS_RESERVED, contained_path, param_changes, project_name, robot_source
+
+EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
+             "object.length_mm": 57.0, "object.mass_g": 60.0, "object.friction": 0.35, "object.max_force_n": 25.0,
+             "finger.sensor": "fsr402", "finger.width_mm": 20.0, "finger.length_mm": 52.0, "finger.thickness_mm": 6.0,
+             "finger.pad_depth_mm": 5.5, "finger.pad_height_mm": 19.8, "electronics.servo": "sts3215"}
+NEEDS = {"": "Pick a raw egg and place it without cracking it.",
+         "so101": "Imported open-source SO-101 arm: edit its electronics, sims and build."}
+ORIGINS = ("default", "brief", "import", "fork")
+DEMOS = ("egg-picker", "so101")
+TRASH = ".trash"
+_LOCK = threading.Lock()  # two requests creating "egg-picker-2" at once get -2 and -3
+
+
+def read_meta(root: str) -> dict:
+    try:
+        with open(os.path.join(root, "meta.json"), encoding="utf-8") as fh:
+            meta = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def write_meta(root: str, meta: dict):
+    """meta.json, replaced atomically."""
+    fd, tmp = tempfile.mkstemp(prefix=".meta.", suffix=".tmp", dir=root)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(meta, fh, indent=1)
+        os.replace(tmp, os.path.join(root, "meta.json"))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def project_root(home: str, name) -> str | None:
+    """The folder of an existing robot project, or None: a bad name, missing, not a robot project, or (through a
+    link) outside MORPH_HOME."""
+    try:
+        project_name(name)
+    except ValueError:
+        return None
+    root = contained_path(home, name, decode=False)
+    if not root or not os.path.isdir(root) or read_meta(root).get("kind") != "robot":
+        return None
+    return root
+
+
+def finished(p: RobotProject) -> list:
+    """Revisions with results (a revision being built, or cut off, has only design.json)."""
+    return [r for r in p.revs() if os.path.isfile(os.path.join(p.rev_dir(r), "results.json"))]
+
+
+def list_projects(home: str) -> list:
+    """Every robot project, by name: {name, source, need, origin, demo, created_utc, revs}. `revs` counts finished
+    revisions, so a project whose first build is still running shows 0."""
+    out = []
+    for name in sorted(os.listdir(home)) if os.path.isdir(home) else []:
+        root = project_root(home, name)  # skips .folders, odd names and links out of the projects folder
+        if not root:
+            continue
+        m = read_meta(root)
+        out.append({"name": name, "source": m.get("source") or "", "need": m.get("need") or "",
+                    "origin": m.get("origin") or "default", "demo": m.get("demo") is True,
+                    "created_utc": m.get("created_utc"), "revs": len(finished(RobotProject(root)))})
+    return out
+
+
+def slug(text, fallback: str = "robot") -> str:
+    """A project name from any text: "Strawberry Picker!" -> "strawberry-picker" (at most 40 characters)."""
+    text = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode()
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40].strip("-")
+    if not s:
+        s = fallback
+    if s in WINDOWS_RESERVED or REV.fullmatch(s):  # "con" can't be a folder on Windows; "r001" looks like a revision
+        s = f"{s}-robot"
+    return project_name(s)
+
+
+def unique_name(home: str, base: str) -> str:
+    """`base`, or base-2, base-3, ...: the first name nothing in MORPH_HOME uses yet."""
+    name, n = base, 1
+    while os.path.lexists(os.path.join(home, name)):
+        n += 1
+        suffix = f"-{n}"
+        name = base[:40 - len(suffix)].rstrip("-") + suffix
+    return name
+
+
+def _check_source(source: str):
+    robot_source(source)
+    from ..robot.imported import robot_dir
+    robot_dir(source)  # ValueError: no robot bundle of that name
+
+
+def as_design(design) -> Design:
+    """A Design from a Design or a design dict; ValueError for anything Morph can't read."""
+    if isinstance(design, Design):
+        return design
+    if not isinstance(design, dict):
+        raise ValueError("Send the design as an object.")
+    try:
+        return Design.from_dict(json.loads(json.dumps(design)))
+    except (TypeError, ValueError, KeyError, RecursionError) as exc:
+        raise ValueError(f"That isn't a Morph design: {exc}") from None
+
+
+CHECKED = {key for key, *_ in PARAMS} - {"object.name", "electronics.extras"}  # custom objects and extras are allowed
+
+
+def check_design(design: Design):
+    """ValueError when a design from outside (an API request) sets an editor parameter out of its range."""
+    flat = design.flat()
+    for key in sorted(CHECKED):
+        value = flat.get(key)
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"{key}: send a finite number.")
+        param_changes({key: value}, PARAMS)
+
+
+def template(name: str, source: str = "") -> Design:
+    """The default egg-picking arm, on an imported robot's body when `source` names one (so101)."""
+    if source:
+        _check_source(source)
+    return Design().with_changes({**EGG_ROBOT, "name": name, "arm.source": source})
+
+
+def create(home: str, name=None, *, source: str = "", design=None, need: str | None = None, origin: str = "default",
+           demo: bool = False, by: str | None = None, unique: bool = True, rename: bool = True,
+           meta: dict | None = None) -> dict:
+    """Make a project folder and its meta.json; build nothing. Returns {"name", "root", "design", "meta"}.
+
+    `design` (a Design or a design dict) replaces the default arm; its arm.source must name a known robot. The design
+    takes the project's name unless rename=False. Names: with unique=True `name` (any text) is slugged and gets
+    -2, -3, ... when taken; with unique=False it must already be a valid name, and a taken name is an error unless
+    that folder has no revisions yet (a first build that failed can be tried again). ValueError for a bad name,
+    design or source; FileExistsError for a taken name."""
+    if origin not in ORIGINS:
+        raise ValueError(f"origin must be one of {', '.join(ORIGINS)}")
+    if design is not None:
+        design = as_design(design)
+        source = design.arm.source
+    if source:
+        _check_source(source)
+    default = design.name if design is not None else (source or "egg-picker")
+    with _LOCK:
+        os.makedirs(home, exist_ok=True)
+        name = unique_name(home, slug(name or default)) if unique else project_name(name)
+        root = contained_path(home, name, decode=False)
+        if root is None:
+            raise ValueError(f"{name} can't be a project folder here.")
+        if os.path.lexists(root) and (unique or not os.path.isdir(root) or RobotProject(root).revs()):
+            raise FileExistsError(f"{root} already exists")
+        os.makedirs(root, exist_ok=True)
+        if design is None:
+            design = template(name, source)
+        elif rename:
+            design = design.with_changes({"name": name})
+        info = {"kind": "robot", "source": source, "need": need if need is not None else NEEDS.get(source, ""),
+                "origin": origin, "demo": bool(demo), "created_utc": utc_now(), **({"created_by": by} if by else {})}
+        info.update({k: v for k, v in (meta or {}).items() if k not in ("kind", "created_utc")})
+        write_meta(root, info)
+    return {"name": name, "root": root, "design": design, "meta": info}
+
+
+def _copy_tree(src: str, dst: str):
+    """A revision folder, without hidden files and without links (a link could point outside the projects)."""
+    skip = lambda d, names: [n for n in names if n.startswith(".") or os.path.islink(os.path.join(d, n))]  # noqa: E731
+    shutil.copytree(src, dst, symlinks=False, ignore=skip)
+
+
+def fork(home: str, project: str, rev: str | None = None, name=None, *, by: str | None = None) -> dict:
+    """A new project from `project`'s revision `rev` (default: its newest finished one), with the same design and meta
+    and origin "fork". When that revision was built by this version of Morph and every stage is valid, its files are
+    copied as the fork's r001 (about a second); otherwise the caller builds the design. Returns create()'s dict plus
+    "copied" and "rev" (r001 when copied, else None). LookupError: no such project or revision."""
+    src = project_root(home, project)
+    if not src:
+        raise LookupError(f"There is no robot project called {project}.")
+    p = RobotProject(src)
+    revs = finished(p)
+    rev = rev or (revs[-1] if revs else None)
+    if rev not in revs:
+        raise LookupError(f"{project} has no finished revision {rev}.")
+    design, results = p.load_design(rev), p.load_results(rev)
+    source = read_meta(src)
+    info = create(home, name or project, design=design, need=source.get("need"), origin="fork", by=by, rename=False,
+                  meta={"forked_from": {"project": project, "rev": rev}})
+    folder = p.rev_dir(rev)
+    valid = results.get("pipeline_version") == pipeline_version(design.arm.source) and not any(
+        stage_problem(results, n) or artifact_problem(results, n, folder) for n in ORDER)
+    info.update(copied=False, rev=None)
+    if not valid:
+        return info
+    new = RobotProject(info["root"])
+    _copy_tree(folder, new.rev_dir("r001"))
+    label = f"fork of {project} {rev}"
+    origin = f"copied from {project} {rev}"
+    results.update(rev="r001", parent=None, label=label, changes={}, timings_s={}, forked_from={"project": project, "rev": rev},
+                   provenance={n: origin for n in ORDER}, stage_status={n: "reused" for n in ORDER})
+    results.pop("by", None)
+    if by:
+        results["by"] = by
+    with open(os.path.join(new.rev_dir("r001"), "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(results, fh, indent=1)
+    new.log({"type": "revision", "rev": "r001", "parent": None, "label": label, "changes": {}, "recomputed": [],
+             "design": design.to_dict(), "predicted": results.get("summary") or {},
+             "forked_from": {"project": project, "rev": rev}, **({"by": by} if by else {})})
+    info.update(copied=True, rev="r001")
+    return info
+
+
+def delete(home: str, name: str) -> str:
+    """Move a robot project to MORPH_HOME/.trash/<name>-<UTC time>/ and return that folder. LookupError: no such
+    project; OSError: the move failed (on Windows, a file in it is open)."""
+    root = project_root(home, name)
+    if not root:
+        raise LookupError(f"There is no robot project called {name}.")
+    trash = os.path.join(home, TRASH)
+    os.makedirs(trash, exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    dst, n = os.path.join(trash, f"{name}-{stamp}"), 1
+    while os.path.lexists(dst):
+        n += 1
+        dst = os.path.join(trash, f"{name}-{stamp}-{n}")
+    os.rename(root, dst)
+    return dst
+
+
+def backfill_demo(home: str, names=DEMOS) -> list:
+    """Projects the launcher made before 0.2 have no demo flag: mark egg-picker and so101 as demo projects (with the
+    origin and creation time they lack), so Reset demo keeps working for them and never touches anything else.
+    Returns the names it marked."""
+    done = []
+    for name in names:
+        root = project_root(home, name)
+        if not root:
+            continue
+        m = read_meta(root)
+        if "demo" in m:
+            continue
+        m.setdefault("origin", "default")
+        m["demo"] = True
+        m.setdefault("created_utc", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.path.getmtime(root))))
+        write_meta(root, m)
+        done.append(name)
+    return done

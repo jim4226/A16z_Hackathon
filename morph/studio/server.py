@@ -37,7 +37,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from ..pipeline import REV
 from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline_version
 from ..spec import diff
-from . import routes
+from . import projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
 from .routes import HTTPError, route
@@ -103,14 +103,6 @@ def _remove_rev(p: RobotProject, rev: str) -> bool:
         return False
     shutil.rmtree(trash, ignore_errors=True)
     return True
-
-
-def is_robot_project(root: str) -> bool:
-    try:
-        with open(os.path.join(root, "meta.json"), encoding="utf-8") as fh:
-            return json.load(fh).get("kind") == "robot"
-    except (OSError, ValueError):  # a plain file (desktop.ini), a gripper project, anything else
-        return False
 
 
 def integrations() -> dict:
@@ -220,6 +212,10 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+class Refused(RuntimeError):
+    """A project change the Studio won't make now (the project is building, or it is the start project)."""
+
+
 class Studio:
     """Every project the Studio serves, one Room each (rooms.py), created on first use. Requests name their project
     with ?project= (default: `start`, the project the Studio was started on), so switching projects in one tab
@@ -245,14 +241,7 @@ class Studio:
     def _root(self, name) -> str | None:
         """The folder of an existing robot project called `name`, or None. Checked before anything is
         created: RobotProject() makes its folder, so it must never see a name that came from a request."""
-        try:
-            name = project_name(name)
-        except ValueError:
-            return None
-        root = contained_path(self.home, name, decode=False)
-        if not root or not os.path.isdir(root) or not is_robot_project(root):
-            return None
-        return root
+        return projects.project_root(self.home, name)
 
     def room(self, name: str | None = None) -> Room:
         """The room of robot project `name` (default: the start project). ValueError for a name that can't be a
@@ -278,21 +267,59 @@ class Studio:
             room.hub.send(event)
 
     def projects(self) -> list:
-        out = []
-        for name in sorted(os.listdir(self.home)) if os.path.isdir(self.home) else []:
-            root = self._root(name)  # skips .folders, odd names and links that point out of the projects folder
-            if not root or not RobotProject(root).revs():
-                continue
-            try:
-                with open(os.path.join(root, "meta.json"), encoding="utf-8") as fh:
-                    m = json.load(fh)
-            except (OSError, ValueError):
-                continue
-            rp = RobotProject(root)
-            room = self.rooms.get(name)
-            out.append({"name": name, "source": m.get("source") or "", "need": m.get("need", ""),
-                        "at_start": rp.latest() == baseline(rp), "busy": bool(room and room.jobs.busy())})
+        """The project menu: projects.list_projects() plus `busy` (building or queued) and, for demo projects,
+        `at_start` (no edits since the clean build Reset demo goes back to)."""
+        out = projects.list_projects(self.home)
+        for info in out:
+            room = self.rooms.get(info["name"])
+            info["busy"] = bool(room and room.jobs.busy())
+            if info["demo"]:
+                p = room.p if room else RobotProject(os.path.join(self.home, info["name"]))
+                info["at_start"] = projects.finished(p)[-1:] == [baseline(p)]
         return out
+
+    # -- projects: new, forked, deleted
+    def create_project(self, name=None, *, source: str = "", design=None, need: str | None = None, origin: str = "default",
+                       by: str | None = None, meta: dict | None = None, label: str = "first design"):
+        """A new robot project (projects.create) whose first build is queued in its room at once: tabs that open it
+        see the build stream in. Returns (room, job). ValueError, FileExistsError as projects.create."""
+        info = projects.create(self.home, name, source=source, design=design, need=need, origin=origin, by=by, meta=meta)
+        room = self.room(info["name"])
+        job = self.queue_build(room, info["design"], label=label, by=by)
+        self.broadcast({"type": "project_created", "project": room.name, "origin": origin, **({"by": by} if by else {})})
+        return room, job
+
+    def fork_project(self, project: str, rev: str | None = None, name=None, *, by: str | None = None):
+        """Fork `project` at `rev` (projects.fork): copied when its files are current, else built in the new room.
+        Returns (room, job or None, info)."""
+        info = projects.fork(self.home, project, rev, name, by=by)
+        room = self.room(info["name"])
+        src = info["meta"]["forked_from"]
+        job = None if info["copied"] else self.queue_build(room, info["design"], label=f"fork of {project} {src['rev']}", by=by)
+        self.broadcast({"type": "project_created", "project": room.name, "origin": "fork", **({"by": by} if by else {})})
+        return room, job, info
+
+    def delete_project(self, name: str) -> str:
+        """Move a project to MORPH_HOME/.trash (projects.delete) and close its room; tabs on it are told. Refused while
+        it builds or has changes waiting, and for the project the Studio started on."""
+        if name == self.start:
+            raise Refused(f"{name} is the project this Studio started on; start the Studio on another project "
+                                  "to delete it.")
+        root = self._root(name)
+        if not root:
+            raise UnknownProject(f"There is no robot project called {name}.")
+        room = self.room(name)
+        if room.jobs.busy() or not room.lock.acquire(blocking=False):
+            raise Refused(f"{name} is building or has changes waiting: delete it when its queue is empty.")
+        try:
+            trash = projects.delete(self.home, name)
+            with self._rooms:
+                self.rooms.pop(name, None)
+        finally:
+            room.lock.release()
+        self.broadcast({"type": "project_deleted", "project": name})
+        room.hub.send({"type": "project_deleted", "project": name})
+        return trash
 
     def state(self, room: Room | None = None) -> dict:
         room = room or self.room()
@@ -528,11 +555,12 @@ class Studio:
             room.sourcing.release()
 
     def reset(self, rebuild: bool = False) -> bool:
-        """Demo reset: every robot project goes back to a clean build of its original design (see baseline()); the
-        revisions after it are deleted, like deleting the projects folder but keeping the first build. If that build
-        is from older code, or `rebuild` is set (new API keys: the Keewano grip calibration only applies to a fresh
-        build), it is rebuilt now (about 30 s per robot). False when one of them is still building."""
-        names = [n for n in sorted(os.listdir(self.home)) if self._root(n)] if os.path.isdir(self.home) else []
+        """Demo reset: each demo project (meta.json demo: true, the launcher's egg-picker and so101) goes back to a
+        clean build of its original design (see baseline()); the revisions after it are deleted, like deleting the
+        project but keeping its first build. If that build is from older code, or `rebuild` is set (new API keys:
+        the Keewano grip calibration only applies to a fresh build), it is rebuilt now (about 30 s per robot).
+        Other projects are never touched. False when a demo project is still building."""
+        names = [p["name"] for p in projects.list_projects(self.home) if p["demo"]]
         rooms = [self.room(n) for n in names]
         held = []
         try:
@@ -951,6 +979,77 @@ def _api_project(req):
     if not req.studio._root(name) and name != req.studio.start:
         raise HTTPError(404, f"There is no robot project called {name}.")
     return 200, {"ok": True, "project": name}
+
+
+@route("GET", "/api/projects", role="viewer")
+def _api_projects(req):
+    return 200, {"projects": req.studio.projects(), "start": req.studio.start}
+
+
+def _text(body: dict, key: str, limit: int) -> str | None:
+    value = body.get(key)
+    if value is not None and (not isinstance(value, str) or len(value) > limit):
+        raise HTTPError(400, f"{key} must be text of at most {limit} characters.")
+    return value
+
+
+@route("POST", "/api/projects")
+def _api_projects_create(req):
+    """{name?, from: "default" | "so101" | "design", design?, need?, brief_id?}: a new project, its first build queued."""
+    body, kind = req.body, req.body.get("from", "default")
+    if kind not in ("default", "so101", "design"):
+        raise HTTPError(400, 'from must be "default", "so101" or "design".')
+    name, need, brief = _text(body, "name", 80), _text(body, "need", 2000), _text(body, "brief_id", 64)
+    if brief is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", brief):
+        raise HTTPError(400, "brief_id is not a brief id.")
+    design = None
+    try:
+        if kind == "design":
+            design = projects.as_design(body.get("design"))
+            projects.check_design(design)
+        room, job = req.studio.create_project(name, source="so101" if kind == "so101" else "", design=design, need=need,
+                                              origin="brief" if brief else "default", by=_by(req),
+                                              meta={"brief_id": brief} if brief else None)
+    except FileExistsError:
+        raise HTTPError(409, "A project with that name already exists.") from None
+    except ValueError as exc:
+        raise HTTPError(400, str(exc)) from None
+    return 202, {"ok": True, "project": room.name, "job": _queued(room, job)}
+
+
+@route("POST", "/api/projects/fork")
+def _api_projects_fork(req):
+    """{project, rev?, name?}: a copy of a project's revision as a new project (copied, or built when the files are
+    from an older Morph)."""
+    project, rev, name = req.body.get("project"), _text(req.body, "rev", 16), _text(req.body, "name", 80)
+    try:
+        project_name(project)
+        room, job, info = req.studio.fork_project(project, rev, name, by=_by(req))
+    except ValueError as exc:
+        raise HTTPError(400, str(exc)) from None
+    except LookupError as exc:
+        raise HTTPError(404, str(exc)) from None
+    return (202 if job else 201), {"ok": True, "project": room.name, "copied": info["copied"], "rev": info["rev"],
+                                   "job": _queued(room, job) if job else None}
+
+
+@route("DELETE", "/api/projects", role="owner")
+def _api_projects_delete(req):
+    """?project=: move that project to MORPH_HOME/.trash/ (nothing is erased)."""
+    name = req.arg("project")
+    try:
+        project_name(name)
+        trash = req.studio.delete_project(name)
+    except ValueError as exc:
+        raise HTTPError(400, str(exc)) from None
+    except LookupError as exc:
+        raise HTTPError(404, str(exc)) from None
+    except Refused as exc:
+        raise HTTPError(409, str(exc)) from None
+    except OSError as exc:
+        raise HTTPError(409, f"Couldn't move {name} to the trash ({exc.strerror or exc}); close any file of it that is "
+                             "open, then try again.") from None
+    return 200, {"ok": True, "project": name, "trash": os.path.relpath(trash, req.studio.home).replace(os.sep, "/")}
 
 
 @route("POST", "/api/reset", role="owner")

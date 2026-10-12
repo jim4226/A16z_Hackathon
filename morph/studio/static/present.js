@@ -178,10 +178,10 @@ export class Presenter {
     const i = this.i, n = STEPS.length, a = this.a;
     const dots = STEPS.map((_, k) => `<b class="${k < i ? 'done' : k === i ? 'cur' : ''}" data-k="${k}"></b>`).join('');
     if (i < 0) {
-      const dirty = (a.state.projects || []).filter((p) => p.at_start === false).map((p) => p.name);
+      const dirty = (a.state.projects || []).filter((p) => p.demo && p.at_start === false).map((p) => p.name);  // Reset demo touches only these
       const narrow = this.narrow();
       this.el.innerHTML = `<div class="pr-top"><span class="pr-n">${I('play', 'sm')}Present</span><span class="pr-t">The Morph demo, ${n} steps</span><span class="grow"></span>
-        <button class="btn${dirty.length ? ' primary' : ''}" data-a="reset" title="Delete the chat edits from earlier takes and go back to each robot's original design">${I('replay', 'sm')}Reset demo</button>
+        <button class="btn${dirty.length ? ' primary' : ''}" data-a="reset" title="Delete the chat edits from earlier takes and go back to each demo robot's original design (egg-picker and so101; your other projects are never touched)">${I('replay', 'sm')}Reset demo</button>
         <button class="btn${dirty.length ? '' : ' primary'}" data-a="next">Start ${I('arrow', 'sm')}</button>
 <button class="btn icon ghost" data-a="close" title="Exit (Esc)">${I('x', 'sm')}</button></div>
         ${narrow ? `<div class="pr-warn">${I('alert', 'sm')}<span>The window is too narrow to show the right panel (time card, grip force). Zoom out once (${ZOOM_OUT}), then open Present again.</span></div>` : ''}

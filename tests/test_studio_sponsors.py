@@ -103,7 +103,7 @@ def _rev(root, rev, parent, label="", design=None, version=None):
     from morph.spec import Design
 
     (root / rev).mkdir(parents=True)
-    (root / "meta.json").write_text(json.dumps({"kind": "robot"}))
+    (root / "meta.json").write_text(json.dumps({"kind": "robot", "demo": True}))  # the launcher's demo robots
     (root / rev / "results.json").write_text(json.dumps({"parent": parent, "label": label, "provenance": {}, "timings_s": {},
                                                          "pipeline_version": version or pipeline_version()}))
     (root / rev / "design.json").write_text(json.dumps(Design().with_changes(design or {}).to_dict()))

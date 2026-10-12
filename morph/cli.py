@@ -22,6 +22,7 @@ from . import agent, boardrepo, darwin, keewano, kicad, report
 from .explore import explore
 from .pipeline import Project
 from .spec import Design
+from .studio.projects import EGG_ROBOT  # noqa: F401  (the default arm; tests and tools import it from here)
 
 HOME = os.environ.get("MORPH_HOME", "projects")
 
@@ -244,20 +245,22 @@ def cmd_studio(a):
                      f"{os.path.join(HOME, a.name, 'report.html')} for it. Morph Studio opens whole robots: "
                      "run_studio.bat / ./run_studio.sh, or `python -m morph.cli studio egg-picker --open`.")
     from . import keys
+    from .studio import projects
     if keys.ensure_env_file():
         print("Created .env for your API keys (optional): use the Keys button in the Studio, or edit .env.")
+    projects.backfill_demo(HOME)  # robots this launcher made before 0.2: Reset demo touches only demo projects
     for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
         _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
     if not p.revs():
         print(f"no project {a.name} yet: generating the first robot (about a minute)...")
         cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
-                                     source="so101" if a.name == "so101" else None))
+                                     source="so101" if a.name == "so101" else None, demo=a.name in projects.DEMOS))
     other = "so101" if a.name != "so101" else "egg-picker"
     if not RobotProject(os.path.join(HOME, other)).revs():
         print(f"also preparing the {other} project for the project switcher...")
         cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
-                                     source="so101" if other == "so101" else None))
+                                     source="so101" if other == "so101" else None, demo=True))
     from .robot.pipeline2 import pipeline_version
     for proj in (p, RobotProject(os.path.join(HOME, other))):
         last = proj.latest()
@@ -271,10 +274,6 @@ def cmd_studio(a):
     serve(p, a.host, a.port, home=HOME, token=token)
 
 
-EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
-             "object.length_mm": 57.0, "object.mass_g": 60.0, "object.friction": 0.35, "object.max_force_n": 25.0,
-             "finger.sensor": "fsr402", "finger.width_mm": 20.0, "finger.length_mm": 52.0, "finger.thickness_mm": 6.0,
-             "finger.pad_depth_mm": 5.5, "finger.pad_height_mm": 19.8, "electronics.servo": "sts3215"}
 
 
 def _robot_summary(p, rev) -> list:
@@ -294,46 +293,38 @@ def _robot_summary(p, rev) -> list:
 def cmd_robot(a) -> int:
     """Exit status: 1 when the new revision has stages that did not complete (show never fails)."""
     from .robot.pipeline2 import ORDER, RobotProject
-    from .studio.security import project_name
+    from .studio import projects
 
     root = os.path.join(HOME, a.name)
     source = getattr(a, "source", None) or ("so101" if a.name == "so101" else "")
-    if a.action == "new":  # checked before RobotProject() creates the folder
+    failed = []
+    if a.action == "new":  # the name and source are checked before anything is created
         try:
-            project_name(a.name)
-            if source:
-                from .robot import imported
-                imported.robot_dir(source)
+            info = projects.create(HOME, a.name, source=source, need=a.need, demo=getattr(a, "demo", False), unique=False)
         except ValueError as exc:
             sys.exit(f"{a.name}: {exc}")
-    elif not os.path.isdir(root):
-        sys.exit(f"no project {a.name} in {os.path.abspath(HOME)}")
-    p = RobotProject(root)
-    failed = []
-    if a.action == "new":
-        if p.revs():
-            sys.exit(f"{p.root} already exists")
-        design = Design().with_changes({**EGG_ROBOT, "name": a.name, "arm.source": source})
+        except FileExistsError:
+            sys.exit(f"{root} already exists")
+        p, design = RobotProject(info["root"]), info["design"]
         if a.need:
             from .studio.intent import interpret
             it = interpret(a.need, design)
-            design = design.with_changes(it["changes"])
+            design = design.with_changes({k: v for k, v in it["changes"].items() if k not in ("name", "arm.source")})
             print(it["reply"])
-        json.dump({"kind": "robot", "source": source,
-                   "need": a.need or ("Imported open-source SO-101 arm: edit its electronics, sims and build."
-                                      if source else "Pick a raw egg and place it without cracking it.")},
-                  open(os.path.join(p.root, "meta.json"), "w", encoding="utf-8"))
-        rev = p.run(design, label="first design", n_trials=a.trials, fast_sim=a.fast)
-        failed = _robot_summary(p, rev)
-    elif a.action == "change":
-        base = a.base or p.latest()
-        changes = dict(kv.split("=", 1) for kv in a.changes)
-        rev = p.run(p.load_design(base).with_changes(changes), parent=base, label=" ".join(a.changes)[:48],
-                    n_trials=a.trials, fast_sim=a.fast)
-        failed = _robot_summary(p, rev)
-    elif a.action == "show":
-        for r in ([a.base] if a.base else p.revs()):
-            _robot_summary(p, r)
+        failed = _robot_summary(p, p.run(design, label="first design", n_trials=a.trials, fast_sim=a.fast))
+    else:
+        if not os.path.isdir(root):
+            sys.exit(f"no project {a.name} in {os.path.abspath(HOME)}")
+        p = RobotProject(root)
+        if a.action == "change":
+            base = a.base or p.latest()
+            changes = dict(kv.split("=", 1) for kv in a.changes)
+            rev = p.run(p.load_design(base).with_changes(changes), parent=base, label=" ".join(a.changes)[:48],
+                        n_trials=a.trials, fast_sim=a.fast)
+            failed = _robot_summary(p, rev)
+        elif a.action == "show":
+            for r in ([a.base] if a.base else p.revs()):
+                _robot_summary(p, r)
     if failed:
         print(f"\n{len(failed)} of {len(ORDER)} stages did not complete: {', '.join(failed)} (details above)")
     return 1 if failed else 0
