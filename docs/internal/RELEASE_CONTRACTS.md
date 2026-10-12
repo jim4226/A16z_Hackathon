@@ -241,6 +241,27 @@ same graph the pipeline uses). Reviews are requested automatically from the owne
 servo swap touches mechanical, electronics, manufacturing and sourcing, so it asks the electronics,
 manufacturing and sourcing owners.
 
+**Generalist** (the discipline tag `generalist`, for people who work on every stage, like a founder or
+a solo builder):
+- **Ownership:** a generalist owns no stage exclusively. They are the **fallback owner** of every
+  discipline that has no specialist on the team. A change touching a discipline with no specialist asks
+  the generalists; one touching a discipline with a specialist asks that specialist.
+- **Watching:** generalists aren't auto-requested on everything (that would flood them). Each member has
+  a "Watch all changes" setting, on by default for generalists, which puts every proposal and review in
+  their inbox without making them a required reviewer.
+- **Approvals:** a generalist's approval counts for any affected discipline, and one approval can cover
+  several. The team policy can list disciplines that need a specialist, `specialist_required`, e.g.
+  electronics for production. The approve button names what it covers ("Approve as Electronics and
+  Manufacturing").
+- **Distinct people:** the gate also counts distinct approvers, so one generalist can't ship alone above
+  prototype:
+  - prototype: 1 approval, and the author may approve
+  - pilot: at least 1 approver who isn't the author
+  - production: at least 2 distinct approvers who aren't the author, including the owner
+- **Defaults:** the team creator starts as owner + generalist. The Share dialog offers "Generalist (all
+  stages)" next to the specialist disciplines. Routing chips read like
+  "Electronics: Ana · Manufacturing: Jaron (generalist)".
+
 **Roles** (team-wide): owner, editor, viewer. Viewers can comment and propose. Disciplines are tags on
 members; a member can hold several.
 
