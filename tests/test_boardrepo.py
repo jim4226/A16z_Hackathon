@@ -89,6 +89,7 @@ def test_a_licence_is_added_only_when_the_user_picks_one(tmp_path):
     own.write_text("CERN-OHL-S-2.0 text", encoding="utf-8")
     kicad.export(b, str(tmp_path / "b"), "egg-r004", license=kicad.license_text(str(own)))
     assert (tmp_path / "b" / "LICENSE").read_text(encoding="utf-8") == "CERN-OHL-S-2.0 text"
+    assert "Licensed under the terms in LICENSE." in (tmp_path / "b" / "README.md").read_text(encoding="utf-8")
     with pytest.raises(ValueError):
         kicad.license_text("gpl-please")
 

@@ -260,7 +260,7 @@ def readme(board: dict, name: str, about: dict | None = None, notes: str = "", l
              "The GND pour is stored filled with Morph's own polygon (B in KiCad's PCB editor refills it). "
              "Solder it on perfboard following the layout, or have KiCad generate fab outputs (they include "
              "solder mask).", "",
-             f"Licensed under {license} (LICENSE)." if license else
+             f"Licensed under {license}." if license else
              "No licence is included: this board is your design, so choose one before you publish it. "
              "BoardRepo shows a board without a licence as all rights reserved."]
     return "\n".join(lines) + "\n" + (f"\n{notes}" if notes else "")
@@ -271,11 +271,11 @@ def license_text(choice: str) -> tuple[str, str]:
     text) or the path of a licence file the user picked. ValueError for anything else."""
     if choice.strip().lower() in ("apache-2.0", "apache"):
         with open(resources.path("LICENSE"), encoding="utf-8") as fh:
-            return "Apache-2.0", fh.read()
+            return "Apache-2.0 (LICENSE)", fh.read()
     if not os.path.isfile(choice):
         raise ValueError(f"--license takes apache-2.0 or the path of a licence file; {choice} is neither")
     with open(choice, encoding="utf-8", errors="replace") as fh:
-        return "the licence in LICENSE", fh.read()
+        return "the terms in LICENSE", fh.read()
 
 
 def export(board: dict, outdir: str, name: str = "board", about: dict | None = None, notes: str = "",
