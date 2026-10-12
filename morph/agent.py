@@ -1,8 +1,7 @@
 """Natural-language front end: need -> design spec, and component research.
 
-Uses Claude when ANTHROPIC_API_KEY (or an `ant auth login` profile) is
-available; otherwise falls back to a deterministic parser so the demo never
-depends on the network.
+Uses the configured Claude connection when network access is enabled;
+otherwise falls back to a deterministic parser.
 """
 
 from __future__ import annotations
@@ -14,9 +13,7 @@ from pydantic import BaseModel, Field
 
 from .materials import MATERIALS
 from .spec import Design
-
-MODEL = "claude-opus-5-5"
-
+from . import providers
 
 class NeedSpec(BaseModel):
     project_name: str = Field(description="short kebab-case name")
@@ -41,9 +38,8 @@ class NeedSpec(BaseModel):
 
 def _client():
     try:
-        import anthropic
-        return anthropic.Anthropic()
-    except Exception:
+        return providers.client()
+    except providers.ProviderError:
         return None
 
 
@@ -111,7 +107,7 @@ def propose(need: str) -> tuple[Design, NeedSpec, str]:
     if client is not None:
         try:
             resp = client.messages.parse(
-                model=MODEL,
+                model=providers.model(),
                 max_tokens=16000,
                 output_config={"effort": "medium"},
                 system=("You turn a robotics engineer's request into a grasp-design spec for custom "
@@ -124,7 +120,9 @@ def propose(need: str) -> tuple[Design, NeedSpec, str]:
             if resp.stop_reason != "refusal" and resp.parsed_output is not None:
                 return _to_design(resp.parsed_output), resp.parsed_output, "claude"
         except Exception as exc:
-            print(f"  (Claude unavailable: {exc.__class__.__name__}; using offline parser)")
+            print(f"  ({providers.note_error(exc)} Using offline parser.)")
+        finally:
+            providers.close_client(client)
     spec = heuristic(need)
     return _to_design(spec), spec, "heuristic"
 
@@ -133,17 +131,22 @@ def research(query: str, max_searches: int = 5) -> str:
     """Web research for components, tooling or suppliers, returned with source URLs."""
     client = _client()
     if client is None:
-        return "Research needs Claude credentials (ANTHROPIC_API_KEY or `ant auth login`)."
+        return "Research needs a Claude connection and network access. Connect Claude in Studio Settings."
     messages = [{"role": "user", "content": (
         "Research this for a robotics hardware build and answer concisely with specific part numbers, "
         "specs, prices and links where available:\n\n" + query)}]
     tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches}]
-    for _ in range(4):
-        resp = client.messages.create(model=MODEL, max_tokens=16000, tools=tools, messages=messages,
-                                      output_config={"effort": "medium"})
-        if resp.stop_reason != "pause_turn":
-            break
-        messages.append({"role": "assistant", "content": resp.content})
+    try:
+        for _ in range(4):
+            resp = client.messages.create(model=providers.model(), max_tokens=16000, tools=tools, messages=messages,
+                                          output_config={"effort": "medium"})
+            if resp.stop_reason != "pause_turn":
+                break
+            messages.append({"role": "assistant", "content": resp.content})
+    except Exception as exc:
+        return providers.note_error(exc)
+    finally:
+        providers.close_client(client)
     if resp.stop_reason == "refusal":
         return "Request declined by the model."
     text, sources = [], []

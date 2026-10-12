@@ -3,4 +3,4 @@
 Hackathon slice: custom gripper fingers for a robot arm, end to end.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0b1"

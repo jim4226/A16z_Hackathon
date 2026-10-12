@@ -268,7 +268,8 @@ def export(board: dict, outdir: str, name: str = "board", about: dict | None = N
     os.makedirs(outdir, exist_ok=True)
     files = {f"{name}.kicad_pro": to_kicad_pro(name), f"{name}.kicad_pcb": to_kicad_pcb(board, name),
              f"{name}.kicad_sch": to_kicad_sch(board, name), "README.md": readme(board, name, about, notes)}
-    lic = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "LICENSE")
+    from .resources import asset_path
+    lic = str(asset_path("LICENSE"))
     if os.path.exists(lic):   # BoardRepo shows a board with no licence file as all rights reserved
         with open(lic, encoding="utf-8") as fh:
             files["LICENSE"] = fh.read()

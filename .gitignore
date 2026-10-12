@@ -2,6 +2,11 @@ projects/
 __pycache__/
 *.egg-info/
 .venv/
+.rcubed-venv/
+build/
+dist/
+.pytest_cache/
+node_modules/
 .snap_*/
 # API keys (e.g. keewano.env): never commit
 *.env

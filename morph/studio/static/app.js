@@ -5,6 +5,7 @@ import {
   RobotPanel, SimPanel, ElecPanel, MfgPanel, AsmPanel, BomPanel, forceWindowSVG,
 } from './panels.js';
 import { Presenter } from './present.js';
+import { setupLocal } from './setup.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -75,9 +76,10 @@ class ServerBackend {
     return r.ok;
   }
   connect(onEvent, onStatus) {
+    let opened = false;
     const go = () => {
       const es = new EventSource('/api/events');
-      es.onopen = () => onStatus('live');
+      es.onopen = () => { onStatus('live'); if (opened) onEvent({ type: 'resync' }); opened = true; };
       es.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (e) { console.warn('bad event', e); } };
       es.onerror = () => { es.close(); onStatus('off'); setTimeout(go, 1500); };
     };
@@ -91,6 +93,7 @@ async function getFresh(url) {
 }
 function post(url, body) {
   return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(async (response) => { if (!response.ok) { const data = await response.json(); toast(data.error || data.message || 'Request not accepted.'); } return response; })
     .catch((e) => toast(`Couldn't reach the Studio server (${e.message})`));
 }
 
@@ -273,6 +276,9 @@ async function reloadProject() {
   clearCaches();
   for (const p of Object.values(panels)) p.resetCache?.();
   const st = await backend.state();
+  S.busy = !!st.busy;
+  if (!S.busy) { liveProv = null; sysMsg = null; typing(false); }
+  setConn(S.busy ? 'busy' : (FIXTURE ? 'fixture' : 'live'), S.busy ? 'Regenerating' : undefined);
   S.project = st.project; S.projects = st.projects || S.projects; S.revs = st.revs || []; S.latest = st.current?.rev || null;
   S.labels = {}; S.robotKey = null; S.justAdded = null;
   $('#messages').innerHTML = '';
@@ -281,6 +287,7 @@ async function reloadProject() {
   if (!(st.history || []).length && st.current) addMsg('assistant', `Switched to ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`);
   renderProjects();
   if (st.current) await show(st.current, st.previous, { tour: false });
+  else { S.current = null; S.previous = null; renderHeader(); renderPipeline(null); $('#insp').innerHTML = '<div class="empty"><p>Create a project to begin.</p></div>'; }
   S.reloads = (S.reloads || 0) + 1;
   for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
 }
@@ -453,8 +460,9 @@ function renderPipeline(rev, live) {
   $('#pipeline').innerHTML = nodes.map(([k, label], i) => {
     let cls = '', sub = '—';
     const p = live ? live[k] : prov[k];
-    if (live) { cls = p || 'queued'; sub = { queued: 'queued', computing: 'running…', reused: 'reused', computed: 'rebuilt' }[cls] || ''; }
+    if (live) { cls = p || 'queued'; sub = { queued: 'queued', computing: 'running…', reused: 'reused', computed: 'rebuilt', error: 'failed', blocked: 'blocked', preview: 'preview only', pending: 'incomplete' }[cls] || ''; }
     else if (errs[k]) { cls = 'error'; sub = 'error'; }
+    else if (['error', 'blocked', 'preview', 'pending'].includes(p)) { cls = 'error'; sub = { error: 'failed', blocked: 'blocked', preview: 'preview only', pending: 'incomplete' }[p]; }
     else if (p === 'computed') { cls = 'computed'; sub = tim[k] >= 0.005 ? `rebuilt ${fmtSec(tim[k])}` : 'rebuilt'; }
     else if (p && p.startsWith('reused')) { cls = 'reused'; sub = 'reused'; }
     const long = String(label).split(/\s+/).some((w) => w.length >= 12) ? ' long' : '';
@@ -467,7 +475,7 @@ function nodeEvent(ev) {
   const d = $(`#pipeline .node[data-node="${CSS.escape(ev.node)}"]`);
   if (!d) return;
   d.className = `node ${ev.status}${ev.status === 'computed' ? ' just' : ''}`;
-  $('.ns span', d).textContent = ev.status === 'computing' ? 'running…' : ev.status === 'computed' ? (ev.seconds >= 0.005 ? `rebuilt ${fmtSec(ev.seconds)}` : 'rebuilt') : 'reused';
+  $('.ns span', d).textContent = ev.status === 'computed' ? (ev.seconds >= 0.005 ? `rebuilt ${fmtSec(ev.seconds)}` : 'rebuilt') : ({ computing: 'running…', reused: 'reused', error: 'failed', blocked: 'blocked', preview: 'preview only', pending: 'incomplete' }[ev.status] || ev.status);
   const link = d.previousElementSibling;
   $$('#pipeline .link').forEach((l) => l.classList.remove('flow'));
   if (ev.status === 'computing' && link?.classList.contains('link')) link.classList.add('flow');
@@ -557,10 +565,12 @@ function renderInspector(cur, prev) {
   const force = cur.gripper?.force;
   $('#insp').innerHTML = `
     <div class="revcard fade-in">
-      <div class="top"><span class="rv">${esc(cur.rev)}</span>${feasible ? '<span class="tag good">' + I('check', 'sm') + 'all checks pass</span>' : `<span class="tag bad">${issues.length + errs.length} issue${issues.length + errs.length === 1 ? '' : 's'}</span>`}
+      <div class="top"><span class="rv">${esc(cur.rev)}</span>${feasible ? '<span class="tag good">' + I('check', 'sm') + 'software checks pass</span>' : `<span class="tag bad">${issues.length + errs.length} issue${issues.length + errs.length === 1 ? '' : 's'}</span>`}
         <span class="grow"></span>${cur.rev !== S.latest && S.latest ? '<span class="tag neutral">history</span>' : '<span class="tag acc">latest</span>'}</div>
       <div class="lb">${esc(cur.label || 'Revision ' + cur.rev)}</div>
       <div class="mt">${cur.parent ? `from <span class="mono">${esc(cur.parent)}</span> · ` : 'first revision · '}${nComp}/${prov.length || nodesOf(cur).length} stages regenerated</div>
+      <p class="setup-help">Engineering preview · firmware and physical hardware are unverified.</p>
+      ${FIXTURE ? '' : `<a class="btn" href="/api/export?rev=${encodeURIComponent(cur.rev)}" download>Export revision</a>`}
     </div>
     ${timeCard(cur)}
     <div class="isec"><div class="sec-t">Quick facts</div><div class="facts">${facts.map(([l, v, u, k]) => `<div class="fact${flash(k)}"><div class="l">${l}</div><div class="v">${v ?? '–'}${u && v != null && v !== '–' ? `<small>${u}</small>` : ''}</div></div>`).join('')}</div></div>
@@ -600,10 +610,8 @@ function timeCard(cur) {
 }
 function keewanoLine(cur) {
   const f = cur.gripper?.force || {}, cal = f.hold_calibration, kw = S.integrations?.keewano || {};
-  const pad = cur.design?.['finger.pad'], mat = cur.design?.['finger.material'];
-  if (cal) return `<div class="kw on">${I('spark', 'sm')}<span><b>Keewano</b>: holding force ×${fmt(cal.ratio, '', 2)} from ${cal.n} measured ${esc(pretty(pad))} · ${esc(mat || '')} builds</span></div>`;
-  if (kw.query) return `<div class="kw">${I('spark', 'sm')}<span><b>Keewano</b>: no measured ${esc(pretty(pad))} · ${esc(mat || '')} builds yet; simulation value</span></div>`;
-  return `<div class="kw off">${I('spark', 'sm')}<span>Keewano not connected: simulation-only target</span></div>`;
+  if (cal) return `<div class="kw">${I('alert', 'sm')}<span>Legacy calibration is unverified. Regenerate this design before relying on its force target.</span></div>`;
+  return `<div class="kw off">${I('spark', 'sm')}<span>Automatic calibration disabled in this beta. Keewano event sharing ${kw.send ? 'enabled' : 'off'}.</span></div>`;
 }
 function inspectorSkeleton() {
   $('#insp').innerHTML = `<div class="skel" style="height:96px;margin-bottom:16px;border-radius:12px"></div>
@@ -693,6 +701,9 @@ const tabName = (t) => $(`#tabs .tab[data-tab="${t}"]`)?.textContent.trim() || t
 let sysMsg = null, startT = 0, liveProv = null;
 function onEvent(ev) {
   switch (ev.type) {
+    case 'job_idle': S.busy = false; liveProv = null; typing(false); reloadProject().catch(() => {}); break;
+    case 'job_error': S.busy = false; typing(false); setConn('live'); toast(ev.message || 'The operation failed. Earlier revisions are saved.'); reloadProject().catch(() => {}); break;
+    case 'resync': reloadProject().catch(() => {}); break;
     case 'user': addMsg('user', ev.text); typing(true); break;
     case 'assistant': typing(false); addMsg('assistant', ev.text, ev.noop ? null : ev.changes); if (/^(Error|Couldn't apply)/.test(ev.text || '')) { S.busy = false; S.errorAt = performance.now(); } if (ev.noop) S.noopAt = performance.now(); break;
     case 'start': {
@@ -727,7 +738,7 @@ function onEvent(ev) {
       const n = Object.values(cur.provenance || {}).filter((p) => p === 'computed').length;
       if (sysMsg) {
         sysMsg.classList.add('ok');
-        $('.b', sysMsg).innerHTML = `${I('check', 'sm')}<span>${esc(cur.rev)} ready in ${ev.seconds ?? ((performance.now() - startT) / 1000).toFixed(1)} s · ${n} of ${nodesOf(cur).length} stages regenerated</span>`;
+        $('.b', sysMsg).innerHTML = `${I(cur.summary?.feasible === false ? 'alert' : 'check', 'sm')}<span>${esc(cur.rev)} ${cur.summary?.feasible === false ? 'completed with issues' : 'computed'} in ${ev.seconds ?? ((performance.now() - startT) / 1000).toFixed(1)} s · ${n} of ${nodesOf(cur).length} stages regenerated</span>`;
         sysMsg = null;
       }
       liveProv = null;
@@ -821,6 +832,7 @@ async function boot() {
   setupChat();
   setupParams();
   setupProjects();
+  const localSetup = setupLocal({ fixture: FIXTURE, state: () => S, toast, reload: reloadProject });
   pipelineSkeleton();
   inspectorSkeleton();
   const views = Object.fromEntries($$('#views .view').map((v) => [v.dataset.view, v]));
@@ -840,7 +852,7 @@ async function boot() {
   presenter = new Presenter(presentApi());
   $('#presentBtn').onclick = () => presenter.toggle();
   document.addEventListener('keydown', (e) => {
-    if ((e.key === 'p' || e.key === 'P') && !e.target.closest('input, textarea, select') && !e.metaKey && !e.ctrlKey && !e.altKey) presenter.toggle();
+    if (!$('#presentBtn').hidden && (e.key === 'p' || e.key === 'P') && !e.target.closest('input, textarea, select') && !e.metaKey && !e.ctrlKey && !e.altKey) presenter.toggle();
   });
   if (QS.get('tour') === '0') $('#tour').checked = false;
   const start = QS.get('tab');
@@ -868,7 +880,8 @@ async function boot() {
     // labels for older revisions (shown on the timeline chips), fetched in the background
     for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
     if (QS.get('demo')) setTimeout(() => sendChat(QS.get('demo')), 600);
-    if (QS.get('present')) presenter.open();
+    if (QS.get('present') && (FIXTURE || st.demo_mode)) presenter.open();
+    await localSetup.ready(st);
   } catch (e) {
     console.error(e);
     setConn('off', 'Offline');

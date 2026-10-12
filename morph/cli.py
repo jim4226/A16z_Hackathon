@@ -18,12 +18,12 @@ import os
 import sys
 import time
 
-from . import agent, boardrepo, darwin, keewano, kicad, report
+from . import agent, boardrepo, darwin, keewano, kicad, report, settings
 from .explore import explore
 from .pipeline import Project
 from .spec import Design
 
-HOME = os.environ.get("MORPH_HOME", "projects")
+HOME = str(settings.projects_dir())
 
 
 def _project(name: str) -> Project:
@@ -206,7 +206,7 @@ def _set_aside_cut_off(proj):
 
 def cmd_studio(a):
     from .robot.pipeline2 import RobotProject
-    from .studio.server import serve
+    from .studio.server import serve, is_robot_project
 
     import socket
     with socket.socket() as sock:  # a Studio left running in another window would share the port on Windows
@@ -218,20 +218,33 @@ def cmd_studio(a):
                      "To restart it, close its CMD window first.")
     if os.environ.get("MUJOCO_GL") is None and sys.platform.startswith("linux"):
         os.environ["MUJOCO_GL"] = "egl"
-    for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
+    demo_mode = getattr(a, "demo", False)
+    explicit_name = a.name is not None
+    if not a.name:
+        existing = sorted(n for n in os.listdir(HOME)
+                          if is_robot_project(os.path.join(HOME, n))) if os.path.isdir(HOME) else []
+        a.name = "egg-picker" if demo_mode else (existing[0] if existing else "_welcome")
+    if a.name != "_welcome":
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", a.name):
+            sys.exit("Choose a project name using letters, numbers, hyphens or underscores.")
+    names = [a.name]
+    if demo_mode:
+        names.append("so101" if a.name != "so101" else "egg-picker")
+    for nm in names:
         _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
-    if not p.revs():
+    if not p.revs() and (explicit_name or demo_mode):
         print(f"no project {a.name} yet: generating the first robot (about a minute)...")
         cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if a.name == "so101" else None))
-    other = "so101" if a.name != "so101" else "egg-picker"
-    if not RobotProject(os.path.join(HOME, other)).revs():
-        print(f"also preparing the {other} project for the project switcher...")
-        cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
-                                     source="so101" if other == "so101" else None))
+    for other in names[1:]:
+        if not RobotProject(os.path.join(HOME, other)).revs():
+            print(f"also preparing the {other} project for the project switcher...")
+            cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
+                                         source="so101" if other == "so101" else None))
     from .robot.pipeline2 import pipeline_version
-    for proj in (p, RobotProject(os.path.join(HOME, other))):
+    for proj in [RobotProject(os.path.join(HOME, name)) for name in names] if demo_mode else []:
         last = proj.latest()
         if last and proj.load_results(last).get("pipeline_version") != pipeline_version():
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
@@ -239,7 +252,7 @@ def cmd_studio(a):
     if a.open:
         import threading
         threading.Timer(1.5, open_app_window, args=(f"http://{a.host}:{a.port}",)).start()
-    serve(p, a.host, a.port, home=HOME)
+    serve(p, a.host, a.port, home=HOME, demo_mode=demo_mode)
 
 
 EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
@@ -453,7 +466,10 @@ def load_env(path=None):
 
 
 def main(argv=None):
-    load_env()
+    global HOME
+    if os.environ.get("MORPH_LOAD_DOTENV") == "1":
+        load_env()
+        HOME = str(settings.projects_dir())
     ap = argparse.ArgumentParser(prog="morph", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -541,7 +557,8 @@ def main(argv=None):
     s.set_defaults(fn=cmd_robot)
 
     s = sub.add_parser("studio", help="web UI: chat with / edit the robot, watch everything regenerate")
-    s.add_argument("name", nargs="?", default="egg-picker")
+    s.add_argument("name", nargs="?", default=None)
+    s.add_argument("--demo", action="store_true", help="prepare presentation examples and enable demo reset")
     s.add_argument("--open", action="store_true", help="open the browser when the server is up")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)

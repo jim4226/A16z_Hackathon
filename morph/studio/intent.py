@@ -11,8 +11,7 @@ import json
 import re
 
 from ..spec import Design
-
-MODEL = "claude-opus-5-5"
+from .. import providers
 
 OBJECTS = {  # rough real-world values; max_force_n = per-finger squeeze that damages it (0 = robust)
     "raw egg": dict(shape="cylinder", diameter_mm=44, length_mm=57, mass_g=60, friction=0.35, max_force_n=25),
@@ -227,12 +226,11 @@ TOOL = {
 def interpret(msg: str, d: Design, last_target: float | None = None) -> dict:
     if last_target:
         _LAST_TARGET["value"] = last_target
+    client = None
     try:
-        import anthropic
-
-        client = anthropic.Anthropic()
+        client = providers.client()
         resp = client.messages.create(
-            model=MODEL, max_tokens=4000, output_config={"effort": "low"},
+            model=providers.model(), max_tokens=4000, output_config={"effort": "low"},
             system="You are Morph's design assistant for a whole robot: a robot arm with a force-sensing parallel "
                    "gripper, its electronics and its manufacturing. Turn each request into a call to "
                    "apply_design_changes. Always call the tool exactly once.",
@@ -244,11 +242,15 @@ def interpret(msg: str, d: Design, last_target: float | None = None) -> dict:
                 if block.type == "tool_use" and block.name == TOOL["name"]:
                     return {"changes": block.input.get("changes", {}), "reply": block.input.get("reply", ""),
                             "source": "claude"}
-    except Exception:
-        pass
+    except Exception as exc:
+        notice = providers.note_error(exc)
+    else:
+        notice = "Claude did not return a design change. Using simple offline rules."
+    finally:
+        providers.close_client(client)
     ch, said = rules(msg, d)
     if not ch:
         return {"changes": {}, "source": "rules",
-                "reply": "I couldn't map that to a design parameter. Try: “swap to Dynamixel servos”, “use a custom PCB”, "
+                 "reply": notice + " I couldn't map that to a design parameter. Try: “swap to Dynamixel servos”, “use a custom PCB”, "
                          "“make it 6-DOF”, “add a wrist camera”, “pilot build”, “reach 380 mm”, “make it work for a strawberry”."}
-    return {"changes": ch, "reply": "Changing " + "; ".join(said) + ".", "source": "rules"}
+    return {"changes": ch, "reply": notice + " Changing " + "; ".join(said) + ".", "source": "rules"}

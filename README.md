@@ -10,150 +10,101 @@ Darwin handles purchasing and engineering help, finding agents that can quote an
 
 Keewano gives R Cubed observability and recursive self-improvement: every design, bench test and human minute is logged, and the measured results tune the next design's grip force.
 
-## Morph Studio: the whole-robot platform (the live demo)
+## Local beta: 0.2.0b1
 
-Morph Studio is R Cubed's platform for whole robots: a 5-axis arm with a force-sensing gripper, or an
-existing open-source robot (Hugging Face's SO-101, imported from its own URDF). One request generates
-the CAD, MuJoCo simulations, electronics (schematic, routed PCB, harness, firmware), manufacturing plan
-(prototype, pilot and production), BOM with sourcing, and an assembly manual. Every chat edit
-regenerates only what depends on it.
+The opening example describes the original hackathon demonstration and product direction. This beta
+is a **local engineering preview** for generated arms and the SO-101 open-source robot. Automatic
+calibration from remote build history is disabled: demo measurements are not physical validation.
+Generated firmware has not been verified against real board cores or on a physical robot.
 
-```bash
-run_studio.bat                      # Windows: double-click. macOS/Linux: ./run_studio.sh
-python -m morph.cli studio egg-picker --open    # same thing by hand
-```
+R Cubed Studio connects CAD, simulation, electronics, manufacturing, sourcing and assembly in one
+browser interface. Its Python backend runs on your computer. Your projects and credentials are
+separate from the installation, and no R Cubed account is required.
 
-- **Tabs:** Robot (3D, motion, X-ray, explode), Simulation (pick and place, payload, workspace,
-  shake), Electronics, Manufacturing, Assembly, and BOM & Sourcing. The **Darwin agents** view finds an
-  agent for every purchased part and every fabrication job.
-- **Inspector:** the time-saved card (cited by-hand hours vs measured time), metric deltas, the
-  grip-force window with Keewano calibration, and issues.
-- **Present** (button or `P`): the demo as 14 press-through steps with captions.
-  See [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
-- Keys (optional): copy `env.example` to `.env`. See [docs/SPONSORS.md](docs/SPONSORS.md) for Keewano
-  and Darwin, and [docs/TIME_SAVED.md](docs/TIME_SAVED.md) for the time-saved sources.
+## Install and open
 
-## R Cubed Studio (gripper demo)
+This beta requires **Python 3.10–3.12**; Python 3.11 is the recommended Windows setup. The initial
+installation needs internet access and can take several minutes. Git is not needed for the setup ZIP.
 
-```bash
-python -m morph.cli demo            # builds projects/raw-egg (≈25 s)
-python -m morph.cli studio raw-egg  # → http://localhost:8765
-```
+1. Extract a versioned `r-cubed-0.2.0b1-local-setup.zip` built by the release workflow.
+2. On Windows, double-click `run_studio.bat`. On Linux, run `bash run_studio.sh`.
+3. Choose **New project**, name it, and start with the generated arm or SO-101. Existing projects can
+   be copied from the same dialog. Creating an example does not require an API key.
+4. Edit parameters or chat, inspect changed stages, then choose **Export revision** in the inspector.
+5. Keep the terminal open while using Studio. Close it to stop; reopen the launcher to resume.
 
-Chat on the left: "make it work for a strawberry", "use an SG90 servo instead", "switch to an ESP32",
-"make the fingers 10 mm longer", "gentler grip". Each request becomes parameter changes. The pipeline strip
-shows which of the 7 stages regenerate and which are reused. Then the views tour what changed:
+Launchers install this version once. They do not pull Git changes or update dependencies on each
+launch. See [installation, troubleshooting and updates](docs/INSTALL.md). This branch provides the
+build tooling; a signed installer, bundled Python runtime and verified macOS release are not included.
 
-- **3D design:** the whole printable gripper (back plate, servo, pinion, two racks, sensor fingers) around the object. The previous revision is shown dashed.
-- **Electronics + PCB:** the carrier board builds itself: parts drop in, then ratsnest, routed traces, GND pour, and a DRC pass. Download Gerbers or solder it on perfboard.
-- **Fab:** print beds for the fingers and the gripper body, with time and cost.
-- **Firmware:** generated `morph_grip.ino` with changed lines highlighted (target force, divider, servo angles).
-- **Simulation:** MuJoCo grasp GIF.
-- **Inspector:** design diffs, metric deltas, and the grip-force window.
+## Connect your own Claude key
 
-The Studio uses Claude to interpret chat when `ANTHROPIC_API_KEY` is set; otherwise a built-in rule parser
-handles the common requests, so the demo works offline.
+Open **Settings** to enter your key, select a Claude model ID, and test the connection. Store the key
+in your system credential store, or choose **Until this app closes**. Replace or remove it there.
+Never paste a key into design chat. The app does not store keys in browser storage, projects or exports.
 
-## Quick start
+The local backend calls Anthropic directly; R Cubed's servers never receive your key. Anthropic
+receives the request and design context and bills your account. Without a connection, simple requests
+and parameter editing use offline rules. Provider errors clearly identify that fallback.
 
-```bash
-python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m morph.cli demo           # ~25 s → projects/raw-egg/report.html
-```
+**Network and data sharing** are separate Settings controls:
 
-To see a finished run without installing, open the committed example at `examples/raw-egg/report.html`.
+- **Network access:** turn off for local-only operations. `MORPH_OFFLINE=1` also enforces this.
+- **Darwin sourcing:** off by default; enable it, then choose Find agents to send component and
+  fabrication queries. Files are not uploaded and nothing is purchased automatically.
+- **Keewano events:** off by default; an optional developer integration using your own Keewano
+  credentials. Enabling events does not enable force calibration.
 
-## Live hardware loop
+Read [privacy and data flow](docs/PRIVACY.md) and [integration setup](docs/SPONSORS.md).
 
-```bash
-morph new egg --need "pick up a raw egg (44 mm wide, 57 mm long, 60 g) on its side without cracking it, MG996R gripper"
-morph explore egg                                   # pad styles × sections, simulated, ranked
-# print  projects/egg/r00X/fab/plate.stl            (finger + pad, ×2)
-# flash  projects/egg/r00X/electronics/morph_grip/morph_grip.ino   (Arduino IDE; set OPEN_DEG/CLOSED_DEG)
-morph bench egg r00X --port COM5                    # live force bar in the terminal; trace + result logged
-morph bench egg r00X --simulate                     # rehearsal without hardware (labelled SIMULATED everywhere)
-morph clock egg test 12                             # log human minutes so the time claim counts them
-morph time egg r00X                                 # before/after time study
-```
+## What the beta includes
 
-Other commands:
+- **Robot:** generated arm or SO-101 model, motion, X-ray and exploded views.
+- **Simulation:** pick-and-place, payload, workspace and shake scenarios.
+- **Electronics:** schematic, harness, controller plan, PCB artifacts and generated firmware.
+- **Manufacturing:** prototype/pilot/production estimates and supported fabrication artifacts.
+- **Assembly and sourcing:** an assembly guide, BOM and optional Darwin lookups.
+- **Revision exports:** a ZIP of generated artifacts plus a manifest with stage status, issues and
+  firmware-validation status. Failed or missing required artifacts remain visible across revisions.
+
+The Studio accepts loopback connections only. It is not a multi-user hosted service. Team accounts,
+private shared workspaces and hardware pull-request approvals are future work.
+
+Presentation controls are opt-in: `python -m morph.cli studio --demo --open`. A fixture preview
+(`?fixture=1`) replays precomputed examples; its edits do not run CAD, simulation or fabrication.
+
+## Develop and verify
 
 ```bash
-morph change egg electronics.servo=sg90             # rebuilds the affected artifacts
-morph change egg object.max_force_n=3               # e.g. a strawberry; window and firmware update
-morph compare egg r001 r004 r005
-morph send egg r00X --grbl COM3                     # CNC/laser parts (non-sensor fingers)
-morph research "FSR 402 vs load cell for a hobby gripper"
+python -m venv .venv
+# Activate .venv for your shell.
+python -m pip install --require-hashes -r requirements.lock
+python -m morph.cli studio --open
+python tools/run_offline_tests.py -q
+python tools/build_release.py
 ```
 
-Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli …`.
-`new` and `research` use Claude when `ANTHROPIC_API_KEY` is set; everything else runs offline.
+Project files default to the current user's R Cubed application-data directory. Set `MORPH_HOME`
+to select another project directory; existing source-checkout users can point it at their old
+`projects` folder. `MORPH_CONFIG_DIR` overrides non-secret preferences. Existing `morph` commands
+remain available; `rcubed` is an additional command alias after installation.
 
-## Modules
+For developer-only environment configuration, copy `env.example` to `.env` and explicitly set
+`MORPH_LOAD_DOTENV=1`. Keys already set in the environment take precedence. End users should use
+Settings rather than editing `.env`.
 
-| module | job |
-|---|---|
-| `mechanism.py` | printable rack-and-pinion parallel gripper sized to the servo and object: involute pinion, slotted racks, back plate with servo/guide/arm holes, jaw travel, servo angles |
-| `board.py` | carrier board: real module pinouts, placement, two-layer maze router, GND pour, DRC, Gerbers + drill, perfboard-ready |
-| `kicad.py` | the same board as a KiCad 8/9 project (PCB, schematic, project file) + a BoardRepo-ready zip; pure Python, `kicad-cli` DRC/ERC when installed |
-| `boardrepo.py` | checked open reference boards on BoardRepo (gripper carrier, servo bus, PWM, load cell), read live from their public pages |
-| `studio/` | R Cubed Studio web app (stdlib server + SSE, three.js viewer, PCB build animation, chat → changes) |
-| `spec.py` | one `Design` (object, finger, gripper, electronics, fab); changes are dotted keys |
-| `design.py` | 2.5D profiles → watertight solids. Pads: flat, V, or contour. With `finger.sensor=fsr402`, a two-part finger: a dovetail socket plus a sliding pad whose tail presses on the FSR |
-| `analysis.py` | grip-force budget, cantilever deflection and stress, print derate |
-| `sim.py` | MuJoCo close → lift → shake over randomized trials, plus a bisection for the minimum holding force |
-| `electronics.py` | grip-force window, servo choice and stall-force check, divider sizing and resolution, supply and wiring, BOM, generated firmware |
-| `bench.py` | serial driver for the firmware, live terminal bar, CSV trace, measured-vs-predicted |
-| `explore.py` | closed-form screening, then simulate the best of each pad style |
-| `fab.py` | DFM, print plate, laser SVG, GRBL G-code, time and cost |
-| `pipeline.py` | dependency graph, partial recompute, revisions, ledger |
-| `timestudy.py` | before/after time study (auto-logged tool time, logged human minutes, overridable baseline) |
-| `report.py` | the comparison page |
-| `agent.py` | Claude need → spec (fragility, sensor, servo inferred), web research |
+The legacy gripper slice remains available with `python -m morph.cli demo`, which writes a report;
+Studio's supported workflow is the whole-robot pipeline. KiCad export and BoardRepo references are
+documented in [docs/BOARDREPO.md](docs/BOARDREPO.md).
 
-## Sponsor integrations
+## Validation and release notes
 
-**Keewano: the build memory.** Every ledger entry (revision, bench measurement, human minutes,
-Darwin lookup) is sent to Keewano as typed events from `Project.log()` (`morph/keewano.py`).
-Before choosing the grip-force target, `electronics.plan()` asks Keewano how much more holding
-force real builds with the same pad and material needed than the simulation predicted, and
-scales the target by that ratio. Remove Keewano and the firmware ships the uncalibrated number.
+See [CHANGELOG.md](CHANGELOG.md), [release gates](docs/RELEASE_CHECKLIST.md), and
+[security reporting](SECURITY.md). The build workflow tests Python 3.10–3.12 on Windows/Linux and
+checks an installed wheel outside the checkout. Remote CI and platform results must be checked for
+the exact commit before publishing.
 
-```bash
-export KEEWANO_API_KEY=...                       # send (Settings -> Project -> API Keys)
-export KEEWANO_PAT=kwpat-... KEEWANO_PROJECT_ID=<uuid>   # query (Settings -> Personal -> Security)
-python tools/keewano_backfill.py --send          # 2 weeks of synthetic-* builds, labelled
-morph ask 'SELECT "PadStyle", avg("HoldForceRatioPct") FROM events GROUP BY "PadStyle"'
-```
-
-**Darwin: who sells the parts and builds the rest.** R Cubed designs and programs; `morph source
-<project> [rev]` asks Darwin Search for an agent per purchased BOM line plus the engineering
-handoffs (PCB fab from the Gerbers, printing the STLs, a design review), writes
-`<rev>/sourcing_darwin.json`, and logs every lookup, including gaps, to Keewano. It stops at a
-shortlist: ordering is Darwin Act, which needs the user's own account and approval.
-
-With no keys set, both integrations are no-ops and everything runs offline.
-
-**BoardRepo: the board in KiCad, and open boards to learn from** (not a sponsor). Every carrier
-board is also written as a KiCad project next to its Gerbers (`electronics/board/kicad/`), with
-the same copper, the GND pour included. KiCad 9 reports 0 DRC violations, 0 unconnected items, 0 PCB-vs-schematic
-mismatches and 0 ERC errors for every MCU. Darwin's PCB-fab handoff includes it. `morph kicad`
-packages a revision for [BoardRepo](https://boardrepo.com), which takes a zipped KiCad project and
-renders schematic, PCB, 3D and BOM. The README inside the zip lists related open designs.
-
-```bash
-morph kicad raw-egg r004      # projects/raw-egg/r004/boardrepo/raw-egg-r004/*-kicad.zip + upload steps
-morph boardrepo               # reference boards with live licence and views
-```
-
-Uploading needs your own BoardRepo sign-in, so R Cubed stops at the zip. More in `docs/BOARDREPO.md`.
-
-## Honest limits
-
-- The FSR is calibrated with one known mass (`c<grams>` over serial). Its absolute accuracy is about ±10–25%, so the window margins absorb that error.
-- The egg damage force and servo stall torques are typical values. Check them with a kitchen scale.
-- The sim treats fingers as rigid and models the egg as a capsule.
-- The firmware assumes a position servo and a 0.5° step. Set `OPEN_DEG`/`CLOSED_DEG` for your gripper.
-
-Plan, schedule and demo script: `docs/HACKATHON_PLAN.md`. Data sources: `docs/DATA_SOURCES.md`.
+Simulation results and software checks do not establish physical safety. Force estimates, FSR
+calibration, fabrication tolerances and real firmware need review on the intended hardware.
+Time-saving estimates and historical demo material remain in [docs/TIME_SAVED.md](docs/TIME_SAVED.md),
+[docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md), and [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).

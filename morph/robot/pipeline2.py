@@ -132,6 +132,59 @@ def _mod(name):
         return None
 
 
+OUTPUT_KEYS = {"sizing": "sizing", "gripper": "gripper", "electronics": "eplan", "cad": "cad",
+               "sim": "sims", "wiring": "electronics", "manufacturing": "manufacturing", "bom": "bom",
+               "manual": "manual"}
+
+
+def stage_problem(results: dict, node: str) -> str | None:
+    """Check validity independently of provenance, including older saved revisions."""
+    error = (results.get("errors") or {}).get(node)
+    if error:
+        return error
+    status = (results.get("stage_status") or {}).get(node) or (results.get("provenance") or {}).get(node)
+    if status in ("pending", "error", "blocked", "preview"):
+        return status
+    if not results.get(OUTPUT_KEYS[node]):
+        return "missing required output"
+    if node == "cad" and (results.get("preview_only") or (results.get("cad") or {}).get("preview_only")):
+        return "basic model is a preview only; detailed CAD must succeed before manufacturing"
+    return None
+
+
+def artifact_problem(results: dict, node: str, revision_dir: str) -> str | None:
+    """A cached JSON result cannot stand in for deleted or incomplete output files."""
+    value = results.get(OUTPUT_KEYS[node]) or {}
+    paths = []
+    if node == "cad":
+        paths = ["cad/robot.glb", "cad/robot.json", value.get("urdf")]
+    elif node == "sim":
+        scenarios = value.get("scenarios") or {}
+        if not scenarios or any(not s.get("file") or (s.get("metrics") or {}).get("error") for s in scenarios.values()):
+            return "missing or failed simulation scenario output"
+        paths = ["sim/" + str(value.get("mjcf") or ""),
+                 *("sim/" + s["file"] for s in scenarios.values())]
+    elif node == "wiring":
+        paths = ["electronics/" + str(value.get(k) or "") for k in ("schematic_svg", "schematic_json", "harness_csv", "firmware")]
+    elif node == "manufacturing":
+        paths = ["mfg/manufacturing.json", "mfg/" + str(value.get("package") or "")]
+        paths += ["mfg/" + f for part in value.get("parts", []) for f in part.get("files", [])]
+    elif node == "manual":
+        paths = ["manual/" + str(value.get(k) or "") for k in ("json", "html")]
+    base = os.path.realpath(revision_dir)
+    for path in paths:
+        if not path:
+            return "missing required artifact reference"
+        target = os.path.realpath(os.path.join(base, path))
+        try:
+            valid = os.path.commonpath((base, target)) == base and os.path.isfile(target)
+        except ValueError:
+            valid = False
+        if not valid:
+            return f"missing required artifact for {node}: {path}"
+    return None
+
+
 class RobotProject(Project):
     def run(self, design: Design, parent: str | None = None, label: str = "", n_trials: int = 4,
             verbose: bool = True, on_event=None, fast_sim: bool = False) -> str:
@@ -150,7 +203,7 @@ class RobotProject(Project):
         else:
             changes, todo, prev = {}, list(ORDER), {}
         res = {"rev": rev, "parent": parent, "label": label, "kind": "robot",
-               "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "timings_s": {}}
+               "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "stage_status": {}, "timings_s": {}}
         emit({"type": "start", "rev": rev, "parent": parent, "changes": res["changes"], "dirty": todo})
         cache = {}
 
@@ -162,10 +215,11 @@ class RobotProject(Project):
                 else:
                     try:
                         cache["asm"] = arm.build(design, res["sizing"], res.get("eplan"))
-                    except Exception as exc:  # never leave the user without a robot: fall back to the stub generator
+                    except Exception as exc:  # retain a preview, but never manufacture the substitute model
                         traceback.print_exc()
                         from . import arm_stub
                         res.setdefault("warnings", []).append(f"detailed arm generator failed ({exc}); showing the basic model")
+                        res["preview_only"] = True
                         cache["asm"] = arm_stub.build(design, res["sizing"], res.get("eplan"))
             return cache["asm"]
 
@@ -174,12 +228,27 @@ class RobotProject(Project):
             if node not in todo:
                 for key in self._keys(node):
                     res[key] = prev.get(key)
-                res["provenance"][node] = f"reused from {parent}"
+                problem = stage_problem(prev, node) or artifact_problem(prev, node, self.rev_dir(parent))
+                if node == "cad" and prev.get("preview_only"):
+                    res["preview_only"] = True
+                if problem:
+                    res.setdefault("errors", {})[node] = problem
+                    res["stage_status"][node] = "error"
+                    res["provenance"][node] = "error"
+                else:
+                    res["stage_status"][node] = "computed"
+                    res["provenance"][node] = f"reused from {parent}"
                 if sub and os.path.isdir(os.path.join(self.rev_dir(parent), sub)):
                     shutil.copytree(os.path.join(self.rev_dir(parent), sub), os.path.join(out, sub))
-                emit({"type": "node", "node": node, "status": "reused"})
+                emit({"type": "node", "node": node, "status": "error" if problem else "reused"})
                 if verbose:
-                    print(f"  {node:<14} reused")
+                    print(f"  {node:<14} {'error (inherited)' if problem else 'reused'}")
+                continue
+            blocked = [up for up in GRAPH[node][1] if stage_problem(res, up)]
+            if blocked:
+                res.setdefault("errors", {})[node] = "blocked by invalid stage(s): " + ", ".join(blocked)
+                res["stage_status"][node] = res["provenance"][node] = "blocked"
+                emit({"type": "node", "node": node, "status": "blocked"})
                 continue
             emit({"type": "node", "node": node, "status": "computing"})
             t0 = time.time()
@@ -189,11 +258,17 @@ class RobotProject(Project):
             try:
                 if self._compute(node, design, res, nd, asm, n_trials, fast_sim) is False:
                     status = "pending"          # module not available yet: say so, never fake "computed"
+                else:
+                    problem = stage_problem(res, node) or artifact_problem(res, node, out)
+                    if problem:
+                        res.setdefault("errors", {})[node] = problem
+                        status = "preview" if node == "cad" and res.get("preview_only") else "error"
             except Exception as exc:  # keep the rest of the pipeline alive; surface the error
                 traceback.print_exc()
                 res.setdefault("errors", {})[node] = f"{exc.__class__.__name__}: {exc}"
                 status = "error"
             res["provenance"][node] = status
+            res["stage_status"][node] = status
             res["timings_s"][node] = round(time.time() - t0, 2)
             emit({"type": "node", "node": node, "status": status, "seconds": res["timings_s"][node]})
             if verbose:
@@ -223,9 +298,11 @@ class RobotProject(Project):
             else:
                 try:
                     res["sizing"] = arm.size(design)
-                except Exception:
+                except Exception as exc:
                     from . import arm_stub
                     res["sizing"] = arm_stub.size(design)
+                    res.setdefault("errors", {})["sizing"] = f"detailed sizing failed ({exc}); fallback is preview only"
+                    res["preview_only"] = True
         elif node == "gripper" and design.arm.source:
             from . import imported
             res["gripper"] = imported.gripper_summary(design, imported.size(design))
@@ -256,6 +333,7 @@ class RobotProject(Project):
                           "validate": errs, "urdf": os.path.relpath(urdf, os.path.dirname(nd)),
                           "groups": len({p.group or p.name for p in a.parts}),
                           "source": a.meta.get("source") or "generated", "title": a.meta.get("title"),
+                          "preview_only": bool(res.get("preview_only")),
                           "license": a.meta.get("license"), "source_url": a.meta.get("source_url"),
                           "issues": a.meta.get("issues", []),
                           "redesign": [p.meta["needs_redesign"] for p in a.parts if p.meta.get("needs_redesign")]}
@@ -314,9 +392,11 @@ def summarize(r: dict) -> dict:
         issues.append(f"{node} stage error: {err}")
     if pp.get("success") is False:
         issues.append(f"pick-and-place failed in simulation ({pp.get('failure') or pp.get('reason') or 'object not delivered'})")
-    pending = [n for n, v in (r.get("provenance") or {}).items() if v in ("pending", "error")]
+    pending = [n for n in ORDER if stage_problem(r, n)]
     if pending:
         issues.append("not computed: " + ", ".join(pending))
+    if r.get("preview_only") or cad.get("preview_only"):
+        issues.append("preview only: fallback geometry is not valid for manufacturing")
     return {
         "dof": len(joints), "reach_mm": sz.get("reach_mm"), "payload_g": sz.get("payload_g"),
         "actuators": ", ".join(sorted({j["actuator"] for j in joints})),

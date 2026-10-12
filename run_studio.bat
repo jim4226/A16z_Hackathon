@@ -1,14 +1,15 @@
 @echo off
-REM Morph Studio one-click launcher for Windows.
-REM First run: creates .venv and installs dependencies (a few minutes). Every run: pulls the latest code.
+setlocal
 cd /d "%~dp0"
-git pull --ff-only
-if errorlevel 1 echo Could not pull the latest code - starting the version already here.
-if not exist .venv (
-  py -3 -m venv .venv || python -m venv .venv
-)
-call .venv\Scripts\activate.bat
-python -m pip install -q -r requirements.txt
 set PYTHONUTF8=1
-python -m morph.cli studio egg-picker --open
-if errorlevel 1 pause
+if exist .rcubed-venv\Scripts\python.exe (
+  .rcubed-venv\Scripts\python.exe tools\install_local.py --launch
+) else (
+  py -3.11 tools\install_local.py --launch
+)
+if errorlevel 1 (
+  echo.
+  echo R Cubed could not start. Install Python 3.11 from python.org, then run setup_studio.bat.
+  pause
+  exit /b 1
+)

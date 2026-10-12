@@ -57,13 +57,13 @@ def _plan_target(monkeypatch, ratio):
     return electronics.plan(p.load_design("r001"), r["analysis"], r["sim"])
 
 
-def test_keewano_calibration_raises_target(monkeypatch):
+def test_remote_calibration_cannot_change_generated_force(monkeypatch):
     base = _plan_target(monkeypatch, None)
     cal = _plan_target(monkeypatch, {"ratio": 1.4, "n": 9, "source": "keewano"})
     assert base["hold_calibration"] is None
-    assert cal["hold_calibration"]["n"] == 9
-    assert cal["target_force_n"] > base["target_force_n"]
-    assert cal["hold_force_n"] > base["hold_force_n"]
+    assert cal["hold_calibration"] is None
+    assert cal["target_force_n"] == base["target_force_n"]
+    assert cal["hold_force_n"] == base["hold_force_n"]
 
 
 def test_darwin_source_shortlists_parts_and_reports_gaps(tmp_path, monkeypatch):

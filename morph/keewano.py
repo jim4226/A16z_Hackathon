@@ -1,16 +1,16 @@
-"""Keewano: every ledger entry becomes typed events; one query calibrates the grip force.
+"""Optional Keewano analytics. Remote history never changes generated force targets.
 
 Send side (REST, stdlib only): Project.log() calls emit(entry). Each project is one Keewano
 entity (UUID v5 of its name), so its revisions, measurements, human minutes and Darwin
 sourcing calls land in one ordered timeline. Design context (servo, pad, ...) is sent before
 a measurement, so every measured value carries the design it was measured on, no join needed.
 
-Query side (SQL through Keewano's MCP run_sql_query tool): hold_ratio(pad, material) returns how
-much more (or less) holding force real builds needed than the simulation predicted.
-electronics.plan() scales the simulated holding force by it before setting the target.
+Query side (SQL through Keewano's MCP run_sql_query tool) is for explicit analytics only.
+Automatic force calibration is disabled until measurement provenance is verified.
 
 Env: KEEWANO_API_KEY (send), KEEWANO_PAT + KEEWANO_PROJECT_ID (query).
-With none set, everything here is a no-op and Morph runs offline as before.
+Sending additionally requires explicit telemetry consent in Settings or
+MORPH_TELEMETRY_ENABLED=1. MORPH_OFFLINE=1 prevents all network operations.
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ import time
 import uuid
 import zlib
 from urllib.request import Request, urlopen
+
+from . import settings
 
 API = "https://api.keewano.com/event/ingress/v1/json"
 MCP = "https://api.keewano.com/mcp"
@@ -52,6 +54,7 @@ CUSTOM_EVENTS = [
     {"eventTypeId": 2019, "name": "SourcingAgentsFound", "dataType": "uint"},
     {"eventTypeId": 2020, "name": "SourcingTopAgent", "dataType": "string"},
     {"eventTypeId": 2021, "name": "SourcingGap", "dataType": "string"},
+    {"eventTypeId": 2022, "name": "MeasurementSource", "dataType": "string"},
 ]
 _ID = {e["name"]: (e["eventTypeId"], e["dataType"]) for e in CUSTOM_EVENTS}
 EVENTS_HASH = zlib.crc32(json.dumps(CUSTOM_EVENTS, sort_keys=True).encode()) or 1
@@ -90,10 +93,12 @@ def events_for(entry: dict, design: dict | None = None) -> list:
                ("TargetForceMilliN", _mn(p.get("target_force_n")))]
     elif t == "measurement":
         a, err = entry.get("actual") or {}, entry.get("error_vs_prediction") or {}
+        synthetic = bool(a.get("simulated") or entry.get("synthetic"))
+        ev.append(("MeasurementSource", "synthetic" if synthetic else "unverified"))
         ev += [("Revision", entry.get("rev"))] + _design_ctx(design or {})
         meas = a.get("min_hold_force_n")
         ev.append(("MeasuredMinHoldMilliN", _mn(meas)))
-        if meas is not None and "min_hold_force_n" in err:
+        if not synthetic and meas is not None and "min_hold_force_n" in err:
             pred = meas - err["min_hold_force_n"]
             if pred > 0:
                 ev.append(("HoldForceRatioPct", round(100 * meas / pred)))
@@ -125,6 +130,8 @@ def _post(path: str, body: dict, key: str):
 def send(project_name: str, events: list, ts: int | None = None, key: str | None = None) -> bool:
     """POST one batch for one project entity. Never raises: Keewano must not break a design run."""
     global _batch, _registered, _warned
+    if not settings.telemetry_enabled():
+        return False
     key = key or os.environ.get("KEEWANO_API_KEY")
     if not key or not events:
         return False
@@ -134,6 +141,9 @@ def send(project_name: str, events: list, ts: int | None = None, key: str | None
             _post("custom", {"customEventsHash": EVENTS_HASH, "eventTypes": CUSTOM_EVENTS}, key)
             _registered = True
         _batch += 1
+        if project_name.startswith("synthetic-"):
+            events = [(n, v) for n, v in events if n not in ("HoldForceRatioPct", "MeasurementSource")]
+            events.append(("MeasurementSource", "synthetic"))
         body = [{"eventTypeId": _ID[n][0], "dataType": _ID[n][1], "timestamp": ts, "data": v}
                 for n, v in [("Project", project_name)] + events]
         _post("in", {"dataSessionId": _session, "batch": _batch, "customEventsHash": EVENTS_HASH,
@@ -155,6 +165,8 @@ def emit(project_name: str, entry: dict, design: dict | None = None) -> bool:
     hold up a design run or the Studio (each send can take up to its 5 s timeout). One background
     thread sends in order, so batch numbers stay sequential."""
     global _queue
+    if not settings.telemetry_enabled():
+        return False
     events = events_for(entry, design)
     if not events or not os.environ.get("KEEWANO_API_KEY"):
         return False
@@ -174,19 +186,14 @@ def emit(project_name: str, entry: dict, design: dict | None = None) -> bool:
 
 # -- query side ------------------------------------------------------------------------------
 
-_ratio_cache: dict = {}
-
-
-def _lit(v: str) -> str:
-    return "'" + str(v).replace("'", "''") + "'"
-
-
 def query(sql: str, max_rows: int = 100) -> list | None:
     """Run read-only SQL against the project's events via Keewano's MCP run_sql_query tool.
 
     Only the personal access token and project id are needed. None when not configured or
     unreachable, so a design run never waits on it.
     """
+    if not settings.network_allowed():
+        return None
     pat, project = os.environ.get("KEEWANO_PAT"), os.environ.get("KEEWANO_PROJECT_ID")
     if not (pat and project):
         return None
@@ -209,22 +216,9 @@ def query(sql: str, max_rows: int = 100) -> list | None:
 
 
 def hold_ratio(pad: str, material: str) -> dict | None:
-    """How real builds' holding force compared with the simulation, for this pad + material.
+    """Disabled in the public beta: history has no verified measurement provenance.
 
-    Holding force is a friction question (pad shape, pad material), so that is the key; the
-    servo only sets how hard the gripper *can* squeeze.
-
-    Returns {"ratio": measured/predicted, "n": measurements, "source": "keewano"} or None.
-    Each HoldForceRatioPct event already carries the PadStyle and Material in effect when it was
-    measured (Keewano columns hold their last value forward), so this is a plain WHERE.
+    Kept as a compatibility shim. It never queries the network or returns a multiplier,
+    including when remote history contains old synthetic calibration events.
     """
-    k = (pad, material)
-    if k not in _ratio_cache:
-        rows = query('SELECT avg("HoldForceRatioPct") AS r, count("HoldForceRatioPct") AS n FROM events '
-                     f'WHERE "PadStyle" = {_lit(pad)} AND "Material" = {_lit(material)}')
-        r = None
-        if rows and rows[0][0] is not None and rows[0][1]:
-            ratio = min(3.0, max(0.5, float(rows[0][0]) / 100))  # one bad bench run can't wreck a design
-            r = {"ratio": round(ratio, 3), "n": int(rows[0][1]), "source": "keewano"}
-        _ratio_cache[k] = r
-    return _ratio_cache[k]
+    return None

@@ -403,7 +403,7 @@ def test_manual_json_and_html(built):
         d = built[cfg]["dir"] / "manual"
         assert man["json"] == "manual.json" and man["html"] == "manual.html"
         assert (d / "manual.json").is_file() and (d / "manual.html").is_file()
-        html = (d / "manual.html").read_text()
+        html = (d / "manual.html").read_text(encoding="utf-8")
         steps = man["steps"]
         mech = [s for s in steps if s.get("kind") == "mechanical"]
         assert len(mech) == 8
@@ -510,7 +510,7 @@ def test_manual_folds_generator_wiring_step_and_uses_servo_ids(tmp_path):
     fw = next(s for s in man["steps"] if s["kind"] == "firmware")
     assert [x["id"] for x in fw["servo_ids"]] == [1, 2, 3, 4, 5, 6, 7]
     assert fw["servo_ids"][5]["joint"] == "j5_wrist_roll"                    # "roll" resolved to the real joint
-    html = (tmp_path / "manual.html").read_text()
+    html = (tmp_path / "manual.html").read_text(encoding="utf-8")
     assert "J2 shoulder (2)" in html
 
 
