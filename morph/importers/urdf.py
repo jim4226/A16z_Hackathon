@@ -302,7 +302,7 @@ def normalize(urdf_path: str, bundle: str, out_dir: str, text: str | None = None
     index = _bundle_index(bundle)
     mesh_dir = os.path.join(out_dir, "meshes")
     os.makedirs(mesh_dir, exist_ok=True)
-    copied, missing, total, mtaken, refused = {}, [], 0, set(), []
+    copied, missing, total, mtaken, refused, bad = {}, [], 0, set(), [], {}
     out_root = ET.Element("robot", {"name": root_el.get("name") or "robot"})
     for el in root_el:
         if el.tag not in KEEP:
@@ -351,6 +351,8 @@ def normalize(urdf_path: str, bundle: str, out_dir: str, text: str | None = None
                 ref = mesh.get("filename") or ""
                 total += 1
                 real, how = resolve_mesh(ref, urdf_dir, bundle, pkgs, index)
+                if real is not None and real in bad:             # already refused for another visual
+                    real, how = None, bad[real]
                 if real is None:
                     missing.append({"ref": ref, "why": how, "link": el.get("name")})
                     lk.remove(v)
@@ -376,6 +378,7 @@ def normalize(urdf_path: str, bundle: str, out_dir: str, text: str | None = None
                         else:
                             raise ImportFailed(f"{os.path.basename(real)} is not a mesh Morph can read ({fmt}).")
                     except ImportFailed as exc:
+                        bad[real] = str(exc)
                         refused.append(str(exc))
                         missing.append({"ref": ref, "why": str(exc), "link": el.get("name")})
                         mtaken.discard(fn[:-4])
@@ -384,9 +387,13 @@ def normalize(urdf_path: str, bundle: str, out_dir: str, text: str | None = None
                     copied[real] = fn
                 attrs = {"filename": f"meshes/{copied[real]}"}
                 if mesh.get("scale") or mesh_scale:
-                    sc = [float(x) for x in (mesh.get("scale") or "1 1 1").split()][:3] or [1.0, 1.0, 1.0]
-                    sc = (sc * 3)[:3] if len(sc) == 1 else sc
-                    attrs["scale"] = " ".join(f"{v * (mesh_scale or 1.0):.6g}" for v in sc)
+                    try:
+                        sc = [float(x) for x in (mesh.get("scale") or "1 1 1").split()][:3] or [1.0, 1.0, 1.0]
+                    except ValueError:
+                        sc = [1.0, 1.0, 1.0]
+                        warnings.append(f"ignored the unreadable mesh scale {mesh.get('scale')[:40]!r} of {ref[-60:]}")
+                    sc = (sc * 3)[:3] if len(sc) < 3 else sc
+                    attrs["scale"] = " ".join(f"{x * (mesh_scale or 1.0):.6g}" for x in sc)
                 ET.SubElement(gg, "mesh", attrs)
             else:
                 prim = next((g.find(t) for t in ("box", "cylinder", "sphere") if g.find(t) is not None), None)
