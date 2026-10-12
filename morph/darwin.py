@@ -26,14 +26,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.request import Request, urlopen
 
-from . import settings
+from . import resources, settings
 
 API = "https://api.darwin.so/api/v3/search"
 AGENT_PAGE = "https://index.darwin.so/agent/{agent}?capability={cap}"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "morph", "darwin")
 # Answers from live searches, shipped with the repo: the last fallback when Darwin is down
 # and this machine has never searched that query (a fresh demo laptop).
-SHIPPED = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "darwin-cache")
+SHIPPED = resources.path("data", "darwin-cache")
 
 # The agents we route each kind of work to, by Darwin agent id (names are not unique).
 # Picked from live searches on 2026-10-11; Search still runs, these just go first and are

@@ -1,9 +1,9 @@
 """API keys for the integrations: what each one is for, whether it is set, and saving new ones.
 
-Keys live in the repo's git-ignored `.env` and in the process environment. Nothing here ever
-returns a key's value: the Studio only learns whether each key is set. Everything works without
-keys (Claude chat falls back to the built-in rules, Keewano switches itself off, Darwin Search
-needs no key), so keys only add capabilities.
+Keys live in the git-ignored `.env` next to the launchers (an installed wheel uses the user's settings folder,
+resources.config_dir(), never site-packages) and in the process environment. Nothing here ever returns a key's
+value: the Studio only learns whether each key is set. Everything works without keys (Claude chat falls back to
+the built-in rules, Keewano switches itself off, Darwin Search needs no key), so keys only add capabilities.
 """
 
 from __future__ import annotations
@@ -14,9 +14,10 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENV_PATH = os.path.join(ROOT, ".env")
-TEMPLATE = os.path.join(ROOT, "env.example")
+from . import resources
+
+ENV_PATH = os.path.join(resources.config_dir(), ".env")
+TEMPLATE = resources.path("env.example")
 
 KEYS = [
     {"name": "ANTHROPIC_API_KEY", "service": "Claude", "label": "Anthropic API key",
@@ -83,7 +84,9 @@ def load_env(path: str | None = None) -> list:
 def _write_private(path: str, text: str):
     """Replace `path` with `text`, readable by this user only (0600): written to a fresh private temp file
     next to it, then renamed over it, so a crash never leaves half a file. Raises OSError (read-only folder)."""
-    fd, tmp = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=os.path.dirname(os.path.abspath(path)))
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)  # an installed wheel's settings folder may not exist yet
+    fd, tmp = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=folder)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)

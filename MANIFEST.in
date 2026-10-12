@@ -1,0 +1,14 @@
+# The source archive (python -m build) holds everything a wheel is built from, plus the launchers, docs and tests.
+include LICENSE NOTICE README.md CHANGELOG.md SECURITY.md THIRD_PARTY_NOTICES.md
+include requirements.txt constraints.txt env.example setup.py
+include run_studio.bat run_studio.sh .gitattributes
+recursive-include robots *
+recursive-include data/darwin-cache *.json
+recursive-include morph/studio/static *
+include morph/robot/*.json
+recursive-include docs *.md
+recursive-include tools *.py *.html *.txt
+recursive-include tests *.py *.h
+recursive-include examples *
+prune morph/_assets
+global-exclude __pycache__ *.py[cod] .DS_Store

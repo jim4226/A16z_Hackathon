@@ -483,9 +483,9 @@ def _git_sha() -> str | None:
     import shutil
     import subprocess
 
-    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    git = shutil.which("git")
-    if not git or not os.path.exists(os.path.join(repo, ".git")):
+    from . import resources
+    repo, git = resources.checkout(), shutil.which("git")
+    if not git or not repo or not os.path.exists(os.path.join(repo, ".git")):
         return None
     try:
         run = lambda *args: subprocess.run([git, "-C", repo, *args], capture_output=True, text=True, timeout=10)  # noqa: E731
@@ -503,9 +503,10 @@ def cmd_doctor(a):
     import importlib
     import platform
     import socket
-    from . import keys
+    from . import keys, resources
 
     ok_all = True
+    checkout = resources.checkout()
 
     def line(ok, text, fix=""):
         nonlocal ok_all
@@ -528,7 +529,8 @@ def cmd_doctor(a):
             line(True, f"{mod} {getattr(m, '__version__', '')}".strip())
         except Exception as exc:  # noqa: BLE001
             line(False, f"{mod} does not import ({exc.__class__.__name__}: {exc})",
-                 "run the launcher again (it installs requirements.txt), or: python -m pip install -r requirements.txt")
+                 "delete the .venv folder, then run the launcher again: it reinstalls the packages" if checkout else
+                 f"reinstall it: python -m pip install --force-reinstall {'pillow' if mod == 'PIL' else mod}")
     try:
         os.makedirs(HOME, exist_ok=True)
         probe = os.path.join(HOME, ".write-test")
@@ -539,7 +541,7 @@ def cmd_doctor(a):
     except OSError as exc:
         line(False, f"cannot write {os.path.abspath(HOME)} ({exc})", "move the repo out of a read-only or synced folder")
     if keys.ensure_env_file():
-        line(None, "created .env from env.example (add your keys there, or with the Keys button in the Studio)")
+        line(None, f"created {keys.ENV_PATH} from env.example (add your keys there, or with the Keys button in the Studio)")
     for k in keys.status():
         line(None, f"{k['service']}: {k['label']} {'is set' if k['set'] else 'not set (optional)'}")
     line(None, "Darwin: no key needed")
@@ -552,7 +554,7 @@ def cmd_doctor(a):
         p = RobotProject(root) if os.path.isdir(root) else None
         last = p.latest() if p else None
         if not last:
-            line(None, f"{name}: not built yet (the launcher builds it, about a minute)")
+            line(None, f"{name}: not built yet (starting the Studio builds it, about a minute)")
             continue
         try:
             res = p.load_results(last)
@@ -579,8 +581,9 @@ def cmd_doctor(a):
         sock.settimeout(1)
         busy = sock.connect_ex(("127.0.0.1", 8765)) == 0
     line(None, "port 8765: " + ("in use (a Studio is running, or another app)" if busy else "free"))
-    print("\nAll good: double-click run_studio.bat (Windows) or run ./run_studio.sh (macOS/Linux)." if ok_all
-          else "\nFix the lines marked FIX, then run this again.")
+    start = ("double-click run_studio.bat (Windows) or run ./run_studio.sh (macOS/Linux)" if checkout
+             else "run `morph studio --open`")
+    print(f"\nAll good: {start}." if ok_all else "\nFix the lines marked FIX, then run this again.")
 
 
 def _console_safe():

@@ -14,13 +14,14 @@ import os
 
 import numpy as np
 
+from .. import resources
 from ..studio.security import contained_path, robot_source
 from . import catalog, catalog_extra  # noqa: F401  (registers extra catalog keys)
 from . import components
 from .assembly import Cable, Part, trans
 from .urdf_import import load_urdf
 
-ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "robots")
+ROOT = resources.path("robots")  # the repo's robots/ folder, or its copy inside an installed wheel
 G = np.array([0.0, 0.0, -9.81])
 # Feetech STS3215 STL frame -> Morph actuator frame (shaft axis at the horn face, body towards -z)
 STS_STL_TO_COMPONENT = trans((12.5, 0.0, 20.2))
