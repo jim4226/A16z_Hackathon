@@ -309,7 +309,7 @@ def _anchor_label(info: dict, kind: str, key) -> str:
     return f"{info['rev']}" + (f": {info['label']}" if info.get("label") else "")
 
 
-def make_anchor(root: str, rev: str, kind: str = "rev", key=None) -> dict:
+def make_anchor(root: str, rev: str, kind: str = "rev", key=None, item=None, category=None) -> dict:
     """{rev, design_sha256, kind, key, label} for a comment, checked against that revision."""
     info = rev_info(root, rev)
     if info is None:
@@ -317,6 +317,8 @@ def make_anchor(root: str, rev: str, kind: str = "rev", key=None) -> dict:
     if kind not in KINDS:
         raise CollabError(400, "Comment on a revision, stage, BOM line, parameter or file.")
     key = rev if kind == "rev" else key
+    if kind == "bom" and key is None and isinstance(item, str):  # the browser names the row; the server derives its key
+        key = bom_key(category, item)
     if not isinstance(key, str) or not _key_exists(root, info, kind, key):
         raise CollabError(400, f"{rev} has no {'BOM line' if kind == 'bom' else kind} {str(key)[:60]!r} to comment on.")
     return {"rev": rev, "design_sha256": info["design_sha256"], "kind": kind, "key": key, "label": _anchor_label(info, kind, key)}
@@ -354,7 +356,8 @@ def add_comment(root: str, by: str, body, anchor: dict | None = None, parent: st
         else:
             if not isinstance(anchor, dict):
                 raise CollabError(400, "Say what the comment is about: {rev, kind, key}.")
-            anc = make_anchor(root, anchor.get("rev"), anchor.get("kind") or "rev", anchor.get("key"))
+            anc = make_anchor(root, anchor.get("rev"), anchor.get("kind") or "rev", anchor.get("key"), anchor.get("item"),
+                              anchor.get("category"))
             root_id = None
         c = {"id": new_id("c", 5), "anchor": anc, "body": body, "by": by, "ts": utc(), "parent": root_id,
              "mentions": mentions(body, members) if members else []}
@@ -899,7 +902,7 @@ def can_release(level: str, decisions, members, *, authors=(), required=None, po
             if dec.get("decision") == "request_changes":
                 chg.append(_pub(m, b, via))
             elif level == "prototype" or b not in work:
-                appr.append(_pub(m, b, via))
+                appr.append({**_pub(m, b, via), "anchor": dec.get("anchor"), "carried": bool(dec.get("carried"))})
         if level == "prototype":
             any_ok |= {a["id"] for a in appr}
         counted |= {a["id"] for a in appr}

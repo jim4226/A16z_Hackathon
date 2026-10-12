@@ -37,6 +37,10 @@ def _item(kind: str, ts, by, text: str, ref: dict, seq: int) -> dict:
             "text": text, "ref": ref, "_seq": seq}
 
 
+def _and(names: list) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1] if names else ""
+
+
 def _name(members: dict, mid) -> str:
     return (members.get(mid) or {}).get("name") or ("someone" if not mid else "a former member")
 
@@ -96,7 +100,7 @@ def feed(root: str, members=None, limit: int = 50, before: float | None = None) 
             add("review", op.get("ts"), op.get("by"), f"{_name(members, op.get('by'))} asked for review of {what}" + (f": {asked}" if asked else ""),
                 {"id": op.get("id"), "target": t})
         elif k == "decide" and op.get("review") in reviews:
-            ds = " and ".join(LABELS.get(d, d) for d in op.get("disciplines") or [])
+            ds = _and([LABELS.get(d, d) for d in op.get("disciplines") or []])
             verb = "approved" if op.get("decision") == "approve" else "requested changes on"
             add("review", op.get("ts"), op.get("by"), f"{_name(members, op.get('by'))} {verb} {reviews[op['review']]}" + (f" as {ds}" if ds else ""),
                 {"id": op.get("review"), "rev": op.get("rev"), "decision": op.get("decision")})

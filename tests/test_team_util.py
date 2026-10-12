@@ -159,7 +159,7 @@ def request(home, root, member=None, method="GET", path="/", body=None, query=No
 
 def serve(home, root, extra=None):
     """Start a team-mode server on 127.0.0.1 (free port). Returns (httpd, base_url, room). `extra(handler, path, member)`
-    may answer additional GET paths (the UI demo page) after authentication."""
+    may answer additional GET paths (the UI demo page) for any signed-in member, before the route table."""
     from morph.studio import api_team
 
     api_team.configure(home=str(home))
@@ -185,6 +185,8 @@ def serve(home, root, extra=None):
             if self.command in ("GET", "HEAD") and api_team.landing(self):
                 return
             member = api_team.authenticate(self)
+            if extra and member and self.command == "GET" and extra(self, u.path, member):
+                return  # test-only pages (the UI demo) for any signed-in member
             if not api_team.authorize(member, self.command, u.path):
                 if member is None and u.path == "/":
                     status, page, ctype, csp = api_team.signed_out_page()
@@ -228,8 +230,6 @@ def serve(home, root, extra=None):
                 finally:
                     hub.unsubscribe(q)
                     api_team.stream(room.name, member, False, send=hub.send)
-                return
-            if extra and self.command == "GET" and extra(self, u.path, member):
                 return
             hit = routes.get((self.command, u.path))
             if hit is None:

@@ -663,7 +663,7 @@ def reviews_decide(req):
     what = rv["target"]["rev"] or f"change request {rv['target']['proposal']}"
     tell = set(rv.get("authors") or []) | {rv.get("by")}
     _notify(req, sorted(x for x in tell if x), "decision",
-            f"{m['name']} {verb} {what} as " + " and ".join(LABELS[d] for d in last["disciplines"]), {"review": rv["id"], "rev": rv["target"]["rev"]})
+            f"{m['name']} {verb} {what} as " + activity._and([LABELS[d] for d in last["disciplines"]]), {"review": rv["id"], "rev": rv["target"]["rev"]})
     out = {"ok": True, "review": rv}
     if rv["target"]["rev"]:
         out["gate"] = collab.release_gate(root, rv["target"]["rev"], members, pol)
