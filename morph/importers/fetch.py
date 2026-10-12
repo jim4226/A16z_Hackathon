@@ -379,6 +379,8 @@ def _hf(p: dict, dest: str, on_progress, deadline) -> dict:
         url = m.group(1) if m else None
         pages += 1
     files = [e for e in entries if isinstance(e.get("path"), str) and WANTED.search(e["path"])]
+    gltf_dirs = {posixpath.dirname(e["path"]) for e in files if e["path"].lower().endswith(".gltf")}
+    files = [e for e in files if not e["path"].lower().endswith(".bin") or posixpath.dirname(e["path"]) in gltf_dirs]
     if not files:
         raise ImportFailed("No robot, mesh or parts-list files in that Hugging Face folder.")
     if len(files) > LIMITS["fetch_files"]:
