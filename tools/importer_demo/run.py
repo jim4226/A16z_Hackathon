@@ -188,7 +188,28 @@ def main():
                 p.click('[data-a="commit"]')
                 p.wait_for_selector(".imp-row.done")
                 shot(p, "10c_object_applied")
+            if scn == "bom":
+                p.click('[data-a="commit"]')
+                p.wait_for_selector(".imp-row.done")
+                with p.expect_download() as dl:
+                    p.click('[data-a="csv"]')
+                csv_path = dl.value.path()
+                with open(csv_path, encoding="utf-8") as fh:
+                    head = fh.readline().strip()
+                if not head.startswith("item,qty"):
+                    errors.append(f"bom csv header: {head!r}")
+                shot(p, "11b_bom_done")
             p.close()
+
+        # 10d: a Studio with no edit path for the object says so and shows the changes to type
+        p = page_for("object", slow=20, applied=0)
+        p.click("#importBtn")
+        p.set_input_files('input[data-in="files"]', [dummy])
+        p.wait_for_selector('[data-a="commit"]', timeout=20000)
+        p.click('[data-a="commit"]')
+        p.wait_for_selector(".imp-pre")
+        shot(p, "10d_object_not_applied")
+        p.close()
 
         # 12: a link Morph refuses, 13: the page-wide drop overlay
         p = page_for("robot_ok")

@@ -25,6 +25,7 @@ from ..importers import ImportFailed, session as sess
 from ..importers.common import LIMITS, set_home
 
 _busy: dict = {}
+_doomed: dict = {}            # sessions deleted while a download or build was running: removed when it ends
 _busy_lock = threading.Lock()
 _cleaned: set = set()
 PATH_RX = re.compile(r"^/api/import/([a-f0-9]{16})(?:/(file|detect|commit|preview\.glb|preview\.png))?/?$")
@@ -89,6 +90,9 @@ def _claim(sid: str) -> bool:
 def _release(sid: str):
     with _busy_lock:
         _busy.pop(sid, None)
+        home = _doomed.pop(sid, False)
+    if home is not False:
+        sess.Session(sid, home).delete()
 
 
 def _open(req, sid):
@@ -166,6 +170,8 @@ def upload(req, sid):
     length = int(raw)
     if length > LIMITS["upload_file"]:
         return _err(413, f"That file is {length / (1 << 20):.0f} MB; the limit is {LIMITS['upload_file'] >> 20} MB.")
+    if _busy.get(sid):
+        return _err(409, "This import is busy (downloading, detecting or building); start a new import to add files.")
     out = s.add_file(rel, req.handler.rfile, length)
     st = s.state()
     return 200, {"ok": True, **out, "files": len(st["files"]), "bytes": st["bytes"]}
@@ -217,7 +223,8 @@ def commit(req, sid):
         def run():
             ev = _emitter(req, project)
             try:
-                out = sess.build(plan, home, on_event=ev, fast_sim=False, n_trials=2)
+                out = sess.build(plan, home, on_event=ev, fast_sim=False, n_trials=2, session_id=sid,
+                                 created_by=(getattr(req, "member", None) or {}).get("id"))
                 ev({"type": "import", "id": sid, "stage": "build", "status": "done",
                     "text": f"Built {out['project']} ({out['rev']})"})
             except Exception as exc:  # noqa: BLE001
@@ -233,22 +240,31 @@ def commit(req, sid):
         return 202, {"ok": True, **{k: v for k, v in plan.items() if k not in ("design", "history")}}
     _release(sid)
     if plan["kind"] == "object" and (body.get("apply", True) is not False):
-        _apply_async(req, plan["changes"], plan.get("label") or "imported object")
-        return 202, {"ok": True, **plan, "applied": True}
-    return 200, {"ok": True, **plan}
+        if _apply_async(req, plan["changes"], plan.get("label") or "imported object"):
+            return 202, {"ok": True, **plan, "applied": True}
+    out = {"ok": True, **plan}
+    if plan["kind"] == "object":
+        out["applied"] = False                   # no edit path here: the dialog applies the changes itself
+    return 200, out
 
 
-def _apply_async(req, changes: dict, label: str):
+def _apply_async(req, changes: dict, label: str) -> bool:
     """Object keys go through the room's normal edit path (one pipeline run at a time)."""
     target = getattr(getattr(req, "room", None), "apply", None) or getattr(req.studio, "apply", None)
     if target is None:
-        return
+        return False
     threading.Thread(target=lambda: target(changes, label), daemon=True, name="import-apply").start()
+    return True
 
 
 def delete(req, sid):
-    s = sess.Session(sid, _home(req))
-    s.delete()
+    """DELETE /api/import/<id>. A running download or build finishes first; its files go when it ends."""
+    home = _home(req)
+    with _busy_lock:
+        if _busy.get(sid):
+            _doomed[sid] = home
+            return 202, {"ok": True, "pending": True}
+    sess.Session(sid, home).delete()
     return 200, {"ok": True}
 
 

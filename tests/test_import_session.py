@@ -239,8 +239,9 @@ def test_api_commit_robot_builds_in_the_background(home, tmp_path, monkeypatch):
     assert api_import.dispatch(_req(st, "POST", f"/api/import/{sid}/detect", {}))[0] == 200
     built = []
 
-    def fake_build(plan, home_dir=None, on_event=None, fast_sim=False, n_trials=2):
+    def fake_build(plan, home_dir=None, on_event=None, fast_sim=False, n_trials=2, **kw):
         built.append(plan)
+        assert kw["session_id"] == sid and kw["created_by"] is None
         on_event({"type": "node", "node": "sizing", "status": "computed"})
         on_event({"type": "project_created", "project": plan["project"], "origin": "import"})
         return {"project": plan["project"], "rev": "r001", "summary": {}}
@@ -335,3 +336,50 @@ def test_kicad_board_candidate_keeps_its_kind(home, tmp_path):
     assert c["kind"] == "board" and c["document"] == "pcb" and c["board_mm"] == [50.0, 30.0]
     res = s.commit(0)
     assert res["kind"] == "board" and res["document"] == "pcb" and len(res["rows"]) == 2
+
+
+def test_build_tags_import_events_and_records_the_creator(home, tmp_path, monkeypatch):
+    from morph.robot import pipeline2
+
+    class FakeProject:
+        def __init__(self, root):
+            self.root = root
+
+        def run(self, design, label=None, n_trials=2, verbose=False, on_event=None, fast_sim=False):
+            on_event({"type": "node", "node": "sizing", "status": "computed"})
+            return "r001"
+
+        def load_results(self, rev):
+            return {"summary": {"feasible": True}}
+
+    monkeypatch.setattr(pipeline2, "RobotProject", FakeProject)
+    plan = {"kind": "robot", "source": "box-arm", "project": "box-arm", "changes": {"arm.source": "so101"},
+            "meta": {"kind": "robot", "source": "so101", "origin": "import", "demo": False, "need": "Imported"}}
+    events = []
+    out = sess.build(plan, home, on_event=events.append, session_id="0123456789abcdef", created_by="m-7")
+    assert out["project"] == "box-arm" and out["rev"] == "r001"
+    start = next(e for e in events if e["type"] == "import")
+    assert start["id"] == "0123456789abcdef" and start["project"] == "box-arm" and start["stage"] == "build"
+    assert "id" not in next(e for e in events if e["type"] == "node")
+    assert events[-1] == {"type": "project_created", "project": "box-arm", "origin": "import"}
+    meta = json.load(open(os.path.join(home, "box-arm", "meta.json"), encoding="utf-8"))
+    assert meta["origin"] == "import" and meta["created_by"] == "m-7" and meta["created_utc"].endswith("Z")
+
+
+def test_api_busy_sessions_and_unapplied_objects(home, tmp_path):
+    st = _Studio(home)
+    bare = types.SimpleNamespace(home=home, hub=st.hub, remote=False, p=st.p)      # a Studio without an edit path
+    sid = api_import.dispatch(_req(bare, "POST", "/api/import", {}))[1]["id"]
+    egg = open(egg_stl(str(tmp_path / "egg.stl")), "rb").read()
+    api_import.dispatch(_req(bare, "PUT", f"/api/import/{sid}/file", query={"path": ["egg.stl"]}, raw=egg))
+    api_import.dispatch(_req(bare, "POST", f"/api/import/{sid}/detect", {}))
+    s, out = api_import.dispatch(_req(bare, "POST", f"/api/import/{sid}/commit", {"candidate": 0}))
+    assert s == 200 and out["applied"] is False and out["changes"]["object.shape"] == "cylinder"
+    assert api_import._claim(sid)                                   # as if a download or build were running
+    s, out = api_import.dispatch(_req(st, "PUT", f"/api/import/{sid}/file", query={"path": ["b.stl"]}, raw=egg))
+    assert s == 409 and "busy" in out["error"]
+    s, out = api_import.dispatch(_req(st, "DELETE", f"/api/import/{sid}"))
+    assert s == 202 and out["pending"] and os.path.isdir(os.path.join(home, ".imports", sid))
+    api_import._release(sid)                                        # the job ends: its files go now
+    assert not os.path.exists(os.path.join(home, ".imports", sid))
+    assert api_import.dispatch(_req(st, "GET", f"/api/import/{sid}"))[0] == 404

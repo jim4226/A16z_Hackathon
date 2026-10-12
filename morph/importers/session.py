@@ -774,7 +774,7 @@ def unique_project(name: str, home_dir: str | None = None) -> str:
 
 
 def build(plan: dict, home_dir: str | None = None, on_event=None, fast_sim: bool = False, n_trials: int = 2,
-          verbose: bool = False) -> dict:
+          verbose: bool = False, session_id: str | None = None, created_by: str | None = None) -> dict:
     """Create the project for a robot or project plan and run the pipeline once. Returns
     {"project", "rev", "summary"}. W0b's projects.create_project / job queue can replace this in the Studio."""
     from ..robot.pipeline2 import RobotProject
@@ -809,8 +809,13 @@ def build(plan: dict, home_dir: str | None = None, on_event=None, fast_sim: bool
         raw_event = on_event
 
         def on_event(ev, _send=raw_event):
-            _send({**ev, "project": ev.get("project") or name})
+            ev = {**ev, "project": ev.get("project") or name}
+            if session_id and ev.get("type") == "import":
+                ev.setdefault("id", session_id)
+            _send(ev)
     meta = {**plan.get("meta", {}), "kind": "robot", "created_utc": utcnow()}
+    if created_by:
+        meta["created_by"] = str(created_by)[:64]
     with open(os.path.join(root, "meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=1)
     if plan["kind"] == "project":

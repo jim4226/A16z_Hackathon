@@ -37,6 +37,8 @@ const CSS = `
   color: var(--ink, #e9ecf2); padding: 0 10px; font: 12.5px var(--mono, monospace); outline: none; min-width: 0; }
 .imp-url input:focus, .imp-in:focus, .imp select:focus { border-color: var(--accent-line, rgba(112,145,255,.45)); box-shadow: 0 0 0 3px var(--accent-bg, rgba(112,145,255,.12)); }
 .imp-note { color: var(--dim, #5d6676); font-size: 11.5px; margin-top: 6px; }
+.imp-pre { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--bg1, #0d0f14); border: 1px solid var(--line2, #262c38);
+  font: 11.5px var(--mono, monospace); white-space: pre-wrap; word-break: break-word; user-select: all; }
 .imp-bar { height: 4px; border-radius: 3px; background: var(--bg4, #20252f); overflow: hidden; margin: 12px 0 4px; }
 .imp-bar > i { display: block; height: 100%; width: 0; background: var(--accent, #7091ff); transition: width .2s; }
 .imp-check { display: grid; gap: 5px; margin-top: 10px; }
@@ -406,7 +408,7 @@ export class Importer {
         this.view = 'building';
       } else {
         this.view = 'done';
-        if (r.kind === 'object') this.s.toast?.('Object applied: the robot regenerates with it');
+        if (r.kind === 'object' && r.applied) this.s.toast?.('Object applied: the robot regenerates with it');
       }
       this.render();
     } catch (e) {
@@ -576,12 +578,36 @@ export class Importer {
       const foot = `<span class="grow"></span><button class="btn" type="button" data-a="close">Close</button>${b.done ? `<button class="btn primary" type="button" data-a="openp">Open ${E(b.project)}</button>` : ''}`;
       return { body, foot };
     }
-    let text = 'Done.';
-    if (r.kind === 'object') text = `The object (${E(r.changes?.['object.shape'])} ${E(r.changes?.['object.diameter_mm'])} × ${E(r.changes?.['object.length_mm'])} mm, about ${E(r.mass?.g)} g, estimated) is applied to this project: watch the pipeline strip regenerate it.`;
-    if (r.kind === 'bom') text = `Read ${E((r.rows || []).length)} parts${r.total != null ? ` totalling ${E(r.total)} ${E(r.currency || '')}` : ''}. ${r.darwin_parts?.length ? `${E(r.darwin_parts.length)} of them can be looked up with Darwin from the BOM tab.` : ''}`;
+    let text = 'Done.', extra = '';
+    if (r.kind === 'object') {
+      const obj = `${E(r.changes?.['object.shape'])} ${E(r.changes?.['object.diameter_mm'])} × ${E(r.changes?.['object.length_mm'])} mm, about ${E(r.mass?.g)} g, estimated`;
+      text = r.applied ? `The object (${obj}) is applied to this project: watch the pipeline strip regenerate it.`
+        : `Read the object (${obj}). It was not applied here; type these changes in the chat to use it:`;
+      if (!r.applied) extra = `<pre class="imp-pre">${E(Object.entries(r.changes || {}).map(([k, v]) => `${k}=${v}`).join(', '))}</pre>`;
+    }
+    if (r.kind === 'bom') text = `Read ${E((r.rows || []).length)} parts${r.total != null ? ` totalling ${E(r.total)} ${E(r.currency || '')}` : ''}.`;
     if (r.kind === 'board') text = `Read ${E((r.rows || []).length)} BOM lines${r.board_mm ? ` and a ${E(r.board_mm[0])} × ${E(r.board_mm[1])} mm outline` : ''}.`;
-    return { body: `<div class="imp-row done" style="margin-top:14px"><span class="dot">${ROW_ICON.done}</span><span>${text}</span></div>`,
-      foot: '<button class="btn" type="button" data-a="restart">Import something else</button><span class="grow"></span><button class="btn primary" type="button" data-a="close">Close</button>' };
+    const csv = (r.kind === 'bom' || r.kind === 'board') && (r.rows || []).length ? '<button class="btn" type="button" data-a="csv">Download CSV</button>' : '';
+    return { body: `<div class="imp-row done" style="margin-top:14px"><span class="dot">${ROW_ICON.done}</span><span>${text}</span></div>${extra}`,
+      foot: `<button class="btn" type="button" data-a="restart">Import something else</button>${csv}<span class="grow"></span><button class="btn primary" type="button" data-a="close">Close</button>` };
+  }
+
+  // the parsed rows as CSV; cells that a spreadsheet would run as a formula are quoted as text
+  downloadCsv() {
+    const r = this.result || {}, rows = r.rows || [];
+    const cols = ['item', 'qty', 'unit_price', 'ext_price', 'currency', 'category', 'make_or_buy', 'ref', 'refs', 'value', 'footprint', 'mpn', 'manufacturer', 'supplier', 'url'];
+    const cell = (v) => {
+      let t = v == null ? '' : String(v);
+      if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;
+      return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const used = cols.filter((k) => rows.some((x) => x[k] != null && x[k] !== ''));
+    const csv = [used.join(','), ...rows.map((x) => used.map((k) => cell(x[k])).join(','))].join('\r\n') + '\r\n';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `${(r.file || 'parts').split('/').pop().replace(/\.[^.]+$/, '') || 'parts'}-morph.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   previewHtml(c) {
@@ -618,6 +644,7 @@ export class Importer {
     q('[data-a="commit"]').forEach((b) => (b.onclick = () => this.commit()));
     q('[data-a="openp"]').forEach((b) => (b.onclick = () => { const p = this.building?.project; this.unsubscribe(); this.building = null; this.view = 'pick'; this.close(); if (p) this.s.openProject?.(p); }));
     q('[data-a="3d"]').forEach((b) => (b.onclick = () => this.mini3d(b)));
+    q('[data-a="csv"]').forEach((b) => (b.onclick = () => this.downloadCsv()));
     const host3d = this.el.querySelector('[data-3d]');
     const c = this.cand();
     if (host3d && c && this.s.preview3d) this.preview = this.s.preview3d(host3d, this.url(`/api/import/${this.id}/preview.glb`, { candidate: c.index })) || null;

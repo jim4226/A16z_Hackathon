@@ -58,8 +58,8 @@ async function commit(body) {
   window.log.push(['commit', body]);
   const fx = fixtures[window.scenario];
   const c = fx.detect.candidates[body.candidate];
-  if (c.kind === 'object') return { ok: true, kind: 'object', changes: c.changes, mass: c.mass, applied: true };
-  if (c.kind === 'bom') return { ok: true, kind: 'bom', rows: c.rows, total: c.total, currency: c.currency, darwin_parts: c.rows.map((r) => [r.item, r.item]) };
+  if (c.kind === 'object') return { ok: true, kind: 'object', changes: c.changes, mass: c.mass, applied: params.get('applied') !== '0' };
+  if (c.kind === 'bom') return { ok: true, kind: 'bom', file: c.file, rows: c.rows, total: c.total, currency: c.currency, darwin_parts: c.rows.map((r) => [r.item, r.item]) };
   const name = (body.name || c.name || 'robot').toLowerCase().replace(/[^a-z0-9]+/g, '-');
   const project = name;
   (async () => {   // the background build, as the Studio streams it
