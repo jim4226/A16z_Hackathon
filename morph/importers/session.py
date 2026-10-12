@@ -13,7 +13,7 @@ Candidate shapes (all JSON):
            tcp, base, ready, actuators, family, hints, units, meshes, license, warnings}
   object  {index, kind, file, format, changes, fit, units, mass, warnings}
   bom     {index, kind, file, format, rows, count, total, currency, columns, warnings}
-  board   {index, kind, file, format, board_mm, footprints, rows, warnings}
+  board   {index, kind, file, format, document: pcb|schematic, version, board_mm, footprints, layers, rows, warnings}
   project {index, kind, file, project, revisions, source, robot, warnings}
 commit() returns {kind: robot|object|bom|board|project, ...}; robots and projects come back as a plan that
 build() turns into a new project (the latest design is rebuilt, never trusted from results.json).

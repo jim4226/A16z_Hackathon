@@ -229,9 +229,12 @@ def commit(req, sid):
                     "text": f"Built {out['project']} ({out['rev']})"})
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
+                src = plan.get("source")
+                retry = (f"The robot is saved as {src}; build it in a new project with: "
+                         f"morph robot new NAME --source {src}" if plan["kind"] == "robot" and src
+                         else "Import the file again to retry.")
                 ev({"type": "import", "id": sid, "stage": "build", "status": "error",
-                    "text": f"The build failed ({exc.__class__.__name__}: {str(exc)[:200]}). The robot is saved; "
-                            "try New project from it again."})
+                    "text": f"The build failed ({exc.__class__.__name__}: {str(exc)[:200]}). {retry}"})
             finally:
                 _release(sid)
                 s.delete()
@@ -244,7 +247,7 @@ def commit(req, sid):
             return 202, {"ok": True, **plan, "applied": True}
     out = {"ok": True, **plan}
     if plan["kind"] == "object":
-        out["applied"] = False                   # no edit path here: the dialog applies the changes itself
+        out["applied"] = False                   # no edit path on this Studio: the dialog shows the keys to type
     return 200, out
 
 
