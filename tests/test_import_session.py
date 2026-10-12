@@ -323,3 +323,15 @@ def test_mjcf_scene_and_asset_includes(home, tmp_path):
     cands = [c for c in s.detect()["candidates"] if c["kind"] == "robot"]
     assert [c["file"] for c in cands] == ["mj/robot.xml"]
     assert "arm joints before the gripper" in cands[0]["error"]     # converted fine; one joint is not an arm
+
+
+def test_kicad_board_candidate_keeps_its_kind(home, tmp_path):
+    from test_import_fixtures import KICAD_PCB
+
+    s = sess.Session.create(home)
+    data = KICAD_PCB.encode()
+    s.add_file("carrier.kicad_pcb", io.BytesIO(data), len(data))
+    c = s.detect()["candidates"][0]
+    assert c["kind"] == "board" and c["document"] == "pcb" and c["board_mm"] == [50.0, 30.0]
+    res = s.commit(0)
+    assert res["kind"] == "board" and res["document"] == "pcb" and len(res["rows"]) == 2

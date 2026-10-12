@@ -1,7 +1,7 @@
 """KiCad 6 to 9 boards and schematics -> BOM lines and the board outline (for the controller plate and Darwin).
 
   res = read("carrier.kicad_pcb")
-  res -> {"kind": "pcb", "version": 20240108, "board_mm": [92.0, 66.0], "footprints": 61, "layers": 2,
+  res -> {"document": "pcb", "version": 20240108, "board_mm": [92.0, 66.0], "footprints": 61, "layers": 2,
           "rows": [{"item": "10k 0603", "qty": 4, "refs": "R1, R2, R3, R4", "footprint": ..., "make_or_buy": "buy"}, ...]}
 
 A ~40-line S-expression reader with depth and token limits; nothing is evaluated. Footprints or symbols marked
@@ -158,7 +158,7 @@ def read(path: str) -> dict:
         outline = _outline(root)
         if outline is None:
             warnings.append("no board outline on Edge.Cuts")
-        return {"kind": "pcb", "version": version, "board_mm": outline, "footprints": len(fps), "layers": layers,
+        return {"document": "pcb", "version": version, "board_mm": outline, "footprints": len(fps), "layers": layers,
                 "rows": _rows(items), "warnings": warnings}
     if kind == "kicad_sch":
         items = []
@@ -175,6 +175,6 @@ def read(path: str) -> dict:
         sheets = len(find(root, "sheet"))
         if sheets:
             warnings.append(f"{sheets} hierarchical sheets are not read; import the .kicad_pcb for the full parts list")
-        return {"kind": "schematic", "version": version, "board_mm": None, "footprints": len(items), "layers": None,
+        return {"document": "schematic", "version": version, "board_mm": None, "footprints": len(items), "layers": None,
                 "rows": _rows(items), "warnings": warnings}
     raise ImportFailed(f"{os.path.basename(path)} is not a KiCad board or schematic.")

@@ -559,8 +559,9 @@ export class Importer {
 
   boardView(c) {
     const E = this.esc;
-    const detail = `<dl class="imp-kv"><dt>File</dt><dd>${E(c.kind === 'board' ? c.file.split('/').pop() : '')}</dd><dt>Board</dt><dd>${c.board_mm ? `${c.board_mm[0]} × ${c.board_mm[1]} mm` : 'no outline'}${c.layers ? `, ${c.layers} copper layers` : ''}</dd>
-        <dt>Parts</dt><dd>${c.footprints} placed, ${(c.rows || []).length} BOM lines</dd></dl>
+    const sch = c.document === 'schematic';
+    const detail = `<dl class="imp-kv"><dt>File</dt><dd>${E(c.file.split('/').pop())}</dd><dt>${sch ? 'Schematic' : 'Board'}</dt><dd>${sch ? 'no outline in a schematic' : c.board_mm ? `${E(c.board_mm[0])} × ${E(c.board_mm[1])} mm` : 'no outline on Edge.Cuts'}${c.layers ? `, ${E(c.layers)} copper layers` : ''}</dd>
+        <dt>Parts</dt><dd>${E(c.footprints)} ${sch ? 'symbols' : 'placed'}, ${(c.rows || []).length} BOM lines</dd></dl>
       <table class="imp-table"><thead><tr><th>Part</th><th>Qty</th><th>Refs</th></tr></thead><tbody>${(c.rows || []).slice(0, 10).map((r) => `<tr><td>${E(r.item)}</td><td class="n">${E(r.qty)}</td><td>${E(r.refs)}</td></tr>`).join('')}</tbody></table>${this.warnings(c.warnings)}`;
     return { detail, action: `<button class="btn primary" type="button" data-a="commit">Use this board</button>` };
   }
