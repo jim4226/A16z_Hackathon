@@ -744,7 +744,11 @@ def _chip(label, value, default=False, note=""):
 
 def make_question(b: Brief, slot: str) -> dict:
     a, d = _arch(b), defaults(b)
-    things = a.things
+    things, they = a.things, "they"
+    if filled(b, "object"):  # "Where does it pick up the strawberries, and where do they go?"
+        lab = _object_label(b.get("object"), short=True)
+        things = "the " + re.sub(r"^(?:a|an) ", "", lab.lower())
+        they = "it" if re.match(r"(?:a|an) ", lab.lower()) else "they"
     if slot == "object":
         dk = d["object"].get("key")
         chips = [_chip(_object_label(object_value(k)), k, k == dk) for k in a.objects[:4]]
@@ -753,7 +757,8 @@ def make_question(b: Brief, slot: str) -> dict:
     spec = {
         "task": ("What should it do with them?", "Sorting adds a wrist camera; handing things over adds an emergency stop.",
                  [_chip("Pick and place", "pick_place"), _chip("Sort into bins", "sort"), _chip("Hand things to me", "hand_over")]),
-        "layout": (f"Where does it pick up {things}, and where do they go?", "Sets the pick and place points the arm is sized for.",
+        "layout": (f"Where does it pick up {things}, and where do{'es' if they == 'it' else ''} {they} go?",
+                   "Sets the pick and place points the arm is sized for.",
                    [_chip(v["label"], k) for k, v in LAYOUTS.items()]),
         "throughput": ("How fast does it need to work?", "Sets the cycle time in the simulation; about 4 s is the fastest.",
                        [_chip("One every 10 s", 10.0), _chip("One every 6 s", 6.0), _chip("As fast as it can, about 4 s", 4.0)]),
@@ -947,6 +952,9 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
                                                                          "fragility", "people_nearby", "perception", "connectivity")},
                 "inferred": p["inferred"], "hints": p["hints"], "oos": p["oos"], "implicit": p["implicit"]}
         merge(b, keep, "user", "answer")
+        a2 = _archetype_for_object(b.get("object"))
+        if _arch(b).key == "generic_arm" and a2:
+            set_archetype(b, a2, 0.9, "user")
     b.turns.append({"role": "user", "answers": dict(answers or {}), "text": (text or "")[:2000], "ts": _now_iso()})
     return notes
 
@@ -1299,6 +1307,11 @@ def assumptions_for(b: Brief, ch: dict) -> list:
 
     def add(slot, text, kind):
         q = make_question(b, slot) if slot in SLOTS else None
+        # options: other answers for this slot before the build (POST /api/brief answers); alternatives: the same choices
+        # as /api/params changes once the robot exists (only those that map onto Parameters keys)
+        cur = value(b, slot)
+        cur = cur.get("key") if isinstance(cur, dict) else cur
+        opts = [] if slot == "budget" else [{"label": c["label"], "value": c["value"]} for c in (q or {}).get("chips", []) if c["value"] != cur]
         alts = []
         if slot == "budget":
             q = {"chips": [{"label": "Dynamixel servos (about $1,000)", "value": "dynamixel"},
@@ -1309,7 +1322,7 @@ def assumptions_for(b: Brief, ch: dict) -> list:
             d = {"arm.actuator_family": c["value"]} if slot == "budget" else alt_changes(slot, c["value"])
             if d:
                 alts.append({"label": c["label"], "changes": d})
-        out.append({"slot": slot, "text": text, "kind": kind, "alternatives": alts[:3]})
+        out.append({"slot": slot, "text": text, "kind": kind, "options": opts[:3], "alternatives": alts[:3]})
 
     for slot in ("object", "layout", "throughput", "people_nearby", "perception", "budget", "quantity"):
         s = b.slots.get(slot)

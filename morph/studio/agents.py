@@ -407,7 +407,8 @@ def _feasibility_line(b: B.Brief) -> str:
             return f"Preflight still flags {len(pf['issues'])} issue(s) after repair"
         fixes = sum(1 for a in b.assumptions if a.get("kind") == "repair")
         est = f"; {b.estimate['label']}" if b.estimate else ""
-        return f"Preflight passed in {pf.get('ms', 0)} ms ({pf.get('checks', 1)} checks, {fixes} repair{'s' if fixes != 1 else ''}){est}"
+        n = pf.get("checks", 1)
+        return f"Preflight passed in {pf.get('ms', 0)} ms ({n} check{'s' if n != 1 else ''}, {fixes} repair{'s' if fixes != 1 else ''}){est}"
     return b.status
 
 

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Morph Studio: New robot demo</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  /* a stand-in for the Studio around the dialog (newrobot_demo.py serves this page; see its docstring) */
+  body { opacity: 1; }
+  .demo-main { display: grid; place-items: center; height: calc(100% - var(--head-h)); color: var(--muted); }
+  .demo-main p { max-width: 520px; text-align: center; line-height: 1.6; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border-radius: 9px; background: var(--bg4);
+    border: 1px solid var(--line3); color: var(--ink); font-size: 12.5px; opacity: 0; transition: opacity .2s; z-index: 70; }
+  #toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <div class="brand"><span class="logo"><svg viewBox="0 0 24 24"><path d="M5 18V6l7 6 7-6v12"/></svg></span><span>Morph <span class="sub">Studio</span></span></div>
+    <div class="crumb"><span class="sep">/</span><div class="projwrap"><button class="proj multi" id="projBtn" type="button"><i></i><span id="project">egg-picker</span>
+      <svg class="i sm chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+      <div class="menu glass" id="projMenu"><div class="mh">Projects</div><button type="button"><b>egg-picker</b><span class="tag neutral">generated</span></button>
+        <div id="projSlot"></div></div></div></div>
+    <div class="grow"></div>
+    <div id="headSlot" style="display:flex;gap:6px"></div>
+    <div id="conn" class="conn fixture"><i></i><span>Demo: brief engine live, build simulated</span></div>
+  </header>
+  <div class="demo-main"><p>This page runs the real brief engine (POST /api/brief) behind a mock Studio shell.<br>Click <b>New robot</b> in the header to start.</p></div>
+</div>
+<div id="toast"></div>
+<script type="module">
+import { I, esc } from '/static/panels.js';
+import { init, open } from '/static/newrobot.js';
+
+const QS = new URLSearchParams(location.search);
+const PACE = QS.has('slow') ? 650 : 140;          // ms between replayed events (?slow=1 to watch the timeline)
+const subs = {};
+const emit = (ev) => (subs[ev.type] || []).forEach((fn) => { try { fn(ev); } catch (e) { console.error(e); } });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let layer = null;
+
+async function replay(events) {  // the SSE stream, replayed in order a little after the reply
+  for (const ev of events) { await sleep(ev.type === 'agent' && ev.status === 'start' ? PACE * 2 : PACE); emit(ev); }
+}
+
+async function fakeBuild(project) {  // what the Studio streams while it builds: project_created, start, node x 9, done, agents
+  const stages = ['sizing', 'gripper', 'electronics', 'cad', 'sim', 'wiring', 'manufacturing', 'bom', 'manual'];
+  await sleep(PACE); emit({ type: 'project_created', project, origin: 'brief' });
+  emit({ type: 'start', project, rev: 'r001', parent: null, changes: {}, dirty: stages });
+  for (const node of stages) {
+    emit({ type: 'node', project, node, status: 'computing' });
+    await sleep(PACE * 1.4);
+    emit({ type: 'node', project, node, status: 'computed', seconds: 1.2 });
+  }
+  emit({ type: 'agent', project, role: 'sourcing', provider: 'darwin', status: 'start', ms: null, text: 'Darwin is shortlisting suppliers for every bought part' });
+  emit({ type: 'done', project, seconds: 17.4, current: { rev: 'r001', summary: { feasible: true, unit_cost: 289.4, pick_place_success: true,
+    cycle_time_s: 5.8, max_payload_g: 980, issues: [] } }, previous: null });
+  await sleep(PACE * 3);
+  emit({ type: 'agent', project, role: 'sourcing', provider: 'darwin', status: 'done', ms: 6200, text: 'Shortlist ready in the BOM tab (search only: nothing is ordered)' });
+  emit({ type: 'agent', project, role: 'memory', provider: 'keewano', status: 'skipped', ms: 0, text: 'Keewano not configured' });
+}
+
+const studio = {
+  S: { project: 'egg-picker', projects: [{ name: 'egg-picker' }] },
+  project: () => studio.S.project,
+  api: {
+    async get(path, params) {
+      return fetch(path + (params ? `?${new URLSearchParams(params)}` : ''), { cache: 'no-store', headers: { 'X-Morph-Client': 'demo' } });
+    },
+    async post(path, body) {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Morph-Client': 'demo' }, body: JSON.stringify(body) });
+      const data = await r.json();
+      const events = data._events || [];
+      delete data._events;
+      if (path === '/api/brief' && r.ok && data.brief && !body.action?.match?.(/^(build|cancel)$/)) {
+        // answer like the Studio does: 202 at once, the timeline and the result over the event stream
+        replay(events);
+        return { ok: true, status: 202, brief_id: data.brief_id, busy: true, brief: { ...data.brief, questions: [], status: 'asking' } };
+      }
+      if (path === '/api/brief' && body.action === 'build' && r.ok) { replay(events); fakeBuild(data.project || data.build.name); }
+      return { ...data, status: r.status, ok: r.ok && data.ok !== false };
+    },
+  },
+  on(type, fn) { (subs[type] ||= []).push(fn); return () => { subs[type] = subs[type].filter((f) => f !== fn); }; },
+  toast(text) { const t = document.getElementById('toast'); t.textContent = text; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 2200); },
+  addMsg() {}, esc, I,
+  modal: {
+    open(el, opts = {}) {
+      studio.modal.close();
+      layer = document.createElement('div');
+      layer.className = 'modal on';
+      const dlg = document.createElement('div');
+      dlg.className = `glass dlg${opts.wide ? ' wide' : ''}`;
+      dlg.appendChild(typeof el === 'string' ? Object.assign(document.createElement('div'), { innerHTML: el }) : el);
+      layer.appendChild(dlg);
+      layer.addEventListener('click', (e) => { if (e.target === layer) studio.modal.close(); });
+      document.body.appendChild(layer);
+    },
+    close() { layer?.remove(); layer = null; },
+  },
+  openProject(name) { studio.S.project = name; document.getElementById('project').textContent = name; },
+  reload() {},
+  mount: { header: document.getElementById('headSlot'), projMenu: document.getElementById('projSlot') },
+};
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && layer) studio.modal.close(); });
+document.getElementById('projBtn').onclick = (e) => { e.stopPropagation(); document.getElementById('projMenu').classList.toggle('on'); };
+document.addEventListener('click', (e) => { if (!e.target.closest('#projMenu')) document.getElementById('projMenu').classList.remove('on'); });
+init(studio);
+window.newrobot = { open, studio, emit };
+if (QS.get('open')) open(QS.get('open') === '1' ? '' : QS.get('open'));
+</script>
+</body>
+</html>
