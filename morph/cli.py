@@ -218,6 +218,20 @@ def cmd_studio(a):
                      "To restart it, close its CMD window first.")
     if os.environ.get("MUJOCO_GL") is None and sys.platform.startswith("linux"):
         os.environ["MUJOCO_GL"] = "egl"
+    meta = os.path.join(HOME, a.name, "meta.json")
+    if os.path.isfile(meta):
+        try:
+            with open(meta, encoding="utf-8") as fh:
+                kind = json.load(fh).get("kind")
+        except (OSError, ValueError, AttributeError):
+            kind = "robot"  # unreadable: let the robot pipeline report what is wrong
+        if kind != "robot":
+            sys.exit(f"{a.name} is a gripper-only project from the earlier CLI prototype; open "
+                     f"{os.path.join(HOME, a.name, 'report.html')} for it. Morph Studio opens whole robots: "
+                     "run_studio.bat / ./run_studio.sh, or `python -m morph.cli studio egg-picker --open`.")
+    from . import keys
+    if keys.ensure_env_file():
+        print("Created .env for your API keys (optional): use the Keys button in the Studio, or edit .env.")
     for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
         _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
@@ -422,34 +436,84 @@ def cmd_demo(a):
 
 def load_env(path=None):
     """KEY=value lines from the repo's .env (git-ignored) into the environment, without overriding
-    anything already set. Lets the demo laptop keep its Keewano/Anthropic keys in one file."""
-    path = path or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-    if not os.path.isfile(path):
-        return []
-    loaded = []
-    with open(path, "rb") as fh:
-        raw = fh.read()
-    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):  # PowerShell 5.1 `>` / Out-File writes UTF-16
-        text = raw.decode("utf-16", errors="replace")
-    else:
+    anything already set (see morph/keys.py: any Windows encoding, comments, quotes)."""
+    from . import keys
+    return keys.load_env(path)
+
+
+def cmd_doctor(a):
+    """Check that this machine can run Morph Studio, and say exactly what to fix if not."""
+    import importlib
+    import platform
+    import socket
+    from . import keys
+
+    ok_all = True
+
+    def line(ok, text, fix=""):
+        nonlocal ok_all
+        ok_all &= ok in (True, None)
+        mark = {True: "  OK  ", False: " FIX  ", None: " info "}[ok]
+        print(f"[{mark}] {text}" + (f"\n         -> {fix}" if fix and ok is False else ""))
+
+    print(f"Morph doctor ({platform.system()} {platform.release()}, {platform.machine()})\n")
+    v = sys.version_info
+    line((3, 10) <= v[:2] <= (3, 14), f"Python {platform.python_version()}",
+         "install Python 3.10 to 3.14 from python.org, then run the launcher again")
+    for mod in ("numpy", "scipy", "shapely", "manifold3d", "trimesh", "mujoco", "pydantic", "anthropic", "PIL"):
         try:
-            text = raw.decode("utf-8-sig")
-        except UnicodeDecodeError:  # Notepad "ANSI"
-            text = raw.decode("cp1252", errors="replace")
-    text = text.replace("\x00", "")  # a UTF-16 line appended to a UTF-8 file with `>>`
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+            m = importlib.import_module(mod)
+            line(True, f"{mod} {getattr(m, '__version__', '')}".strip())
+        except Exception as exc:  # noqa: BLE001
+            line(False, f"{mod} does not import ({exc.__class__.__name__}: {exc})",
+                 "run the launcher again (it installs requirements.txt), or: python -m pip install -r requirements.txt")
+    try:
+        os.makedirs(HOME, exist_ok=True)
+        probe = os.path.join(HOME, ".write-test")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("\u2192 \u2248 ok")  # characters the generators write; cp1252 cannot encode them
+        os.remove(probe)
+        line(True, f"can write {os.path.abspath(HOME)}")
+    except OSError as exc:
+        line(False, f"cannot write {os.path.abspath(HOME)} ({exc})", "move the repo out of a read-only or synced folder")
+    if keys.ensure_env_file():
+        line(None, "created .env from env.example (add your keys there, or with the Keys button in the Studio)")
+    for k in keys.status():
+        line(None, f"{k['service']}: {k['label']} {'is set' if k['set'] else 'not set (optional)'}")
+    line(None, "Darwin: no key needed")
+    for name in ("egg-picker", "so101"):
+        root = os.path.join(HOME, name)
+        from .robot.pipeline2 import RobotProject
+        p = RobotProject(root) if os.path.isdir(root) else None
+        last = p.latest() if p else None
+        if not last:
+            line(None, f"{name}: not built yet (the launcher builds it, about a minute)")
             continue
-        k, v = line.split("=", 1)
-        k, v = k.strip().removeprefix("export ").strip(), v.strip()
-        if v[:1] not in ('"', "'"):
-            v = v.split(" #", 1)[0].strip()  # KEY=value  # comment
-        v = v.strip('"').strip("'")
-        if k and v and k not in os.environ:
-            os.environ[k] = v
-            loaded.append(k)
-    return loaded
+        try:
+            res = p.load_results(last)
+        except (OSError, ValueError):
+            line(False, f"{name} {last}: results missing (a build was cut off)", "start the launcher again; it sets cut-off builds aside")
+            continue
+        bad = {n: st for n, st in (res.get("provenance") or {}).items() if st in ("error", "pending")}
+        errs = res.get("errors") or {}
+        line(not bad, f"{name} {last}: " + ("all stages built" if not bad else
+             "; ".join(f"{n} {st}" + (f" ({errs[n][:120]})" if n in errs else "") for n, st in bad.items())),
+             "send this output to the team; delete the projects folder and start again to rebuild")
+    if not getattr(a, "offline", False):
+        try:
+            r = darwin.search("PCB fabrication quote from Gerber files", 2, retries=0, timeout=15)
+            line(None, "Darwin Search: " + ("reachable" if r["ok"] and not r.get("cached") else
+                 f"not reachable right now ({r.get('error')}); the Studio uses its cached answers"))
+        except Exception as exc:  # noqa: BLE001
+            line(None, f"Darwin Search: check failed ({exc})")
+        for service, c in keys.check().items():  # each key that is set, tried once (read-only)
+            line(c["ok"], f"{service}: {c['detail']}", "replace the key with the Keys button in the Studio, or in .env")
+    with socket.socket() as sock:
+        sock.settimeout(1)
+        busy = sock.connect_ex(("127.0.0.1", 8765)) == 0
+    line(None, "port 8765: " + ("in use (a Studio is running, or another app)" if busy else "free"))
+    print("\nAll good: double-click run_studio.bat (Windows) or run ./run_studio.sh (macOS/Linux)." if ok_all
+          else "\nFix the lines marked FIX, then run this again.")
 
 
 def main(argv=None):
@@ -539,6 +603,10 @@ def main(argv=None):
     s.add_argument("--trials", type=int, default=4)
     s.add_argument("--fast", action="store_true", help="shorter simulations")
     s.set_defaults(fn=cmd_robot)
+
+    s = sub.add_parser("doctor", help="check this machine can run Morph Studio, and what to fix if not")
+    s.add_argument("--offline", action="store_true", help="skip the Darwin and Keewano network checks")
+    s.set_defaults(fn=cmd_doctor)
 
     s = sub.add_parser("studio", help="web UI: chat with / edit the robot, watch everything regenerate")
     s.add_argument("name", nargs="?", default="egg-picker")

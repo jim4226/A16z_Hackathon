@@ -729,3 +729,36 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .bm td.incl { color: var(--muted); }
 .bm td.incl small { display: block; font-size: 10px; color: var(--dim); font-weight: 500; }
 .dk.k-material { background: rgba(201, 162, 39, .14); color: #e3c35a; }
+
+/* ------------------------------------------------------------------ API keys dialog */
+.keysbtn { position: relative; height: 28px; }
+.keysbtn .kdot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); margin-left: 2px; }
+.keysbtn .kdot.some { background: var(--warn); } .keysbtn .kdot.on { background: var(--good); }
+.modal { position: fixed; inset: 0; z-index: 60; display: none; place-items: center; background: rgba(4, 5, 8, .62); backdrop-filter: blur(2px); }
+.modal.on { display: grid; animation: fadeIn .2s; }
+.modal .dlg { width: min(600px, calc(100vw - 32px)); max-height: 88vh; overflow: auto; padding: 16px 18px 14px; border-radius: 14px;
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, .9); }
+.dlg-h { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 6px; }
+.dlg-h .t { font-size: 16px; font-weight: 680; letter-spacing: -.01em; }
+.dlg-h .s { color: var(--muted); font-size: 12px; margin-top: 3px; line-height: 1.45; }
+.kicon { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-bg); color: var(--accent2); flex: none; }
+.kicon svg { width: 16px; height: 16px; }
+.ksec { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line2); }
+.ks-h { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.ks-n { color: var(--muted); font-size: 12px; margin: 3px 0 6px; }
+.kf { margin-top: 9px; }
+.kf label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink2); margin-bottom: 4px; }
+.kin { display: flex; gap: 6px; }
+.kin input { flex: 1; height: 32px; border-radius: 8px; border: 1px solid var(--line3); background: var(--bg1); color: var(--ink); padding: 0 10px;
+  font: 12.5px var(--mono); outline: none; min-width: 0; }
+.kin input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-bg); }
+.kh { color: var(--dim); font-size: 11px; margin-top: 4px; }
+.kh a { color: var(--accent2); margin-left: 4px; }
+.knote { margin-top: 14px; display: grid; gap: 6px; scroll-margin-bottom: 72px; }  /* clear of the sticky buttons */
+.knote:empty { display: none; }
+.kchk { display: flex; gap: 8px; align-items: flex-start; padding: 8px 11px; border-radius: 9px; font-size: 12.3px; line-height: 1.45; background: var(--bg3); color: var(--ink2); }
+.kchk.good { background: var(--good-bg); color: #b7efd3; } .kchk.bad { background: var(--bad-bg); color: #ffc4c4; }
+.kchk svg, .kchk .spin { flex: none; margin-top: 3px; }
+.btn.warnbtn { border-color: var(--bad); color: #ffc4c4; background: var(--bad-bg); }
+.dlg-f { display: flex; align-items: center; gap: 8px; position: sticky; bottom: -14px; z-index: 1; margin: 16px -18px -14px;
+  padding: 12px 18px 14px; background: var(--bg2); border-top: 1px solid var(--line2); }  /* buttons stay in view while the fields scroll */

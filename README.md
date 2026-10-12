@@ -10,7 +10,49 @@ Darwin handles purchasing and engineering help, finding agents that can quote an
 
 Keewano gives R Cubed observability and recursive self-improvement: every design, bench test and human minute is logged, and the measured results tune the next design's grip force.
 
-## Morph Studio: the whole-robot platform (the live demo)
+## Run it
+
+You need **Git**, **Python 3.10 to 3.14** ([python.org](https://www.python.org/downloads/); on Windows tick
+"Add python.exe to PATH") and, for the app window, **Chrome or Edge** (any browser works at
+http://127.0.0.1:8765).
+
+```bash
+git clone https://github.com/jim4226/A16z_Hackathon
+cd A16z_Hackathon
+run_studio.bat          # Windows: or double-click run_studio.bat in Explorer
+./run_studio.sh         # macOS / Linux
+```
+
+The first launch takes a few minutes: it creates `.venv`, installs `requirements.txt`, then **builds
+two robots** (the generated egg-picker arm and the imported SO-101), printing each pipeline stage in
+the terminal. The Morph Studio window opens when they are ready. Later launches pull the latest code
+and open in seconds (after an update, both robots are rebuilt once, about two minutes).
+
+**API keys are optional.** Everything runs without them. Click **Keys** (top right of the Studio) to
+paste your own; they are saved only on your computer, in the git-ignored `.env` (created from
+`env.example` on first launch), and take effect immediately. **Test keys** in the same dialog tries
+each one, so a mistyped key shows up at once.
+
+| Key | What it adds | Where to get it |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Free-form chat requests (without it, the suggestion chips and common phrasings work) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: every revision and measurement logged, grip force calibrated from real builds | Keewano settings ([docs/SPONSORS.md](docs/SPONSORS.md)) |
+| Darwin | Nothing to add: Darwin Search is public | |
+
+**Present the demo:** click **Present** (or press `P`), then **Reset demo** and **Start**; press `→`
+for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
+
+**If something looks wrong or empty:**
+- Run `python -m morph.cli doctor` (inside `.venv`: `.venv\Scripts\python -m morph.cli doctor` on Windows,
+  `.venv/bin/python -m morph.cli doctor` elsewhere). It checks Python, packages, keys, network and
+  whether every pipeline stage built, and says what to fix. Send its output to the team.
+- A stage marked *error* in the pipeline strip leaves its tab empty; the other stages still work.
+  Delete the `projects` folder and start again to rebuild everything from scratch.
+- "Morph Studio is already running": close the other terminal window first.
+- The right panel (time card, grip force) is hidden when the window is narrower than 1280 px, as at
+  150 % Windows display scaling: press **Ctrl** and **-** once.
+
+## Morph Studio: the whole-robot platform
 
 Morph Studio is R Cubed's platform for whole robots: a 5-axis arm with a force-sensing gripper, or an
 existing open-source robot (Hugging Face's SO-101, imported from its own URDF). One request generates
@@ -18,48 +60,22 @@ the CAD, MuJoCo simulations, electronics (schematic, routed PCB, harness, firmwa
 (prototype, pilot and production), BOM with sourcing, and an assembly manual. Every chat edit
 regenerates only what depends on it.
 
-```bash
-run_studio.bat                      # Windows: double-click. macOS/Linux: ./run_studio.sh
-python -m morph.cli studio egg-picker --open    # same thing by hand
-```
-
 - **Tabs:** Robot (3D, motion, X-ray, explode), Simulation (pick and place, payload, workspace,
-  shake), Electronics, Manufacturing, Assembly, and BOM & Sourcing. The **Darwin agents** view finds an
-  agent for every purchased part and every fabrication job.
+  shake), Electronics, Manufacturing, Assembly, and BOM & Sourcing (parts, bulk materials with buy
+  links, and the **Darwin agents** view, which finds an agent for every part and fabrication job).
 - **Inspector:** the time-saved card (cited by-hand hours vs measured time), metric deltas, the
   grip-force window with Keewano calibration, and issues.
 - **Present** (button or `P`): the demo as 14 press-through steps with captions.
-  See [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
-- Keys (optional): copy `env.example` to `.env`. See [docs/SPONSORS.md](docs/SPONSORS.md) for Keewano
-  and Darwin, and [docs/TIME_SAVED.md](docs/TIME_SAVED.md) for the time-saved sources.
+- More: [docs/SPONSORS.md](docs/SPONSORS.md) (Keewano and Darwin), [docs/TIME_SAVED.md](docs/TIME_SAVED.md)
+  (time-saved sources), [docs/PLATFORM_CONTRACTS.md](docs/PLATFORM_CONTRACTS.md) (how the stages fit together).
 
-## R Cubed Studio (gripper demo)
+## The gripper-only prototype (command line)
 
-```bash
-python -m morph.cli demo            # builds projects/raw-egg (≈25 s)
-python -m morph.cli studio raw-egg  # → http://localhost:8765
-```
-
-Chat on the left: "make it work for a strawberry", "use an SG90 servo instead", "switch to an ESP32",
-"make the fingers 10 mm longer", "gentler grip". Each request becomes parameter changes. The pipeline strip
-shows which of the 7 stages regenerate and which are reused. Then the views tour what changed:
-
-- **3D design:** the whole printable gripper (back plate, servo, pinion, two racks, sensor fingers) around the object. The previous revision is shown dashed.
-- **Electronics + PCB:** the carrier board builds itself: parts drop in, then ratsnest, routed traces, GND pour, and a DRC pass. Download Gerbers or solder it on perfboard.
-- **Fab:** print beds for the fingers and the gripper body, with time and cost.
-- **Firmware:** generated `morph_grip.ino` with changed lines highlighted (target force, divider, servo angles).
-- **Simulation:** MuJoCo grasp GIF.
-- **Inspector:** design diffs, metric deltas, and the grip-force window.
-
-The Studio uses Claude to interpret chat when `ANTHROPIC_API_KEY` is set; otherwise a built-in rule parser
-handles the common requests, so the demo works offline.
-
-## Quick start
+Before the whole-robot platform, R Cubed started as a command-line pipeline for one force-sensing
+gripper. It still works and produces an HTML report rather than opening in the Studio:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m morph.cli demo           # ~25 s → projects/raw-egg/report.html
+python -m morph.cli demo           # ~25 s -> projects/raw-egg/report.html (open it in a browser)
 ```
 
 To see a finished run without installing, open the committed example at `examples/raw-egg/report.html`.
@@ -98,7 +114,7 @@ Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli �
 | `board.py` | carrier board: real module pinouts, placement, two-layer maze router, GND pour, DRC, Gerbers + drill, perfboard-ready |
 | `kicad.py` | the same board as a KiCad 8/9 project (PCB, schematic, project file) + a BoardRepo-ready zip; pure Python, `kicad-cli` DRC/ERC when installed |
 | `boardrepo.py` | checked open reference boards on BoardRepo (gripper carrier, servo bus, PWM, load cell), read live from their public pages |
-| `studio/` | R Cubed Studio web app (stdlib server + SSE, three.js viewer, PCB build animation, chat → changes) |
+| `studio/` | Morph Studio web app (stdlib server + SSE, three.js viewer, PCB build animation, chat → changes) |
 | `spec.py` | one `Design` (object, finger, gripper, electronics, fab); changes are dotted keys |
 | `design.py` | 2.5D profiles → watertight solids. Pads: flat, V, or contour. With `finger.sensor=fsr402`, a two-part finger: a dovetail socket plus a sliding pad whose tail presses on the FSR |
 | `analysis.py` | grip-force budget, cantilever deflection and stress, print derate |
@@ -156,4 +172,4 @@ Uploading needs your own BoardRepo sign-in, so R Cubed stops at the zip. More in
 - The sim treats fingers as rigid and models the egg as a capsule.
 - The firmware assumes a position servo and a 0.5° step. Set `OPEN_DEG`/`CLOSED_DEG` for your gripper.
 
-Plan, schedule and demo script: `docs/HACKATHON_PLAN.md`. Data sources: `docs/DATA_SOURCES.md`.
+Demo script (Present mode): `docs/DEMO_SCRIPT.md`. The original hackathon plan, from the gripper prototype: `docs/HACKATHON_PLAN.md`. Data sources: `docs/DATA_SOURCES.md`.

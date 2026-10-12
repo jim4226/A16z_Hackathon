@@ -1,0 +1,187 @@
+"""API keys for the integrations: what each one is for, whether it is set, and saving new ones.
+
+Keys live in the repo's git-ignored `.env` and in the process environment. Nothing here ever
+returns a key's value: the Studio only learns whether each key is set. Everything works without
+keys (Claude chat falls back to the built-in rules, Keewano switches itself off, Darwin Search
+needs no key), so keys only add capabilities.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_PATH = os.path.join(ROOT, ".env")
+TEMPLATE = os.path.join(ROOT, "env.example")
+
+KEYS = [
+    {"name": "ANTHROPIC_API_KEY", "service": "Claude", "label": "Anthropic API key",
+     "what": "Understands free-form chat requests. Without it the suggestion chips and common phrasings still work.",
+     "where": "console.anthropic.com, Settings, API Keys", "url": "https://console.anthropic.com/settings/keys"},
+    {"name": "KEEWANO_API_KEY", "service": "Keewano", "label": "Project key (type SDK)",
+     "what": "Sends every revision, edit and bench measurement to your Keewano project.",
+     "where": "Keewano, Settings, Project, API Keys (choose type SDK)", "url": "https://keewano.com"},
+    {"name": "KEEWANO_PAT", "service": "Keewano", "label": "Personal access token (kwpat-...)",
+     "what": "Reads the build history that calibrates the grip force.",
+     "where": "Keewano, Settings, Personal, Security", "url": "https://keewano.com"},
+    {"name": "KEEWANO_PROJECT_ID", "service": "Keewano", "label": "Project ID",
+     "what": "Which Keewano project to read.", "where": "Keewano, Settings, Details, Project ID", "url": "https://keewano.com"},
+]
+NAMES = [k["name"] for k in KEYS]
+_LINE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+_LOCK = threading.Lock()  # two Save clicks must not interleave their writes
+
+
+def read_text(path: str) -> str:
+    """A .env as text, whatever editor wrote it: UTF-8 (with or without BOM), UTF-16 from
+    PowerShell 5.1 `>`/Out-File, an "ANSI" (cp1252) file from Notepad, or a mix from `>>`."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = raw.decode("utf-16", errors="replace")
+    else:
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = raw.decode("cp1252", errors="replace")
+    return text.replace("\x00", "")
+
+
+def parse(text: str) -> list:
+    """[(KEY, value)] from .env text: comments, blank lines, `export`, quotes and `  # comment` handled."""
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.strip().removeprefix("export ").strip(), v.strip()
+        if v[:1] not in ('"', "'"):
+            v = v.split(" #", 1)[0].strip()
+        out.append((k, v.strip('"').strip("'")))
+    return out
+
+
+def load_env(path: str | None = None) -> list:
+    """KEY=value lines from .env into the environment without overriding anything already set.
+    Returns the names it set."""
+    path = path or ENV_PATH
+    if not os.path.isfile(path):
+        return []
+    loaded = []
+    for k, v in parse(read_text(path)):
+        if k and v and k not in os.environ:
+            os.environ[k] = v
+            loaded.append(k)
+    return loaded
+
+
+def ensure_env_file(path: str | None = None) -> bool:
+    """Create .env from env.example on first run, so there is one obvious place to put keys."""
+    path = path or ENV_PATH
+    if os.path.exists(path) or not os.path.isfile(TEMPLATE):
+        return False
+    with open(TEMPLATE, encoding="utf-8") as src, open(path, "w", encoding="utf-8", newline="\n") as dst:
+        dst.write(src.read())
+    return True
+
+
+def status() -> list:
+    """Each key's description and whether it is set. Never the value."""
+    return [{**k, "set": bool(os.environ.get(k["name"]))} for k in KEYS]
+
+
+def save(updates: dict, path: str | None = None) -> list:
+    """Write keys into .env (other lines and comments kept) and apply them to this process at once.
+    An empty value removes the key. Returns the names changed."""
+    path = path or ENV_PATH
+    clean = {}
+    for k, v in (updates or {}).items():
+        if k not in NAMES:
+            raise ValueError(f"unknown key {k}")
+        v = str(v if v is not None else "").strip()
+        if len(v) > 500 or any(c in v for c in "\r\n\x00\"'"):
+            raise ValueError(f"{k}: that does not look like a key")
+        clean[k] = v
+    if not clean:
+        return []
+    with _LOCK:
+        if os.path.isfile(path):
+            lines = read_text(path).splitlines()
+        elif os.path.isfile(TEMPLATE):
+            with open(TEMPLATE, encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+        else:
+            lines = []
+        out, done = [], set()
+        for line in lines:
+            m = _LINE.match(line)
+            if m and m.group(1) in clean:
+                if m.group(1) not in done:
+                    out.append(f"{m.group(1)}={clean[m.group(1)]}")
+                    done.add(m.group(1))
+                continue  # drop duplicate lines for the same key
+            out.append(line)
+        out += [f"{k}={v}" for k, v in clean.items() if k not in done]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(out).rstrip("\n") + "\n")
+        os.replace(tmp, path)
+        for k, v in clean.items():
+            if v:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+    return sorted(clean)
+
+
+def _claude_error(exc: Exception) -> str:
+    name, status = exc.__class__.__name__, getattr(exc, "status_code", None)
+    if name == "AuthenticationError" or status == 401:
+        return "Anthropic rejected this key: copy it again from console.anthropic.com"
+    if name == "PermissionDeniedError" or status == 403:
+        return "this key is not allowed to use the API"
+    if name in ("APIConnectionError", "APITimeoutError"):
+        return "couldn't reach api.anthropic.com (offline, or blocked by a firewall)"
+    return f"{name}: {str(exc)[:160]}"
+
+
+def _check_claude() -> dict:
+    try:
+        import anthropic
+
+        anthropic.Anthropic(timeout=15, max_retries=0).models.list(limit=1)
+        return {"ok": True, "detail": "key works: free-form chat is on"}
+    except Exception as exc:  # noqa: BLE001  (any failure is reported, never raised)
+        return {"ok": False, "detail": _claude_error(exc)}
+
+
+def _check_keewano() -> dict:
+    from . import keewano
+
+    rows = keewano.query("SELECT count(*) FROM events")
+    if rows is None:
+        return {"ok": False, "detail": "the query failed: check the personal access token and the project ID"}
+    n = rows[0][0] if rows and rows[0] else 0
+    return {"ok": True, "detail": f"connected: {n} events in the project"
+            + ("" if os.environ.get("KEEWANO_API_KEY") else " (add the project key to send events too)")}
+
+
+def check(services=None) -> dict:
+    """Try each configured service once with the current keys, so a wrong key shows up at once instead
+    of as a silent fallback: {"Claude": {"ok", "detail"}, "Keewano": {...}}. Services without keys are
+    skipped. Read-only calls; nothing is sent to Keewano."""
+    env = os.environ.get
+    jobs = {}
+    if env("ANTHROPIC_API_KEY") and (not services or "Claude" in services):
+        jobs["Claude"] = _check_claude
+    if env("KEEWANO_PAT") and env("KEEWANO_PROJECT_ID") and (not services or "Keewano" in services):
+        jobs["Keewano"] = _check_keewano
+    if not jobs:
+        return {}
+    with ThreadPoolExecutor(len(jobs)) as pool:
+        futures = {name: pool.submit(fn) for name, fn in jobs.items()}
+        return {name: f.result() for name, f in futures.items()}
