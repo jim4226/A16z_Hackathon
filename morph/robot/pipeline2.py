@@ -112,17 +112,62 @@ def gripper_actuator(design: Design) -> str:
     return "sts3215" if fam == "smart_bus" else "xl430_w250"
 
 
-def pipeline_version() -> str:
-    """Hash of the platform code: results built by older code are rebuilt when the Studio starts."""
+# The morph/*.py modules the robot pipeline computes with (its import graph, without keewano.py and settings.py:
+# Keewano's calibration is opt-in data, and features append event ids there). Every morph/robot/*.py is hashed too.
+PIPELINE_MODULES = ("spec", "design", "analysis", "electronics", "sim", "mechanism", "fab", "materials", "pipeline")
+_BUNDLES: dict = {}
+
+
+def _code_files() -> list:
+    here = os.path.dirname(os.path.abspath(__file__))
+    top = os.path.dirname(here)
+    robot = [os.path.join(here, fn) for fn in sorted(os.listdir(here)) if fn.endswith(".py")]
+    return robot + [os.path.join(top, m + ".py") for m in PIPELINE_MODULES]
+
+
+def _bundle_hash(source: str) -> str:
+    """The files of an imported robot's bundle (URDF, meshes, profile), hashed again only when one changes."""
+    import hashlib
+
+    try:
+        from .imported import robot_dir
+        root = robot_dir(source)
+    except (ValueError, OSError, ImportError):
+        return "missing"
+    try:
+        files = []
+        for directory, dirs, names in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+            for fn in sorted(names):
+                path = os.path.join(directory, fn)
+                if fn.startswith(".") or os.path.islink(path):
+                    continue
+                st = os.stat(path)
+                files.append((os.path.relpath(path, root).replace(os.sep, "/"), st.st_size, st.st_mtime_ns))
+        key = (root, tuple(files))
+        if key not in _BUNDLES:
+            h = hashlib.sha1()
+            for rel, _, _ in files:
+                with open(os.path.join(root, rel), "rb") as fh:
+                    h.update(rel.encode() + b"\0" + fh.read())
+            _BUNDLES[key] = h.hexdigest()
+        return _BUNDLES[key]
+    except OSError:
+        return "unreadable"
+
+
+def pipeline_version(source: str | None = None) -> str:
+    """Hash of the code that computes a revision (morph/robot/*.py plus PIPELINE_MODULES) and, for an imported robot
+    (`source` = arm.source), of its bundle: results built by older code or from an edited bundle are rebuilt when the
+    Studio starts. Studio, CLI and service modules are not hashed, so editing them never rebuilds the demo robots."""
     import hashlib
 
     h = hashlib.sha1()
-    here = os.path.dirname(os.path.abspath(__file__))
-    for root in (here, os.path.dirname(here)):
-        for fn in sorted(os.listdir(root)):
-            if fn.endswith(".py"):
-                with open(os.path.join(root, fn), "rb") as fh:
-                    h.update(fn.encode() + fh.read())
+    for path in _code_files():
+        with open(path, "rb") as fh:
+            h.update(os.path.basename(path).encode() + fh.read())
+    if source:
+        h.update(b"bundle:" + _bundle_hash(source).encode())
     return h.hexdigest()[:12]
 
 
@@ -194,13 +239,14 @@ def artifact_problem(results: dict, node: str, revision_dir: str) -> str | None:
 
 class RobotProject(Project):
     def run(self, design: Design, parent: str | None = None, label: str = "", n_trials: int = 4,
-            verbose: bool = True, on_event=None, fast_sim: bool = False) -> str:
+            verbose: bool = True, on_event=None, fast_sim: bool = False, by: str | None = None) -> str:
+        """Build a revision of `design` (reusing what `parent` already has) and return its name. `by` is the team
+        member who asked for it (Teams), recorded in results.json and the ledger."""
         from . import arm
 
         emit = on_event or (lambda e: None)
-        rev = f"r{len(self.revs()) + 1:03d}"
+        rev = self.claim_rev()
         out = self.rev_dir(rev)
-        os.makedirs(out)
         with open(os.path.join(out, "design.json"), "w", encoding="utf-8") as fh:
             fh.write(design.dumps())
         if parent:
@@ -211,6 +257,8 @@ class RobotProject(Project):
             changes, todo, prev = {}, list(ORDER), {}
         res = {"rev": rev, "parent": parent, "label": label, "kind": "robot",
                "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "stage_status": {}, "timings_s": {}}
+        if by:
+            res["by"] = by
         emit({"type": "start", "rev": rev, "parent": parent, "changes": res["changes"], "dirty": todo})
         cache = {}
 
@@ -289,11 +337,11 @@ class RobotProject(Project):
                 print(f"  {node:<14} {status} ({res['timings_s'][node]:.2f}s)")
 
         res["summary"] = summarize(res)
-        res["pipeline_version"] = pipeline_version()
+        res["pipeline_version"] = pipeline_version(design.arm.source)
         with open(os.path.join(out, "results.json"), "w", encoding="utf-8") as fh:
             json.dump(res, fh, indent=1, default=_jsonable)
         self.log({"type": "revision", "rev": rev, "parent": parent, "label": label, "changes": res["changes"],
-                  "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"]})
+                  "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"], **({"by": by} if by else {})})
         return rev
 
     @staticmethod

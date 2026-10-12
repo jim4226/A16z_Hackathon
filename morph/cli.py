@@ -261,7 +261,7 @@ def cmd_studio(a):
     from .robot.pipeline2 import pipeline_version
     for proj in (p, RobotProject(os.path.join(HOME, other))):
         last = proj.latest()
-        if last and proj.load_results(last).get("pipeline_version") != pipeline_version():
+        if last and proj.load_results(last).get("pipeline_version") != pipeline_version(proj.load_design(last).arm.source):
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
             proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
     headless = sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))

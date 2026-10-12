@@ -394,7 +394,8 @@ class Studio:
                     if not _remove_rev(p, r):
                         complete = False  # a file in it is open (Excel, a viewer): keep the rest intact
                         break
-                if complete and (rebuild or (self._results(p, keep) or {}).get("pipeline_version") != pipeline_version()):
+                if complete and (rebuild or (self._results(p, keep) or {}).get("pipeline_version")
+                                 != pipeline_version(p.load_design(keep).arm.source)):
                     keep = p.run(p.load_design(keep), parent=None, label="rebuilt with latest Morph", verbose=False)
                 p.log({"type": "demo_reset", "rev": keep, "complete": complete})
             self.p = RobotProject(os.path.join(self.home, self.start))
