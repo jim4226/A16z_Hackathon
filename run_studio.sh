@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Morph Studio launcher for macOS/Linux: pulls the latest code, installs deps on first run, opens the browser.
-set -e
+# Install once, then run the installed release without updating code or packages.
+set -euo pipefail
 cd "$(dirname "$0")"
-git pull --ff-only || true
-[ -d .venv ] || python3 -m venv .venv
-. .venv/bin/activate
-pip install -q --upgrade pip && pip install -q -r requirements.txt
-PYTHONUTF8=1 python -m morph.cli studio egg-picker --open
+export PYTHONUTF8=1
+if [ -x .rcubed-venv/bin/python ]; then
+  exec .rcubed-venv/bin/python tools/install_local.py --launch
+else
+  exec "${RCUBED_PYTHON:-python3}" tools/install_local.py --launch
+fi

@@ -13,7 +13,6 @@ from __future__ import annotations
 import math
 import os
 
-from . import keewano
 from .design import FSR
 from .spec import Design
 
@@ -75,13 +74,9 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
     if hold is None or hold == float("inf"):
         hold = analysis["required_grip_n"] / design.safety_factor  # closed-form fallback
         warnings.append("no simulated holding force; using closed-form estimate")
+    # Remote history includes synthetic and unverified runs. Until measurements have
+    # a verified calibration protocol, firmware targets come only from this design.
     calibration = None
-    if not e.target_force_n:
-        calibration = keewano.hold_ratio(f.pad, f.material)
-        if calibration:
-            hold *= calibration["ratio"]
-            warnings.append(f"holding force scaled x{calibration['ratio']:.2f} from {calibration['n']} measured "
-                            f"{f.pad}/{f.material} builds in Keewano")
     lo = hold * HOLD_MARGIN
     hi = (o.max_force_n / CRUSH_MARGIN) if o.max_force_n > 0 else float("inf")
     if sensor:
@@ -164,6 +159,7 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
 
 
 FIRMWARE = r"""// Morph force-limited gripper firmware, generated for {design_name} ({rev_hint})
+// UNVERIFIED: compile against the board core and calibrate on a bench before operating hardware.
 // {mcu_name} + {servo_name} + {sensor}
 // Serial (115200): g = grip, o = open, t<N> = set target newtons, c<grams> = calibrate with a known mass
 // Streams CSV at 50 Hz: t_ms,force_n,angle_deg,state

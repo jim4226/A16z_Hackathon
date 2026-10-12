@@ -1,22 +1,36 @@
 [project]
 name = "morph"
-version = "0.1.0"
-description = "Describe a need -> CAD -> simulate -> compare -> fabricate -> measure (robot gripper fingers slice)"
-requires-python = ">=3.10"
+version = "0.2.0b1"
+description = "R Cubed: local robot design, simulation, electronics and fabrication workspace"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10,<3.13"
 dependencies = [
-  "numpy", "shapely>=2", "manifold3d", "trimesh", "mujoco>=3", "pydantic>=2", "anthropic", "pillow",
+  "numpy>=2.2,<3", "shapely>=2,<3", "manifold3d>=3,<4", "trimesh>=4,<6",
+  "scipy>=1.15,<2", "mujoco>=3,<4", "pydantic>=2,<3", "anthropic>=1,<2", "pillow>=11,<13",
+  "keyring>=25,<26", "platformdirs>=4,<5",
 ]
 
 [project.optional-dependencies]
 machines = ["pyserial", "requests"]
-dev = ["pytest"]
+dev = ["pytest>=8,<10", "build>=1.2,<2", "setuptools==80.9.0", "wheel>=0.45,<1"]
 
 [project.scripts]
 morph = "morph.cli:main"
+rcubed = "morph.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["morph"]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["morph", "morph.*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"morph.studio" = ["static/**/*", "static/*"]
+"morph.robot" = ["time_baseline.json"]

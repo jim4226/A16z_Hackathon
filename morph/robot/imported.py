@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import math
 import os
+from pathlib import Path
+import re
 
 import numpy as np
 
@@ -19,8 +21,9 @@ from . import catalog, catalog_extra  # noqa: F401  (registers extra catalog key
 from . import components
 from .assembly import Cable, Part, trans
 from .urdf_import import load_urdf
+from ..resources import asset_path
 
-ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "robots")
+ROOT = str(asset_path("robots"))
 G = np.array([0.0, 0.0, -9.81])
 # Feetech STS3215 STL frame -> Morph actuator frame (shaft axis at the horn face, body towards -z)
 STS_STL_TO_COMPONENT = trans((12.5, 0.0, 20.2))
@@ -32,7 +35,13 @@ FAMILY_SWAPS = {  # stock smart-bus robot -> other families, by joint position (
 
 
 def load_profile(source: str) -> tuple[dict, str]:
-    d = os.path.join(ROOT, source)
+    if not isinstance(source, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", source):
+        raise ValueError("Choose a bundled robot by its identifier, such as so101")
+    root = Path(ROOT).resolve()
+    folder = (root / source).resolve()
+    if folder.parent != root:
+        raise ValueError("Robot resources must stay inside the bundled robot directory")
+    d = str(folder)
     with open(os.path.join(d, "morph_profile.json"), encoding="utf-8") as fh:
         return json.load(fh), d
 

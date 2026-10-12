@@ -729,3 +729,24 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .bm td.incl { color: var(--muted); }
 .bm td.incl small { display: block; font-size: 10px; color: var(--dim); font-weight: 500; }
 .dk.k-material { background: rgba(201, 162, 39, .14); color: #e3c35a; }
+.release-label { color: var(--warn); font-size: 11px; white-space: nowrap; }
+[hidden] { display: none !important; }
+.setup-dialog { width: min(580px, calc(100vw - 32px)); max-height: calc(100vh - 40px); padding: 24px; background: var(--bg1); color: var(--ink); border: 1px solid var(--line3); border-radius: 16px; box-shadow: 0 24px 90px #000a; }
+.setup-dialog::backdrop { background: #050710bb; backdrop-filter: blur(5px); }
+.setup-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.setup-dialog h2 { margin: 0; font-size: 22px; letter-spacing: -.025em; }
+.setup-intro { color: var(--ink2); line-height: 1.65; margin: 16px 0 22px; }
+.setup-dialog fieldset { border: 1px solid var(--line2); padding: 16px; margin: 16px 0; border-radius: 10px; }
+.setup-dialog legend { padding: 0 6px; color: var(--ink); font-weight: 650; }
+.setup-dialog label:not(.setup-check) { display: block; margin: 14px 0 6px; font-weight: 600; }
+.setup-dialog input:not([type=checkbox]), .setup-dialog select { width: 100%; padding: 10px 12px; background: var(--bg3); border: 1px solid var(--line3); border-radius: 7px; }
+.setup-dialog input:focus-visible, .setup-dialog select:focus-visible, .setup-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.setup-help, .setup-check small { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.setup-check { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0; cursor: pointer; }
+.setup-check input { margin-top: 4px; accent-color: var(--accent); }
+.setup-check small { display: block; margin-top: 4px; }
+.setup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.setup-status { color: var(--accent2); margin: 0; }
+.setup-message { min-height: 20px; color: var(--ink2); line-height: 1.6; }
+.setup-message.error { color: var(--bad); }
+@media (max-width: 1100px) { #top { gap: 7px; } .release-label, .tourctl { display: none; } .brand .sub { display: none; } }

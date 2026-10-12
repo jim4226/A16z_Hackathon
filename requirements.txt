@@ -1,13 +1,4 @@
-numpy
-shapely>=2
-manifold3d
-trimesh
-scipy
-mujoco>=3
-pydantic>=2
-anthropic
-pillow
-pytest
-# optional, for driving real machines
-pyserial
-requests
+# Locked runtime, machine, and development dependencies for the local beta.
+# Install the package separately: python -m pip install --no-deps --no-build-isolation .
+--require-hashes
+-r requirements.lock

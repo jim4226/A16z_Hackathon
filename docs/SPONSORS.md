@@ -1,7 +1,13 @@
 # Sponsor integrations: Keewano and Darwin
 
-Both integrations use only the Python standard library, so nothing new to install. With no keys,
-both still work: Darwin Search needs no account, and Keewano switches itself off.
+The local beta keeps these integrations optional. Darwin Search needs no account but sends search
+queries over the network, so enable sourcing in Settings before using it in Studio. Keewano event
+sharing requires both your own credentials and explicit telemetry consent. Network-off mode blocks
+both. Remote history never adjusts grip targets in this beta.
+
+The presentation descriptions below document the original hackathon workflow. In the local beta,
+the grip-force inspector identifies calibration as disabled, and presentation controls require
+`python -m morph.cli studio --demo --open`.
 
 ## In the Studio
 
@@ -11,12 +17,12 @@ both still work: Darwin Search needs no account, and Keewano switches itself off
 | **Inspector → Grip force window** | The Keewano line. With Keewano connected and measured builds for the robot's pad and material, the simulated holding force is scaled by measured/predicted (for example ×1.12 from 8 contour/PETG builds) before the grip target and firmware limit are set. |
 | **Present mode, steps 8 and 9** | Darwin and Keewano each get a step with a caption. |
 
-Every revision, chat edit, Darwin lookup and bench measurement is sent to Keewano as typed events
-(`Project.log()` → `morph/keewano.py`).
+When event sharing is enabled, supported revision, Darwin lookup and bench entries are sent as
+typed events (`Project.log()` → `morph/keewano.py`). By default nothing is sent to Keewano.
 
 ## Keys (Keewano only)
 
-Copy `env.example` to `.env` in the repo folder and fill in:
+Developer setup: copy `env.example` to `.env` in the repo folder and fill in:
 
 | Variable | What it is | Where in Keewano |
 |---|---|---|
@@ -24,18 +30,19 @@ Copy `env.example` to `.env` in the repo folder and fill in:
 | `KEEWANO_PAT` | personal access token (`kwpat-...`) | Settings → Personal → Security |
 | `KEEWANO_PROJECT_ID` | project UUID | Settings → Details → Project ID |
 
-`.env` is git-ignored and read at every start (`run_studio.bat` needs nothing else). Keys set in the
-terminal win over the file.
+`.env` is git-ignored and loaded only when `MORPH_LOAD_DOTENV=1` is explicitly set for the CLI.
+Keys set in the terminal take precedence. Enable event sharing in Settings or use
+`MORPH_TELEMETRY_ENABLED=1`; credentials alone do not enable it. The installed launcher's working
+directory is separate from the repository, so prefer explicit environment variables for this
+advanced integration. Normal Claude setup is available in Settings.
 
 Check: `python -m morph.cli ask "SELECT count(*) FROM events"` prints a number.
 
-**If the keys are for a project other than R cubed**, it has no build history yet. Load it once and
-wait about 5 minutes before demoing: `python tools/keewano_backfill.py --send`. The backfilled
-projects are named `synthetic-*`, and their force ratios are invented: say so if asked. The R cubed
-project's history is the same kind of seeded data.
-
-After setting keys for the first time, close the Studio, delete the `projects` folder and start it
-again, so the gripper stage reruns and picks up the calibration (Reset demo keeps the existing build).
+The original `tools/keewano_backfill.py` contains invented `synthetic-*` measurements. It is retained
+for isolated developer demonstrations only; do not seed a real engineering dataset with it. Legacy
+R Cubed demo history is the same kind of seeded data. Automatic history-based calibration is now
+disabled until verified measurements and a review workflow exist. Do not delete your projects when
+connecting a service; ordinary settings changes preserve revisions.
 
 ## Darwin when its API is down
 
