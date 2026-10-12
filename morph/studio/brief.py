@@ -8,7 +8,7 @@ slots map to design keys (brief_to_changes), and a ~30 ms preflight of the gener
 loop. Every default, inference and repair becomes a plain-sentence assumption on the confirm card.
 
     b = brief.start("something to pick strawberries")      # b.status == "asking", b.questions[...]
-    brief.answer(b, {"layout": "side_to_side"}); brief.progress(b, defaults=True)
+    brief.answer(b, {"layout": "side_to_side"}); brief.progress(b, defaults_now=True)
     b.status, b.changes, b.preflight                          # "ready", {...dotted design keys...}, {"issues": []}
 """
 
@@ -767,7 +767,7 @@ def make_question(b: Brief, slot: str) -> dict:
                            _chip("Children or pets nearby", "pets" if a.key == "pet_feeding" else "children")]),
         "precision": ("How precisely does it need to place them?", "Tighter placement needs servos with position feedback.",
                       [_chip("Roughly, ±5 mm", "loose"), _chip("Precisely, ±2 mm", "tight"),
-                       _chip("Very precisely, ±1 mm", "very_tight", note="Dynamixel servos, about $1,000")]),
+                       _chip("Very precisely, ±1 mm", "very_tight", note="Dynamixel servos, from about $700 in parts")]),
         "budget": ("What is the budget for parts?", "Decides between smart-bus and Dynamixel servos.",
                    [_chip("Lowest cost, about $300", 300.0), _chip("Up to $1,000", 1000.0), _chip("Up to $2,500", 2500.0)]),
         "perception": ("Should it have a camera?", "Morph adds the camera hardware and wiring; it does not write vision code.",
@@ -833,7 +833,7 @@ def _numeric_fix(b: Brief) -> tuple[list, dict | None]:
         fix["diameter_mm"] = cap.MAX_WIDTH_MM - 5
     if ov["mass_g"] > cap.MAX_MASS_G:
         notes.append(f"{ov['mass_g']:g} g is more than a desk arm here lifts: {cap.MAX_MASS_G} g at most, with Dynamixel servos and "
-                     "4 joints (about $1,000 in parts).")
+                     "4 joints (about $1,500 in parts).")
         fix["mass_g"] = float(cap.MAX_MASS_G)
     if not fix:
         return [], None
@@ -864,7 +864,7 @@ def assess_scope(b: Brief) -> dict:
         obj = sanitize_object(slots.get("object") or ARCHETYPES[arch].objects[0])
         dims = f"{obj['diameter_mm']:g} mm, {obj['mass_g']:g} g"
         summary = (f"A desk arm that {_verb(ARCHETYPES[arch])} {_object_label(obj, short=True).lower()} ({dims}) on the table plane"
-                   + (", with Dynamixel servos and 4 joints (about $1,000)" if slots.get("budget") else "") + ".")
+                   + (", with Dynamixel servos and 4 joints (about $1,500 in parts)" if slots.get("budget") else "") + ".")
         return {"status": "out_of_scope", "notes": notes, "nearest": {"archetype": arch, "slots": slots, "summary": summary}}
     ov = b.get("object")
     if b.get("existing_hardware") == "so101" and ov and ov["mass_g"] > cap.SO101_PAYLOAD_G:
@@ -917,8 +917,10 @@ def start(text: str, *, bid: str | None = None) -> Brief:
 
 
 def refuse(b: Brief, evidence: str, source: str) -> Brief:
+    """Status refused. `source` is who caught it: "rules" (the local filter, before anything was sent anywhere),
+    "subq" or "claude" (the request already went to that service; nothing more is sent)."""
     b.status, b.questions, b.changes = "refused", [], {}
-    b.flags["harm"] = str(evidence)[:80]
+    b.flags["harm"], b.flags["harm_by"] = str(evidence)[:80], source
     b.scope = {"status": "out_of_scope", "notes": [_STUB], "nearest": None}
     b.turns.append({"role": "assistant", "text": _STUB, "source": source, "ts": _now_iso()})
     b.updated = time.time()
@@ -1169,13 +1171,15 @@ def deep_check(changes: dict) -> list:
 
 def repair(changes: dict, b: Brief, *, max_steps: int = 8, deep: bool = True) -> tuple[dict, list, dict]:
     """Preflight, then fix what the generator flags, one rule per issue kind (each fix is an assumption):
-    torque -> Dynamixel (when the budget allows) then fewer joints; finger deflection -> beam +1.5 mm up to 14 mm;
-    object too small -> FSR finger; no safe grip -> FSR finger or a V pad; too big for the printer -> pilot build."""
+    torque -> Dynamixel servos when that arm fits a budget of $1,000 or more, else fewer joints first (the cheaper fix),
+    then Dynamixel; finger deflection -> beam +1.5 mm up to 14 mm; object too small -> FSR finger; no safe grip ->
+    FSR finger or a V pad; too big for the printer -> pilot build."""
     ch, notes = dict(changes), []
     locked = {k for k in b.hints if k in ("arm.dof", "arm.actuator_family")}
     if value(b, "precision") == "very_tight":
         locked.add("arm.actuator_family")
-    allow_dxl = float(value(b, "budget")) >= DYNAMIXEL_BUDGET
+    budget = float(value(b, "budget"))
+    allow_dxl, stated_budget = budget >= DYNAMIXEL_BUDGET, b.slots.get("budget") is not None
     t0, checks, thick0 = time.perf_counter(), 0, ch.get("finger.thickness_mm", 6.0)
     deep_done = False
     pre = {"issues": []}
@@ -1197,16 +1201,25 @@ def repair(changes: dict, b: Brief, *, max_steps: int = 8, deep: bool = True) ->
             changed = True
         if kinds & {"torque", "supply"} and not ch.get("arm.source"):
             fam, dof = ch["arm.actuator_family"], int(ch["arm.dof"])
+            can_fam, can_dof = fam != "dynamixel" and "arm.actuator_family" not in locked, dof > 4 and "arm.dof" not in locked
             step = None
-            if fam != "dynamixel" and allow_dxl and "arm.actuator_family" not in locked:
-                step = ("arm.actuator_family", "dynamixel", f"The shoulder needs more torque than {_family_label(fam)} servos give "
-                        "with a 2x margin, so I used Dynamixel servos (within your budget).")
-            elif dof > 4 and "arm.dof" not in locked:
+            if can_fam and allow_dxl:
+                # Dynamixel servos keep every joint when that arm fits the budget; otherwise fewer joints come first (cheaper)
+                trial = dict(ch, **{"arm.actuator_family": "dynamixel"})
+                est = estimate_cost(trial, preflight(trial))
+                checks += 1
+                if not can_dof or (est is not None and est["unit_cost"] <= budget * 1.05):
+                    step = ("arm.actuator_family", "dynamixel", f"The shoulder needs more torque than {_family_label(fam)} servos "
+                            "give with a 2x margin, so I used Dynamixel servos.")
+            if step is not None:
+                pass
+            elif can_dof:
                 step = ("arm.dof", dof - 1, f"The shoulder needs more torque than {dof} joints of {_family_label(fam)} servos give with "
                         f"a 2x margin, so I used {dof - 1} joints: a shorter, lighter wrist.")
-            elif fam != "dynamixel" and "arm.actuator_family" not in locked:
+            elif can_fam:
                 step = ("arm.actuator_family", "dynamixel", f"With {dof} joints, {_family_label(fam)} servos are too weak for this "
-                        "load, so I used Dynamixel servos (about $1,000 in parts, more than the default budget).")
+                        "load, so I used Dynamixel servos" + ("." if allow_dxl or stated_budget else
+                                                             "; they cost more than the default budget (see the parts estimate)."))
             elif dof > 4:
                 step = ("arm.dof", dof - 1, f"You asked for {dof} joints, but no servo family here holds this load with {dof}; "
                         f"I used {dof - 1}.")
@@ -1314,7 +1327,7 @@ def assumptions_for(b: Brief, ch: dict) -> list:
         opts = [] if slot == "budget" else [{"label": c["label"], "value": c["value"]} for c in (q or {}).get("chips", []) if c["value"] != cur]
         alts = []
         if slot == "budget":
-            q = {"chips": [{"label": "Dynamixel servos (about $1,000)", "value": "dynamixel"},
+            q = {"chips": [{"label": "Dynamixel servos (from about $700 in parts)", "value": "dynamixel"},
                            {"label": "Hobby PWM servos (no position feedback)", "value": "hobby_pwm"}]}
         for c in (q or {}).get("chips", []):
             if c.get("default") or c["value"] == value(b, slot):
@@ -1386,6 +1399,14 @@ def finalize(b: Brief, *, deep: bool = True, home: str | None = None) -> Brief:
     if b.flags.get("nearest_note"):
         b.assumptions.insert(0, {"kind": "scope", "text": f"Building the nearest robot Morph can make: {b.flags['nearest_note']}"})
     b.estimate = estimate_cost(ch, pre)
+    bud = b.slots.get("budget")
+    if b.estimate and bud is not None and bud.source in ("user", "video", "photo") and \
+            b.estimate["unit_cost"] > float(bud.value) * 1.05 and float(bud.value) >= MIN_COST_USD:
+        dxl_fix = ch.get("arm.actuator_family") == "dynamixel" and any(r.get("slot") == "budget" for r in repairs)
+        why = (": smaller servos can't hold this load with a 2x margin" if dxl_fix else
+               ": placement to ±1 mm needs Dynamixel servos" if value(b, "precision") == "very_tight" else "")
+        b.assumptions.append({"kind": "scope", "text": f"The parts estimate, about ${b.estimate['unit_cost']:,.0f}, is above your "
+                              f"${float(bud.value):,.0f} budget{why}."})
     b.summary = summary_text(b, ch, pre)
     b.questions, b.status = [], "ready"
     b.turns.append({"role": "assistant", "text": b.summary, "ts": _now_iso()})

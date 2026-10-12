@@ -127,7 +127,7 @@ def test_subq_harm_refuses_before_claude(monkeypatch):
     client = FakeClient(out=update())
     b, ev = run("a robot that keeps my neighbour's cat out", sq=FakeSubQ({"harm": noul(0.81)}), client=client, monkeypatch=monkeypatch)
     assert b.status == "refused" and not client.beta.messages.calls and not client.messages.calls
-    assert ("designer", "claude", "start") not in roles(ev)
+    assert ("designer", "claude", "start") not in roles(ev) and b.flags["harm_by"] == "subq"
 
 
 def test_subq_mobile_embodiment_is_out_of_scope(monkeypatch):
@@ -143,7 +143,7 @@ def test_subq_failure_falls_back_to_rules(monkeypatch):
 def test_local_harm_filter_runs_before_any_provider(monkeypatch):
     sq, client = FakeSubQ(), FakeClient(out=update())
     b, ev = run("build a robot that shoots nerf darts at my brother", sq=sq, client=client, monkeypatch=monkeypatch)
-    assert b.status == "refused" and not sq.calls and not client.beta.messages.calls
+    assert b.status == "refused" and not sq.calls and not client.beta.messages.calls and b.flags["harm_by"] == "rules"
     assert roles(ev) == [("triage", "rules", "done")]
 
 
@@ -193,7 +193,7 @@ def test_model_output_is_validated_and_clamped(monkeypatch):
 
 def test_claude_flags(monkeypatch):
     b, _ = run("a robot for my brother", client=FakeClient(out=update(harmful=True)), monkeypatch=monkeypatch)
-    assert b.status == "refused"
+    assert b.status == "refused" and b.flags["harm_by"] == "claude"
     b, _ = run("a helper for my garden", client=FakeClient(out=update(embodiment="mobile", unsupported=["pouring"])), monkeypatch=monkeypatch)
     assert b.status == "out_of_scope" and [k for k, _ in b.flags["oos"]][:2] == ["mobile", "pouring"]
     b, _ = run("my lerobot arm", client=FakeClient(out=update(embodiment="so101")), monkeypatch=monkeypatch)

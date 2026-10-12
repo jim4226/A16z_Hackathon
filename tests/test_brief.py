@@ -233,6 +233,21 @@ def test_repairs_are_assumptions():
     assert ch["finger.sensor"] == "fsr402" and any("FSR 402" in n["text"] for n in notes) and pre["issues"] == []
 
 
+def test_torque_repair_takes_the_cheaper_arm_and_flags_the_budget():
+    b = agents.run_turn(agents.run_turn(text="a robot that picks up 450 g jars, budget $1,000"), action="defaults")
+    assert (b.changes["arm.actuator_family"], b.changes["arm.dof"]) == ("dynamixel", 4)     # about $1,230, not $1,810 for 5 joints
+    over = [a["text"] for a in b.assumptions if "above your $1,000 budget" in a["text"]]
+    assert over and "smaller servos" in over[0] and b.estimate["unit_cost"] > 1000 and b.preflight["issues"] == []
+    b = agents.run_turn(agents.run_turn(text="a robot that picks up 450 g jars, budget $2,500"), action="defaults")
+    assert (b.changes["arm.actuator_family"], b.changes["arm.dof"]) == ("dynamixel", 5)     # affordable: every joint stays
+    assert not any("above your" in a["text"] for a in b.assumptions)
+    b = agents.run_turn(agents.run_turn(text="something to pick strawberries for under $300"), action="defaults")
+    assert b.estimate["unit_cost"] <= 315 and not any("above your" in a["text"] for a in b.assumptions)
+    b = agents.run_turn(agents.run_turn(text="pick up 300 g cans and sort them by colour, budget $285"), action="defaults")
+    over = [a["text"] for a in b.assumptions if "above your $285 budget" in a["text"]]
+    assert b.changes["arm.actuator_family"] == "smart_bus" and len(over) == 1 and over[0].endswith("above your $285 budget.")  # no reason
+
+
 def test_printer_bed_repair():
     b = agents.run_turn(text="a 6 axis dynamixel arm with a custom pcb that moves eggs")
     b = agents.run_turn(b, action="defaults")
