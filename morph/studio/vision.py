@@ -1030,8 +1030,9 @@ def apply_answers(result, answers) -> tuple:
 class _Mapping:
     """One map_to_changes() call: the result, what the person confirmed or kept, and what it has decided so far."""
 
-    def __init__(self, res: dict, flat: dict, confirmed: set, kept: set, notes: list):
+    def __init__(self, res: dict, flat: dict, confirmed: set, kept: set, notes: list, valued=()):
         self.res, self.flat, self.confirmed, self.kept, self.notes = res, flat, confirmed, kept, notes
+        self.valued = set(valued)  # paths the person typed or picked a value for (not just "@accept")
         self.dis = ((res.get("second_opinion") or {}).get("disagree") or {})
         self.src = "photo" if res.get("kind") == "photo" else "video"
         self.changes, self.why, self.srcs, self.questions = {}, {}, {}, []
@@ -1080,7 +1081,8 @@ def map_to_changes(result, design=None, answers=None) -> dict:
     if res.get("marks") and res.get("kind") != "photo" and "timing.cycle_time_s" not in confirmed \
             and (not isinstance(tm, dict) or tm.get("basis") == "frames"):
         _timing_from_marks(res, [], res["marks"])  # cards filled in by hand still get the marked timing
-    m = _Mapping(res, _flat_design(design), confirmed, kept, notes)
+    valued = {p for p, v in (answers.items() if isinstance(answers, dict) else ()) if p in confirmed and v != "@accept"}
+    m = _Mapping(res, _flat_design(design), confirmed, kept, notes, valued)
     if not res.get("usable", True):
         notes.insert(0, res.get("unusable_reason") or "Nothing usable was seen.")
         return _finish_mapping(m)
@@ -1118,8 +1120,9 @@ def _map_object(m: _Mapping):
         if m.sure("object.name"):
             for k, v in object_changes(preset).items():
                 m.put(k, v, f"Morph's {preset} preset", "preset")
+            _user_overrides(m, o)  # the preset beats the model's guesses, never what the person typed
             frag = o.get("fragility")
-            if frag and DAMAGE_N[frag] and not OBJECTS[preset]["max_force_n"]:
+            if frag and DAMAGE_N[frag] and not OBJECTS[preset]["max_force_n"] and "object.fragility" not in m.valued:
                 m.notes.append(f"The video suggests a {FRAGILITY_LABEL[frag]} object; the {preset} preset treats it as "
                                "robust. Edit the damage force if yours breaks.")
         elif not m.is_kept("object.name"):
@@ -1179,6 +1182,21 @@ def _map_object(m: _Mapping):
     if (o.get("count_per_cycle") or 1) > 1 and m.section_ok("object"):
         k = o["count_per_cycle"]
         m.notes.append(f"The person moves {k} at a time; the gripper picks one, so expect {k} times as many cycles.")
+
+
+def _user_overrides(m: _Mapping, o: dict):
+    """Values the person entered on the object card, over a preset."""
+    for f in ("mass_g", "length_mm", "shape"):
+        if f"object.{f}" in m.valued and o.get(f) not in (None, "irregular"):
+            m.put(f"object.{f}", o[f], "you entered it", "user")
+    if "object.diameter_mm" in m.valued and o.get("diameter_mm") is not None:
+        m.put("object.diameter_mm", o["diameter_mm"], "you entered it", "user")
+        for k, v in fit_finger({"diameter_mm": o["diameter_mm"]}).items():
+            m.put(k, v, f"fingers fitted to a {o['diameter_mm']:g} mm object", "rules")
+    if "object.fragility" in m.valued and o.get("fragility") in DAMAGE_N:
+        m.put("object.max_force_n", DAMAGE_N[o["fragility"]], f"you said {FRAGILITY_LABEL[o['fragility']]}", "user")
+    if "object.surface" in m.valued and o.get("surface") in SURFACES:
+        m.put("object.friction", 0.35 if o["surface"] in ("smooth", "wet") else 0.6, f"you said {o['surface']}", "user")
 
 
 def _map_motion(m: _Mapping):

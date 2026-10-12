@@ -144,6 +144,12 @@ def test_a_preset_beats_the_models_guesses():
     assert m["changes"]["object.max_force_n"] == 25 and m["changes"]["object.friction"] == 0.35 and m["changes"]["object.mass_g"] == 60
     assert vision.preset_for("a soda can") == "soda can" and vision.preset_for("can it lift 2 kg") is None
     assert vision.preset_for("glass jar") is None
+    # ...but what the person types beats the preset
+    m = vision.map_to_changes(result(), Design(), {"object.mass_g": 65, "object.diameter_mm": 48, "object.fragility": "very_delicate"})
+    ch, src = m["changes"], {i["key"]: i["source"] for i in m["items"]}
+    assert (ch["object.mass_g"], ch["object.diameter_mm"], ch["object.max_force_n"]) == (65, 48, 3)
+    assert src["object.mass_g"] == src["object.max_force_n"] == "user" and src["object.friction"] == "preset"
+    assert ch["finger.length_mm"] == 54.0 and not any("preset treats it as robust" in n for n in m["notes"])
 
 
 def test_low_confidence_becomes_questions_never_changes():
