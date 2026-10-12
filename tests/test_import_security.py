@@ -102,6 +102,32 @@ def test_tar_links_and_traversal(tmp_path):
     assert not (tmp_path / "escape.txt").exists()
 
 
+def test_tar_members_that_are_skipped_still_count_toward_the_limit(tmp_path):
+    t = tmp_path / "t.tar.gz"
+    with tarfile.open(t, "w:gz") as tf:
+        info = tarfile.TarInfo("robot/.cache/blob")         # hidden: skipped, but tarfile inflates it to get past
+        info.size = 5000
+        tf.addfile(info, io.BytesIO(b"\0" * 5000))
+        info = tarfile.TarInfo("robot/a.urdf")
+        info.size = 8
+        tf.addfile(info, io.BytesIO(b"<robot/>"))
+    with pytest.raises(ImportFailed, match="unpacks to more than"):
+        zipsafe.extract_tar(str(t), str(tmp_path / "out"), limits={"zip_total": 4000})
+    assert zipsafe.extract_tar(str(t), str(tmp_path / "out2"))[0] == ["robot/a.urdf"]
+
+
+def test_windows_device_names_and_trailing_dots(tmp_path, monkeypatch):
+    assert common.windows_unsafe("meshes/con.stl") and common.windows_unsafe("a/NUL") and common.windows_unsafe("a./b")
+    assert not common.windows_unsafe("meshes/console.stl") and not common.windows_unsafe("a/b.stl")
+    z = _zip(tmp_path / "w.zip", {"robot/a.urdf": "<robot/>", "robot/aux.stl": "solid x"})
+    monkeypatch.setattr(os, "name", "nt")
+    with pytest.raises(ImportFailed, match="Windows can't store"):
+        common.safe_relpath("robot/con.stl")
+    files, warns = zipsafe.extract_zip(z, str(tmp_path / "out"))
+    monkeypatch.undo()
+    assert files == ["robot/a.urdf"] and any("aux.stl" in w for w in warns)
+
+
 # ------------------------------------------------------------------------------------------- XML
 
 
@@ -124,6 +150,44 @@ def test_utf16_doctype_is_also_refused(tmp_path):
     p.write_bytes('<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE r [<!ENTITY x "y">]><robot/>'.encode("utf-16"))
     with pytest.raises(ImportFailed, match="DOCTYPE"):
         common.parse_xml(str(p))
+
+
+def test_xml_encodings_that_hide_a_doctype_are_refused(tmp_path):
+    doc = '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE r [<!ENTITY x "y">]><robot name="&x;"/>'
+    for i, data in enumerate([doc.encode("utf-16-le"), doc.encode("utf-16-be"),                # no byte order mark
+                              b"\xef\xbb\xbf" + doc.replace("UTF-16", "UTF-8").encode("utf-8")]):
+        p = tmp_path / f"enc{i}.urdf"
+        p.write_bytes(data)
+        with pytest.raises(ImportFailed, match="DOCTYPE"):
+            common.parse_xml(str(p))
+    ebcdic = b'<?xml version="1.0" encoding="cp037"?>' + '<!DOCTYPE r><robot/>'.encode("cp037")
+    p = tmp_path / "ebcdic.urdf"
+    p.write_bytes(ebcdic)
+    with pytest.raises(ImportFailed, match="cp037 encoding; save it as UTF-8"):
+        common.parse_xml(str(p))
+    p.write_bytes('<?xml version="1.0" encoding="ISO-8859-1"?><robot name="caf\u00e9"/>'.encode("latin-1"))
+    assert common.parse_xml(str(p)).get("name") == "caf\u00e9"
+
+
+def test_xml_meshes_are_checked_and_unreadable_formats_say_what_they_need(tmp_path, monkeypatch):
+    with pytest.raises(ImportFailed, match="DOCTYPE"):
+        urdf._check_xml_mesh(b'<?xml version="1.0"?><!DOCTYPE c [<!ENTITY x "y">]><COLLADA/>', "dae", "arm.dae")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("3D/3dmodel.model", '<?xml version="1.0"?><!DOCTYPE m [<!ENTITY x "y">]><model/>')
+    with pytest.raises(ImportFailed, match="DOCTYPE"):
+        urdf._check_xml_mesh(buf.getvalue(), "3mf", "egg.3mf")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("3D/3dmodel.model", b" " * (20 << 20))
+    with pytest.raises(ImportFailed, match="far more data"):
+        urdf._check_xml_mesh(buf.getvalue(), "3mf", "bomb.3mf")
+    import trimesh
+    p = tmp_path / "egg.3mf"
+    p.write_bytes(buf.getvalue())
+    monkeypatch.setattr(trimesh, "available_formats", lambda: {"stl", "obj", "glb"})
+    with pytest.raises(ImportFailed, match="lxml and networkx"):
+        urdf.load_mesh(str(p), "3mf")
 
 
 def test_oversize_xml_is_refused(tmp_path, monkeypatch):
@@ -205,6 +269,17 @@ def test_upload_caps_and_cut_off_uploads(tmp_path, monkeypatch):
         Session.open("../../etc", str(tmp_path))
 
 
+def test_upload_file_and_folder_name_clashes_are_refused_cleanly(tmp_path):
+    s = Session.create(str(tmp_path))
+    s.add_file("robot/a", io.BytesIO(b"12"), 2)
+    with pytest.raises(ImportFailed, match="clashes"):
+        s.add_file("robot/a/b.stl", io.BytesIO(b"123"), 3)
+    with pytest.raises(ImportFailed, match="clashes"):
+        s.add_file("robot", io.BytesIO(b"1"), 1)
+    st = s.state()
+    assert st["files"] == {"robot/a": 2} and st["bytes"] == 2
+
+
 # ------------------------------------------------------------------------------------------- URL fetch
 
 
@@ -221,6 +296,20 @@ def test_allowlisted_hosts():
     for u in ("https://github.com/a/b", "https://raw.githubusercontent.com/a/b/main/x.urdf",
               "https://huggingface.co/a/b", "https://cdn-lfs.hf.co/x", "https://codeload.github.com/a/b/zip/main"):
         assert fetch.check_url(u).hostname
+
+
+@pytest.mark.parametrize("url", ["https://github.com/x/..", "https://github.com/../b", "https://codeload.github.com/a/../zip/main",
+                                 "https://codeload.github.com/a/%2e%2e/zip/main", "https://raw.githubusercontent.com/x/../main/a.urdf",
+                                 "https://raw.githubusercontent.com/x/y/main/../../a.urdf", "https://huggingface.co/x/..",
+                                 "https://raw.githubusercontent.com/x/y/main/.git/config"])
+def test_link_segments_cannot_name_parent_or_hidden_folders(url):
+    with pytest.raises(ImportFailed):
+        fetch.plan(url)
+
+
+def test_downloaded_folders_are_never_hidden():
+    assert fetch._local(".github") == "github" and fetch._local("..") == "repo" and fetch._local("SO-ARM100") == "SO-ARM100"
+    assert fetch.plan("https://github.com/a/.github")["repo"] == ".github"
 
 
 def _fake_dns(monkeypatch, table):

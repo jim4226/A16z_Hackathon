@@ -30,7 +30,7 @@ import time
 import urllib.request
 from urllib.parse import quote, unquote, urljoin, urlsplit
 
-from .common import LIMITS, MB, ImportFailed, contained, parse_xml
+from .common import LIMITS, MB, ImportFailed, contained, parse_xml, safe_relpath
 
 ALLOW = {"github.com", "codeload.github.com", "raw.githubusercontent.com", "huggingface.co"}
 ALLOW_SUFFIX = (".hf.co",)
@@ -38,6 +38,21 @@ WANTED = re.compile(r"\.(urdf|xacro|xml|stl|obj|ply|off|dae|glb|gltf|bin|3mf|ste
                     r"kicad_pcb|kicad_sch)$|(^|/)(package\.xml|licen[sc]e[^/]*|copying[^/]*|notice[^/]*|readme[^/]*)$", re.I)
 UA = "MorphStudio-import/0.2 (+https://github.com/jim4226/A16z_Hackathon)"
 OVERALL_S = 600.0
+SEG = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}$")      # an owner, repo or ref path segment; never . or ..
+
+
+def _local(name: str) -> str:
+    """A folder name for a downloaded repository (".github" -> "github"; never hidden, never a path)."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", name).lstrip(".")[:100] or "repo"
+
+
+def _usable(rel: str) -> bool:
+    """A listed or referenced path we may write: relative, no '..' and nothing hidden (or reserved on Windows)."""
+    try:
+        safe_relpath(rel)
+        return True
+    except ImportFailed:
+        return False
 
 
 def network_allowed() -> bool:
@@ -220,7 +235,7 @@ def plan(url: str) -> dict:
     u = check_url(url)
     host = u.hostname.lower()
     parts = [unquote(p) for p in u.path.strip("/").split("/") if p]
-    seg = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+    seg = SEG
     if host == "github.com":
         if len(parts) < 2 or not all(seg.match(p) for p in parts[:2]):
             raise ImportFailed("Paste a repository link such as https://github.com/<owner>/<repo>.")
@@ -236,12 +251,12 @@ def plan(url: str) -> dict:
         return {"kind": "github_zip", "owner": owner, "repo": repo, "ref": ref or "HEAD", "sub": sub, "zip": zip_url,
                 "source_url": f"https://github.com/{owner}/{repo}" + (f"/tree/{ref}/{sub}".rstrip("/") if ref else "")}
     if host == "codeload.github.com":
-        if len(parts) < 4 or parts[2] != "zip":
+        if len(parts) < 4 or parts[2] != "zip" or not all(seg.match(x) for x in parts[:2]):
             raise ImportFailed("Paste the repository's github.com link instead.")
         return {"kind": "github_zip", "owner": parts[0], "repo": parts[1], "ref": "/".join(parts[3:]), "sub": "",
                 "zip": url, "source_url": f"https://github.com/{parts[0]}/{parts[1]}"}
     if host == "raw.githubusercontent.com":
-        if len(parts) < 4:
+        if len(parts) < 4 or not all(seg.match(x) for x in parts[:3]) or not _usable("/".join(parts[3:])):
             raise ImportFailed("Paste a raw file link: https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>.")
         return {"kind": "github_raw", "owner": parts[0], "repo": parts[1], "ref": parts[2], "path": "/".join(parts[3:]),
                 "base": f"https://raw.githubusercontent.com/{quote(parts[0])}/{quote(parts[1])}/{quote(parts[2])}/",
@@ -272,7 +287,7 @@ def _github_zip(p: dict, dest: str, on_progress, deadline) -> dict:
     budget = {}
     on_progress and on_progress(f"Downloading {p['owner']}/{p['repo']} ({p['ref']})")
     download(p["zip"], tmp, LIMITS["fetch_bytes"], budget, deadline)
-    root = os.path.join(dest, p["repo"])
+    root = os.path.join(dest, _local(p["repo"]))
     unpack = os.path.join(dest, f".unpack-{os.getpid()}")
     try:
         files, warns = zipsafe.extract_zip(tmp, unpack)
@@ -286,7 +301,7 @@ def _github_zip(p: dict, dest: str, on_progress, deadline) -> dict:
             import shutil
             shutil.rmtree(unpack, ignore_errors=True)
             raise ImportFailed(f"The folder {p['sub']} isn't in {p['owner']}/{p['repo']}.")
-        root = os.path.join(dest, os.path.basename(base.rstrip(os.sep)) or p["repo"])
+        root = os.path.join(dest, _local(os.path.basename(base.rstrip(os.sep)) or p["repo"]))
     os.replace(base, root)
     import shutil
     shutil.rmtree(unpack, ignore_errors=True)
@@ -321,11 +336,11 @@ def _refs(path: str) -> list:
 
 
 def _github_raw(p: dict, dest: str, on_progress, deadline) -> dict:
-    root = os.path.join(dest, p["repo"])
+    root = os.path.join(dest, _local(p["repo"]))
     budget, done, todo = {}, {}, [[p["path"]]]
     n = 0
     while todo:
-        alts = [a for a in todo.pop(0) if a not in done and not a.startswith("..")]
+        alts = [a for a in todo.pop(0) if a not in done and _usable(a)]
         for rel in alts:
             n += 1
             if n > LIMITS["fetch_files"]:
@@ -363,7 +378,7 @@ def _github_raw(p: dict, dest: str, on_progress, deadline) -> dict:
 
 
 def _hf(p: dict, dest: str, on_progress, deadline) -> dict:
-    root = os.path.join(dest, p["repo"].split("/")[1])
+    root = os.path.join(dest, _local(p["repo"].split("/")[1]))
     api = f"https://huggingface.co/api/{p['repo_type']}/{p['repo']}/tree/{quote(p['rev'], safe='')}"
     sub = p["sub"]
     if p["kind"] == "hf_file":
@@ -392,7 +407,7 @@ def _hf(p: dict, dest: str, on_progress, deadline) -> dict:
     for e in files:
         rel = e["path"][len(sub) + 1:] if sub and e["path"].startswith(sub + "/") else e["path"]
         local = os.path.join(root, *rel.split("/"))
-        if contained(root, local) is None:
+        if not _usable(rel) or contained(root, local) is None:
             continue
         on_progress and on_progress(f"Fetching {rel}")
         download(f"https://huggingface.co/{p['prefix']}{p['repo']}/resolve/{quote(p['rev'], safe='')}/{quote(e['path'])}",

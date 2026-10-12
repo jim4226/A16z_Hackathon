@@ -17,10 +17,10 @@ import tarfile
 import zipfile
 import zlib
 
-from .common import LIMITS, MB, ImportFailed, contained
+from .common import LIMITS, MB, ImportFailed, contained, windows_unsafe
 
 NESTED = re.compile(r"\.(zip|tar|tgz|gz|bz2|xz|7z|rar|whl|jar|apk)$", re.I)
-SKIP = re.compile(r"(^|/)(__MACOSX|\.git|\.svn|\.hg)(/|$)|(^|/)\.[^/]*$|(^|/)Thumbs\.db$", re.I)
+SKIP = re.compile(r"(^|/)(__MACOSX|\.[^/]*)(/|$)|(^|/)Thumbs\.db$", re.I)   # hidden files and folders, .git
 
 
 def _clean(name: str) -> str | None:
@@ -69,10 +69,21 @@ def _copy(src, dst_path: str, size_hint: int, budget: dict, lim: dict, name: str
 def _target(dest: str, rel: str) -> str:
     path = os.path.join(dest, *rel.split("/"))
     parent = os.path.dirname(path)
-    os.makedirs(parent, exist_ok=True)
-    if contained(dest, parent) is None:      # a symlinked folder already in dest: never write through it
-        raise ImportFailed(f"Refused to write {rel[:80]!r} outside the import folder.")
+    for _ in (0, 1):                          # before and after creating it: never write through a symlinked folder
+        if contained(dest, parent) is None:
+            raise ImportFailed(f"Refused to write {rel[:80]!r} outside the import folder.")
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except OSError:
+            raise ImportFailed(f"Couldn't unpack {rel[:80]!r}: a file and a folder in the archive share a name.") from None
     return path
+
+
+def _windows_skip(rel: str, warns: list) -> bool:
+    if os.name == "nt" and windows_unsafe(rel):
+        warns.append(f"skipped {rel}: Windows can't store that name")
+        return True
+    return False
 
 
 def is_symlink_zipinfo(info: zipfile.ZipInfo) -> bool:
@@ -109,6 +120,8 @@ def extract_zip(path: str, dest: str, limits: dict | None = None) -> tuple[list,
             if is_symlink_zipinfo(info):
                 warns.append(f"skipped the symlink {rel}")
                 continue
+            if _windows_skip(rel, warns):
+                continue
             if info.flag_bits & 0x1:
                 raise ImportFailed("The archive is password-protected; unzip it and drop the folder instead.")
             if NESTED.search(rel):
@@ -142,7 +155,7 @@ def extract_zip(path: str, dest: str, limits: dict | None = None) -> tuple[list,
 def extract_tar(path: str, dest: str, limits: dict | None = None) -> tuple[list, list]:
     lim = _limits(limits)
     os.makedirs(dest, exist_ok=True)
-    files, warns, budget, n, seen = [], [], {"total": 0}, 0, set()
+    files, warns, budget, n, seen, declared = [], [], {"total": 0}, 0, set(), 0
     try:
         tf = tarfile.open(path, "r:*")
     except (tarfile.TarError, OSError, EOFError) as exc:
@@ -153,10 +166,13 @@ def extract_tar(path: str, dest: str, limits: dict | None = None) -> tuple[list,
                 n += 1
                 if n > lim["zip_entries"]:
                     raise ImportFailed(f"The archive has more than {lim['zip_entries']:,} entries; zip only the robot's folder.")
+                declared += max(m.size, 0)       # skipped members are decompressed too, to get past them
+                if declared > lim["zip_total"]:
+                    raise ImportFailed(f"The archive unpacks to more than {lim['zip_total'] // MB} MB, the import limit.")
                 if m.isdir():
                     continue
                 rel = _clean(m.name)
-                if rel is None or SKIP.search(rel):
+                if rel is None or SKIP.search(rel) or _windows_skip(rel, warns):
                     continue
                 if not m.isreg():
                     warns.append(f"skipped {rel}: links and special files are not imported")

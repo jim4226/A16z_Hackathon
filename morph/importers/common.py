@@ -22,7 +22,8 @@ LIMITS = {
 ROBOT_RX = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")      # arm.source / .robots/<name>
 PROJECT_RX = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")     # projects/<name>
 SESSION_RX = re.compile(r"^[a-f0-9]{16}$")
-WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+WINDOWS_RESERVED = {"con", "prn", "aux", "nul", "conin$", "conout$", *(f"com{i}" for i in range(1, 10)),
+                    *(f"lpt{i}" for i in range(1, 10))}
 _HOME = None
 
 
@@ -64,6 +65,11 @@ def contained(root: str, path: str) -> str | None:
         return None
 
 
+def windows_unsafe(rel: str) -> bool:
+    """A path Windows can't store as written: a device name (con, nul, com1...) or a trailing dot or space."""
+    return any(p.split(".", 1)[0].lower() in WINDOWS_RESERVED or p != p.rstrip(" .") for p in rel.split("/"))
+
+
 def safe_relpath(rel: str, maxlen: int = 1024) -> str:
     """Validate a client-supplied relative path ("folder/meshes/a.stl"); returns it with "/" separators."""
     if not isinstance(rel, str) or not rel or len(rel) > maxlen:
@@ -75,6 +81,9 @@ def safe_relpath(rel: str, maxlen: int = 1024) -> str:
     parts = rel.split("/")
     if any(p in ("", ".", "..") or p.startswith(".") or len(p) > 255 for p in parts):
         raise ImportFailed(f"Refused the path {rel[:80]!r}: no '..', hidden or empty folder names.")
+    if os.name == "nt" and windows_unsafe(rel):
+        raise ImportFailed(f"Refused the path {rel[:80]!r}: Windows can't store that name (a device name such as "
+                           "con or nul, or a trailing dot or space); rename it.")
     return "/".join(parts)
 
 
@@ -106,11 +115,24 @@ def xml_bytes(path: str, max_bytes: int | None = None) -> bytes:
     return data
 
 
+_XML_ENCODING = re.compile(rb"""^\s*<\?xml[^>]{0,200}?encoding\s*=\s*["']([A-Za-z0-9._:-]{1,40})["']""")
+_ASCII_SAFE = re.compile(r"^(utf-?8|us-?ascii|ascii|iso[-_]?8859-\d{1,2}|latin-?1|l1|windows-125\d|cp125\d|utf-?16)$")
+
+
 def check_xml_text(data, name: str = "file"):
+    """Refuse DOCTYPE/ENTITY declarations. Bytes are decoded the way expat would read them: UTF-16 with or without
+    a byte order mark, else UTF-8; any other declared encoding that isn't ASCII-compatible (EBCDIC, UTF-7) is
+    refused, since the check below couldn't see through it."""
     if isinstance(data, bytes):
-        if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        head = data[:4]
+        if head[:2] in (b"\xff\xfe", b"\xfe\xff"):
             text = data.decode("utf-16", errors="replace")
+        elif head in (b"<\x00?\x00", b"\x00<\x00?"):
+            text = data.decode("utf-16-le" if head[:1] == b"<" else "utf-16-be", errors="replace")
         else:
+            m = _XML_ENCODING.match(data[3:] if data[:3] == b"\xef\xbb\xbf" else data)
+            if m and not _ASCII_SAFE.match(m.group(1).decode("ascii").lower()):
+                raise ImportFailed(f"{name} is in the {m.group(1).decode('ascii')[:40]} encoding; save it as UTF-8.")
             text = data.decode("utf-8", errors="replace")
     else:
         text = data

@@ -29,7 +29,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
-from .common import LIMITS, ImportFailed, contained, parse_xml, parse_xml_text
+from .common import LIMITS, MB, ImportFailed, check_xml_text, contained, parse_xml, parse_xml_text
 
 RESERVED = {"world": "world_link", "morph_base": "morph_base_orig", "tcp": "tcp_orig"}
 KEEP = ("link", "joint", "material")
@@ -146,19 +146,24 @@ def load_mesh(path: str, fmt: str, bundle: str | None = None):
                 head = fh.read(512)
             if not head.lstrip().lower().startswith(b"solid"):
                 raise ImportFailed(f"{name} is not a valid STL file (its size doesn't match its triangle count).")
-    if fmt == "dae":
-        try:
-            import collada  # noqa: F401
-        except ImportError:
-            raise ImportFailed(f"{name} is a COLLADA (.dae) mesh, which needs the optional pycollada package; "
-                               "export the meshes as STL instead.") from None
     if fmt == "step":
         return load_step(path)
+    try:
+        readable = fmt == "stl" or fmt in trimesh.available_formats()
+    except Exception:  # noqa: BLE001
+        readable = fmt in ("stl", "obj", "off", "ply", "glb", "gltf")
+    if not readable:
+        need = {"dae": "the optional pycollada package", "3mf": "the optional lxml and networkx packages"}
+        kind = {"dae": "a COLLADA (.dae) mesh", "3mf": "a 3MF mesh"}.get(fmt, f"a .{fmt} file")
+        raise ImportFailed(f"{name} is {kind}, which needs {need.get(fmt, 'an optional package')} to read; "
+                           "export it as STL, OBJ or GLB instead.")
     with open(path, "rb") as fh:
         data = fh.read()
     resolver = _Resolver(os.path.dirname(path), bundle or os.path.dirname(path))
     if fmt == "gltf":
         _check_gltf_uris(data, name)
+    if fmt in ("dae", "3mf"):
+        _check_xml_mesh(data, fmt, name)
     try:
         m = trimesh.load(io.BytesIO(data), file_type=fmt, force="mesh", resolver=resolver, process=False)
     except ImportFailed:
@@ -174,6 +179,34 @@ def load_mesh(path: str, fmt: str, bundle: str | None = None):
     if not np.all(np.isfinite(m.vertices)):
         raise ImportFailed(f"{name} has invalid (NaN or infinite) vertex coordinates.")
     return m
+
+
+def _check_xml_mesh(data: bytes, fmt: str, name: str):
+    """COLLADA is XML and 3MF is XML in a zip: no DOCTYPE/ENTITY, and the 3MF zip within the archive limits."""
+    if fmt == "dae":
+        if len(data) > LIMITS["xml_bytes"]:
+            raise ImportFailed(f"{name} is over the {LIMITS['xml_bytes'] >> 20} MB limit for XML files; export it as STL.")
+        check_xml_text(data, name)
+        return
+    import zipfile
+
+    from .zipsafe import read_member
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+        infos = zf.infolist()
+    except (zipfile.BadZipFile, OSError, ValueError):
+        raise ImportFailed(f"{name} is not a valid 3MF file.") from None
+    if len(infos) > LIMITS["zip_entries"]:
+        raise ImportFailed(f"{name} holds more than {LIMITS['zip_entries']:,} entries.")
+    total = 0
+    for zi in infos:
+        total += zi.file_size
+        if zi.file_size > LIMITS["zip_file"] or total > LIMITS["zip_total"] or \
+                (zi.file_size > MB and zi.file_size > LIMITS["zip_ratio"] * max(zi.compress_size, 1)):
+            raise ImportFailed(f"{name} unpacks to far more data than it holds; export it as STL instead.")
+        if zi.filename.lower().endswith((".model", ".rels", ".xml")):
+            check_xml_text(read_member(zf, zi.filename, LIMITS["xml_bytes"]), f"{name} ({zi.filename[:60]})")
 
 
 def _check_gltf_uris(data: bytes, name: str):

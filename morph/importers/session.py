@@ -142,12 +142,17 @@ class Session:
             st["status"] = "new"
             self._save(st)
         target = os.path.join(self.files, *rel.split("/"))
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        if contained(self.files, os.path.dirname(target)) is None:
-            raise ImportFailed("Refused a path outside the import folder.")
         tmp = target + f".part-{secrets.token_hex(4)}"
         got = 0
         try:
+            if contained(self.files, os.path.dirname(target)) is None:
+                raise ImportFailed("Refused a path outside the import folder.")
+            try:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+            except OSError:
+                raise ImportFailed(f"{rel[:80]} clashes with a file of the same name already in this import.") from None
+            if os.path.isdir(target):
+                raise ImportFailed(f"{rel[:80]} clashes with a folder of the same name already in this import.")
             with open(tmp, "wb") as out:
                 while got < length:
                     chunk = stream.read(min(MB, length - got))
