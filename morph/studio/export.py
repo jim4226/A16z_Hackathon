@@ -7,7 +7,8 @@ and that the firmware is unverified, or (full=True) the project's whole design h
                 plus the files above for `rev` when one is given (F2's project import rebuilds the rest)
 
 Settings, API keys, chat history, the ledger, hidden files and anything outside the revision folders are never
-read. Sizes and file counts are bounded and the archive is built in a temporary file, not in memory.
+read. Sizes and file counts are bounded and the archive is built in a temporary file, not in memory. A team Studio
+passes `keep` (its download policy: order files of a revision nobody released) and `extra` (team.json).
 """
 
 from __future__ import annotations
@@ -124,15 +125,34 @@ def _manifest_rev(rev: str, folder: str, results: dict) -> dict:
             {"status": "unverified", "board_core": "not_verified", "bench": "not_verified"}}
 
 
-def _plan(project, rev, full: bool) -> tuple[dict, list, str]:
+def _kept(files: list, keep, prefix: str | None) -> tuple[list, list]:
+    """(files kept, archive paths left out): `keep(rel)` decides for the exported revision's own files (rel: the path
+    inside its folder, which their archive paths start with `prefix`)."""
+    if keep is None or prefix is None:
+        return files, []
+    out, held = [], []
+    for path, arc in files:
+        if arc.startswith(prefix) and not keep(arc[len(prefix):]):
+            held.append(arc)
+        else:
+            out.append((path, arc))
+    return out, held
+
+
+LEFT_OUT = "Order files of a revision nobody released yet are left out (the team's download policy): release it first."
+
+
+def _plan(project, rev, full: bool, keep=None) -> tuple[dict, list, str]:
     """(manifest, [(disk path, archive path)], filename) without writing anything."""
     name = os.path.basename(os.path.normpath(project.root))
     safe = re.sub(r"[^A-Za-z0-9_-]", "-", name)[:64] or "project"
     if not full:
         folder, results = _revision(project, rev)
-        files = _files(folder)
+        files, held = _kept(_files(folder), keep, "")
         manifest = {"format_version": 1, "kind": "revision", "project": name,
                     **_manifest_rev(rev, folder, results), "note": NOTE}
+        if held:
+            manifest.update(left_out=held, left_out_note=LEFT_OUT)
         return manifest, files, f"{safe}-{rev}.zip"
     revs = [r for r in project.revs() if os.path.isfile(os.path.join(project.rev_dir(r), "results.json"))]
     if not revs:
@@ -152,14 +172,17 @@ def _plan(project, rev, full: bool) -> tuple[dict, list, str]:
         meta = {k: raw[k] for k in META_KEYS if isinstance(raw, dict) and k in raw}
     except (OSError, ValueError):
         pass
+    files, held = _kept(files, keep, f"{rev}/" if rev else None)
     manifest = {"format_version": 1, "kind": "project", "project": name, "meta": meta, "files_of": rev,
                 "revisions": entries, "note": NOTE}
+    if held:
+        manifest.update(left_out=held, left_out_note=LEFT_OUT)
     return manifest, files, f"{safe}-{'history' if rev is None else rev + '-history'}.zip"
 
 
-def check(project, rev, full: bool = False):
+def check(project, rev, full: bool = False, keep=None):
     """Raise ExportError when build_export would refuse, without reading any file contents."""
-    _, files, _ = _plan(project, rev, full)
+    _, files, _ = _plan(project, rev, full, keep=keep)
     total = 0
     for path, _ in files:
         try:
@@ -171,10 +194,11 @@ def check(project, rev, full: bool = False):
                               "or the files you need from its tabs.", 413)
 
 
-def build_export(project, rev, full: bool = False):
-    """(open temporary file positioned at 0, download name). The caller streams and closes it."""
-    check(project, rev, full)
-    manifest, files, filename = _plan(project, rev, full)
+def build_export(project, rev, full: bool = False, *, keep=None, extra: dict | None = None):
+    """(open temporary file positioned at 0, download name). The caller streams and closes it. `keep(rel)`: whether a file
+    of the exported revision goes in; `extra`: {archive name: JSON value} added at the top (a team's team.json)."""
+    check(project, rev, full, keep=keep)
+    manifest, files, filename = _plan(project, rev, full, keep=keep)
     out = tempfile.TemporaryFile(mode="w+b")
     try:
         written = 0
@@ -193,6 +217,10 @@ def build_export(project, rev, full: bool = False):
                 except OSError:
                     raise ExportError("A file of this revision disappeared while exporting. Try again.", 409) from None
                 listing.append({"path": arc, "bytes": os.path.getsize(path), "sha256": digest.hexdigest()})
+            for arc, value in (extra or {}).items():
+                blob = json.dumps(value, indent=2).encode("utf-8")
+                archive.writestr(arc, blob)
+                listing.append({"path": arc, "bytes": len(blob), "sha256": hashlib.sha256(blob).hexdigest()})
             manifest["files"] = listing
             if manifest.get("meta"):
                 archive.writestr("meta.json", json.dumps(manifest["meta"], indent=2))

@@ -294,8 +294,13 @@ def test_a_change_request_is_built_by_the_room_queue_for_its_author(team_studio)
     until(lambda: room.latest() == "r002")
     res = room.p.load_results("r002")
     assert res["by"] == ids["Ana"] and res["proposed_by"] == ids["Vic"]
-    with open(os.path.join(room.p.root, "ledger.jsonl"), encoding="utf-8") as fh:
-        entry = [json.loads(x) for x in fh if '"revision"' in x][-1]
+    def revision_entry():  # the ledger line follows results.json by a moment
+        try:
+            with open(os.path.join(room.p.root, "ledger.jsonl"), encoding="utf-8") as fh:
+                return [e for e in map(json.loads, fh) if e.get("type") == "revision" and e.get("rev") == "r002"]
+        except FileNotFoundError:
+            return []
+    entry = until(revision_entry)[-1]
     assert entry["by"] == ids["Ana"] and entry["proposed_by"] == ids["Vic"]
     p = until(lambda: next((x for x in call("GET", "/api/proposals", headers={"Cookie": jar["Vic"]})[1]["proposals"]
                             if x["id"] == pid and x.get("applied_rev")), None))
@@ -439,6 +444,176 @@ def test_a_browser_signs_in_from_the_teams_link_page(tmp_path, monkeypatch):
         finally:
             browser.close()
             httpd.shutdown()
+
+
+# ------------------------------------------------------------------ I2b: what the wiring guarantees beyond each route
+
+
+def test_every_route_has_its_role_in_the_teams_table(studio):
+    """A route a feature registers gets the same role from the Teams table (teams/roles.py), so a team Studio never falls
+    back to the table's catch-all for it (an editor to read, an owner to change)."""
+    from morph.studio.teams import roles
+    seen = 0
+    for r in routes.routes():
+        if r.path.startswith("/api/test-"):                           # registered by test_studio_routes.py
+            continue
+        path = r.path[:-1] + "x" if r.path.endswith("/*") else r.path
+        listed = (r.method, r.path) in roles.ROUTES or any(
+            m == r.method and p.endswith("/*") and path.startswith(p[:-1]) for m, p in roles.ROUTES)
+        assert listed and roles.required(r.method, path)[0] == r.role, (r.method, r.path, r.role)
+        seen += 1
+    assert seen >= 60
+
+
+def _brief_ready(call, text):
+    s, out, _ = call("POST", "/api/brief", {"text": text})
+    bid = out["brief_id"]
+    until(lambda: call("GET", f"/api/brief?id={bid}")[1]["busy"] is False)
+    call("POST", "/api/brief", {"brief_id": bid, "action": "defaults"})
+    until(lambda: (lambda g: g["brief"]["status"] == "ready" and not g["busy"])(call("GET", f"/api/brief?id={bid}")[1]))
+    return bid
+
+
+def test_building_a_brief_twice_makes_one_project(studio):
+    st, call = studio
+    bid = _brief_ready(call, "help me sort socks")
+    st.builds.acquire()                                               # the first build waits for the build slot
+    try:
+        s1, o1, _ = call("POST", "/api/brief", {"brief_id": bid, "action": "build"})
+        s2, o2, _ = call("POST", "/api/brief", {"brief_id": bid, "action": "build"})   # a second click while it builds
+    finally:
+        st.builds.release()
+    assert s1 == 200 and o1["project"] == "sock-sorter" and not o1.get("already")
+    assert s2 == 200 and o2["project"] == "sock-sorter" and o2["already"] is True
+    room = st.room("sock-sorter")
+    until(lambda: room.latest())
+    assert [p["name"] for p in st.projects()] == ["egg-picker", "sock-sorter"]   # no sock-sorter-2
+    until(lambda: not os.path.exists(B.draft_path(st.home, bid)))
+    assert call("POST", "/api/brief", {"brief_id": bid, "action": "build"})[0] == 404   # built: the brief is done
+
+
+def test_a_brief_whose_first_build_failed_can_be_built_again(studio, monkeypatch):
+    st, call = studio
+    bid = _brief_ready(call, "help me sort socks")
+    real = RobotProject.run
+    monkeypatch.setattr(RobotProject, "run", lambda self, *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    s, out, _ = call("POST", "/api/brief", {"brief_id": bid, "action": "build"})
+    assert s == 200 and out["project"] == "sock-sorter"
+    until(lambda: (lambda g: g[0] == 200 and g[1]["brief"]["status"] == "ready" and not g[1]["busy"])(
+        call("GET", f"/api/brief?id={bid}")))
+    monkeypatch.setattr(RobotProject, "run", real)
+    s, out, _ = call("POST", "/api/brief", {"brief_id": bid, "action": "build"})
+    assert s == 200 and out["project"] == "sock-sorter-2" and not out.get("already")   # a new project, built this time
+    room = st.room("sock-sorter-2")
+    assert until(lambda: room.latest()) == "r001"
+    until(lambda: os.path.isfile(os.path.join(room.p.root, "brief.json")))
+
+
+def test_imports_go_into_the_team_audit_log(team_studio, tmp_path):
+    st, call, ids, jar, _ = team_studio
+    from test_import_fixtures import egg_stl
+    ana = {"Cookie": jar["Ana"]}
+    sid = call("POST", "/api/import", {}, headers=ana)[1]["id"]
+    with open(egg_stl(str(tmp_path / "egg.stl")), "rb") as fh:
+        call("PUT", f"/api/import/{sid}/file?path=egg.stl", raw=fh.read(), ctype="application/octet-stream", headers=ana)
+    call("POST", f"/api/import/{sid}/detect", {}, headers=ana)
+    s, out, _ = call("POST", f"/api/import/{sid}/commit", {"candidate": 0}, headers=ana)
+    assert s == 202 and out["applied"]
+    sid = call("POST", "/api/import", {}, headers=ana)[1]["id"]
+    src = tmp_path / "arm"
+    arm_urdf(str(src), motor_names=True)
+    for dp, _, fns in os.walk(src):
+        for f in fns:
+            p = os.path.join(dp, f)
+            with open(p, "rb") as fh:
+                call("PUT", f"/api/import/{sid}/file?path=arm/{os.path.relpath(p, src).replace(os.sep, '/')}", raw=fh.read(),
+                     ctype="application/octet-stream", headers=ana)
+    call("POST", f"/api/import/{sid}/detect", {}, headers=ana)
+    s, out, _ = call("POST", f"/api/import/{sid}/commit", {"candidate": 0, "name": "Box Arm"}, headers=ana)
+    assert s == 202 and out["project"] == "box-arm"
+    rows = team_audit.entries(st.home, event="import")[::-1]          # entries() is newest first
+    assert [(e["by"], e["kind"], e["project"]) for e in rows] == [(ids["Ana"], "object", "egg-picker"),
+                                                                  (ids["Ana"], "robot", "box-arm")]
+    assert rows[0]["file"] == "egg.stl" and rows[1]["source"] == "box-arm" and team_audit.verify(st.home)["ok"]
+    from morph.studio import api_import                              # a link import is logged without its query
+    req = type("R", (), {"studio": st, "member": {"id": ids["Ana"]}})()
+    s_url = type("S", (), {"state": lambda self: {"source_url": "https://github.com/acme/arm/tree/main?token=x#readme"}})()
+    api_import._audit(req, s_url, kind="robot", project="arm")
+    assert team_audit.entries(st.home, event="import")[0]["url"] == "https://github.com/acme/arm/tree/main"
+
+
+def _zip(port, path, cookie=None):
+    import io
+    import zipfile
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    conn.request("GET", path, headers={"Cookie": cookie} if cookie else {})
+    r = conn.getresponse()
+    data = r.read()
+    conn.close()
+    assert r.status == 200, (r.status, data[:200])
+    z = zipfile.ZipFile(io.BytesIO(data))
+    return z, json.loads(z.read("export-manifest.json"))
+
+
+ORDER_FILES = ("mfg/mfg_prototype.zip", "mfg/controller_pcba/gerbers.zip")
+
+
+def _order_files(root):
+    for rel in ORDER_FILES + ("mfg/plan.json",):
+        os.makedirs(os.path.dirname(os.path.join(root, "r001", *rel.split("/"))), exist_ok=True)
+        with open(os.path.join(root, "r001", *rel.split("/")), "wb") as fh:
+            fh.write(b"{}" if rel.endswith(".json") else b"PK\x05\x06" + bytes(18))
+
+
+def test_a_team_export_follows_the_download_policy_and_carries_the_teams_record(team_studio):
+    from morph.studio.teams import collab
+    from morph.studio.teams.store import TeamStore
+    st, call, ids, jar, port = team_studio
+    root = st.room().p.root
+    _order_files(root)
+    # a viewer: the order files of a revision nobody released stay out (as on /files), and the manifest says so
+    z, man = _zip(port, "/api/export?rev=r001", jar["Vic"])
+    names = set(z.namelist())
+    assert "mfg/plan.json" in names and not names & set(ORDER_FILES) and sorted(man["left_out"]) == sorted(ORDER_FILES)
+    assert "release" in man["left_out_note"]
+    rec = json.loads(z.read("team.json"))
+    assert rec["format"] == "morph-team-record/1" and rec["rev"] == "r001" and rec["level"] == "prototype"
+    assert rec["release_gate"]["ok"] is False and rec["releases"] == []
+    assert any(f["path"] == "team.json" for f in man["files"])
+    # the owner may take a draft order package: it goes out, and the audit log says so
+    z, man = _zip(port, "/api/export?rev=r001", jar["Jim"])
+    assert set(ORDER_FILES) <= set(z.namelist()) and "left_out" not in man
+    row = team_audit.entries(st.home, event="export")[0]
+    assert row["by"] == ids["Jim"] and sorted(row["draft_order_files"]) == sorted(ORDER_FILES)
+    # reviewed and released: everyone's export has the order files, and the record names who approved it
+    ms = TeamStore(st.home).read()["members"]
+    rv = collab.request_review(root, ids["Jim"], rev="r001", members=ms)
+    collab.decide(root, rv["id"], ms[ids["Ana"]], "approve", members=ms)
+    collab.create_release(root, "Proto 1", "r001", ids["Jim"], ms, home=st.home)
+    z, man = _zip(port, "/api/export?rev=r001", jar["Vic"])
+    rec = json.loads(z.read("team.json"))
+    assert set(ORDER_FILES) <= set(z.namelist()) and rec["release_gate"]["ok"] is True
+    assert [(r["tag"], r["by"]) for r in rec["releases"]] == [("Proto 1", "Jim")]
+    assert {a["name"] for d in rec["disciplines"] for a in d["approved_by"]} == {"Ana"}
+    blob = z.read("team.json").decode()
+    assert not any(mid in blob for mid in ids.values())               # names, never member ids
+    # the project's history: the whole team record
+    z, man = _zip(port, "/api/export?full=1", jar["Vic"])
+    hist = json.loads(z.read("team.json"))
+    assert hist["format"] == "morph-team-history/1" and [r["tag"] for r in hist["releases"]] == ["Proto 1"]
+    assert call("GET", "/api/export?rev=r009", headers={"Cookie": jar["Vic"]})[0] == 404
+
+
+def test_an_export_without_teams_has_no_team_record_and_keeps_order_files(tmp_path):
+    home = tmp_path / "projects"
+    st = server.Studio(make_project(home, "egg-picker"), str(home))
+    httpd = start(st)
+    try:
+        _order_files(st.room().p.root)
+        z, man = _zip(httpd.server_address[1], "/api/export?rev=r001")
+        assert set(ORDER_FILES) <= set(z.namelist()) and "team.json" not in z.namelist() and "left_out" not in man
+    finally:
+        httpd.shutdown()
 
 
 def test_a_build_that_ends_while_the_tab_switches_to_it_is_not_missed(tmp_path, monkeypatch):

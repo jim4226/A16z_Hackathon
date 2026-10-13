@@ -1163,3 +1163,25 @@ def export_bundle(root: str, members=None) -> dict:
             "reviews": scrub([r for r in _reviews_state(root).values()]), "branches": scrub(branches(root)),
             "releases": scrub(releases(root))}
 
+
+def revision_record(root: str, rev: str, members=None, policy=None) -> dict:
+    """What a revision export carries about the team (team.json): who made the revision, its release gate, every
+    discipline's approvals of this exact revision (and the revision each was made on) and the releases that tag it; names
+    in place of member ids."""
+    members = _members_dict(members)
+    g = release_gate(root, rev, members, policy)
+
+    def name(mid):
+        return (members.get(mid) or {}).get("name") or ("former member" if mid else None)
+
+    def person(a):
+        return {"name": a.get("name"), "via": a.get("via"), "approved_on": a.get("anchor"), "carried": bool(a.get("carried"))}
+
+    return {"format": "morph-team-record/1", "rev": rev, "design_sha256": g["design_sha256"], "level": g["level"],
+            "release_gate": {"ok": g["ok"], "text": g["text"]}, "made_by": [name(a) for a in g["authors"]],
+            "disciplines": [{"discipline": d["discipline"], "label": d["label"], "state": d["state"],
+                             "approved_by": [person(a) for a in d["approvers"]],
+                             "changes_requested_by": [a.get("name") for a in d["requested_changes"]]} for d in g["disciplines"]],
+            "releases": [{"tag": r.get("tag"), "level": r.get("level"), "by": name(r.get("by")), "ts": r.get("ts"),
+                          "note": r.get("note") or ""} for r in releases(root)
+                         if r.get("rev") == rev and r.get("design_sha256") == g["design_sha256"]]}

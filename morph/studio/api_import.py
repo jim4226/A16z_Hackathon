@@ -77,6 +77,26 @@ def _room_project(req):
     return os.path.basename(p.root) if p is not None else None
 
 
+def _audit(req, s, **fields):
+    """Team Studios: what an import brought in goes into the team's audit log (who, what, into which project, and the
+    link it came from, without its query)."""
+    studio = getattr(req, "studio", None)
+    if not getattr(studio, "team", False):
+        return
+    from urllib.parse import urlsplit, urlunsplit
+
+    from .teams import audit
+    try:
+        st = s.state() if s is not None else {}
+    except (OSError, ValueError):
+        st = {}
+    url = st.get("source_url") or st.get("url") or ""
+    if url:
+        u = urlsplit(url)
+        url = urlunsplit((u.scheme, u.hostname or "", u.path, "", ""))[:300]
+    audit.append("import", by=_member_id(req), home=studio.home, **fields, **({"url": url} if url else {}))
+
+
 def _allow_url(studio) -> bool:
     remote = bool(getattr(studio, "remote", False) or getattr(studio, "team", None))
     return (not remote) or bool(getattr(studio, "allow_url_import", False))
@@ -254,6 +274,8 @@ def commit(req, sid):
     if plan["kind"] == "object" and (body.get("apply", True) is not False):
         queued = _queue_object(req, plan["changes"], plan.get("label") or "imported object")
         if queued is not None:
+            if queued[0] == 202:
+                _audit(req, s, kind="object", project=req.room.name, file=str(plan.get("file") or "")[:160])
             return queued if queued[0] != 202 else (202, {"ok": True, **plan, "applied": True, "job": queued[1]})
         if _apply_async(req, plan["changes"], plan.get("label") or "imported object"):
             return 202, {"ok": True, **plan, "applied": True}
@@ -289,6 +311,7 @@ def _create_project(req, sid: str, s, plan: dict, emit):
                 json.dump(d, fh, indent=1)
         except (OSError, TypeError, ValueError):
             break
+    _audit(req, s, kind=plan["kind"], project=room.name, source=plan.get("source") or "")  # before _follow removes the session
     _follow(sid, s, room, job, emit, sub.get("q") or room.hub.subscribe())
     emit({"type": "import", "id": sid, "stage": "build", "status": "start", "text": f"Building {room.name}",
           "built_project": room.name})

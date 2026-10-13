@@ -858,6 +858,31 @@ def check_download(member: dict | None, project_root: str, rel: str, home: str |
     return res
 
 
+def export_parts(member: dict | None, project_root: str, rev: str | None, full: bool, home: str | None = None) -> tuple:
+    """For /api/export on a team Studio: (keep(rel), extra, drafts). keep: the exported revision's files that this member
+    may take, by the same rule as /files (order files of a revision nobody released go to owners, and to editors when
+    the policy is "warn"); extra: team.json, the team's record (a revision's approvals and releases, or the whole
+    project's comments, change requests, reviews, branches and releases); drafts: the draft order files that went in."""
+    home = home or CONFIG["home"]
+    store = TeamStore(home)
+    members, pol = store.read().get("members") or {}, store.policy()
+    drafts = set()
+
+    def keep(rel: str) -> bool:
+        res = collab.download(project_root, rev, rel, member, pol)
+        if res["allowed"] and res["draft"]:
+            drafts.add(rel)
+        return res["allowed"]
+
+    if full:
+        record = collab.export_bundle(project_root, members)
+    elif rev:
+        record = collab.revision_record(project_root, rev, members, pol)
+    else:
+        return None, None, drafts  # no revision: the export refuses it
+    return (keep if rev else None), {"team.json": record}, drafts
+
+
 # ------------------------------------------------------------------ registration
 
 ROUTES = [

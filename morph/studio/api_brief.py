@@ -199,6 +199,9 @@ def post(req, send=None, *, home: str | None = None, open_project: dict | None =
 
 
 def _build(b: B.Brief, home, name, send, create_project):
+    if b.status == "building" and b.project and create_project is not None:  # asked again (a second click, a retry):
+        return 200, {"ok": True, "brief_id": b.id, "build": B.build_payload(b, None, home), "project": b.project,
+                     "already": True}                                       # the project it is building, never a second one
     if b.status in ("asking", "out_of_scope"):
         agents.run_turn(b, action="build", on_event=send, home=home)   # code only: defaults (or the nearest robot), preflight
     if b.status not in ("ready", "building"):
@@ -303,6 +306,15 @@ def _studio_create(req):
     return create
 
 
+def _claim(brief_id: str) -> bool:
+    """Wait for the request that created the project to finish with the brief (it saves it last), then hold it."""
+    for _ in range(1200):
+        if STORE.claim(brief_id):
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def _first_build(studio, room, job, brief_id):
     """After the new project's first build: brief.json written and the draft deleted (on_built), then the agents
     timeline's last steps in the new room: Darwin sourcing when sourcing is on, Keewano when its events are on."""
@@ -311,16 +323,15 @@ def _first_build(studio, room, job, brief_id):
     if not job.result:
         room.hub.send({"type": "agent", "role": "pipeline", "provider": "code", "status": "error", "ms": None,
                        "brief": brief_id, "text": f"The first build failed: {str(job.error or job.status)[:200]}"})
-        return
-    if not brief_id:
-        return
-    for _ in range(1200):  # the request that created the project saves the brief last: let it finish first
-        if STORE.claim(brief_id):
-            break
-        time.sleep(0.05)
-    else:
+    if not brief_id or not _claim(brief_id):
         return
     try:
+        if not job.result:  # the brief can be built again (a new project); the failed one stays for a look
+            b = STORE.get(studio.home, brief_id)
+            if b is not None and b.status == "building" and b.project == room.name:
+                b.status, b.project = "ready", None
+                STORE.put(studio.home, b)
+            return
         b = on_built(studio.home, brief_id, room.name, job.result, room.p.root)
     finally:
         STORE.release(brief_id)

@@ -1296,14 +1296,24 @@ def _api_export(req):
     from . import export
     room, rev, h = req.room, req.arg("rev"), req.handler
     full = req.arg("full", "") in ("1", "true", "yes")
+    keep, extra, drafts = None, None, set()
     try:
+        if req.studio.team:  # the team's download policy for order files, and its record of the revision (team.json)
+            from . import api_team
+            from .teams.collab import CollabError
+            try:
+                keep, extra, drafts = api_team.export_parts(req.member, room.p.root, rev, full, home=req.studio.home)
+            except CollabError:  # no such finished revision: the export says so in its own words (and nothing goes out)
+                export.check(room.p, rev, full=full)
+                raise
         if "check" in req.query:  # the button asks first, so a refusal is a message rather than a broken download
-            export.check(room.p, rev, full=full)
+            export.check(room.p, rev, full=full, keep=keep)
             return 200, {"ok": True}
-        archive, filename = export.build_export(room.p, rev, full=full)
+        archive, filename = export.build_export(room.p, rev, full=full, keep=keep, extra=extra)
     except export.ExportError as exc:
         raise HTTPError(exc.status, str(exc)) from None
-    _audit(req, "export", project=room.name, rev=rev or "", full=full)
+    _audit(req, "export", project=room.name, rev=rev or "", full=full,
+           **({"draft_order_files": sorted(drafts)[:20]} if drafts else {}))
     with archive:
         size = archive.seek(0, os.SEEK_END)
         archive.seek(0)
