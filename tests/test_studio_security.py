@@ -342,7 +342,7 @@ def test_chat_can_not_set_the_robot_source_or_name(local, monkeypatch):
     sent = []
     monkeypatch.setattr(st.hub, "send", sent.append)
     monkeypatch.setattr(RobotProject, "run", lambda *a, **k: pytest.fail("must not build"))
-    st.chat("import the robot at ../../tmp/evil and call it pwned")
+    st.chat("set the robot source to ../../tmp/evil and call it pwned")  # an edit: chat routing offers nothing
     assert sent[-1]["type"] == "assistant" and sent[-1]["noop"] is True
     assert st.p.load_design("r001").arm.source == ""
 

@@ -471,9 +471,37 @@ class Studio:
             finally:
                 room.live = None
 
-    def chat(self, msg: str, room: Room | None = None, job=None) -> str | None:
+    def _offer(self, room: Room, job, msg: str, cur) -> bool:
+        """A message that asks for another robot (or to import one) is offered the New robot (or Import) dialog
+        instead of becoming an edit of this one (agents.chat_offer decides). True when it was offered."""
+        from . import agents
+        info = {}
+        try:
+            offer = agents.chat_offer(msg, cur, {"name": room.name, "source": cur.arm.source or "generated"}, info=info)
+        except Exception:  # noqa: BLE001  (routing never stops an edit)
+            traceback.print_exc()
+            offer = None
+        if info.get("source"):  # SubQ answered: counts and timings in the ledger (Keewano, when its events are on)
+            try:
+                room.p.log({"type": "subq", "purpose": "chat_route", **info})
+            except OSError:
+                pass
+        if not offer:
+            return False
+        name, source = room.name, offer["route"].get("source", "rules")
+        text = (f"That reads like a new robot rather than a change to {name}, so {name} stays as it is."
+                if offer["kind"] == "new_robot" else
+                f"That sounds like bringing in an existing robot. Import takes its URDF, xacro or MuJoCo files, a zip, or "
+                f"a GitHub or Hugging Face link; {name} stays as it is.")
+        if source == "subq":  # SubQ made the call: say so, as every SubQ answer is labelled
+            text += " (SubQ Snap (AI) read it that way.)"
+        self._say(room, job, "noop", text, noop=True, offer={"kind": offer["kind"], "text": msg[:2000], "source": source})
+        return True
+
+    def chat(self, msg: str, room: Room | None = None, job=None, *, route: bool = True) -> str | None:
         """Interpret a chat message against the room's newest design and apply it. A queued job's user message was
-        sent when it was queued; a direct call sends it here."""
+        sent when it was queued; a direct call sends it here. With `route`, a message that asks for another robot is
+        offered the New robot dialog instead (the tab's "Change it instead" sends it again with route=False)."""
         room = room or self.room()
         with room.lock:
             try:
@@ -484,6 +512,8 @@ class Studio:
                     return self._say(room, job, "error", "This project has no finished revision yet, so there is "
                                                          "nothing to change. Wait for its first build.")
                 cur = room.p.load_design(base)
+                if route and self._offer(room, job, msg, cur):
+                    return None
                 target = ((self._results(room.p, base) or {}).get("summary") or {}).get("grip_target_n") or room.last_target
                 it = interpret(msg, cur, target)  # this room's grip target in, the one after the message out
                 room.last_target = it.get("last_target") or target
@@ -534,11 +564,11 @@ class Studio:
         threading.Thread(target=wait, daemon=True, name=f"morph-after-{job.id}").start()
 
     # -- the queue: what /api/chat, /api/params and new projects use
-    def queue_chat(self, room: Room, msg: str, *, base_rev: str | None = None, by: str | None = None):
+    def queue_chat(self, room: Room, msg: str, *, base_rev: str | None = None, by: str | None = None, route: bool = True):
         """Queue a chat message; it is interpreted when its turn comes, against the newest design. The user's message
-        is shown at once. Raises QueueFull."""
+        is shown at once. `route=False`: an edit of this project even if it reads like a new robot. Raises QueueFull."""
         say = lambda job: room.hub.send({"type": "user", "text": msg, "job": job.id, **({"by": by} if by else {})})  # noqa: E731
-        return room.jobs.submit("chat", lambda job: self.chat(msg, room=room, job=job), by=by, label=msg,
+        return room.jobs.submit("chat", lambda job: self.chat(msg, room=room, job=job, route=route), by=by, label=msg,
                                 base_rev=base_rev or room.latest(), announce=say)
 
     def queue_changes(self, room: Room, changes: dict, *, label: str, reply: str | None = None, source: str = "",
@@ -1144,8 +1174,9 @@ def _api_chat(req):
         raise HTTPError(400, "That looks like an API key. Paste keys in the Keys dialog, never in chat; this message "
                              "was not sent or saved.")
     room = req.room
-    try:
-        job = req.studio.queue_chat(room, msg.strip(), base_rev=_base_rev(req, room), by=_by(req))
+    try:  # {edit: true}: the person chose "Change <project> instead" for a message that read like a new robot
+        job = req.studio.queue_chat(room, msg.strip(), base_rev=_base_rev(req, room), by=_by(req),
+                                    route=req.body.get("edit") is not True)
     except QueueFull as exc:
         raise HTTPError(429, str(exc)) from None
     return 202, {"ok": True, "job": _queued(room, job)}

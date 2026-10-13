@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from typing import List, Literal, Optional
@@ -416,8 +417,9 @@ def _feasibility_line(b: B.Brief) -> str:
     return b.status
 
 
-def route(text: str, open_project: dict | None = None) -> dict:
-    """New robot or a change to the open one, for /api/chat triage: {value, confidence, source}. SubQ when set, else rules."""
+def route(text: str, open_project: dict | None = None, *, timeout: float = SUBQ_TIMEOUT_S, info: dict | None = None) -> dict:
+    """New robot or a change to the open one, for /api/chat triage: {value, confidence, source}. SubQ when set, else rules.
+    `info` (a dict) receives SubQ's {source, ms, input_tokens} when it answered (the project's ledger counts them)."""
     rules = B.route_rules(text)
     if B.harmful(text):
         return {"value": "other", "confidence": 1.0, "source": "rules", "harm": True}
@@ -426,16 +428,65 @@ def route(text: str, open_project: dict | None = None) -> dict:
         return rules
     q = {"route": triage_questions()["route"], "harm": triage_questions()["harm"]}
     try:
-        res = sq.decide({"request": (text or "")[:2000], "open_project": open_project}, q, timeout=SUBQ_TIMEOUT_S, retries=1,
+        res = sq.decide({"request": (text or "")[:2000], "open_project": open_project}, q, timeout=timeout, retries=1,
                         purpose="chat_route")
     except Exception:  # noqa: BLE001
         res = None
+    if res and info is not None:
+        info.update(source=res.get("source"), ms=res.get("ms"), input_tokens=(res.get("usage") or {}).get("input_tokens"))
     ans = _answers(res)
     harm = _noul(ans, "harm")
     if harm is not None and harm >= 0.5:
         return {"value": "other", "confidence": round(harm, 2), "source": "subq", "harm": True}
     v, c = _pick(ans, "route")
     return {"value": v, "confidence": round(c, 2), "source": "subq"} if v else rules
+
+
+# A chat message in an open project that asks for another robot is offered the New robot dialog instead of becoming an
+# edit of the open one. Code decides from the wording first; SubQ (when set) settles only what the wording leaves open.
+_PART = r"(?!\s+(?:length|reach|joints?|segments?|links?|servos?|motors?|speed|base|mount|height|width|mass|weight|cost|price)\b)"
+NEW_ROBOT_WORDS = re.compile(
+    r"\b(?:(?:another|a second|a different|a separate|a new|new) robot\b" + _PART + "|"
+    r"an? (?:robot arm|robot|arm|machine) (?:that|to|for|which|who)\b|"
+    r"(?:build|make|design|create) (?:me |us )?an? (?:new |second |different )?(?:robot|arm|machine)\b" + _PART + "|"
+    r"i(?: would|'d)? (?:need|want|like) an? (?:new |second )?(?:robot|arm|machine)\b" + _PART + r"|something (?:to|that)\b)")
+EDIT_LEAD = re.compile(r"\s*(?:please\s+)?(?:make (?:it|the|its|this)|use|add|swap|switch|change|increase|decrease|reduce|"
+                       r"remove|set|go back|undo|try|lower|raise|replace|drop|give it|turn)\b")
+CHAT_ROUTE_TIMEOUT_S = 4.0  # a chat message waits for this at most before the rules decide alone
+
+
+def chat_offer(text: str, design=None, open_project: dict | None = None, *, info: dict | None = None) -> dict | None:
+    """What a chat message typed in an open project should be offered instead of an edit of it, or None to edit:
+    {"kind": "new_robot" | "import", "route": {value, confidence, source}}. `design` (a Design) lets the edit rules say
+    whether the message changes the open robot; `info` gets SubQ's usage when it was asked."""
+    from .intent import rules as edit_rules
+
+    t = " ".join((text or "").lower().split())
+    if not t or B.harmful(t):
+        return None
+    rules = B.route_rules(t)
+    if rules["value"] in ("question", "other") or EDIT_LEAD.match(t):
+        return None  # a question, small talk, or a message that starts like an edit ("make it", "use", "add", ...)
+    if NEW_ROBOT_WORDS.search(t):  # "a robot that ...", "build me an arm", "another robot", "something to ..."
+        return {"kind": "new_robot", "route": {"value": "new_robot", "confidence": 0.9, "source": "rules"}}
+    if design is not None:
+        try:
+            if edit_rules(t, design)[0]:
+                return None  # the edit rules understand it as a change to the open robot
+        except Exception:  # noqa: BLE001  (a rule that trips on odd text is no reason to offer anything)
+            pass
+    if rules["value"] == "import_robot":
+        return {"kind": "import", "route": rules}
+    p = B.parse(t)
+    key, conf = p.get("archetype") or ("generic_arm", 0.0)
+    task = bool(key not in ("generic_arm", "so101") and conf >= 0.6) or bool(p["slots"].get("task") or p["slots"].get("object"))
+    r = route(t, open_project, timeout=CHAT_ROUTE_TIMEOUT_S, info=info)
+    if r.get("harm"):
+        return None
+    if r.get("source") != "rules":  # SubQ answered with confidence: it saw the open project too
+        kind = {"new_robot": "new_robot", "import_robot": "import"}.get(r.get("value"))
+        return {"kind": kind, "route": r} if kind else None
+    return {"kind": "new_robot", "route": rules} if task else None
 
 
 # ------------------------------------------------------------------ after the build: sourcing + memory

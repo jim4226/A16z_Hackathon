@@ -795,7 +795,8 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 /* ---- rooms: queued requests and conflicts ---- */
 .msg.user { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
 .msg.user .qtag { font-size: 10.5px; color: var(--muted); padding-right: 4px; }
-.msg .qacts { display: flex; gap: 6px; margin-top: 7px; }
+.msg .qacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.msg.assistant > div { min-width: 0; }
 .msg .qacts .btn { height: 26px; padding: 0 10px; font-size: 12px; }
 #projMenu .tag.warn { margin-left: 4px; }
 

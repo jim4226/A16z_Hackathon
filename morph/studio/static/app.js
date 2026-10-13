@@ -81,7 +81,7 @@ class ServerBackend {
   }
   async state() { return getFresh(this.q('/api/state')); }
   async rev(r) { return getFresh(this.q('/api/rev', { rev: r })); }
-  chat(message, base_rev) { return post(this.q('/api/chat'), { message, base_rev }); }
+  chat(message, base_rev, edit = false) { return post(this.q('/api/chat'), { message, base_rev, ...(edit ? { edit: true } : {}) }); }
   params(changes, base_rev) { return post(this.q('/api/params'), { changes, base_rev }); }
   source(rev) { return post(this.q('/api/source'), { rev }); }
   resolve(job, action) { return post(this.q('/api/jobs/resolve'), { job, action }); }
@@ -454,6 +454,7 @@ function addMsg(role, text, opts = {}) {
       }));
       el.lastElementChild.appendChild(c);
     }
+    if (opts.offer && opts.live && backend?.chat) offerActs(el, opts.offer);
   } else if (role === 'system') {
     el.innerHTML = `<div class="b"><span class="spin"></span><span class="t"></span></div>`;
     $('.t', el).textContent = text;
@@ -465,6 +466,21 @@ function addMsg(role, text, opts = {}) {
   $('#messages').appendChild(el);
   scrollChat();
   return el;
+}
+// A message that read like another robot (or importing one) was not applied: offer that feature's dialog, or the edit
+// after all ({edit: true} skips the routing).
+function offerActs(el, offer) {
+  const c = h('div', 'qacts');
+  const go = offer.kind === 'import' ? `${I('download', 'sm')}Open Import` : `${I('spark', 'sm')}Start a new robot from this`;
+  c.innerHTML = `<button class="btn primary" type="button" data-o="go">${go}</button><button class="btn ghost" type="button" data-o="edit">Change ${esc(S.project)} instead</button>`;
+  $('[data-o="go"]', c).onclick = () => {
+    if (offer.kind === 'import') started.get(importer)?.open?.(); else newrobot.open(offer.text || '');
+  };
+  $('[data-o="edit"]', c).onclick = () => {
+    $$('button', c).forEach((x) => (x.disabled = true));
+    backend.chat(offer.text, S.current?.rev, true);
+  };
+  el.lastElementChild.appendChild(c);
 }
 function scrollChat() { const m = $('#messages'); requestAnimationFrame(() => (m.scrollTop = m.scrollHeight)); }
 let typingEl = null;
@@ -1048,9 +1064,10 @@ const studio = {
   reload: () => reloadProject(),
   mount: {},
 };
+const started = new Map();  // feature module -> what its init() returned (the chat's offers open their dialogs)
 async function initFeatures() {
   for (const f of FEATURES) {
-    try { await f.init?.(studio); } catch (e) { console.error('[morph] a feature failed to start', e); }
+    try { started.set(f, await f.init?.(studio)); } catch (e) { console.error('[morph] a feature failed to start', e); }
   }
 }
 
