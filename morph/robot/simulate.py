@@ -74,6 +74,7 @@ clearance_ok, the arc and those detours; any contact fails it. The workspace dro
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -1402,7 +1403,7 @@ class _Run:
 
 
 def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_hand=False, payload_fn=None,
-              on_step=None, record=True, scenario="") -> _Run:
+              on_step=None, record=True, scenario="", perturb=None) -> _Run:
     mj, m = rob._mj, rob.model
     d = rob.data
     mj.mj_resetData(m, d)
@@ -1431,6 +1432,8 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
         yaw = obj_yaw if obj_yaw is not None else rob.opts.object_yaw
         yaw = yaw if yaw is not None else math.atan2(y0, x0)
         oz = rob.R + 0.2
+        if perturb:
+            x0, y0, yaw, oz = _perturb_start(rob, perturb, x0, y0, yaw)
         if rob.opts.world is not None:
             oz += rob.sz
         d.qpos[rob.obj_q:rob.obj_q + 3] = [x0 * MM, y0 * MM, oz * MM]
@@ -1442,6 +1445,7 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
     mj.mj_forward(m, d)
 
     hits = {} if len(rob.world_geoms) else None   # world mode: first contact of each (link, obstacle) pair
+    servo = _servo(perturb, dt, rob.n) if perturb else None
     integ = np.zeros(rob.n)
     imax = 0.5 * rob.eff
     g_ctrl = g_start
@@ -1463,11 +1467,14 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
         a = frac[step]
         qr = Q[k] * (1 - a) + Q[k2] * a
         qdr = QD[k] * (1 - a) + QD[k2] * a
-        q = d.qpos[rob.qadr]
-        err = qr - q
-        integ = np.clip(integ + KI * rob.kp * err * dt, -imax, imax)
-        u = d.qfrc_bias[rob.dadr] + rob.kvv * qdr + integ
-        d.ctrl[rob.aid] = qr + u / rob.kp
+        if servo is not None:
+            integ = servo(step, rob, d, qr, qdr, integ, imax)
+        else:
+            q = d.qpos[rob.qadr]
+            err = qr - q
+            integ = np.clip(integ + KI * rob.kp * err * dt, -imax, imax)
+            u = d.qfrc_bias[rob.dadr] + rob.kvv * qdr + integ
+            d.ctrl[rob.aid] = qr + u / rob.kp
         if rob.g_act is not None:
             gt = Gm[k]
             closing = (gt - g_ctrl) * g_dir < 0
@@ -1505,6 +1512,120 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
     stats["max_speed_pct"] = {n: round(float(stats["max_speed"][i] / max(vmax[i], 1e-6) * 100.0), 1)
                               for i, n in enumerate(info.arm_joints)}
     return _Run(frames, stats)
+
+
+# ====================================================================== robustness trials (perturb=, never by default)
+# A trial executes the nominal plan in a world that differs from the design. Every key is optional and absent means
+# nominal: off_across_mm / off_along_mm / yaw_deg (the object's start, relative to its long axis), size_scale,
+# mass_g, friction_scale (pads and object), grip_scale (grip-force calibration), torque_scale (servo torque and gain),
+# deadband_deg, encoder_cpr / encoder_noise (counts) / noise_seed, rate_hz (host set-points, held between updates),
+# mount_dx_mm / mount_dy_mm / mount_yaw_deg (the room moves the other way), box_offsets_mm ([dx, dy] per box),
+# timestep, impratio. The host still plans and computes with the nominal values.
+
+def _perturb_start(rob, p, x0, y0, yaw):
+    """The object's start in a trial: off its mark across and along its long axis, turned, resized."""
+    ax = np.array([-math.sin(yaw), math.cos(yaw), 0.0])
+    off = np.cross([0, 0, 1.0], ax) * p.get("off_across_mm", 0.0) + ax * p.get("off_along_mm", 0.0)
+    return x0 + off[0], y0 + off[1], yaw + math.radians(p.get("yaw_deg", 0.0)), rob.R * p.get("size_scale", 1.0) + 0.2
+
+
+def _servo(p, dt, n):
+    """A trial's servo model, or None (the nominal loop): the host reads encoders of encoder_cpr counts per turn with
+    encoder_noise counts of noise, sends set-points at rate_hz and holds them; each servo ignores position errors
+    inside deadband_deg (backlash as a deadband) and drives with its own, possibly derated, gain."""
+    if not any(k in p for k in ("rate_hz", "encoder_cpr", "encoder_noise", "deadband_deg")):
+        return None
+    res = 2 * math.pi / p["encoder_cpr"] if p.get("encoder_cpr") else 0.0
+    sig = p.get("encoder_noise", 0.0) * (res or 2 * math.pi / 4096)
+    rng = np.random.default_rng(p.get("noise_seed", 0))
+    hold = max(1, int(round(1.0 / (p["rate_hz"] * dt)))) if p.get("rate_hz") else 1
+    wdb = math.radians(p.get("deadband_deg", 0.0))
+    cmd = [None]
+
+    def step(i, rob, d, qr, qdr, integ, imax):
+        q_true = d.qpos[rob.qadr]
+        q_meas = q_true + (rng.normal(0, sig, n) if sig > 0 else 0.0)
+        if res:
+            q_meas = np.round(q_meas / res) * res
+        if i % hold == 0:
+            err = qr - q_meas
+            integ = np.clip(integ + KI * rob.kp * err * dt * hold, -imax, imax)
+            u = d.qfrc_bias[rob.dadr] + rob.kvv * qdr + integ
+            cmd[0] = qr + u / rob.kp
+        e = cmd[0] - q_meas
+        if wdb > 0:
+            e = np.sign(e) * np.maximum(np.abs(e) - wdb, 0.0)
+        d.ctrl[rob.aid] = q_true + e
+        return integ
+    return step
+
+
+PERTURBED = ("geom_size", "geom_rbound", "geom_aabb", "geom_friction", "geom_pos", "geom_quat", "body_mass",
+             "body_inertia", "actuator_forcerange", "actuator_gainprm", "actuator_biasprm")
+
+
+@contextlib.contextmanager
+def _perturbed(rob, p):
+    """A trial's changes to the compiled model (object size and mass, friction, grip-force calibration, servo torque
+    and gain, the room's offsets, solver settings); the nominal model is put back bit for bit afterwards."""
+    if not p:
+        yield
+        return
+    m = rob.model
+    keep = {k: getattr(m, k).copy() for k in PERTURBED}
+    opt = (m.opt.timestep, m.opt.impratio)
+    try:
+        g, (shape, R, L) = rob.obj_geom, _object_dims(rob.design)
+        s = p.get("size_scale")
+        if s is not None:
+            Ra, La = R * s, L * s
+            if shape == "cylinder":
+                half = max(La / 2 - Ra, 0.5)
+                m.geom_size[g, :2] = [Ra * MM, half * MM]
+                m.geom_rbound[g] = (Ra + half) * MM
+                m.geom_aabb[g, 3:] = [Ra * MM, Ra * MM, (Ra + half) * MM]
+            elif shape == "sphere":
+                m.geom_size[g, 0] = Ra * MM
+                m.geom_rbound[g] = Ra * MM
+                m.geom_aabb[g, 3:] = Ra * MM
+            else:
+                m.geom_size[g] = [Ra * MM, La / 2 * MM, Ra * MM]
+                m.geom_rbound[g] = math.sqrt(2 * Ra * Ra + La * La / 4) * MM
+                m.geom_aabb[g, 3:] = m.geom_size[g]
+        if s is not None or "mass_g" in p:
+            mnom = rob.design.object.mass_g / 1000.0
+            ma = p.get("mass_g", rob.design.object.mass_g) / 1000.0
+            m.body_mass[rob.obj] = ma
+            m.body_inertia[rob.obj] = keep["body_inertia"][rob.obj] * (ma / mnom) * (s or 1.0) * (s or 1.0)
+        if "friction_scale" in p:
+            for gi in [g, *np.nonzero(m.geom_contype == B_JAW)[0]]:
+                m.geom_friction[gi, 0] = keep["geom_friction"][gi, 0] * p["friction_scale"]
+        if "grip_scale" in p and rob.g_act is not None:
+            m.actuator_forcerange[rob.g_act] *= p["grip_scale"]
+        if "torque_scale" in p:
+            for a in rob.aid:
+                m.actuator_forcerange[a] *= p["torque_scale"]
+                m.actuator_gainprm[a, 0] *= p["torque_scale"]
+                m.actuator_biasprm[a, 1] *= p["torque_scale"]
+        if len(rob.world_geoms) and any(k in p for k in ("mount_dx_mm", "mount_dy_mm", "mount_yaw_deg", "box_offsets_mm")):
+            yaw = -math.radians(p.get("mount_yaw_deg", 0.0))
+            c, sn = math.cos(yaw), math.sin(yaw)
+            Rz = np.array([[c, -sn, 0], [sn, c, 0], [0, 0, 1.0]])
+            shift = -np.array([p.get("mount_dx_mm", 0.0), p.get("mount_dy_mm", 0.0), 0.0]) * MM
+            offs = p.get("box_offsets_mm") or []
+            for k, gid in enumerate(rob.world_geoms):
+                o = offs[k] if k < len(offs) else (0.0, 0.0)
+                m.geom_pos[gid] = Rz @ keep["geom_pos"][gid] + shift + np.array([o[0], o[1], 0.0]) * MM
+                m.geom_quat[gid] = _qmul([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)], keep["geom_quat"][gid])
+        if "timestep" in p:
+            m.opt.timestep = float(p["timestep"])
+        if "impratio" in p:
+            m.opt.impratio = float(p["impratio"])
+        yield
+    finally:
+        for k, v in keep.items():
+            getattr(m, k)[:] = v
+        m.opt.timestep, m.opt.impratio = opt
 
 
 def _world_hits(rob: _Robot, d, t, hits: dict):
@@ -1886,7 +2007,16 @@ def _grasp_sequence(rob, plan, pick, s, hover):
     return q_grasp
 
 
-def _pick_place(rob: _Robot, design, fast=False):
+def _pick_place(rob: _Robot, design, fast=False, perturb=None):
+    plan, at = _plan_pick_place(rob, design, fast)
+    with _perturbed(rob, perturb):
+        run, metrics = _run_pick_place(rob, design, plan, at, perturb)
+    return plan, run, metrics
+
+
+def _plan_pick_place(rob: _Robot, design, fast=False):
+    """The pick-and-place plan, always for the nominal design (a robustness study plans once and runs it many times):
+    (plan, at), `at` holding the targets and times the run and its metrics need."""
     info = rob.info
     s = _cycle_scale(rob, design)
     pick, place = _targets(rob, design)
@@ -1924,19 +2054,28 @@ def _pick_place(rob: _Robot, design, fast=False):
     elif not fast:
         plan.joint(rob.q_ready(), 1.2 * s, "retreat")
     plan.hold(0.3, "retreat")
+    return plan, {"pick": pick, "place": place, "e1": e1, "e2": e2, "hover": hover, "t_move": t_move,
+                  "t_release": t_release, "t_released": t_released}
 
+
+def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
+    """Simulate a pick-and-place plan and measure it: (run, metrics). `perturb`: a robustness trial (_simulate; the
+    model changes come from _perturbed around this call); `on_step(t, data, phase)` also sees every step."""
+    info = rob.info
+    pick, place, e1, e2 = at["pick"], at["place"], at["e1"], at["e2"]
+    t_move, t_release, t_released = at["t_move"], at["t_release"], at["t_released"]
     # monitor in-hand slip between the end of the grasp and the release
     st = {"rel0": None, "slip": 0.0, "grip": [], "carry": False}
 
-    def on_step(t, d, ph):
+    def monitor(t, d, ph):
         if ph in ("lift", "move", "place") and t < t_release:
             rel = _rel_obj(rob, d)
             if st["rel0"] is None:
                 st["rel0"] = rel
             st["slip"] = max(st["slip"], float(np.linalg.norm(rel - st["rel0"])))
-        return True
+        return True if on_step is None else on_step(t, d, ph)
 
-    run = _simulate(rob, plan, obj_xy=pick[:2], on_step=on_step)
+    run = _simulate(rob, plan, obj_xy=pick[:2], on_step=monitor, perturb=perturb)
     _label_grip(plan, run)
     fr = run.frames
     carry = [f["grip_n"] for f in fr if f["phase"] in ("lift", "move")]
@@ -1983,7 +2122,7 @@ def _pick_place(rob: _Robot, design, fast=False):
                                   if h["t"] < 0.05 else
                                   f"the {h['link'].replace('_', ' ')} hits {h['obstacle']} at {h['t']:.1f} s")
             plan.mark(f"hits {h['obstacle']}", h["t"])
-    return plan, run, metrics
+    return run, metrics
 
 
 def _sized_reach(rob, design):
@@ -2405,9 +2544,11 @@ def _scenario_doc(rob, design, name, plan, run, metrics, points=None) -> dict:
     return out
 
 
-def _run_one(rob, design, name, fast):
+def _run_one(rob, design, name, fast, perturb=None):
+    if perturb and name != "pick_place":
+        raise ValueError("perturb: robustness trials run the pick_place scenario")
     if name == "pick_place":
-        plan, run, metrics = _pick_place(rob, design, fast)
+        plan, run, metrics = _pick_place(rob, design, fast, perturb)
         return _scenario_doc(rob, design, name, plan, run, metrics)
     if name == "payload_sweep":
         plan, run, metrics = _payload_sweep(rob, design, fast)
@@ -2435,12 +2576,14 @@ def _write(outdir, name, doc):
     return path
 
 
-def run(asm, design, scenario: str, outdir: str | None = None, fast: bool = False, **opts) -> dict:
+def run(asm, design, scenario: str, outdir: str | None = None, fast: bool = False, perturb: dict | None = None,
+        **opts) -> dict:
     """Run one scenario; writes ``outdir/sim_<scenario>.json`` and ``outdir/robot.xml`` when outdir is given.
-    Returns the scenario document (same content as the JSON)."""
+    Returns the scenario document (same content as the JSON). ``perturb``: one robustness trial of pick_place (see
+    _perturb_start); the plan stays the nominal one."""
     rob = _make_robot(asm, design, fast, opts)
     t0 = time.time()
-    doc = _run_one(rob, design, scenario, fast)
+    doc = _run_one(rob, design, scenario, fast, perturb)
     doc["info"]["wall_s"] = round(time.time() - t0, 2)
     if outdir:
         os.makedirs(outdir, exist_ok=True)
