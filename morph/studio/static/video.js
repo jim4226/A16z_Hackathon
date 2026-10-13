@@ -233,9 +233,10 @@ class VideoJob {
 
   reset() {
     this.cleanup?.();
+    clearTimeout(this.pt);  // a list of changes still due for the last clip
     Object.assign(this, { files: [], kind: 'video', frames: [], sel: 0, marks: { grasp_s: null, release_s: null }, crop: null, cropping: false,
       video: null, url: null, duration: null, subq: false, result: null, mapping: null, answers: {}, why: '', jobId: null, view: null,
-      busy: false, measure: null, photoIs: 'object', name: '' });
+      busy: false, measure: null, photoIs: 'object', name: '', dirty: false });
   }
 
   cleanup() {
@@ -427,6 +428,7 @@ class VideoJob {
 
   // ---- views
   render(view, opts = {}) {
+    const moved = this.view !== view;
     this.view = view;
     const E = this.esc, I = this.I;
     const head = (sub) => `<div class="dlg-h"><div class="kicon">${svg(ICON.film, '')}</div><div class="grow"><div class="t">Show Morph the job</div>
@@ -470,6 +472,7 @@ class VideoJob {
     else if (view === 'measure') html = this.measureHTML(head);
     else if (view === 'review') html = this.reviewHTML(head);
     this.el.innerHTML = html;
+    if (moved) this.el.scrollTop = 0;  // a new step starts at its title, not where the last one was scrolled to
     this.bind();
     if (view === 'analyzing') this.tick();
   }
@@ -527,7 +530,7 @@ class VideoJob {
           <button class="btn ${this.cropping ? 'on' : ''}" type="button" data-a="crop" title="One box for every frame: leave out people, screens and documents">${svg(ICON.crop)}${this.crop ? 'Redraw crop' : 'Crop'}</button>
           ${this.crop ? '<button class="btn ghost" type="button" data-a="nocrop">Clear crop</button>' : ''}<span class="grow"></span>${markLine}</div>
       </div>${remote}${sub && this.subq ? `<div class="vj-subqnote dim">${E(COPY.subq)}</div>` : ''}
-      <div class="dlg-f">${local ? `<span class="vj-mode dim">${this.info?.claude ? `Kept on this computer · <a href="#" data-a="consent">change</a>` : 'Kept on this computer (no Claude key)'}</span>`
+      <div class="dlg-f">${local ? `<span class="vj-mode dim">${this.info?.claude ? `Kept on this computer · <a href="#" data-a="consent">change</a>` : `Kept on this computer (${this.info?.offline ? 'network lookups are off' : 'no Claude key'})`}</span>`
         : sub ? `<label class="vj-subq" title="${E(COPY.subq)}"><span class="switch"><input type="checkbox" data-a="subq" ${this.subq ? 'checked' : ''}><i></i></span>Second opinion (beta)</label>` : ''}
         <span class="grow"></span><span class="dim vj-count">${n} of up to ${DEFAULTS.max}</span>
         ${local ? `<button class="btn primary" type="button" data-a="manual">${I('check', 'sm')}Fill in the cards</button>`
@@ -702,14 +705,16 @@ class VideoJob {
 
   async preview(render = true) {
     const seq = (this.seq = (this.seq || 0) + 1);
+    this.dirty = true;  // the list of changes is behind the cards until this answer is in
     const r = await call(() => this.s.api.post('/api/video/apply', { preview: true, result: this.result, answers: this.answers }));
     if (seq !== this.seq) return;
+    this.dirty = false;
     if (r.ok && r.mapping) this.mapping = r.mapping;
     else if (!r.ok) this.toast(r.error || "Couldn't update the list of changes");
     if (render && this.view === 'results') this.renderSummary();
   }
 
-  previewSoon() { clearTimeout(this.pt); this.pt = setTimeout(() => this.preview(), 350); }
+  previewSoon() { this.dirty = true; clearTimeout(this.pt); this.pt = setTimeout(() => this.preview(), 350); }
 
   // ---- results: cards, questions, notes
   val(path) {
@@ -892,7 +897,11 @@ class VideoJob {
     el.querySelectorAll('[data-frame]').forEach((b) => (b.onclick = () => this.flash(+b.dataset.frame)));
     const on = (a, fn) => el.querySelectorAll(`[data-a="${a}"]`).forEach((b) => (b.onclick = fn));
     on('back', () => this.render('picker'));
-    on('review', () => (this.project() ? this.render('review') : this.handOff()));
+    on('review', async () => {  // an edit made a moment ago may still be on its way to the list of changes: wait for it
+      if (this.dirty) { clearTimeout(this.pt); await this.preview(false); }
+      if (this.view !== 'results') return;
+      if (this.project()) this.render('review'); else this.handOff();
+    });
     on('measure', () => this.openMeasure());
     this.bindTable(el.querySelector('.vj-table'));
     this.renderSummary();
