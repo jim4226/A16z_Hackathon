@@ -491,10 +491,10 @@ export class RobotPanel {
     this.ctx = ctx;
     root.innerHTML = `<div class="robot-v vp"></div>
       <div class="ov tl tlstack"><div class="glass toolbar">
-        <button class="btn" data-a="motion">${I('motion')}Motion demo</button><span class="sep"></span>
-        <label class="slider">${I('layers', 'sm')}Explode<input type="range" min="0" max="100" value="0" data-a="explode"><span class="v">0%</span></label><span class="sep"></span>
-        <button class="btn" data-a="xray">${I('eye')}X-ray</button>
-        <button class="btn" data-a="labels">${I('tag')}Labels</button>
+        <button class="btn" data-a="motion" title="Motion demo: the arm runs its pick and place">${I('motion')}Motion demo</button><span class="sep"></span>
+        <label class="slider" title="Explode the assembly">${I('layers', 'sm')}Explode<input type="range" min="0" max="100" value="0" data-a="explode"><span class="v">0%</span></label><span class="sep"></span>
+        <button class="btn" data-a="xray" title="X-ray: see through the covers">${I('eye')}X-ray</button>
+        <button class="btn" data-a="labels" title="Label the parts">${I('tag')}Labels</button>
         <button class="btn" data-a="ghost" title="Overlay the previous revision">${I('ghost')}Ghost<span class="mono dim" data-prev></span></button><span class="sep"></span>
         <button class="btn icon" data-a="home" title="Home view">${I('home')}</button>
       </div><div class="vstat"></div></div>

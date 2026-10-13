@@ -99,6 +99,7 @@ export class Team {
     injectCss();
     this.mountHeader();
     this.mountInspector();
+    this.applyRole();
     this.subscribe();
     document.addEventListener('morph:comment', (e) => this.commentOn(e.detail || {}));
     this.beat = setInterval(() => this.heartbeat(), 60000);
@@ -118,7 +119,7 @@ export class Team {
     on('activity', () => { if (this.tab === 'activity') later(); });
     on('presence', (ev) => { this.presence = ev.members || []; this.renderPresence(); });
     on('inbox', (ev) => { if (!ev.to || ev.to === this.me.member.id) this.loadInbox(); });
-    on('member', () => this.loadTeam());
+    on('member', (ev) => { this.loadTeam(); if (ev.member?.id === this.me.member.id) this.refreshMe(); });
     on('policy', () => this.refreshMe());
     on('done', () => later());
     on('project', () => {  // this tab switched projects (or Reset demo rebuilt this one): what was being written stays with its project
@@ -129,7 +130,26 @@ export class Team {
     });
   }
   async refreshMe() {
-    try { this.me = await this.call('GET', '/api/me'); this.renderHeader(); this.loadTab(true); } catch (e) { /* keep the last view */ }
+    try { this.me = await this.call('GET', '/api/me'); this.renderHeader(); this.applyRole(); this.loadTab(true); } catch (e) { /* keep the last view */ }
+  }
+  // Without edit rights (viewers) the page's editing tools are off, and the chat points at change requests instead.
+  applyRole() {
+    const ro = !this.can('edit');
+    document.body.classList.toggle('tm-readonly', ro);
+    const input = document.querySelector('#input');
+    if (input) {
+      if (this.placeholder == null) this.placeholder = input.placeholder;
+      input.disabled = ro;
+      input.placeholder = ro ? (this.can('propose') ? 'Viewers propose changes: open Changes on the right' : 'View only') : this.placeholder;
+    }
+    this.titles = this.titles || {};
+    for (const sel of ['#send', '#paramsApply']) {
+      const b = document.querySelector(sel);
+      if (!b) continue;
+      if (!(sel in this.titles)) this.titles[sel] = b.title;
+      b.disabled = ro;
+      b.title = ro ? 'Viewers propose changes in Changes on the right; an editor applies them' : this.titles[sel];
+    }
   }
   async heartbeat() {
     try {
@@ -397,6 +417,10 @@ export class Team {
   }
   show(tab) {
     this.tab = tab;
+    if (window.matchMedia?.('(max-width: 1280px)').matches) {  // a narrow window folds the right panel away: open it
+      document.body.classList.add('insp-open');
+      document.querySelector('#inspBtn')?.setAttribute('aria-pressed', 'true');
+    }
     this.ins.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
     this.renderBody();
     this.loadTab();
@@ -894,6 +918,9 @@ export class Team {
 
 // ---- styles (injected once; integration may move them into style.css under /* ---- teams ---- */)
 const CSS = `
+body.tm-readonly #suggest, body.tm-readonly .nr-headbtn, body.tm-readonly .nr-menubtn, body.tm-readonly #importBtn,
+body.tm-readonly .imp-menu, body.tm-readonly .vj-btn, body.tm-readonly #viewerTools { display: none; }
+body.tm-readonly #form { opacity: .75; }
 .tm-hdr { display: flex; align-items: center; gap: 8px; }
 .tm-avs { display: flex; align-items: center; }
 .tm-av { --c: #5d6676; width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; flex: none; font: 650 10px var(--sans);

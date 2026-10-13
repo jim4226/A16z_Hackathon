@@ -54,7 +54,7 @@ function injectCSS() {
   const s = document.createElement('style');
   s.id = 'morph-world-css';
   s.textContent = `
-.wv-panel{position:absolute;z-index:6;left:14px;top:58px;width:318px;max-height:calc(100% - 72px);overflow:auto;padding:10px 12px 12px;font:12px/1.4 var(--sans,Inter,system-ui,sans-serif);color:var(--ink,#e9ecf2);
+.wv-panel{position:absolute;z-index:6;left:14px;top:96px;width:318px;max-height:calc(100% - 110px);overflow:auto;padding:10px 12px 12px;font:12px/1.4 var(--sans,Inter,system-ui,sans-serif);color:var(--ink,#e9ecf2);
   background:rgba(14,17,23,.86);border:1px solid rgba(255,255,255,.08);border-radius:10px;box-shadow:0 10px 30px -10px rgba(0,0,0,.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .wv-panel h3{margin:0;font-size:13px;font-weight:680;display:flex;align-items:center;gap:7px}
 .wv-panel h3 .wv-beta{font:600 9.5px/1 var(--sans,system-ui);letter-spacing:.08em;text-transform:uppercase;padding:3px 6px;border-radius:5px;background:rgba(245,185,66,.14);color:var(--warn,#f5b942)}

@@ -611,6 +611,14 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px;
 #toast.on { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-width: 1280px) { main#main { grid-template-columns: 290px minmax(0, 1fr); } #inspector { display: none; } }
+/* windows of 1280 px or less: the right panel opens over the views from the header's panel button */
+.inspbtn { display: none; }
+@media (max-width: 1280px) {
+  .inspbtn { display: inline-flex; }
+  body.insp-open .inspbtn { background: var(--accent-bg); color: var(--accent2); border-color: var(--accent-line); }
+  body.insp-open #inspector { display: block; position: fixed; top: var(--head-h); right: 0; bottom: 0; width: min(330px, calc(100vw - 48px));
+    z-index: 25; border-left: 1px solid var(--line2); box-shadow: -24px 0 48px -24px rgba(0, 0, 0, .8); animation: fadeIn .2s; }
+}
 body > #viewerHost { display: none; }
 
 /* robot tab: stats row under the toolbar */
@@ -804,8 +812,44 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .feat-slot { display: none; }
 #featHeader:not(:empty) { display: flex; align-items: center; gap: 6px; }
 #projActions:not(:empty) { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; padding-top: 4px; border-top: 1px solid var(--line2); }
-#chatTools:not(:empty) { display: flex; align-items: center; gap: 2px; align-self: center; margin-left: -5px; }
+#projActions > button { display: flex; align-items: center; justify-content: flex-start; gap: 8px; text-align: left; }
+/* with chat tools the form has two rows: the message on top, the tools and Send under it */
+#form:has(> #chatTools:not(:empty)) { flex-wrap: wrap; row-gap: 3px; padding-top: 7px; }
+#form:has(> #chatTools:not(:empty)) #input { flex: 1 0 100%; order: 0; }
+#form:has(> #chatTools:not(:empty)) #send { order: 2; }
+#chatTools:not(:empty) { order: 1; flex: 1 0 auto; display: flex; align-items: center; gap: 2px; margin-left: -6px; }
 #inspTabs:not(:empty) { position: sticky; top: 0; z-index: 2; display: flex; gap: 4px; padding: 8px 14px 0; background: var(--bg1); }
 #viewerTools:not(:empty) { display: flex; align-items: center; gap: 3px; }
 #viewerTools:not(:empty)::before { content: ""; width: 1px; height: 18px; background: var(--line3); margin: 0 4px; }
 .modal .dlg.wide { width: min(980px, calc(100vw - 32px)); }
+
+/* ---- narrow windows: the header, tabs and robot toolbar keep their icons; titles name the rest ---- */
+/* the tour pill takes the badges' place while it runs; a team Studio's header gives them up for its people and Share */
+.tourpill.on + #badges { display: none; }
+@media (max-width: 1700px) { body:has(.tm-hdr) #badges { display: none; } }
+@media (max-width: 1500px) {
+  .cbadge .k { display: none; }
+}
+@media (max-width: 1400px) {
+  header#top { gap: 10px; }
+  #badges, .tm-role { display: none; }
+  #featHeader .tm-share { font-size: 0; gap: 0; padding: 0 8px; }
+  .tourctl { font-size: 0; gap: 0; }
+}
+@media (max-width: 1100px) {
+  header#top { gap: 8px; padding: 0 10px 0 12px; }
+  .brand > span:not(.logo), .conn span { display: none; }
+  #featHeader > .btn, .keysbtn, .presbtn { font-size: 0; gap: 0; padding: 0 8px; }
+  .keysbtn .kdot { margin-left: 4px; }
+  #pipeline { overflow-x: auto; scrollbar-width: thin; }
+  .node { flex: 1 0 84px; }
+  #tabs { padding: 0 6px; }
+  #tabs button.tab { padding: 0 7px; gap: 5px; font-size: 12px; }
+  #tabs button.tab > svg { display: none; }
+  #tabs .tinfo > span:not(.chip) { display: none; }
+  #tabs .tinfo .xport { font-size: 0; gap: 0; padding: 0 6px; }
+  .toolbar .btn, .toolbar .slider { font-size: 0; gap: 0; }
+  .toolbar .btn { padding: 0 7px; }
+  .toolbar .slider .v { display: none; }
+  .toolbar #viewerTools .btn { font-size: 12px; gap: 6px; }
+}

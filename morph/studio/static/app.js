@@ -352,7 +352,8 @@ async function loadState(st, { fresh = false, first = false } = {}) {
   renderKeysDot();
   renderProjects();
   for (const m of st.history || []) addMsg(m.type, m.text, m);
-  if (!(st.history || []).length) {
+  S.chatEmpty = !(st.history || []).length;
+  if (S.chatEmpty) {
     addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : ''}.`
       : fresh && !first ? `Opened ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`
         : `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`);
@@ -1078,6 +1079,10 @@ async function boot() {
   const pin = () => { if (window.scrollY || document.scrollingElement?.scrollTop) window.scrollTo(0, 0); };
   window.addEventListener('scroll', pin, { passive: true });
   document.addEventListener('scroll', pin, { passive: true, capture: false });
+  // a file dropped where no feature takes it (over an open dialog, say) must not make the browser leave the Studio for it
+  const files = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  window.addEventListener('dragover', (e) => { if (files(e)) e.preventDefault(); });
+  window.addEventListener('drop', (e) => { if (files(e)) e.preventDefault(); });
   setupChat();
   setupParams();
   setupProjects();
@@ -1110,6 +1115,9 @@ async function boot() {
     onChanged(integrations) { S.integrations = integrations || S.integrations; renderKeysDot(); if (S.current) renderInspector(S.current, S.previous); },
   });
   $('#keysBtn').onclick = () => keysDlg.open();
+  const insp = (on) => { document.body.classList.toggle('insp-open', on); $('#inspBtn').setAttribute('aria-pressed', String(on)); };
+  $('#inspBtn').onclick = () => insp(!document.body.classList.contains('insp-open'));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('.modal.on')) insp(false); });
   document.addEventListener('keydown', (e) => {
     if ((e.key === 'p' || e.key === 'P') && !e.target.closest('input, textarea, select') && !e.metaKey && !e.ctrlKey && !e.altKey) presenter.toggle();
   });
@@ -1153,6 +1161,18 @@ async function boot() {
   }
   opened();
   await (features || initFeatures());
+  featureTips();
+}
+// A project with no conversation yet: one message naming the feature entry points this page actually has.
+function featureTips() {
+  if (!S.current || !S.chatEmpty || $('#messages .msg.user')) return;
+  const tips = [
+    [$('#featHeader .nr-headbtn'), 'New robot (top right): another robot from one sentence'],
+    [$('#importBtn'), 'Import (top right): a robot folder or zip, an object mesh, a parts list or a board'],
+    [$('#chatTools .vj-btn'), 'Show Morph the job (below): a phone video or photos of the task'],
+    [$('#viewerTools button'), 'World (over the robot, beta): simulate it in a room'],
+  ].filter(([el]) => el).map(([, t]) => `· ${t}`);
+  if (tips.length) addMsg('assistant', `Also here:\n${tips.join('\n')}`);
 }
 async function firstState() {
   try { return await backend.state(); } catch (e) {

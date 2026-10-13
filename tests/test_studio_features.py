@@ -446,6 +446,86 @@ def test_a_browser_signs_in_from_the_teams_link_page(tmp_path, monkeypatch):
             httpd.shutdown()
 
 
+def test_the_page_offers_a_new_robot_for_a_new_job_and_fits_a_laptop_window(tmp_path, monkeypatch):
+    """At 1280 x 720: the header fits, the chat tools sit under the message, the right panel opens from the header, a
+    project without a conversation names the feature entry points, and a chat line that asks for another robot is offered
+    the New robot dialog (or, when asked, edits the open robot after all). A viewer on a team Studio gets no editing tools."""
+    pw = pytest.importorskip("playwright.sync_api")
+    chrome = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    from morph import keys
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    home = tmp_path / "projects"
+    st = server.Studio(make_project(home, "egg-picker"), str(home))
+    httpd = start(st)
+    port = httpd.server_address[1]
+    with pw.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(executable_path=chrome if os.path.exists(chrome) else None, args=["--no-sandbox"])
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"no Chromium for Playwright ({exc.__class__.__name__})")
+        try:
+            pg = browser.new_page(viewport={"width": 1280, "height": 720})
+            errors = []
+            pg.on("pageerror", lambda e: errors.append(str(e)))
+            pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+            pg.goto(f"http://127.0.0.1:{port}/?tour=0", wait_until="domcontentloaded")
+            pg.wait_for_selector("#chatTools .vj-btn", timeout=60000)
+            until(lambda: "Also here:" in pg.inner_text("#messages"))
+            tips = pg.inner_text("#messages")
+            assert "New robot (top right)" in tips and "Import (top right)" in tips and "Show Morph the job (below)" in tips
+            box = pg.evaluate("""() => { const r = (s) => document.querySelector(s).getBoundingClientRect(), top = document.querySelector('#top');
+                return {input: r('#input').bottom, tools: r('#chatTools').top, send: r('#send').left, toolsLeft: r('#chatTools').left,
+                        overflow: top.scrollWidth - top.clientWidth, page: document.documentElement.scrollWidth - innerWidth}; }""")
+            assert box["tools"] >= box["input"] - 1 and box["send"] > box["toolsLeft"]   # tools and Send under the message
+            assert box["overflow"] <= 0 and box["page"] <= 0                              # nothing pushed off the header
+            assert pg.is_hidden("#inspector")
+            pg.click("#inspBtn")
+            assert pg.is_visible("#inspector") and pg.get_attribute("#inspBtn", "aria-pressed") == "true"
+            pg.keyboard.press("Escape")
+            assert pg.is_hidden("#inspector")
+            pg.fill("#input", "help me sort socks")
+            pg.keyboard.press("Enter")
+            pg.wait_for_selector(".msg.assistant .qacts [data-o=go]", timeout=30000)
+            assert "egg-picker stays as it is" in pg.inner_text("#messages")
+            pg.click(".msg.assistant .qacts [data-o=go]")
+            pg.wait_for_selector("#featModal.on .nr", timeout=10000)
+            until(lambda: "help me sort socks" in pg.inner_text("#featModal"))     # the dialog started from the line
+            pg.keyboard.press("Escape")
+            pg.click(".msg.assistant .qacts [data-o=edit]")
+            until(lambda: pg.evaluate("document.querySelectorAll('.msg.user').length") == 2)
+            until(lambda: "couldn't map that" in pg.inner_text("#messages"))     # edited after all: nothing to change
+            assert pg.evaluate("[...document.querySelectorAll('.qacts [data-o]')].every((b) => b.disabled)")
+            assert st.room().p.revs() == ["r001"] and errors == []
+        finally:
+            browser.close()
+            httpd.shutdown()
+
+
+def test_a_viewer_gets_no_editing_tools(team_studio, monkeypatch):
+    pw = pytest.importorskip("playwright.sync_api")
+    chrome = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    st, call, ids, jar, port = team_studio
+    with pw.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(executable_path=chrome if os.path.exists(chrome) else None, args=["--no-sandbox"])
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"no Chromium for Playwright ({exc.__class__.__name__})")
+        try:
+            ctx = browser.new_context(viewport={"width": 1400, "height": 900})
+            name, value = jar["Vic"].split("=", 1)
+            ctx.add_cookies([{"name": name, "value": value, "domain": "127.0.0.1", "path": "/"}])
+            pg = ctx.new_page()
+            pg.goto(f"http://127.0.0.1:{port}/?tour=0", wait_until="domcontentloaded")
+            pg.wait_for_selector(".tm-tabs", timeout=60000)
+            until(lambda: pg.evaluate("document.body.classList.contains('tm-readonly')"))
+            assert pg.is_disabled("#input") and pg.is_disabled("#send") and pg.is_disabled("#paramsApply")
+            assert "Changes" in pg.get_attribute("#input", "placeholder")
+            for sel in (".nr-headbtn", "#importBtn", ".vj-btn", "#suggest"):
+                assert pg.is_hidden(sel), sel
+        finally:
+            browser.close()
+
+
 # ------------------------------------------------------------------ I2b: what the wiring guarantees beyond each route
 
 

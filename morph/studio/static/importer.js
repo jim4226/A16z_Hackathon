@@ -738,9 +738,17 @@ export function init(studio) {
   let depth = 0;
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
   const busyElsewhere = () => [...document.querySelectorAll('.modal.on')].some((m) => !m.querySelector('.imp'));
+  const mediaDrag = (e) => {
+    const items = [...(e.dataTransfer?.items || [])];
+    return items.length > 0 && items.every((x) => x.kind === 'file' && /^(video|image)\//.test(x.type || '')) && !!document.querySelector('.vj-btn');
+  };
   window.addEventListener('dragenter', (e) => {
     if (!hasFiles(e) || e.target.closest?.('[data-drop]') || busyElsewhere()) return;
     depth += 1;
+    if (!overlay.classList.contains('on')) {
+      overlay.firstElementChild.innerHTML = mediaDrag(e) ? 'Drop to show Morph the job<small>a phone video or photos of the task, done by hand</small>'
+        : 'Drop to import into Morph<small>a robot folder, zip, mesh, parts list or KiCad board</small>';
+    }
     overlay.classList.add('on');
   });
   window.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) overlay.classList.remove('on'); });
@@ -750,6 +758,12 @@ export function init(studio) {
     depth = 0;
     overlay.classList.remove('on');
     const files = await entriesToFiles([...e.dataTransfer.items]);
+    // videos and photos of the task are for Show Morph the job (video.js listens for morph:video-open), not imports
+    const media = (f) => /^(video|image)\//.test(f.file.type || '') || /\.(mp4|mov|m4v|webm|mkv|avi|jpe?g|png|webp|heic)$/i.test(f.path);
+    if (files.length && files.every(media) && document.querySelector('.vj-btn')) {
+      window.dispatchEvent(new CustomEvent('morph:video-open', { detail: { files: files.map((f) => f.file) } }));
+      return;
+    }
     imp.open({ files });
   });
   return imp;
