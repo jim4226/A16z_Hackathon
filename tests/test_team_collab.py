@@ -131,7 +131,7 @@ def test_change_requests_report_conflicts_and_validate_changes(team):
     home, root, ids, ms = team
     build(root, "r001", by=ids["Jim"])
     p = collab.create_proposal(root, ids["Ana"], None, {"build.config": "pilot", "electronics.mcu": "rp2040_pico"}, members=ms)
-    assert p["title"].startswith("Build to pilot") and "(+1 more)" in p["title"]
+    assert p["title"].startswith("Build to Pilot") and "(+1 more)" in p["title"]    # option names, as the Parameters panel
     build(root, "r002", "r001", {"build.config": "production"}, by=ids["Raj"])   # main moved underneath it
     assert collab.head_conflicts(root, collab.get_proposal(root, p["id"])) == ["build.config"]
     assert collab.apply_proposal(root, p["id"], ids["Jim"])["conflicts"] == ["build.config"]
@@ -293,7 +293,10 @@ def test_flagship_servo_swap_is_routed_approved_released_and_goes_stale_only_whe
     assert rv3["disciplines"] == ["manufacturing", "sourcing", "documentation"]
     assert {r["discipline"]: r["via"] for r in rv3["requested_from"]} == {"manufacturing": "generalist", "sourcing": "specialist",
                                                                            "documentation": "generalist"}
-    collab.decide(root, rv3["id"], ms[ids["Raj"]], "approve", members=ms)            # recorded, but his own work
+    with pytest.raises(collab.CollabError) as e:                                     # his own work: refused, and why
+        collab.decide(root, rv3["id"], ms[ids["Raj"]], "approve", members=ms)
+    assert e.value.status == 403 and "You made this change" in str(e.value) and "Jim (generalist)" in str(e.value)
+    assert collab.decision_scope(root, rv3, ms[ids["Raj"]], ms)["authored"] == ["manufacturing"]
     assert collab.release_gate(root, "r003", ms)["missing"] == ["manufacturing", "sourcing", "documentation"]
     collab.decide(root, rv3["id"], ms[ids["Sue"]], "approve", members=ms)
     collab.decide(root, rv3["id"], ms[ids["Jim"]], "approve", disciplines=["manufacturing", "documentation"], members=ms)

@@ -22,6 +22,7 @@ import inspect
 import json
 import os
 import threading
+import time
 import traceback
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
@@ -109,8 +110,25 @@ def role_hook(req, role: str, member: dict | None = None) -> dict | None:
     if not authorize(member, req.method, req.path, declared=role, home=home):
         if member is None:
             raise HTTPError(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
-        raise HTTPError(403, f"A team {member.get('role') or 'member'} can't do that here: ask an owner.")
+        raise HTTPError(403, refusal(member, req.method, req.path, role))
     return member
+
+
+def refusal(member: dict, method: str, path: str, declared: str | None = None) -> str:
+    """Why the route table refused a signed-in member, and what they can do instead."""
+    need, flag = roles.required(method, path)
+    if declared and declared != roles.PUBLIC and roles.RANK.get(declared, 0) > roles.RANK.get(need, 0):
+        need = declared
+    if need == "owner":
+        return "Only the team's owners can do that."
+    if flag:
+        what = {"viewers_can_comment": "comment", "viewers_can_propose": "propose changes",
+                "viewers_can_approve": "approve"}.get(flag, "do that")
+        return f"Viewers can't {what} on this team (an owner can allow it under Share, Policy)."
+    if member.get("role") == "viewer":
+        return ("Viewers can't change the design: propose the change under Changes in the right panel, or ask an owner to "
+                "make you an editor.")
+    return f"A team {member.get('role') or 'member'} can't do that here: ask an owner."
 
 
 def _page(title: str, body: str) -> bytes:
@@ -138,11 +156,18 @@ def join_page(code: str, error: str = "", home: str | None = None) -> tuple:
                "revoked": "This invite was cancelled."}.get((inv or {}).get("state"), "This invite link is not valid.")
         return 410 if inv else 400, _page("Morph Studio: invite", f"<h1>Morph Studio</h1><p class=\"bad\">{html.escape(why)}</p>"
                                                                  "<p>Ask the team owner for a new invite link.</p>")
-    tags = "".join(f"<span class=\"tag\">{html.escape(LABELS.get(d, d))}</span>" for d in inv["disciplines"])
+    tags = "".join(f"<span class=\"tag\">{html.escape(LABELS.get(d, d))}</span>" for d in inv["disciplines"] if d != GENERALIST)
     who = f"{html.escape(inv['invited_by'])} invited you" if inv.get("invited_by") else "You're invited"
     err = f"<p class=\"bad\">{html.escape(error)}</p>" if error else ""
+    does = {"viewer": "You'll see the robot live, comment and propose changes.", "editor": "You'll edit and build the robot, "
+            "propose and apply changes, review and release.", "owner": "You'll run the team: everything an editor does, plus "
+            "members, invites and settings."}.get(inv["role"], "")
+    reviews = ("<p class=\"dim\" style=\"margin:0 0 6px\">You review changes to:</p>" if tags else "") + \
+        (f"<div class=\"tags\">{tags}</div>" if tags else "") + \
+        ("<p class=\"dim\">As a generalist you also review every stage that has no specialist on the team.</p>"
+         if GENERALIST in inv["disciplines"] else "")
     body = (f"<h1>Join {html.escape(inv.get('team') or 'the team')} on Morph Studio</h1>"
-            f"<p>{who} as <b>{html.escape(inv['role'])}</b>. This link works once.</p><div class=\"tags\">{tags}</div>{err}"
+            f"<p>{who} as <b>{html.escape(inv['role'])}</b>. {does} This link works once.</p>{reviews}{err}"
             f"<form method=\"post\" action=\"/api/team/join\"><input type=\"hidden\" name=\"code\" value=\"{html.escape(code)}\">"
             f"<input name=\"name\" maxlength=\"40\" autocomplete=\"name\" placeholder=\"Your name\" aria-label=\"Your name\" required autofocus "
             f"value=\"{html.escape(inv.get('name_hint') or '')}\"><button type=\"submit\">Join</button></form>"
@@ -165,13 +190,69 @@ def link_page(code: str, error: str = "", home: str | None = None) -> tuple:
     return 200, _page("Morph Studio: sign in", body)
 
 
-def signed_out_page(home: str | None = None) -> tuple:
-    """(status, html bytes, content type, csp) for a page load without a session in team mode."""
-    team = (auth.team_info(home or CONFIG["home"]) or {}).get("name") or "a team"
-    body = (f"<h1>Morph Studio for {html.escape(team)}</h1><p>This Studio is shared with a team. Open the invite link the team "
-            "owner sent you, or a sign-in link from one of your signed-in devices.</p>"
-            "<p class=\"dim\">Owner: run <code>morph team link</code> on the Studio computer for a new sign-in link.</p>")
+def _session_value(handler) -> str | None:
+    jar = SimpleCookie()
+    try:
+        jar.load(handler.headers.get("Cookie") or "")
+    except Exception:  # noqa: BLE001
+        return None
+    name = auth.cookie_name(_port(handler))
+    return jar[name].value if name in jar else None
+
+
+def signed_out_page(home: str | None = None, handler=None) -> tuple:
+    """(status, html bytes, content type, csp) for a page load without a session in team mode. A browser whose member was
+    removed (or signed out everywhere) is told so, from its own genuine cookie; everyone else gets the general page."""
+    home = home or CONFIG["home"]
+    team = (auth.team_info(home) or {}).get("name") or "a team"
+    state, m = auth.session_state(_session_value(handler), home=home) if handler is not None else (None, None)
+    if state == "removed":
+        store = TeamStore(home)
+        by = (store.member((store.member(m["id"]) or {}).get("revoked_by") or "") or {}).get("name")
+        body = (f"<h1>You're no longer on {html.escape(team)}</h1><p>{html.escape(by or 'The team owner')} removed "
+                f"{html.escape(m['name'])} from this Studio, so this browser is signed out. Your name stays on the work you did.</p>"
+                "<p class=\"dim\">If that's a mistake, ask the team owner for a new invite link.</p>")
+    elif state == "ended":
+        body = (f"<h1>Signed out of {html.escape(team)}</h1><p>{html.escape(m['name'])} signed out everywhere, so this browser "
+                "needs a new sign-in link: make one under Team on a signed-in device, or ask the team owner.</p>"
+                "<p class=\"dim\">Owner: <code>morph team link</code> on the Studio computer prints one.</p>")
+    else:
+        body = (f"<h1>Morph Studio for {html.escape(team)}</h1><p>This Studio is shared with a team. Open the invite link the "
+                "team owner sent you, or a sign-in link from one of your signed-in devices.</p>"
+                "<p class=\"dim\">Owner: run <code>morph team link</code> on the Studio computer for a new sign-in link.</p>")
     return 401, _page("Morph Studio: sign in", body), "text/html; charset=utf-8", JOIN_CSP
+
+
+class StreamCheck:
+    """For an open event stream on a team Studio: is the member behind it still signed in? Checked at most every
+    `every` seconds (the cookie the stream opened with, against the team's current members and epochs), so removing a
+    member, or their "Sign out everywhere", ends their open streams within seconds. `goodbye()` is the stream's last event:
+    the page then shows why it was signed out."""
+
+    def __init__(self, handler, member: dict, home: str | None = None, every: float = 2.0):
+        self.handler, self.member, self.home, self.every = handler, member, home or CONFIG["home"], every
+        self.next, self.ok, self.why = 0.0, True, ""
+
+    def __call__(self) -> bool:
+        now = time.monotonic()
+        if self.ok and now >= self.next:
+            self.next = now + self.every
+            try:
+                m = authenticate(self.handler, home=self.home)
+            except Exception:  # noqa: BLE001  (a busy team file: keep the stream, check again)
+                return True
+            if not m or m.get("id") != self.member.get("id"):
+                cur = TeamStore(self.home).member(self.member.get("id")) or {}
+                self.ok, self.why = False, "removed" if cur.get("revoked") or not cur else "signed_out"
+        return self.ok
+
+    def goodbye(self, project: str) -> bytes:
+        return f"data: {json.dumps({'type': 'signed_out', 'project': project, 'reason': self.why})}\n\n".encode()
+
+
+def stream_check(handler, member: dict | None, home: str | None = None):
+    """server.py's /api/events: a StreamCheck for a member's stream (None without a member)."""
+    return StreamCheck(handler, member, home) if member else None
 
 
 def _write(handler, status: int, body: bytes, ctype: str = "application/json", headers=(), csp: str | None = None):
@@ -469,7 +550,15 @@ def team_revoke(req):
     if not b.get("member"):
         return _err(400, "Name the member or invite to revoke.")
     out = auth.revoke_member(str(b["member"]), m["id"], home=_home(req))
-    _emit(req, {"type": "member", "action": "revoked", "member": out})
+    ev = {"type": "member", "action": "revoked", "member": out, "by": m["id"]}
+    studio = getattr(req, "studio", None)
+    if callable(getattr(studio, "broadcast", None)):  # every project's tabs: the member may be on any of them
+        try:
+            studio.broadcast(ev)
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        _emit(req, ev)
     return 200, {"ok": True, "member": out}
 
 
@@ -546,13 +635,20 @@ def comments_resolve(req):
 # ------------------------------------------------------------------ change requests
 
 
-def _decorate_proposal(root: str, p: dict, members: dict, policy: dict, reviews=None) -> dict:
+def _decorate_proposal(root: str, p: dict, members: dict, policy: dict, reviews=None, member=None) -> dict:
+    """A change request for the page: its author, routing chips, review, conflicts with main, readable diff and, once it
+    is built, what it built. With `member` (a GET by that member) the review says what they may decide (`mine`); events
+    to every tab never carry it."""
     authors = {p.get("by")}
     r = routing(p.get("changes"), authors, members, stages=p.get("explicit_stages") or ())
     revs = [x for x in (reviews if reviews is not None else collab.reviews(root, members=members, policy=policy))
             if (x.get("target") or {}).get("proposal") == p["id"]]
+    rv = revs[0] if revs else None
+    if rv is not None and member:
+        rv = {**rv, "mine": collab.decision_scope(root, rv, members.get(member.get("id")) or member, members, policy)}
     conflicts = collab.head_conflicts(root, p) if p.get("status") == "open" else []
-    return {**p, "author": _author(members, p.get("by")), "routing": r, "review": revs[0] if revs else None, "conflicts": conflicts}
+    return {**p, "author": _author(members, p.get("by")), "routing": r, "review": rv, "conflicts": conflicts,
+            "shown": collab.shown_changes(p.get("diff")), "built": collab.built_summary(root, p)}
 
 
 @_safe
@@ -561,7 +657,8 @@ def proposals_get(req):
     status = _q(req, "status")
     items = collab.proposals(root, status=status if status in ("open", "applied", "closed") else None)
     rvs = collab.reviews(root, members=members, policy=pol)
-    return 200, {"ok": True, "proposals": [_decorate_proposal(root, p, members, pol, rvs) for p in items[:100]]}
+    me = getattr(req, "member", None)
+    return 200, {"ok": True, "proposals": [_decorate_proposal(root, p, members, pol, rvs, member=me) for p in items[:100]]}
 
 
 @_safe
@@ -574,14 +671,16 @@ def proposals_post(req):
     p = collab.create_proposal(root, m["id"], b.get("title") or None, b.get("changes"), base_rev=b.get("base_rev") or None,
                                branch=b.get("branch") or "main", stages=stages, note=b.get("note") or "", members=members, policy=pol)
     out = _decorate_proposal(root, p, members, pol)
-    asked = out["routing"]["reviewers"]
-    _notify(req, asked, "review_request", f"{m['name']} asks for your review of change request #{p['n']}: {p['title']}",
-            {"proposal": p["id"], "review": p.get("review")})
-    _notify(req, out["routing"]["watchers"], "watch", f"{m['name']} opened change request #{p['n']}: {p['title']}", {"proposal": p["id"]})
-    _notify(req, [x for x in p.get("mentions") or [] if x not in asked], "mention",
-            f"{m['name']} mentioned you in change request #{p['n']}", {"proposal": p["id"]})
+    asked, said = out["routing"]["reviewers"], set(p.get("mentions") or [])
+    what = f"change request #{p['n']}: {p['title']}"
+    for mid in asked:  # a reviewer who was also @mentioned gets one notification that says both
+        _notify(req, [mid], "review_request", f"{m['name']} asks for your review of {what}"
+                + (f", and mentioned you: {p.get('note', '')[:120]}" if mid in said else ""), {"proposal": p["id"], "review": p.get("review")})
+    _notify(req, out["routing"]["watchers"], "watch", f"{m['name']} opened {what}", {"proposal": p["id"]})
+    _notify(req, [x for x in said if x not in asked], "mention", f"{m['name']} mentioned you in {what}: {p.get('note', '')[:120]}",
+            {"proposal": p["id"]})
     _emit(req, {"type": "proposal", "action": "open", "proposal": out})
-    return 200, {"ok": True, "proposal": out}
+    return 200, {"ok": True, "proposal": _decorate_proposal(root, p, members, pol, member=m)}
 
 
 def _enqueue(req, job: dict) -> bool:
@@ -688,6 +787,10 @@ def reviews_get(req):
     rev, prop = _q(req, "rev"), _q(req, "proposal")
     st = _q(req, "state")
     items = collab.reviews(root, rev=rev, proposal=prop, state=st, members=members, policy=pol)
+    me = getattr(req, "member", None)
+    if me:  # what this member may decide on each, and why not (the page's buttons and notes)
+        mm = members.get(me.get("id")) or me
+        items = [{**x, "mine": collab.decision_scope(root, x, mm, members, pol)} for x in items[:100]]
     out = {"ok": True, "reviews": items[:100]}
     if rev:
         out["gate"] = collab.release_gate(root, rev, members, pol)
@@ -699,7 +802,7 @@ def reviews_post(req):
     m, b, root, members, pol = _me(req), _body(req), _root(req), _members(req), _policy(req)
     rv = collab.request_review(root, m["id"], rev=b.get("rev") or None, proposal=b.get("proposal") or None,
                                disciplines=b.get("disciplines") or None, note=b.get("note") or "", members=members, policy=pol)
-    what = rv["target"]["rev"] or f"change request {rv['target']['proposal']}"
+    what = rv["target"]["rev"] or collab.proposal_name(root, rv["target"]["proposal"])
     asked = sorted({x for r in rv["requested_from"] for x in r["members"]})
     _notify(req, asked, "review_request", f"{m['name']} asks for your review of {what}: "
             + ", ".join(LABELS[d] for d in rv["disciplines"]), {"review": rv["id"], "rev": rv["target"]["rev"]})
@@ -716,10 +819,11 @@ def reviews_decide(req):
                        disciplines=b.get("disciplines") or None, members=members, policy=pol)
     last = rv["decisions"][-1]
     verb = "approved" if last["decision"] == "approve" else "requested changes on"
-    what = rv["target"]["rev"] or f"change request {rv['target']['proposal']}"
+    what = rv["target"]["rev"] or collab.proposal_name(root, rv["target"]["proposal"])
     tell = set(rv.get("authors") or []) | {rv.get("by")}
-    _notify(req, sorted(x for x in tell if x), "decision",
-            f"{m['name']} {verb} {what} as " + activity._and([LABELS[d] for d in last["disciplines"]]), {"review": rv["id"], "rev": rv["target"]["rev"]})
+    note = f": {last['note'][:140]}" if last.get("note") else ""
+    _notify(req, sorted(x for x in tell if x), "decision", f"{m['name']} {verb} {what} as "
+            + activity._and([LABELS[d] for d in last["disciplines"]]) + note, {"review": rv["id"], "rev": rv["target"]["rev"]})
     out = {"ok": True, "review": rv}
     if rv["target"]["rev"]:
         out["gate"] = collab.release_gate(root, rv["target"]["rev"], members, pol)

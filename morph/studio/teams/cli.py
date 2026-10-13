@@ -35,11 +35,12 @@ def team_init(owner_name: str, team_name: str = "", home: str | None = None, bas
     """Create the team; the creator is owner + generalist. Returns {"member", "team", "code", "path", "url", "expires_utc"}."""
     res = auth.init_team(owner_name, team_name, home=home)
     res["url"] = _url(base_url, res["path"])
-    _say(out, f"Team \"{res['team']}\" created. {res['member']['name']} is the owner (generalist: reviews every stage "
+    _say(out, f"Team \"{res['team']}\" created. {res['member']['name']} is the owner and a generalist (reviews every stage "
               "that has no specialist yet).")
-    _say(out, "Open this link in your browser to sign in (it works once, within 15 minutes):")
+    _say(out, "Next, start the Studio in team mode: morph studio --team (add --remote so teammates' computers can reach it).")
+    _say(out, "It prints a one-time link that signs you in; then invite people with Share in the Studio, or morph team invite.")
+    _say(out, f"If a team Studio is already running at {_url(base_url, '')}, this link signs you in (once, within 15 minutes):")
     _say(out, f"    {res['url']}")
-    _say(out, "Start the Studio in team mode (morph studio --team), then use Share to invite people.")
     return res
 
 

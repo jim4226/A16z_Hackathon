@@ -396,6 +396,28 @@ def verify_session(value, home: str | None = None, now=None) -> dict | None:
     return public_member(m)
 
 
+def session_state(value, home: str | None = None, now=None) -> tuple:
+    """(state, public member) for a session cookie: "ok"; "removed" when the owner revoked its member; "ended" when it was
+    signed out everywhere (it was genuinely signed under an older epoch); (None, None) for anything else (malformed,
+    forged, expired, unknown). The signed-out page tells a removed member why, without telling anyone else anything."""
+    ok = verify_session(value, home=home, now=now)
+    if ok:
+        return "ok", ok
+    mt = SESSION_RX.match(value) if isinstance(value, str) and len(value) <= 120 else None
+    if not mt:
+        return None, None
+    mid, issued, mac = mt.group(1), int(mt.group(2)), mt.group(3)
+    t = _now(now)
+    st = TeamStore(home)
+    m = st.member(mid) if st.exists() else None
+    if not m or issued > t + SKEW_S or t - issued > SESSION_DAYS * 86400:
+        return None, None
+    secret = st.secret()
+    if not any(hmac.compare_digest(_mac(secret, mid, issued, e), mac) for e in range(max(0, int(m.get("epoch") or 0)))):
+        return None, None
+    return ("removed" if m.get("revoked") else "ended"), public_member(m)
+
+
 def cookie_name(port) -> str:
     return f"morph_session_{int(port)}"  # cookies ignore the port, so two Studios on one host need their own
 
@@ -490,7 +512,7 @@ def revoke_member(member_id: str, by: str | None, home: str | None = None) -> di
         if m.get("role") == "owner" and not m.get("revoked") and _owners_left(members, member_id) == 0:
             raise AuthError(409, "That is the team's only owner. Make someone else an owner first.")
         m["revoked"], m["epoch"], m["tokens"] = True, int(m.get("epoch") or 0) + 1, []
-        m["revoked_utc"] = utc()
+        m["revoked_utc"], m["revoked_by"] = utc(), by
         data["links"] = {k: v for k, v in (data.get("links") or {}).items() if v.get("member") != member_id}
         return m
 

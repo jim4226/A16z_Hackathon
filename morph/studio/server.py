@@ -865,8 +865,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return bool(ok)
 
         def _sign_in_page(self, bad=False):
-            if team is not None:  # invites and sign-in links are the way in
-                status, page, ctype, csp = team.signed_out_page(home=studio.home)
+            if team is not None:  # invites and sign-in links are the way in (a removed member's browser is told why)
+                status, page, ctype, csp = team.signed_out_page(home=studio.home, handler=self)
                 return self._send(status, page, ctype, csp=csp)
             note = ('<p class="bad">Too many wrong access codes from this computer. Wait 15 minutes, then try again.</p>'
                     if bad == "throttled" else
@@ -1098,6 +1098,7 @@ def _api_events(req):
         h.end_headers()
         sel.register(h.connection, selectors.EVENT_READ)
         _presence(req, room, True)
+        alive = _member_check(req)  # Teams: a removed (or signed-out-everywhere) member's open stream ends
         try:
             last = time.monotonic()
             while True:
@@ -1106,9 +1107,13 @@ def _api_events(req):
                 except queue.Empty:
                     if _hung_up(sel, h.connection):  # the tab went away: its slot is free now, not after a failed ping
                         break
-                    if time.monotonic() - last < 15:
-                        continue
-                    data = b": ping\n\n"
+                    data = b": ping\n\n" if time.monotonic() - last >= 15 else b""
+                if alive is not None and not alive():
+                    h.wfile.write(alive.goodbye(room.name))
+                    h.wfile.flush()
+                    break
+                if not data:
+                    continue
                 h.wfile.write(data)
                 h.wfile.flush()
                 last = time.monotonic()
@@ -1131,6 +1136,14 @@ def _presence(req, room: Room, opened: bool):
             api_team.stream(room.name, req.member, opened, send=room.hub.send, home=req.studio.home)
         except Exception:  # noqa: BLE001  (presence never breaks the event stream)
             traceback.print_exc()
+
+
+def _member_check(req):
+    """Teams: a check, rate-limited, that the stream's member is still signed in (api_team.StreamCheck); None otherwise."""
+    if not (req.studio.team and req.member):
+        return None
+    from . import api_team
+    return api_team.stream_check(req.handler, req.member, home=req.studio.home)
 
 
 def _hung_up(sel, sock) -> bool:

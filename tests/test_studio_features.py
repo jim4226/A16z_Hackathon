@@ -261,7 +261,7 @@ def test_team_studio_signs_members_in_and_checks_their_roles(team_studio):
     assert call("GET", "/", headers={"Cookie": jar["Vic"]})[0] == 200
     assert call("GET", "/api/state", headers={"Cookie": jar["Vic"]})[0] == 200
     s, out, _ = call("POST", "/api/chat", {"message": "make it 6-DOF"}, headers={"Cookie": jar["Vic"]})
-    assert s == 403 and "viewer" in out["error"]                    # viewers comment and propose; editors edit
+    assert s == 403 and "Viewers can't change the design: propose the change under Changes" in out["error"]  # and what they can do
     assert call("POST", "/api/reset", {}, headers={"Cookie": jar["Ana"]})[0] == 403
     s, out, _ = call("POST", "/api/params", {"changes": {"arm.dof": 6}}, headers={"Cookie": jar["Ana"]})
     assert s == 202 and out["job"]["by"] == ids["Ana"]
