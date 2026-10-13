@@ -546,13 +546,20 @@ def comments_resolve(req):
 # ------------------------------------------------------------------ change requests
 
 
-def _decorate_proposal(root: str, p: dict, members: dict, policy: dict, reviews=None) -> dict:
+def _decorate_proposal(root: str, p: dict, members: dict, policy: dict, reviews=None, member=None) -> dict:
+    """A change request for the page: its author, routing chips, review, conflicts with main, readable diff and, once it
+    is built, what it built. With `member` (a GET by that member) the review says what they may decide (`mine`); events
+    to every tab never carry it."""
     authors = {p.get("by")}
     r = routing(p.get("changes"), authors, members, stages=p.get("explicit_stages") or ())
     revs = [x for x in (reviews if reviews is not None else collab.reviews(root, members=members, policy=policy))
             if (x.get("target") or {}).get("proposal") == p["id"]]
+    rv = revs[0] if revs else None
+    if rv is not None and member:
+        rv = {**rv, "mine": collab.decision_scope(root, rv, members.get(member.get("id")) or member, members, policy)}
     conflicts = collab.head_conflicts(root, p) if p.get("status") == "open" else []
-    return {**p, "author": _author(members, p.get("by")), "routing": r, "review": revs[0] if revs else None, "conflicts": conflicts}
+    return {**p, "author": _author(members, p.get("by")), "routing": r, "review": rv, "conflicts": conflicts,
+            "shown": collab.shown_changes(p.get("diff")), "built": collab.built_summary(root, p)}
 
 
 @_safe
@@ -561,7 +568,8 @@ def proposals_get(req):
     status = _q(req, "status")
     items = collab.proposals(root, status=status if status in ("open", "applied", "closed") else None)
     rvs = collab.reviews(root, members=members, policy=pol)
-    return 200, {"ok": True, "proposals": [_decorate_proposal(root, p, members, pol, rvs) for p in items[:100]]}
+    me = getattr(req, "member", None)
+    return 200, {"ok": True, "proposals": [_decorate_proposal(root, p, members, pol, rvs, member=me) for p in items[:100]]}
 
 
 @_safe
@@ -581,7 +589,7 @@ def proposals_post(req):
     _notify(req, [x for x in p.get("mentions") or [] if x not in asked], "mention",
             f"{m['name']} mentioned you in change request #{p['n']}", {"proposal": p["id"]})
     _emit(req, {"type": "proposal", "action": "open", "proposal": out})
-    return 200, {"ok": True, "proposal": out}
+    return 200, {"ok": True, "proposal": _decorate_proposal(root, p, members, pol, member=m)}
 
 
 def _enqueue(req, job: dict) -> bool:
@@ -688,6 +696,10 @@ def reviews_get(req):
     rev, prop = _q(req, "rev"), _q(req, "proposal")
     st = _q(req, "state")
     items = collab.reviews(root, rev=rev, proposal=prop, state=st, members=members, policy=pol)
+    me = getattr(req, "member", None)
+    if me:  # what this member may decide on each, and why not (the page's buttons and notes)
+        mm = members.get(me.get("id")) or me
+        items = [{**x, "mine": collab.decision_scope(root, x, mm, members, pol)} for x in items[:100]]
     out = {"ok": True, "reviews": items[:100]}
     if rev:
         out["gate"] = collab.release_gate(root, rev, members, pol)

@@ -293,7 +293,10 @@ def test_flagship_servo_swap_is_routed_approved_released_and_goes_stale_only_whe
     assert rv3["disciplines"] == ["manufacturing", "sourcing", "documentation"]
     assert {r["discipline"]: r["via"] for r in rv3["requested_from"]} == {"manufacturing": "generalist", "sourcing": "specialist",
                                                                            "documentation": "generalist"}
-    collab.decide(root, rv3["id"], ms[ids["Raj"]], "approve", members=ms)            # recorded, but his own work
+    with pytest.raises(collab.CollabError) as e:                                     # his own work: refused, and why
+        collab.decide(root, rv3["id"], ms[ids["Raj"]], "approve", members=ms)
+    assert e.value.status == 403 and "You made this change" in str(e.value) and "Jim (generalist)" in str(e.value)
+    assert collab.decision_scope(root, rv3, ms[ids["Raj"]], ms)["authored"] == ["manufacturing"]
     assert collab.release_gate(root, "r003", ms)["missing"] == ["manufacturing", "sourcing", "documentation"]
     collab.decide(root, rv3["id"], ms[ids["Sue"]], "approve", members=ms)
     collab.decide(root, rv3["id"], ms[ids["Jim"]], "approve", disciplines=["manufacturing", "documentation"], members=ms)

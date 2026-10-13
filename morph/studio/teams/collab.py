@@ -23,8 +23,8 @@ import unicodedata
 from ...robot.pipeline2 import ORDER, PARAMS, RobotProject
 from ...spec import Design, diff
 from . import audit
-from .disciplines import (DISCIPLINES, LABELS, LEVELS, STAGE_TITLES, STAGES, affected_stages, covers, disciplines_for_stages,
-                          eligible, route_discipline)
+from .disciplines import (DISCIPLINES, LABELS, LEVELS, STAGE_TITLES, STAGES, affected_stages, disciplines_for_stages, eligible,
+                          route_discipline)
 from .store import append_jsonl, locked, new_id, project_dir, read_json, read_jsonl, utc, write_json
 
 KINDS = ("rev", "stage", "bom", "param", "file")
@@ -770,8 +770,59 @@ def request_review(root: str, by: str, rev: str | None = None, proposal: str | N
     return {**r, "decisions": [], "withdrawn": False, "state": "open"}
 
 
-def _summarize(r: dict, members: dict, policy) -> dict:
-    """A review's state for the UI: per discipline, the latest decision of each eligible reviewer."""
+def work_authors(root: str, r: dict) -> dict:
+    """{discipline: who made the work it reviews} for a stored review: for a revision, per discipline, whoever made the
+    revisions that computed its stages; for a change request, its author."""
+    t, ds = r.get("target") or {}, r.get("disciplines") or []
+    if t.get("kind") == "revision" and t.get("rev") and rev_info(root, t["rev"]) is not None:
+        return {d: discipline_authors(root, t["rev"], d) or set(r.get("authors") or []) for d in ds}
+    return {d: set(r.get("authors") or []) for d in ds}
+
+
+def _names(ms) -> str:
+    out = []
+    for m, via in ms:
+        out.append(f"{m.get('name') or 'a former member'}" + (f" ({via})" if via in ("generalist", "owner") else ""))
+    return " or ".join(out) if len(out) < 3 else ", ".join(out[:-1]) + " or " + out[-1]
+
+
+def decision_scope(root: str, r: dict, member: dict | None, members=None, policy=None) -> dict:
+    """What `member` may decide on review `r`: {"covers": the disciplines their approval counts for, "authored": the ones
+    whose work they made (above prototype nobody reviews their own work, as on GitHub), "why": why they can't decide, or
+    None}. The server checks it on every decision and the page shows the same buttons and reasons."""
+    members = _members_dict(members)
+    level, ds = r.get("level") or "prototype", list(r.get("disciplines") or [])
+    mid, work = (member or {}).get("id"), work_authors(root, r)
+    elig = [d for d in ds if eligible(member, d, members, policy, level, work.get(d, ()))]
+    authored = [d for d in elig if level != "prototype" and mid in work.get(d, ())]
+    covers = [d for d in elig if d not in authored]
+    why = None
+    if not covers:
+        label = lambda xs: ", ".join(LABELS[d] for d in xs)  # noqa: E731
+        if not member or member.get("revoked"):
+            why = "Sign in again to review."
+        elif member.get("role") == "viewer" and not (policy or {}).get("viewers_can_approve"):
+            why = "Viewers can't approve on this team (an owner can allow it under Share, Policy)."
+        elif authored:
+            others = []
+            for d in authored:
+                for m in members.values():
+                    via = eligible(m, d, members, policy, level, work.get(d, ()))
+                    if via and not m.get("revoked") and m.get("id") not in work.get(d, ()) and m not in [x for x, _ in others]:
+                        others.append((m, via))
+            why = (f"You made this change, so at {level} your approval doesn't count for {label(authored)}: "
+                   + (f"{_names(others)} can approve it." if others else
+                      "nobody else on the team can yet. An owner can add someone with that discipline in Share."))
+        else:
+            tags = [LABELS.get(t, t) for t in (member or {}).get("disciplines") or []]
+            why = (f"This review asks for {label(ds)}; your disciplines ({', '.join(tags) or 'none yet'}) don't cover "
+                   f"{'it' if len(ds) == 1 else 'them'}.")
+    return {"covers": covers, "authored": authored, "why": why}
+
+
+def _summarize(r: dict, members: dict, policy, work: dict | None = None) -> dict:
+    """A review's state for the UI: per discipline, the latest decision of each eligible reviewer (above prototype, never
+    one by whoever made that discipline's work)."""
     latest = {}
     for dec in r.get("decisions") or []:
         for d in dec.get("disciplines") or []:
@@ -780,10 +831,11 @@ def _summarize(r: dict, members: dict, policy) -> dict:
     authors_ = set(r.get("authors") or [])
     level = r.get("level") or "prototype"
     for d in r.get("disciplines") or []:
+        wa = set((work or {}).get(d) or authors_)
         appr = [b for (b, dd), dec in latest.items() if dd == d and dec.get("decision") == "approve"
-                and eligible(members.get(b), d, members, policy, level, authors_) and (level == "prototype" or b not in authors_)]
+                and eligible(members.get(b), d, members, policy, level, wa) and (level == "prototype" or b not in wa)]
         chg = [b for (b, dd), dec in latest.items() if dd == d and dec.get("decision") == "request_changes"
-               and eligible(members.get(b), d, members, policy, level, authors_)]
+               and eligible(members.get(b), d, members, policy, level, wa) and (level == "prototype" or b not in wa)]
         per.append({"discipline": d, "label": LABELS[d], "approved_by": appr, "changes_by": chg,
                     "state": "changes_requested" if chg else "approved" if appr else "waiting"})
     if r.get("withdrawn"):
@@ -804,7 +856,7 @@ def reviews(root: str, rev: str | None = None, proposal: str | None = None, stat
         t = r.get("target") or {}
         if rev and t.get("rev") != rev or proposal and t.get("proposal") != proposal:
             continue
-        s = _summarize(r, members, policy)
+        s = _summarize(r, members, policy, work_authors(root, r))
         if state is None or s["state"] == state:
             out.append(s)
     return list(reversed(out))
@@ -812,7 +864,7 @@ def reviews(root: str, rev: str | None = None, proposal: str | None = None, stat
 
 def get_review(root: str, review_id: str, members=None, policy=None) -> dict | None:
     r = _reviews_state(root).get(review_id)
-    return _summarize(r, _members_dict(members), policy) if r else None
+    return _summarize(r, _members_dict(members), policy, work_authors(root, r)) if r else None
 
 
 def decide(root: str, review_id: str, member: dict, decision: str, note: str = "", disciplines=None, members=None,
@@ -834,16 +886,14 @@ def decide(root: str, review_id: str, member: dict, decision: str, note: str = "
             p = get_proposal(root, t.get("proposal")) or {}
             if p.get("status") == "closed":
                 raise CollabError(409, f"Change request #{p.get('n')} is closed.")
-        level = r.get("level") or "prototype"
-        mine = covers(member, r.get("disciplines") or [], members, policy, level, r.get("authors") or [])
+        scope = decision_scope(root, r, member, members, policy)
+        mine = scope["covers"]
         if not mine:
-            names = ", ".join(LABELS[d] for d in r.get("disciplines") or [])
-            raise CollabError(403, f"This review asks for {names}. Your disciplines don't cover any of them"
-                                   + ("" if (member or {}).get("role") != "viewer" else ", and viewers can't approve on this team") + ".")
+            raise CollabError(403, scope["why"] or "You can't decide on this review.")
         if disciplines:
             want = [d for d in disciplines if isinstance(d, str)]
             if not set(want) <= set(mine):
-                raise CollabError(403, "You can only decide for the disciplines you own: " + ", ".join(LABELS[d] for d in mine) + ".")
+                raise CollabError(403, "You can only decide for " + ", ".join(LABELS[d] for d in mine) + " here.")
             mine = [d for d in mine if d in want]
         rev = t.get("rev")
         if t.get("kind") == "proposal":
@@ -932,7 +982,8 @@ def can_release(level: str, decisions, members, *, authors=(), required=None, po
       pilot       every required discipline approved by an eligible member who didn't author that work, and at
                   least 1 approver who isn't the revision's author
       production  as pilot, with at least 2 distinct approvers who aren't the author, one of them an owner
-    An outstanding "request changes" from an eligible reviewer blocks at every level."""
+    An outstanding "request changes" from an eligible reviewer blocks at every level (above prototype, not one by whoever
+    made that work: their review of it counts neither way)."""
     if level not in LEVELS:
         raise ValueError(f"unknown build level {level!r}")
     members = _members_dict(members)
@@ -952,11 +1003,11 @@ def can_release(level: str, decisions, members, *, authors=(), required=None, po
             m = members.get(b)
             work = set(dec["authors"]) if dec.get("authors") is not None else work_d
             via = eligible(m, d, members, policy, level, work)
-            if not via:
+            if not via or (level != "prototype" and b in work):  # above prototype nobody's review of their own work counts
                 continue
             if dec.get("decision") == "request_changes":
                 chg.append(_pub(m, b, via))
-            elif level == "prototype" or b not in work:
+            else:
                 appr.append({**_pub(m, b, via), "anchor": dec.get("anchor"), "carried": bool(dec.get("carried"))})
         if level == "prototype":  # someone looked at this revision: an approval carried from an earlier one isn't enough
             any_ok |= {a["id"] for a in appr if not a["carried"]}
