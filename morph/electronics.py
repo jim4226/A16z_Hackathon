@@ -31,6 +31,9 @@ MCUS = {
                          servo_lib="ESP32Servo.h", price=8.0),
     "rp2040_pico": dict(name="Raspberry Pi Pico (RP2040)", vcc=3.3, adc_bits=12, servo_pin="GP15", fsr_pin="GP26",
                         servo_lib="Servo.h", price=4.0),
+    # a robot's Controller option: its gripper stage plans the grip force with it (FSR on ADC1, as the robot's pin map)
+    "esp32_s3_devkit": dict(name="ESP32-S3-DevKitC-1", vcc=3.3, adc_bits=12, servo_pin="GPIO15", fsr_pin="GPIO4",
+                            servo_lib="ESP32Servo.h", price=15.0),
 }
 SERVOS = {  # stall torque kgf*cm at the listed voltage, stall current A, voltage range
     "sg90": dict(name="TowerPro SG90 (micro, plastic gear)", torque=1.8, stall_a=0.65, v=(4.8, 6.0), price=3.0),
