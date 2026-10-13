@@ -147,6 +147,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   import, xacro expanded in a separate process, and links only from github.com and Hugging Face over HTTPS.
 - World mode names its room by id and hash, never a path: chat can't change it, Teams change requests can't name
   anything else, and an imported export (which doesn't carry the room) is simulated on the plain table.
+- Groundwork for agent tools (beta; no tool ships switched on in this build): a tool is a vetted manifest run by one
+  hardened runner (HTTPS to the manifest's own hosts only, every address checked to be public and connected to as
+  checked, no redirects, size and time limits, keys removed from every answer). A tool's key (`MORPH_TOOL_*`) shows in
+  the Keys dialog under its service, with where to get it, its cost and what is sent; it is checked against the tool's
+  pattern when saved, sent only to that tool's hosts and never to Claude, and chat refuses it like any other key.
+  Agent runs that wait for a key, an approval or a restart are kept in `projects/.runs/` (private, deleted after 7
+  days); every tool decision and call goes into a hash-chained log, `projects/.tools/audit.jsonl`.
 
 ### Fixes
 
