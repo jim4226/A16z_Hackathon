@@ -170,7 +170,7 @@ def _member(req) -> dict:
 
 def send(req, ev: dict):
     """An event on the project's live channel; never raises (a closed tab, a missing hub or an unknown project must not
-    break a request). With Teams on it carries by: {id, name, color}."""
+    break a request). With Teams on it carries `by`: the member id (contracts section 3)."""
     try:
         hub = _hub(req)
         if hub is None:
@@ -178,7 +178,7 @@ def send(req, ev: dict):
         ev = {**ev, "project": _project_name(req)}
         member = _member(req)
         if member:
-            ev.setdefault("by", {k: member[k] for k in ("id", "name", "color") if member.get(k) is not None})
+            ev.setdefault("by", member["id"])
         hub.send(ev)
     except Exception:  # noqa: BLE001
         pass

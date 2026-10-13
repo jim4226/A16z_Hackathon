@@ -6,9 +6,14 @@ import {
 } from './panels.js';
 import { Presenter } from './present.js';
 import { KeysDialog } from './keys.js';
+import * as newrobot from './newrobot.js';
+import * as importer from './importer.js';
+import * as video from './video.js';
+import * as team from './team.js';
+import * as world from './world.js';
 
 // Feature modules (static/<feature>.js) export init(studio); each adds one import line above and one entry here.
-const FEATURES = [];
+const FEATURES = [newrobot, importer, video, team, world];
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -985,9 +990,13 @@ const modal = {
       document.body.appendChild(modalEl);
     }
     modalClose?.();
-    const dlg = h('div', `glass dlg${wide ? ' wide' : ''}`);
+    let dlg = content;  // a feature's own dialog element (.dlg) is used as it is, never wrapped in a second one
+    if (!(content instanceof Element && content.classList.contains('dlg'))) {
+      dlg = h('div', 'glass dlg');
+      if (typeof content === 'string') dlg.innerHTML = content; else dlg.appendChild(content);
+    }
+    dlg.classList.toggle('wide', !!wide);
     dlg.setAttribute('role', 'dialog');
-    if (typeof content === 'string') dlg.innerHTML = content; else dlg.appendChild(content);
     modalEl.replaceChildren(dlg);
     modalEl.classList.add('on');
     modalClose = onClose;

@@ -1,6 +1,7 @@
 """HTTP handlers for the New robot brief: POST /api/brief and GET /api/brief (RELEASE_CONTRACTS section 2).
 
-Written against the morph.studio.routes contract (W0b) and registered by the server integration:
+Written against the morph.studio.routes contract (W0b). The module registers both routes with the Studio's hooks when
+the Studio loads its feature modules (studio_hooks below); register(route, ...) takes other hooks for tests and demos:
 
     from morph.studio import api_brief
     api_brief.register(route, create_project=...)   # or call api_brief.post / api_brief.get from your handlers
@@ -16,12 +17,14 @@ POST {text?, brief_id?, answers?: {slot: value}, action?: "defaults" | "build" |
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import traceback
 
 from . import agents
 from . import brief as B
+from . import capability, routes
 
 ACTIONS = ("defaults", "build", "cancel", "nearest")
 MAX_TEXT = 2000
@@ -265,3 +268,72 @@ def register(route, *, home_for=None, send_for=None, create_project=None, create
         return get(req, home=home_for(req) if home_for else None)
 
     return _post, _get
+
+
+# ------------------------------------------------------------------ the Studio's hooks (contracts section 2)
+def _studio_home(req):
+    return getattr(getattr(req, "studio", None), "home", None)
+
+
+def _open_project(req):
+    """The project this tab is on, for routing a typed line (a change to it, or a new robot)."""
+    room = getattr(req, "room", None)
+    return {"name": room.name} if room is not None else None
+
+
+def _studio_create(req):
+    """W0b's project service for action "build": the brief's changes clamped to the capability envelope first (code
+    decides; projects.create also refuses anything past the design limits), a new project with origin "brief" and the
+    brief's id in meta.json, its first build queued in its own room, and project_created to every tab, the originating
+    one included. When that build ends the brief is marked built and the after-build agents run (_first_build)."""
+    studio = getattr(req, "studio", None)
+    if studio is None or not callable(getattr(studio, "create_project", None)):
+        return None
+    by = (getattr(req, "member", None) or {}).get("id")
+
+    def create(pay: dict) -> dict:
+        from ..spec import Design
+
+        changes, notes = capability.clamp(pay["changes"], allow=("name", "arm.source", "arm.actuator_overrides"))
+        meta = pay.get("meta") or {}
+        room, job = studio.create_project(pay["name"], design=Design().with_changes(changes), need=meta.get("need"),
+                                          origin="brief", by=by, meta={"brief_id": meta.get("brief_id")})
+        studio.when_done(job, lambda j: _first_build(studio, room, j, meta.get("brief_id")))
+        return {"project": room.name, "job": job.id, "clamped": notes}
+    return create
+
+
+def _first_build(studio, room, job, brief_id):
+    """After the new project's first build: brief.json written and the draft deleted (on_built), then the agents
+    timeline's last steps in the new room: Darwin sourcing when sourcing is on, Keewano when its events are on."""
+    from .. import keewano, settings
+
+    if not job.result:
+        room.hub.send({"type": "agent", "role": "pipeline", "provider": "code", "status": "error", "ms": None,
+                       "brief": brief_id, "text": f"The first build failed: {str(job.error or job.status)[:200]}"})
+        return
+    if not brief_id:
+        return
+    for _ in range(1200):  # the request that created the project saves the brief last: let it finish first
+        if STORE.claim(brief_id):
+            break
+        time.sleep(0.05)
+    else:
+        return
+    try:
+        b = on_built(studio.home, brief_id, room.name, job.result, room.p.root)
+    finally:
+        STORE.release(brief_id)
+    if b is None:
+        return
+    try:
+        summary = room.p.load_results(job.result).get("summary") or {}
+    except (OSError, ValueError):
+        summary = None
+    source = (lambda rev: studio.source(rev, room)) if settings.network_allowed() and settings.sourcing_enabled() else None
+    send = (lambda project, events: keewano.send(project, events)) if (
+        settings.telemetry_enabled() and os.environ.get("KEEWANO_API_KEY")) else None
+    agents.after_build(b, room.name, job.result, summary, source=source, keewano_send=send, on_event=room.hub.send)
+
+
+register(routes.route, home_for=_studio_home, create_project_for=_studio_create, open_project_for=_open_project)

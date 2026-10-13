@@ -39,6 +39,7 @@ class Hub:
     MAX_HISTORY = 500   # chat messages replayed to a new tab, and kept on disk
     HISTORY = ("user", "assistant")
     MAX_FILE = 8 << 20  # chat.jsonl is read from its last 8 MiB at most
+    addressed = True    # an event with `to` reaches only that member's tabs (Teams sends inbox items this way)
 
     def __init__(self, project: str = "", path: str | None = None):
         self.project, self.path = project, path

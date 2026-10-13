@@ -10,8 +10,8 @@ when they streamed the answer themselves:
     POST /api/world/inspect {views, ai?, subq?, rev?}
                                              exact checks + the optional AI review (Claude, SubQ) of 6 rendered views
 
-register() adds them to morph.studio.routes (integration calls it once). Live progress goes out as `world` events
-and the agents timeline as `agent` events (contracts section 3).
+register() adds them to morph.studio.routes; the module calls it when the Studio loads its feature modules. Live
+progress goes out as `world` events and the agents timeline as `agent` events (contracts section 3).
 """
 
 from __future__ import annotations
@@ -313,3 +313,6 @@ def register(route=None):
         from .routes import route
     for method, path, fn, kw in ROUTES:
         route(method, path, **kw)(fn)
+
+
+register()  # the Studio loads every api_*.py at start (contracts section 2)

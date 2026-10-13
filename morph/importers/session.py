@@ -778,12 +778,26 @@ def unique_project(name: str, home_dir: str | None = None) -> str:
     return out
 
 
+def plan_design(plan: dict, name: str):
+    """The Design a robot or project plan builds, named `name`: an imported robot carries the default egg-picking task
+    on its own body; a Morph export rebuilds its latest design."""
+    from ..spec import Design
+
+    if plan["kind"] == "robot":
+        try:
+            from ..cli import EGG_ROBOT
+            base = {k: v for k, v in EGG_ROBOT.items() if k != "name"}
+        except Exception:  # noqa: BLE001
+            base = dict(EGG)
+        return Design().with_changes({**base, **plan["changes"], "name": name})
+    return Design.from_dict(plan["design"]).with_changes({"name": name, **(plan.get("changes") or {})})
+
+
 def build(plan: dict, home_dir: str | None = None, on_event=None, fast_sim: bool = False, n_trials: int = 2,
           verbose: bool = False, session_id: str | None = None, created_by: str | None = None) -> dict:
     """Create the project for a robot or project plan and run the pipeline once. Returns
-    {"project", "rev", "summary"}. W0b's projects.create_project / job queue can replace this in the Studio."""
+    {"project", "rev", "summary"}. The CLI's path; in the Studio, api_import queues the build in the new project's room."""
     from ..robot.pipeline2 import RobotProject
-    from ..spec import Design
 
     if plan.get("kind") not in ("robot", "project"):
         raise ImportFailed("Only robots and projects become new projects.")
@@ -801,15 +815,7 @@ def build(plan: dict, home_dir: str | None = None, on_event=None, fast_sim: bool
             continue
     else:
         raise ImportFailed("Couldn't create the project folder; try another name.")
-    if plan["kind"] == "robot":
-        try:
-            from ..cli import EGG_ROBOT
-            base = {k: v for k, v in EGG_ROBOT.items() if k != "name"}
-        except Exception:  # noqa: BLE001
-            base = dict(EGG)
-        design = Design().with_changes({**base, **plan["changes"], "name": name})
-    else:
-        design = Design.from_dict(plan["design"]).with_changes({"name": name, **(plan.get("changes") or {})})
+    design = plan_design(plan, name)
     if on_event:                           # contracts section 3: every event carries its project
         raw_event = on_event
 

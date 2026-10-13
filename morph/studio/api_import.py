@@ -1,4 +1,4 @@
-"""Import routes for the Studio (contracts section 2). Not registered here: server.py calls register().
+"""Import routes for the Studio (contracts section 2); they register themselves when the Studio loads its feature modules.
 
   POST   /api/import {url?}                         -> {id, fetching}
   GET    /api/import/<id>                           -> {id, files, bytes, fetch, detected}
@@ -9,14 +9,18 @@
   POST   /api/import/<id>/commit {candidate, name, answers} -> 202 {kind, ...}; progress as SSE
   DELETE /api/import/<id>
 
-SSE: {"type": "import", "id", "stage", "status", "text", "project"} while fetching, detecting, saving and building,
-then the pipeline's own start/node events (tagged with the new project) and
-{"type": "project_created", "project", "origin": "import"} when the robot is built.
-Errors are {"ok": false, "error": "<what to do>"} with 400 (bad input), 404 (no session), 409 (busy).
+SSE: {"type": "import", "id", "stage", "status", "text", "project"} while fetching, detecting, saving and building.
+In the Studio a robot or project becomes a new project (projects service): {"type": "project_created", "project",
+"origin": "import"} goes to every tab, its first build is queued in its own room, and the importing tab follows it
+through `import` events in its own room (stage "build": progress with `node`/`node_status`, then done or error).
+Errors are {"ok": false, "error": "<what to do>"} with 400 (bad input), 404 (no session), 409 (busy), 429 (queue full).
 """
 
 from __future__ import annotations
 
+import json
+import os
+import queue
 import re
 import threading
 import traceback
@@ -54,9 +58,9 @@ def _emitter(req, project=None):
             return
         ev = dict(ev)
         ev.setdefault("project", proj)
-        member = getattr(req, "member", None)
-        if member:
-            ev.setdefault("by", {"id": member.get("id"), "name": member.get("name"), "color": member.get("color")})
+        by = _member_id(req)
+        if by:
+            ev.setdefault("by", by)  # the member id (contracts section 3)
         try:
             hub.send(ev)
         except Exception:  # noqa: BLE001  (SSE clients come and go)
@@ -64,8 +68,11 @@ def _emitter(req, project=None):
     return emit
 
 
+def _member_id(req) -> str | None:
+    return (getattr(req, "member", None) or {}).get("id")
+
+
 def _room_project(req):
-    import os
     p = getattr(getattr(req, "room", None), "p", None) or getattr(req.studio, "p", None)
     return os.path.basename(p.root) if p is not None else None
 
@@ -215,6 +222,8 @@ def commit(req, sid):
     except BaseException:
         _release(sid)
         raise
+    if plan["kind"] in ("robot", "project") and callable(getattr(req.studio, "create_project", None)):
+        return _create_project(req, sid, s, plan, emit)
     if plan["kind"] in ("robot", "project"):
         home = _home(req)
         project = sess.unique_project(plan.get("project") or plan.get("source") or "robot", home)
@@ -243,12 +252,98 @@ def commit(req, sid):
         return 202, {"ok": True, **{k: v for k, v in plan.items() if k not in ("design", "history")}}
     _release(sid)
     if plan["kind"] == "object" and (body.get("apply", True) is not False):
+        queued = _queue_object(req, plan["changes"], plan.get("label") or "imported object")
+        if queued is not None:
+            return queued if queued[0] != 202 else (202, {"ok": True, **plan, "applied": True, "job": queued[1]})
         if _apply_async(req, plan["changes"], plan.get("label") or "imported object"):
             return 202, {"ok": True, **plan, "applied": True}
     out = {"ok": True, **plan}
     if plan["kind"] == "object":
         out["applied"] = False                   # no edit path on this Studio: the dialog shows the keys to type
     return 200, out
+
+
+def _create_project(req, sid: str, s, plan: dict, emit):
+    """A robot or Morph project as a new project through the Studio's project service: projects.create (names, meta,
+    design limits), the first build queued in the new room, project_created to every tab. The importing tab stays where
+    it is and follows the build through `import` events; the session is removed when the build ends."""
+    from .rooms import QueueFull
+
+    studio, meta, sub = req.studio, dict(plan.get("meta") or {}), {}
+    name = plan.get("project") or plan.get("source") or "robot"
+    try:
+        design = sess.plan_design(plan, name)
+        room, job = studio.create_project(name, design=design, need=meta.pop("need", None), origin="import",
+                                          by=_member_id(req), meta=meta, label=plan.get("label") or "imported",
+                                          on_room=lambda r: sub.update(q=r.hub.subscribe()))
+    except (ValueError, FileExistsError, QueueFull) as exc:
+        _release(sid)
+        return _err(429 if isinstance(exc, QueueFull) else 400, f"Couldn't create the project: {exc}")
+    except BaseException:
+        _release(sid)
+        raise
+    plan["project"] = room.name
+    for i, d in enumerate(plan.get("history") or []):  # a Morph export's earlier designs, for reference
+        try:
+            with open(os.path.join(room.p.root, f"imported_design_{i + 1:03d}.json"), "w", encoding="utf-8") as fh:
+                json.dump(d, fh, indent=1)
+        except (OSError, TypeError, ValueError):
+            break
+    _follow(sid, s, room, job, emit, sub.get("q") or room.hub.subscribe())
+    emit({"type": "import", "id": sid, "stage": "build", "status": "start", "text": f"Building {room.name}",
+          "built_project": room.name})
+    return 202, {"ok": True, **{k: v for k, v in plan.items() if k not in ("design", "history")},
+                 "job": {"id": job.id, "kind": job.kind, "status": job.status}}
+
+
+def _follow(sid: str, s, room, job, emit, q):
+    """Relay the new project's build to the importing tab, whose page only shows its own project's events: each stage
+    as an `import` event (stage "build", `node`, `node_status`), then done or error. `q` is a subscription to the new
+    room made before its build was queued. Then the session goes."""
+
+    def run():
+        try:
+            while True:
+                ended = job.wait(0)  # once it has, what is still queued is relayed, then the loop stops
+                try:
+                    ev = q.get_nowait() if ended else q.get(timeout=0.5)
+                except queue.Empty:
+                    if ended:
+                        break
+                    continue
+                if ev.get("type") == "node":
+                    emit({"type": "import", "id": sid, "stage": "build", "status": "progress", "node": ev.get("node"),
+                          "node_status": ev.get("status"), "built_project": room.name,
+                          "text": f"Building {room.name}: {ev.get('node')} {ev.get('status')}"})
+        finally:
+            room.hub.unsubscribe(q)
+        if job.result:
+            emit({"type": "import", "id": sid, "stage": "build", "status": "done", "built_project": room.name,
+                  "rev": job.result, "text": f"Built {room.name} ({job.result})"})
+        else:
+            why = job.error or f"the build ended as {job.status}"
+            emit({"type": "import", "id": sid, "stage": "build", "status": "error", "built_project": room.name,
+                  "text": f"The build failed ({str(why)[:200]}). The project is there: edit it, or import the files again."})
+        _release(sid)
+        s.delete()
+
+    threading.Thread(target=run, daemon=True, name=f"import-follow-{sid}").start()
+
+
+def _queue_object(req, changes: dict, label: str):
+    """Object keys as an edit of this tab's project, queued in its room like a parameter edit (W0b). None when the
+    Studio has no queue (then _apply_async)."""
+    from .rooms import QueueFull
+
+    room, queue_changes = getattr(req, "room", None), getattr(req.studio, "queue_changes", None)
+    if room is None or not callable(queue_changes) or getattr(room, "jobs", None) is None:
+        return None
+    try:
+        job = queue_changes(room, changes, label=label, reply=f"Imported {label}: object and fingers updated.",
+                            source="import", by=_member_id(req))
+    except QueueFull as exc:
+        return _err(429, str(exc))
+    return 202, job.info()
 
 
 def _apply_async(req, changes: dict, label: str) -> bool:
@@ -300,7 +395,7 @@ def dispatch(req):
 
 
 def register(route=None):
-    """Register the import routes with W0b's router: api_import.register() from server.py."""
+    """Register the import routes with W0b's router (the Studio's own when `route` is None)."""
     if route is None:
         from .routes import route  # noqa: F811  (W0b)
     route("POST", "/api/import", role="editor")(dispatch)
@@ -309,3 +404,6 @@ def register(route=None):
     route("DELETE", "/api/import/*", role="editor")(dispatch)
     route("PUT", "/api/import/*", role="editor", raw_body=True, max_body=LIMITS["upload_file"])(dispatch)
     return dispatch
+
+
+register()  # the Studio loads every api_*.py at start (contracts section 2)

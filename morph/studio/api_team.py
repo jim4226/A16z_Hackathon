@@ -1,13 +1,14 @@
 """Teams routes (RELEASE_CONTRACTS section 2) and the hooks the Studio's router calls in team mode.
 
-Not registered here: server.py calls `api_team.configure(home=..., secure_cookies=...)` when started with --team,
-then `api_team.register(route)`, and wires the hooks:
+The routes register themselves when the Studio loads its feature modules, and answer only on a Studio started with
+`morph studio --team` (Studio.team; GET /api/me says {team: false} elsewhere, every other route 404). A team Studio's
+server (server.py) calls the hooks in this order:
 
     if method == "GET" and api_team.landing(handler): return        # /?invite= and /?link= pages, before sign-in
     member = api_team.authenticate(handler)                          # session cookie or X-Morph-Token, else None
-    if not api_team.authorize(member, method, path, declared):       # the route table in teams/roles.py
-        401 when member is None (unauthenticated page loads get api_team.signed_out_page()), else 403
-    req.member = member
+    req.member = api_team.role_hook(req, route.role, member)         # the route table in teams/roles.py:
+                                                                     # HTTPError 401 signed out, 403 not allowed
+    (page loads without a session get api_team.signed_out_page())
 
 Handlers take the router's Request and return (status, dict) or write the response themselves (join and
 sign-out set cookies) and return None. Errors are {"ok": false, "error": "..."}; nothing secret is ever returned
@@ -49,7 +50,8 @@ def enabled(studio=None) -> bool:
 
 
 def _home(req=None) -> str | None:
-    return CONFIG["home"] or (getattr(getattr(req, "studio", None), "home", None) if req is not None else None)
+    """The team's folder: the Studio's own projects folder (MORPH_HOME), else what configure() set."""
+    return (getattr(getattr(req, "studio", None), "home", None) if req is not None else None) or CONFIG["home"]
 
 
 def _port(handler) -> int:
@@ -93,9 +95,29 @@ def authorize(member, method: str, path: str, declared: str | None = None, home:
     return roles.authorize(member, method, path, policy=pol, declared=declared)
 
 
+def role_hook(req, role: str, member: dict | None = None) -> dict | None:
+    """The router's role check on a team Studio: who is asking (`member` when the server already knows, else the
+    session cookie or X-Morph-Token) and whether the route table lets them. Returns the member (None on the public join
+    route when signed out); raises the router's HTTPError 401 when signed out and 403 when the role isn't enough."""
+    from .routes import HTTPError
+
+    home = _home(req)
+    if member is None:
+        member = authenticate(req.handler, home=home)
+    if role == roles.PUBLIC:
+        return member
+    if not authorize(member, req.method, req.path, declared=role, home=home):
+        if member is None:
+            raise HTTPError(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
+        raise HTTPError(403, f"A team {member.get('role') or 'member'} can't do that here: ask an owner.")
+    return member
+
+
 def _page(title: str, body: str) -> bytes:
+    # strict-origin: the form's POST carries this page's Origin (the Studio's no-referrer policy would send "null", which
+    # the Origin check refuses) and never the invite code in a Referer
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)}</title><style>
+<meta name="referrer" content="strict-origin"><title>{html.escape(title)}</title><style>
 :root {{ color-scheme: dark; }} body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: #08090c; color: #e9ecf2;
   font: 14px/1.5 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }}
 main {{ width: min(460px, calc(100vw - 32px)); padding: 22px; border: 1px solid #262c38; border-radius: 14px; background: #0d0f14; }}
@@ -158,7 +180,7 @@ def _write(handler, status: int, body: bytes, ctype: str = "application/json", h
     handler.send_header("Content-Type", ctype)
     handler.send_header("Content-Length", str(len(body)))
     handler.send_header("Cache-Control", "no-store")
-    if csp:
+    if csp and not getattr(handler, "sends_csp", False):  # the Studio's own handler sends handler.csp itself
         handler.send_header("Content-Security-Policy", csp)
     for k, v in headers:
         handler.send_header(k, v)
@@ -232,7 +254,7 @@ def _me(req) -> dict:
 
 
 def _by(member: dict | None):
-    return {"id": member.get("id"), "name": member.get("name"), "color": member.get("color")} if member else None
+    return member.get("id") if member else None
 
 
 def _hub(req):
@@ -563,13 +585,28 @@ def proposals_post(req):
 
 
 def _enqueue(req, job: dict) -> bool:
-    """Hand the job to the room's queue (W0b); a Studio without one runs the edit the old way, in a thread."""
-    room = getattr(req, "room", None)
+    """Hand the job to the room's queue: the Studio's queue_changes (W0b) builds it in turn, as the applier (`by`) on
+    behalf of the author (`proposed_by`), and job_finished() records how it ended. A room with its own enqueue() (tests)
+    gets the job spec; a Studio without a queue runs the edit the old way, in a thread."""
+    room, studio = getattr(req, "room", None), getattr(req, "studio", None)
     for name in ("enqueue", "submit"):
         fn = getattr(room, name, None)
         if callable(fn):
             fn(job)
             return True
+    queue = getattr(studio, "queue_changes", None)
+    if room is not None and callable(queue):
+        q = queue(room, job["changes"], label=job["label"], reply=job["text"], source="proposal", by=job.get("by"),
+                  proposed_by=job.get("proposed_by"), kind="proposal")  # rooms.QueueFull: the caller reopens the request
+        job["job"] = q.id
+        root, home, send = room.p.root, _home(req), room.hub.send
+
+        def finished(q):
+            error = None if q.result else (q.error or {"noop": "nothing to change: the design already has these values"}
+                                           .get(q.status, f"the build ended as {q.status}"))
+            job_finished(root, job, rev=q.result, error=error, home=home, send=send)
+        studio.when_done(q, finished)
+        return True
     apply = getattr(room, "apply", None) or getattr(getattr(req, "studio", None), "apply", None)
     if not callable(apply):
         return False
@@ -841,13 +878,29 @@ ROUTES = [
 ]
 
 
+def _team_only(method: str, path: str, fn):
+    """A route that answers only on a team Studio (morph studio --team): elsewhere GET /api/me says Teams is off (the
+    page then adds nothing) and every other Teams route is 404, so a Studio without Teams has no Teams surface."""
+    def run(req):
+        if getattr(getattr(req, "studio", None), "team", False):
+            return fn(req)
+        if (method, path) == ("GET", "/api/me"):
+            return 200, {"ok": True, "team": False, "member": None}
+        return _err(404, "Teams is off on this Studio: start it with morph studio --team.")
+    run.__name__ = fn.__name__
+    run.__doc__ = fn.__doc__
+    return run
+
+
 def register(route=None):
-    """Register every Teams route with W0b's router, each with its role from teams/roles.py ("public" for join)."""
-    if route is None:
+    """Register every Teams route with W0b's router, each with its role from teams/roles.py ("public" for join). With
+    the Studio's own router (the default) each route answers only on a team Studio (_team_only)."""
+    real = route is None
+    if real:
         from .routes import route  # noqa: F811  (W0b)
     for method, path, fn, opts in ROUTES:
         role, _ = roles.required(method, path)
-        route(method, path, role=role, **opts)(fn)
+        route(method, path, role=role, **opts)(_team_only(method, path, fn) if real else fn)
     return ROUTES
 
 
@@ -858,3 +911,6 @@ def dispatch(req):
         if method == req.method and p == path:
             return fn(req)
     return _err(404, "Not found.")
+
+
+register()  # the Studio loads every api_*.py at start (contracts section 2); the routes answer only in team mode

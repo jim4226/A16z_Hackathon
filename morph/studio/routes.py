@@ -12,11 +12,13 @@
         return 200, {"ok": True, "bytes": size}
 
 A path is exact ("/api/brief") or a prefix ending in "/*" ("/api/import/*"); exact paths win, then the longest
-prefix. Before a handler runs, the server has checked the Host/Origin, the access token, the X-Morph-Client header
-on POST/PUT/DELETE, the declared body size against `max_body`, and the role. JSON bodies arrive parsed in
-`req.body` (a dict; None for GET and raw_body routes). A handler returns (status, dict | list) for JSON,
-(status, bytes, content_type) for anything else, or None when it wrote the response itself, and may raise
-HTTPError(status, message) for a JSON error. Feature modules register their routes in
+prefix. Before a handler runs, the server has checked the Host/Origin, the access token (or, in team mode, the member's
+session), the X-Morph-Client header on POST/PUT/DELETE, the declared body size against `max_body`, and the role:
+"viewer", "editor" or "owner", or "public" for the one route a team Studio answers before sign-in (POST
+/api/team/join: no member and no X-Morph-Client header needed; a Studio without Teams checks it like any other route).
+JSON bodies arrive parsed in `req.body` (a dict; None for GET and raw_body routes). A handler returns
+(status, dict | list) for JSON, (status, bytes, content_type) for anything else, or None when it wrote the response
+itself, and may raise HTTPError(status, message) for a JSON error. Feature modules register their routes in
 morph/studio/api_<feature>.py; server.py imports every such module at start.
 """
 
@@ -28,7 +30,7 @@ from typing import Callable
 
 from .security import MAX_BODY
 
-ROLES = ("viewer", "editor", "owner")
+ROLES = ("public", "viewer", "editor", "owner")  # public: no team member needed (the Teams join form); every other check stays
 METHODS = ("GET", "POST", "PUT", "DELETE")
 
 

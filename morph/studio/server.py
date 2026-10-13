@@ -218,6 +218,22 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _start_features(home: str):
+    """What feature modules tidy when a Studio starts on `home`: the importers' home (imported robots live in
+    home/.robots) and import sessions older than a day, then video work folders a crash left in .uploads."""
+    try:
+        from ..importers import common as imports, session as import_sessions
+        imports.set_home(home)
+        import_sessions.cleanup(home)
+    except Exception:  # noqa: BLE001  (a feature's clean-up never stops the Studio)
+        traceback.print_exc()
+    try:
+        from . import ffmpeg
+        ffmpeg.cleanup(home, older_than_s=3600)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+
+
 class Refused(RuntimeError):
     """A project change the Studio won't make now (the project is building, or it is the start project)."""
 
@@ -225,16 +241,21 @@ class Refused(RuntimeError):
 class Studio:
     """Every project the Studio serves, one Room each (rooms.py), created on first use. Requests name their project
     with ?project= (default: `start`, the project the Studio was started on), so switching projects in one tab
-    moves nobody else. `builds` limits how many pipeline builds run at once across rooms (MORPH_MAX_BUILDS, 1)."""
+    moves nobody else. `builds` limits how many pipeline builds run at once across rooms (MORPH_MAX_BUILDS, 1).
+    `team`: Morph Teams (morph studio --team), where members sign in and the role table decides what each may do;
+    `allow_url_import`: importing from a link stays on even when other computers can use this Studio."""
 
-    def __init__(self, project: RobotProject, home: str | None = None, max_builds: int | None = None):
+    def __init__(self, project: RobotProject, home: str | None = None, max_builds: int | None = None, *,
+                 team: bool = False, allow_url_import: bool = False):
         self.home = os.path.realpath(home or os.path.dirname(project.root))
         self.start = os.path.basename(project.root)
         self.remote = False  # set by serve() when other computers may use this Studio
+        self.team, self.allow_url_import = bool(team), bool(allow_url_import)
         self.builds = threading.BoundedSemaphore(max_builds or _env_int("MORPH_MAX_BUILDS", 1))
         self.rooms = {self.start: Room(self.start, project)}
         self._rooms = threading.Lock()
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
+        _start_features(self.home)
 
     @property
     def p(self) -> RobotProject:
@@ -287,11 +308,14 @@ class Studio:
 
     # -- projects: new, forked, deleted
     def create_project(self, name=None, *, source: str = "", design=None, need: str | None = None, origin: str = "default",
-                       by: str | None = None, meta: dict | None = None, label: str = "first design"):
+                       by: str | None = None, meta: dict | None = None, label: str = "first design", on_room=None):
         """A new robot project (projects.create) whose first build is queued in its room at once: tabs that open it
-        see the build stream in. Returns (room, job). ValueError, FileExistsError as projects.create."""
+        see the build stream in. `on_room(room)` runs before the build is queued (a feature that relays the build
+        subscribes there, so it misses no event). Returns (room, job). ValueError, FileExistsError as projects.create."""
         info = projects.create(self.home, name, source=source, design=design, need=need, origin=origin, by=by, meta=meta)
         room = self.room(info["name"])
+        if on_room is not None:
+            on_room(room)
         job = self.queue_build(room, info["design"], label=label, by=by)
         self.broadcast({"type": "project_created", "project": room.name, "origin": origin, **({"by": by} if by else {})})
         return room, job
@@ -431,7 +455,8 @@ class Studio:
                 t0 = time.time()
                 with self.builds:
                     rev = room.p.run(design, parent=base, label=label[:48], verbose=False, on_event=room.emit,
-                                     by=job.by if job is not None else None)
+                                     by=job.by if job is not None else None,
+                                     proposed_by=job.data.get("proposed_by") if job is not None else None)
                 room.p.log({"type": "tool_time", "cmd": "studio", "seconds": round(time.time() - t0, 2)})
                 if job is not None:
                     job.result = rev
@@ -496,6 +521,18 @@ class Studio:
             finally:
                 room.live = None
 
+    @staticmethod
+    def when_done(job, fn):
+        """Run fn(job) on a background thread once `job` has ended, whatever its status: what a feature does after a
+        build it queued (the brief's after-build agents, a change request's bookkeeping, an import's progress)."""
+        def wait():
+            job.wait()
+            try:
+                fn(job)
+            except Exception:  # noqa: BLE001  (a feature's follow-up never breaks the room)
+                traceback.print_exc()
+        threading.Thread(target=wait, daemon=True, name=f"morph-after-{job.id}").start()
+
     # -- the queue: what /api/chat, /api/params and new projects use
     def queue_chat(self, room: Room, msg: str, *, base_rev: str | None = None, by: str | None = None):
         """Queue a chat message; it is interpreted when its turn comes, against the newest design. The user's message
@@ -505,10 +542,15 @@ class Studio:
                                 base_rev=base_rev or room.latest(), announce=say)
 
     def queue_changes(self, room: Room, changes: dict, *, label: str, reply: str | None = None, source: str = "",
-                      user_text: str | None = None, base_rev: str | None = None, by: str | None = None, kind="change"):
-        """Queue design changes (parameter edits, applied video findings, a resolved conflict). Raises QueueFull."""
-        say = (lambda job: room.hub.send({"type": "user", "text": user_text, "job": job.id, **({"by": by} if by else {})})
-               ) if user_text else None
+                      user_text: str | None = None, base_rev: str | None = None, by: str | None = None, kind="change",
+                      proposed_by: str | None = None):
+        """Queue design changes (parameter edits, applied video findings, an imported object, a world, a Teams change
+        request built by `by` for its author `proposed_by`, a resolved conflict). Raises QueueFull."""
+        def say(job):
+            if proposed_by:
+                job.data["proposed_by"] = proposed_by
+            if user_text:
+                room.hub.send({"type": "user", "text": user_text, "job": job.id, **({"by": by} if by else {})})
         return room.jobs.submit(kind, lambda job: self.apply(changes, label, reply=reply, source=source, room=room, job=job),
                                 by=by, label=label, base_rev=base_rev or room.latest(), announce=say)
 
@@ -535,7 +577,7 @@ class Studio:
             return None
         d = job.data
         new = self.queue_changes(room, d["changes"], label=d["label"], reply=d.get("reply"), source=d.get("source", ""),
-                                 base_rev=room.latest(), by=by or job.by, kind=job.kind)
+                                 base_rev=room.latest(), by=by or job.by, kind=job.kind, proposed_by=d.get("proposed_by"))
         job.status = "resolved"
         room.jobs.publish(job)
         return new
@@ -702,10 +744,17 @@ class Guesses:
 
 
 def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None):
+    """The request handler. A team Studio (studio.team) signs people in as members (session cookie or script token,
+    api_team) instead of the access token, and the Teams role table checks every route."""
     guesses = Guesses()
+    if studio.team:
+        from . import api_team as team
+    else:
+        team = None
 
     class H(BaseHTTPRequestHandler):
         timeout = 30  # a client that stops sending or reading frees its thread; the event stream pings every 15 s
+        sends_csp = True  # end_headers sends self.csp (Teams' pages set it)
 
         def setup(self):
             super().setup()
@@ -765,8 +814,12 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return False
 
         def _signed_in(self) -> bool:
-            """Remote Studios: the browser opened the access link (its cookie), or a script sends the token."""
-            self._throttled = False
+            """Remote Studios: the browser opened the access link (its cookie), or a script sends the token. Team
+            Studios: a member's session cookie or script token (self._member)."""
+            self._throttled, self._member = False, None
+            if team is not None:
+                self._member = team.authenticate(self, home=studio.home)
+                return self._member is not None
             if not token:
                 return True
             jar = SimpleCookie()
@@ -782,6 +835,9 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return bool(ok)
 
         def _sign_in_page(self, bad=False):
+            if team is not None:  # invites and sign-in links are the way in
+                status, page, ctype, csp = team.signed_out_page(home=studio.home)
+                return self._send(status, page, ctype, csp=csp)
             note = ('<p class="bad">Too many wrong access codes from this computer. Wait 15 minutes, then try again.</p>'
                     if bad == "throttled" else
                     '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
@@ -789,6 +845,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return self._send(429 if bad == "throttled" else 401, page.encode(), "text/html; charset=utf-8", csp=SIGN_IN_CSP)
 
         def _refuse_sign_in(self):
+            if team is not None:
+                return self._error(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
             if self._throttled:
                 return self._error(429, "Too many wrong access codes from this computer. Wait 15 minutes, then try again.")
             return self._error(401, "open the access link printed where Morph Studio was started")
@@ -891,7 +949,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 return self._error(exc.status, str(exc))
             req = routes.Request(self, studio, self.command, u.path, parse_qs(u.query), n)
             try:
-                req.member = routes.authorize(req, r.role)
+                req.member = (team.role_hook(req, r.role, getattr(self, "_member", None)) if team is not None
+                              else routes.authorize(req, r.role))
                 if not r.raw_body and self.command != "GET":
                     self._read = True
                     try:
@@ -924,6 +983,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 return self._error(403, "This Studio only answers its own page.")
             if self._access_link(u):
                 return None
+            if team is not None and team.landing(self, home=studio.home):  # /?invite= and /?link= pages, before sign-in
+                return None
             if not self._signed_in():
                 if u.path in ("/", "/index.html"):
                     return self._sign_in_page(bad="throttled" if self._throttled else False)
@@ -942,9 +1003,11 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             u = urlparse(self.path)
             if not self._trusted(post=True):
                 return self._error(403, "This Studio only answers its own page.")
-            if not self._signed_in():
+            r = routes.find(self.command, u.path)
+            public = team is not None and r is not None and r.role == "public"  # the join form: before sign-in
+            if not self._signed_in() and not public:
                 return self._refuse_sign_in()
-            if not self.headers.get(CLIENT_HEADER):
+            if not public and not self.headers.get(CLIENT_HEADER):
                 return self._error(403, f"Send the header {CLIENT_HEADER}: 1 with every POST, PUT and DELETE "
                                         "(the Studio page does).")
             return self._route(u)
@@ -958,6 +1021,13 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
 
 def _by(req) -> str | None:
     return (req.member or {}).get("id")
+
+
+def _audit(req, event: str, **fields):
+    """Teams' hash-chained security log (team Studios only): who changed keys or settings, exported, reset or deleted."""
+    if req.studio.team:
+        from .teams import audit
+        audit.append(event, by=_by(req), home=req.studio.home, **fields)
 
 
 def _queued(room: Room, job) -> dict:
@@ -997,6 +1067,7 @@ def _api_events(req):
         h.end_headers()
         sel.register(h.connection, selectors.EVENT_READ)
         q = room.hub.subscribe(_by(req))
+        _presence(req, room, True)
         try:
             last = time.monotonic()
             while True:
@@ -1015,10 +1086,21 @@ def _api_events(req):
             pass
         finally:
             room.hub.unsubscribe(q)
+            _presence(req, room, False)
     finally:
         sel.close()
         getattr(h.server, "close_stream", lambda: None)()
     return None
+
+
+def _presence(req, room: Room, opened: bool):
+    """Teams: who has the project open (each member's open tabs), told to the room's tabs."""
+    if req.studio.team and req.member:
+        from . import api_team
+        try:
+            api_team.stream(room.name, req.member, opened, send=room.hub.send, home=req.studio.home)
+        except Exception:  # noqa: BLE001  (presence never breaks the event stream)
+            traceback.print_exc()
 
 
 def _hung_up(sel, sock) -> bool:
@@ -1037,6 +1119,12 @@ def _files(req):
     full = req.studio.artifact(req.path[len("/files/"):])
     if not full:
         raise HTTPError(404, "Not found.")
+    if req.studio.team:  # order packages of a revision nobody released yet follow the team's policy (and are audited)
+        from . import api_team
+        project, _, inner = os.path.relpath(full, req.studio.home).replace(os.sep, "/").partition("/")
+        res = api_team.check_download(req.member, os.path.join(req.studio.home, project), inner, home=req.studio.home)
+        if not res.get("allowed"):
+            raise HTTPError(403, res.get("reason") or "That file needs a released revision.")
     return req.handler._file(full, csp=ARTIFACT_CSP)
 
 
@@ -1191,12 +1279,15 @@ def _api_projects_delete(req):
     except OSError as exc:
         raise HTTPError(409, f"Couldn't move {name} to the trash ({exc.strerror or exc}); close any file of it that is "
                              "open, then try again.") from None
+    _audit(req, "project_deleted", project=name)
     return 200, {"ok": True, "project": name, "trash": os.path.relpath(trash, req.studio.home).replace(os.sep, "/")}
 
 
 @route("POST", "/api/reset", role="owner")
 def _api_reset(req):
     ok = req.studio.reset(rebuild=req.body.get("rebuild") is True)
+    if ok:
+        _audit(req, "reset", rebuild=req.body.get("rebuild") is True)
     return (200 if ok else 409), {"ok": ok, "project": req.studio.start}
 
 
@@ -1212,6 +1303,7 @@ def _api_export(req):
         archive, filename = export.build_export(room.p, rev, full=full)
     except export.ExportError as exc:
         raise HTTPError(exc.status, str(exc)) from None
+    _audit(req, "export", project=room.name, rev=rev or "", full=full)
     with archive:
         size = archive.seek(0, os.SEEK_END)
         archive.seek(0)
@@ -1250,6 +1342,7 @@ def _api_keys_save(req):
         raise HTTPError(500, f"Couldn't save the keys: Morph can't write {os.path.basename(keys.ENV_PATH)} here "
                              f"({exc.strerror or exc.__class__.__name__}). Set them as environment variables instead, "
                              "or move Morph to a folder you can write to.") from None
+    _audit(req, "keys_changed", names=sorted(changed))  # names only, never a key
     if any(k.startswith("KEEWANO") for k in changed):
         keewano._ratio_cache.clear()  # re-query the calibration with the new project
     if "SUBQ_API_KEY" in changed:
@@ -1280,6 +1373,7 @@ def _api_settings_save(req):
         raise HTTPError(400, str(exc)) from None
     except OSError as exc:
         raise HTTPError(500, f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).") from None
+    _audit(req, "settings_changed", values=values)
     keewano._ratio_cache.clear()
     return 200, {"ok": True, "settings": values, "integrations": integrations()}
 
@@ -1350,14 +1444,23 @@ class _Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None, token: str | None = None):
+def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None, token: str | None = None, *,
+          team: bool = False, allow_url_import: bool = False, link: str | None = None):
+    """Run the Studio. `team`: Morph Teams (members sign in with invite or sign-in links; MORPH_TOKEN plays no part),
+    `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers."""
     if not project.revs():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
-    studio = Studio(project, home)
-    token = access_token(host, token)
-    studio.remote = bool(token)
-    # local Studio: requests must name this server (127.0.0.1/localhost); remote Studio: the access token decides
-    allowed = None if token else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}
+    studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
+    token = None if team else access_token(host, token)
+    studio.remote = bool(token) or (team and not is_loopback(host))
+    if team:
+        from . import api_team
+        api_team.configure(home=studio.home, secure_cookies=False, enabled=True)
+    from . import capability
+    capability.warm(block=False)  # the brief's envelope from the generator, in the background
+    # local Studio: requests must name this server (127.0.0.1/localhost); remote Studio: the access token decides; a team
+    # Studio: the member's session decides, so a tunnel's or the LAN's address works too
+    allowed = None if token or team else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}
     try:
         httpd = _Server((host, port), make_handler(studio, allowed, token))
     except OSError as exc:
@@ -1366,7 +1469,14 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
                              "(Ctrl+C in its terminal, or close that window), then start again.") from None
         raise SystemExit(f"Morph Studio couldn't listen on {host}:{port} ({exc}).") from None
     httpd.daemon_threads = True
-    if token:
+    if team:
+        print(f"Morph Studio (Teams preview) is running on {socket.gethostname()} at http://{host}:{port}"
+              + ("" if is_loopback(host) else " for other computers too") + ".")
+        if link:
+            print("Open this one-time link to sign in as the owner (it works once, within 15 minutes):")
+            print(f"    {link}")
+        print("Invite teammates from Share in the Studio, or with `morph team invite`. Ctrl+C to stop.")
+    elif token:
         where = lan_address() if host in ("0.0.0.0", "") else host
         print(f"Morph Studio is running on {socket.gethostname()} ({os.cpu_count()} CPU cores) for other computers too.")
         print("Open this link in a browser on any computer that can reach this one (it signs that browser in):")

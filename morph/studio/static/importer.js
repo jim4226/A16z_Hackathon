@@ -254,6 +254,9 @@ export class Importer {
     const i = this.rows.findIndex((r) => r.key === key);
     if (i >= 0) this.rows[i] = { ...row, key }; else this.rows.push({ ...row, key });
     if (ev.stage === 'build' && ev.status === 'error' && this.building) { this.building.error = ev.text; }
+    // the Studio relays the new project's build to this tab: its stages, then done
+    if (ev.stage === 'build' && this.building && ev.node) this.building.nodes[ev.node] = ev.node_status;
+    if (ev.stage === 'build' && ev.status === 'done' && this.building) { this.finish(ev.built_project || this.building.project); return; }
     if (ev.stage === 'fetch' && ev.status === 'done' && this.view === 'working' && this.fetching) { this.fetching = false; this.detect(); return; }
     if (ev.stage === 'fetch' && ev.status === 'error' && this.fetching) { this.fetching = false; this.fail(ev.text); return; }
     if (['working', 'building'].includes(this.view)) this.render();
@@ -265,11 +268,16 @@ export class Importer {
     if (this.view === 'building') this.render();
   }
 
-  onCreated(ev) {
+  onCreated(ev) {  // the project exists now; its first build is still running (done comes as an import event)
     if (!this.building || ev.project !== this.building.project) return;
+    this.building.created = true;
+  }
+
+  finish(project) {
+    if (!this.building || this.building.done) return;
     this.building.done = true;
     this.view = 'done';
-    this.s.toast?.(`Imported ${ev.project}`);
+    this.s.toast?.(`Imported ${project}`);
     this.render();
   }
 

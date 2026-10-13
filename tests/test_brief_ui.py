@@ -3,7 +3,6 @@ with the real brief engine behind POST /api/brief. Skipped when Playwright or Ch
 MORPH_SHOTS_DIR=<dir> keeps a screenshot of every state."""
 
 import os
-import socket
 import sys
 import threading
 
@@ -15,26 +14,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "tools"))
 CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
 
 
-def _free_port():
+def _serve(home):
+    """The demo server on the first free port in 8800-8899, bound here (parallel test workers race for ports)."""
+    import newrobot_demo
+
     for port in range(8800, 8900):
-        with socket.socket() as s:
-            try:
-                s.bind(("127.0.0.1", port))
-                return port
-            except OSError:
-                continue
+        try:
+            return newrobot_demo.serve(port, home), port
+        except OSError:
+            continue
     pytest.skip("no free port in 8800-8899")
 
 
 @pytest.fixture(scope="module")
 def page(tmp_path_factory):
-    import newrobot_demo
-
     for k in list(os.environ):
         if k.startswith(("ANTHROPIC", "KEEWANO", "SUBQ")):
             os.environ.pop(k)
-    port = _free_port()
-    srv = newrobot_demo.serve(port, str(tmp_path_factory.mktemp("home")))
+    srv, port = _serve(str(tmp_path_factory.mktemp("home")))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         pw = sync_api.sync_playwright().start()

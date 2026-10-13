@@ -239,6 +239,8 @@ function onNode(ev) {
 function onDone(ev) {
   if (!ours(ev)) return;
   st.done = ev.current || {};
+  // the tab may have joined the new project's room after its first stages ran: the revision says how each one ended
+  for (const [k] of STAGES) if (st.done.stage_status?.[k]) st.stages[k] = st.done.stage_status[k];
   const s = st.done.summary || {};
   const errs = STAGES.filter(([k]) => st.stages[k] === 'error').length;
   st.agents.pipeline = { role: 'pipeline', provider: 'morph', status: errs ? 'error' : 'done', ms: ev.seconds ? Math.round(ev.seconds * 1000) : null,
@@ -695,5 +697,8 @@ async function build() {
   later(tick, 1000);
   if (st.project && studio.openProject) {
     try { await studio.openProject(st.project); } catch (e) { /* the tab stays where it is; events for the new room still arrive */ }
+    // a build that ended before this tab joined the new project's room sent its done event elsewhere: the state has it
+    const S = studio.S || {};
+    if (req === st.req && S.project === st.project && S.current && !S.busy) onDone({ project: st.project, current: S.current });
   }
 }

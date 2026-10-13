@@ -25,7 +25,7 @@ ROUTES = {
     # design edits and services
     ("POST", "/api/chat"): "editor", ("POST", "/api/params"): "editor", ("POST", "/api/source"): "editor",
     ("POST", "/api/project"): "viewer",            # rooms: switching only moves this tab
-    ("POST", "/api/restore"): "editor", ("POST", "/api/jobs/cancel"): "editor", ("POST", "/api/jobs/resolve"): "editor",
+    ("GET", "/api/jobs"): "viewer", ("POST", "/api/jobs/cancel"): "editor", ("POST", "/api/jobs/resolve"): "editor",
     ("GET", "/api/export"): "viewer",
     # host administration
     ("POST", "/api/reset"): "owner",
@@ -40,7 +40,8 @@ ROUTES = {
     ("POST", "/api/import"): "editor", ("GET", "/api/import/*"): "editor", ("POST", "/api/import/*"): "editor",
     ("PUT", "/api/import/*"): "editor", ("DELETE", "/api/import/*"): "editor",
     # video and photos (F3)
-    ("POST", "/api/video/analyze"): "editor", ("PUT", "/api/video/upload"): "editor", ("POST", "/api/video/apply"): "editor",
+    ("GET", "/api/video/info"): "viewer", ("POST", "/api/video/analyze"): "editor", ("PUT", "/api/video/upload"): "editor",
+    ("POST", "/api/video/apply"): "editor",
     # world mode (F5)
     ("GET", "/api/world"): "viewer", ("POST", "/api/world"): "editor", ("PUT", "/api/world/upload"): "editor",
     ("POST", "/api/world/obstacles/auto"): "editor", ("POST", "/api/world/inspect"): "editor",

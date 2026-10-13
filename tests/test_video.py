@@ -885,7 +885,7 @@ def test_apply_queues_in_the_room_like_a_parameter_edit(tmp_path):
     code, out = api_video.apply(req(st, {"preview": True, "result": result()}, path="/api/video/apply", room=room))
     assert code == 200 and out["mapping"]["items"] and room.asked == ["latest"]
     api_video.send(req(st, member=ana, room=room), {"type": "video", "id": "x"})
-    assert room.events[-1]["by"] == {"id": "m1", "name": "Ana", "color": "#c60"} and room.events[-1]["project"] == "egg-picker"
+    assert room.events[-1]["by"] == "m1" and room.events[-1]["project"] == "egg-picker"  # the member id
 
 
 class NoSuchProject:
@@ -935,7 +935,7 @@ def test_uploads_read_through_the_router_stream(studio, monkeypatch):
 
 def test_events_carry_the_member_when_teams_is_on(studio):
     api_video.send(req(studio, member={"id": "m1", "name": "Ana", "role": "editor"}), {"type": "video", "id": "x"})
-    assert studio.events[-1]["by"] == {"id": "m1", "name": "Ana"} and studio.events[-1]["project"] == "egg-picker"
+    assert studio.events[-1]["by"] == "m1" and studio.events[-1]["project"] == "egg-picker"
     broken = FakeStudio(studio.home and __import__("pathlib").Path(studio.home))
     broken.hub = types.SimpleNamespace(send=lambda ev: (_ for _ in ()).throw(RuntimeError("closed")))
     api_video.send(req(broken), {"type": "video"})  # never raises

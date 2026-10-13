@@ -127,7 +127,7 @@ def test_change_requests_route_reviews_notify_and_queue_with_attribution(site):
     assert box["unread"] == 1 and box["items"][0]["kind"] == "review_request" and "#1" in box["items"][0]["text"]
     assert any(i["kind"] == "watch" for i in activity.inbox(site["home"], ids["Jim"])["items"]) is False  # Jim is a reviewer, not a watcher
     sent = room.hub.sent
-    assert any(e["type"] == "proposal" and e["action"] == "open" and e["by"]["name"] == "Vic" for e in sent)
+    assert any(e["type"] == "proposal" and e["action"] == "open" and e["by"] == ids["Vic"] for e in sent)  # member ids
     assert {e["to"] for e in sent if e["type"] == "inbox"} >= {ids["Ana"], ids["Raj"], ids["Sue"], ids["Mo"]}
     s, dec, _ = call(base, "POST", "/api/reviews/decide", {"review": p["review"]["id"], "decision": "approve"}, cookie=jar["Ana"])
     assert s == 200 and dec["review"]["decisions"][-1]["disciplines"] == ["electronics"]

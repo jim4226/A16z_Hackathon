@@ -213,7 +213,13 @@ def cmd_studio(a):
     import socket
     if getattr(a, "remote", False) and is_loopback(a.host):
         a.host = "0.0.0.0"  # bring your own compute: other computers may use this Studio, with its access link
-    fixed = os.environ.get("MORPH_TOKEN", "").strip()
+    team = bool(getattr(a, "team", False))
+    if team:  # Morph Teams: members sign in with invite and sign-in links; MORPH_TOKEN plays no part
+        from .studio.teams.store import exists
+        if not exists(HOME):
+            sys.exit("There is no team here yet: run `morph team init --owner <your name>` first, then "
+                     "`morph studio --team`.")
+    fixed = "" if team else os.environ.get("MORPH_TOKEN", "").strip()
     if fixed and not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", fixed):
         sys.exit("MORPH_TOKEN must be 8 to 128 letters, digits, - or _ (it goes in the access link).")
     from .studio.security import project_name
@@ -221,7 +227,7 @@ def cmd_studio(a):
         project_name(a.name)
     except ValueError as exc:
         sys.exit(f"{a.name}: {exc}")
-    token = access_token(a.host, fixed or None)
+    token = None if team else access_token(a.host, fixed or None)
     local = "127.0.0.1" if a.host in ("0.0.0.0", "") else a.host
     link = f"http://{local}:{a.port}/" + (f"?token={token}" if token else "")
     with socket.socket() as sock:  # a Studio left running in another window would share the port on Windows
@@ -267,11 +273,16 @@ def cmd_studio(a):
         if last and proj.load_results(last).get("pipeline_version") != pipeline_version(proj.load_design(last).arm.source):
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
             proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
+    if team:  # a fresh one-time sign-in link for the owner (made now: it lasts 15 minutes)
+        from .studio.teams import cli as teams_cli
+        link = teams_cli.team_link(home=HOME, base_url=f"http://{local}:{a.port}", out=None)["url"]
     headless = sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
     if a.open and not headless:  # a server without a screen: the link printed below is opened from another computer
         import threading
         threading.Timer(1.5, open_app_window, args=(link,)).start()
-    serve(p, a.host, a.port, home=HOME, token=token)
+    extra = {**({"team": True, "link": link} if team else {}),
+             **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {})}
+    serve(p, a.host, a.port, home=HOME, token=token, **extra)
 
 
 
@@ -795,7 +806,20 @@ def main(argv=None) -> int:
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--remote", action="store_true",
                    help="bring your own compute: let other computers use this Studio through a private access link")
+    s.add_argument("--team", action="store_true",
+                   help="Morph Teams (preview): members sign in with invite links; run `morph team init` first")
+    s.add_argument("--allow-url-import", action="store_true",
+                   help="let people import from GitHub or Hugging Face links even when other computers use this Studio")
     s.set_defaults(fn=cmd_studio)
+
+    from .studio.teams import cli as teams_cli
+    teams_cli.add_parser(sub).set_defaults(fn=lambda a: teams_cli.run(a))
+
+    s = sub.add_parser("import", help="import a robot (URDF, xacro, MuJoCo XML), an object mesh, a parts list, a KiCad "
+                                      "board or a Morph export")
+    from . import importers
+    importers.add_arguments(s)
+    s.set_defaults(fn=lambda a: importers.run_cli(a))
 
     s = sub.add_parser("subq", help="SubQ Snap: triage one request with your SUBQ_API_KEY and print the answers")
     s.add_argument("text")
