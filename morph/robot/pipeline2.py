@@ -39,7 +39,7 @@ GRAPH = {
             ["sizing", "electronics"], "cad"),
     # sim reads the arm geometry, but electronics placed in the fixed base do not change its dynamics,
     # so it keys off the geometry-defining parameters instead of the cad node
-    "sim": (["task.*", "object.*", "arm.*", "finger.*", "build.*"], ["sizing", "gripper"], "sim"),
+    "sim": (["task.*", "object.*", "arm.*", "finger.*", "build.*", "world.*"], ["sizing", "gripper"], "sim"),
     "wiring": ([], ["electronics", "cad"], "electronics"),
     "manufacturing": (["build.*", "fab.*"], ["cad", "wiring"], "mfg"),
     "bom": ([], ["manufacturing", "wiring"], None),
@@ -213,6 +213,24 @@ class RobotProject(Project):
                 "sim": ["sims"], "wiring": ["electronics"], "manufacturing": ["manufacturing"], "bom": ["bom"],
                 "manual": ["manual"]}[node]
 
+    def _sim_world(self, design, nd):
+        """World mode: the project's room (world/world.json) in robot base millimetres when design.world.id names
+        it, also kept as sim/world.json so the revision shows what it was simulated against. A named world that is
+        missing or broken fails the stage rather than silently simulating the plain table."""
+        if not design.world.id:
+            return None
+        from ..studio import worlds
+
+        w = worlds.load(self.root)
+        if w is None or w["id"] != design.world.id:
+            raise RuntimeError(f"world mode: {design.world.id} isn't this project's world (world/world.json); "
+                               "save the world again or turn world mode off")
+        sw = worlds.sim_world(w)
+        sw["design_sha"] = design.world.sha
+        with open(os.path.join(nd, "world.json"), "w", encoding="utf-8") as fh:
+            json.dump(sw, fh, indent=1)
+        return sw
+
     def _compute(self, node, design, res, nd, asm, n_trials, fast_sim):
         from . import arm
 
@@ -261,7 +279,9 @@ class RobotProject(Project):
                           "redesign": [p.meta["needs_redesign"] for p in a.parts if p.meta.get("needs_redesign")]}
         elif node == "sim":
             simulate = _mod("simulate")
-            res["sims"] = simulate.run_all(asm(), design, nd, fast=fast_sim) if simulate else None
+            world = self._sim_world(design, nd) if simulate else None
+            res["sims"] = (simulate.run_all(asm(), design, nd, fast=fast_sim, **({"world": world} if world else {}))
+                           if simulate else None)
             return simulate is not None
         elif node == "wiring":
             e2 = _mod("electronics2")
