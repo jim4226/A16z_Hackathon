@@ -85,8 +85,38 @@ def test_prototype_box_on_the_carry_arc(egg, monkeypatch):
     assert m["place_error_mm"] <= 1.5
     assert m["min_clearance_mm"] >= 10.0
     assert m["arc"]["clear"] and m["arc"]["min_clearance_mm"] >= 10.0
+    assert m["arc"]["usual"] is False                 # not the plain table's arc: the page says it was changed for the room
     assert m["world"] == "proto" and m["min_clearance_at"]["obstacle"] == "Bin"
     assert doc["world"]["obstacles"][0]["label"] == "Bin"
+
+
+@pytest.mark.parametrize("h", [60.0, 90.0])
+def test_full_simulation_goes_back_to_rest_around_the_box(egg, h):
+    """The Studio runs full simulations, which end with the move back to the rest pose: straight there it swept through
+    the box the carry arc had just avoided (a contact at 6.7 s failed the whole run). It now goes back along the carry
+    arc with the hand closed to the object's width, then to rest, keeping 10 mm."""
+    d, asm = egg
+    w = _table_world([_bin_on_the_arc(d, h)])
+    doc = simulate.run(asm, d, "pick_place", fast=False, world=w)
+    m = doc["metrics"]
+    assert m["success"] and not m["world_contacts"] and m["clearance_ok"], (m.get("failure"), m.get("detours"))
+    assert m["min_clearance_mm"] >= simulate.CLEAR_MM
+    back = m["detours"]["retreat"]
+    assert back["via"] == "carry path" and back["clear"] and back["min_clearance_mm"] >= simulate.CLEAR_MM
+    assert m["detours"]["approach"]["via"] == "direct" and m["detours"]["approach"]["clear"]
+    f = doc["frames"]
+    assert f[-1]["phase"] == "retreat" and np.allclose(f[-1]["q"][:5], f[0]["q"][:5], atol=0.05)   # back at rest
+    assert f[-1]["q"][-1] == pytest.approx(f[0]["q"][-1], abs=0.5)                                    # hand open again
+    peak = lambda ph: max(max(abs(x) for x in fr["tau"][:5]) for fr in f if fr["phase"] == ph)    # noqa: E731
+    assert peak("retreat") <= 1.15 * peak("move")        # back along the arc at the speed it was carried over, no faster
+    assert m["cycle_time_s"] == simulate.run(asm, d, "pick_place", fast=False, world=_table_world([]))["metrics"]["cycle_time_s"]
+
+
+def test_a_box_where_the_arm_rests_is_named_as_such(egg):
+    d, asm = egg
+    m = simulate.run(asm, d, "pick_place", fast=False, world=_table_world([_bin_on_the_arc(d, 200.0)]))["metrics"]
+    assert not m["success"] and m["world_contacts"][0]["t"] < 0.05
+    assert m["failure"].endswith("touches Bin in the arm's starting pose")
 
 
 def test_world_scenarios(egg, tmp_path):
@@ -143,5 +173,6 @@ def test_egg_picker_succeeds_on_the_desk(egg):
     m = doc["metrics"]
     assert m["success"], m.get("failure")
     assert m["clearance_ok"] and m["min_clearance_mm"] >= 10.0 and not m["world_contacts"]
+    assert m["arc"]["clear"] and m["arc"]["usual"] is True   # the desk keeps the plain table's carry arc (nothing to say)
     assert abs(doc["targets"]["place"][2] - d.object.diameter_mm / 2) < 1e-6      # resting on the desk top (z = 0)
     assert abs(doc["frames"][-1]["obj"][2] - d.object.diameter_mm / 2) < 3.0
