@@ -818,7 +818,8 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 #form:has(> #chatTools:not(:empty)) #input { flex: 1 0 100%; order: 0; }
 #form:has(> #chatTools:not(:empty)) #send { order: 2; }
 #chatTools:not(:empty) { order: 1; flex: 1 0 auto; display: flex; align-items: center; gap: 2px; margin-left: -6px; }
-#inspTabs:not(:empty) { position: sticky; top: 0; z-index: 2; display: flex; gap: 4px; padding: 8px 14px 0; background: var(--bg1); }
+#inspTabs:not(:empty) { display: flex; gap: 4px; padding: 8px 14px 0; background: var(--bg1); }  /* scrolls with the panel (a feature
+   that mounts here keeps its own tab strip in view: a panel taller than the window must still scroll to its end) */
 #viewerTools:not(:empty) { display: flex; align-items: center; gap: 3px; }
 #viewerTools:not(:empty)::before { content: ""; width: 1px; height: 18px; background: var(--line3); margin: 0 4px; }
 .modal .dlg.wide { width: min(980px, calc(100vw - 32px)); }

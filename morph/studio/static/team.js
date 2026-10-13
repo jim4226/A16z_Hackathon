@@ -47,7 +47,21 @@ function ago(ts) {
   if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
   return new Date(t).toLocaleDateString();
 }
+// when something runs out ("expires in 6 days"), for invites
+function expiry(ts) {
+  const t = Date.parse(ts || '');
+  if (!t) return '';
+  const s = (t - Date.now()) / 1000;
+  if (s <= 0) return 'expired';
+  const [n, unit] = s < 3600 ? [Math.max(1, Math.floor(s / 60)), 'min'] : s < 86400 ? [Math.floor(s / 3600), 'h'] : [Math.round(s / 86400), 'day'];
+  return `expires in ${n} ${unit}${unit === 'day' && n !== 1 ? 's' : ''}`;
+}
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+// option values as the Parameters panel names them (the server's collab.VALUES)
+const VALUE = { hobby_pwm: 'Hobby PWM', smart_bus: 'Smart bus', dynamixel: 'Dynamixel', modules: 'Off-the-shelf modules', custom_pcb: 'Custom PCB',
+  prototype: 'Prototype', pilot: 'Pilot', production: 'Production', fsr402: 'FSR 402', esp32_devkit: 'ESP32 DevKit', esp32_s3_devkit: 'ESP32-S3 DevKit',
+  arduino_nano: 'Arduino Nano', rp2040_pico: 'RP2040 Pico', v: 'V-groove', wrist_camera: 'wrist camera', estop: 'e-stop', imu: 'IMU' };
+const money = (v) => (v == null ? '' : `$${Number(v).toLocaleString('en-US', { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2 })}`);
 const andList = (n) => (n.length < 2 ? n.join('') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
 // a change request being written: what it changes, its words, the form's open state, the parameter being picked, and the
 // last preview (kept here, so a live update that redraws the tab never takes any of it away)
@@ -76,14 +90,37 @@ export class Team {
   // ---- api plumbing (studio.api may return parsed JSON or a fetch Response)
   async call(method, path, arg) {
     const a = this.s.api;
-    const r = method === 'GET' ? await a.get(path, arg || {}) : await a.post(path, arg || {});
+    let r;
+    try {
+      r = method === 'GET' ? await a.get(path, arg || {}) : await a.post(path, arg || {});
+    } catch (e) {
+      if (e?.status === 401 && this.me) this.signedOut();  // this browser's session ended (removed, or signed out everywhere)
+      throw e;
+    }
     if (r && typeof r.json === 'function') {
       const data = await r.json().catch(() => ({}));
+      if (r.status === 401 && this.me) this.signedOut();
       if (!r.ok || data.ok === false) throw Object.assign(new Error(data.error || `The Studio answered ${r.status}`), { status: r.status, data });
       return data;
     }
     if (r && r.ok === false) throw Object.assign(new Error(r.error || 'The Studio refused that'), { data: r });
     return r || {};
+  }
+  // The session ended (the owner removed this member, or they signed out everywhere): the page stops being live and the
+  // Studio's sign-in page says why.
+  signedOut(reason) {
+    if (this.gone) return;
+    this.gone = true;
+    clearInterval(this.beat);
+    clearInterval(this.poll);
+    const text = reason === 'removed' ? 'You were removed from this team, so this browser is signed out.'
+      : 'This browser is signed out of the team.';
+    const el = document.createElement('div');
+    el.className = 'tm-gone';
+    el.setAttribute('role', 'alert');
+    el.innerHTML = `<div class="glass"><b>${this.esc(text)}</b><span>Opening the sign-in page…</span></div>`;
+    document.body.appendChild(el);
+    setTimeout(() => location.replace('/'), 1500);
   }
   toast(t) { (this.s.toast || console.log)(t); }
   rev() { return this.s.S?.current?.rev || null; }
@@ -119,7 +156,12 @@ export class Team {
     on('activity', () => { if (this.tab === 'activity') later(); });
     on('presence', (ev) => { this.presence = ev.members || []; this.renderPresence(); });
     on('inbox', (ev) => { if (!ev.to || ev.to === this.me.member.id) this.loadInbox(); });
-    on('member', (ev) => { this.loadTeam(); if (ev.member?.id === this.me.member.id) this.refreshMe(); });
+    on('member', (ev) => {
+      if (ev.member?.id === this.me.member.id && ev.action === 'revoked') { this.signedOut('removed'); return; }
+      this.loadTeam();
+      if (ev.member?.id === this.me.member.id) this.refreshMe();
+    });
+    on('signed_out', (ev) => this.signedOut(ev.reason));  // the Studio ended this member's event stream
     on('policy', () => this.refreshMe());
     on('done', () => later());
     on('project', () => {  // this tab switched projects (or Reset demo rebuilt this one): what was being written stays with its project
@@ -136,11 +178,12 @@ export class Team {
   applyRole() {
     const ro = !this.can('edit');
     document.body.classList.toggle('tm-readonly', ro);
+    document.body.classList.toggle('tm-nokeys', !this.can('keys'));  // API keys and settings are the owners' (their dialog would only refuse)
     const input = document.querySelector('#input');
     if (input) {
       if (this.placeholder == null) this.placeholder = input.placeholder;
       input.disabled = ro;
-      input.placeholder = ro ? (this.can('propose') ? 'Viewers propose changes: open Changes on the right' : 'View only') : this.placeholder;
+      input.placeholder = ro ? (this.can('propose') ? 'View only: propose changes in Changes' : 'View only') : this.placeholder;
     }
     this.titles = this.titles || {};
     for (const sel of ['#send', '#paramsApply']) {
@@ -240,7 +283,7 @@ export class Team {
     this.shareEl.setAttribute('role', 'dialog');
     this.shareEl.setAttribute('aria-label', 'Share');
     this.renderShare();
-    if (this.s.modal?.open) this.s.modal.open(this.shareEl, { wide: true });
+    if (this.s.modal?.open) this.s.modal.open(this.shareEl, { wide: true, onClose: () => { this.lastInvite = null; this.inviteDraft = null; } });
     else {
       this.ownModal = document.createElement('div');
       this.ownModal.className = 'modal on';
@@ -252,9 +295,25 @@ export class Team {
     }
     this.loadTeam();
   }
-  closeShare() { if (this.s.modal?.close) this.s.modal.close(); this.ownModal?.remove(); this.ownModal = null; }
+  closeShare() {
+    if (this.s.modal?.close) this.s.modal.close();
+    this.ownModal?.remove();
+    this.ownModal = null;
+    this.lastInvite = null;
+    this.inviteDraft = null;
+  }
+  // A teammate joining redraws the dialog: the invite being written lives in state (inviteDraft), and the field being
+  // typed in keeps its focus, so a live update never takes what the owner is typing.
   renderShare() {
+    const a = document.activeElement, focus = this.shareEl?.contains(a) ? (a.name || '') : '';
+    const caret = focus && typeof a.selectionStart === 'number' ? a.selectionStart : null;
+    this.shareHtml();
+    const f = focus && this.shareEl.querySelector(`[name="${focus}"]`);
+    if (f) { f.focus(); if (caret != null && f.setSelectionRange) f.setSelectionRange(caret, caret); }
+  }
+  shareHtml() {
     const esc = this.esc, t = this.data.team || {}, owner = this.can('admin'), me = this.me.member;
+    const draft = this.inviteDraft = this.inviteDraft || { role: 'editor', hint: '', tags: [] };
     const discs = this.me.disciplines || [];
     const chips = (name, sel) => discs.map((d) => `<label class="tm-chk"><input type="checkbox" name="${name}" value="${esc(d.key)}"${sel.includes(d.key) ? ' checked' : ''}>
       <span title="${esc(d.stages.join(', ') || 'Fallback owner of every stage without a specialist')}">${esc(d.label)}</span></label>`).join('');
@@ -274,18 +333,18 @@ export class Team {
         <button class="btn icon ghost" type="button" data-a="close" title="Close (Esc)">${icon('x')}</button></div>
       ${owner ? `<section class="ksec"><div class="ks-h"><b>Invite someone</b><span class="tag neutral">works once, for 7 days</span></div>
         <div class="tm-form">
-          <label class="tm-f"><span>Role</span>${roleSel('editor', 'name="role"')}</label>
-          <label class="tm-f grow"><span>Name (shown on the join page)</span><input name="hint" maxlength="40" placeholder="e.g. Ana" autocomplete="off"></label>
+          <label class="tm-f"><span>Role</span>${roleSel(draft.role, 'name="role"')}</label>
+          <label class="tm-f grow"><span>Name (shown on the join page)</span><input name="hint" maxlength="40" placeholder="e.g. Ana" autocomplete="off" value="${esc(draft.hint)}"></label>
         </div>
-        <div class="tm-roleh" data-roleh>${esc(ROLE_HELP.editor)}</div>
-        <div class="tm-f"><span>Disciplines (they review changes to these stages)</span><div class="tm-chks">${chips('inv', [])}</div></div>
+        <div class="tm-roleh" data-roleh>${esc(ROLE_HELP[draft.role] || '')}</div>
+        <div class="tm-f"><span>Disciplines (they review changes to these stages)</span><div class="tm-chks">${chips('inv', draft.tags)}</div></div>
         <div class="tm-row"><button class="btn primary" type="button" data-a="invite">${icon('link')}Create invite link</button><span class="grow"></span></div>
         <div class="tm-out" data-out="invite"></div></section>` : ''}
       <section class="ksec"><div class="ks-h"><b>Members</b><span class="tag neutral">${(t.members || []).length}</span></div>
         <div class="tm-mems">${(t.members || []).map(member).join('')}</div>
         ${owner && invites.length ? `<div class="sec-t" style="margin-top:12px">Pending invites</div>${invites.map((i) => `<div class="tm-inv">
           <span>${esc(i.name_hint || 'Anyone with the link')}</span><span class="tag neutral">${esc(i.role)}</span>
-          <span class="dim">${esc((i.disciplines || []).map((d) => this.disc(d)).join(', ') || 'no discipline')} · expires ${esc(ago(i.expires_utc).replace(' ago', '') || i.expires_utc?.slice(0, 10))}</span>
+          <span class="dim">${esc((i.disciplines || []).map((d) => this.disc(d)).join(', ') || 'no discipline')} · ${esc(expiry(i.expires_utc) || `expires ${i.expires_utc?.slice(0, 10)}`)}</span>
           <span class="grow"></span><button class="btn ghost" type="button" data-cancel="${esc(i.id)}">Cancel</button></div>`).join('')}` : ''}</section>
       ${owner ? `<section class="ksec"><div class="ks-h"><b>Policy</b></div>${this.policyHtml(t.policy || this.me.policy || {})}</section>` : ''}
       <section class="ksec"><div class="ks-h"><b>You</b><span class="tag acc">${esc(me.role)}</span></div>
@@ -314,23 +373,32 @@ export class Team {
   wireShare() {
     const el = this.shareEl, $ = (s) => el.querySelector(s);
     el.querySelectorAll('[data-a="close"]').forEach((b) => (b.onclick = () => this.closeShare()));
-    const role = el.querySelector('select[name="role"]');
-    if (role) role.onchange = () => { $('[data-roleh]').textContent = ROLE_HELP[role.value]; };
+    const role = el.querySelector('select[name="role"]'), draft = this.inviteDraft;
+    if (role) role.onchange = () => { draft.role = role.value; $('[data-roleh]').textContent = ROLE_HELP[role.value]; };
+    const hintIn = $('input[name="hint"]');
+    if (hintIn) hintIn.oninput = () => { draft.hint = hintIn.value; };
+    el.querySelectorAll('input[name="inv"]').forEach((c) => (c.onchange = () => {
+      draft.tags = [...el.querySelectorAll('input[name="inv"]:checked')].map((x) => x.value);
+    }));
     const inv = $('[data-a="invite"]');
     if (inv) inv.onclick = async () => {
       const tags = [...el.querySelectorAll('input[name="inv"]:checked')].map((x) => x.value);
       inv.disabled = true;
       try {
-        const r = await this.call('POST', '/api/team/invites', { role: role.value, disciplines: tags, name_hint: $('input[name="hint"]').value });
+        const hint = $('input[name="hint"]').value.trim();
+        const r = await this.call('POST', '/api/team/invites', { role: role.value, disciplines: tags, name_hint: hint });
         // a Studio others reach over the network, opened here at 127.0.0.1: that address works on this computer only
         const local = this.s.S?.compute?.remote && /^(127\.|localhost$|\[::1\]$)/.test(location.hostname);
-        this.showLink($('[data-out="invite"]'), location.origin + r.path,
-          `Works once, until ${new Date(r.invite.expires_utc).toLocaleString()}. Send it privately: whoever opens it first joins as ${r.invite.role}.`
-          + (local ? ` This link starts with ${location.host}, which only works on this computer: open the Studio at the address teammates use (the one \`morph studio --team --remote\` prints, or your tunnel's) and make the invite there.` : ''));
+        const who = hint || 'the person you send it to';
+        this.lastInvite = [location.origin + r.path,
+          `For ${who}: ${r.invite.role}${tags.length ? `, ${tags.map((d) => this.disc(d)).join(', ')}` : ''}. Works once, until ${new Date(r.invite.expires_utc).toLocaleString()}. Send it privately: whoever opens it first joins.`
+          + (local ? ` This link starts with ${location.host}, which only works on this computer: open the Studio at the address teammates use (the one \`morph studio --team --remote\` prints, or your tunnel's) and make the invite there.` : '')];
         this.data.team = await this.call('GET', '/api/team');
-      } catch (e) { this.toast(e.message); }
-      inv.disabled = false;
+        this.inviteDraft = null;
+        this.renderShare();  // the new invite shows under Pending invites; the form is ready for the next person
+      } catch (e) { this.toast(e.message); inv.disabled = false; }
     };
+    if (this.lastInvite) this.showLink($('[data-out="invite"]'), ...this.lastInvite);
     el.querySelectorAll('.tm-mem').forEach((row) => {
       const id = row.dataset.id, m = (this.data.team?.members || []).find((x) => x.id === id);
       const sel = row.querySelector('[data-a="role"]');
@@ -475,6 +543,7 @@ export class Team {
     const rev = this.rev();
     if (!rev) { this.data.comments = []; return; }
     try { this.data.comments = (await this.call('GET', '/api/comments', { rev })).comments || []; } catch (e) { this.data.comments = []; this.toast(`Comments: ${e.message}`); }
+    this.data.commentsRev = rev;  // which revision they belong to: carried and outdated depend on it
   }
   anchors() {
     const cur = this.s.S?.current || {}, esc = this.esc;
@@ -503,7 +572,8 @@ export class Team {
   commentsHtml() {
     const esc = this.esc, rev = this.rev();
     if (!rev) return '<div class="tm-empty">No revision yet.</div>';
-    const all = this.data.comments, roots = all.filter((c) => !c.parent && (this.showResolved || !c.resolved));
+    const fresh = this.data.commentsRev === rev;  // a new revision's comments are on their way: not the last one's, mislabelled
+    const all = fresh ? this.data.comments : [], roots = all.filter((c) => !c.parent && (this.showResolved || !c.resolved));
     const resolvedN = all.filter((c) => !c.parent && c.resolved).length;
     const canPost = this.can('comment');
     const thread = (c) => {
@@ -527,9 +597,11 @@ export class Team {
         <div class="tm-mention"></div>
         <div class="tm-row"><span class="dim tm-hint">Stage, BOM and parameter comments follow later revisions.</span><span class="grow"></span><button class="btn primary" type="button" data-a="post">Comment</button></div></div>`
         : '<div class="tm-empty">Viewers can\'t comment on this team (owner policy).</div>'}
-      <div class="tm-row tm-filter"><b>${roots.length} thread${roots.length === 1 ? '' : 's'} on ${esc(rev)}</b><span class="grow"></span>
+      ${this.can('admin') && (this.data.team?.members || []).length === 1 ? `<div class="tm-hintbox">${icon('users')}<span>You're the only one on the team so far.
+        <b>Share</b> (top right) makes invite links: teammates sign in from their own browsers, see this robot live, comment and review.</span></div>` : ''}
+      <div class="tm-row tm-filter"><b>${fresh ? `${roots.length} thread${roots.length === 1 ? '' : 's'} on ${esc(rev)}` : `Comments on ${esc(rev)}`}</b><span class="grow"></span>
         ${resolvedN ? `<button class="btn ghost" type="button" data-a="resolved">${this.showResolved ? 'Hide' : 'Show'} ${resolvedN} resolved</button>` : ''}</div>
-      ${roots.length ? roots.map(thread).join('') : '<div class="tm-empty">No open comments here yet.</div>'}
+      ${roots.length ? roots.map(thread).join('') : `<div class="tm-empty">${fresh ? 'No open comments here yet.' : `Loading the comments on ${esc(rev)}…`}</div>`}
       ${sel ? `<input type="hidden" data-sel="${esc(sel)}">` : ''}</div>`;
   }
   msgHtml(c) {
@@ -619,7 +691,9 @@ export class Team {
     try { const r = await this.call('GET', '/api/branches', {}); this.data.branches = r.branches || []; } catch (e) { this.data.branches = []; }
   }
   myCover(review, level) {
-    // which of the review's disciplines my approval covers (the server decides; this only labels the button)
+    // which of the review's disciplines my approval covers: the server says (review.mine, the same check it makes when I
+    // decide); without it, an approximation that only labels the button
+    if (review?.mine) return review.mine.covers || [];
     const m = this.me.member, tags = m.disciplines || [];
     if (!review || (m.role === 'viewer' && !this.me.policy?.viewers_can_approve)) return [];
     const req = (this.me.policy?.specialist_required || {})[level] || [];
@@ -643,6 +717,12 @@ export class Team {
     const v = ds.map((d) => last[d]);
     return v.length && v.every((x) => x && x === v[0]) ? v[0] : null;
   }
+  // Why I can't decide on a review of work I made (above prototype): said, rather than an Approve button that wouldn't count
+  whyNot(review) {
+    const m = review?.mine;
+    if (!m || (m.covers || []).length || !m.why || !(m.authored || []).length) return '';
+    return `<div class="tm-whynot">${icon('alert')}<span>${this.esc(m.why)}</span></div>`;
+  }
   decideButtons(review, ds) {
     if (!review || !ds.length) return '';
     const esc = this.esc, mine = this.myDecision(review, ds), id = esc(review.id);
@@ -664,7 +744,7 @@ export class Team {
         <span class="tm-gl">${esc(d.label)}</span>
         <span class="tm-gw">${d.approvers.length ? d.approvers.map((a) => `<span class="tm-person" title="${esc(a.via || '')}${a.carried ? ' · approved on ' + esc(a.anchor) + ', still current' : ''}"><span class="tm-av xs" style="--c:${color(a.color)}">${esc(initials(a.name))}</span>${esc(a.name)}${a.carried ? `<small>${esc(a.anchor)}</small>` : ''}</span>`).join('')
           : d.requested_changes.length ? `changes requested by ${d.requested_changes.map((a) => esc(a.name)).join(', ')}`
-          : d.needs.length ? `needs: ${d.needs.map((a) => `${esc(a.name)}${a.via === 'generalist' ? ' (generalist)' : ''}`).join(', ')}` : '<span class="dim">no one can approve this yet</span>'}</span></div>`).join('');
+          : d.needs.length ? `needs: ${d.needs.map((a) => `${esc(a.name)}${a.via === 'generalist' ? ' (generalist)' : ''}`).join(', ')}` : `<span class="dim">nobody who didn't make this work can approve it: ${this.can('admin') ? 'add someone with this discipline in Share' : 'ask an owner to add someone with it'}</span>`}</span></div>`).join('');
     const ck = g.checklist || {};
     const released = (this.data.releases || []).filter((r) => r.rev === rev);
     const level = `<span class="tm-lvl l-${esc(g.level)}">${esc(LEVEL[g.level] || g.level)}</span>`;
@@ -673,7 +753,7 @@ export class Team {
     const branchSel = this.data.branches.length > 1 ? `<span class="sel"><select data-a="branch">${this.data.branches.map((b) => `<option value="${esc(b.name)}">${esc(b.name)} (${esc(b.head_rev || '')})</option>`).join('')}</select></span>` : '';
     return `<div class="tm-sec">
       <div class="tm-gate ${g.ok ? 'ok' : 'no'}"><div class="tm-gh">${level}<b>${esc(rev)}</b><span class="grow"></span>
-        <span class="tag ${g.ok ? 'good' : g.short.startsWith('changes') ? 'bad' : 'warn'}">${esc(g.short)}</span></div>
+        <span class="tag ${g.ok ? 'good' : g.short.startsWith('changes') ? 'bad' : 'warn'}">${esc(released.length ? `released: ${released.map((r) => r.tag).join(', ')}` : g.short)}</span></div>
         <div class="tm-need">${esc(LEVEL[g.level])} builds need ${esc(need)}.</div>
         <div class="tm-grs">${rows}</div>
         <div class="tm-ck">${ck.feasible === false ? `<span class="tag bad">${icon('alert')}${(ck.issues || []).length} issue${(ck.issues || []).length === 1 ? '' : 's'}</span>` : ck.feasible ? '<span class="tag good">feasible</span>' : ''}
@@ -682,14 +762,18 @@ export class Team {
         ${ck.feasible === false ? `<div class="tm-issues">${(ck.issues || []).slice(0, 3).map((i) => `<div>${esc(i)}</div>`).join('')}</div>` : ''}
         <div class="tm-row tm-gact">
           ${open && mine.length ? this.decideButtons(open, mine) : ''}
-          ${!open && this.can('request_review') && !g.ok ? `<button class="btn primary" type="button" data-a="request">Request review</button>` : ''}
+          ${!open && this.can('request_review') && !g.ok ? `<button class="btn primary" type="button" data-a="request" title="Asks the owners of the disciplines that aren't approved yet">Request review</button>` : ''}
           <span class="grow"></span>
-          ${this.can('release') ? `<button class="btn${g.ok ? ' primary' : ''}" type="button" data-a="release" ${g.ok ? '' : 'disabled'} title="${esc(g.ok ? 'Tag this revision and unlock its order files' : g.text)}">${icon('tag')}Release</button>` : ''}</div>
+          ${this.can('release') ? `<button class="btn${g.ok && !released.length ? ' primary' : ''}" type="button" data-a="release" ${g.ok ? '' : 'disabled'} title="${esc(g.ok ? 'Tag this revision and unlock its order files' : g.text)}">${icon('tag')}${released.length ? 'Release again' : 'Release'}</button>` : ''}</div>
+        ${open ? this.whyNot(open) : ''}
         ${!g.ok && this.can('release') ? `<div class="tm-why">${icon('alert')}Release locked: ${esc(g.text)}.</div>` : ''}
         <div class="tm-relbox"></div>
-        ${released.length ? `<div class="tm-rels">${released.map((r) => `<span class="tag acc">${icon('tag')}${esc(r.tag)}</span>`).join('')}<span class="dim">order files unlocked</span></div>` : ''}</div>
+        ${released.length ? `<div class="tm-rels">${released.map((r) => `<span class="tag acc">${icon('tag')}${esc(r.tag)}</span>`).join('')}<span class="dim">released by ${esc(this.member(released[0].by)?.name || '?')}: its order files are unlocked for everyone</span></div>` : ''}</div>
       ${open ? `<div class="sec-t" style="margin-top:14px">Review requested by ${esc(this.member(open.by)?.name || '?')} <span class="r">${esc(ago(open.ts))}</span></div>
-        <div class="tm-routes">${(open.requested_from || []).map((r) => `<span class="tm-chip" title="${esc(r.via)}">${esc(this.disc(r.discipline))}: ${r.members.map((id) => esc(this.member(id)?.name || '?')).join(', ') || 'nobody yet'}${r.via === 'generalist' ? ' (generalist)' : ''}</span>`).join('')}</div>
+        <div class="tm-routes">${(open.requested_from || []).map((r) => {
+          const s = (open.per_discipline || []).find((x) => x.discipline === r.discipline)?.state || 'waiting';
+          return `<span class="tm-chip ${s}" title="${esc(s.replace('_', ' '))}">${s === 'approved' ? icon('check') : s === 'changes_requested' ? icon('x') : ''}${esc(this.disc(r.discipline))}: ${r.members.map((id) => esc(this.member(id)?.name || '?')).join(', ') || 'nobody yet'}${r.via === 'generalist' ? ' (generalist)' : ''}</span>`;
+        }).join('')}</div>
         ${(open.decisions || []).slice(-6).reverse().map((d) => `<div class="tm-dec"><b>${esc(this.member(d.by)?.name || '?')}</b> ${d.decision === 'approve' ? 'approved' : 'requested changes'} as ${esc(andList(d.disciplines.map((x) => this.disc(x))))}${d.note ? `: ${esc(d.note)}` : ''} <span class="dim">${esc(ago(d.ts))}</span></div>`).join('')}` : ''}
       <div class="sec-t" style="margin-top:16px">${icon('branch')}Branches<span class="r">${esc((this.data.branches[0] || {}).head_rev || '')} on main</span></div>
       <div class="tm-row">${branchSel}${this.can('branch') ? `<button class="btn" type="button" data-a="newbranch">${icon('plus')}Branch from ${esc(rev)}</button>` : ''}<span class="grow"></span></div>
@@ -771,6 +855,36 @@ export class Team {
   }
 
   // ---- change requests
+  param(key) { return (this.s.S?.current?.params || []).find((x) => x.key === key) || null; }
+  paramLabel(key) { const p = this.param(key); return p ? `${p.group} · ${p.label}` : key; }
+  showValue(key, v) {
+    if (v === '' || v == null) return 'none';
+    const p = this.param(key);
+    if (typeof v === 'number') { const n = String(+v.toFixed(3)); return p?.unit ? (p.unit === '×' ? `${n}×` : `${n} ${p.unit}`) : n; }
+    return String(v).split(',').map((x) => VALUE[x] || x.replace(/_/g, ' ')).join(' + ');
+  }
+  // What a change does, in numbers (teams/impact.py): estimated from the pipeline's fast stages before it builds
+  impactHtml(imp, open = true) {
+    const esc = this.esc;
+    if (!imp || !((imp.rows || []).length || imp.error)) return '';
+    const rows = (imp.rows || []).map((r) => `<div class="tm-ir${r.tone ? ' t-' + esc(r.tone) : ''}"><b>${esc(r.label)}</b><span>${esc(r.text)}${(r.detail || []).length
+      ? `<span class="tm-idet">${r.detail.map((d) => `<span>${esc(d)}</span>`).join('')}</span>` : ''}</span></div>`).join('');
+    return `<details class="tm-imp"${open ? ' open' : ''}><summary>What changes <span class="tag neutral" title="From the pipeline's fast stages (sizing, gripper checks, electronics plan) and catalog prices: the build decides">estimated</span></summary>
+      ${rows || `<div class="dim">${esc(imp.error)}</div>`}</details>`;
+  }
+  builtHtml(b) {
+    if (!b) return '';
+    const [m0, m1] = b.min_torque_margin || [], [c0, c1] = b.unit_cost || [];
+    const bits = [m1 != null ? `weakest joint ${m0 != null ? `${m0}× → ` : ''}${m1}×` : '', c1 != null ? `${c0 != null ? `${money(c0)} → ` : ''}${money(c1)} per unit` : '',
+      b.feasible === false ? `${b.issues} issue${b.issues === 1 ? '' : 's'}` : b.feasible ? 'feasible' : ''].filter(Boolean);
+    return `<div class="tm-built ${b.feasible === false ? 'bad' : ''}">${icon(b.feasible === false ? 'alert' : 'check')}<span>Built ${this.esc(b.rev)}: ${this.esc(bits.join(', '))}</span></div>`;
+  }
+  previewHtml(r) {
+    const esc = this.esc, pv = r.preview;
+    return `${this.impactHtml(pv.impact, true)}
+      <div class="tm-aff">Recomputes ${pv.stage_titles.length} of 9 stages: ${esc(pv.stage_titles.join(', ') || 'none')}</div>
+      <div class="tm-needs">needs: ${r.routing.routes.map((x) => `<span class="tm-chip">${esc(x.label)}: ${x.members.map((m) => esc(m.name)).join(', ') || 'nobody yet'}${x.via === 'generalist' ? ' (generalist)' : x.via === 'owner' ? ' (owner)' : ''}</span>`).join('')}</div>`;
+  }
   async loadProposals() {
     try { this.data.proposals = (await this.call('GET', '/api/proposals', {})).proposals || []; } catch (e) { this.toast(`Change requests: ${e.message}`); }
   }
@@ -789,10 +903,14 @@ export class Team {
       return `<div class="tm-pr ${esc(p.status)}" data-id="${esc(p.id)}">
         <div class="tm-prh"><span class="tm-num">#${esc(p.n)}</span><b>${esc(p.title)}</b><span class="grow"></span><span class="tag ${p.status === 'open' ? 'acc' : p.status === 'applied' ? 'good' : 'neutral'}">${esc(p.status)}${p.applied_rev ? ' ' + esc(p.applied_rev) : ''}</span></div>
         <div class="tm-meta"><span class="tm-av xs" style="--c:${color(p.author?.color)}">${esc(initials(p.author?.name))}</span>${esc(p.author?.name || '?')} · ${esc(ago(p.ts))} · on ${esc(p.base_rev || 'start')}${p.branch !== 'main' ? ' · ' + esc(p.branch) : ''}</div>
-        ${Object.keys(p.diff || {}).length ? `<div class="tm-diff">${Object.entries(p.diff).map(([k, [a, v]]) => `<div><span class="mono">${esc(k)}</span> ${esc(a)} <b>${esc(v)}</b></div>`).join('')}</div>` : ''}
+        ${(p.shown || []).length ? `<div class="tm-diff">${p.shown.map((c) => `<div><span class="tm-dk" title="${esc(c.key)}">${esc(c.label)}</span> ${esc(c.old)} <b>${esc(c.new)}</b></div>`).join('')}</div>`
+          : Object.keys(p.diff || {}).length ? `<div class="tm-diff">${Object.entries(p.diff).map(([k, [a, v]]) => `<div><span class="mono">${esc(k)}</span> ${esc(a)} <b>${esc(v)}</b></div>`).join('')}</div>` : ''}
         ${p.note ? `<div class="tm-text">${esc(p.note)}</div>` : ''}
-        <div class="tm-aff">Affects ${esc((p.routing?.stage_titles || []).join(', ') || 'nothing in the pipeline')}</div>
+        ${p.status === 'applied' ? this.builtHtml(p.built) : ''}
+        ${this.impactHtml(p.impact, p.status === 'open')}
+        <div class="tm-aff">Recomputes ${esc((p.routing?.stage_titles || []).join(', ') || 'nothing in the pipeline')}</div>
         ${p.status === 'open' ? `<div class="tm-needs">needs: ${routes || '<span class="dim">no reviewers</span>'}</div>` : ''}
+        ${p.status === 'open' && rv ? this.whyNot(rv) : ''}
         ${(p.conflicts || []).length ? `<div class="tm-why">${icon('alert')}main changed ${esc(p.conflicts.join(', '))} since ${esc(p.base_rev)}: applying puts this request's values on top.</div>` : ''}
         ${p.last_error ? `<div class="tm-why">${icon('alert')}The last build failed: ${esc(p.last_error)}</div>` : ''}
         ${p.status === 'open' ? `<div class="tm-row">
@@ -805,7 +923,7 @@ export class Team {
       ${this.can('propose') ? `<details class="tm-new"${ready || this.draft.open ? ' open' : ''}><summary>${icon('plus')}Propose a change</summary>
         <div class="tm-form"><span class="sel grow"><select data-a="param" aria-label="Parameter">${params.map((p) => `<option value="${esc(p.key)}"${p.key === this.draft.param ? ' selected' : ''}>${esc(p.group)} · ${esc(p.label)}</option>`).join('')}</select></span><span class="tm-val"></span>
           <button class="btn" type="button" data-a="add">${icon('plus')}Add</button></div>
-        <div class="tm-draft">${draft.map(([k, v]) => `<span class="tm-chip">${esc(k)} = <b>${esc(v)}</b><button type="button" data-del="${esc(k)}" title="Remove">${icon('x')}</button></span>`).join('')}</div>
+        <div class="tm-draft">${draft.map(([k, v]) => `<span class="tm-chip" title="${esc(k)}">${esc(this.paramLabel(k))}: <b>${esc(this.showValue(k, v))}</b><button type="button" data-del="${esc(k)}" title="Remove">${icon('x')}</button></span>`).join('')}</div>
         <label class="tm-f"><span>Or a change that isn't a parameter, about a stage (the manual's wording, a drawing)</span>
           <span class="sel"><select data-a="stage"><option value="">No stage</option>${nodes.map(([k, l]) => `<option value="${esc(k)}"${this.draft.stage === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></span></label>
         <input class="tm-in" data-a="title" maxlength="120" placeholder="Title (optional)" value="${esc(this.draft.title)}">
@@ -825,7 +943,7 @@ export class Team {
       if (!p) { val.innerHTML = ''; return; }
       const cur = this.draft.param === p.key && this.draft.value != null ? this.draft.value : p.value;
       val.innerHTML = p.type === 'select'
-        ? `<span class="sel"><select data-v>${(p.options || []).map((o) => `<option value="${this.esc(o)}"${String(o) === String(cur) ? ' selected' : ''}>${this.esc(o === '' ? '(none)' : o)}</option>`).join('')}</select></span>`
+        ? `<span class="sel"><select data-v aria-label="New value">${(p.options || []).map((o) => `<option value="${this.esc(o)}"${String(o) === String(cur) ? ' selected' : ''}>${this.esc(this.showValue(p.key, o))}</option>`).join('')}</select></span>`
         : `<div class="field"><input data-v type="number" value="${this.esc(cur)}" step="${this.esc(p.step || 'any')}"><span class="u">${this.esc(p.unit || '')}</span></div>`;
       const v = val.querySelector('[data-v]');
       v.oninput = v.onchange = () => { this.draft.param = p.key; this.draft.value = v.value; };
@@ -857,14 +975,17 @@ export class Team {
     const pv = b.querySelector('[data-a="preview"]');
     if (pv) pv.onclick = async () => {
       keep();
+      pv.disabled = true;
+      const box0 = this.body.querySelector('.tm-preview');
+      if (box0 && !this.draft.preview) box0.innerHTML = '<div class="dim tm-aff">Working out what it changes…</div>';
       try {
         const r = await this.call('POST', '/api/proposals', { preview: true, ...body() });
-        const esc = this.esc;
-        this.draft.preview = `<div class="tm-aff">Recomputes ${esc(r.preview.stage_titles.join(', ') || 'nothing')}</div>
-          <div class="tm-needs">needs: ${r.routing.routes.map((x) => `<span class="tm-chip">${esc(x.label)}: ${x.members.map((m) => esc(m.name)).join(', ') || 'nobody yet'}${x.via === 'generalist' ? ' (generalist)' : ''}</span>`).join('')}</div>`;
-        const box = this.body.querySelector('.tm-preview');  // the tab may have been redrawn while the preview was asked for
-        if (box) box.innerHTML = this.draft.preview;
-      } catch (e) { this.toast(e.message); }
+        this.draft.preview = this.previewHtml(r);
+      } catch (e) { this.toast(e.message); this.draft.preview = ''; }
+      const box = this.body.querySelector('.tm-preview');  // the tab may have been redrawn while the preview was asked for
+      if (box) box.innerHTML = this.draft.preview;
+      const again = this.body.querySelector('[data-a="preview"]');
+      if (again) again.disabled = false;
     };
     const sub = b.querySelector('[data-a="submit"]');
     if (sub) sub.onclick = async () => {
@@ -922,8 +1043,30 @@ export class Team {
 // ---- styles (injected once; integration may move them into style.css under /* ---- teams ---- */)
 const CSS = `
 body.tm-readonly #suggest, body.tm-readonly .nr-headbtn, body.tm-readonly .nr-menubtn, body.tm-readonly #importBtn,
-body.tm-readonly .imp-menu, body.tm-readonly .vj-btn, body.tm-readonly #viewerTools { display: none; }
-body.tm-readonly #form { opacity: .75; }
+body.tm-readonly .imp-menu, body.tm-readonly .vj-btn, body.tm-readonly #viewerTools, body.tm-readonly #presentBtn,
+body.tm-readonly #paramsBar { display: none; }
+body.tm-nokeys #keysBtn { display: none; }
+body.tm-readonly #form { opacity: .75; } body.tm-readonly #send { opacity: .45; cursor: not-allowed; }
+body.tm-readonly #paramsBody { pointer-events: none; opacity: .8; }
+.tm-gone { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(8, 9, 12, .72); }
+.tm-gone .glass { display: grid; gap: 6px; padding: 18px 22px; border-radius: var(--r3); max-width: min(420px, calc(100vw - 32px)); font-size: 13px; }
+.tm-gone span { color: var(--muted); font-size: 12px; }
+.tm-imp { margin-top: 8px; padding: 6px 8px; border-radius: 7px; background: var(--bg1); border: 1px solid var(--line); font-size: 11.3px; }
+.tm-imp summary { cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink2); list-style: none; }
+.tm-imp summary::-webkit-details-marker { display: none; }
+.tm-imp[open] summary { margin-bottom: 4px; }
+.tm-ir { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 8px; padding: 4px 0; border-top: 1px dashed var(--line2); color: var(--ink2); line-height: 1.4; }
+.tm-ir b { font-weight: 600; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; padding-top: 1px; }
+.tm-ir span { overflow-wrap: anywhere; min-width: 0; }
+.tm-ir.t-good > span { color: #9ee8c3; } .tm-ir.t-bad > span { color: #ffb3b3; } .tm-ir.t-warn > span { color: #f3d79b; }
+.tm-idet { display: grid; gap: 1px; margin-top: 3px; color: var(--muted); font-size: 10.8px; }
+.tm-built { display: flex; gap: 6px; align-items: flex-start; margin-top: 7px; font-size: 11.3px; color: #9ee8c3; }
+.tm-built.bad { color: #ffb3b3; } .tm-built svg { flex: none; margin-top: 1px; }
+.tm-whynot { display: flex; gap: 6px; align-items: flex-start; margin-top: 7px; font-size: 11.3px; color: var(--muted); line-height: 1.4; }
+.tm-whynot svg { flex: none; margin-top: 1px; color: var(--dim); }
+.tm-dk { color: var(--ink2); }
+.tm-hintbox { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--accent-bg);
+  color: var(--ink2); font-size: 11.8px; line-height: 1.45; } .tm-hintbox svg { flex: none; margin-top: 1px; color: var(--accent2); }
 .tm-hdr { display: flex; align-items: center; gap: 8px; }
 .tm-avs { display: flex; align-items: center; }
 .tm-av { --c: #5d6676; width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; flex: none; font: 650 10px var(--sans);
@@ -950,7 +1093,7 @@ body.tm-readonly #form { opacity: .75; }
 .tm-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .tm-insp { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; min-width: 0; }
 .tm-text, .tm-diff, .tm-aff, .tm-ft, .tm-note span, .tm-al, .tm-dec, .tm-why, .tm-gw { overflow-wrap: anywhere; }
-.tm-tabs { width: 100%; display: flex; }
+.tm-tabs { width: 100%; display: flex; position: sticky; top: 0; z-index: 2; background: var(--bg1); padding: 4px 0; margin-top: -4px; }
 .tm-tabs button { flex: 1 1 auto; min-width: 0; justify-content: center; padding: 0 5px; gap: 3px; font-size: 11.3px; }
 .tm-insp .btn { max-width: 100%; }
 .tm-insp .btn.primary, .tm-gact .btn { height: auto; min-height: 28px; white-space: normal; line-height: 1.3; padding-top: 5px; padding-bottom: 5px; text-align: left; }

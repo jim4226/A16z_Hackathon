@@ -280,7 +280,8 @@ def test_a_viewer_proposes_a_change_and_sees_who_it_will_ask(demo):
     page.click("[data-a=preview]")
     page.wait_for_selector(".tm-preview .tm-chip")
     prev = page.inner_text(".tm-preview")
-    assert "Recomputes Sizing" in prev and "Electronics: Ana" in prev and "Mechanical: Mo" in prev
+    assert "Recomputes 9 of 9 stages: Sizing" in prev and "Electronics: Ana" in prev and "Mechanical: Mo" in prev
+    assert " ".join(page.inner_text(".tm-draft").split()) == "Arm · Actuators: Hobby PWM"   # names, as the Parameters panel
     page.screenshot(path=os.path.join(shots_dir(demo), "f4_viewer_propose.png"))
     page.click("[data-a=submit]")
     page.wait_for_function("[...document.querySelectorAll('.tm-pr b')].some((b) => b.textContent.includes('classroom'))")
@@ -291,7 +292,7 @@ def test_a_viewer_proposes_a_change_and_sees_who_it_will_ask(demo):
     page.fill("[data-a=title]", "Torque spec for the base screws in step 4")
     page.click("[data-a=preview]")
     page.wait_for_selector(".tm-preview .tm-chip")
-    assert page.inner_text(".tm-preview .tm-aff") == "Recomputes Assembly manual"
+    assert page.inner_text(".tm-preview .tm-aff") == "Recomputes 1 of 9 stages: Assembly manual"
     assert [c.strip() for c in page.locator(".tm-preview .tm-chip").all_inner_texts()] == ["Documentation: Jim (generalist)"]
     page.click("[data-a=submit]")
     page.wait_for_function("[...document.querySelectorAll('.tm-pr b')].some((b) => b.textContent.includes('Torque spec'))")
@@ -317,11 +318,15 @@ def test_the_inspector_fits_the_narrow_column(demo):
     page.screenshot(path=os.path.join(shots_dir(demo), "f4_narrow_review.png"))
     page.click(".tm-tabs [data-tab=changes]")
     page.wait_for_selector(".tm-pr [data-decide=request_changes]")
-    page.locator(".tm-pr [data-decide=request_changes]").first.click()
+    own = page.locator(".tm-pr", has_text="Custom controller PCB")          # Ana's own request, at pilot: no buttons, a reason
+    assert own.locator("[data-decide]").count() == 0 and "You made this change" in own.inner_text()
+    card = page.locator(".tm-pr", has=page.locator("[data-decide=request_changes]")).first
+    title = card.locator(".tm-prh b").inner_text()
+    card.locator("[data-decide=request_changes]").click()
     page.fill(".tm-ask textarea", "Needs the PCBA lead time first")
     page.click(".tm-ask [data-go]")
     page.wait_for_selector(".tm-pr .tm-done")
-    assert "You requested changes" in page.inner_text(".tm-pr")
+    assert "You requested changes" in page.locator(".tm-pr", has_text=title).inner_text()
     assert errors == [], errors
     ctx.close()
 
@@ -360,6 +365,6 @@ def test_live_updates_never_take_what_you_are_writing(demo):
     page.wait_for_function("[...document.querySelectorAll('.tm-pr b')].some((b) => b.textContent.includes('Thicker base plate'))")
     assert page.locator(".tm-preview .tm-chip").all_inner_texts() == chips and chips
     assert page.input_value("[data-a=title]") == "A batch of 25" and page.locator(".tm-new[open]").count() == 1
-    assert "build.quantity" in page.inner_text(".tm-draft")
+    assert " ".join(page.inner_text(".tm-draft").split()) == "Manufacturing · Quantity: 25 units"
     assert errors == []
     ctx.close()
