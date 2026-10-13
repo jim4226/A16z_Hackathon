@@ -1573,7 +1573,7 @@ def _perturbed(rob, p):
         return
     m = rob.model
     keep = {k: getattr(m, k).copy() for k in PERTURBED}
-    opt = (m.opt.timestep, m.opt.impratio)
+    opt = (m.opt.timestep, m.opt.impratio, m.opt.disableflags)
     try:
         g, (shape, R, L) = rob.obj_geom, _object_dims(rob.design)
         s = p.get("size_scale")
@@ -1617,6 +1617,10 @@ def _perturbed(rob, p):
                 o = offs[k] if k < len(offs) else (0.0, 0.0)
                 m.geom_pos[gid] = Rz @ keep["geom_pos"][gid] + shift + np.array([o[0], o[1], 0.0]) * MM
                 m.geom_quat[gid] = _qmul([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)], keep["geom_quat"][gid])
+            if not np.array_equal(m.geom_pos, keep["geom_pos"]) or not np.array_equal(m.geom_quat, keep["geom_quat"]):
+                # the compiled collision hierarchy still has the boxes where they were: without the midphase every pair
+                # is tested where the boxes are now (a moved box was otherwise passed through without a contact)
+                m.opt.disableflags |= int(rob._mj.mjtDisableBit.mjDSBL_MIDPHASE)
         if "timestep" in p:
             m.opt.timestep = float(p["timestep"])
         if "impratio" in p:
@@ -1625,7 +1629,7 @@ def _perturbed(rob, p):
     finally:
         for k, v in keep.items():
             getattr(m, k)[:] = v
-        m.opt.timestep, m.opt.impratio = opt
+        m.opt.timestep, m.opt.impratio, m.opt.disableflags = opt
 
 
 def _world_hits(rob: _Robot, d, t, hits: dict):

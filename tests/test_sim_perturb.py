@@ -99,6 +99,32 @@ def test_the_room_moves_against_the_mount_error_and_each_box_by_its_own(egg):
     assert pickle.dumps(m) == before
 
 
+def test_a_box_the_offsets_move_into_the_arm_is_hit(egg):
+    """MuJoCo's collision hierarchy is compiled with the boxes where they were: a box moved at run time must still be
+    found where it is now (the research prototype passed through it)."""
+    d, asm = egg
+    far = {"id": "b", "label": "B", "center": [-200.0, 0.0, 150.0], "half": [20.0, 20.0, 150.0], "yaw_deg": 0.0}
+    world = {"id": "w", "sha": "t", "surface": {"label": "T", "center": [100.0, 0.0, -12.0], "half": [550.0, 600.0, 12.0],
+                                                "yaw_deg": 0.0}, "floor_z": -750.0, "zones": [], "obstacles": [far]}
+    rob = simulate._make_robot(asm, d, True, {"world": world})
+    m, data = rob.model, mujoco.MjData(rob.model)
+    box = int(rob.world_geoms[0])
+
+    def hits():
+        data.qpos[:] = 0
+        data.qpos[rob.qadr] = rob.q_ready()
+        data.qpos[rob.obj_q:rob.obj_q + 4] = [0.3, 0.3, 0.05, 1.0]
+        mujoco.mj_forward(m, data)
+        return sum((int(c.geom1) == box) != (int(c.geom2) == box) for c in data.contact[:data.ncon])
+    assert hits() == 0
+    flags = m.opt.disableflags
+    with simulate._perturbed(rob, {"box_offsets_mm": [[200.0, 0.0]]}):         # through the arm's base column
+        assert hits() > 0 and m.opt.disableflags != flags
+    with simulate._perturbed(rob, {"box_offsets_mm": [[0.0, 0.0]], "mount_dx_mm": 0.0}):   # nothing moved: unchanged
+        assert m.opt.disableflags == flags
+    assert hits() == 0 and m.opt.disableflags == flags
+
+
 def test_a_start_off_its_mark_is_measured_from_the_object_axis(egg, fast_robot):
     d, rob = egg[0], fast_robot
     x0, y0 = d.task.pick_x_mm, d.task.pick_y_mm

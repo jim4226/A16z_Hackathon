@@ -61,8 +61,11 @@ CHECK_RUNS, CHECK_SUCCESSES = 20, 15
 CACHED = 4                          # packed robots a long-running process keeps (about 5 MB each)
 NOTE = "Simulation, for the tolerances shown; not a field failure rate."
 SENSITIVE = "This result changes with the simulator's friction or timestep settings. Test it on the real robot."
-WARNINGS = ("mjWARN_BADQACC", "mjWARN_CONTACTFULL", "mjWARN_CNSTRFULL", "mjWARN_INERTIA")
-UNSTABLE = ("mjWARN_BADQACC", "mjWARN_CONTACTFULL", "mjWARN_CNSTRFULL")
+# A bad position, velocity, acceleration or control makes MuJoCo reset the run to its start (and its warning counters,
+# all but that one), and a full contact or constraint buffer drops contacts: either way the run is not counted.
+UNSTABLE = ("mjWARN_BADQPOS", "mjWARN_BADQVEL", "mjWARN_BADQACC", "mjWARN_BADCTRL", "mjWARN_CONTACTFULL",
+            "mjWARN_CNSTRFULL")
+WARNINGS = UNSTABLE + ("mjWARN_INERTIA",)
 
 
 class StudyError(ValueError):
