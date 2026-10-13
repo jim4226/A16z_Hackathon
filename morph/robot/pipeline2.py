@@ -28,9 +28,10 @@ from . import catalog_extra  # noqa: F401  (imported robots' parts, needed even 
 # node: (parameter patterns it reads, upstream nodes, output directory)
 GRAPH = {
     # arm.size() reads the build config (link materials set the masses), the task (reach) and the hand
-    # (gripper/finger set the payload), so a pilot build re-sizes the joints instead of reusing prototype torques
-    "sizing": (["arm.*", "object.*", "electronics.servo", "build.*", "task.pick_*", "task.place_*", "finger.*", "gripper.*"],
-               [], None),
+    # (gripper/finger set the payload, a wrist camera or IMU in electronics.extras rides on it), so a pilot build
+    # re-sizes the joints instead of reusing prototype torques
+    "sizing": (["arm.*", "object.*", "electronics.servo", "electronics.extras", "build.*", "task.pick_*", "task.place_*",
+                "finger.*", "gripper.*"], [], None),
     "gripper": (["finger.*", "object.*", "gripper.*", "safety_factor", "electronics.target_force_n",
                  "electronics.servo", "electronics.supply_v", "electronics.pinion_radius_mm", "arm.actuator_family",
                  "arm.source", "arm.actuator_overrides"],
@@ -39,8 +40,8 @@ GRAPH = {
     "cad": (["finger.*", "object.shape", "object.diameter_mm", "object.length_mm", "build.*", "name", "arm.source"],
             ["sizing", "electronics"], "cad"),
     # sim reads the arm geometry, but electronics placed in the fixed base do not change its dynamics,
-    # so it keys off the geometry-defining parameters instead of the cad node
-    "sim": (["task.*", "object.*", "arm.*", "finger.*", "build.*"], ["sizing", "gripper"], "sim"),
+    # so it keys off the geometry-defining parameters instead of the cad node (plus the extras that ride on the hand)
+    "sim": (["task.*", "object.*", "arm.*", "finger.*", "build.*", "electronics.extras"], ["sizing", "gripper"], "sim"),
     "wiring": ([], ["electronics", "cad"], "electronics"),
     "manufacturing": (["build.*", "fab.*"], ["cad", "wiring"], "mfg"),
     "bom": ([], ["manufacturing", "wiring"], None),

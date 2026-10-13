@@ -85,6 +85,18 @@ def test_size_overrides_and_dual_shoulder():
     assert s["issues"] == []
 
 
+def test_moving_accessories_count_in_the_hand_mass():
+    """A wrist camera and an IMU ride on the gripper: sizing carries what the build mounts there."""
+    _, s0, a0, _ = _built()
+    _, s1, a1, _ = _built(extras="wrist_camera,estop,imu")
+    hand = lambda a: 1000 * sum(a.link_mass(n)[0] for n in ("gripper_base", "jaw_left", "jaw_right", "pinion", "tcp"))  # noqa: E731
+    grew = s1["hand_mass_g"] - s0["hand_mass_g"]
+    assert grew > 15 and abs(grew - (hand(a1) - hand(a0))) < 2.0, (grew, hand(a1) - hand(a0))
+    sh = lambda s: next(j for j in s["joints"] if j["name"] == "j2_shoulder")["torque_req_nm"]  # noqa: E731
+    assert sh(s1) > sh(s0)
+    assert arm.size(_design(electronics__extras="estop"))["hand_mass_g"] == s0["hand_mass_g"]   # the e-stop is in the base
+
+
 # ------------------------------------------------------------------ build: structure + contract
 @pytest.mark.parametrize("cfg", CONFIGS)
 @pytest.mark.parametrize("fam", FAMILIES)

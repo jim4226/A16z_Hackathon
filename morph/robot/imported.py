@@ -67,6 +67,12 @@ def _extras(design) -> set:
     return {e.strip() for e in design.electronics.extras.split(",") if e.strip()}
 
 
+def _urdf(design, prof) -> str:
+    """The robot's URDF, or its wrist-camera variant: sizing and the build read the same one, so the camera and its
+    mount (they ride on the gripper) load every joint."""
+    return prof["urdf_camera"] if "wrist_camera" in _extras(design) and prof.get("urdf_camera") else prof["urdf"]
+
+
 def actuator_plan(design, prof) -> dict:
     """joint -> catalog key after the requested family/voltage edits."""
     stock = dict(prof["actuators"])
@@ -97,7 +103,7 @@ def _subtree(asm, link) -> list:
 
 def size(design) -> dict:
     prof, d = load_profile(design.arm.source)
-    asm = load_urdf(bundle_file(d, prof["urdf"]), prof, bundle=d)
+    asm = load_urdf(bundle_file(d, _urdf(design, prof)), prof, bundle=d)
     acts = actuator_plan(design, prof)
     q0 = {j: 0.0 for j in prof["arm_joints"]}           # zero pose = arm stretched out (worst case for SO-101)
     T = asm.world_transforms(q0)
@@ -158,8 +164,7 @@ def _place(asm, comp, prefix, link, T, step, kind=None, explode=(0, 0, 25)):
 def build(design, sizing, eplan=None):
     prof, d = load_profile(design.arm.source)
     extras = _extras(design)
-    urdf = prof["urdf_camera"] if "wrist_camera" in extras and prof.get("urdf_camera") else prof["urdf"]
-    asm = load_urdf(bundle_file(d, urdf), prof, bundle=d)
+    asm = load_urdf(bundle_file(d, _urdf(design, prof)), prof, bundle=d)
     issues = []
     acts = {j["name"]: j["actuator"] for j in sizing["joints"]}
     acts[prof["gripper_joint"]] = sizing["gripper_actuator"]

@@ -21,6 +21,32 @@ def test_sizing_reruns_for_everything_it_reads():
     assert "sizing" in dirty_nodes(["task.pick_x_mm"]) and "sizing" not in dirty_nodes(["task.cycle_time_s"])
 
 
+def test_moving_accessories_resize_and_resimulate():
+    # a wrist camera or an IMU rides on the gripper: every joint carries it and the simulation moves it
+    dirty = dirty_nodes(["electronics.extras"])
+    assert {"sizing", "sim"} <= set(dirty) and "gripper" not in dirty
+
+
+def test_an_extras_edit_reruns_sizing_and_sim(tmp_path):
+    p = RobotProject(str(tmp_path / "egg"))
+    d = Design().with_changes(EGG_ROBOT)
+    r1 = p.run(d, n_trials=1, verbose=False, fast_sim=True)
+    r2 = p.run(d.with_changes({"electronics.extras": "wrist_camera,imu"}), parent=r1, n_trials=1, verbose=False, fast_sim=True)
+    a, b = p.load_results(r1), p.load_results(r2)
+    assert b["stage_status"]["sizing"] == b["stage_status"]["sim"] == "computed"
+    assert b["stage_status"]["gripper"] == "reused" and not b.get("errors"), b.get("errors")
+    assert b["sizing"]["hand_mass_g"] >= a["sizing"]["hand_mass_g"] + 15
+
+
+def test_imported_robots_size_the_camera_they_carry():
+    from morph.robot import imported
+
+    d = Design().with_changes({**EGG_ROBOT, "name": "so101", "arm.source": "so101"})
+    req = lambda s: {j["name"]: j["torque_req_nm"] for j in s["joints"]}  # noqa: E731
+    plain, cam = req(imported.size(d)), req(imported.size(d.with_changes({"electronics.extras": "wrist_camera"})))
+    assert all(cam[n] > plain[n] for n in ("shoulder_lift", "elbow_flex", "wrist_flex"))
+
+
 def test_pipeline_runs_and_reuses(tmp_path):
     p = RobotProject(str(tmp_path / "egg"))
     d = Design().with_changes(EGG_ROBOT)

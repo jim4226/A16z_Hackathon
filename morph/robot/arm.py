@@ -786,21 +786,32 @@ def _struct_mass_g(config, L, D2, hw):
     return k * L * (2 * D2) * (2 * hw) / 10.0 + 12.0
 
 
-def _hand_mass_g(lay: _Layout, config) -> float:
+# Electronics extras that camera() and imu() mount on the gripper, and the grams each adds on top of the module itself
+# (printed mount + screws; calibrated on built hands)
+HAND_EXTRAS_G = {"wrist_camera": 4.0, "imu": 0.0}
+
+
+def _hand_extras_g(design) -> float:
+    """Moving accessories: they ride on the gripper, so every joint carries them like the hand itself."""
+    ex = _extras(design)
+    return sum(catalog.MODULES[k]["mass_g"] + mount for k, mount in HAND_EXTRAS_G.items() if k in ex)
+
+
+def _hand_mass_g(lay: _Layout, config, extras_g=0.0) -> float:
     g = lay.grip
     A = g["A"]
     area = sum(p.area for p in (g["rack_A"], g["rack_B"], g["pinion"])) * 6.0 + g["geom"].area_mm2 * g["w"] * 2
     rho = 1.27e-3 * 0.55
     plate = (2 * g["px"]) * (g["y_top"] - g["py0"]) * 5.0 * 0.7 + (2 * g["px"]) * 40 * T_FLANGE
     f = {"prototype": 1.4, "pilot": 3.2, "production": 1.95}.get(config, 1.4)   # calibrated on generated hands
-    return A.mass_g + f * rho * (area + plate) + 10.0      # + fasteners, FSR, cabling
+    return A.mass_g + f * rho * (area + plate) + 10.0 + extras_g      # + fasteners, FSR, cabling, accessories
 
 
 def _torques(design, lay: _Layout, config) -> dict:
     """Static torque per joint (N*m), worst case: arm stretched horizontally."""
     g_kg = lambda grams: grams / 1000.0  # noqa: E731
     payload = g_kg(design.object.mass_g)
-    hand = g_kg(_hand_mass_g(lay, config))
+    hand = g_kg(_hand_mass_g(lay, config, _hand_extras_g(design)))
     jg = lay.jg
     acts = {jn: _act(k) for jn, k in lay.keys.items()}
     cnt = lambda jn: lay.counts.get(jn, 1)  # noqa: E731
@@ -962,7 +973,7 @@ def size(design) -> dict:
             "gripper": {"actuator": gkey, "pinion_teeth": lay.grip["n"], "pitch_radius_mm": lay.grip["r"],
                         "travel_mm": round(lay.grip["T"], 1), "overtravel_mm": lay.grip["overtravel"],
                         "stall_force_n": round(grip_force, 1)},
-            "hand_mass_g": round(_hand_mass_g(lay, config), 1), "build_config": config,
+            "hand_mass_g": round(_hand_mass_g(lay, config, _hand_extras_g(design)), 1), "build_config": config,
             "issues": issues, "notes": notes}
 
 
