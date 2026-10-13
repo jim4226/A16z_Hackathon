@@ -131,7 +131,7 @@ def test_change_requests_report_conflicts_and_validate_changes(team):
     home, root, ids, ms = team
     build(root, "r001", by=ids["Jim"])
     p = collab.create_proposal(root, ids["Ana"], None, {"build.config": "pilot", "electronics.mcu": "rp2040_pico"}, members=ms)
-    assert p["title"].startswith("Build to pilot") and "(+1 more)" in p["title"]
+    assert p["title"].startswith("Build to Pilot") and "(+1 more)" in p["title"]    # option names, as the Parameters panel
     build(root, "r002", "r001", {"build.config": "production"}, by=ids["Raj"])   # main moved underneath it
     assert collab.head_conflicts(root, collab.get_proposal(root, p["id"])) == ["build.config"]
     assert collab.apply_proposal(root, p["id"], ids["Jim"])["conflicts"] == ["build.config"]

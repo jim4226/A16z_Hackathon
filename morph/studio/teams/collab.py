@@ -39,7 +39,32 @@ MENTION_RX = re.compile(r"(?<![\w@])@([\w.-]{1,40})", re.UNICODE)
 ORDER_FILES = ("mfg/*.zip", "mfg/*/gerbers.zip", "mfg/*/jlc_*.csv", "electronics/board/gerbers/*", "electronics/board/jlc_*.csv")
 MAX_BODY, MAX_TITLE, MAX_CHANGES = 4000, 120, 40
 _PARAMS = {k: (label, typ, extra) for k, label, _, typ, extra in PARAMS}
+_GROUPS = {k: group for k, _, group, _, _ in PARAMS}
 _DEFAULTS = Design().flat()
+VALUES = {"hobby_pwm": "Hobby PWM", "smart_bus": "Smart bus", "dynamixel": "Dynamixel", "modules": "Off-the-shelf modules",
+          "custom_pcb": "Custom PCB", "prototype": "Prototype", "pilot": "Pilot", "production": "Production", "fsr402": "FSR 402",
+          "esp32_devkit": "ESP32 DevKit", "esp32_s3_devkit": "ESP32-S3 DevKit", "arduino_nano": "Arduino Nano",
+          "rp2040_pico": "RP2040 Pico", "v": "V-groove", "wrist_camera": "wrist camera", "estop": "e-stop", "imu": "IMU"}
+
+
+def show_value(key: str, value) -> str:
+    """A design value as people read it: option names and numbers with their unit ("Dynamixel", "70 g", "wrist camera +
+    e-stop"), the way the Parameters panel shows them."""
+    if value is None or value == "":
+        return "none"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (int, float)):
+        unit = ((_PARAMS.get(key) or (None, None, {}))[2] or {}).get("unit") or ""
+        return f"{value:g}{unit}" if unit == "×" else f"{value:g} {unit}".strip()
+    s = str(value)
+    return " + ".join(VALUES.get(x, x.replace("_", " ")) for x in s.split(",")) if "," in s else VALUES.get(s, s)
+
+
+def show_key(key: str) -> str:
+    """A design key as the Parameters panel names it ("Arm · Actuators"), else the key itself."""
+    p = _PARAMS.get(key)
+    return f"{_GROUPS.get(key)} · {p[0]}" if p else key
 
 
 class CollabError(ValueError):
@@ -527,9 +552,11 @@ def preview(root: str, changes=None, base_rev: str | None = None, stages=(), bra
         raise CollabError(400, f"Couldn't apply those changes ({exc}).") from None
     d = {k: [a, b] for k, (a, b) in diff(old, new).items()}
     st = affected_stages(list(d), stages)
+    from .impact import impact
     return {"base_rev": base_rev, "branch": branch, "changes": d, "noop": not d and not stages, "stages": st,
             "stage_titles": [STAGE_TITLES[s] for s in st], "disciplines": disciplines_for_stages(st),
-            "design_sha256": design_sha256(new.to_dict()), "level": new.build.config if new.build.config in LEVELS else "prototype"}
+            "design_sha256": design_sha256(new.to_dict()), "level": new.build.config if new.build.config in LEVELS else "prototype",
+            "shown": shown_changes(d), "impact": impact(root, base_rev, {k: v[1] for k, v in d.items()}, stages) if d else None}
 
 
 def _proposal_state(root: str) -> "collections.OrderedDict":
@@ -570,8 +597,14 @@ def _title(changes: dict, stages) -> str:
     if changes:
         k, v = next(iter(changes.items()))
         more = f" (+{len(changes) - 1} more)" if len(changes) > 1 else ""
-        return f"{(_PARAMS.get(k) or (k,))[0]} to {v}{more}"[:MAX_TITLE]
+        return f"{(_PARAMS.get(k) or (k,))[0]} to {show_value(k, v)}{more}"[:MAX_TITLE]
     return ("Change " + ", ".join(STAGE_TITLES.get(s, s) for s in stages))[:MAX_TITLE]
+
+
+def shown_changes(diff_: dict) -> list:
+    """A change request's diff for people: [{key, label, old, new}] with parameter names and readable values."""
+    return [{"key": k, "label": show_key(k), "old": show_value(k, ab[0]), "new": show_value(k, ab[1])}
+            for k, ab in (diff_ or {}).items() if isinstance(ab, (list, tuple)) and len(ab) == 2]
 
 
 def create_proposal(root: str, by: str, title=None, changes=None, base_rev: str | None = None, branch: str = "main",
@@ -593,11 +626,31 @@ def create_proposal(root: str, by: str, title=None, changes=None, base_rev: str 
              "diff": pv["changes"], "stages": pv["stages"], "explicit_stages": [s for s in (stages or []) if s in ORDER],
              "disciplines": pv["disciplines"], "base_rev": pv["base_rev"], "base_sha256": base["design_sha256"] if base else None,
              "design_sha256": pv["design_sha256"], "level": pv["level"], "branch": branch, "by": by, "ts": utc(),
-             "status": "open", "source": source or None, "mentions": mentions(note, members) if (note and members) else []}
+             "status": "open", "source": source or None, "mentions": mentions(note, members) if (note and members) else [],
+             "impact": pv.get("impact")}
         append_jsonl(_file(root, "proposals.jsonl"), {"op": "open", **p})
         rv = request_review(root, by, proposal=p["id"], members=members, policy=policy, _proposal=p)
     p["review"] = rv["id"]
     return p
+
+
+def built_summary(root: str, p: dict) -> dict | None:
+    """What an applied change request's revision actually built, next to its base revision: {rev, base_rev, feasible,
+    issues, min_torque_margin: [base, built], unit_cost: [base, built]}; None until it is built."""
+    rev, base = p.get("applied_rev"), p.get("base_rev")
+    a = rev_info(root, rev) if rev else None
+    if a is None:
+        return None
+    s0, s1 = ((rev_info(root, base) or {}).get("summary") or {}) if base else {}, a["summary"]
+    return {"rev": rev, "base_rev": base, "feasible": s1.get("feasible"), "issues": len(s1.get("issues") or []),
+            "min_torque_margin": [s0.get("min_torque_margin"), s1.get("min_torque_margin")],
+            "unit_cost": [s0.get("unit_cost"), s1.get("unit_cost")]}
+
+
+def proposal_name(root: str, pid) -> str:
+    """'change request #3: Swap to Dynamixel' (or the id when it is gone)."""
+    p = get_proposal(root, pid) or {}
+    return f"change request #{p['n']}: {p.get('title')}" if p.get("n") else f"change request {pid}"
 
 
 def head_conflicts(root: str, p: dict) -> list:
@@ -1153,7 +1206,8 @@ def export_bundle(root: str, members=None) -> dict:
 
     def scrub(obj):
         if isinstance(obj, dict):
-            return {k: (name(v) if k in ("by", "proposed_by", "applied_by", "closed_by", "resolved_by", "withdrawn_by") else scrub(v))
+            return {k: (name(v) if k in ("by", "proposed_by", "applied_by", "closed_by", "resolved_by", "withdrawn_by", "revoked_by")
+                        and (v is None or isinstance(v, str)) else scrub(v))
                     for k, v in obj.items() if k not in ("mentions", "requested_from", "authors")}
         if isinstance(obj, list):
             return [scrub(x) for x in obj]
@@ -1177,8 +1231,10 @@ def revision_record(root: str, rev: str, members=None, policy=None) -> dict:
     def person(a):
         return {"name": a.get("name"), "via": a.get("via"), "approved_on": a.get("anchor"), "carried": bool(a.get("carried"))}
 
+    who = rev_by(root, rev)
     return {"format": "morph-team-record/1", "rev": rev, "design_sha256": g["design_sha256"], "level": g["level"],
             "release_gate": {"ok": g["ok"], "text": g["text"]}, "made_by": [name(a) for a in g["authors"]],
+            "applied_by": name(who.get("by")) if who.get("proposed_by") and who.get("by") != who.get("proposed_by") else None,
             "disciplines": [{"discipline": d["discipline"], "label": d["label"], "state": d["state"],
                              "approved_by": [person(a) for a in d["approvers"]],
                              "changes_requested_by": [a.get("name") for a in d["requested_changes"]]} for d in g["disciplines"]],
