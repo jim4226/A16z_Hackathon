@@ -115,7 +115,7 @@ function post(url, body) {
 const GRAPH = {
   sizing: [['arm.', 'object.mass_g', 'electronics.servo', 'electronics.extras'], []], gripper: [['finger.', 'object.', 'gripper.', 'safety_factor', 'electronics.target_force_n', 'electronics.servo'], []],
   electronics: [['electronics.'], ['sizing', 'gripper']], cad: [['finger.', 'object.shape', 'object.diameter_mm', 'build.', 'name'], ['sizing', 'electronics']],
-  sim: [['task.', 'object.', 'arm.', 'finger.', 'build.', 'electronics.extras'], ['sizing', 'gripper']], wiring: [[], ['electronics', 'cad']],
+  sim: [['task.', 'object.', 'arm.', 'finger.', 'build.', 'electronics.extras', 'world.'], ['sizing', 'gripper']], wiring: [[], ['electronics', 'cad']],
   manufacturing: [['build.', 'fab.'], ['cad', 'wiring']], bom: [[], ['manufacturing', 'wiring']], manual: [[], ['cad', 'manufacturing', 'wiring']],
 };
 class FixtureBackend {

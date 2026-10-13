@@ -5,7 +5,7 @@ shapely>=2
 manifold3d
 trimesh
 scipy
-mujoco>=3
+mujoco>=3.1.6  # world mode measures clearance with mj_geomDistance (3.1.6); constraints.txt pins the tested one
 pydantic>=2
 anthropic>=1.13  # the design chat uses output_config (effort)
 pillow

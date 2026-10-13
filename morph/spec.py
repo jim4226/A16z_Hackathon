@@ -77,6 +77,12 @@ class BuildSpec:
 
 
 @dataclass
+class WorldSpec:
+    id: str = ""                     # world mode: the room in <project>/world/world.json ("" = the plain table)
+    sha: str = ""                    # hash of that world.json: editing the room reruns the simulation only
+
+
+@dataclass
 class FabSpec:
     process: str = "auto"            # auto | fdm_print | laser_cut | cnc_router
     tool_d_mm: float = 3.175
@@ -95,6 +101,7 @@ class Design:
     task: TaskSpec = field(default_factory=TaskSpec)
     build: BuildSpec = field(default_factory=BuildSpec)
     safety_factor: float = 2.0
+    world: WorldSpec = field(default_factory=WorldSpec)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -126,6 +133,7 @@ class Design:
             task=TaskSpec(**d.get("task", {})),
             build=BuildSpec(**d.get("build", {})),
             safety_factor=d.get("safety_factor", 2.0),
+            world=WorldSpec(**d.get("world", {})),
         )
 
     def with_changes(self, changes: dict) -> "Design":
