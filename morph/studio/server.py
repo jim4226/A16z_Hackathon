@@ -234,6 +234,15 @@ def _start_features(home: str):
         traceback.print_exc()
 
 
+def _after_build(studio, room, rev):
+    """A finished build: Live prices may start by itself (api_tools.after_build, when its setting is on)."""
+    try:
+        from . import api_tools
+        api_tools.after_build(studio, room, rev)
+    except Exception:  # noqa: BLE001  (an after-build agent never fails the build)
+        traceback.print_exc()
+
+
 def _start_tools(studio):
     """The agents' toolbox (api_tools.attach): runs a stopped Studio left working become interrupted pauses."""
     try:
@@ -474,6 +483,7 @@ class Studio:
                 room.emit({"type": "done", "current": rev_payload(room.p, rev, room.name),
                            "previous": rev_payload(room.p, base, room.name), "seconds": round(time.time() - t0, 1),
                            **self._tag(job)})
+                _after_build(self, room, rev)
                 return rev
             except Exception as exc:  # noqa: BLE001  (shown in the chat; the room keeps working)
                 traceback.print_exc()
@@ -554,6 +564,7 @@ class Studio:
                     job.result = rev
                 room.emit({"type": "done", "current": rev_payload(room.p, rev, room.name), "previous": None,
                            "seconds": round(time.time() - t0, 1), **self._tag(job)})
+                _after_build(self, room, rev)
                 return rev
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()

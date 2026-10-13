@@ -81,7 +81,10 @@ def _normalize(query: str, raw: dict) -> dict:
             "capability_id": a.get("capabilityId"),
             "url": AGENT_PAGE.format(agent=a.get("agentId"), cap=a.get("capabilityId")),
         })
+    question = resp.get("question")
     return {"query": query, "ok": True, "search_id": raw.get("searchId"), "agents": agents,
+            "status": raw.get("status") if isinstance(raw.get("status"), str) else None,  # completed | needs_input | no_match
+            "question": question[:500] if isinstance(question, str) else None,  # what Darwin asks the person (an email ...)
             "no_match_reason": resp.get("noMatchReason")}
 
 

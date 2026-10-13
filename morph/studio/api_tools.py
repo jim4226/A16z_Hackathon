@@ -7,7 +7,7 @@ may start, and what a Studio start and a key save do for the runs that wait (REL
                                               for, cards, result; never message text), what this member may do (`can`)
                                               and whether runs can start now (`ready`)
     GET  /api/runs/answer             viewer  ?run=: a finished run's closing summary, for its card
-    POST /api/runs/start              editor  {agent, rev?}: one of the agents registered here (api_tools.agent)
+    POST /api/runs/start              editor  {agent, rev?}: one of the agents registered here (Live prices: price_check)
     POST /api/runs/decide             editor  {run, decisions: {tool_use_id: allow_once | allow_always | skip | deny}}:
                                               editors may skip; only the owner allows or denies
     POST /api/runs/resume|cancel      editor  {run}
@@ -112,6 +112,35 @@ def keys_saved(req, changed) -> list:
     except Exception:  # noqa: BLE001  (the keys are saved; a run that can't resume yet says so on its card)
         traceback.print_exc()
         return []
+
+
+def after_build(studio, room, rev: str):
+    """After a finished build (server.py): Live prices by itself when "Check live prices after a build" is on (with agent
+    tools, Claude and network lookups), and only when the build changed the purchased parts. Starts in the background,
+    so the room never waits; returns that thread (tests) or None."""
+    from .. import settings
+    from . import agents
+    s = settings.load()
+    if not (s["auto_price_check"] and s["agent_tools_enabled"] and claude_ready()):
+        return None
+    try:
+        parent = (room.p.load_results(rev) or {}).get("parent")
+    except (OSError, ValueError):
+        return None
+    now = agents.bom_lines(room.p, rev)
+    key = lambda lines: sorted((ln["item"], ln["qty"]) for ln in lines)  # noqa: E731
+    if not now or (parent and key(agents.bom_lines(room.p, parent)) == key(now)):
+        return None
+
+    def go():
+        try:
+            agents.start_price_check(studio, room, {"rev": rev}, None, auto=True)
+        except Exception:  # noqa: BLE001  (nothing started; the BOM tab's button still can)
+            traceback.print_exc()
+
+    t = threading.Thread(target=go, daemon=True, name="morph-auto-prices")
+    t.start()
+    return t
 
 
 def _by(req):
@@ -255,3 +284,12 @@ def _runs_cancel(req):
     except ToolboxError as exc:
         raise _refused(exc) from None
     return 200, {"ok": True, "run": view, "ended": view["status"] in ENDED}
+
+
+# ------------------------------------------------------------------ the agents a person may start
+def _register_agents():
+    from . import agents
+    agent(agents.PRICE_AGENT, title="Live prices", start=agents.start_price_check)
+
+
+_register_agents()

@@ -453,7 +453,7 @@ class Toolbox:
                 "turns": run.get("turns", 0), "calls": dict(run.get("calls") or {}), "note": run.get("note", ""),
                 "by": run.get("by"), "spend_usd": run.get("spend_usd", 0.0), "result": run.get("result"),
                 "requests": list(run.get("requests") or []), "context": {k: v for k, v in (run.get("context") or {}).items()
-                                                                         if k in ("rev", "auto")}}
+                                                                         if k in ("rev", "auto", "lines")}}
 
     def wait(self, run_id: str, timeout: float | None = None) -> dict:
         """Block until no thread drives the run (tests and CLI tools); returns its view."""
