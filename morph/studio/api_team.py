@@ -110,8 +110,25 @@ def role_hook(req, role: str, member: dict | None = None) -> dict | None:
     if not authorize(member, req.method, req.path, declared=role, home=home):
         if member is None:
             raise HTTPError(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
-        raise HTTPError(403, f"A team {member.get('role') or 'member'} can't do that here: ask an owner.")
+        raise HTTPError(403, refusal(member, req.method, req.path, role))
     return member
+
+
+def refusal(member: dict, method: str, path: str, declared: str | None = None) -> str:
+    """Why the route table refused a signed-in member, and what they can do instead."""
+    need, flag = roles.required(method, path)
+    if declared and declared != roles.PUBLIC and roles.RANK.get(declared, 0) > roles.RANK.get(need, 0):
+        need = declared
+    if need == "owner":
+        return "Only the team's owners can do that."
+    if flag:
+        what = {"viewers_can_comment": "comment", "viewers_can_propose": "propose changes",
+                "viewers_can_approve": "approve"}.get(flag, "do that")
+        return f"Viewers can't {what} on this team (an owner can allow it under Share, Policy)."
+    if member.get("role") == "viewer":
+        return ("Viewers can't change the design: propose the change under Changes in the right panel, or ask an owner to "
+                "make you an editor.")
+    return f"A team {member.get('role') or 'member'} can't do that here: ask an owner."
 
 
 def _page(title: str, body: str) -> bytes:
@@ -139,11 +156,18 @@ def join_page(code: str, error: str = "", home: str | None = None) -> tuple:
                "revoked": "This invite was cancelled."}.get((inv or {}).get("state"), "This invite link is not valid.")
         return 410 if inv else 400, _page("Morph Studio: invite", f"<h1>Morph Studio</h1><p class=\"bad\">{html.escape(why)}</p>"
                                                                  "<p>Ask the team owner for a new invite link.</p>")
-    tags = "".join(f"<span class=\"tag\">{html.escape(LABELS.get(d, d))}</span>" for d in inv["disciplines"])
+    tags = "".join(f"<span class=\"tag\">{html.escape(LABELS.get(d, d))}</span>" for d in inv["disciplines"] if d != GENERALIST)
     who = f"{html.escape(inv['invited_by'])} invited you" if inv.get("invited_by") else "You're invited"
     err = f"<p class=\"bad\">{html.escape(error)}</p>" if error else ""
+    does = {"viewer": "You'll see the robot live, comment and propose changes.", "editor": "You'll edit and build the robot, "
+            "propose and apply changes, review and release.", "owner": "You'll run the team: everything an editor does, plus "
+            "members, invites and settings."}.get(inv["role"], "")
+    reviews = ("<p class=\"dim\" style=\"margin:0 0 6px\">You review changes to:</p>" if tags else "") + \
+        (f"<div class=\"tags\">{tags}</div>" if tags else "") + \
+        ("<p class=\"dim\">As a generalist you also review every stage that has no specialist on the team.</p>"
+         if GENERALIST in inv["disciplines"] else "")
     body = (f"<h1>Join {html.escape(inv.get('team') or 'the team')} on Morph Studio</h1>"
-            f"<p>{who} as <b>{html.escape(inv['role'])}</b>. This link works once.</p><div class=\"tags\">{tags}</div>{err}"
+            f"<p>{who} as <b>{html.escape(inv['role'])}</b>. {does} This link works once.</p>{reviews}{err}"
             f"<form method=\"post\" action=\"/api/team/join\"><input type=\"hidden\" name=\"code\" value=\"{html.escape(code)}\">"
             f"<input name=\"name\" maxlength=\"40\" autocomplete=\"name\" placeholder=\"Your name\" aria-label=\"Your name\" required autofocus "
             f"value=\"{html.escape(inv.get('name_hint') or '')}\"><button type=\"submit\">Join</button></form>"
@@ -647,12 +671,14 @@ def proposals_post(req):
     p = collab.create_proposal(root, m["id"], b.get("title") or None, b.get("changes"), base_rev=b.get("base_rev") or None,
                                branch=b.get("branch") or "main", stages=stages, note=b.get("note") or "", members=members, policy=pol)
     out = _decorate_proposal(root, p, members, pol)
-    asked = out["routing"]["reviewers"]
-    _notify(req, asked, "review_request", f"{m['name']} asks for your review of change request #{p['n']}: {p['title']}",
-            {"proposal": p["id"], "review": p.get("review")})
-    _notify(req, out["routing"]["watchers"], "watch", f"{m['name']} opened change request #{p['n']}: {p['title']}", {"proposal": p["id"]})
-    _notify(req, [x for x in p.get("mentions") or [] if x not in asked], "mention",
-            f"{m['name']} mentioned you in change request #{p['n']}", {"proposal": p["id"]})
+    asked, said = out["routing"]["reviewers"], set(p.get("mentions") or [])
+    what = f"change request #{p['n']}: {p['title']}"
+    for mid in asked:  # a reviewer who was also @mentioned gets one notification that says both
+        _notify(req, [mid], "review_request", f"{m['name']} asks for your review of {what}"
+                + (f", and mentioned you: {p.get('note', '')[:120]}" if mid in said else ""), {"proposal": p["id"], "review": p.get("review")})
+    _notify(req, out["routing"]["watchers"], "watch", f"{m['name']} opened {what}", {"proposal": p["id"]})
+    _notify(req, [x for x in said if x not in asked], "mention", f"{m['name']} mentioned you in {what}: {p.get('note', '')[:120]}",
+            {"proposal": p["id"]})
     _emit(req, {"type": "proposal", "action": "open", "proposal": out})
     return 200, {"ok": True, "proposal": _decorate_proposal(root, p, members, pol, member=m)}
 
@@ -776,7 +802,7 @@ def reviews_post(req):
     m, b, root, members, pol = _me(req), _body(req), _root(req), _members(req), _policy(req)
     rv = collab.request_review(root, m["id"], rev=b.get("rev") or None, proposal=b.get("proposal") or None,
                                disciplines=b.get("disciplines") or None, note=b.get("note") or "", members=members, policy=pol)
-    what = rv["target"]["rev"] or f"change request {rv['target']['proposal']}"
+    what = rv["target"]["rev"] or collab.proposal_name(root, rv["target"]["proposal"])
     asked = sorted({x for r in rv["requested_from"] for x in r["members"]})
     _notify(req, asked, "review_request", f"{m['name']} asks for your review of {what}: "
             + ", ".join(LABELS[d] for d in rv["disciplines"]), {"review": rv["id"], "rev": rv["target"]["rev"]})
@@ -793,10 +819,11 @@ def reviews_decide(req):
                        disciplines=b.get("disciplines") or None, members=members, policy=pol)
     last = rv["decisions"][-1]
     verb = "approved" if last["decision"] == "approve" else "requested changes on"
-    what = rv["target"]["rev"] or f"change request {rv['target']['proposal']}"
+    what = rv["target"]["rev"] or collab.proposal_name(root, rv["target"]["proposal"])
     tell = set(rv.get("authors") or []) | {rv.get("by")}
-    _notify(req, sorted(x for x in tell if x), "decision",
-            f"{m['name']} {verb} {what} as " + activity._and([LABELS[d] for d in last["disciplines"]]), {"review": rv["id"], "rev": rv["target"]["rev"]})
+    note = f": {last['note'][:140]}" if last.get("note") else ""
+    _notify(req, sorted(x for x in tell if x), "decision", f"{m['name']} {verb} {what} as "
+            + activity._and([LABELS[d] for d in last["disciplines"]]) + note, {"review": rv["id"], "rev": rv["target"]["rev"]})
     out = {"ok": True, "review": rv}
     if rv["target"]["rev"]:
         out["gate"] = collab.release_gate(root, rv["target"]["rev"], members, pol)
