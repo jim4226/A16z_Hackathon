@@ -197,6 +197,23 @@ morph world egg-picker --starter desk     # or --off for the plain table again
 
 Limits, the optional AI review and what it sends: [docs/WORLD.md](docs/WORLD.md).
 
+### Robustness studies (beta)
+
+One nominal run says a design works once, exactly as drawn. `morph study` runs a revision's pick and place hundreds of
+times in randomized worlds within the project's tolerances (the object off its mark and turned, its size and mass,
+friction, grip-force calibration, servo torque and deadband, encoder noise, the set-point rate and, in World mode,
+the mount and every box) and reports how often it succeeds with a 95 % interval, what the failures have in common, and
+whether they hold up under other simulator settings.
+
+```bash
+morph study egg-picker                 # 200 runs and the solver checks: about 2 minutes on 4 cores
+morph study egg-picker --runs 1000     # deeper: the first 200 are kept
+morph study egg-picker --stress        # every tolerance range doubled
+```
+
+Results are saved in the project (`.studies/`) as each run finishes, so Ctrl+C keeps them and the same command
+carries on. It is simulation, for the tolerances shown; not a field failure rate.
+
 ### SubQ Snap (optional)
 
 With a SubQ key (Keys, `SUBQ_API_KEY`), SubQ Snap makes quick yes/no and multiple-choice decisions, labelled

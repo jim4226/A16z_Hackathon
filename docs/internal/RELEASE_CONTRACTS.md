@@ -47,6 +47,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room |
 | `<p>/brief.json` | F1 | the final brief that created the project |
 | `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
+| `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
 | `<p>/.team/comments.jsonl`, `reviews.jsonl`, `proposals.jsonl`, `branches.json`, `releases.json` | F4 | Teams |
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
 | `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h) |
@@ -202,6 +203,8 @@ A job applies its changes to the newest revision when its turn comes. If one of 
     or they signed out everywhere (the stream checks its member every 2 s, `api_team.StreamCheck`); the page then opens
     the sign-in page, which tells that browser why
   - `world {stage, status, text, result?}`
+  - `study {id, rev, status, phase, done, n, successes, failures, unstable, p, ci, eta_s, elapsed_s, first_result_s,
+    summary?}`: a robustness study's progress (section 16)
 - Agent roles for `agent` events: `triage` (SubQ), `designer` (Claude), `feasibility` (code),
   `pipeline`, `sourcing` (Darwin), `memory` (Keewano), `vision` (Claude/SubQ on frames), `reviewer`.
 
@@ -657,3 +660,89 @@ in sections 3, 4 and 8. The rest that other code relies on:
   New robot, Import and video browsers and the Teams owner's (World mode always has it, through SwiftShader); and
   `PLAYWRIGHT_CHROMIUM` names the browser. A page fails on script or console errors, requests to
   other sites or sideways scrolling; a Studio fails on any traceback.
+
+## 16. Simulation track: robustness studies (B2-S1; the Studio routes and the card come next)
+
+One nominal simulation says a design works once, exactly as drawn. A **study** runs a revision's own nominal
+pick-and-place plan (planned once, as the Studio's simulation plans it) many times in worlds drawn from the project's
+tolerance spec, labels every run, and reports the success rate with its interval, the failure groups, the one rule
+that best isolates each and whether it survives other solver settings. Simulation, for the tolerances shown; never a
+field failure rate (section 0, honesty).
+
+- **Code.** `morph/services/robust.py` (the engine: spec, sampling, workers, analysis, storage) and
+  `morph/studio/jobs.py` (heavy jobs beside the build queue); both outside `pipeline_version()`. `simulate.py` has
+  only the hook below. `tests/test_sim_golden.py` pins every nominal output (robot.xml, each `sim_<scenario>.json`
+  with its frames, `run_all`'s return value, the MuJoCo state after each scenario) for the egg-picker (full and fast),
+  the SO-101 and a world with a box on the carry path: with `perturb=None` the simulation stays bit-identical
+  (hashes per environment; elsewhere the test is skipped). The H2 and H7 changes to `simulate.py` keep it green.
+- **Hook** (`simulate.py`, pick_place only): `run(asm, design, "pick_place", perturb=...)`, or for a study
+  `_plan_pick_place(rob, design)` once, then per run `with _perturbed(rob, p): _run_pick_place(rob, design, plan, at,
+  p, on_step)`. Keys, all optional (absent = nominal): `off_across_mm`, `off_along_mm`, `yaw_deg` (the object's start,
+  relative to its long axis), `size_scale`, `mass_g`, `friction_scale` (pads and object), `grip_scale`, `torque_scale`
+  (servo torque and P gain), `deadband_deg`, `encoder_cpr`, `encoder_noise` (counts), `noise_seed`, `rate_hz` (host
+  set-points, held between updates), `mount_dx_mm`, `mount_dy_mm`, `mount_yaw_deg` (the room moves the other way),
+  `box_offsets_mm` ([dx, dy] per world box), `timestep`, `impratio`. The plan, the host's gains and the targets stay
+  nominal; `_perturbed` puts the compiled model back bit for bit (also when a run raises). A run that moves the room
+  turns MuJoCo's midphase off for that run: the compiled collision hierarchy still has the boxes where they were, and a
+  moved box would otherwise be passed through.
+- **Tolerance spec** (`robust.default_spec(design, world)`, `tolerances(root, rev)`): entries `{name, label, unit,
+  lo, hi, nominal, source, on, edited}` in a fixed sampling order (never reorder or insert):
+  `object_across_mm`, `object_along_mm`, `object_yaw_deg`, `object_size`, `object_mass_g`, `pad_friction`, `grip_force`,
+  `servo_torque`, `servo_deadband_deg`, `encoder_noise`, `setpoint_hz`, then in World mode `mount_dx_mm`, `mount_dy_mm`,
+  `mount_yaw_deg`, `box_error_mm`. Defaults and sources follow the research (egg mass 50-72 g from USDA weight
+  classes, FSR 400 calibration, ST3215 torque, backlash and 4096-count encoder; the rest "assumed"); other objects and
+  servo families get relative ranges marked "assumed". A project's edits live in `<p>/.studies/tolerances.json`
+  (`save_tolerances(root, {name: {lo?, hi?, on?}} | {"world_preset": name} | {"reset": true}, rev, by)`: finite numbers
+  inside `robust.LIMITS`, `lo <= hi`; anything else is a `StudyError`). A study records the spec's sha
+  (`base_spec_sha`); once the project's spec changes, `load()` marks the older study `outdated`. **World presets:**
+  `robust.register_world_preset(name, fn(sim_world, design) -> the four world entries)`; `standard` is mount +/-10 mm
+  and +/-2 deg, each box 0-15 mm (H2 adds scan presets). Stress mode doubles every range about its nominal (floors in
+  `robust.FLOOR`).
+- **Runs.** Run `i` of a study draws its world from `SeedSequence([seed, i])` only (every entry draws, also when
+  switched off, so editing one range never moves the others): outcomes do not depend on the number of workers or the
+  batch size, a deeper study extends a shallower one, and the default seed (1) reproduces the published egg-picker
+  study (140 of 200 at 1 ms). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
+  more than 45 mm off: the jaws stayed shut and carried it), `drag`, `missed_grasp` (not lifted half the hover height),
+  `dropped` (more than 12 mm of slip in transit), `over_force` (the product's damage check), `unreachable`,
+  `world_collision` grouped as `world_collision:<phase>` (the plan's phase at the first contact); `unstable` (MuJoCo's
+  BADQPOS, BADQVEL, BADQACC or BADCTRL warnings, after which MuJoCo restarts the run from its first frame, a full
+  contact or constraint buffer, or a non-finite state) and `error` runs are listed and never counted.
+- **Statistics.** Wilson 95 % for the success rate and every group; Clopper-Pearson (exact) when no run, or every run,
+  fails (200 runs, none failing: at least 98.2 %). Each group gets the one-parameter interval (on the value, or on the
+  distance from nominal for two-sided ranges; 26 quantile cuts) with the best Youden's J, `significant` when above the
+  95th percentile of what 60 shuffles of the outcomes reach. **Model sensitivity:** every group's runs (at most 20)
+  and 15 successes are re-run at half the timestep and with `impratio=1`; a group is `model_sensitive` when, under
+  either, fewer than 80 % of its runs still fail the same way or at least 20 % (and 2) of the successes now do. Copy:
+  section 0's honesty notes and heavy_plan's notes 1-3 ("This result changes with the simulator's friction or timestep
+  settings. Test it on the real robot." is `robust.SENSITIVE`).
+- **Workers.** `multiprocessing` with the spawn start method on every OS, `MORPH_STUDY_WORKERS` (default cores minus
+  one) at `MORPH_STUDY_NICE` (default 5; below-normal priority on Windows). A short-lived process rebuilds the
+  revision's robot the way the pipeline built it and plans once; the robot travels to the workers packed (pickle, only
+  over the study's own pipes, never through a file) with a mesh-free skeleton of the assembly, so a worker is up and
+  loaded in about 0.3 s on an idle machine (0.9 s at load 9-14) at about 140 MB. A rebuilt model that differs from the
+  revision's `sim/robot.xml` is reported (`model.matches_revision: false`). A dead worker's runs are tried once more
+  elsewhere. Study processes mute MuJoCo's warning handler (it writes `MUJOCO_LOG.TXT` into the current folder) and read
+  the warning counters instead.
+- **Storage** (`<p>/.studies/`, a hidden folder: never a project, never exported): `tolerances.json`; `active.json`
+  (the running study's lock, its heartbeat is the file's mtime: older than 30 s means it stopped); `<id>/study.json`
+  (definition, effective spec, status `queued|preparing|running|checking|done|cancelled|error`, read back as
+  `interrupted` when its process stopped, `model`, `timing`, `summary`); `<id>/runs.jsonl` and `<id>/checks.jsonl`
+  (one row per run, about 0.5 KB). `<id>` is 12 hex digits of the sha256 of (revision, design, pipeline version,
+  seed, timestep, stress, spec). Studies never write inside `rNNN/` and never change a stage hash.
+- **Heavy jobs** (`morph/studio/jobs.py`): `jobs.manager(studio)` (one per Studio; `HeavyJobs(home, emit=...)`
+  elsewhere): `start_study(project, rev=None, *, runs=200, seed=1, stress=False, workers=None, timestep=0.001,
+  checks=True, by=None)` -> job (`StudyError`; `StudyBusy` when one runs for that project, in any process), `status`,
+  `cancel` (within 2 s; finished runs kept), `wait`, `resume(project, id)`, `interrupted()`, `result(project, id,
+  rows=False)`, `studies`, `tolerances`, `save_tolerances`, `replay(project, id, run)` (a run's
+  `sim_pick_place.json` document with a `robustness` block, for the viewer). A job never takes the room's lock, its job
+  queue or `Studio.builds`; jobs on different projects take turns (`MORPH_HEAVY_JOBS`, default 1 at once).
+- **Event** `study {id, rev, status, phase: prepare|runs|checks|done, done, n, successes, failures, unstable, p, ci,
+  eta_s, elapsed_s, first_result_s, stress, summary?}` to the project's room, at most four a second plus every phase
+  change and the end (`summary`: n, successes, p, wilson95, clopper_pearson95, groups with id, label, count, rate,
+  model_sensitive).
+- **CLI:** `morph study <project> [--rev rNNN] [--runs N] [--workers N] [--stress] [--seed S] [--timestep ms]
+  [--no-checks]` prints the study as ASCII text; Ctrl+C keeps the finished runs and the same command carries on.
+- **For the next package (routes and the card):** register the routes in `api_study.py` with `jobs.manager(req.studio)`
+  (starting, cancelling and editing tolerances are editor routes; reading is viewer); `delete_project` and Reset demo
+  should cancel the project's study first (`jobs.manager(studio).cancel(name)`) and the Studio's stop should call
+  `shutdown()`; the card shows `model.matches_revision`, `outdated`, unstable and error runs, and the honesty notes.

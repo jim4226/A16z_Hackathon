@@ -61,6 +61,18 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   move from the rest pose would sweep through a box, the approach and the return to rest follow the carry path too.
   It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
   `morph world <project> --starter desk` (or `--off`) does the same from a terminal; [docs/WORLD.md](docs/WORLD.md).
+- **Robustness studies** (beta; the engine and `morph study`, the Studio card follows): one nominal simulation says a
+  design works once, exactly as drawn. A study runs a revision's own pick-and-place plan hundreds of times in worlds
+  drawn from the project's tolerances (the object off its mark, turned, its size and mass, pad friction, grip-force
+  calibration, servo torque, deadband, encoder noise, the host's set-point rate and, in World mode, the mount and every
+  box; each range says where it comes from), labels every run (placed, jaws stayed shut, dragged, missed grasp, dropped,
+  over-force, hit the room in a named phase) and reports the success rate with a Wilson 95 % interval, the rule that
+  best isolates each failure group, and whether that failure holds at half the timestep and with softer friction
+  ("model-sensitive: test it on the real robot"). The default egg-picker succeeds in 140 of 200 runs (63-76 %); 58 of
+  the 60 failures are the jaws staying shut at release (half the runs with the egg turned 3-9 degrees end that way), and
+  that failure changes with the solver's settings. Runs are reproducible from the seed on any number of worker
+  processes, saved as they finish and resumable (Ctrl+C keeps them): `morph study egg-picker [--runs N] [--stress]`.
+  Simulation, for the tolerances shown; not a field failure rate.
 - `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
   a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
   (whether ffmpeg was found), Teams and World mode.
