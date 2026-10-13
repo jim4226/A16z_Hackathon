@@ -929,7 +929,8 @@ def _combine(jobs: dict, late: list, prepared: list, idx: list, kind: str, marks
 LABELS = {"object.name": "Object", "object.shape": "Object shape", "object.diameter_mm": "Object width",
           "object.length_mm": "Object length", "object.mass_g": "Object mass", "object.friction": "Surface friction",
           "object.max_force_n": "Damage force", "finger.length_mm": "Finger length", "finger.pad_height_mm": "Pad height",
-          "finger.pad_depth_mm": "Pad depth", "task.pick_x_mm": "Pick x", "task.pick_y_mm": "Pick y",
+          "finger.pad_depth_mm": "Pad depth", "finger.sensor": "Finger force sensor", "finger.width_mm": "Finger width",
+          "finger.material": "Finger material", "fab.process": "Finger process", "task.pick_x_mm": "Pick x", "task.pick_y_mm": "Pick y",
           "task.place_x_mm": "Place x", "task.place_y_mm": "Place y", "task.cycle_time_s": "Cycle time",
           "arm.reach_mm": "Reach", "electronics.extras": "Extras"}
 # the keys video and photo estimates may change, within the ranges the generator accepts (PARAMS where it has them)
@@ -937,8 +938,9 @@ BOUNDS = {"object.diameter_mm": (5.0, 300.0), "object.length_mm": (5.0, 500.0), 
           "object.friction": (0.1, 1.2), "object.max_force_n": (0.0, 100.0), "finger.length_mm": (30.0, 120.0),
           "finger.pad_height_mm": (10.0, 60.0), "finger.pad_depth_mm": (2.0, 15.0), "task.pick_x_mm": (80.0, 400.0),
           "task.pick_y_mm": (-300.0, 300.0), "task.place_x_mm": (80.0, 400.0), "task.place_y_mm": (-300.0, 300.0),
-          "task.cycle_time_s": (4.0, 60.0), "arm.reach_mm": (200.0, 500.0)}
-ENUMS = {"object.shape": ("cylinder", "box", "sphere")}
+          "task.cycle_time_s": (4.0, 60.0), "arm.reach_mm": (200.0, 500.0), "finger.width_mm": (20.0, 20.0)}
+ENUMS = {"object.shape": ("cylinder", "box", "sphere"), "finger.sensor": ("none", "fsr402"), "finger.material": ("PETG",),
+         "fab.process": ("fdm_print",)}  # the finger keys only as the force-sensing finger needs them (_map_finger)
 EXTRAS = ("imu", "wrist_camera", "estop", "wifi")  # the parameter editor's order
 KEY_ORDER = tuple(LABELS)  # how the list of changes reads: object first, then the fingers, layout, timing, arm, extras
 KEYS = frozenset(BOUNDS) | frozenset(ENUMS) | {"object.name", "electronics.extras"}
@@ -1113,6 +1115,7 @@ def map_to_changes(result, design=None, answers=None) -> dict:
                   [{"label": FRAGILITY_LABEL[d["claude"]].capitalize(), "value": d["claude"]},
                    {"label": FRAGILITY_LABEL[d["subq"]].capitalize(), "value": d["subq"]}], "second opinion")
     _map_object(m)
+    _map_finger(m)
     _map_motion(m)
     _map_timing(m)
     _map_safety(m)
@@ -1197,6 +1200,33 @@ def _map_object(m: _Mapping):
     if (o.get("count_per_cycle") or 1) > 1 and m.section_ok("object"):
         k = o["count_per_cycle"]
         m.notes.append(f"The person moves {k} at a time; the gripper picks one, so expect {k} times as many cycles.")
+
+
+FSR_FINGER = {"finger.sensor": "fsr402", "finger.width_mm": 20.0, "fab.process": "fdm_print", "finger.material": "PETG"}
+
+
+def _map_finger(m: _Mapping):
+    """A new object that is fragile, or narrower than the plain finger closes on, gets the force-sensing finger, as the
+    brief and Import give it: without it the build flags the grip (too much force, or pads that can't close)."""
+    if not any(k.startswith("object.") for k in m.changes):
+        return
+    flat = {**(m.flat or {}), **m.changes}
+    if flat.get("finger.sensor") == "fsr402":
+        return
+    shape = flat.get("object.shape") if flat.get("object.shape") in ("cylinder", "box", "sphere") else "cylinder"
+    try:
+        from .capability import min_width
+        lo = float(min_width(shape, "none"))
+    except Exception:  # noqa: BLE001  (no envelope module to ask: the plain finger's own limits)
+        lo = 31.5 if shape == "box" else 38.0
+    dia, dmg = float(flat.get("object.diameter_mm") or 0.0), float(flat.get("object.max_force_n") or 0.0)
+    narrow = 0 < dia < lo
+    if narrow or dmg > 0:
+        why = (f"a {dia:g} mm {shape} is narrower than the plain finger closes on" if narrow else
+               f"it is damaged above {dmg:g} N: the force sensor keeps the grip under that")
+        for k, v in FSR_FINGER.items():
+            if (m.flat or {}).get(k) != v:
+                m.put(k, v, why, "rules")
 
 
 def _user_overrides(m: _Mapping, o: dict):
@@ -1496,7 +1526,9 @@ def describe(mapping: dict, by_hand: bool = False) -> str:
     if None not in pick or None not in place:
         parts.append(", ".join(f"{n} ({p[0]:g}, {p[1]:g}) mm" for n, p in (("pick", pick), ("place", place)) if None not in p))
     for k in KEY_ORDER:
-        if k in ch and k != "object.name" and not k.startswith(("finger.", "task.pick_", "task.place_")):
+        if k in ch and k != "object.name" and not k.startswith(("finger.", "fab.", "task.pick_", "task.place_")):
             parts.append(f"{LABELS.get(k, k).lower()} {_fmt(k, ch[k])}")
+    if ch.get("finger.sensor") == "fsr402":  # the finger keys follow the object; the force sensor is worth saying
+        parts.append("force-sensing fingers")
     head = "From the cards you filled in" if by_hand else "From the video"
     return (f"{head}: " + "; ".join(parts[:9]) + ".") if parts else f"{head}: nothing to change."

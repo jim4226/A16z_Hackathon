@@ -226,6 +226,19 @@ def _servo_voltage(acts: list) -> tuple[tuple, float, list]:
     return (lo, hi), nom, issues
 
 
+def _underpowered(acts: list, servo_v: float) -> list:
+    """A servo on a rail far below its rated voltage (a 12 V STS3215 beside 7.4 V ones) gives roughly that fraction of
+    the torque it was sized with: below 70 % the joint's sizing no longer holds, so say which servos and why."""
+    low = {}
+    for a in acts:
+        rated = ACTUATORS[a["key"]]["nominal_v"]
+        if servo_v < 0.7 * rated:
+            low.setdefault(a["key"], (rated, []))[1].append(a["joint"])
+    return [f"{', '.join(dict.fromkeys(joints))}: {key} is rated at {rated:g} V but the shared servo rail runs at {servo_v:g} V, "
+            f"so it gives roughly {servo_v / rated:.0%} of the torque it was sized with; put every servo on one voltage class"
+            for key, (rated, joints) in low.items()]
+
+
 def _pick_supply(vrange, nom, need_a) -> dict:
     """Supply whose voltage sits inside the actuators' range (closest to nominal, enough current), else 12 V + buck."""
     cands = []
@@ -363,6 +376,7 @@ def plan(design, sizing: dict) -> dict:
     supply = _pick_supply(vrange, nom, rough_peak)
     servo_v = supply["v"] if not supply["servo_buck"] else min(max(nom, vrange[0]), vrange[1])
     supply["servo_v"] = servo_v
+    issues += _underpowered(acts, servo_v)
     if config == "custom_pcb" and supply["servo_buck"]:
         issues.append(f"no catalogued supply sits inside the servos' {vrange[0]:g}-{vrange[1]:g} V range; the custom PCB "
                       "passes its input straight to the servo rail, so use the modules config (12 V + servo buck)")

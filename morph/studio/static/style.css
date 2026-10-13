@@ -807,6 +807,9 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .msg.assistant > div { min-width: 0; }
 .msg .qacts .btn { height: 26px; padding: 0 10px; font-size: 12px; }
 #projMenu .tag.warn { margin-left: 4px; }
+/* many projects: the list scrolls and New robot / Import under it stay in reach; long descriptions show two lines */
+#projList { max-height: calc(100vh - 190px); overflow-y: auto; overscroll-behavior: contain; }
+#projList small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ---- feature slots: hidden until a feature adds something to them ---- */
 .feat-slot { display: none; }

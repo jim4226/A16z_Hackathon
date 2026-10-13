@@ -51,6 +51,9 @@ LAYOUTS = {  # pick -> place on the table plane (base frame, mm); all three size
                      "from": "from its right side", "to": "to its left side"},
     "short_hop": {"label": "Two spots 12 cm apart", "pick": (230.0, -60.0), "place": (230.0, 60.0),
                   "from": "from one spot", "to": "to another 12 cm away"},
+    # the mirror image, for "from the left to the right" in someone's own words (never offered as a chip)
+    "left_to_right": {"label": "Left side to right side", "pick": (180.0, 150.0), "place": (180.0, -150.0),
+                      "from": "from its left side", "to": "to its right side", "typed": True},
 }
 
 # Objects the archetypes offer (presets from intent.OBJECTS are used by key). Every one is inside the envelope and
@@ -108,6 +111,7 @@ class Archetype:
     things: str = "the objects"
     name: str = "{obj}-picker"
     note: str = ""             # scope note when the archetype itself is an adjusted version of the request
+    place: str = ""            # what the tray-to-bin layout sets things down by, when it isn't a bin ("plant")
 
 
 _FOOD = (r"\b(strawberr(?:y|ies)|berr(?:y|ies)|eggs?|tomato(?:e?s)?|fruits?|grapes?|cherr(?:y|ies)|peach(?:es)?|plums?|apricots?|"
@@ -143,14 +147,14 @@ ARCHETYPES = {a.key: a for a in (
               ((r"\bwater(?:s|ing)?\s+(?:my |the |our )?(?:house)?(?:plants?|garden|flowers?|herbs?|seedlings?)\b", 5),
                (r"\b(plants?|garden\w*|flowers?|herbs?|seedlings?|watering)\b", 2)),
               ("watering_bottle", "spray_bottle"), ("layout", "people_nearby"), throughput=10.0,
-              object_q="What should it carry to the plants?", things="the bottle", name="plant-helper",
-              note="Pouring is not simulated: the robot carries a small watering bottle to the plant and sets it down."),
+              object_q="What should it carry to the plants?", things="the bottle", name="plant-helper", place="plant",
+              note="Pouring is not simulated: the robot carries the bottle to the plant and sets it down."),
     Archetype("pet_feeding", "Pet feeding", "dispense",
               ((r"\bfeed(?:s|ing|er)?\s+(?:my |the |our )?(?:cats?|dogs?|pets?|fish|hamsters?|rabbits?|birds?)\b", 5),
                (r"\b(kibble|pet food|cat food|dog food|treats?|feeder|feeding)\b", 2)),
               ("food_cup", "treat_ball"), ("people_nearby", "layout"), people="pets", throughput=10.0,
-              object_q="What should it bring to the bowl?", things="the food", name="pet-helper",
-              note="Tipping food out is not simulated: the robot carries a cup of food to the feeding spot and sets it down."),
+              object_q="What should it bring to the bowl?", things="the food", name="pet-helper", place="feeding spot",
+              note="Tipping food out is not simulated: the robot carries the food to the feeding spot and sets it down."),
     Archetype("dishes", "Dishes", "pick_place",
               ((r"\b(dish(?:es)?|dishwasher|plates?|bowls?|cutlery|silverware|mugs?|(?<!suction )cups?|glasses|ramekins?|saucers?)\b", 2),),
               ("espresso_cup", "ramekin"), ("people_nearby", "layout"), environment="kitchen", people="yes",
@@ -530,7 +534,11 @@ def parse(text: str) -> dict:
     elif re.search(r"\b(robust|sturdy|tough|unbreakable|heavy[- ]duty)\b", t):
         s["fragility"] = "robust"
     # layout (inferred: the coordinates are always an assumption)
-    if re.search(r"\b(left to right|right to left|side to side|one side to the other)\b", t):
+    lr = re.search(r"\b(left|right)(?:[- ]hand)?(?:\s+side)?\s+(?:to|into|onto|over to|across to)\s+(?:the\s+|its\s+|my\s+)?"
+                   r"(left|right)\b", t)
+    if lr and lr.group(1) != lr.group(2):  # "from the left side to the right side": the way the person said it
+        inf["layout"] = "left_to_right" if lr.group(1) == "left" else "side_to_side"
+    elif re.search(r"\b(side to side|one side to the other)\b", t):
         inf["layout"] = "side_to_side"
     elif re.search(r"\bfrom one (?:cup|bin|box|spot|tray|place|rack) to (?:another|the other)\b|"
                    r"\bbetween (?:two )?(?:racks|trays|spots|cups|bins|stations)\b", t):
@@ -558,11 +566,16 @@ def parse(text: str) -> dict:
         if re.search(pat, t):
             s["environment"] = env
             break
-    if re.search(r"\b(kids?|children|child|toddlers?|my son|my daughter)\b", t):
+    near = r"(?:near(?:by)?|next to|around|beside|alongside|close (?:by|to))"
+    if re.search(r"\b(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b(?:\s+\w+){0,3}?\s*" + near + r"\b", t):
+        s["people_nearby"] = "no"   # "nobody nearby", "no one works next to it"
+    elif re.search(r"\b(kids?|children|child|toddlers?|my son|my daughter)\b", t):
         s["people_nearby"] = "children"
     elif re.search(r"\b(next to me|beside me|near me|with people|around people|coworkers?|colleagues?|hands? me|pass(?:es)? me|"
-                   r"while i work|people around)\b", t):
-        s["people_nearby"] = "yes"
+                   r"while i work|people around)\b", t) or \
+            re.search(r"\b(?:people|someone|staff|workers|operators|users|humans|others)\b(?:\s+\w+){0,3}?\s*" + near + r"\b", t) or \
+            re.search(r"\b" + near + r"\s+(?:to\s+)?(?:people|staff|workers|operators|users|humans|someone|others|us)\b", t):
+        s["people_nearby"] = "yes"  # "people nearby", "people work next to it", "near people"
     elif re.search(r"\b(alone|unattended|on its own|by itself|enclosed|fenced)\b", t):
         s["people_nearby"] = "no"
     # precision
@@ -591,7 +604,7 @@ def parse(text: str) -> dict:
     if re.search(r"\b(wi-?fi|wireless|from my phone|over the network|remote(?:ly)? control\w*|bluetooth)\b", t):
         s["connectivity"] = "wifi"
     # quantity
-    q = re.search(r"(\d[\d,]*)\s*(?:units|robots|copies|pcs|pieces|of them|arms)\b", t)
+    q = re.search(r"(\d[\d,]*)\s*(?:units?|robots?|cop(?:y|ies)|pcs|pieces|of them|arms)\b", t)
     if q:
         s["quantity"] = int(q.group(1).replace(",", ""))
     elif re.search(r"\b(mass[- ]produc\w*|production run|to sell|for sale|as a product|thousands)\b", t):
@@ -779,7 +792,8 @@ def _chip(label, value, default=False, note=""):
 
 def make_question(b: Brief, slot: str) -> dict:
     a, d = _arch(b), defaults(b)
-    things, they = a.things, "they"
+    things = a.things
+    they = "they" if things.endswith("s") else "it"  # "the bottle" and "the food": where does it go
     if filled(b, "object"):  # "Where does it pick up the strawberries, and where do they go?"
         lab = _object_label(b.get("object"), short=True)
         things = "the " + re.sub(r"^(?:a|an) ", "", lab.lower())
@@ -794,7 +808,7 @@ def make_question(b: Brief, slot: str) -> dict:
                  [_chip("Pick and place", "pick_place"), _chip("Sort into bins", "sort"), _chip("Hand things to me", "hand_over")]),
         "layout": (f"Where does it pick up {things}, and where do{'es' if they == 'it' else ''} {they} go?",
                    "Sets the pick and place points the arm is sized for.",
-                   [_chip(v["label"], k) for k, v in LAYOUTS.items()]),
+                   [_chip(_layout(b, k)["label"], k) for k in LAYOUTS if not LAYOUTS[k].get("typed")]),
         "throughput": ("How fast does it need to work?", "Sets the cycle time in the simulation; about 4 s is the fastest.",
                        [_chip("One every 10 s", 10.0), _chip("One every 6 s", 6.0), _chip("As fast as it can, about 4 s", 4.0)]),
         "people_nearby": ("Will people work right next to it?", "People, children or pets nearby add an emergency stop.",
@@ -962,6 +976,46 @@ def refuse(b: Brief, evidence: str, source: str) -> Brief:
     return b
 
 
+_BARE_MM = re.compile(r"(?:about |around |roughly |~)?(\d+(?:\.\d+)?)\s*mm(?:\s+(?:wide|across|in diameter))?")
+_BARE_S = re.compile(r"(?:about |around |roughly |~|one every )?(\d+(?:\.\d+)?)\s*s(?:ec(?:ond)?s?)?(?:\s+each)?")
+
+
+def _typed_answer(b: Brief, p: dict, t: str):
+    """A typed reply to the questions ("6 cm, 200 g, 10 per minute, people nearby"), on top of parse(): a bare length is
+    the object's width and a bare time the pace, and sizes alone change the object being discussed instead of replacing
+    it with a generic one (strawberries stay strawberries, at 200 g). `t` is the lower-case text with units normalized."""
+    s = p["slots"]
+    o = s.get("object")
+    generic = o is None or (o.get("key") is None and o.get("name") == "object")
+    dia = None
+    for part in re.split(r"[,;]|\band\b|\bplus\b", t):
+        part = part.strip(" .!")
+        m = _BARE_MM.fullmatch(part)
+        if m and (o is None or "diameter_mm" not in (o.get("stated") or [])):
+            dia = float(m.group(1))
+        m = _BARE_S.fullmatch(part)
+        if m and "throughput" not in s:
+            s["throughput"] = float(m.group(1))
+    if not generic:  # a named object ("eggs, 50 mm"): the bare width is its width
+        if dia is not None:
+            o.update(diameter_mm=dia, length_mm=max(float(o.get("length_mm") or 0), dia),
+                     stated=sorted(set(o.get("stated") or []) | {"diameter_mm"}))
+        return
+    if o is None and dia is None:
+        return
+    base = dict(value(b, "object"))
+    stated = set(base.pop("stated", None) or [])
+    if o is not None:
+        for k in o.get("stated") or []:
+            base[k] = o[k]
+            stated.add(k)
+    if dia is not None:
+        base["diameter_mm"] = dia
+        stated.add("diameter_mm")
+    base["length_mm"] = max(float(base.get("length_mm") or 0), float(base["diameter_mm"]))
+    s["object"] = dict(base, stated=sorted(stated))
+
+
 def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
     """Apply chip answers ({slot: value}) and an optional free-text answer. Returns notes for what was ignored."""
     notes = []
@@ -985,8 +1039,10 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
         if p["harm"]:
             refuse(b, p["harm"], "rules")
             return notes
+        _typed_answer(b, p, normalize_units(t.lower()))
         keep = {"slots": {k: v for k, v in p["slots"].items() if k in ("object", "throughput", "budget", "quantity", "precision",
-                                                                         "fragility", "people_nearby", "perception", "connectivity")},
+                                                                         "fragility", "people_nearby", "perception", "connectivity",
+                                                                         "environment", "task")},
                 "inferred": p["inferred"], "hints": p["hints"], "oos": p["oos"], "implicit": p["implicit"]}
         merge(b, keep, "user", "answer")
         a2 = _archetype_for_object(b.get("object"))
@@ -1331,8 +1387,17 @@ def suggest_name(b: Brief, home: str | None = None) -> str:
     return name
 
 
+def _layout(b: Brief, key: str | None = None) -> dict:
+    """A layout in this brief's words: a plant or a feeding spot takes the bin's place where the archetype has one."""
+    key = key or value(b, "layout")
+    lay, place = LAYOUTS[key], _arch(b).place
+    if place and key == "tray_to_bin":
+        return dict(lay, label=f"Tray in front, {place} on the left", to=f"to the {place} on its left")
+    return lay
+
+
 def _phrase_layout(b: Brief) -> str:
-    lay = LAYOUTS[value(b, "layout")]
+    lay = _layout(b)
     return f"{lay['from']} {lay['to']}"
 
 
@@ -1413,19 +1478,22 @@ def assumptions_for(b: Brief, ch: dict) -> list:
                 add(slot, f"I assumed {PEOPLE[v]}, so there is no emergency stop.", kind)
             elif v in ("yes", "children", "pets"):
                 add(slot, f"I assumed {PEOPLE[v]}, so it has an emergency stop.", kind)
-            else:
-                add(slot, f"It works at a {ENVIRONMENTS[env]}, so it has an emergency stop.", kind)
+            else:  # the e-stop comes with the place: say whether the place was the person's or Morph's guess
+                es = b.slots.get("environment")
+                said = es is not None and es.source in ("user", "video", "photo")
+                add(slot, f"{'It works' if said else 'I assumed it works'} at a {ENVIRONMENTS[env]}, so it has an emergency stop.",
+                    kind)
         elif slot == "perception" and v == "wrist_camera":
             add(slot, "I added a wrist camera for sorting: the hardware and wiring only; Morph does not write vision code.", kind)
         elif slot == "budget" and ch.get("arm.actuator_family") == "smart_bus" and not ch.get("arm.source"):
-            add(slot, "I assumed a maker budget (under $1,000), so it uses smart-bus servos (Feetech STS3215).", kind)
+            add(slot, f"I assumed a parts budget of up to ${float(v):,.0f}, so it uses smart-bus servos (Feetech STS3215).", kind)
         elif slot == "quantity" and int(v) == 1:
             add(slot, "I assumed one 3D-printed prototype.", kind)
     return out
 
 
 def summary_text(b: Brief, ch: dict, pre: dict) -> str:
-    o, lay = value(b, "object"), LAYOUTS[value(b, "layout")]
+    o, lay = value(b, "object"), _layout(b)
     if ch.get("arm.source") == "so101":
         head, grip = "Your SO-101 arm", "its own gripper"
     else:
@@ -1483,13 +1551,16 @@ def card(b: Brief) -> list:
             v = value(b, slot)
             if slot == "object":
                 txt = _object_label(v) + (f", damaged above {v['max_force_n']:g} N" if v.get("max_force_n") else "")
-                gaps = [w for k, w in (("diameter_mm", "width"), ("mass_g", "weight")) if v.get("stated") and not v.get("key")
-                        and k not in v["stated"]]
-                txt += f"; {' and '.join(gaps)} assumed" if gaps else ""
+                gaps = [w for k, w in (("diameter_mm", "width"), ("mass_g", "weight")) if v.get("stated") and k not in v["stated"]]
+                preset = "from Morph's preset"
+                if gaps:  # what the person didn't give: Morph's preset for a named object, else an assumption
+                    txt += f"; {' and '.join(gaps)} {preset if v.get('key') else 'assumed'}"
+                elif v.get("key") and not v.get("stated") and src in ("user", "video", "photo"):
+                    txt += f"; sizes {preset}"  # the person named it; the sizes are Morph's
             elif slot == "task":
                 txt = TASKS.get(v, v).capitalize()
             elif slot == "layout":
-                txt = LAYOUTS[v]["label"]
+                txt = _layout(b, v)["label"]
             elif slot == "throughput":
                 txt = f"One every {float(v):g} s"
             elif slot == "environment":

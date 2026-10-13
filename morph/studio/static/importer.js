@@ -232,7 +232,8 @@ export class Importer {
 
   reset() {
     this.view = 'pick'; this.id = null; this.det = null; this.sel = 0; this.rows = []; this.error = ''; this.answers = {};
-    this.progress = 0; this.building = null; this.result = null; this.flagMissing = false; this.nameValue = null;
+    this.progress = 0; this.building = null; this.result = null; this.flagMissing = false; this.nameValue = null; this.early = null;
+    this.urlValue = '';
   }
 
   subscribe() {
@@ -255,8 +256,15 @@ export class Importer {
     if (i >= 0) this.rows[i] = { ...row, key }; else this.rows.push({ ...row, key });
     if (ev.stage === 'build' && ev.status === 'error' && this.building) { this.building.error = ev.text; }
     // the Studio relays the new project's build to this tab: its stages, then done
-    if (ev.stage === 'build' && this.building && ev.node) this.building.nodes[ev.node] = ev.node_status;
-    if (ev.stage === 'build' && ev.status === 'done' && this.building) { this.finish(ev.built_project || this.building.project); return; }
+    if (ev.stage === 'build' && ev.node) {  // stages can run before the commit's answer arrives: keep them for it
+      if (this.building) this.building.nodes[ev.node] = ev.node_status; else (this.early ||= {})[ev.node] = ev.node_status;
+    }
+    if (ev.stage === 'build' && ev.status === 'done' && this.building) {
+      Object.assign(this.building, { feasible: ev.feasible, issues: ev.issues || [], rev: ev.rev });  // the build's verdict
+      Object.assign(this.building.nodes, ev.stages || {});
+      this.finish(ev.built_project || this.building.project);
+      return;
+    }
     if (ev.stage === 'fetch' && ev.status === 'done' && this.view === 'working' && this.fetching) { this.fetching = false; this.detect(); return; }
     if (ev.stage === 'fetch' && ev.status === 'error' && this.fetching) { this.fetching = false; this.fail(ev.text); return; }
     if (['working', 'building'].includes(this.view)) this.render();
@@ -277,7 +285,7 @@ export class Importer {
     if (!this.building || this.building.done) return;
     this.building.done = true;
     this.view = 'done';
-    this.s.toast?.(`Imported ${project}`);
+    this.s.toast?.(this.building.feasible === false ? `Imported ${project}: not feasible yet` : `Imported ${project}`);
     this.render();
   }
 
@@ -297,6 +305,8 @@ export class Importer {
 
   async fetchUrl(url) {
     url = (url || '').trim();
+    this.urlValue = url;  // a refused link stays in the box to be corrected
+    if (/^(?:www\.)?(?:github\.com|raw\.githubusercontent\.com|huggingface\.co|[a-z0-9-]+\.hf\.co)\//i.test(url)) url = `https://${url}`;  // pasted without https://
     if (!/^https:\/\//i.test(url)) { this.fail('Paste a link that starts with https:// (github.com, raw.githubusercontent.com or huggingface.co).'); return; }
     this.error = '';
     this.view = 'working';
@@ -307,7 +317,18 @@ export class Importer {
       this.id = r.id;
       this.fetching = true;
       if (!this.s.on) await this.pollFetch();
+      else this.checkFetch();
     } catch (e) { this.fail(e.message); }
+  }
+
+  // a download that ended before this tab knew its session (offline it fails at once) sent its event too early to be
+  // matched: ask once how it went; a later event settles it otherwise
+  async checkFetch() {
+    const id = this.id;
+    const st = await this.call('GET', `/api/import/${id}`).catch(() => null);
+    if (!this.fetching || this.id !== id) return;
+    if (st?.fetch?.status === 'done' && this.view === 'working') { this.fetching = false; this.detect(); }
+    else if (st?.fetch?.status === 'error') { this.fetching = false; this.fail(st.fetch.error); }
   }
 
   async pollFetch() {   // only used when the host has no live events
@@ -410,7 +431,8 @@ export class Importer {
       const r = await this.call('POST', `/api/import/${this.id}/commit`, { candidate: c.index, name, answers: this.answersFor(c) });
       this.result = r;
       if (r.kind === 'robot' || r.kind === 'project') {
-        this.building = { project: r.project, nodes: {}, done: false, title: r.title || r.project };
+        this.building = { project: r.project, nodes: { ...(this.early || {}) }, done: false, title: r.title || r.project };
+        this.early = null;
         this.rows = [{ key: 'commit', stage: 'commit', status: 'done', text: r.kind === 'robot' ? `Saved the robot as ${r.source}` : `Importing ${r.revisions || 1} revision(s)` },
           { key: 'build', stage: 'build', status: 'busy', text: `Building ${r.project}: about 15 to 30 seconds` }];
         this.view = 'building';
@@ -440,7 +462,7 @@ export class Importer {
           <div class="btns"><button class="btn" type="button" data-a="files">Choose files</button><button class="btn" type="button" data-a="folder">Choose folder</button></div>
           <div class="fmt">Up to 300 MB and 2,000 files per import</div></div>
         <div class="imp-or">or paste a link</div>
-        <form class="imp-url" data-a="url"><input type="url" name="url" placeholder="https://github.com/owner/repo  or  https://huggingface.co/owner/repo" aria-label="GitHub or Hugging Face link" autocomplete="off" spellcheck="false">
+        <form class="imp-url" data-a="url" novalidate><input type="url" name="url" value="${E(this.urlValue || '')}" placeholder="https://github.com/owner/repo  or  https://huggingface.co/owner/repo" aria-label="GitHub or Hugging Face link" autocomplete="off" spellcheck="false">
           <button class="btn primary" type="submit">Fetch</button></form>
         <div class="imp-note">github.com, raw.githubusercontent.com and huggingface.co only (public repositories).</div>
         <input type="file" data-in="files" multiple hidden><input type="file" data-in="folder" webkitdirectory multiple hidden>${err}`;
@@ -523,16 +545,19 @@ export class Importer {
     const fam = this.answers.family;
     const opt = (sel) => `<option value="">${fam ? 'sized by Morph' : 'pick a model'}</option>${FAMILIES.map(([f, label]) => `<optgroup label="${E(label)}">${cat.filter((k) => k.family === f).map((k) => `<option value="${E(k.key)}"${k.key === sel ? ' selected' : ''} title="${E(k.name)}">${E(shortName(k.key, k.name))} (${k.torque_nm} N·m)</option>`).join('')}</optgroup>`).join('')}`;
     const need = acts.some(([, a]) => !a.key);
+    const famName = fam ? FAMILIES.find((f) => f[0] === fam)[1] : '';
     const actRows = acts.map(([j, a]) => {
-      const pick = (this.answers.actuators || {})[j] || a.key || (fam ? '' : a.suggest) || '';
-      const why = (this.answers.actuators || {})[j] ? 'you picked it' : a.key ? a.basis : fam ? `${FAMILIES.find((f) => f[0] === fam)[1]} family, sized for the worst-case pose` : a.suggest ? `suggested: ${a.suggest_basis}` : a.options ? `the files mention ${a.options.map((k) => shortName(k)).join(' and ')}` : a.basis;
+      // a family sizes every joint the person didn't pick, the files' motors too (as the commit does)
+      const mine = (this.answers.actuators || {})[j];
+      const pick = mine || (fam ? '' : a.key || a.suggest) || '';
+      const why = mine ? 'you picked it' : fam ? `${famName} family, sized for the worst-case pose` : a.key ? a.basis : a.suggest ? `suggested: ${a.suggest_basis}` : a.options ? `the files mention ${a.options.map((k) => shortName(k)).join(' and ')}` : a.basis;
       return `<tr class="${!a.key && !pick && !fam ? `need${this.flagMissing ? ' miss' : ''}` : ''}"><td class="j">${E(j)}</td><td><select data-act="${E(j)}" aria-label="Actuator for ${E(j)}">${opt(pick)}</select></td><td class="why">${E(why)}</td></tr>`;
     }).join('');
-    const famBtns = need ? `<div class="imp-note" style="margin:0 0 5px">One family for every joint (Morph sizes each joint):</div><div class="imp-fam">${FAMILIES.map(([f, label, ex]) => `<button type="button" class="btn${fam === f ? ' on' : ''}" data-fam="${f}">${E(label)}<small>${E(ex)}</small></button>`).join('')}</div>` : '';
+    const famBtns = acts.length ? `<div class="imp-note" style="margin:0 0 5px">${need ? 'One family for every joint (Morph sizes each joint):' : 'Or one family for every joint, each sized by Morph on one supply voltage:'}</div><div class="imp-fam">${FAMILIES.map(([f, label, ex]) => `<button type="button" class="btn${fam === f ? ' on' : ''}" data-fam="${f}">${E(label)}<small>${E(ex)}</small></button>`).join('')}</div>` : '';
     const detail = `<label class="imp-lab" for="imp-name">Robot name</label><input id="imp-name" class="imp-in" data-k="name" value="${E(c.name || '')}" maxlength="40" spellcheck="false">
       ${this.checklist(rows)}
       <div class="imp-sec"><h4>Gripper joint<span class="grow"></span>${gSel}</h4></div>
-      <div class="imp-sec"><h4>Actuators ${need ? '<span class="tag warn">your choice needed</span>' : '<span class="tag good">from the files</span>'}</h4>
+      <div class="imp-sec"><h4>Actuators ${fam ? `<span class="tag acc">${E(famName)} family</span>` : need ? '<span class="tag warn">your choice needed</span>' : '<span class="tag good">from the files</span>'}</h4>
         ${need ? '<div class="imp-note" style="margin:0 0 6px">The files don\'t say which motors drive the joints (URDF effort values are simulation numbers, not ratings). Pick a model per joint, or one family and Morph sizes each joint.</div>' : ''}
         ${famBtns}<table class="imp-acts">${actRows}</table></div>${this.warnings(c.warnings)}`;
     const side = `<div class="imp-prev" data-prev>${this.previewHtml(c)}<span class="cap">Ready pose · ${E(c.file.split('/').pop())}</span></div>
@@ -547,8 +572,11 @@ export class Importer {
     const k = { mm: 1, cm: 10, m: 1000, in: 25.4 }[u] / ({ mm: 1, cm: 10, m: 1000, in: 25.4 }[c.units?.unit || 'mm'] || 1);
     const d = (ch['object.diameter_mm'] || 0) * k, L = (ch['object.length_mm'] || 0) * k;
     const mass = (c.mass?.g || 0) * k * k * k * (this.answers.density_g_cc || c.mass?.density_g_cc || 1) / (c.mass?.density_g_cc || 1);
+    const dmg = ch['object.max_force_n'];
+    const breaks = dmg ? `damaged above ${E(dmg)} N${c.preset ? ` (Morph's ${E(c.preset)} preset)` : ''}` : 'robust: a mesh can\'t say how fragile it is; tell the chat if it breaks';
     const detail = `<dl class="imp-kv"><dt>Name</dt><dd>${E(ch['object.name'])}</dd><dt>Shape</dt><dd>${E(ch['object.shape'])} (fills ${Math.round((c.fit?.fill_ratio || 0) * 100)}% of it)</dd>
-        <dt>Size</dt><dd>${d.toFixed(1)} × ${L.toFixed(1)} mm</dd><dt>Mass</dt><dd>${mass.toFixed(mass < 10 ? 1 : 0)} g, estimated (volume × density)</dd></dl>
+        <dt>Size</dt><dd>${d.toFixed(1)} × ${L.toFixed(1)} mm</dd><dt>Mass</dt><dd>${mass.toFixed(mass < 10 ? 1 : 0)} g, estimated (volume × density)</dd>
+        <dt>Handling</dt><dd>${breaks}</dd>${ch['finger.sensor'] === 'fsr402' ? '<dt>Fingers</dt><dd>force-sensing (FSR 402), so the grip stays under that force</dd>' : ''}</dl>
       <div class="imp-sec"><h4>Units<span class="grow"></span><select data-k="units" aria-label="Units">${['mm', 'cm', 'm', 'in'].map((x) => `<option value="${x}"${x === u ? ' selected' : ''}>${x}</option>`).join('')}</select></h4>
         <div class="imp-note">${E(c.units?.why || '')}</div></div>
       <div class="imp-sec"><h4>Density<span class="grow"></span><select data-k="density" aria-label="Density">${[['1.0', 'water-like (1.0 g/cm³)'], ['0.4', 'foam or wood (0.4)'], ['1.24', 'PLA print (1.24)'], ['2.7', 'aluminium (2.7)'], ['7.85', 'steel (7.85)']].map(([v, l]) => `<option value="${v}"${Number(v) === Number(this.answers.density_g_cc || c.mass?.density_g_cc || 1) ? ' selected' : ''}>${l}</option>`).join('')}</select></h4></div>
@@ -563,8 +591,9 @@ export class Importer {
     const tables = (c.tables || []).length > 1 ? `<div class="imp-sec"><h4>Table<span class="grow"></span><select data-k="table">${c.tables.map((t) => `<option value="${t.index}"${t.index === (this.answers.table ?? 0) ? ' selected' : ''}>${E(t.title || `Table ${t.index + 1}`)} (${t.rows} rows)</option>`).join('')}</select></h4></div>` : '';
     const detail = `<dl class="imp-kv"><dt>Rows</dt><dd>${c.count}</dd><dt>Total</dt><dd>${money(c.total)}${c.total != null ? ' (from the listed prices)' : ''}</dd></dl>${tables}
       <table class="imp-table"><thead><tr><th>Part</th><th>Qty</th><th>Unit</th><th>Link</th></tr></thead><tbody>${(c.rows || []).slice(0, 12).map((r) => `<tr><td>${E(r.item)}${r.catalog ? ` <span class="tag acc">${E(r.catalog)}</span>` : ''}</td><td class="n">${E(r.qty)}</td><td class="n">${money(r.unit_price)}</td><td>${r.url ? `<a href="${E(r.url)}" target="_blank" rel="noopener noreferrer">${E(new URL(r.url).hostname.replace(/^www\./, ''))}</a>` : ''}</td></tr>`).join('')}</tbody></table>
-      ${(c.rows || []).length > 12 ? `<div class="imp-note">and ${c.rows.length - 12} more rows</div>` : ''}${this.warnings(c.warnings)}`;
-    return { detail, action: `<button class="btn primary" type="button" data-a="commit">Use this parts list</button>` };
+      ${(c.rows || []).length > 12 ? `<div class="imp-note">and ${c.rows.length - 12} more rows</div>` : ''}${this.warnings(c.warnings)}
+      <div class="imp-note">Morph reads the parts, quantities and prices; a parts list doesn't change the robot. You get it back as a clean CSV.</div>`;
+    return { detail, action: `<button class="btn primary" type="button" data-a="commit">Read this parts list</button>` };
   }
 
   boardView(c) {
@@ -580,7 +609,18 @@ export class Importer {
     const E = this.esc, b = this.building, r = this.result || {};
     if (b) {
       const st = STAGES.map(([k, label]) => `<span class="imp-stage ${E(b.nodes[k] || '')}">${E(label)}</span>`).join('');
-      const fin = b.done ? `<div class="imp-row done" style="margin-top:12px"><span class="dot">${ROW_ICON.done}</span><span><b>${E(b.project)}</b> is ready: open it to check the gripper, tool point and actuators Morph derived (marked auto-calibrated).</span></div>` : '';
+      let fin = '';
+      if (b.done && b.feasible === false) {  // built, but its own checks flag it: say what and how to fix it
+        const torque = (b.issues || []).some((x) => /N·m with margin/.test(x));
+        fin = `<div class="imp-row warn" style="margin-top:12px"><span class="dot">${ROW_ICON.warn}</span><span><b>${E(b.project)}</b> is built${b.rev ? ` (${E(b.rev)})` : ''}, but it isn't feasible yet:</span></div>
+          ${this.warnings(b.issues)}
+          <div class="imp-note">${torque ? 'A joint needs a stronger servo: import the files again and pick one family under Actuators, so Morph sizes every joint for the worst pose (2x torque margin) on one supply voltage.'
+            : 'Open it to see each stage\'s report, then change what it flags in the chat or the parameters.'}</div>`;
+      } else if (b.done) {
+        fin = `<div class="imp-row done" style="margin-top:12px"><span class="dot">${ROW_ICON.done}</span><span><b>${E(b.project)}</b> is ready: ${this.result?.kind === 'project'
+          ? 'the export\'s latest design was rebuilt here, every stage from scratch.'
+          : 'open it to check the gripper, tool point and actuators Morph derived (marked auto-calibrated).'}</span></div>`;
+      }
       const body = `${this.checklist(this.rows)}<div class="imp-stages">${st}</div>${fin}${b.error ? `<div class="imp-err">${E(b.error)}</div>` : ''}
         ${b.done ? '' : '<div class="imp-note">You can close this window; the build continues and the project appears in the project list.</div>'}`;
       const foot = `<span class="grow"></span><button class="btn" type="button" data-a="close">Close</button>${b.done ? `<button class="btn primary" type="button" data-a="openp">Open ${E(b.project)}</button>` : ''}`;
@@ -593,7 +633,10 @@ export class Importer {
         : `Read the object (${obj}). It was not applied here; type these changes in the chat to use it:`;
       if (!r.applied) extra = `<pre class="imp-pre">${E(Object.entries(r.changes || {}).map(([k, v]) => `${k}=${v}`).join(', '))}</pre>`;
     }
-    if (r.kind === 'bom') text = `Read ${E((r.rows || []).length)} parts${r.total != null ? ` totalling ${E(r.total)} ${E(r.currency || '')}` : ''}.`;
+    if (r.kind === 'bom') {
+      const sym = r.currency === 'EUR' ? '€' : r.currency === 'GBP' ? '£' : r.currency && r.currency !== 'USD' ? `${r.currency} ` : '$';
+      text = `Read ${E((r.rows || []).length)} parts${r.total != null ? ` totalling ${E(sym)}${E(Number(r.total).toFixed(2))}` : ''}. A parts list doesn't change the robot: download it as a clean CSV below.`;
+    }
     if (r.kind === 'board') text = `Read ${E((r.rows || []).length)} BOM lines${r.board_mm ? ` and a ${E(r.board_mm[0])} × ${E(r.board_mm[1])} mm outline` : ''}.`;
     const csv = (r.kind === 'bom' || r.kind === 'board') && (r.rows || []).length ? '<button class="btn" type="button" data-a="csv">Download CSV</button>' : '';
     return { body: `<div class="imp-row done" style="margin-top:14px"><span class="dot">${ROW_ICON.done}</span><span>${text}</span></div>${extra}`,

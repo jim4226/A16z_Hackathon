@@ -55,8 +55,6 @@ TEXT_RX = [  # README / BOM / package.xml mentions -> catalog key
 ]
 MOTOR_PART_RX = r"^(?!.*(holder|mount|bracket|plate|cover|case|adapter|clip|cap))" \
                 r".*(motor|servo|sts3215|st3215|xl430|xl330|xm430|dynamixel|mg996|ds3218|sg90)"
-FAMILY_KEYS = {"hobby_pwm": ["sg90", "mg996r", "ds3218"], "smart_bus": ["sts3215_7v4", "sts3215"],
-               "dynamixel": ["xl330_m288", "xl430_w250", "xm430_w350"]}
 STOCK_ELECTRONICS = {
     "smart_bus": {"bus": "ttl_half_duplex", "driver": "bus_servo_adapter", "host": "laptop over USB"},
     "dynamixel": {"bus": "ttl_half_duplex", "driver": "u2d2", "host": "laptop over USB"},
@@ -424,21 +422,29 @@ def actuators(J: dict, names: dict, joints: list, hints: dict, answers: dict) ->
     return out
 
 
+# One servo rail per arm: a family's actuators in groups that share a supply voltage at their rated torque (a 12 V
+# STS3215 on the 7.4 V servos' rail gives far less than its 2.9 N·m; an XL330 can't share an XL430's 10-12 V).
+FAMILY_GROUPS = {"hobby_pwm": [["sg90", "mg996r", "ds3218"]], "smart_bus": [["sts3215_7v4"], ["sts3215"]],
+                 "dynamixel": [["xl330_m288"], ["xl430_w250", "xm430_w350"]]}
+
+
 def size_for_family(asm, arm: list, gripper: str, family: str, payload_kg: float = 0.06, margin: float = 2.0) -> dict:
-    """Weakest actuator of the family meeting the worst-case gravity torque x margin, per joint."""
+    """The weakest actuator per joint that holds its worst-case gravity torque x margin, all from the family's first
+    voltage group where every joint has one (else the strongest group). The torques are worked out as the build's
+    sizing does (imported.size): yaw and roll joints at least a fifth of the heaviest load, the jaw at least 0.15 N·m."""
     from ..robot import catalog, catalog_extra  # noqa: F401
     from ..robot.imported import worst_case_torques
 
-    keys = FAMILY_KEYS.get(family)
-    if not keys:
+    groups = FAMILY_GROUPS.get(family)
+    if not groups:
         raise ImportFailed(f"Unknown actuator family {family!r}; pick hobby_pwm, smart_bus or dynamixel.")
     need, _ = worst_case_torques(asm, arm, gripper, payload_kg)
-    out = {}
-    for n in arm + [gripper]:
-        req = max(need.get(n, 0.0), 0.15 if n == gripper else 0.2 * max(need.values() or [0.0]))
-        key = next((k for k in keys if catalog.ACTUATORS[k]["torque_nm"] >= req * margin), keys[-1])
-        out[n] = key
-    return out
+    need[gripper] = max(need.get(gripper, 0.0), 0.15)
+    top = max(need.values() or [0.0])
+    reqs = {n: max(need.get(n, 0.0), 0.2 * top) * margin for n in arm + [gripper]}
+    holds = lambda keys, req: next((k for k in keys if catalog.ACTUATORS[k]["torque_nm"] >= req), None)  # noqa: E731
+    keys = next((g for g in groups if all(holds(g, r) for r in reqs.values())), groups[-1])
+    return {n: holds(keys, r) or keys[-1] for n, r in reqs.items()}
 
 
 def steps_for(asm) -> list:
@@ -550,11 +556,16 @@ def derive(src_urdf: str, out_dir: str, bundle: str | None = None, answers: dict
         warnings.append(f"Units: {units.get('note')}; check the preview before building")
 
     # ---- actuators
+    names_all = " ".join(names.values())
+    overrides = {}
+    if re.search(MOTOR_PART_RX, names_all, re.I | re.M) or any(re.search(MOTOR_PART_RX, v, re.I) for v in names.values()):
+        overrides[MOTOR_PART_RX] = {"kind": "actuator", "material": "purchased", "process": "purchased", "color": "#1d1f23"}
     hints = actuator_hints(bundle)
     acts = actuators(J, names, arm + [gripper], hints, answers)
     fam = answers.get("family")
-    if fam:
-        picked = size_for_family(asm, arm, gripper, fam)
+    if fam:  # sized on the masses the build sizes with: motor meshes are bought parts, not printed ones
+        asm_s = load_urdf(urdf_out, {**base_prof, "material": "PLA", "process": "fdm_print", "part_overrides": overrides})
+        picked = size_for_family(asm_s, arm, gripper, fam)
         for n in arm + [gripper]:
             if acts[n]["key"] is None or acts[n]["basis"] != "you picked it":
                 acts[n] = {"key": picked[n], "basis": f"{fam} family, sized by Morph for the worst-case pose"}
@@ -574,10 +585,6 @@ def derive(src_urdf: str, out_dir: str, bundle: str | None = None, answers: dict
     if len(families) > 1:
         warnings.append(f"mixed actuator families ({', '.join(families)}); they need separate buses")
 
-    names_all = " ".join(names.values())
-    overrides = {}
-    if re.search(MOTOR_PART_RX, names_all, re.I | re.M) or any(re.search(MOTOR_PART_RX, v, re.I) for v in names.values()):
-        overrides[MOTOR_PART_RX] = {"kind": "actuator", "material": "purchased", "process": "purchased", "color": "#1d1f23"}
     profile = {
         "name": os.path.basename(out_dir), "title": title or "Imported robot", "source_url": source_url,
         "license": (license_info or {}).get("summary") or "unknown (imported)", "urdf": "robot.urdf",

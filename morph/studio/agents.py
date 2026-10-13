@@ -390,7 +390,8 @@ def run_turn(b: B.Brief | None = None, *, text: str | None = None, answers: dict
                 return b
         else:
             n = sum(1 for s in b.slots.values() if s.source == "user")
-            tl("designer", "rules", "done", f"Built-in rules: {n} fact{'s' if n != 1 else ''} from your words (no Claude key)", ms=0)
+            tl("designer", "rules", "done", (f"Built-in rules: {n} fact{'s' if n != 1 else ''} from your words" if n else
+                                             "Built-in rules: the kind of job only, no sizes or details yet") + " (no Claude key)", ms=0)
     if b.status == "refused":
         return b
     tl("feasibility", "code", "start", "Checking it against what Morph can build")
@@ -546,9 +547,10 @@ def _repair_kind(text: str) -> str:
 
 
 def after_build(b: B.Brief, project: str, rev: str | None = None, summary: dict | None = None, *, source=None,
-                keewano_send=None, on_event=None) -> dict:
+                keewano_send=None, on_event=None, no_source: str = "Sourcing runs from the BOM tab") -> dict:
     """Integration hook once the first revision exists: Darwin sourcing (`source(rev)`, e.g. Studio.source) and Keewano
-    memory (`keewano_send(project, events)`), each on the timeline. Returns {"sourcing", "memory"} statuses; never raises."""
+    memory (`keewano_send(project, events)`), each on the timeline; `no_source` says why there is no sourcing. Returns
+    {"sourcing", "memory"} statuses; never raises."""
     tl, out = _Timeline(b, on_event), {}
     if source is not None:
         tl("sourcing", "darwin", "start", "Darwin is shortlisting suppliers for every bought part")
@@ -561,7 +563,7 @@ def after_build(b: B.Brief, project: str, rev: str | None = None, summary: dict 
             tl("sourcing", "darwin", "error", f"Sourcing failed ({exc.__class__.__name__}); the BOM tab can retry")
     else:
         out["sourcing"] = "skipped"
-        tl("sourcing", "darwin", "skipped", "Sourcing runs from the BOM tab", ms=0)
+        tl("sourcing", "darwin", "skipped", no_source, ms=0)
     if keewano_send is not None:
         try:
             ok = keewano_send(project, memory_events(b, "ready") + memory_events(b, "built", summary))

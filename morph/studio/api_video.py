@@ -241,6 +241,7 @@ def info(req):
     studio = _studio(req)
     return 200, {"ok": True, "claude": claude, "subq": sub, "ffmpeg": ff["available"], "ffmpeg_version": ff.get("version"),
                  "manual_reason": None if claude or sub else vision.offline_reason(),
+                 "offline": not vision._network_allowed(),  # why there is no Claude here: network off, or no key
                  "remote": bool(getattr(studio, "remote", False)),
                  "limits": {"frames": vision.MAX_FRAMES, "frame_mb": vision.MAX_FRAME_BYTES >> 20, "body_mb": MAX_BODY >> 20,
                             "upload_mb": MAX_UPLOAD >> 20, "seconds": int(ffmpeg.MAX_SECONDS), "long_edge": vision.FRAME_EDGE,

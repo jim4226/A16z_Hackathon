@@ -740,6 +740,10 @@ def test_info_says_what_this_studio_can_do(studio, keys):
     assert out["limits"]["frames"] == 12 and out["limits"]["upload_mb"] == 500 and "path" not in json.dumps(out)
     keys.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
     assert api_video.info(req(studio, method="GET"))[1]["claude"] is True
+    assert out["offline"] is False
+    keys.setenv("MORPH_OFFLINE", "1")  # a key, but network lookups off: the page says that, not "no Claude key"
+    off = api_video.info(req(studio, method="GET"))[1]
+    assert off["claude"] is False and off["offline"] is True and off["manual_reason"].startswith("Network lookups are off")
 
 
 def test_analyze_route(studio, claude):

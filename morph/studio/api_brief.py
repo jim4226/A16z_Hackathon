@@ -344,7 +344,8 @@ def _first_build(studio, room, job, brief_id):
     source = (lambda rev: studio.source(rev, room)) if settings.network_allowed() and settings.sourcing_enabled() else None
     send = (lambda project, events: keewano.send(project, events)) if (
         settings.telemetry_enabled() and os.environ.get("KEEWANO_API_KEY")) else None
-    agents.after_build(b, room.name, job.result, summary, source=source, keewano_send=send, on_event=room.hub.send)
+    agents.after_build(b, room.name, job.result, summary, source=source, keewano_send=send, on_event=room.hub.send,
+                       no_source="Darwin lookups are off in Keys, Privacy and network; the BOM tab shows saved answers")
 
 
 register(routes.route, home_for=_studio_home, create_project_for=_studio_create, open_project_for=_open_project)

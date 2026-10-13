@@ -233,9 +233,10 @@ class VideoJob {
 
   reset() {
     this.cleanup?.();
+    clearTimeout(this.pt);  // a list of changes still due for the last clip
     Object.assign(this, { files: [], kind: 'video', frames: [], sel: 0, marks: { grasp_s: null, release_s: null }, crop: null, cropping: false,
       video: null, url: null, duration: null, subq: false, result: null, mapping: null, answers: {}, why: '', jobId: null, view: null,
-      busy: false, measure: null, photoIs: 'object', name: '' });
+      busy: false, measure: null, photoIs: 'object', name: '', dirty: false });
   }
 
   cleanup() {
@@ -427,6 +428,7 @@ class VideoJob {
 
   // ---- views
   render(view, opts = {}) {
+    const moved = this.view !== view;
     this.view = view;
     const E = this.esc, I = this.I;
     const head = (sub) => `<div class="dlg-h"><div class="kicon">${svg(ICON.film, '')}</div><div class="grow"><div class="t">Show Morph the job</div>
@@ -470,6 +472,7 @@ class VideoJob {
     else if (view === 'measure') html = this.measureHTML(head);
     else if (view === 'review') html = this.reviewHTML(head);
     this.el.innerHTML = html;
+    if (moved) this.el.scrollTop = 0;  // a new step starts at its title, not where the last one was scrolled to
     this.bind();
     if (view === 'analyzing') this.tick();
   }
@@ -516,7 +519,7 @@ class VideoJob {
     const local = this.mode === 'local';
     const sub = this.info?.subq && !local;
     const kindLine = this.kind === 'photo' ? `<div class="pills vj-kind"><span class="lab">This photo shows</span><button type="button" class="${this.photoIs === 'object' ? 'on' : ''}" data-photo="object">the object to pick</button><button type="button" class="${this.photoIs === 'job' ? 'on' : ''}" data-photo="job">the job</button></div>` : '';
-    return head(`${E(this.name)} · ${n} ${photos ? (n === 1 ? 'photo' : 'photos') : `frame${n === 1 ? '' : 's'}`}${this.duration ? ` from ${fmtT(this.duration)}` : ''}${this.frames[0]?.src === 'ffmpeg' ? ' (extracted on the Studio computer)' : this.kind === 'video' ? ', picked here in your browser' : ''}. Nothing leaves this browser until you press Analyze.`)
+    return head(`${E(this.name)} · ${n} ${photos ? (n === 1 ? 'photo' : 'photos') : `frame${n === 1 ? '' : 's'}`}${this.duration ? ` from ${fmtT(this.duration)}` : ''}${this.frames[0]?.src === 'ffmpeg' ? ' (extracted on the Studio computer)' : this.kind === 'video' ? ', picked here in your browser' : ''}. ${this.mode === 'local' ? 'No frame leaves this browser: you fill in the cards.' : 'Nothing leaves this browser until you press Analyze.'}`)
       + `<div class="vj-pick">
         <div class="vj-stage ${this.cropping ? 'cropping' : ''}"><img class="vj-img" src="${f?.thumb || ''}" width="${f?.w || ''}" height="${f?.h || ''}" alt="Selected frame" draggable="false"><canvas class="vj-live" hidden></canvas>
           <div class="vj-ov">${this.crop ? `<div class="vj-crop" style="left:${this.crop.x * 100}%;top:${this.crop.y * 100}%;width:${this.crop.w * 100}%;height:${this.crop.h * 100}%"></div>` : ''}</div>
@@ -527,7 +530,7 @@ class VideoJob {
           <button class="btn ${this.cropping ? 'on' : ''}" type="button" data-a="crop" title="One box for every frame: leave out people, screens and documents">${svg(ICON.crop)}${this.crop ? 'Redraw crop' : 'Crop'}</button>
           ${this.crop ? '<button class="btn ghost" type="button" data-a="nocrop">Clear crop</button>' : ''}<span class="grow"></span>${markLine}</div>
       </div>${remote}${sub && this.subq ? `<div class="vj-subqnote dim">${E(COPY.subq)}</div>` : ''}
-      <div class="dlg-f">${local ? `<span class="vj-mode dim">${this.info?.claude ? `Kept on this computer · <a href="#" data-a="consent">change</a>` : 'Kept on this computer (no Claude key)'}</span>`
+      <div class="dlg-f">${local ? `<span class="vj-mode dim">${this.info?.claude ? `Kept on this computer · <a href="#" data-a="consent">change</a>` : `Kept on this computer (${this.info?.offline ? 'network lookups are off' : 'no Claude key'})`}</span>`
         : sub ? `<label class="vj-subq" title="${E(COPY.subq)}"><span class="switch"><input type="checkbox" data-a="subq" ${this.subq ? 'checked' : ''}><i></i></span>Second opinion (beta)</label>` : ''}
         <span class="grow"></span><span class="dim vj-count">${n} of up to ${DEFAULTS.max}</span>
         ${local ? `<button class="btn primary" type="button" data-a="manual">${I('check', 'sm')}Fill in the cards</button>`
@@ -702,14 +705,16 @@ class VideoJob {
 
   async preview(render = true) {
     const seq = (this.seq = (this.seq || 0) + 1);
+    this.dirty = true;  // the list of changes is behind the cards until this answer is in
     const r = await call(() => this.s.api.post('/api/video/apply', { preview: true, result: this.result, answers: this.answers }));
     if (seq !== this.seq) return;
+    this.dirty = false;
     if (r.ok && r.mapping) this.mapping = r.mapping;
     else if (!r.ok) this.toast(r.error || "Couldn't update the list of changes");
     if (render && this.view === 'results') this.renderSummary();
   }
 
-  previewSoon() { clearTimeout(this.pt); this.pt = setTimeout(() => this.preview(), 350); }
+  previewSoon() { this.dirty = true; clearTimeout(this.pt); this.pt = setTimeout(() => this.preview(), 350); }
 
   // ---- results: cards, questions, notes
   val(path) {
@@ -882,6 +887,8 @@ class VideoJob {
         let v = k === 'bool' ? inp.checked : k === 'num' ? (inp.value === '' ? null : Number(inp.value)) : inp.value.trim();
         if (v === null || v === '' || (k === 'num' && !Number.isFinite(v))) delete this.answers[p]; else this.answers[p] = v;
         inp.closest('.vj-card')?.querySelector('h5 .tag')?.replaceWith(Object.assign(document.createElement('span'), { className: 'tag acc', textContent: 'you set this' }));
+        const basis = p === 'timing.cycle_time_s' && p in this.answers && inp.closest('.vj-card')?.querySelector('.vj-note');
+        if (basis) basis.textContent = 'you entered it';  // no longer "from your marks"
         this.previewSoon();
       };
       inp.addEventListener(inp.dataset.kind === 'bool' || inp.tagName === 'SELECT' ? 'change' : 'input', set);
@@ -890,7 +897,11 @@ class VideoJob {
     el.querySelectorAll('[data-frame]').forEach((b) => (b.onclick = () => this.flash(+b.dataset.frame)));
     const on = (a, fn) => el.querySelectorAll(`[data-a="${a}"]`).forEach((b) => (b.onclick = fn));
     on('back', () => this.render('picker'));
-    on('review', () => (this.project() ? this.render('review') : this.handOff()));
+    on('review', async () => {  // an edit made a moment ago may still be on its way to the list of changes: wait for it
+      if (this.dirty) { clearTimeout(this.pt); await this.preview(false); }
+      if (this.view !== 'results') return;
+      if (this.project()) this.render('review'); else this.handOff();
+    });
     on('measure', () => this.openMeasure());
     this.bindTable(el.querySelector('.vj-table'));
     this.renderSummary();
@@ -1005,7 +1016,8 @@ class VideoJob {
   // ---- review and apply
   reviewHTML(head) {
     const E = this.esc, mp = this.mapping || { items: [], notes: [] }, project = this.project();
-    const fmt = (k, v) => (v == null || v === '' ? '<span class="dim">none</span>' : typeof v === 'number' ? `${+v.toFixed(3)}${/_mm$/.test(k) ? ' mm' : /_g$/.test(k) ? ' g' : /_n$/.test(k) ? ' N' : /_s$/.test(k) ? ' s' : ''}` : E(v));
+    const NAMED = { fsr402: 'FSR 402', fdm_print: '3D printed', auto: 'automatic' };  // values a person reads, not keys
+    const fmt = (k, v) => (v == null || v === '' ? '<span class="dim">none</span>' : typeof v === 'number' ? `${+v.toFixed(3)}${/_mm$/.test(k) ? ' mm' : /_g$/.test(k) ? ' g' : /_n$/.test(k) ? ' N' : /_s$/.test(k) ? ' s' : ''}` : E(NAMED[v] || v));
     const SRC = { preset: 'Morph preset', video: 'from the video', photo: 'from the photo', marks: 'your marks', user: 'you set it', rules: "Morph's rule" };
     const why = (it) => (it.source === 'user' && it.why === 'you entered it' ? '' : it.why || '');  // the tag says so already
     const rows = (mp.items || []).map((it) => `<tr><td>${E(it.label)}<small class="mono dim">${E(it.key)}</small></td><td class="mono">${fmt(it.key, it.old)}</td><td>${this.I('arrow', 'sm')}</td>

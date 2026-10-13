@@ -9,7 +9,7 @@ drop files anywhere on the page, or use `morph import` in a terminal.
 | You have | Morph reads | What happens |
 |---|---|---|
 | A robot | a folder or `.zip` with a URDF, a xacro file (needs `pip install morph[xacro]`) or MuJoCo XML, plus its meshes | Morph finds the gripper joint, the tool point, the base and a ready pose, asks only what the files can't tell (usually which motors drive the joints), saves the robot and builds it as a **new project** |
-| The object to grasp | an STL, OBJ, PLY, OFF, GLB or glTF mesh, or STEP with `pip install morph[cad]` | its size, shape and (with a density) mass become the open project's object: one new revision, like a parameter edit |
+| The object to grasp | an STL, OBJ, PLY, OFF, GLB or glTF mesh, or STEP with `pip install morph[cad]` | its size, shape and (with a density) mass become the open project's object: one new revision, like a parameter edit. An object Morph knows by name (an egg, a strawberry) brings its damage force and friction; a fragile one, or one narrower than the plain finger closes on, gets the force-sensing finger |
 | A parts list | CSV, TSV, XLSX or a Markdown table | the rows, the total and the parts Darwin can look up; the dialog offers them as a CSV. Nothing is changed |
 | A board | a KiCad 6 or newer `.kicad_pcb` or `.kicad_sch` | its size, footprints and layers. Nothing is changed |
 | A Morph export | the ZIP from **Export** (or `morph export`) | its newest design is rebuilt as a new project; earlier designs are kept next to it for reference |
@@ -52,6 +52,13 @@ every reachable pose. That is more conservative than the shipped SO-101 demo, wh
 pose: an SO-101 imported from its own URDF reports its shoulder needing about 2.0 N·m with margin against the
 STS3215's 1.91 N·m, so it builds as not feasible until you choose stronger motors. The shipped demo is the same arm,
 sized the way it is used.
+
+Picking one motor family in the dialog (or `--family`) sizes every joint the same way, with the motors counted as
+bought parts as the build counts them, and keeps the arm on one supply voltage: the 7.4 V STS3215 on every joint while
+it holds them all, otherwise the 12 V STS3215 on all of them; XL330s never share a supply with XL430s and XM430s.
+The SO-101 with **Smart bus** picked builds as feasible on 12 V STS3215s. A motor picked per joint shares that one
+servo supply: a 12 V STS3215 beside 7.4 V ones would run at 6 V and give about half its rated torque, so the build
+flags it. When an imported robot builds but its own checks flag it, the dialog says so and lists why.
 
 The gripper, tool point and motors Morph derived are marked auto-calibrated: check them in the Robot tab before you
 trust the numbers.

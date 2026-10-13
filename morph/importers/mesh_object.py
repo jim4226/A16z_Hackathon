@@ -97,6 +97,24 @@ def _name(path: str, answers: dict) -> str:
     return (s or "imported object")[:40]
 
 
+FSR_FINGER = {"finger.sensor": "fsr402", "finger.width_mm": 20.0, "fab.process": "fdm_print", "finger.material": "PETG"}
+
+
+def handling(name: str, shape: str, diameter_mm: float) -> dict:
+    """How the new object is handled, so nothing carries over from the old one: friction and the squeeze that damages it
+    from Morph's preset when the name is one ("egg" is a raw egg: 25 N), else a robust object (0 N); and the force-
+    sensing finger when the object is fragile or narrower than the plain finger closes on (capability.min_width)."""
+    from ..studio.capability import min_width
+    from ..studio.intent import OBJECTS, object_alias
+
+    preset = object_alias(str(name).lower())
+    p = OBJECTS.get(preset) or {}
+    out = {"object.friction": float(p.get("friction", 0.5)), "object.max_force_n": float(p.get("max_force_n", 0.0))}
+    if out["object.max_force_n"] > 0 or diameter_mm < min_width(shape, "none"):
+        out.update(FSR_FINGER)
+    return {"changes": out, "preset": preset}
+
+
 def object_changes(path: str, fmt: str | None = None, answers: dict | None = None, bundle: str | None = None) -> dict:
     from ..studio.intent import fit_finger
 
@@ -119,10 +137,12 @@ def object_changes(path: str, fmt: str | None = None, answers: dict | None = Non
     if not f["closed"]:
         warnings.append("The mesh isn't watertight; its volume (and mass) come from its convex hull.")
     obj = {"shape": f["shape"], "diameter_mm": f["diameter_mm"], "length_mm": f["length_mm"]}
-    changes = {"object.name": _name(path, answers), "object.shape": f["shape"],
+    name = _name(path, answers)
+    hand = handling(name, f["shape"], f["diameter_mm"])
+    changes = {"object.name": name, "object.shape": f["shape"],
                "object.diameter_mm": f["diameter_mm"], "object.length_mm": f["length_mm"],
-               "object.mass_g": max(mass, 1.0), **fit_finger(obj)}
-    return {"changes": changes, "fit": f, "units": units, "warnings": warnings,
+               "object.mass_g": max(mass, 1.0), **fit_finger(obj), **hand["changes"]}
+    return {"changes": changes, "fit": f, "units": units, "warnings": warnings, "preset": hand["preset"],
             "mass": {"g": max(mass, 1.0), "density_g_cc": rho, "basis": "estimated: volume x density"
                      + (" (you set the density)" if answers.get("density_g_cc") else " (1.0 g/cm3, like water)")},
             "faces": int(len(mesh.faces))}
