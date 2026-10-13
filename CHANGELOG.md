@@ -14,9 +14,25 @@ The feature teams add their entries here before the tag:
 - _A new robot from a one-line request, with follow-up questions._
 - _Import a robot or a part: URDF, MJCF, meshes, BOM._
 - _Show Morph the job: video and photo uploads._
-- _SubQ integration._
+- SubQ Snap: an optional SubQ key (Keys, `SUBQ_API_KEY`) for quick yes/no and multiple-choice decisions, shown as
+  "SubQ Snap (AI)". It is only called with your key and network lookups on, retries once, switches itself off for a
+  refused or out-of-credit key, caches answers (never requests or photos) for 7 days, and every use has an offline
+  fallback. `morph doctor` checks it; `morph subq "<text>"` tries a key by hand.
 - _Teams preview: GitHub for physical things._
 - _World mode (beta)._
+
+### Studio
+
+- Each browser tab works on its own project: the project menu (it always opens now, even with one project) switches
+  that tab only and puts `?project=` in its address, so other tabs and other people stay where they are.
+- Chat and parameter edits wait their turn in a queue per project instead of being dropped while a build runs; the
+  message says where it waits. An edit to a setting that changed after you asked is not applied over it: the chat
+  asks whether to apply it to the newest revision or drop it. One build runs at a time across projects.
+- Each project keeps its chat, so it is still there after switching projects or restarting.
+- New projects, forks and deletes through `/api/projects` (deleted projects move to `projects/.trash/`).
+  **Reset demo** only touches the demo robots (egg-picker and so101), never projects you made.
+- Revisions sort by number (r1000 after r999) and a number is never reused; ledger times are UTC.
+- Only changes to pipeline code rebuild the demo robots at the next start.
 
 ### Install and updates
 

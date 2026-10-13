@@ -110,6 +110,9 @@ regenerates only what depends on it.
 - **Export** (next to the revision number above the tabs): the revision as a ZIP of its CAD,
   simulations, electronics and firmware, manufacturing files and manual, with a manifest of which stages
   completed and the firmware marked unverified. Keys, settings, chat and the ledger are never included.
+- **Projects** (the menu next to the logo): each browser tab opens its own project (`?project=` in its
+  address), so switching one tab moves no other tab and nobody else. Chat and parameter edits wait their turn
+  in each project's queue, and each project keeps its chat.
 - **Present** (button or `P`): the demo as 14 press-through steps with captions.
 - More: [docs/SPONSORS.md](docs/SPONSORS.md) (Keewano and Darwin), [docs/TIME_SAVED.md](docs/TIME_SAVED.md)
   (time-saved sources), [docs/internal/PLATFORM_CONTRACTS.md](docs/internal/PLATFORM_CONTRACTS.md) (how the stages fit

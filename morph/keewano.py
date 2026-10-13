@@ -33,7 +33,13 @@ from . import settings
 API = "https://api.keewano.com/event/ingress/v1/json"
 MCP = "https://api.keewano.com/mcp"
 
-# Append-only: Keewano never lets a registered id change type. Add new events at the end.
+# Append-only: Keewano never lets a registered id change type. Add new events at the end, each with an id from
+# its feature's range (docs/internal/RELEASE_CONTRACTS.md, section 10), so features built in parallel never collide:
+#   2000-2021  existing events (below)        2160-2179  video and photos
+#   2022-2099  W0 foundations                 2180-2229  teams (pseudonymous: hashed member ids, never names)
+#   2100-2129  brief (new robot from a line)  2230-2259  world mode
+#   2130-2159  import                         2260-2279  SubQ
+# Nothing is sent unless the person turns on Keewano events (settings.telemetry_enabled()).
 CUSTOM_EVENTS = [
     {"eventTypeId": 2000, "name": "Project", "dataType": "string"},
     {"eventTypeId": 2001, "name": "Revision", "dataType": "string"},

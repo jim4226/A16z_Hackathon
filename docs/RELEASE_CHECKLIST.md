@@ -41,6 +41,7 @@ Run each on a clean machine or a fresh user account, from a fresh clone of the r
 | 12 | Video | Upload a short phone clip; analyse with and without a Claude key. | Frames appear; with a key, editable suggestions; without one, the fields to fill in by hand. |
 | 13 | World mode (beta) | Open a starter world, place the robot, walk through, simulate. | Runs on the CPU and WebGL; labelled beta. |
 | 14 | `--update` | In a clone of the previous release run `--update`; repeat with an edited tracked file; run it in a zip download. | Switches to the new tag and starts it; refuses with local edits; explains the download route for a zip. |
+| 15 | Two tabs, two projects | Open egg-picker in one tab and so101 in another; send two chat edits quickly in one; switch the other tab's project. | Each tab shows only its own project's events; the second edit waits ("queued") and then builds on top of the first; switching one tab never moves the other. |
 
 ## Tag and publish
 

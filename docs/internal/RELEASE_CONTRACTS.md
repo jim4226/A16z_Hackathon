@@ -31,15 +31,17 @@ decisions lives outside the repo; the essentials are summarized here.
   - Match the surrounding code: dense, few comments, plain English in UI copy, no emoji.
   - Tests go under `tests/` and must pass offline: no network, no keys.
   - Run `node --check` on every JS file you touch.
-- **Don't rebuild the demo robots by accident.** `pipeline_version()` hashes pipeline code. Put new
-  Studio/service modules in `morph/studio/` or `morph/services/` (W0b makes the hash cover an explicit
-  module list), never as top-level `morph/*.py` unless they are pipeline code.
+- **Don't rebuild the demo robots by accident.** `pipeline_version()` hashes pipeline code only: every
+  `morph/robot/*.py` plus `PIPELINE_MODULES` in pipeline2.py (spec, design, analysis, electronics, sim,
+  mechanism, fab, materials, pipeline) and, for an imported robot, its bundle files. Put new Studio/service
+  modules in `morph/studio/` or `morph/services/`, never as top-level `morph/*.py` unless they are pipeline
+  code; editing keewano.py (event ids), settings, keys or the CLI rebuilds nothing.
 
 ## 1. Storage layout (MORPH_HOME, default `projects/` in the repo folder)
 
 | Path | Owner | Contents |
 |---|---|---|
-| `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?}` |
+| `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}` |
 | `<p>/rNNN/` | pipeline | unchanged; names sort numerically (W0b) |
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
 | `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room |
@@ -49,6 +51,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
 | `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h) |
 | `.uploads/` | W0a | temporary uploads; cleared at startup |
+| `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
 | `.team/` | F4 | `team.json`, `secret` (0600), `audit.jsonl` |
 
@@ -79,30 +82,68 @@ class Request:
 
 - Every request passes the existing checks first: Host/Origin, the access token or Teams session, the
   body cap and the role check.
-- Feature modules register their routes in `morph/studio/api_<feature>.py`; `server.py` imports them.
+- POST, PUT and DELETE also need the header `X-Morph-Client: 1` (403 without it); `studio.api` sends it.
+- Feature modules register their routes in `morph/studio/api_<feature>.py`. `server.py` imports every
+  `api_*.py` in that folder at start, so a feature never edits server.py. Registering a method and path
+  twice raises.
 - JSON bodies are capped at 1 MiB by default. Raise the cap per route only when needed (video frames:
   16 MiB).
+- Also in routes.py: `HTTPError(status, message)` (raise it for a JSON error), `Request.arg(name)` (first
+  query value), `Request.length` (the checked Content-Length), `Request.stream(chunk)` and
+  `Request.save(path)` (raw bodies in 1 MiB chunks; `save` removes the file again if the upload is cut
+  off), `set_role_hook(fn)` for Teams: `fn(req, role)` returns the member dict or raises `HTTPError(401|403)`.
+  An unexpected exception in a handler answers 500 with the error text.
 
 | Area | Routes |
 |---|---|
-| W0b projects | `GET /api/projects`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, brief_id?}`; `POST /api/projects/fork {project, rev?, name?}`; `DELETE /api/projects?project=` (owner; moves to `.trash/`) |
+| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds and for the start project) |
+| W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
 | F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
 | F3 video | `POST /api/video/analyze {frames:[{t_s, jpeg_b64}], marks?, crop?, subq?: bool}` (16 MiB); `PUT /api/video/upload` (raw, ≤500 MB, ffmpeg fallback) → `{frames}`; `POST /api/video/apply {changes}` |
 | F4 teams | `GET /api/me`; `GET /api/team`; `POST /api/team/join`, `/invites`, `/revoke`, `/members`, `/policy`; `GET\|POST /api/comments`; `POST /api/comments/resolve`; `GET\|POST /api/proposals` (change requests); `POST /api/proposals/apply`; `GET\|POST /api/reviews`; `POST /api/reviews/decide`; `GET /api/activity`; `GET /api/inbox`; `POST /api/presence`; `GET /api/audit`; `GET\|POST /api/branches`; `GET\|POST /api/releases` |
 | F5 world | `GET /api/world?project=`; `POST /api/world` (save world.json); `PUT /api/world/upload` (raw .glb ≤300 MB); `POST /api/world/obstacles/auto`; `POST /api/world/inspect {views:[{name, jpeg_b64}]}` |
 
+### W0b Python API for feature modules
+
+```python
+studio.room(name=None) -> Room           # ValueError (bad name), rooms.UnknownProject (a LookupError)
+Room: name, p (RobotProject), hub (Hub: send(event), history), jobs (JobQueue), lock, completed(), latest(),
+      emit(event)                         # emit: pipeline events, remembered for tabs that open mid-build
+studio.queue_chat(room, text, *, base_rev=None, by=None) -> Job                  # rooms.QueueFull when 10 wait
+studio.queue_changes(room, changes, *, label, reply=None, source="", user_text=None, base_rev=None, by=None)
+studio.queue_build(room, design, *, label="first design", by=None)              # a parentless build
+studio.create_project(name=None, *, source="", design=None, need=None, origin="default", by=None, meta=None)
+    -> (room, job)                        # projects.create + queue_build + project_created to every tab
+studio.fork_project(project, rev=None, name=None, *, by=None) -> (room, job | None, info)
+studio.delete_project(name) -> trash folder; studio.broadcast(event)
+Job: id, kind, by, status, base_rev, result (new rev), wait(timeout), info(position)
+projects (morph/studio/projects.py): create(home, name=None, *, source, design, need, origin, demo, by,
+    unique=True, rename=True, meta=None) -> {name, root, design, meta}; fork(); delete(); list_projects(home);
+    slug(text); unique_name(home, base); read_meta(root); write_meta(root, meta); check_design(design)
+```
+
+A job applies its changes to the newest revision when its turn comes. If one of its keys changed after its
+`base_rev` (default: the newest revision when it was queued), it ends as `conflict` instead.
+
 ## 3. Live events (SSE)
 
-- Every event carries `project`. With Teams on, events also carry `by: {id, name, color}`.
+- Every event carries `project`. With Teams on, events also carry `by: {id, name, color}`. An event with
+  `to` (a member id) reaches only that member's tabs and is never saved in the chat history.
+- `user` and `assistant` events carry the `job` they belong to. A conflict is an `assistant` event with
+  `conflict {job, keys, base_rev, rev}`: the change was not applied because `keys` changed after
+  `base_rev`; the tab offers "Apply to rev" or "Drop it" (`POST /api/jobs/resolve`).
 - Existing events: `user`, `assistant`, `start`, `node`, `done`, `sourcing`, `project`.
 - New events:
   - `brief {id, status, round, questions, slots, assumptions, scope, preflight}`
   - `agent {role, provider, status: "start"\|"done"\|"error"\|"skipped", ms, text}`, the agents timeline
-  - `project_created {project, origin}`
+  - `project_created {project, origin}` and `project_deleted {project}`: sent to every tab
+  - `project {project, reset: true}`: Reset demo changed this project; tabs on it reload
   - `import {id, stage, status, text}`
   - `video {id, stage, status, text, result?}`
-  - `queue {jobs:[{id, by, status, position}]}`
+  - `queue {jobs:[{id, by, status, position, kind, label, base_rev, rev?, conflict?}]}`: the running job
+    (position 0), the waiting ones (1, 2, ...) and, once, a job that just ended (position null) with its
+    final status: done, noop, error, conflict, cancelled, dropped or resolved
   - `presence {members}`
   - `comment`, `proposal`, `review`, `activity`, `inbox` (addressed to one member only)
   - `world {stage, status, text, result?}`
@@ -127,9 +168,16 @@ studio = {
 }
 ```
 
+- `api` calls resolve to the parsed JSON (text for other answers) and reject with an Error carrying
+  `status` and `body`. `post(path, body)`; `put(path, blob, params)` sends the blob raw; `del(path, params)`
+  (a `project` in params wins over this tab's). `on('*', fn)` gets every event. `modal.open()` returns the
+  dialog element and takes `{wide, onClose}`. `mount.projMenu` is where "+ New robot" goes (F1); every slot
+  is hidden while empty. `mount.chatTools` sits inside the chat form, so its buttons need `type="button"`.
+  `window.morph.studio` is the same object, for tests.
+- `init(studio)` runs after the first state load (and also when the server can't be reached).
 - Features never edit another feature's file.
-- Edits to `app.js`, `index.html` and `style.css` are limited to one import line, one `init` call and an
-  appended CSS section headed `/* ---- <feature> ---- */`.
+- Edits to `app.js`, `index.html` and `style.css` are limited to one import line and one entry in the
+  `FEATURES` array at the top of app.js, and an appended CSS section headed `/* ---- <feature> ---- */`.
 
 ## 5. SubQ client (`morph/studio/subq.py`)
 
@@ -157,6 +205,11 @@ lint(body) -> (bool, str)                           # dev/CI only: no key, 401 m
 - **Thresholds:** act at `confidence >= 0.6`, treat `noul >= 0.5` as yes; otherwise ask the user. Label
   results "SubQ Snap (AI)".
 - **Keys entry:** `SUBQ_API_KEY`, service "SubQ", where to get it: console.subq.ai.
+- **Also:** `enabled()` is also false while network lookups are off. `timeout` is the budget for all tries
+  together. Builders never raise: `decide()` checks the questions and images and returns None for an invalid
+  request. `health()` (GET /health, for `morph doctor`), `LABEL` ("SubQ Snap (AI)"), `CONFIDENCE` (0.6) and
+  `YES` (0.5). `p_yes`/`pick`/`level` take decide()'s result or its `answers`. `morph subq "<text>"` runs a
+  sample triage with your key (`--lint` checks the request without one).
 - **Disclosure copy:** "Requests go to SubQ (Subquadratic Inc.) under your own account. SubQ keeps
   requests per your organisation's retention setting (zero retention on request) and does not train on
   API content."

@@ -18,10 +18,11 @@ until the pipeline has finished, so you can't skip ahead mid-build.
 1. Double-click `run_studio.bat`. Wait for the Morph Studio window. The first start after an update
    rebuilds both robots in its terminal window for about two minutes. Maximize the window.
 2. Click **Present**, then **Reset demo** on the start card. This deletes the chat edits from the
-   last take; both robots go back to their original design in a few seconds (up to a minute right
-   after an update, when they are rebuilt). If the start card says the window is too narrow for the
-   right panel (common at 150 % Windows display scaling), press **Ctrl** and **-** once and reopen
-   Present: steps 9 and 14 highlight that panel.
+   last take; both demo robots (egg-picker and so101) go back to their original design in a few seconds
+   (up to a minute right after an update, when they are rebuilt). Projects you made yourself are never
+   touched, and other browser tabs keep their own projects. If the start card says the window is too
+   narrow for the right panel (common at 150 % Windows display scaling), press **Ctrl** and **-** once
+   and reopen Present: steps 9 and 14 highlight that panel.
 3. Screen recorder: full screen, 1080p, mic on. Press **Start**.
 
 ## The 14 steps (what you'll see, and what to say)
