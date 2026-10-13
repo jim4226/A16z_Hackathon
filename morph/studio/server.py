@@ -1303,9 +1303,9 @@ def _api_export(req):
             from .teams.collab import CollabError
             try:
                 keep, extra, drafts = api_team.export_parts(req.member, room.p.root, rev, full, home=req.studio.home)
-            except CollabError:  # no such finished revision: the export says so in its own words (and nothing goes out)
-                export.check(room.p, rev, full=full)
-                raise
+            except CollabError as exc:  # no such finished revision: the export says so in its own words, else the team's
+                export.check(room.p, rev, full=full)  # reason (nothing goes out without the team's record)
+                raise HTTPError(exc.status, str(exc)) from None
         if "check" in req.query:  # the button asks first, so a refusal is a message rather than a broken download
             export.check(room.p, rev, full=full, keep=keep)
             return 200, {"ok": True}

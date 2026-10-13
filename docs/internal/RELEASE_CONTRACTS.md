@@ -543,6 +543,9 @@ The five feature branches are merged into the release branch and live in the Stu
   - A revision simulates the world its design pins: `worlds.save` keeps each world as `world/saved/<sha>.json` and
     `RobotProject._sim_world` loads `worlds.load_pinned(root, world.id, world.sha)` (the saved copy, else `world.json`
     when its id matches), so a world saved while a build waits or runs never changes what that build simulates.
+  - A team export the team's record can't be made for (a finished revision whose `design.json` can't be read) answers
+    the team's reason with its status (`CollabError` becomes an `HTTPError`), never a 500; a project-history export
+    still goes out, its record being the history.
   - `tools/newrobot_demo.html` answers `GET /api/state` from its simulated build, as the Studio's room does: the New
     robot dialog reads it after switching to the new project.
 - **World (F5):** `design.world.id` must be a world id (`[a-z0-9][a-z0-9-]{0,39}`), never a path: the design limits,

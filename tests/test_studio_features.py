@@ -604,6 +604,21 @@ def test_a_team_export_follows_the_download_policy_and_carries_the_teams_record(
     assert call("GET", "/api/export?rev=r009", headers={"Cookie": jar["Vic"]})[0] == 404
 
 
+def test_a_team_export_the_team_cant_vouch_for_is_refused_with_its_reason(team_studio):
+    """A finished revision whose design.json can't be read has no team record (team.json): its export is refused with the
+    team's reason, as the button's check and as the download, never a server error, and nothing goes out. The project's
+    history still exports: its record is the history."""
+    st, call, ids, jar, port = team_studio
+    with open(os.path.join(st.room().p.root, "r001", "design.json"), "w", encoding="utf-8") as fh:
+        fh.write("{not json")
+    for q in ("rev=r001&check=1", "rev=r001"):
+        s, out, _ = call("GET", f"/api/export?{q}", headers={"Cookie": jar["Jim"]})
+        assert s == 404 and "no completed revision r001" in out["error"], (q, s, out)
+    assert team_audit.entries(st.home, event="export") == []
+    z, man = _zip(port, "/api/export?full=1&rev=r001", jar["Jim"])
+    assert json.loads(z.read("team.json"))["format"] == "morph-team-history/1"
+
+
 def test_an_export_without_teams_has_no_team_record_and_keeps_order_files(tmp_path):
     home = tmp_path / "projects"
     st = server.Studio(make_project(home, "egg-picker"), str(home))
