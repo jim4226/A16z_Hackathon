@@ -6,6 +6,7 @@ recursive-include robots *
 recursive-include data/darwin-cache *.json
 recursive-include morph/studio/static *
 include morph/robot/*.json
+include morph/studio/toolbox/catalog/*.json
 recursive-include docs *.md
 recursive-include tools *.py *.html *.in
 recursive-include tests *.py *.h

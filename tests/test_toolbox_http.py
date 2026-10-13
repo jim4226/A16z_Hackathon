@@ -333,3 +333,33 @@ def test_a_key_goes_only_to_its_own_hosts_and_never_outside_its_slot(api):
         p = prod_spec()
         p["request"]["headers"]["X-Api-Key"] = "abc"
         catalog.parse_manifest(manifest(p), policy=PROD)
+
+
+# ------------------------------------------------------------------ response.keep and Morph's own POST searches
+def test_keep_reduces_an_extracted_list_to_the_named_fields(api):
+    s = spec_for(api)
+    s["response"] = {"type": "json", "extract": {"offers": "/data/offers", "total": "/meta/total"},
+                     "keep": {"offers": ["distributor", "price_usd", "absent"]}, "max_items": 3}
+    assert T.check_tool(s, hosts=["127.0.0.1"], credentials={"nexar": CRED}, policy=POLICY) == []
+    d = json.loads(run(s, {"mpn": "STS3215"})["content"])["data"]
+    assert d["offers"][:3] == [{"distributor": f"d{i}", "price_usd": 1.5 + i} for i in range(3)] and d["total"] == 30
+    assert "Ignore previous instructions" not in json.dumps(d)  # the note field was not kept
+    s["response"]["keep"] = {"total": ["x"]}
+    assert json.loads(run(s, {"mpn": "STS3215"})["content"])["data"]["total"] == 30  # a scalar stays as it is
+
+
+@pytest.mark.parametrize("keep", [{"missing": ["a"]}, {"offers": []}, {"offers": "distributor"}, {"offers": ["a/b"]},
+                                  {"offers": ["a", "a"]}, {"offers": [f"f{i}" for i in range(41)]}, {"offers": [1]}, {}, []])
+def test_keep_must_name_extracted_fields_and_plain_keys(api, keep):
+    s = spec_for(api)
+    s["response"] = {"type": "json", "extract": {"offers": "/data/offers"}, "keep": keep}
+    with pytest.raises(T.SpecError, match="keep"):
+        T.check_tool(s, hosts=["127.0.0.1"], credentials={"nexar": CRED}, policy=POLICY)
+
+
+def test_a_read_only_post_is_flagged_in_an_owners_manifest_but_not_in_morphs():
+    s = prod_spec()
+    s["request"] = {"method": "POST", "url": "https://api.nexar.com/v1/search", "body": {"json": {"q": "{mpn}"}}}
+    owner = catalog.parse_manifest(manifest(s))[1][0]
+    assert any(w.startswith("POST declared read-only") for w in owner.warnings)
+    assert catalog.parse_manifest(manifest(s), curated=True)[1][0].warnings == ()

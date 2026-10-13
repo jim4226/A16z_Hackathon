@@ -285,7 +285,7 @@ def parse_manifest(doc, *, source: str = "", curated: bool = False, policy=DEFAU
         desc = _text(t.get("description"), f"{where}.description", 20, 1024)
         sends = _text(t.get("sends"), f"{where}.sends", 3, 200)
         try:
-            warnings = http_tool.check_tool(t, hosts=info["hosts"], credentials=cred_specs, policy=policy)
+            warnings = http_tool.check_tool(t, hosts=info["hosts"], credentials=cred_specs, policy=policy, curated=curated)
         except SpecError as exc:
             raise ManifestError(f"{where}: {exc}") from None
         if http_tool.INJECTION_HINTS.search(desc) or http_tool.INJECTION_HINTS.search(title):
