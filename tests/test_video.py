@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import types
@@ -243,7 +244,8 @@ def test_custom_objects_get_force_and_friction_from_fragility_and_surface():
     m = vision.map_to_changes(result(object__name="spanner", object__fragility="robust", object__surface="dry",
                                      object__diameter_mm=20, object__mass_g=None), Design().with_changes(EGG_ROBOT))
     assert m["changes"]["object.max_force_n"] == 0 and m["changes"]["object.friction"] == 0.6
-    assert any("26 to 75 mm" in n for n in m["notes"]) and m["questions"][0]["id"] == "object.mass_g"
+    # Morph's own range note, or the capability envelope's when it is there (F1): either way the width is called out
+    assert any("20 mm" in n for n in m["notes"]) and m["questions"][0]["id"] == "object.mass_g"
 
 
 def test_cycle_time_from_marks_and_clamps():
@@ -294,7 +296,8 @@ def test_clean_result_bounds_anything_a_client_sends():
     assert "evil" not in r and r["second_opinion"]["disagree"] == {}
 
 
-def test_slots_for_the_brief_engine_only_carry_what_is_sure():
+def test_slots_for_the_brief_engine_only_carry_what_is_sure(monkeypatch):
+    monkeypatch.setitem(sys.modules, "morph.studio.brief", None)  # without F1's brief the layout is the spots themselves
     s = vision.to_slots(result())
     assert s["object"]["value"]["key"] == "raw egg" and s["object"]["value"]["max_force_n"] == 25
     assert s["object"]["source"] == "video" and s["layout"]["value"] == {"pick": [230.0, -90.0], "place": [170.0, 160.0]}
@@ -303,6 +306,37 @@ def test_slots_for_the_brief_engine_only_carry_what_is_sure():
     assert "object" not in s and "layout" not in s
     s = vision.to_slots(result(object__confidence=0.3), answers={"object.name": "@accept"})
     assert s["object"]["confidence"] == 1.0
+
+
+def test_the_layout_slot_names_the_brief_layout_nearest_the_demonstrated_spots(monkeypatch):
+    fake = types.ModuleType("morph.studio.brief")
+    fake.LAYOUTS = {"tray_to_bin": {"pick": (220.0, -80.0), "place": (160.0, 170.0)},
+                    "side_to_side": {"pick": (180.0, -150.0), "place": (180.0, 150.0)}}
+    monkeypatch.setitem(sys.modules, "morph.studio.brief", fake)
+    s = vision.to_slots(result())
+    assert s["layout"]["value"] == "tray_to_bin" and s["layout"]["source"] == "video"
+    far = result(motion={"pick": {"x_mm": 390, "y_mm": 250, "z_mm": 0}, "place": {"x_mm": 100, "y_mm": -250, "z_mm": 0},
+                         "positions_vary": False, "confidence": 0.9, "evidence_frames": [1]})
+    assert "layout" not in vision.to_slots(far)  # no named layout is close: the brief asks, the spots go as changes
+    assert vision.map_to_changes(far)["changes"]["task.pick_x_mm"] == 390
+
+
+def test_the_capability_envelope_has_the_last_word_on_size(monkeypatch):
+    import morph.studio as pkg
+    said = []
+    fake = types.ModuleType("morph.studio.capability")
+    fake.check = lambda design: {"status": "adjusted", "notes": list(said)}
+    monkeypatch.setitem(sys.modules, "morph.studio.capability", fake)
+    monkeypatch.setattr(pkg, "capability", fake, raising=False)
+    pan = result(object={**egg()["object"], "name": "cast iron pan", "diameter_mm": 250, "mass_g": 1400, "fragility": "robust",
+                         "surface": "dry"})
+    rough = "A 250 mm object is outside the gripper's usual 26 to 75 mm range."
+    assert rough in vision.map_to_changes(pan, Design())["notes"]  # the envelope said nothing: Morph's own note stays
+    said[:] = ["250 mm is wider than the 75 mm the gripper opens around", "1400 g is more than any desk arm here lifts"]
+    notes = vision.map_to_changes(pan, Design())["notes"]
+    assert rough not in notes and said[0] in notes and said[1] in notes
+    said[:] = ["1400 g is more than any desk arm here lifts"]
+    assert rough in vision.map_to_changes(pan, Design())["notes"]  # a note about something else doesn't replace it
 
 
 # ------------------------------------------------------------------ images
@@ -542,7 +576,6 @@ def test_find_ffmpeg_order(tmp_path, keys, monkeypatch):
     assert ffmpeg.find() == str(exe)
     keys.setenv("MORPH_FFMPEG", str(tmp_path / "missing"))
     monkeypatch.setattr(ffmpeg.shutil, "which", lambda name: None)
-    import sys
     monkeypatch.setitem(sys.modules, "imageio_ffmpeg", types.SimpleNamespace(get_ffmpeg_exe=lambda: str(exe)))
     assert ffmpeg.find() == str(exe)  # MORPH_FFMPEG broken, nothing on PATH: imageio-ffmpeg's copy
     assert "MORPH_FFMPEG" in ffmpeg.status().get("warning", "")

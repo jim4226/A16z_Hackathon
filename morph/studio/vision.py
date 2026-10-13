@@ -1049,6 +1049,7 @@ class _Mapping:
         self.dis = ((res.get("second_opinion") or {}).get("disagree") or {})
         self.src = "photo" if res.get("kind") == "photo" else "video"
         self.changes, self.why, self.srcs, self.questions = {}, {}, {}, []
+        self.rough = {}  # Morph's own rough-range note -> what it is about ("250 mm"): the envelope's note on it wins
 
     def conf(self, sec: str) -> float:
         return (self.res.get(sec) or {}).get("confidence", 0.0)
@@ -1168,6 +1169,7 @@ def _map_object(m: _Mapping):
             m.put(k, v, f"fingers fitted to a {dia:g} mm object", "rules")
         if not 26 <= dia <= 75:
             m.notes.append(f"A {dia:g} mm object is outside the gripper's usual 26 to 75 mm range.")
+            m.rough[m.notes[-1]] = f"{dia:g} mm"
         ln = o.get("length_mm") if o.get("length_mm") is not None else (dia if o.get("shape") == "sphere" else None)
         if ln is not None and m.sure("object.length_mm"):
             m.put("object.length_mm", ln, "seen in the video" if "object.length_mm" not in m.confirmed else "you entered it")
@@ -1378,7 +1380,9 @@ def _finish_mapping(m: _Mapping) -> dict:
             from . import capability
             from ..spec import Design
             chk = capability.check(Design.from_dict(_nest(m.flat)).with_changes(clean))
-            notes += chk.get("notes") or []
+            if chk.get("notes"):
+                said = " ".join(map(str, chk["notes"]))
+                notes = [n for n in notes if not (n in m.rough and m.rough[n] in said)] + list(chk["notes"])
         except Exception:  # noqa: BLE001  (no envelope module yet, or a design it can't read)
             pass
     items = []
@@ -1400,6 +1404,22 @@ def _finish_mapping(m: _Mapping) -> dict:
 # ------------------------------------------------------------------ estimates -> brief slots (a new robot, no project open)
 ENV_SLOT = {"food": "kitchen", "lab": "lab", "office": "office", "workshop": "workshop", "warehouse": "workshop", "home": "home"}
 FRAGILITY_SLOT = {"robust": "robust", "firm": "robust", "delicate": "care", "very_delicate": "fragile"}
+
+
+def _layout_value(pick: list, place: list):
+    """The brief's layout slot for the demonstrated spots. F1's brief takes a named layout (brief.LAYOUTS): the nearest
+    one when it is within 60 mm at both ends, else none (the brief asks); the exact spots travel as design changes in
+    any case (the handoff's `changes`). Without the brief module: the spots themselves."""
+    try:
+        from .brief import LAYOUTS
+    except Exception:  # noqa: BLE001  (F1 not merged, or a brief module that can't load: plain spots)
+        return {"pick": pick, "place": place}
+
+    def off(key):
+        lay = LAYOUTS[key]
+        return max(math.dist(lay["pick"], pick), math.dist(lay["place"], place))
+    best = min(LAYOUTS, key=off, default=None)
+    return best if best is not None and off(best) <= 60.0 else None
 
 
 def to_slots(result, *, confirmed=frozenset(), kept=frozenset(), answers=None) -> dict:
@@ -1436,8 +1456,9 @@ def to_slots(result, *, confirmed=frozenset(), kept=frozenset(), answers=None) -
     mo = res.get("motion") or {}
     coords = [f"motion.{a}.{c}" for a in ("pick", "place") for c in ("x_mm", "y_mm")]
     if mo.get("pick") and mo.get("place") and (m.sure("motion") or all(p in m.confirmed for p in coords)):
-        slot("layout", {"pick": [mo["pick"]["x_mm"], mo["pick"]["y_mm"]], "place": [mo["place"]["x_mm"], mo["place"]["y_mm"]]},
-             "motion", *coords)
+        lay = _layout_value([mo["pick"]["x_mm"], mo["pick"]["y_mm"]], [mo["place"]["x_mm"], mo["place"]["y_mm"]])
+        if lay is not None:
+            slot("layout", lay, "motion", *coords)
     if mo.get("positions_vary") and m.sure("motion.positions_vary"):
         slot("perception", "wrist_camera", "motion", "motion.positions_vary")
     tm = res.get("timing") or {}
