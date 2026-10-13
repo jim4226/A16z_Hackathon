@@ -1,4 +1,5 @@
-"""Non-secret preferences: what Morph may send over the network and whether Keewano history may tune a design.
+"""Non-secret preferences: what Morph may send over the network, whether Keewano history may tune a design and whether
+agents may run with tools (beta).
 
 Stored as JSON in MORPH_HOME/.settings.json (the projects folder, git-ignored). API keys never go here: they
 live in .env (morph/keys.py). Standard library only. MORPH_OFFLINE=1 turns every network call off whatever
@@ -17,9 +18,12 @@ DEFAULTS = {
     "sourcing_enabled": True,      # Darwin supplier lookups (Find agents, `morph source`)
     "telemetry_enabled": False,    # send build events to Keewano: opt-in
     "calibration_enabled": False,  # scale grip-force targets by Keewano build history: opt-in, demo data unless real
+    "agent_tools_enabled": True,   # agents may run with tools (beta): Live prices from the BOM tab, keys asked for in cards
+    "auto_price_check": False,     # start Live prices after a build changes the purchased parts: opt-in (it uses Claude)
 }
 LABELS = {"network_enabled": "network lookups", "sourcing_enabled": "Darwin sourcing",
-          "telemetry_enabled": "Keewano events", "calibration_enabled": "Keewano calibration"}
+          "telemetry_enabled": "Keewano events", "calibration_enabled": "Keewano calibration",
+          "agent_tools_enabled": "agent tools", "auto_price_check": "price checks after builds"}
 _LOCK = threading.Lock()
 
 
@@ -96,3 +100,7 @@ def telemetry_enabled() -> bool:
 
 def calibration_enabled() -> bool:
     return network_allowed() and load()["calibration_enabled"]
+
+
+def agent_tools_enabled() -> bool:
+    return network_allowed() and load()["agent_tools_enabled"]

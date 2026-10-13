@@ -21,15 +21,16 @@ def no_network(*a, **k):
 
 
 def test_defaults_and_round_trip():
-    assert settings.load() == {"network_enabled": True, "sourcing_enabled": True,
-                               "telemetry_enabled": False, "calibration_enabled": False}
+    assert settings.load() == {"network_enabled": True, "sourcing_enabled": True, "telemetry_enabled": False,
+                               "calibration_enabled": False, "agent_tools_enabled": True, "auto_price_check": False}
     assert not os.path.exists(settings.path())
     out = settings.save({"telemetry_enabled": True, "calibration_enabled": True})
     assert out["telemetry_enabled"] and out["calibration_enabled"] and out["network_enabled"]
     with open(settings.path(), encoding="utf-8") as fh:
         assert json.load(fh) == out
     assert settings.path().startswith(os.environ["MORPH_HOME"])
-    assert settings.describe() == "network lookups on, Darwin sourcing on, Keewano events on, Keewano calibration on"
+    assert settings.describe() == ("network lookups on, Darwin sourcing on, Keewano events on, Keewano calibration on, "
+                                   "agent tools on, price checks after builds off")
     assert [f for f in os.listdir(settings.home()) if f.endswith(".tmp")] == []
 
 

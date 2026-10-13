@@ -62,6 +62,10 @@ ROUTES = {
     ("GET", "/api/audit"): "owner",
     ("GET", "/api/branches"): "viewer", ("POST", "/api/branches"): "editor",
     ("GET", "/api/releases"): "viewer", ("POST", "/api/releases"): "editor",
+    # agent tools (beta, api_tools): the decide handler lets editors skip and only owners allow or deny
+    ("GET", "/api/tools"): "viewer", ("POST", "/api/tools/enable"): "owner", ("POST", "/api/tools/disable"): "owner",
+    ("GET", "/api/runs"): "viewer", ("GET", "/api/runs/answer"): "viewer", ("POST", "/api/runs/start"): "editor",
+    ("POST", "/api/runs/decide"): "editor", ("POST", "/api/runs/resume"): "editor", ("POST", "/api/runs/cancel"): "editor",
 }
 
 

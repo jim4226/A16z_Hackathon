@@ -234,6 +234,15 @@ def _start_features(home: str):
         traceback.print_exc()
 
 
+def _start_tools(studio):
+    """The agents' toolbox (api_tools.attach): runs a stopped Studio left working become interrupted pauses."""
+    try:
+        from . import api_tools
+        api_tools.attach(studio)
+    except Exception:  # noqa: BLE001  (agent tools never stop the Studio)
+        traceback.print_exc()
+
+
 class Refused(RuntimeError):
     """A project change the Studio won't make now (the project is building, or it is the start project)."""
 
@@ -256,6 +265,8 @@ class Studio:
         self._rooms = threading.Lock()
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
         _start_features(self.home)
+        self.toolbox = None
+        _start_tools(self)
 
     @property
     def p(self) -> RobotProject:
@@ -1373,7 +1384,7 @@ def _api_export(req):
 
 def _keys_state(studio: Studio) -> dict:
     from .. import keys, settings
-    return {"keys": keys.status(), "integrations": integrations(), "settings": settings.load(),
+    return {"keys": keys.status(home=studio.home), "integrations": integrations(), "settings": settings.load(),
             "file": os.path.basename(keys.ENV_PATH), "compute": compute_info(studio.remote)}
 
 
@@ -1389,7 +1400,7 @@ def _api_keys_save(req):
     if not isinstance(values, dict):
         raise HTTPError(400, "Send the keys as {\"values\": {\"NAME\": \"key\"}}.")
     try:
-        changed = keys.save(values)
+        changed = keys.save(values, home=req.studio.home)
     except ValueError as exc:
         raise HTTPError(400, str(exc)) from None
     except OSError as exc:
@@ -1402,7 +1413,9 @@ def _api_keys_save(req):
     if "SUBQ_API_KEY" in changed:
         from . import subq
         subq.reset()  # a new key gets a fresh start (a refused or out-of-credit key switched SubQ off)
-    return 200, {"ok": True, "changed": changed, **_keys_state(req.studio)}
+    from . import api_tools
+    resumed = api_tools.keys_saved(req, changed)  # agent runs that waited for one of these keys continue
+    return 200, {"ok": True, "changed": changed, "resumed": resumed, **_keys_state(req.studio)}
 
 
 @route("POST", "/api/keys/check", role="owner")
