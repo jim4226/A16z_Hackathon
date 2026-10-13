@@ -305,6 +305,9 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px;
 #views { position: relative; flex: 1; min-height: 0; }
 .view { position: absolute; inset: 0; display: none; }
 .view.on { display: block; animation: viewIn .35s cubic-bezier(.2, .8, .2, 1); }
+.views-empty { position: absolute; inset: 0; display: none; }
+#views.norev > .view { visibility: hidden; }  /* a project without a finished revision: nothing of the previous one shows */
+#views.norev > .views-empty { display: grid; }
 @keyframes viewIn { from { opacity: 0; transform: translateY(4px); } }
 
 /* viewer slot + host */

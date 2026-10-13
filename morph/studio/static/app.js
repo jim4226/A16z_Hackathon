@@ -360,7 +360,10 @@ async function loadState(st, { fresh = false, first = false } = {}) {
   if (st.current) await show(st.current, st.previous, { tour: false });
   else {  // a project whose first build hasn't finished: nothing of the project shown before stays as its revision
     S.current = null; S.previous = null;
-    renderHeader(); renderPipeline(null); $('#insp').innerHTML = '<div class="empty"><p>No finished revision yet.</p></div>';
+    renderHeader(); renderPipeline(null); renderParams(null); markTabs(null);
+    $('#insp').innerHTML = '<div class="empty"><p>No finished revision yet.</p></div>';
+    $('#viewsEmpty p').textContent = `No finished revision of ${st.project} yet.`;
+    $('#views').classList.add('norev');  // the robot, its simulations and the other tabs wait for one
   }
   renderQueue();
   if (st.building) {  // opened mid-build: show the run so far; its events continue the strip
@@ -519,7 +522,8 @@ function renderParams(cur) {
   }
   const changed = cur?.changes || {};
   $('#paramsBody').innerHTML = groups.map((g) => `<div class="pgroup"><div class="sec-t">${esc(g.name)}<span class="r">${g.items.length}</span></div>` +
-    g.items.map((p) => paramRow(p, p.key in changed)).join('') + '</div>').join('') || '<div class="empty"><p>No editable parameters in this revision.</p></div>';
+    g.items.map((p) => paramRow(p, p.key in changed)).join('') + '</div>').join('') ||
+    `<div class="empty"><p>${cur ? 'No editable parameters in this revision.' : 'No finished revision yet.'}</p></div>`;
   $$('#paramsBody .prow').forEach((row) => {
     const p = params.find((x) => x.key === row.dataset.key);
     const rng = $('input[type=range]', row), num = $('input[type=number]', row), sel = $('select', row);
@@ -759,6 +763,7 @@ async function show(cur, prev, { tour = false } = {}) {
   stopTour();
   S.current = cur;
   S.previous = prev;
+  $('#views').classList.remove('norev');
   if (cur.label) S.labels[cur.rev] = cur.label;
   if (prev?.label) S.labels[prev.rev] = prev.label;
   renderHeader();

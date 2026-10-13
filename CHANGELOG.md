@@ -148,5 +148,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   member ids.
 - A tab that switches projects tells world mode and Teams, so the other project's room and team panel no longer stay
   on screen. It listens to the new project before loading it, so a build that ends during the switch is never missed,
-  and a project whose first build is still running no longer shows the previous project's revision as its own (the
-  New robot dialog could report the new robot as done with the old project's numbers).
+  and a project whose first build is still running (or failed) no longer shows the previous project's revision as its
+  own: the New robot dialog could report the new robot as done with the old project's numbers, and the robot, its
+  tabs, its parameters and its Export button stayed on screen. They wait for the project's first revision now.

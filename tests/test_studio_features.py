@@ -666,10 +666,17 @@ def test_a_build_that_ends_while_the_tab_switches_to_it_is_not_missed(tmp_path, 
             time.sleep(1.0)
             assert pg.query_selector("[data-a=openproj]") is None     # still building: not done with the old project's revision
             assert pg.evaluate("window.morph.state.current") is None  # the tab shows no revision of egg-picker as sock-sorter's
+            # nor anything of it: the views wait (no egg-picker robot), no Export of its revision, none of its parameters
+            assert pg.evaluate("document.querySelector('#views').classList.contains('norev')")
+            assert pg.is_visible("#viewsEmpty") and not pg.is_visible("#views .view.on")
+            assert "sock-sorter" in pg.inner_text("#viewsEmpty")
+            assert pg.inner_text("#tabsInfo").strip() == "" and pg.query_selector("#paramsBody .prow") is None
             gate.set()                                                # the build ends now
             pg.wait_for_selector("[data-a=openproj]", timeout=60000)  # the dialog saw it end
             assert st.room("sock-sorter").latest() == "r001"
             assert pg.evaluate("[window.morph.state.current?.rev, window.morph.state.current?.design?.name]") == ["r001", "sock-sorter"]
+            assert not pg.is_visible("#viewsEmpty") and pg.is_visible("#views .view.on")   # its own revision shows
+            assert "r001" in pg.inner_text("#tabsInfo") and pg.query_selector("#paramsBody .prow") is not None
             assert errors == []
         finally:
             gate.set()

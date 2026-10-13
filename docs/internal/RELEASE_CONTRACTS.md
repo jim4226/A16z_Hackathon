@@ -223,7 +223,9 @@ studio = {
   `state.building` or from its `node` events, and reloads its state when the stream reconnects after a drop. A project
   switch listens first too (I2b): `openProject` waits for the new project's stream to open (at most 3 s) before loading
   its state, and `/api/events` subscribes a stream before it answers, so a build that ends during the switch is in the
-  state or in the events. A project with no finished revision leaves `S.current` null (never the previous project's).
+  state or in the events. A project with no finished revision leaves `S.current` null (never the previous project's),
+  clears the parameters and the tab bar's Export, and hides the six tab views behind a note (`#views.norev`,
+  `#viewsEmpty`) until `show()` renders its first revision.
 - Features never edit another feature's file.
 - Edits to `app.js`, `index.html` and `style.css` are limited to one import line and one entry in the
   `FEATURES` array at the top of app.js, and an appended CSS section headed `/* ---- <feature> ---- */`.
