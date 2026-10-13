@@ -984,6 +984,10 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
         else:
             out.append(_check("clearance", "Clearance along the path", "pass",
                               f"At least {mc:.0f} mm between the arm and the room{where}.", mc, "mm", "along_path", where=at))
+    elif in_world and not sw["obstacles"]:
+        out.append(_check("clearance", "Clearance along the path", "warn",
+                          "This world has no grey boxes, so the simulation sees only the surface. Add a box for anything "
+                          "near the arm.", view="along_path"))
     else:
         out.append(_check("clearance", "Clearance along the path", "skip",
                           "Clearance is measured when the simulation runs in this world.", view="along_path"))
@@ -1506,8 +1510,11 @@ def subq_review(views: list, facts: dict, *, wrist_camera: bool = False, timeout
                          "recommendation": "Look at this view yourself.", "source": "subq"})
     wl = ans.get("wrist_light") or {}
     if isinstance(wl.get("score"), (int, float)):
-        conf = wl.get("confidence", 0)
-        if conf >= 0.6 and wl["score"] < 0.75:
+        # the nearest level's label when SubQ sends a legend ("poor: ..." is the first level), else a score nearer
+        # the first level than the second (levels counted from 0)
+        s, name = sq.level(res, "wrist_light") if hasattr(sq, "level") else (wl["score"], "")
+        poor = name.lower().startswith("poor") if name else (s is not None and s < 0.5)
+        if wl.get("confidence", 0) >= 0.6 and poor:
             find.append({"category": "perception", "severity": "warning", "viewpoint": "overview",
                          "evidence": f"{label}: the pick spot looks poorly lit for a wrist camera.",
                          "recommendation": "Add light over the pick spot or avoid glare.", "source": "subq"})

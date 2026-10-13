@@ -1494,7 +1494,7 @@ export class WorldPanel {
         <div class="wv-list">${zs.map((z) => `<div class="wv-item"><i style="background:${C[z.kind]}"></i><span>${esc(z.label)}</span><small>${esc(z.kind)}</small>
           <button class="wv-x" data-a="delzone" data-arg="${esc(z.id)}" title="Delete">&times;</button></div>`).join('')}</div></div>`;
       const sim = s.sim;
-      const simLine = sim && sim.world ? `Simulated in this world: ${sim.success ? 'success' : 'fails'}, min clearance ${sim.min_clearance_mm ?? '?'} mm${(sim.world_contacts || []).length ? `, ${sim.world_contacts.length} contact(s)` : ''}.` : 'Not simulated in this world yet.';
+      const simLine = sim && sim.world ? `Simulated in this world: ${sim.success ? 'success' : 'fails'}${sim.min_clearance_mm != null ? `, min clearance ${sim.min_clearance_mm} mm` : ', no grey boxes to keep clear of'}${(sim.world_contacts || []).length ? `, ${sim.world_contacts.length} contact(s)` : ''}.` : 'Not simulated in this world yet.';
       h += `<div class="wv-sec"><b>Simulate</b><div class="wv-row">${B('save', w._dirty ? 'Save and simulate' : 'Save world', { primary: !!w._dirty })}${B('play', 'Play in the room')}
         ${B('walk', wv.walking ? 'Stop walking' : 'Walk', { on: !!wv.walking, title: 'Walk through the room: WASD and the mouse' })}${B('off', 'World off', { title: 'Simulate on the plain table again' })}</div>
         <div class="wv-note">${esc(simLine)}</div>${wv.octreeNote ? `<div class="wv-note">${esc(wv.octreeNote)}</div>` : ''}</div>`;

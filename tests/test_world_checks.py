@@ -293,6 +293,41 @@ def test_subq_findings_never_change_the_verdict(monkeypatch):
     assert W.subq_review(views(), res["facts"]) is None
 
 
+def test_world_without_boxes_warns_instead_of_failing():
+    w = copy.deepcopy(W.starter("desk"))
+    w["obstacles"] = []
+    w = W.validate(w)
+    res = results(w)
+    for k in ("min_clearance_mm", "min_clearance_at"):                       # as simulate reports a box-free world
+        res["sims"]["scenarios"]["pick_place"]["metrics"].pop(k)
+    out = W.checks(w, res, robot=ROBOT, design=design())
+    c = {x["id"]: x for x in out["checks"]}
+    assert c["sim_world"]["status"] == "pass" and c["clearance"]["status"] == "warn" and "no grey boxes" in c["clearance"]["text"]
+    assert out["verdict"] == "ready"
+
+
+class LegendSubQ(FakeSubQ):
+    def level(self, res, name):                       # as morph.studio.subq.level: the nearest level's label
+        a = res["answers"][name]
+        return float(a["score"]), str((a.get("legend") or {}).get(str(round(a["score"])), ""))
+
+
+def test_subq_wrist_light_reads_the_nearest_level(monkeypatch):
+    world = W.starter("desk")
+    facts = W.checks(world, results(world), robot=ROBOT, design=design())["facts"]
+    quiet = {"unmodelled_obstacle": {"noul": 0.1}, "person_in_reach": {"noul": 0.1}}
+    legend = {"1": "poor: dark or glare", "2": "ok: usable", "3": "good: even, no glare"}
+    for sq, poor in ((LegendSubQ({**quiet, "wrist_light": {"score": 1.2, "confidence": 0.8, "legend": legend}}), True),
+                     (LegendSubQ({**quiet, "wrist_light": {"score": 2.1, "confidence": 0.8, "legend": legend}}), False),
+                     (LegendSubQ({**quiet, "wrist_light": {"score": 1.0, "confidence": 0.4, "legend": legend}}), False),
+                     (FakeSubQ({**quiet, "wrist_light": {"score": 0.2, "confidence": 0.8}}), True),
+                     (FakeSubQ({**quiet, "wrist_light": {"score": 1.4, "confidence": 0.8}}), False)):
+        monkeypatch.setattr(W, "_subq", lambda sq=sq: sq)
+        out = W.subq_review(views(), facts, wrist_camera=True)
+        assert "wrist_light" in sq.calls[0][1]
+        assert any(f["category"] == "perception" for f in out["findings"]) is poor
+
+
 def test_inspect_without_ai_sends_nothing(monkeypatch):
     world = W.starter("desk")
     boom = FakeClaude(exc=AssertionError("must not be called"))
