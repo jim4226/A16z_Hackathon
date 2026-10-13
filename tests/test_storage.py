@@ -103,4 +103,6 @@ def test_odd_folder_names_are_not_revisions(tmp_path, bad):
         os.mkdir(os.path.join(p.root, bad))
     except OSError:
         pytest.skip("this file system refuses the name")
+    if bad not in os.listdir(p.root):  # Windows drops the trailing space and makes a real r001
+        pytest.skip("this file system stores the name differently")
     assert p.revs() == []
