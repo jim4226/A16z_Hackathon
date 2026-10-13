@@ -85,6 +85,11 @@ class Request:
   answered 429 for 15 minutes without its codes being compared.
 - POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; the page sends `1`; 403
   without it); `studio.api` sends it.
+- A connection has `HEADER_TIMEOUT` (20 s) in all for its request line and headers. The server serves at most
+  `MAX_CONNECTIONS` (64) connections at once, `MAX_STREAMS` (48) of them `/api/events` streams; past either cap the
+  answer is 503 at once. A stream notices a closed tab within a second and frees its slot. A route that holds its
+  connection open for long (a stream of its own) should take a slot the same way (`req.handler.server.open_stream()` /
+  `close_stream()`).
 - Feature modules register their routes in `morph/studio/api_<feature>.py`. `server.py` imports every
   `api_*.py` in that folder at start, so a feature never edits server.py. Registering a method and path
   twice raises.
@@ -188,6 +193,9 @@ studio = {
   is hidden while empty. `mount.chatTools` sits inside the chat form, so its buttons need `type="button"`.
   `window.morph.studio` is the same object, for tests.
 - `init(studio)` runs after the first state load (and also when the server can't be reached).
+- The page subscribes to events before it loads its state, retries `/api/state` with backoff (1, 2, 4, 8, then
+  every 15 s, and at once when the stream connects) instead of staying offline, follows a build already running from
+  `state.building` or from its `node` events, and reloads its state when the stream reconnects after a drop.
 - Features never edit another feature's file.
 - Edits to `app.js`, `index.html` and `style.css` are limited to one import line and one entry in the
   `FEATURES` array at the top of app.js, and an appended CSS section headed `/* ---- <feature> ---- */`.
@@ -428,19 +436,36 @@ Telemetry is opt-in (W0a).
      passes validation and the firmware drives a Dynamixel servo with Feetech SCServo commands.
    - **Fix:** validate the protocol of every selected actuator. Reject mixed-protocol buses with a clear
      issue, or implement them. Add tests.
+   - **Done (W0c):** every catalog actuator names its `protocol` (`feetech_scs`, `dynamixel_2`, `pwm`;
+     `catalog.protocol(key)` falls back to the family's for entries registered at runtime).
+     `electronics2.bus_problems()` puts one issue per actuator of another wiring or protocol (gripper included)
+     in the plan, so the design is not feasible; `finalize()` and `firmware()` raise before writing anything, so
+     the wiring stage fails with the reason. `arm.size()` reports overrides it can't apply (unknown actuator,
+     unknown joint, not `joint=actuator`). The summary lists the plan's issues even when wiring didn't complete.
+     For imports (F2): a robot whose actuators mix protocols builds as not feasible until one family is chosen.
 2. **Moving accessories (P2).**
    - **Bug:** `electronics.extras` (wrist_camera, imu) ride on the moving gripper and change the hand
      mass, but `dirty_nodes` excludes sizing and sim, so stale sizing and simulations are reused.
    - **Fix:** include moving accessories in the sizing hand mass, and make `electronics.extras` dirty
      sizing and sim. Teams routing then asks the simulation reviewers too.
+   - **Done (W0c):** `arm.size()` adds the camera (module, mount, screws) and the IMU to `hand_mass_g`, within 2 g
+     of what the build mounts; `GRAPH` has `electronics.extras` on sizing and sim. Imported robots are sized from
+     the URDF they are built from (the SO-101's camera variant).
 3. **Refresh during a build (P2).**
    - **Bug:** `Studio.state()` reads `latest()` while a revision is still being built (design.json
      without results.json), raising FileNotFoundError. The page then shows offline and never subscribes
      to events.
    - **Fix:** publish only completed revisions, plus an explicit build status (rev in progress, current
      node). The front end subscribes to events even if loading state fails, and retries.
+   - **Done:** the server side in W0b (`state.building`); the page in W0c (section 4), with a browser test.
 4. **Pending chat follows the project switch (P1).** A chat interpreted before a project switch must
    apply to the project it was sent from. Rooms capture the room at enqueue time and interpret inside
    the room's worker (W0b), with a test.
 5. **Stage reuse hides failures (P1).** A failed stage is never laundered into feasible by a later
    unrelated edit (W0a-1 ports the fix), with a test.
+
+Also fixed in W0c: a custom-PCB base was 253 mm, over the 250 mm FDM bed (Present step 6 showed the issue): behind one
+custom board the back-panel jacks sit higher, over the board's edge, and the bay is 14 mm shorter (239 mm). The chat's
+Claude client has a 30 s timeout and one retry. The grip target that "gentler" and "firmer" scale goes in and out of
+`intent.interpret()` (`last_target` in its result) and is kept per room (`Room.last_target`), never in a module
+global. `morph robot change` and `robot new --need` apply `security.design_values()` before building.

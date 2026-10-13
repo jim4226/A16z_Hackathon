@@ -74,7 +74,11 @@ The feature teams add their entries here before the tag:
 - Remote mode: after 10 different wrong access codes from one address, that address waits 15 minutes.
 - The server never opens a pipe or device file, and a request whose body stops arriving gets an answer.
 - Every value a chat edit, Claude or a request can set must fit limits far wider than any robot Morph builds: a
-  kilometre-wide object used to hold the build slot for hours. Designs with unknown keys are refused.
+  kilometre-wide object used to hold the build slot for hours. Designs with unknown keys are refused. `morph robot
+  change` and `morph robot new --need` apply the same limits before they build anything.
+- Each connection gets 20 seconds for its request line and headers, and the Studio serves at most 64 connections at
+  once (48 of them live event streams); more are answered "busy" (503) at once. A slow or idle client could hold a
+  thread for good, which matters most in remote mode.
 
 ### Fixes
 
@@ -85,3 +89,15 @@ The feature teams add their entries here before the tag:
 - The CLI exits non-zero when a build fails, prints safely on Windows consoles, and `morph doctor` shows the version
   and git commit.
 - Export a revision as a ZIP with a manifest of what completed. Keys, settings, chat and the ledger are never included.
+- One servo bus speaks one protocol: a DYNAMIXEL servo on a Feetech bus (or the reverse), for example through
+  `arm.actuator_overrides`, is an issue and gets no wiring or firmware, instead of firmware that sends it the wrong
+  commands. An override naming an actuator the catalog doesn't have is reported instead of ignored.
+- A wrist camera or IMU rides on the gripper, so adding one re-sizes the joints and reruns the simulations (Teams
+  asks the simulation reviewers too). The SO-101 is sized with its wrist-camera mount when it has one.
+- A page opened or refreshed during a build follows the build and shows the new revision when it is done. When the
+  server can't answer, the page keeps listening and retries instead of staying offline; after a server restart it
+  reloads.
+- Robots with a custom controller PCB print their base on a 250 mm bed again (it was 253 mm): the USB-C and power
+  jacks sit higher, over the board's edge, so the bay behind the board is shorter.
+- Chat: a Claude call gives up after about a minute instead of holding the project's queue, and "gentler grip" scales
+  that project's own grip target.
