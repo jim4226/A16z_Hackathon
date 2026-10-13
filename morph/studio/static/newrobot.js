@@ -66,7 +66,14 @@ export function init(s) {
   on('node', onNode);
   on('done', onDone);
   const qs = new URLSearchParams(location.search);
-  if (qs.has('new')) open(qs.get('new') || '');
+  if (qs.has('new')) {
+    open(qs.get('new') || '');
+    try {  // once read, ?new= leaves the address: a reload must not start a second brief
+      const u = new URL(location.href);
+      u.searchParams.delete('new');
+      history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    } catch (e) { /* file:// pages */ }
+  }
   return { open };
 }
 

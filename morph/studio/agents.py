@@ -390,7 +390,8 @@ def run_turn(b: B.Brief | None = None, *, text: str | None = None, answers: dict
                 return b
         else:
             n = sum(1 for s in b.slots.values() if s.source == "user")
-            tl("designer", "rules", "done", f"Built-in rules: {n} fact{'s' if n != 1 else ''} from your words (no Claude key)", ms=0)
+            tl("designer", "rules", "done", (f"Built-in rules: {n} fact{'s' if n != 1 else ''} from your words" if n else
+                                             "Built-in rules: the kind of job only, no sizes or details yet") + " (no Claude key)", ms=0)
     if b.status == "refused":
         return b
     tl("feasibility", "code", "start", "Checking it against what Morph can build")
