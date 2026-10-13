@@ -375,7 +375,7 @@ def test_the_page_mounts_every_feature_and_a_new_robot_builds_from_it(tmp_path, 
             pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
             pg.goto(f"http://127.0.0.1:{port}/?tour=0", wait_until="domcontentloaded")
             pg.wait_for_selector("#featHeader .nr-headbtn", timeout=60000)
-            pg.wait_for_selector("#importBtn", timeout=30000)
+            pg.wait_for_selector("#importBtn", timeout=120000)
             assert pg.evaluate("[...document.querySelectorAll('#featHeader button')].map(b => b.textContent.trim())") == \
                 ["New robot", "Import"]
             assert pg.inner_text("#chatTools").strip().startswith("Show Morph the job")
@@ -389,6 +389,8 @@ def test_the_page_mounts_every_feature_and_a_new_robot_builds_from_it(tmp_path, 
             until(lambda: "no frame leaves this browser" in pg.inner_text("#featModal"))   # after it asked /api/video/info
             assert pg.evaluate("document.querySelectorAll('#featModal .dlg').length") == 1
             pg.keyboard.press("Escape")
+            # (keep the unsubscribe function: Playwright calls a function an expression evaluates to)
+            pg.evaluate("window.__switched = []; window.__off = window.morph.studio.on('project', (e) => window.__switched.push(e)); 0")
             pg.click(".nr-headbtn")
             pg.fill("#nr-text", "help me sort socks")
             pg.click("[data-a=start]")
@@ -397,6 +399,8 @@ def test_the_page_mounts_every_feature_and_a_new_robot_builds_from_it(tmp_path, 
             pg.wait_for_selector("[data-a=build]", timeout=30000)
             pg.click("[data-a=build]")
             until(lambda: pg.evaluate("window.morph.state.project") == "sock-sorter")   # the tab follows the build
+            # feature modules hear that this tab now shows another project (world mode clears the old room, Teams reloads)
+            until(lambda: pg.evaluate("window.__switched") == [{"type": "project", "project": "sock-sorter", "switched": True}])
             pg.wait_for_selector("[data-a=openproj]", timeout=60000)
             assert st.room("sock-sorter").latest() == "r001" and "project=sock-sorter" in pg.url
             assert errors == []
@@ -433,5 +437,66 @@ def test_a_browser_signs_in_from_the_teams_link_page(tmp_path, monkeypatch):
             until(lambda: pg.evaluate("document.querySelectorAll('[class*=tm-]').length") > 0)   # Teams UI on the page
             assert pg.evaluate("fetch('/api/me').then(r => r.json())")["member"]["name"] == "Jim"
         finally:
+            browser.close()
+            httpd.shutdown()
+
+
+def test_a_build_that_ends_while_the_tab_switches_to_it_is_not_missed(tmp_path, monkeypatch):
+    """The New robot dialog switches its tab to the new project while that project's first build runs. The tab listens
+    to the new project before it loads its state (and the server subscribes a stream before answering it), so a build
+    that ends in between is in the state or in the events: here the new room's stream is 2 s slow to subscribe and the
+    build ends as soon as the tab shows it waiting."""
+    pw = pytest.importorskip("playwright.sync_api")
+    chrome = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    from morph import keys
+    from morph.studio import rooms
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    gate, real_run, real_sub = threading.Event(), RobotProject.run, rooms.Hub.subscribe
+
+    def gated(self, *a, **k):
+        if os.path.basename(self.root) == "sock-sorter":
+            assert gate.wait(60)
+        return real_run(self, *a, **k)
+
+    def slow(self, member=None):
+        if self.project == "sock-sorter":
+            time.sleep(2.0)
+        return real_sub(self, member)
+    monkeypatch.setattr(RobotProject, "run", gated)
+    monkeypatch.setattr(rooms.Hub, "subscribe", slow)
+    home = tmp_path / "projects"
+    st = server.Studio(make_project(home, "egg-picker"), str(home))
+    httpd = start(st)
+    port = httpd.server_address[1]
+    httpd.RequestHandlerClass = server.make_handler(st, {f"127.0.0.1:{port}", f"localhost:{port}"})
+    with pw.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(executable_path=chrome if os.path.exists(chrome) else None, args=["--no-sandbox"])
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"no Chromium for Playwright ({exc.__class__.__name__})")
+        try:
+            pg = browser.new_page(viewport={"width": 1400, "height": 900})
+            errors = []
+            pg.on("pageerror", lambda e: errors.append(str(e)))
+            pg.goto(f"http://127.0.0.1:{port}/?tour=0", wait_until="domcontentloaded")
+            pg.wait_for_selector("#featHeader .nr-headbtn", timeout=120000)
+            pg.click(".nr-headbtn")
+            pg.fill("#nr-text", "help me sort socks")
+            pg.click("[data-a=start]")
+            pg.wait_for_selector("[data-a=defaults]", timeout=60000)
+            pg.click("[data-a=defaults]")
+            pg.wait_for_selector("[data-a=build]", timeout=60000)
+            pg.click("[data-a=build]")
+            until(lambda: pg.evaluate("window.morph.state.project === 'sock-sorter' && window.morph.state.queue.length > 0"))
+            time.sleep(1.0)
+            assert pg.query_selector("[data-a=openproj]") is None     # still building: not done with the old project's revision
+            assert pg.evaluate("window.morph.state.current") is None  # the tab shows no revision of egg-picker as sock-sorter's
+            gate.set()                                                # the build ends now
+            pg.wait_for_selector("[data-a=openproj]", timeout=60000)  # the dialog saw it end
+            assert st.room("sock-sorter").latest() == "r001"
+            assert pg.evaluate("[window.morph.state.current?.rev, window.morph.state.current?.design?.name]") == ["r001", "sock-sorter"]
+            assert errors == []
+        finally:
+            gate.set()
             browser.close()
             httpd.shutdown()

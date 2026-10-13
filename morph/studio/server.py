@@ -1060,13 +1060,13 @@ def _api_events(req):
     if not getattr(h.server, "open_stream", lambda: True)():
         raise HTTPError(503, "There are as many open event streams as the Studio serves; the page tries again.")
     sel = selectors.DefaultSelector()
+    q = room.hub.subscribe(_by(req))  # before the answer: a page that loads its state once the stream is open misses nothing
     try:
         h.send_response(200)
         h.send_header("Content-Type", "text/event-stream")
         h.send_header("Cache-Control", "no-store")
         h.end_headers()
         sel.register(h.connection, selectors.EVENT_READ)
-        q = room.hub.subscribe(_by(req))
         _presence(req, room, True)
         try:
             last = time.monotonic()
@@ -1085,9 +1085,9 @@ def _api_events(req):
         except OSError:  # tab closed (Windows: 10053) or stopped reading for `timeout` seconds
             pass
         finally:
-            room.hub.unsubscribe(q)
             _presence(req, room, False)
     finally:
+        room.hub.unsubscribe(q)
         sel.close()
         getattr(h.server, "close_stream", lambda: None)()
     return None

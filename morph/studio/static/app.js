@@ -86,20 +86,25 @@ class ServerBackend {
   source(rev) { return post(this.q('/api/source'), { rev }); }
   resolve(job, action) { return post(this.q('/api/jobs/resolve'), { job, action }); }
   async reset(rebuild) { const r = await send('POST', '/api/reset', { rebuild: !!rebuild }); return r.ok; }
-  setProject(name) { this.name = name; if (this.onEvent) this.connect(this.onEvent, this.onStatus); }
+  setProject(name) { this.name = name; return this.onEvent ? this.connect(this.onEvent, this.onStatus) : Promise.resolve(); }
+  // Resolves once the stream is open (the server subscribes it before answering), or at the latest after 3 s or a
+  // failed try (it keeps trying, and its next open reloads the state): load the state after it and no event is lost.
   connect(onEvent, onStatus) {
     this.onEvent = onEvent; this.onStatus = onStatus;
     const gen = ++this.gen;
     this.dropped = false;  // set when the stream drops: its next open is a reconnect that may have missed events
     this.es?.close();
+    let opened;
+    const ready = new Promise((res) => { opened = res; setTimeout(res, 3000); });
     const go = () => {
       if (gen !== this.gen) return;
       const es = this.es = new EventSource(this.q('/api/events'));
-      es.onopen = () => { const again = this.dropped; this.dropped = false; onStatus('live', again); };
+      es.onopen = () => { const again = this.dropped; this.dropped = false; opened(); onStatus('live', again); };
       es.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (e) { console.warn('bad event', e); } };
-      es.onerror = () => { es.close(); if (gen !== this.gen) return; this.dropped = true; onStatus('off'); setTimeout(go, 1500); };
+      es.onerror = () => { es.close(); opened(); if (gen !== this.gen) return; this.dropped = true; onStatus('off'); setTimeout(go, 1500); };
     };
     go();
+    return ready;
   }
 }
 async function getFresh(url) {
@@ -301,12 +306,17 @@ async function openProject(name) {
   const prev = S.project;
   stopTour(); typing(false); sysMsg = null; liveProv = null; S.busy = false; S.queue = [];
   S.project = name;
-  backend.setProject(name);
+  const listening = backend.setProject(name);
   setUrlProject(name);
-  try { await reloadProject(); return true; } catch (e) {
+  try {
+    await listening;  // listen first: a build that ends while this tab switches is in its state or in its events
+    await reloadProject();
+    emitBus({ type: 'project', project: name, switched: true });  // feature modules reload what they show for the new project
+    return true;
+  } catch (e) {
     console.warn(e);
     toast(`Couldn't open ${name}${e.status === 404 ? ': it no longer exists' : ''}`);
-    if (prev && prev !== name) { S.project = prev; backend.setProject(prev); setUrlProject(prev); await reloadProject().catch(() => {}); }
+    if (prev && prev !== name) { S.project = prev; await backend.setProject(prev); setUrlProject(prev); await reloadProject().catch(() => {}); }
     return false;
   }
 }
@@ -348,7 +358,10 @@ async function loadState(st, { fresh = false, first = false } = {}) {
         : `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`);
   }
   if (st.current) await show(st.current, st.previous, { tour: false });
-  else { renderHeader(); renderPipeline(null); $('#insp').innerHTML = '<div class="empty"><p>No finished revision yet.</p></div>'; }
+  else {  // a project whose first build hasn't finished: nothing of the project shown before stays as its revision
+    S.current = null; S.previous = null;
+    renderHeader(); renderPipeline(null); $('#insp').innerHTML = '<div class="empty"><p>No finished revision yet.</p></div>';
+  }
   renderQueue();
   if (st.building) {  // opened mid-build: show the run so far; its events continue the strip
     const nodes = nodesOf(S.current), b = st.building;
