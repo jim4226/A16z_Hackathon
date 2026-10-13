@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import html
 import importlib
+import io
 import json
 import mimetypes
 import os
@@ -25,6 +26,7 @@ import pkgutil
 import queue
 import re
 import secrets
+import selectors
 import shutil
 import socket
 import stat
@@ -616,6 +618,38 @@ ARTIFACT_CSP = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'un
 SIGN_IN_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 CLIENT_HEADER = "X-Morph-Client"
 DRAIN_MAX = 8 << 20  # a refused body up to this size is read and dropped, so the client still gets the answer
+# Anyone who can reach a --remote Studio can open connections, so each one gets HEADER_TIMEOUT seconds in all for its
+# request line and headers (a byte every few seconds no longer holds a thread for good), and at most MAX_CONNECTIONS
+# are served at once, MAX_STREAMS of them event streams (so streams never take every slot); past a cap: 503 at once.
+HEADER_TIMEOUT = 20.0
+MAX_CONNECTIONS = 64
+MAX_STREAMS = 48
+BUSY = (b'{"ok": false, "error": "The Studio is answering as many connections as it can. Try again in a few seconds."}')
+
+
+class _Deadline(io.RawIOBase):
+    """A connection's reads. While `until` (a time.monotonic() value) is set, each read waits only for what is left
+    of it, so a client trickling its request line and headers a byte at a time is cut off when the time is up."""
+
+    def __init__(self, raw, sock):
+        super().__init__()
+        self.raw, self.sock, self.until = raw, sock, None
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        if self.until is not None:
+            left = self.until - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("the request line and headers took too long")
+            self.sock.settimeout(left)
+        return self.raw.readinto(b)
+
+    def close(self):
+        if not self.closed:
+            self.raw.close()
+        super().close()
 
 
 def _sha256(text: str) -> str:
@@ -671,6 +705,23 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
 
     class H(BaseHTTPRequestHandler):
         timeout = 30  # a client that stops sending or reading frees its thread; the event stream pings every 15 s
+
+        def setup(self):
+            super().setup()
+            self.rfile.close()  # the same socket, read through the header deadline
+            self.clock = _Deadline(self.connection.makefile("rb", buffering=0), self.connection)
+            self.rfile = io.BufferedReader(self.clock)
+
+        def handle_one_request(self):
+            self.clock.until = time.monotonic() + HEADER_TIMEOUT
+            super().handle_one_request()
+
+        def parse_request(self):
+            try:
+                return super().parse_request()
+            finally:  # the headers are in: the body, the answer and an event stream get the usual timeout
+                self.clock.until = None
+                self.connection.settimeout(self.timeout)
 
         def log_message(self, *a):
             pass
@@ -935,24 +986,49 @@ def _api_rev(req):
 @route("GET", "/api/events", role="viewer")
 def _api_events(req):
     room, h = req.room, req.handler
-    h.send_response(200)
-    h.send_header("Content-Type", "text/event-stream")
-    h.send_header("Cache-Control", "no-store")
-    h.end_headers()
-    q = room.hub.subscribe(_by(req))
+    if not getattr(h.server, "open_stream", lambda: True)():
+        raise HTTPError(503, "There are as many open event streams as the Studio serves; the page tries again.")
+    sel = selectors.DefaultSelector()
     try:
-        while True:
-            try:
-                ev = q.get(timeout=15)
-                h.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
-            except queue.Empty:
-                h.wfile.write(b": ping\n\n")
-            h.wfile.flush()
-    except OSError:  # tab closed (Windows: 10053) or stopped reading for `timeout` seconds
-        pass
+        h.send_response(200)
+        h.send_header("Content-Type", "text/event-stream")
+        h.send_header("Cache-Control", "no-store")
+        h.end_headers()
+        sel.register(h.connection, selectors.EVENT_READ)
+        q = room.hub.subscribe(_by(req))
+        try:
+            last = time.monotonic()
+            while True:
+                try:
+                    data = f"data: {json.dumps(q.get(timeout=1.0))}\n\n".encode()
+                except queue.Empty:
+                    if _hung_up(sel, h.connection):  # the tab went away: its slot is free now, not after a failed ping
+                        break
+                    if time.monotonic() - last < 15:
+                        continue
+                    data = b": ping\n\n"
+                h.wfile.write(data)
+                h.wfile.flush()
+                last = time.monotonic()
+        except OSError:  # tab closed (Windows: 10053) or stopped reading for `timeout` seconds
+            pass
+        finally:
+            room.hub.unsubscribe(q)
     finally:
-        room.hub.unsubscribe(q)
+        sel.close()
+        getattr(h.server, "close_stream", lambda: None)()
     return None
+
+
+def _hung_up(sel, sock) -> bool:
+    """True once an event stream's client has closed the connection (a tab never sends anything after its request,
+    so a readable socket that reads as empty means it is gone)."""
+    try:
+        return bool(sel.select(0)) and sock.recv(1, socket.MSG_PEEK) == b""
+    except (BlockingIOError, InterruptedError):
+        return False
+    except (OSError, ValueError):
+        return True
 
 
 @route("GET", "/files/*", role="viewer")
@@ -1211,6 +1287,59 @@ class _Server(ThreadingHTTPServer):
     daemon_threads = True
     # On Windows SO_REUSEADDR lets a second Studio bind the same port while this one still listens
     allow_reuse_address = os.name != "nt"
+    max_connections, max_streams = MAX_CONNECTIONS, MAX_STREAMS
+    request_queue_size = MAX_CONNECTIONS  # a burst waits in the listen queue for its answer (or 503), not in SYN retries
+
+    def __init__(self, *args, **kwargs):
+        self.slots, self.connections, self.streams = threading.Lock(), 0, 0
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        """A thread per connection, up to max_connections at once; past that, a 503 straight from here, without
+        reading the request, so idle or slow clients can never take every thread."""
+        with self.slots:
+            ok = self.connections < self.max_connections
+            self.connections += ok
+        if not ok:
+            return self._busy(request)
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._release()
+
+    def _release(self):
+        with self.slots:
+            self.connections -= 1
+
+    def open_stream(self) -> bool:
+        with self.slots:
+            ok = self.streams < self.max_streams
+            self.streams += ok
+            return ok
+
+    def close_stream(self):
+        with self.slots:
+            self.streams -= 1
+
+    def _busy(self, request):
+        try:
+            request.settimeout(0.5)
+            request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n"
+                            b"X-Content-Type-Options: nosniff\r\nRetry-After: 5\r\nConnection: close\r\n"
+                            b"Content-Length: %d\r\n\r\n%s" % (len(BUSY), BUSY))
+            request.setblocking(False)
+            while request.recv(65536):  # what the client already sent, so closing doesn't reset the answer away
+                pass
+        except OSError:
+            pass
+        self.shutdown_request(request)
 
     def handle_error(self, request, client_address):
         # a browser tab closing mid-response is normal; don't print a traceback for it
