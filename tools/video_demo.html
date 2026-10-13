@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Morph Studio: Show Morph the job (demo harness)</title>
+<!--
+  "Show Morph the job" outside the Studio shell: a stand-in for app.js's feature object (RELEASE_CONTRACTS section 4)
+  around static/video.js, for tests and visual checks. Served from the repo root by tests/test_video_browser.py, which
+  answers /api/video/* with the real handlers (Claude faked); with a plain static server the frame picker still works,
+  and the calls that need the Studio say they couldn't reach it.
+  ?noproject=1 behaves as if no project were open (Apply hands the slots to the brief engine).
+-->
+<link rel="stylesheet" href="/morph/studio/static/style.css">
+<style>
+  html, body { height: auto; min-height: 100%; overflow: auto; }
+  .demo { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 16px; padding: 16px; }
+  .demo #left { height: 620px; border: 1px solid var(--line2); border-radius: 12px; overflow: hidden; }
+  .demo .chat-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 6px; }
+  .demo .side { color: var(--ink2); font-size: 12.5px; line-height: 1.5; }
+  .demo .side h3 { margin: 4px 0 6px; color: var(--ink); font-size: 15px; }
+  .demo .side pre { margin: 10px 0 0; padding: 10px; max-height: 420px; overflow: auto; border-radius: 10px; background: var(--bg2);
+    border: 1px solid var(--line2); color: var(--muted); font: 11px/1.5 var(--mono); white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="demo">
+  <aside id="left">
+    <section id="chat">
+      <div class="panel-h"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>Design assistant<span class="grow"></span><span class="sub">chat to change anything</span></div>
+      <div id="messages"><div class="msg assistant"><div class="av"><svg viewBox="0 0 24 24"><path d="M5 18V6l7 6 7-6v12"/></svg></div><div><div class="b">Switched to egg-picker at r001. Ask for a change, or show me the job: a phone video or photos of it done by hand.</div></div></div></div>
+      <div id="chatTools" class="chat-tools"></div>
+      <form id="form" autocomplete="off"><textarea id="input" rows="1" placeholder="Ask for a change…"></textarea>
+        <button id="send" type="button" title="Send"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></form>
+    </section>
+  </aside>
+  <div class="side">
+    <h3>Show Morph the job: demo harness</h3>
+    <p>Click <b>Show Morph the job</b>, or drop a video or photos on the chat. Frames are picked in this browser; the analysis
+      and the list of changes come from the server this page is served by.</p>
+    <label>Probe file for tests: <input type="file" id="probe" accept="video/*,image/*"></label>
+    <pre id="log"></pre>
+  </div>
+</div>
+<div id="toast"></div>
+<script type="module">
+import { I, esc } from '/morph/studio/static/panels.js';
+import * as video from '/morph/studio/static/video.js';
+
+const q = new URLSearchParams(location.search);
+const PROJECT = 'egg-picker';
+const bus = {}, calls = [];
+let es = null, toastT = null;
+const log = (...a) => {
+  const el = document.getElementById('log');
+  el.textContent = (a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') + '\n' + el.textContent).slice(0, 8000);
+};
+function connect() {
+  if (es) return;
+  es = new EventSource(`/api/events?project=${PROJECT}`);
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    log('event', ev.type, ev.stage || ev.provider || '', ev.status || '', ev.text || '');
+    for (const fn of bus[ev.type] || []) fn(ev);
+  };
+}
+// what app.js's studio.api does: ?project=, the X-Morph-Client header, JSON answers with ok and status
+async function request(method, path, params, body, ctype) {
+  const u = new URL(path, location.origin);
+  u.searchParams.set('project', PROJECT);
+  for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
+  calls.push({ method, path, params: params || null, body: typeof body === 'string' ? JSON.parse(body) : body ? { blob: body.size } : null });
+  const r = await fetch(u, { method, body, headers: { 'X-Morph-Client': 'studio', ...(ctype ? { 'Content-Type': ctype } : {}) } });
+  const out = await r.json().catch(() => ({}));
+  return { ...out, status: r.status, ok: r.ok && out.ok !== false };
+}
+const overlay = document.createElement('div');
+overlay.className = 'modal';
+document.body.appendChild(overlay);
+const modal = {
+  open(el, opts = {}) { overlay.replaceChildren(typeof el === 'string' ? Object.assign(document.createElement('div'), { innerHTML: el }) : el); overlay.classList.add('on'); this.onClose = opts.onClose; },
+  close() { overlay.classList.remove('on'); const f = this.onClose; this.onClose = null; f?.(); },
+};
+overlay.addEventListener('click', (e) => { if (e.target === overlay) modal.close(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('on')) modal.close(); });
+const studio = {
+  S: { project: PROJECT, compute: { remote: false } },
+  project: () => (q.get('noproject') ? null : PROJECT),
+  api: {
+    get: (p, params) => request('GET', p, params),
+    post: (p, body) => request('POST', p, null, JSON.stringify(body), 'application/json'),
+    put: (p, blob, params) => request('PUT', p, params, blob, 'application/octet-stream'),
+    del: (p, params) => request('DELETE', p, params),
+  },
+  on(type, fn) { connect(); (bus[type] ||= new Set()).add(fn); return () => bus[type].delete(fn); },
+  toast(text) { const t = document.getElementById('toast'); t.textContent = text; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2600); log('toast', text); },
+  addMsg(role, text) { log('msg', role, text); },
+  esc, I, modal,
+  openProject() {}, reload() {},
+  mount: { chatTools: document.getElementById('chatTools'), header: null, projMenu: null, inspectorTabs: null, viewerTools: null },
+};
+connect();
+const api = video.init(studio);
+const slots = [];
+api.onSlots((d) => { slots.push(d); log('slots', d.slots); });
+window.demo = {
+  video, studio, api, calls, slots,
+  // extraction alone, timed: {ok, n, ms, sizes, times, kb, duration} or the error's {name, code, message, ms}
+  async extract(sel = '#probe', opts = {}) {
+    const f = document.querySelector(sel).files[0], t0 = performance.now();
+    try {
+      const out = await video.extractFrames(f, opts);
+      const r = { ok: true, kind: out.kind, n: out.frames.length, ms: Math.round(performance.now() - t0), sizes: out.frames.map((x) => [x.w, x.h]),
+        times: out.frames.map((x) => x.t_s), kb: out.frames.map((x) => Math.round(x.blob.size / 1024)), duration: out.duration };
+      const bytes = new Uint8Array(await out.frames[0].blob.arrayBuffer());  // an APP1 "Exif" block would carry GPS
+      r.exif = new TextDecoder('latin1').decode(bytes.slice(0, 4096)).includes('Exif');
+      if (out.video) { out.video.removeAttribute('src'); out.video.load(); }
+      if (out.url) URL.revokeObjectURL(out.url);
+      return r;
+    } catch (e) {
+      return { ok: false, name: e.name, code: e.code, message: e.message, ms: Math.round(performance.now() - t0) };
+    }
+  },
+};
+document.documentElement.dataset.ready = '1';
+</script>
+</body>
+</html>

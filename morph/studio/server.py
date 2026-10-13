@@ -658,7 +658,8 @@ def _sha256(text: str) -> str:
 
 def app_csp(page: str | None = None) -> str:
     """The Studio page's policy: scripts only from the Studio itself plus index.html's inline loader (by hash,
-    worked out from the file so an edit can't silently break the page), three.js blob/data textures allowed."""
+    worked out from the file so an edit can't silently break the page), three.js blob/data textures allowed, and
+    blob: media so the video frame picker can play the clip the person picked (it never leaves the browser)."""
     if page is None:
         with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as fh:
             page = fh.read()
@@ -666,7 +667,7 @@ def app_csp(page: str | None = None) -> str:
     handlers = [_sha256(h) for h in re.findall(r"\son[a-z]+=\"([^\"]*)\"", page)]
     script_src = " ".join(["'self'", *scripts, *(["'unsafe-hashes'", *handlers] if handlers else [])])
     return (f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
-            "font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' data: blob:; "
+            "font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' data: blob:; "
             "worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 
