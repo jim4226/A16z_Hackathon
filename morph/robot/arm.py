@@ -2210,7 +2210,11 @@ class _Builder:
                 place.append(dict(m, x=x - depth / 2, y=y + dy / 2, rz=rz, dx=dx, dy=dy))
                 y += dy + gap
             x -= depth + gap
-        panel_depth = 46.0
+        # the band for the back-wall USB-C and power jacks. Behind one custom board they sit higher (back_panel), so
+        # their cable tails clear its edge and the band is just the USB-C extension's 30 mm body and a 10 mm bend:
+        # the base then prints in one piece on a 250 mm bed (behind modules the jacks keep the full band)
+        self.jacks_raised = custom is not None
+        panel_depth = 32.0 if self.jacks_raised else 46.0
         x_back = min(x - panel_depth, -(50.0 + 7.0) - 60.0)
         return R_f, x_back, place
 
@@ -2489,7 +2493,7 @@ class _Builder:
                                     {"l": l, "w": w, "h": 12.0}, {"mass_g": 0.0019 * l * w * 1.6 * 1.85 * 10 + 8})
 
     def back_panel(self, x_back, R_f, z_fl, zd):
-        zc = z_fl + 7.0
+        zc = z_fl + (13.0 if getattr(self, "jacks_raised", False) else 7.0)
         for key, y, off in (("usb_c_breakout", R_f * 0.38, None), ("xt30_inlet", -R_f * 0.38, None)):
             comp = components.module(key)
             panel = np.asarray(comp.frames.get("panel", np.eye(4)))

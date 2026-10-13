@@ -47,6 +47,16 @@ def test_imported_robots_size_the_camera_they_carry():
     assert all(cam[n] > plain[n] for n in ("shoulder_lift", "elbow_flex", "wrist_flex"))
 
 
+def test_the_present_custom_pcb_step_builds_a_feasible_robot(tmp_path):
+    # Present step 6: the egg-picker on Dynamixel servos with one custom controller PCB; its printed base used to
+    # exceed the 250 mm bed, so the step showed an issue
+    p = RobotProject(str(tmp_path / "egg"))
+    d = Design().with_changes({**EGG_ROBOT, "arm.actuator_family": "dynamixel", "electronics.config": "custom_pcb"})
+    res = p.load_results(p.run(d, n_trials=1, verbose=False, fast_sim=True))
+    assert res["summary"]["feasible"] and res["summary"]["issues"] == [], res["summary"]["issues"]
+    assert res["electronics"]["board"]["drc"]["pass"]
+
+
 def test_pipeline_runs_and_reuses(tmp_path):
     p = RobotProject(str(tmp_path / "egg"))
     d = Design().with_changes(EGG_ROBOT)

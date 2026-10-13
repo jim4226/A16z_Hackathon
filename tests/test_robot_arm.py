@@ -297,6 +297,26 @@ def test_electronics_bay_and_panel():
     assert names
 
 
+@pytest.mark.parametrize("fam", FAMILIES)
+@pytest.mark.parametrize("ecfg", ("modules", "custom_pcb"))
+def test_the_printed_base_fits_the_printer(fam, ecfg):
+    """With the real electronics plan in its bay, a prototype base shell prints in one piece on the FDM bed the
+    manufacturing plan checks against (a custom PCB's base used to be 253 mm long)."""
+    from morph.robot import electronics2
+    from morph.robot.manufacturing import FDM_BED
+
+    d = _design(arm__actuator_family=fam, electronics__config=ecfg, electronics__extras="estop")
+    s = arm.size(d)
+    a = arm.build(d, s, electronics2.plan(d, s))
+    ext = sorted(next(p for p in a.parts if p.name == "base_shell").mesh.extents, reverse=True)
+    assert all(e <= b for e, b in zip(ext, sorted(FDM_BED, reverse=True))), ext
+    if ecfg == "custom_pcb":
+        assert ext[0] <= FDM_BED[0] - 10.0, ext             # with room to spare, not by a hair
+        jacks = [p for p in a.parts if p.name.startswith("panel_")]
+        board = next(p for p in a.parts if p.name.endswith("_board") and p.kind == "pcb")
+        assert jacks and all(j.mesh.bounds[0][2] > board.mesh.bounds[1][2] for j in jacks if j.name.endswith("_cable"))
+
+
 def test_electronics_plan_integration():
     from morph.robot import electronics2
 
