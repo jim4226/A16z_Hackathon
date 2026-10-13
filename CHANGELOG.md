@@ -54,7 +54,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   simulation, and each revision is simulated in exactly the room it names: every saved room is kept under its hash
   (`world/saved/`), so editing the room while a build waits never changes what that build simulates. Check placement:
   measured checks set the verdict; an optional AI review (beta) of six rendered views adds findings, suggested changes
-  and a guided tour, and never changes pass or fail. It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
+  and a guided tour, and never changes pass or fail (without a key it says so and sends nothing). When the straight
+  move from the rest pose would sweep through a box, the approach and the return to rest follow the carry path too.
+  It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
   `morph world <project> --starter desk` (or `--off`) does the same from a terminal; [docs/WORLD.md](docs/WORLD.md).
 - `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
   a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
@@ -137,7 +139,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Without `--team` the Studio has no Teams routes.
 - Imports treat every file and link as hostile: archive limits, no XML entities, meshes and paths kept inside the
   import, xacro expanded in a separate process, and links only from github.com and Hugging Face over HTTPS.
-- World mode names its room by id, never a path, and chat can't change it.
+- World mode names its room by id and hash, never a path: chat can't change it, Teams change requests can't name
+  anything else, and an imported export (which doesn't carry the room) is simulated on the plain table.
 
 ### Fixes
 
