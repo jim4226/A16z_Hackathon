@@ -1277,6 +1277,8 @@ class _Robot:
         already in ``d`` (kinematics done), and where: (mm, robot geom, world geom). Bounding spheres prune the pairs
         so only the few that can be closest go to mj_geomDistance."""
         mj, m = self._mj, self.model
+        if not hasattr(mj, "mj_geomDistance"):          # added in MuJoCo 3.1.6; only world mode needs it
+            raise RuntimeError("World mode needs MuJoCo 3.1.6 or newer: pip install -U mujoco")
         W = self.world_geoms
         R = np.r_[self.robot_geoms, [self.obj_geom]] if with_object else self.robot_geoms
         cw, rw = d.geom_xpos[W], m.geom_rbound[W]
@@ -1848,6 +1850,9 @@ def _pick_place(rob: _Robot, design, fast=False):
                     "slip_mm": metrics["max_slip_mm"], "payload_g": design.object.mass_g, "reach_mm": _sized_reach(rob, design)})
     if not metrics["intact"]:
         metrics["success"] = False
+    if not len(rob.world_geoms) and rob.opts.world:      # a world without boxes: simulated there, nothing to hit
+        W = rob.opts.world
+        metrics.update({"world": W.get("id", ""), "world_sha": W.get("sha", ""), "world_contacts": [], "clearance_ok": True})
     if len(rob.world_geoms):
         metrics.update(_world_metrics(rob, design, run))
         if metrics["world_contacts"]:

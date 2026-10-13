@@ -120,6 +120,22 @@ def test_contact_fails_pick_place(egg):
     assert m["world_contacts"][0]["obstacle"] == "Crate" and "Crate" in m["failure"]
 
 
+def test_world_without_boxes_still_says_where_it_ran(egg):
+    d, asm = egg
+    m = simulate.run(asm, d, "pick_place", fast=True, world=_table_world([]))["metrics"]
+    assert m["success"] and m["world"] == "proto" and m["world_sha"] == "test" and m["world_contacts"] == []
+    assert "min_clearance_mm" not in m                                       # nothing to measure against
+
+
+def test_old_mujoco_says_what_world_mode_needs(egg, tmp_path, monkeypatch):
+    d, asm = egg
+    monkeypatch.delattr(mujoco, "mj_geomDistance")                           # as before MuJoCo 3.1.6
+    with pytest.raises(RuntimeError, match="MuJoCo 3.1.6"):
+        simulate.run(asm, d, "pick_place", fast=True, world=_table_world([_bin_on_the_arc(d)]))
+    res = simulate.run_all(asm, d, str(tmp_path), scenarios=["pick_place"], fast=True, world=_table_world([_bin_on_the_arc(d)]))
+    assert "MuJoCo 3.1.6" in res["scenarios"]["pick_place"]["metrics"]["error"]    # the Studio shows why
+
+
 def test_egg_picker_succeeds_on_the_desk(egg):
     d, asm = egg
     w = worlds.sim_world(worlds.starter("desk"))
