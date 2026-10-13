@@ -85,13 +85,14 @@ class ServerBackend {
   connect(onEvent, onStatus) {
     this.onEvent = onEvent; this.onStatus = onStatus;
     const gen = ++this.gen;
+    this.dropped = false;  // set when the stream drops: its next open is a reconnect that may have missed events
     this.es?.close();
     const go = () => {
       if (gen !== this.gen) return;
       const es = this.es = new EventSource(this.q('/api/events'));
-      es.onopen = () => onStatus('live');
+      es.onopen = () => { const again = this.dropped; this.dropped = false; onStatus('live', again); };
       es.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (e) { console.warn('bad event', e); } };
-      es.onerror = () => { es.close(); if (gen !== this.gen) return; onStatus('off'); setTimeout(go, 1500); };
+      es.onerror = () => { es.close(); if (gen !== this.gen) return; this.dropped = true; onStatus('off'); setTimeout(go, 1500); };
     };
     go();
   }
@@ -247,7 +248,7 @@ function toast(text) {
 }
 
 // ------------------------------------------------------------------ app state
-const S = { project: '', start: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null, integrations: {}, busy: false, queue: [] };
+const S = { project: '', start: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null, integrations: {}, busy: false, queue: [], loaded: false };
 let backend, viewer, panels, presenter, keysDlg;
 
 const ctx = {
@@ -319,7 +320,7 @@ function reloadProject() {  // one at a time; a request during a reload runs onc
   })();
   return reloading;
 }
-async function loadState(st, { fresh = false } = {}) {
+async function loadState(st, { fresh = false, first = false } = {}) {
   if (fresh) {
     memo.clear();
     clearCaches();
@@ -338,21 +339,23 @@ async function loadState(st, { fresh = false } = {}) {
   for (const m of st.history || []) addMsg(m.type, m.text, m);
   if (!(st.history || []).length) {
     addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : ''}.`
-      : fresh ? `Opened ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`
+      : fresh && !first ? `Opened ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`
         : `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`);
   }
   if (st.current) await show(st.current, st.previous, { tour: false });
   else { renderHeader(); renderPipeline(null); $('#insp').innerHTML = '<div class="empty"><p>No finished revision yet.</p></div>'; }
   renderQueue();
   if (st.building) {  // opened mid-build: show the run so far; its events continue the strip
-    const nodes = nodesOf(S.current);
-    liveProv = Object.fromEntries(nodes.map(([k]) => [k, st.building.nodes?.[k] || 'queued']));
+    const nodes = nodesOf(S.current), b = st.building;
+    liveProv = Object.fromEntries(nodes.map(([k]) => [k, b.nodes?.[k] || 'queued']));
     renderPipeline(S.current, liveProv);
     S.busy = true;
     setConn('busy', 'Regenerating');
-    renderRevs(st.building.rev);
+    renderRevs(b.rev);
+    sysMsg = addMsg('system', `Regenerating ${b.rev} from ${b.parent || 'scratch'} · ${(b.dirty || []).length || nodes.length} of ${nodes.length} stages affected`);
   }
   S.reloads = (S.reloads || 0) + 1;
+  S.loaded = true;
   for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
 }
 
@@ -838,7 +841,17 @@ function onEvent(ev) {
       renderRevs(ev.rev);
       break;
     }
-    case 'node': if (liveProv) liveProv[ev.node] = ev.status; nodeEvent(ev); break;
+    case 'node':
+      if (!liveProv) {  // a build that started before this tab was listening, while its state can't load yet
+        liveProv = Object.fromEntries(nodesOf(S.current).map(([k]) => [k, 'queued']));
+        renderPipeline(S.current, liveProv);
+        S.busy = true;
+        setConn('busy', 'Regenerating');
+        sysMsg = sysMsg || addMsg('system', 'Regenerating: a build was already running when this tab opened');
+      }
+      liveProv[ev.node] = ev.status;
+      nodeEvent(ev);
+      break;
     case 'sourcing':
       if (ev.project && ev.project !== S.project) break;  // a search still running for the other robot
       panels.bom.onSourcing(ev);
@@ -1060,28 +1073,68 @@ async function boot() {
   const start = QS.get('tab');
   showTab(TABS.includes(start) ? start : 'robot');
 
-  try {
-    if (FIXTURE) { backend = new FixtureBackend(); await backend.load(); } else backend = new ServerBackend(QS.get('project'));
-    let st;
-    try { st = await backend.state(); } catch (e) {
-      if (![400, 404].includes(e.status) || !backend.name) throw e;
-      toast(`There is no project called ${backend.name}; opening the start project`);  // a deleted project's link
-      backend.name = '';
-      st = await backend.state();
-    }
-    if (backend.setProject) backend.name = st.project;
-    await loadState(st);
-    backend.connect(onEvent, (k) => setConn(k));
-    if (FIXTURE) setConn('fixture');
-    if (QS.get('demo')) setTimeout(() => sendChat(QS.get('demo')), 600);
-    if (QS.get('present')) presenter.open();
-  } catch (e) {
-    console.error(e);
-    if (/^401/.test(e.message)) { location.href = '/'; return; }  // a remote Studio restarted with a new access code
-    setConn('off', 'Offline');
-    $('#insp').innerHTML = `<div class="empty"><div><div class="ill">${I('alert', 'lg')}</div><h4>Can't reach the Studio server</h4><p>Start it with <span class="mono">python -m morph.cli studio &lt;project&gt;</span>, or open <span class="mono">?fixture=1</span> for the offline demo data.</p></div></div>`;
+  if (FIXTURE) {
+    try {
+      backend = new FixtureBackend();
+      await backend.load();
+      await loadState(await backend.state());
+      backend.connect(onEvent, (k) => setConn(k));
+      setConn('fixture');
+      opened();
+    } catch (e) { console.error(e); unreachable(e); }
+    await initFeatures();
+    return;
   }
-  await initFeatures();
+  // Listen first: a tab opened mid-build follows the build from its events even while its state can't load. The
+  // state is retried with backoff (and as soon as the event stream connects) until the server answers.
+  backend = new ServerBackend(QS.get('project'));
+  backend.connect(onEvent, onConn);
+  let features = null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const st = await firstState();
+      const was = backend.name;
+      if (was !== st.project) { backend.name = st.project; if (was) backend.connect(onEvent, onConn); }
+      await loadState(st, { fresh: attempt > 0, first: true });
+      if (backend.es?.readyState === 1) onConn('live');
+      break;
+    } catch (e) {
+      console.warn(e);
+      if (e.status === 401) { location.href = '/'; return; }  // a remote Studio restarted with a new access code
+      const wait = Math.min(15, 2 ** Math.min(attempt, 4));
+      unreachable(e, wait);
+      features = features || initFeatures();  // features start even when the server can't be reached
+      await retryPause(wait * 1000);
+    }
+  }
+  opened();
+  await (features || initFeatures());
+}
+async function firstState() {
+  try { return await backend.state(); } catch (e) {
+    if (![400, 404].includes(e.status) || !backend.name) throw e;
+    toast(`There is no project called ${backend.name}; opening the start project`);  // a deleted project's link
+    backend.name = '';
+    return backend.state();
+  }
+}
+function opened() {
+  if (QS.get('demo')) setTimeout(() => sendChat(QS.get('demo')), 600);
+  if (QS.get('present')) presenter.open();
+}
+let wake = null;  // ends a retry pause early: the event stream just connected, so the server is back
+function retryPause(ms) { return new Promise((res) => { const t = setTimeout(res, ms); wake = () => { clearTimeout(t); res(); }; }); }
+function onConn(kind, again) {
+  if (kind !== 'live') return setConn(kind);
+  if (wake) { wake(); wake = null; }
+  if (again && S.loaded) reloadProject().catch((e) => console.warn(e));  // back after a drop: events may be missing
+  if (S.busy) setConn('busy', 'Regenerating'); else if (S.loaded) setConn('live'); else setConn('busy', 'Connecting');
+}
+function unreachable(e, wait = 0) {
+  if (S.current || S.busy) return;  // events already show a build or a revision: keep it on screen
+  setConn('off', wait ? 'Reconnecting' : 'Offline');
+  const why = e?.status ? `The Studio answered ${e.status}.` : wait ? "The Studio server isn't answering." : "Couldn't load the demo data.";
+  $('#insp').innerHTML = `<div class="empty"><div><div class="ill">${I('alert', 'lg')}</div><h4>Can't load the project yet</h4><p>${why}${wait ? ` Trying again in ${wait} s.` : ''} If the server isn't running, start it with <span class="mono">python -m morph.cli studio &lt;project&gt;</span>, or open <span class="mono">?fixture=1</span> for the offline demo data.</p></div></div>`;
 }
 
 window.morph = { show, showTab, state: S, studio, get viewer() { return viewer; }, get panels() { return panels; }, get presenter() { return presenter; }, onEvent, sendChat };
