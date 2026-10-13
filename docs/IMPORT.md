@@ -56,8 +56,9 @@ sized the way it is used.
 Picking one motor family in the dialog (or `--family`) sizes every joint the same way, with the motors counted as
 bought parts as the build counts them, and keeps the arm on one supply voltage: the 7.4 V STS3215 on every joint while
 it holds them all, otherwise the 12 V STS3215 on all of them; XL330s never share a supply with XL430s and XM430s.
-The SO-101 with **Smart bus** picked builds as feasible on 12 V STS3215s. When an imported robot builds but its own
-checks flag it, the dialog says so and lists why.
+The SO-101 with **Smart bus** picked builds as feasible on 12 V STS3215s. A motor picked per joint shares that one
+servo supply: a 12 V STS3215 beside 7.4 V ones would run at 6 V and give about half its rated torque, so the build
+flags it. When an imported robot builds but its own checks flag it, the dialog says so and lists why.
 
 The gripper, tool point and motors Morph derived are marked auto-calibrated: check them in the Robot tab before you
 trust the numbers.

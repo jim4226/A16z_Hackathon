@@ -181,9 +181,16 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   SO-101 with Smart bus builds as feasible; the dialog says when an imported robot built but isn't feasible, and why.
   An object mesh brings its own damage force and friction (never the previous object's) and, when fragile or narrow,
   the force-sensing finger. An archive with nothing usable left says what was skipped, and a link pasted without
-  `https://` works.
+  `https://` works. The motor families are offered for robots whose files name their motors too (the SO-101), and a
+  link that fails at once (offline) says why instead of showing "Fetching" forever; a refused link stays in the box.
+- A servo that would run far below its rated voltage on the arm's one servo rail is an issue: a 12 V STS3215 picked
+  for one joint beside 7.4 V ones runs at 6 V there and gives about half the torque it was sized with, and the build
+  called that robot feasible.
 - Show Morph the job: a fragile object, or one narrower than the plain finger closes on, gets the force-sensing
-  finger in the list of changes, so Apply builds a robot that passes its own checks.
+  finger in the list of changes, so Apply builds a robot that passes its own checks. Review lists the change typed a
+  moment before (it could miss it), each step opens at its title, and cards filled in by hand say whether network
+  lookups are off or there is no Claude key.
+- New robot: with Darwin lookups off, the sourcing step says so after a build.
 - The project menu scrolls when there are many projects and refreshes its "building" tags each time it opens.
 - `morph studio --team --remote` prints the network address teammates use, and the owner's sign-in link starts with
   it; Share warns when the page that makes an invite was opened at an address only this computer can reach.
