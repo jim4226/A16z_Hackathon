@@ -254,8 +254,11 @@ def commit(req, sid):
             try:
                 out = sess.build(plan, home, on_event=ev, fast_sim=False, n_trials=2, session_id=sid,
                                  created_by=(getattr(req, "member", None) or {}).get("id"))
+                summary = out.get("summary") or {}
                 ev({"type": "import", "id": sid, "stage": "build", "status": "done",
-                    "text": f"Built {out['project']} ({out['rev']})"})
+                    "text": f"Built {out['project']} ({out['rev']})", "feasible": summary.get("feasible"),
+                    "issues": [str(x)[:240] for x in (summary.get("issues") or [])[:4]],
+                    "pick_place": summary.get("pick_place_success")})
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
                 src = plan.get("source")
@@ -353,8 +356,16 @@ def _follow(sid: str, s, room, job, emit, q):
         finally:
             room.hub.unsubscribe(q)
         if job.result:
+            try:  # the verdict travels with "done": a robot that built but isn't feasible must not read as ready
+                res = room.p.load_results(job.result)
+            except (OSError, ValueError):
+                res = {}
+            summary = res.get("summary") or {}
             emit({"type": "import", "id": sid, "stage": "build", "status": "done", "built_project": room.name,
-                  "rev": job.result, "text": f"Built {room.name} ({job.result})"})
+                  "rev": job.result, "text": f"Built {room.name} ({job.result})",
+                  "feasible": summary.get("feasible"), "issues": [str(x)[:240] for x in (summary.get("issues") or [])[:4]],
+                  "pick_place": summary.get("pick_place_success"),
+                  "stages": {k: v for k, v in (res.get("stage_status") or {}).items() if isinstance(v, str)}})
         else:
             why = job.error or f"the build ended as {job.status}"
             emit({"type": "import", "id": sid, "stage": "build", "status": "error", "built_project": room.name,

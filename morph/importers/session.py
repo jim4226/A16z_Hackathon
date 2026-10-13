@@ -260,8 +260,9 @@ class Session:
         os.makedirs(self.work)
         self._unpack(emit, warnings, errors)
         inv = _detect.scan(self.files, 20000)
-        if not inv and not errors:
-            raise ImportFailed("Nothing to import yet: drop a file or folder, or paste a link.")
+        if not inv and not errors:  # an archive whose every entry was skipped says which, not "drop a file"
+            raise ImportFailed(f"Nothing left to import: Morph {'; '.join(warnings[:3])}." if warnings else
+                               "Nothing to import yet: drop a file or folder, or paste a link.")
         for f in inv:
             msg = _detect.refusal(f["format"], os.path.basename(f["path"]))
             if msg:
