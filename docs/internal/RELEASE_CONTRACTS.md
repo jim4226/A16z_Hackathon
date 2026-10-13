@@ -63,7 +63,8 @@ Folders starting with `.` are never projects: `projects()` and `reset()` must sk
 
 ```python
 route(method, path, *, role="editor", raw_body=False, max_body=1 << 20)  # decorator
-# path: exact ("/api/brief") or prefix ("/api/import/*"). role: "viewer" | "editor" | "owner".
+# path: exact ("/api/brief") or prefix ("/api/import/*"). role: "viewer" | "editor" | "owner", or "public" (the Teams
+# join form only: a team Studio answers it before sign-in, without X-Morph-Client; other Studios check it as usual).
 # raw_body=True: the handler reads req.handler.rfile itself (streamed uploads, bounded by max_body).
 
 class Request:
@@ -92,7 +93,16 @@ class Request:
   `close_stream()`).
 - Feature modules register their routes in `morph/studio/api_<feature>.py`. `server.py` imports every
   `api_*.py` in that folder at start, so a feature never edits server.py. Registering a method and path
-  twice raises.
+  twice raises. Each module registers itself when imported, with the Studio's hooks (I2a): `api_brief` with the
+  project service (`_studio_create`), `api_import`, `api_video`, `api_world`, and `api_team`, whose routes answer
+  only on a team Studio (`GET /api/me` says `{team: false}` elsewhere, every other Teams route is 404).
+- **Team mode** (`morph studio --team`, `Studio(team=True)`): a member's session cookie or `X-Morph-Token` script
+  token signs every request in (`MORPH_TOKEN` plays no part); the server calls `api_team.role_hook(req, role)` for
+  every route, which checks the Teams role table (`teams/roles.py`; a declared role can only make it stricter) and
+  raises 401 or 403. The hook is per Studio, so `routes.set_role_hook` stays a global hook for tests. `/?invite=` and
+  `/?link=` get the join and sign-in pages before sign-in; a page load without a session gets the team's sign-in
+  page; `/files` checks gated order packages (`api_team.check_download`); the event stream feeds presence; keys,
+  settings, export, reset, project deletion and imports go into the team's audit log.
 - JSON bodies are capped at 1 MiB by default. Raise the cap per route only when needed (video frames:
   16 MiB).
 - Also in routes.py: `HTTPError(status, message)` (raise it for a JSON error), `Request.arg(name)` (first
@@ -126,8 +136,13 @@ Room: name, p (RobotProject), hub (Hub: send(event), history), jobs (JobQueue), 
 studio.queue_chat(room, text, *, base_rev=None, by=None) -> Job                  # rooms.QueueFull when 10 wait
 studio.queue_changes(room, changes, *, label, reply=None, source="", user_text=None, base_rev=None, by=None)
 studio.queue_build(room, design, *, label="first design", by=None)              # a parentless build
-studio.create_project(name=None, *, source="", design=None, need=None, origin="default", by=None, meta=None)
-    -> (room, job)                        # projects.create + queue_build + project_created to every tab
+studio.create_project(name=None, *, source="", design=None, need=None, origin="default", by=None, meta=None,
+                      label="first design", on_room=None)
+    -> (room, job)                        # projects.create + queue_build + project_created to every tab; on_room(room)
+                                          # runs before the build is queued (subscribe there to miss no event)
+studio.queue_changes(..., kind="change", proposed_by=None)  # proposed_by: a Teams change request's author (ledger)
+studio.when_done(job, fn)                 # fn(job) on a background thread once the job ended (any status)
+Studio(project, home, *, team=False, allow_url_import=False); RobotProject.run(..., by=None, proposed_by=None)
 studio.fork_project(project, rev=None, name=None, *, by=None) -> (room, job | None, info)
 studio.delete_project(name) -> trash folder; studio.broadcast(event)
 Job: id, kind, by, status, base_rev, result (new rev), wait(timeout), info(position)
@@ -157,7 +172,9 @@ A job applies its changes to the newest revision when its turn comes. If one of 
   - `agent {role, provider, status: "start"\|"done"\|"error"\|"skipped", ms, text}`, the agents timeline
   - `project_created {project, origin}` and `project_deleted {project}`: sent to every tab
   - `project {project, reset: true}`: Reset demo changed this project; tabs on it reload
-  - `import {id, stage, status, text}`
+  - `import {id, stage, status, text}`; while a new project from an import builds, the importing tab's room also
+    gets `import {id, stage: "build", status: "progress", node, node_status, built_project}` per stage, then
+    `status: "done"` (with `rev`) or `"error"` (a page shows only its own project's pipeline events)
   - `video {id, stage, status, text, result?}`
   - `queue {jobs:[{id, by, status, position, kind, label, base_rev, rev?, conflict?}]}`: the running job
     (position 0), the waiting ones (1, 2, ...) and, once, a job that just ended (position null) with its
@@ -191,6 +208,8 @@ studio = {
   (a `project` in params wins over this tab's). `on('*', fn)` gets every event. `modal.open()` returns the
   dialog element and takes `{wide, onClose}`. `mount.projMenu` is where "+ New robot" goes (F1); every slot
   is hidden while empty. `mount.chatTools` sits inside the chat form, so its buttons need `type="button"`.
+  `modal.open(el)` uses an element that already has the class `dlg` as the dialog itself (I2a: the import, video and
+  Teams dialogs); anything else is wrapped in one.
   `window.morph.studio` is the same object, for tests.
 - `init(studio)` runs after the first state load (and also when the server can't be reached).
 - The page subscribes to events before it loads its state, retries `/api/state` with backoff (1, 2, 4, 8, then
@@ -199,6 +218,9 @@ studio = {
 - Features never edit another feature's file.
 - Edits to `app.js`, `index.html` and `style.css` are limited to one import line and one entry in the
   `FEATURES` array at the top of app.js, and an appended CSS section headed `/* ---- <feature> ---- */`.
+- `FEATURES` (I2a): `newrobot` (header and project menu), `importer` (header, project menu, page-wide drop), `video`
+  (chat tools), `team` (header and inspector tabs; adds nothing when `/api/me` says Teams is off), `world` (viewer
+  tools; needs the WebGL viewer). Each injects or links its own CSS.
 
 ## 5. SubQ client (`morph/studio/subq.py`)
 
@@ -414,7 +436,9 @@ members; a member can hold several.
 | world | 2230–2259 |
 | subq | 2260–2279 |
 
-Telemetry is opt-in (W0a).
+Telemetry is opt-in (W0a). The brief (2100–2114), video (2160–2170) and Teams (2180–2189) event types are in
+`keewano.CUSTOM_EVENTS`, copied from the feature modules (a test keeps them equal); video ledger entries map through
+`api_video.keewano_events`. A brief's events go out after its first build, only when Keewano events are on.
 
 ## 11. File ownership (create only your files; shared files only as section 4 allows)
 
@@ -469,3 +493,38 @@ custom board the back-panel jacks sit higher, over the board's edge, and the bay
 Claude client has a 30 s timeout and one retry. The grip target that "gentler" and "firmer" scale goes in and out of
 `intent.interpret()` (`last_target` in its result) and is kept per room (`Room.last_target`), never in a module
 global. `morph robot change` and `robot new --need` apply `security.design_values()` before building.
+
+## 13. Integration of the feature cores (I2a)
+
+The five feature branches are merged into the release branch and live in the Studio:
+
+- **Brief (F1):** `POST /api/brief {action: "build"}` creates the project through the project service: the brief's
+  changes are clamped to the capability envelope first (`capability.clamp`; `world.*` are locked like `name` and
+  `arm.source`), the project gets `origin: "brief"` and `brief_id`, its first build is queued in its own room and
+  `project_created` goes to every tab. When that build ends, `api_brief.on_built` writes `<project>/brief.json` and
+  deletes the draft, then `agents.after_build` runs Darwin sourcing (network and sourcing on) and Keewano (its events
+  on) on the new room's timeline. The dialog switches its tab to the new project. `capability.warm(block=False)` runs
+  at Studio start. The brief's Claude calls are off while network lookups are off.
+- **Import (F2):** a robot or a Morph export becomes a project through `studio.create_project(origin="import")`; an
+  object is a room job (`queue_changes(source="import")`). The importers' home is the Studio's projects folder, set
+  at start with the 24 h session cleanup. `morph studio --allow-url-import` keeps links on for a Studio others use.
+  `arm.source` lookups go through `importers.robots.resolve` behind Wave 0's `robot_dir()` checks. The shipped
+  `robots/so101` keeps q = 0 sizing (its stretched-out pose); only auto-imported arms are sized over a pose grid, so an
+  auto-imported SO-101 flags its shoulder (2.0 N·m with margin against the STS3215's 1.91 N·m) while the shipped demo,
+  which the real servos lift, stays feasible.
+- **Video (F3):** the page policy has `media-src 'self' blob:`; old `video-*` work folders are cleared at start.
+- **Teams (F4):** see section 2 (team mode). `morph team init|link|invite|members|revoke|audit` are CLI commands;
+  `morph studio --team` needs a team and prints a one-time owner sign-in link. Change requests are built by the
+  room's queue as the applier (`by`) for the author (`proposed_by`, in results.json and the ledger), and
+  `api_team.job_finished` records the revision or reopens the request. Event `by` is the member id everywhere.
+  `Hub.addressed` is true: inbox events reach one member's tabs.
+- **Pages and records:** a revision's `results.json` is written to a hidden temporary file and renamed, so a revision
+  that has one is complete. The Teams join and sign-in pages carry `<meta name="referrer" content="strict-origin">`:
+  under the Studio's `no-referrer` policy a browser would post their forms with `Origin: null`, which the Origin check
+  refuses. The New robot dialog switches its tab to the new project; it finishes from the state when the build ended
+  before the tab joined the room. The import dialog stays on its tab and follows the relayed `import` events.
+- **World (F5):** `design.world.id` must be a world id (`[a-z0-9][a-z0-9-]{0,39}`), never a path: the design limits,
+  chat (`CHAT_FORBIDDEN`) and the simulation stage all check it, and the stage only ever reads
+  `<project>/world/world.json` inside the project. A fork copies `world/`. MuJoCo 3.1.6 is the floor in
+  `pyproject.toml` and `requirements.txt` (`mj_geomDistance`). `morph/studio/worlds.py` is not in the pipeline hash:
+  a world's content is pinned by `world.sha` in the design.

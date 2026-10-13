@@ -9,17 +9,45 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 
 ### Features (beta)
 
-The feature teams add their entries here before the tag:
-
-- _A new robot from a one-line request, with follow-up questions._
-- _Import a robot or a part: URDF, MJCF, meshes, BOM._
-- _Show Morph the job: video and photo uploads._
+- **New robot** from a one-line request: describe the job in one sentence; Morph asks up to three rounds of chip
+  questions or uses sensible defaults, shows every assumption, checks the design in about 30 ms and builds the whole
+  robot as a new project. Requests Morph can't build get a plain reason and the nearest robot it can build; harmful
+  requests are refused, and nothing is sent anywhere when the local filter catches them. The agents timeline labels
+  each step (SubQ Snap, Claude, Morph's own checks, Darwin, Keewano); without keys everything runs on built-in rules.
+- Chat edits understand units (mm, cm, in, g, kg, lb, oz) and whole-word object names, and questions such as "can it
+  lift 2 kg?" no longer change the design.
+- **Import** (beta): drop a robot folder or zip (URDF, xacro, MuJoCo XML) or paste a GitHub or Hugging Face link; drop
+  an STL, OBJ or GLB of the object to grasp, a parts list (CSV, XLSX, Markdown), a KiCad board or a Morph export.
+  Morph finds the gripper, tool point, base and ready pose, asks only what the files can't tell (usually the motors)
+  and builds the robot as a new project. Imported robots are kept in `projects/.robots/` with their licence and where
+  they came from; `morph import <path|url>` does the same from a terminal. Auto-imported arms are sized for their
+  worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
+  stretched-out pose). On a Studio other computers use, links are off unless it was started with
+  `--allow-url-import`.
+- **Show Morph the job** (beta): add a phone video or photos of the task done by hand. Morph picks still frames in
+  your browser, estimates the object, the pick and place spots, the cycle time and safety needs, and lists every
+  change before Apply. Only the chosen frames are sent, after you agree: to Claude, plus up to 4 to SubQ as an
+  optional second opinion. With no key, or network lookups off, you fill in the cards by hand with a measuring tool.
+  Clips your browser can't play (often iPhone HEVC) can go to the Studio computer's ffmpeg (install ffmpeg, or
+  `pip install morph[video]`), and the video is deleted once its frames are out.
 - SubQ Snap: an optional SubQ key (Keys, `SUBQ_API_KEY`) for quick yes/no and multiple-choice decisions, shown as
   "SubQ Snap (AI)". It is only called with your key and network lookups on, retries once, switches itself off for a
   refused or out-of-credit key, caches answers (never requests or photos) for 7 days, and every use has an offline
   fallback. `morph doctor` checks it; `morph subq "<text>"` tries a key by hand.
-- _Teams preview: GitHub for physical things._
-- _World mode (beta)._
+- **Morph Teams** (preview, "GitHub for physical things"): `morph team init --owner <name>`, then `morph studio
+  --team`. Invite teammates with a single-use link and a role (owner, editor, viewer) plus disciplines; comment on
+  revisions, stages, BOM lines and parameters; change requests are routed to the owners of the stages they touch, and
+  a generalist covers any discipline with no specialist; reviews are tied to the exact revision, and an approval goes
+  stale only when a later edit recomputes that discipline's stages; releases are gated by build level; branches,
+  an activity feed, an inbox, and a hash-chained audit log (`morph team audit --verify`). Team data stays on the
+  Studio computer. Links travel as plain HTTP unless the Studio is behind HTTPS (use a tunnel or VPN), and an
+  approval doesn't certify that a robot is safe.
+- **World mode** (beta): put the robot in a room (a built-in desk, kitchen counter or workbench, or your own .glb room
+  scan with a two-point scale), place it by clicking a surface, walk through the room, and simulate pick and place
+  against grey obstacle boxes with a carry path that keeps clear of them. Editing the room reruns only the
+  simulation. Check placement: measured checks set the verdict; an optional AI review (beta) of six rendered views
+  adds findings, suggested changes and a guided tour, and never changes pass or fail. It is not a motion planner.
+  Needs MuJoCo 3.1.6 or newer.
 
 ### Studio
 
@@ -79,6 +107,13 @@ The feature teams add their entries here before the tag:
 - Each connection gets 20 seconds for its request line and headers, and the Studio serves at most 64 connections at
   once (48 of them live event streams); more are answered "busy" (503) at once. A slow or idle client could hold a
   thread for good, which matters most in remote mode.
+- Teams: members sign in with a single-use invite or a 15-minute sign-in link (signed session cookies; codes and
+  script tokens are stored hashed, and wrong codes are throttled); `MORPH_TOKEN` plays no part in team mode. Every
+  route is checked against the team's role table, each member's tabs get only their own notifications, and gated
+  order packages of an unreleased revision follow the team's policy. Without `--team` the Studio has no Teams routes.
+- Imports treat every file and link as hostile: archive limits, no XML entities, meshes and paths kept inside the
+  import, xacro expanded in a separate process, and links only from github.com and Hugging Face over HTTPS.
+- World mode names its room by id, never a path, and chat can't change it.
 
 ### Fixes
 

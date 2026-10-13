@@ -30,6 +30,13 @@ Morph Studio is a local app: a small web server on your computer, used from your
   browser or prints it.
 - Every optional service (Claude, Keewano, Darwin, SubQ) can be switched off; [docs/PRIVACY.md](docs/PRIVACY.md)
   lists what each one receives.
+- Imports treat every file and link as hostile: archive limits (entries, sizes, compression ratio, no links or nested
+  archives), no XML entities, meshes and paths kept inside the import, xacro expanded in a separate process with a
+  timeout, and links only to github.com and Hugging Face over HTTPS, refusing private addresses on every redirect.
+- Team mode (`--team`): members sign in with single-use invite links or 15-minute sign-in links; session cookies are
+  signed with the team's secret, codes and script tokens are stored hashed, wrong codes are throttled, revoking a
+  member ends their sessions, and the role table checks every request. The audit log is hash-chained
+  (`morph team audit --verify`).
 
 ## What it doesn't protect
 
@@ -41,6 +48,10 @@ Morph Studio is a local app: a small web server on your computer, used from your
   Never open port 8765 to the internet. Restarting Morph changes the code, unless `MORPH_TOKEN` in `.env` fixes it.
   After 10 different wrong codes from one address, Morph stops checking that address's codes for 15 minutes. Still
   keep the generated code, or make `MORPH_TOKEN` long (20 or more characters).
+- **Team mode is plain HTTP too.** Invite and sign-in links and session cookies can be copied by anyone who can watch
+  the network: use it on a network you trust, or behind HTTPS (a tunnel or VPN). An approval records who reviewed a
+  revision; it doesn't certify that a robot is safe.
+- xacro files run in a separate process as your user; their memory limit applies on macOS and Linux only.
 - Programs running as your user can read your projects and `.env`.
 - Generated designs, wiring and firmware are not bench-validated. Check them before you power real hardware.
 
