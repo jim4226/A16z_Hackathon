@@ -857,3 +857,11 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
   .toolbar .slider .v { display: none; }
   .toolbar #viewerTools .btn { font-size: 12px; gap: 6px; }
 }
+
+/* ---- keys: tool keys (toolbox, beta) ---- */
+.ksec.ktools { margin-top: 18px; }
+.ksec.ktool { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line2); }
+.khosts { color: var(--dim); font-size: 11px; margin-top: 3px; }
+.khosts .mono { color: var(--ink2); }
+.kf.kfocus { border-radius: 10px; box-shadow: 0 0 0 2px var(--accent-line); padding: 6px 8px; margin: 9px -8px 0; animation: kfocus 1.6s ease-out 1; }
+@keyframes kfocus { from { background: var(--accent-bg); } to { background: transparent; } }

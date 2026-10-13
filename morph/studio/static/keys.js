@@ -2,6 +2,9 @@
 // Keys go to the local Studio server, which writes them to the repo's git-ignored .env and applies
 // them at once. The server only ever reports whether a key is set, never its value. The privacy
 // switches (network, Keewano events, Keewano calibration) are non-secret settings (/api/settings).
+// Tool keys (beta, entries with `tool: true`) come from the manifests of the tools that are on and are grouped under
+// their service. window.dispatchEvent(new CustomEvent('morph:keys', {detail: {key: 'MORPH_TOOL_...'}})) opens the
+// dialog scrolled to that key (a "Key needed" card's Add key button).
 import { I, esc, sleep } from './panels.js';
 
 const JSON_POST = { 'Content-Type': 'application/json', 'X-Morph-Client': '1' };  // the server refuses changes without X-Morph-Client
@@ -30,6 +33,7 @@ export class KeysDialog {
     this.el.className = 'modal';
     this.el.addEventListener('click', (e) => { if (e.target === this.el) this.close(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && this.el.classList.contains('on')) this.close(); });
+    window.addEventListener('morph:keys', (e) => { const d = e.detail; this.open(typeof d === 'string' ? d : d?.key || d?.name || ''); });
     document.body.appendChild(this.el);
   }
   async refresh() {
@@ -38,24 +42,32 @@ export class KeysDialog {
     this.data = await r.json();
     return this.data;
   }
-  async open() {
+  async open(focus = '') {
+    this.focus = focus;
     this.el.classList.add('on');
     this.el.innerHTML = '<div class="glass dlg"><div class="skel" style="height:220px"></div></div>';
     try { await this.refresh(); } catch (e) {
-      this.el.innerHTML = `<div class="glass dlg"><p>Couldn't reach the Studio server (${esc(e.message)}).</p></div>`;
+      this.el.innerHTML = `<div class="glass dlg"><p>${e.message === '403' ? 'Only the owner of this Studio can see and add keys: ask them to add this one.'
+        : `Couldn't reach the Studio server (${esc(e.message)}).`}</p></div>`;
       return;
     }
     this.render();
   }
   close() { this.el.classList.remove('on'); }
   render() {
-    const d = this.data, keys = d.keys || [];
-    const services = [...new Set(keys.map((k) => k.service))];
+    const d = this.data, all = d.keys || [], keys = all.filter((k) => !k.tool), tools = all.filter((k) => k.tool);
+    const services = [...new Set(keys.map((k) => k.service))], toolServices = [...new Set(tools.map((k) => k.service))];
     const field = (k) => `<div class="kf" data-k="${esc(k.name)}">
         <label><span>${esc(k.label)}</span>${k.set ? `<span class="tag good">${I('check', 'sm')}set</span>` : '<span class="tag neutral">not set</span>'}</label>
         <div class="kin"><input type="password" autocomplete="off" spellcheck="false" placeholder="${k.set ? 'Set. Paste a new key to replace it' : 'Paste key'}" aria-label="${esc(k.label)}">
           ${k.set ? `<button class="btn ghost" type="button" data-clear="${esc(k.name)}" title="Remove this key">Remove</button>` : ''}</div>
-        <div class="kh">${esc(k.what)} <a href="${esc(k.url)}" target="_blank" rel="noopener">Where: ${esc(k.where)}</a></div></div>`;
+        <div class="kh">${esc(k.what)} <a href="${esc(k.url)}" target="_blank" rel="noopener">${k.tool ? 'Get a key' : 'Where'}: ${esc(k.where)}</a></div>
+        ${k.tool ? `<div class="khosts">Sent only to <span class="mono">${(k.hosts || []).map(esc).join(', ')}</span>${(k.used_by || []).length ? `; used by ${k.used_by.map(esc).join(', ')}` : ''}</div>` : ''}</div>`;
+    const sentence = (t) => (t && !/[.!?]$/.test(t) ? `${t}.` : t || '');
+    const toolSecs = toolServices.length ? `<section class="ksec ktools"><div class="ks-h"><b>Tool keys</b><span class="tag neutral">beta</span></div>
+        <div class="ks-n">Morph's agents ask for these when one of their tools needs your key. Each key is sent only to its own service, never to Claude.</div></section>
+      ${toolServices.map((sv) => { const ks = tools.filter((k) => k.service === sv); return `<section class="ksec ktool"><div class="ks-h"><b>${esc(sv)}</b>${ks.every((k) => k.set) ? '<span class="tag good">set up</span>' : '<span class="tag neutral">not set up</span>'}</div>
+        <div class="ks-n">${esc([sentence(ks[0].privacy), sentence(ks[0].cost)].filter(Boolean).join(' '))}</div>${ks.map(field).join('')}</section>`; }).join('')}` : '';
     const kw = d.integrations?.keewano || {}, st = d.settings || {};
     const toggle = ([k, title, note]) => `<label class="kt"><span class="switch"><input type="checkbox" data-s="${k}"${st[k] ? ' checked' : ''}><i></i></span>
         <span><b>${esc(title)}</b><small>${esc(note)}</small></span></label>`;
@@ -67,6 +79,7 @@ export class KeysDialog {
         <div class="ks-n">${esc(SERVICE_NOTE[sv] || '')}</div>${keys.filter((k) => k.service === sv).map(field).join('')}</section>`).join('')}
       <section class="ksec"><div class="ks-h"><b>Darwin</b><span class="tag good">no key needed</span></div>
         <div class="ks-n">Darwin Search is public, so the BOM tab finds agents for every part without a key. Ordering through Darwin uses your own Darwin sign-in, outside Morph.</div></section>
+      ${toolSecs}
       <section class="ksec"><div class="ks-h"><b>Privacy and network</b></div>${SETTINGS.map(toggle).join('')}
         ${st.network_enabled === false ? '<div class="ks-n">Network lookups are off, so nothing is sent to Keewano, Darwin, SubQ or Claude.</div>' : ''}</section>
       <div class="knote"></div>
@@ -83,6 +96,16 @@ export class KeysDialog {
     if (rb) rb.onclick = () => this.rebuild(rb);
     this.el.querySelectorAll('.kf input').forEach((inp) => inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.save(); }));
     this.el.querySelectorAll('[data-s]').forEach((inp) => (inp.onchange = () => this.setting(inp.dataset.s, inp.checked, inp)));
+    const focus = this.focus;
+    this.focus = '';
+    const target = focus && [...this.el.querySelectorAll('.kf')].find((f) => f.dataset.k === focus);
+    if (target) {
+      target.classList.add('kfocus');
+      target.scrollIntoView({ block: 'center' });
+      target.querySelector('input')?.focus({ preventScroll: true });
+      return;
+    }
+    if (focus) this.note(this.row('bad', `${esc(focus)} isn't in this list: the tool that needs it may be turned off.`));
     this.el.querySelector('.kf input')?.focus();
   }
   async setting(name, on, inp) {
@@ -117,6 +140,12 @@ export class KeysDialog {
     const values = { ...(extra || {}) };
     this.el.querySelectorAll('.kf').forEach((f) => { const v = f.querySelector('input').value.trim(); if (v) values[f.dataset.k] = v; });
     if (!Object.keys(values).length) { this.a.toast('Paste a key first'); return; }
+    for (const [name, v] of Object.entries(values)) {  // the server checks again; this only saves a round trip
+      const k = (this.data.keys || []).find((x) => x.name === name);
+      let fits = true;
+      try { fits = !(k?.tool && v && k.pattern) || new RegExp(k.pattern).test(v); } catch { fits = true; }
+      if (!fits) { this.note(this.row('bad', `That doesn't look like a ${esc(k.service)} key. Copy the ${esc(k.label)} again (${esc(k.where)}).`)); return; }
+    }
     const btn = this.el.querySelector('[data-a="save"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
     const r = await fetch('/api/keys', { method: 'POST', headers: JSON_POST, body: JSON.stringify({ values }) })
@@ -138,11 +167,12 @@ export class KeysDialog {
       removed.length ? `Removed: ${removed.map(label).join(', ')}.` : '',
       kwAdded && !out.integrations.keewano?.send ? 'Nothing goes to Keewano until <b>Send build events to Keewano</b> is on (Privacy and network, below).' : '',
       kwAdded && out.integrations.keewano?.calibration ? 'The Keewano grip calibration applies to newly generated robots: <b>Reset demo and rebuild</b> regenerates both (about a minute).' : '',
+      (out.resumed || []).length ? `${out.resumed.length === 1 ? 'A paused run that waited for it continues' : `${out.resumed.length} paused runs that waited for it continue`} now.` : '',
     ].filter(Boolean).join(' '));
     this.note(saved);
     this.a.toast(added.length ? 'Keys saved on this computer' : 'Key removed');
-    const services = [...new Set(added.map((k) => (out.keys || []).find((x) => x.name === k)?.service).filter(Boolean))];
-    if (services.length) await this.test(services, saved);
+    const services = [...new Set(added.map((k) => (out.keys || []).find((x) => x.name === k)).filter((k) => k && !k.tool).map((k) => k.service))];
+    if (services.length) await this.test(services, saved);  // tool keys are tried by their tools, not here
   }
   async test(services, before = '') {
     this.note(before + this.row('busy', `Checking ${services ? esc(services.join(' and ')) : 'your keys'}…`));
