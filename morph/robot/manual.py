@@ -64,6 +64,13 @@ def _camera(az_deg, el_deg):
     return d, r, u
 
 
+def _mat(a, m):
+    """a @ m without BLAS. render() runs on several threads at once, and on Windows the OpenBLAS in older numpy wheels
+    (numpy 2.2, the last for Python 3.10) crashed the whole process when those threads multiplied large arrays."""
+    a = np.asarray(a, float)
+    return np.einsum("...j,jk->...k", a, m) if np.ndim(m) == 2 else np.einsum("...j,j->...", a, m)
+
+
 def _cluster(mesh, cell):
     """Vertex-clustering decimation (drops thread / knurl detail far below a pixel)."""
     if cell <= 0 or len(mesh.faces) < 400:
@@ -104,8 +111,8 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     d, r, u = _camera(*view)
     P = np.stack([r, u, d], axis=1)               # world -> (x_screen, y_screen, depth)
     allv = np.vstack([m.vertices for m, _, _ in items if len(m.vertices)]) if items else np.zeros((1, 3))
-    sv = allv @ P
-    frame = np.asarray(focus_frame, float) @ P if focus_frame is not None and len(focus_frame) else sv
+    sv = _mat(allv, P)
+    frame = _mat(focus_frame, P) if focus_frame is not None and len(focus_frame) else sv
     lo, hi = frame[:, :2].min(0), frame[:, :2].max(0)
     span = np.maximum(hi - lo, 1e-6)
     scale = float(min(W * (1 - 2 * pad) / span[0], H * (1 - 2 * pad) / span[1]))
@@ -133,7 +140,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
         ln = np.linalg.norm(n, axis=1)
         ok = ln > 1e-12
         t, n = t[ok], n[ok] / ln[ok, None]
-        front = n @ d > -0.02
+        front = _mat(n, d) > -0.02
         t, n = t[front], n[front]
         tris.append(t)
         normals.append(n)
@@ -148,7 +155,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     C = np.concatenate(cols)
     S = np.concatenate(styles)
     PI = np.concatenate(pids)
-    st = T @ P                                    # (F, 3, 3) screen coords + depth
+    st = _mat(T, P)                               # (F, 3, 3) screen coords + depth
     xs = (st[:, :, 0] - cx) * scale + W / 2
     ys = H / 2 - (st[:, :, 1] - cy) * scale
     depth = st[:, :, 2].mean(1)
@@ -173,9 +180,9 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     L2 /= np.linalg.norm(L2)
     Hh = L1 + d
     Hh /= np.linalg.norm(Hh)
-    k1 = np.clip(N @ L1, 0, 1)[:, None]
-    k2 = np.clip(N @ L2, 0, 1)[:, None]
-    spec = np.clip(N @ Hh, 0, 1)[:, None] ** 28
+    k1 = np.clip(_mat(N, L1), 0, 1)[:, None]
+    k2 = np.clip(_mat(N, L2), 0, 1)[:, None]
+    spec = np.clip(_mat(N, Hh), 0, 1)[:, None] ** 28
     FC = np.clip(C * (0.46 + 0.46 * k1 + 0.16 * k2) + 0.10 * spec, 0, 1)
     gh = S == 0
     FC[gh] = (0.80 + 0.13 * np.clip(0.4 + 0.6 * k1[gh], 0, 1)) * np.array([0.985, 0.99, 1.0])
@@ -234,7 +241,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
             c0 = base_pts[:, :2].mean(0)
             rad = float(np.percentile(np.linalg.norm(base_pts[:, :2] - c0, axis=1), 95)) * 1.25
             ang = np.linspace(0, 2 * math.pi, 64)
-            ring = np.stack([c0[0] + rad * np.cos(ang), c0[1] + rad * np.sin(ang), np.full(64, allv[:, 2].min())], 1) @ P
+            ring = _mat(np.stack([c0[0] + rad * np.cos(ang), c0[1] + rad * np.sin(ang), np.full(64, allv[:, 2].min())], 1), P)
             sh = Image.new("L", (W, H), 0)
             ImageDraw.Draw(sh).polygon([((x - cx) * scale + W / 2, H / 2 - (y - cy) * scale) for x, y, _ in ring], fill=70)
             sh = sh.filter(ImageFilter.GaussianBlur(radius=float(max(6.0, 0.06 * rad * scale))))
@@ -244,7 +251,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
             o[free] *= (1 - 0.35 * sa[free])[:, None]
             res = Image.fromarray(o.astype(np.uint8), "RGB")
     def scr(p):
-        a_ = np.asarray(p, float) @ P
+        a_ = _mat(p, P)
         return (a_[0] - cx) * scale + W / 2, H / 2 - (a_[1] - cy) * scale
 
     if lines or dots:
@@ -267,8 +274,8 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     if arrows:
         dr2 = ImageDraw.Draw(res)
         for p0, p1 in arrows:
-            a0 = np.asarray(p0) @ P
-            a1 = np.asarray(p1) @ P
+            a0 = _mat(p0, P)
+            a1 = _mat(p1, P)
             x0, y0 = (a0[0] - cx) * scale + W / 2, H / 2 - (a0[1] - cy) * scale
             x1, y1 = (a1[0] - cx) * scale + W / 2, H / 2 - (a1[1] - cy) * scale
             L = math.hypot(x1 - x0, y1 - y0)
