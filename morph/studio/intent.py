@@ -88,6 +88,35 @@ def object_changes(key: str) -> dict:
     return ch
 
 
+NOTE = "~"  # a `said` entry that changes nothing ("it already has an emergency stop"): the reply says so, apart
+CHEAPER = re.compile(r"\b(cheaper|cheapest|less expensive|cost less|lower (?:the )?(?:cost|price)|(?:reduce|cut|lower) (?:the )?"
+                     r"(?:parts )?(?:cost|price)s?|save money|costs? down)\b")
+
+
+def cost_down(d: Design, ch: dict, said: list):
+    """"Make it cheaper": one step down the cost ladder that still lifts the object with a 2x torque margin
+    (capability.PAYLOAD_G): Dynamixel to smart-bus servos, then one joint fewer, then hobby PWM servos."""
+    from .capability import payload_g
+
+    if d.arm.source:
+        said.append(f"{NOTE}an imported arm keeps its own servos; a Morph-generated arm can be made cheaper")
+        return
+    fam, dof, g = d.arm.actuator_family, int(d.arm.dof), float(d.object.mass_g)
+    if fam == "dynamixel" and payload_g("smart_bus", dof) >= g:
+        ch["arm.actuator_family"] = "smart_bus"
+        said.append(f"actuators → smart bus (Feetech STS3215, far cheaper than Dynamixel; they still lift the {g:g} g object "
+                    "with a 2x margin)")
+    elif dof > 4 and payload_g(fam, dof - 1) >= g:
+        ch["arm.dof"] = dof - 1
+        said.append(f"{dof - 1}-DOF arm (one servo fewer; top-down picks need only 4 joints)")
+    elif fam == "smart_bus" and payload_g("hobby_pwm", dof) >= g:
+        ch["arm.actuator_family"] = "hobby_pwm"
+        said.append("actuators → hobby PWM servos (the cheapest; they have no position feedback)")
+    else:
+        label = {"hobby_pwm": "hobby PWM", "smart_bus": "smart-bus", "dynamixel": "Dynamixel"}.get(fam, fam)
+        said.append(f"{NOTE}this is already the cheapest arm Morph makes for a {g:g} g object ({dof} joints, {label} servos)")
+
+
 def robot_rules(t: str, d: Design, ch: dict, said: list):
     """Whole-robot requests: actuator family, DOF, reach, electronics config, extras, build config."""
     fam = None
@@ -115,6 +144,21 @@ def robot_rules(t: str, d: Design, ch: dict, said: list):
     elif re.search(r"(shorter|less|smaller|reduce) reach|more compact", t):
         ch["arm.reach_mm"] = max(d.arm.reach_mm - 60, 200)
         said.append(f"reach → {max(d.arm.reach_mm - 60, 200):g} mm")
+    if CHEAPER.search(t) and not fam and "arm.dof" not in ch:
+        cost_down(d, ch, said)
+    pace = (re.search(r"\b(faster|quicker|speed (?:it )?up|more per (?:minute|hour))\b(?! (?:servos?|motors?|actuators?))", t)
+            and -1) or (re.search(r"\b(slower|more slowly|slow (?:it )?down)\b", t) and 1)
+    if pace:
+        from .capability import CYCLE_S
+
+        cur = float(d.task.cycle_time_s)
+        new = round(min(max(cur * (0.75 if pace < 0 else 1.33), CYCLE_S[0]), CYCLE_S[1]), 1)
+        if new != cur:
+            ch["task.cycle_time_s"] = new
+            said.append(f"cycle time → {new:g} s per pick and place (was {cur:g} s)")
+        else:
+            said.append(f"{NOTE}one pick and place every {cur:g} s is already the "
+                        f"{'fastest' if pace < 0 else 'slowest'} these arms plan for")
     if re.search(r"custom pcb|custom board|pcba|single board|one board", t):
         ch["electronics.config"] = "custom_pcb"
         said.append("electronics → one custom controller PCBA")
@@ -122,14 +166,20 @@ def robot_rules(t: str, d: Design, ch: dict, said: list):
         ch["electronics.config"] = "modules"
         said.append("electronics → off-the-shelf modules")
     extras = [e for e in d.electronics.extras.split(",") if e]
+    names = {"wrist_camera": ("a", "wrist camera"), "estop": ("an", "emergency stop"), "imu": ("an", "IMU")}
     for pat, key in ((r"camera", "wrist_camera"), (r"e-?stop|emergency stop|kill switch", "estop"), (r"\bimu\b", "imu")):
         if re.search(pat, t):
             if re.search(r"(remove|no|without|drop) (the |a )?(wrist )?" + pat, t):
-                extras = [e for e in extras if e != key]
-                said.append(f"removed {key.replace('_', ' ')}")
+                if key in extras:
+                    extras = [e for e in extras if e != key]
+                    said.append(f"removed {key.replace('_', ' ')}")
+                else:
+                    said.append(f"{NOTE}it has no {names[key][1]}")
             elif key not in extras:
                 extras.append(key)
                 said.append(f"added {key.replace('_', ' ')}")
+            else:
+                said.append(f"{NOTE}it already has {' '.join(names[key])}")
     if ",".join(extras) != d.electronics.extras:
         ch["electronics.extras"] = ",".join(extras)
     if re.search(r"\bpilot\b|cnc|sheet[- ]metal|aluminum|aluminium|machined", t):
@@ -335,8 +385,22 @@ def _interpret(msg: str, d: Design) -> dict:
     except Exception:
         pass
     ch, said = rules(msg, d)
+    notes = [s[len(NOTE):] for s in said if s.startswith(NOTE)]
+    said = [s for s in said if not s.startswith(NOTE)]
     if not ch:
-        return {"changes": {}, "source": "rules",
-                "reply": "I couldn't map that to a design parameter. Try: “swap to Dynamixel servos”, “use a custom PCB”, "
-                         "“make it 6-DOF”, “add a wrist camera”, “pilot build”, “reach 380 mm”, “make it work for a strawberry”."}
-    return {"changes": ch, "reply": "Changing " + "; ".join(said) + ".", "source": "rules"}
+        t = " ".join(msg.lower().split())
+        if notes:
+            reply = "Nothing to change: " + "; ".join(notes) + "."
+        elif t.endswith("?") or re.match(r"(?:what|how|why|which|can|could|does|do|is|are|will|would)\b", t):
+            reply = ("That reads like a question, so nothing was changed: without Claude, the chat only makes changes. The right "
+                     "panel shows this design's payload, reach, cost and torque margins.")
+        elif len(t.split()) <= 3 and re.match(r"(?:hi|hello|hey|thanks|thank you|thx|ok|okay|cool|great|nice|yes|no)\b", t):
+            reply = "Ask for a change whenever you're ready, for example “make it cheaper” or “add a wrist camera”."
+        else:
+            reply = ("I couldn't map that to a design parameter. Try: “swap to Dynamixel servos”, “make it cheaper”, "
+                     "“use a custom PCB”, “make it 6-DOF”, “add a wrist camera”, “pilot build”, “reach 380 mm”, "
+                     "“make it work for a strawberry”.")
+        return {"changes": {}, "source": "rules", "reply": reply}
+    note = "; ".join(notes)
+    return {"changes": ch, "reply": "Changing " + "; ".join(said) + "." + (f" ({note[:1].upper() + note[1:]}.)" if note else ""),
+            "source": "rules"}
