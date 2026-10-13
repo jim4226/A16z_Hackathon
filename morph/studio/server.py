@@ -109,13 +109,16 @@ def integrations() -> dict:
     """Which services are configured on this machine (keys come from the environment) and switched on in
     the settings: `configured` means the keys are there, the other flags mean Morph will actually call it."""
     from .. import settings
+    from . import subq
     env, s, net = os.environ.get, settings.load(), settings.network_allowed()
     claude = bool(env("ANTHROPIC_API_KEY"))
     send, query = bool(env("KEEWANO_API_KEY")), bool(env("KEEWANO_PAT") and env("KEEWANO_PROJECT_ID"))
+    sq = subq.status()
     return {"claude": {"configured": claude, "chat": claude and net},
             "keewano": {"configured": send and query, "send": send and net and settings.telemetry_enabled(),
                         "query": query and net, "calibration": query and net and s["calibration_enabled"]},
             "darwin": {"search": net and s["sourcing_enabled"]},
+            "subq": {"configured": sq["configured"], "decide": subq.enabled(), "disabled": sq["disabled"]},
             "network": net}
 
 
@@ -1110,6 +1113,9 @@ def _api_keys_save(req):
                              "or move Morph to a folder you can write to.") from None
     if any(k.startswith("KEEWANO") for k in changed):
         keewano._ratio_cache.clear()  # re-query the calibration with the new project
+    if "SUBQ_API_KEY" in changed:
+        from . import subq
+        subq.reset()  # a new key gets a fresh start (a refused or out-of-credit key switched SubQ off)
     return 200, {"ok": True, "changed": changed, **_keys_state(req.studio)}
 
 

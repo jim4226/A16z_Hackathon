@@ -349,9 +349,11 @@ async function loadState(st, { fresh = false } = {}) {
 }
 
 function renderKeysDot() {
-  const i = S.integrations || {}, on = [i.claude?.configured ?? i.claude?.chat, i.keewano?.configured ?? (i.keewano?.send && i.keewano?.query)].filter(Boolean).length;
+  const i = S.integrations || {};
+  const set = [['Claude', i.claude?.configured ?? i.claude?.chat], ['Keewano', i.keewano?.configured ?? (i.keewano?.send && i.keewano?.query)],
+    ['SubQ', i.subq?.configured && !i.subq?.disabled]].filter(([, on]) => on).map(([name]) => name);
   const d = $('#keysBtn .kdot');
-  if (d) { d.className = `kdot ${on === 2 ? 'on' : on ? 'some' : ''}`; $('#keysBtn').title = `API keys: ${on === 2 ? 'Claude and Keewano connected' : on ? 'partly connected' : 'none set (optional)'}`; }
+  if (d) { d.className = `kdot ${set.length === 3 ? 'on' : set.length ? 'some' : ''}`; $('#keysBtn').title = `API keys: ${set.length ? `${set.join(', ')} connected` : 'none set (optional)'}`; }
 }
 function renderHeader() {
   $('#project').textContent = S.project || '—';

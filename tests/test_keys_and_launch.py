@@ -13,7 +13,7 @@ import pytest
 
 from morph import cli, keewano, keys
 
-NAMES = ["ANTHROPIC_API_KEY", "KEEWANO_API_KEY", "KEEWANO_PAT", "KEEWANO_PROJECT_ID"]
+NAMES = ["ANTHROPIC_API_KEY", "KEEWANO_API_KEY", "KEEWANO_PAT", "KEEWANO_PROJECT_ID", "SUBQ_API_KEY"]
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def test_saving_keys_keeps_the_rest_of_the_file(env):
     assert not os.path.exists(str(env) + ".tmp")
     status = keys.status()
     assert {k["name"]: k["set"] for k in status} == {"ANTHROPIC_API_KEY": True, "KEEWANO_API_KEY": False,
-                                                    "KEEWANO_PAT": True, "KEEWANO_PROJECT_ID": False}
+                                                    "KEEWANO_PAT": True, "KEEWANO_PROJECT_ID": False, "SUBQ_API_KEY": False}
     assert "sk-ant-test" not in json.dumps(status) and "kwpat-new" not in json.dumps(status)  # never the values
     assert keys.save({"KEEWANO_PAT": ""}) == ["KEEWANO_PAT"]  # Remove
     assert "KEEWANO_PAT" not in os.environ and "KEEWANO_PAT=" in env.read_text(encoding="utf-8").splitlines()

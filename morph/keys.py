@@ -31,6 +31,10 @@ KEYS = [
      "where": "Keewano, Settings, Personal, Security", "url": "https://keewano.com"},
     {"name": "KEEWANO_PROJECT_ID", "service": "Keewano", "label": "Project ID",
      "what": "Which Keewano project to read.", "where": "Keewano, Settings, Details, Project ID", "url": "https://keewano.com"},
+    {"name": "SUBQ_API_KEY", "service": "SubQ", "label": "SubQ API key (sk-...)",
+     "what": "Quick yes/no and multiple-choice decisions, such as sorting out what a one-line request asks for, shown as "
+             "\"SubQ Snap (AI)\". Without it Morph uses its built-in rules.",
+     "where": "console.subq.ai, API keys", "url": "https://console.subq.ai"},
 ]
 NAMES = [k["name"] for k in KEYS]
 _LINE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
@@ -196,16 +200,24 @@ def _check_keewano() -> dict:
             + ("" if os.environ.get("KEEWANO_API_KEY") else " (add the project key to send events too)")}
 
 
+def _check_subq() -> dict:
+    from .studio import subq
+
+    return subq.check()
+
+
 def check(services=None) -> dict:
     """Try each configured service once with the current keys, so a wrong key shows up at once instead
-    of as a silent fallback: {"Claude": {"ok", "detail"}, "Keewano": {...}}. Services without keys are
-    skipped. Read-only calls; nothing is sent to Keewano."""
+    of as a silent fallback: {"Claude": {"ok", "detail"}, "Keewano": {...}, "SubQ": {...}}. Services without keys
+    are skipped. Nothing is sent to Keewano; SubQ answers one tiny question (about 50 input tokens)."""
     env = os.environ.get
     jobs = {}
     if env("ANTHROPIC_API_KEY") and (not services or "Claude" in services):
         jobs["Claude"] = _check_claude
     if env("KEEWANO_PAT") and env("KEEWANO_PROJECT_ID") and (not services or "Keewano" in services):
         jobs["Keewano"] = _check_keewano
+    if env("SUBQ_API_KEY") and (not services or "SubQ" in services):
+        jobs["SubQ"] = _check_subq
     if not jobs:
         return {}
     from . import settings

@@ -186,11 +186,13 @@ def test_integrations_say_what_will_actually_be_called(monkeypatch):
     i = server.integrations()
     assert i == {"claude": {"configured": False, "chat": False},
                  "keewano": {"configured": False, "send": False, "query": False, "calibration": False},
-                 "darwin": {"search": True}, "network": True}
-    for k, v in (("ANTHROPIC_API_KEY", "k"), ("KEEWANO_API_KEY", "k"), ("KEEWANO_PAT", "k"), ("KEEWANO_PROJECT_ID", "p")):
+                 "darwin": {"search": True}, "subq": {"configured": False, "decide": False, "disabled": None},
+                 "network": True}
+    for k, v in (("ANTHROPIC_API_KEY", "k"), ("KEEWANO_API_KEY", "k"), ("KEEWANO_PAT", "k"), ("KEEWANO_PROJECT_ID", "p"),
+                 ("SUBQ_API_KEY", "k")):
         monkeypatch.setenv(k, v)
     i = server.integrations()
-    assert i["claude"]["chat"] and i["keewano"]["configured"] and i["keewano"]["query"]
+    assert i["claude"]["chat"] and i["keewano"]["configured"] and i["keewano"]["query"] and i["subq"]["decide"]
     assert not i["keewano"]["send"] and not i["keewano"]["calibration"]  # keys alone: no events, no calibration
     settings.save({"telemetry_enabled": True, "calibration_enabled": True})
     i = server.integrations()
@@ -198,6 +200,7 @@ def test_integrations_say_what_will_actually_be_called(monkeypatch):
     settings.save({"network_enabled": False})
     i = server.integrations()
     assert i["claude"] == {"configured": True, "chat": False} and i["network"] is False and not i["darwin"]["search"]
+    assert i["subq"] == {"configured": True, "decide": False, "disabled": None}
     assert not any((i["keewano"]["send"], i["keewano"]["query"], i["keewano"]["calibration"]))
 
 

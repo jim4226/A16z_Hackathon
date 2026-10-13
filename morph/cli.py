@@ -573,6 +573,9 @@ def cmd_doctor(a):
                  f"not reachable right now ({r.get('error')}); the Studio uses its cached answers"))
         except Exception as exc:  # noqa: BLE001
             line(None, f"Darwin Search: check failed ({exc})")
+        from .studio import subq
+        h = subq.health()
+        line(None, "SubQ: api.subq.ai " + ("is reachable" if h["ok"] else f"{h['detail']}; Morph uses its own rules without it"))
         for service, c in keys.check().items():  # each key that is set, tried once (read-only)
             line(c["ok"], f"{service}: {c['detail']}", "replace the key with the Keys button in the Studio, or in .env")
     with socket.socket() as sock:
@@ -582,6 +585,72 @@ def cmd_doctor(a):
     start = ("double-click run_studio.bat (Windows) or run ./run_studio.sh (macOS/Linux)" if checkout
              else "run `morph studio --open`")
     print(f"\nAll good: {start}." if ok_all else "\nFix the lines marked FIX, then run this again.")
+
+
+SUBQ_ROUTES = {"new_robot": "Design a new robot for a task or an object",
+               "edit_current": "Change the open project, e.g. make it cheaper, add a camera, use 6 joints",
+               "import_robot": "Bring in an existing robot design: a URDF, CAD files, a repo or a named open-source arm",
+               "ask_about_design": "A question about the open project with no change asked",
+               "out_of_scope": "Anything else: small talk, or a task that is not about designing a robot"}
+
+
+def subq_triage(text: str) -> tuple:
+    """(state, questions) for `morph subq`: a sample triage of a one-line request, for trying a SubQ key by hand."""
+    from .studio import subq
+
+    state = {"request": text, "morph_builds": "One stationary tabletop robot arm with 4 to 6 joints and a two-finger "
+             "gripper that picks and places small objects, with its CAD, electronics, firmware, simulations, bill of "
+             "materials and assembly manual; or an imported open-source arm (SO-101)."}
+    questions = {
+        "route": subq.choice("What does the user want Morph to do with `request`?", SUBQ_ROUTES),
+        "harm": subq.noul("Is the robot in `request` meant to hurt, threaten, restrain or target people or animals, "
+                          "or to work as a weapon?", true="Weapons, launching things at someone, injuring or restraining",
+                          false="Handling, sorting, assembly, lab, kitchen, hobby or teaching tasks"),
+        "fragility": subq.score("How easily would the object in `request` be damaged by squeezing it?",
+                                ["Robust: a can, a tool, a wooden block", "Needs care: a tomato, a light bulb",
+                                 "Very fragile: a raw egg, a grape, a strawberry"]),
+        "payload": subq.score("How heavy is the heaviest thing the robot must lift?",
+                              ["Under 50 g", "50 to 200 g", "200 to 500 g", "Over 500 g"]),
+        "says_object": subq.noul("Does `request` name or describe the object the robot must handle?"),
+    }
+    return state, questions
+
+
+def cmd_subq(a) -> int:
+    """One SubQ Snap triage of a request, printed: for trying a SubQ key (about 1,000 input tokens per run)."""
+    from .studio import subq
+
+    state, questions = subq_triage(a.text)
+    if a.lint:  # no key: SubQ checks the request's shape before the key
+        ok, msg = subq.lint({"model": subq.SNAP, "state": state, "questions": questions})
+        print(("valid request: " if ok else "invalid request: ") + msg)
+        return 0 if ok else 1
+    if not os.environ.get("SUBQ_API_KEY"):
+        print("SUBQ_API_KEY is not set: add it with the Keys button in the Studio, or in .env (key from console.subq.ai).")
+        return 1
+    res = subq.decide(state, questions, timeout=a.timeout, cache=not a.no_cache, purpose="cli")
+    if res is None:
+        st = subq.status()
+        why = st["disabled"] or (st["last_error"] or {}).get("message") or ("paused for a minute after errors" if st["cooling"]
+                                                                           else "network lookups are off")
+        print(f"SubQ didn't answer: {why}")
+        return 1
+    if a.json:
+        print(json.dumps(res, indent=1))
+        return 0
+    print(f"{subq.LABEL}, {res['source']}, {res['ms']} ms, {res.get('usage', {}).get('input_tokens', '?')} input tokens")
+    for name, q in questions.items():
+        ans = res["answers"].get(name) or {}
+        if q["type"] == "noul":
+            p = subq.p_yes(res, name)
+            print(f"  {name}: p(yes) = {p:.2f}" if p is not None else f"  {name}: no answer")
+        elif q["type"] == "choice":
+            conf = ans.get("confidence")
+            print(f"  {name}: {ans.get('choice')} (confidence {conf:.2f})" if isinstance(conf, (int, float)) else f"  {name}: no answer")
+        else:
+            s, label = subq.level(res, name)
+            print(f"  {name}: {s:.2f} ({label})" if s is not None else f"  {name}: no answer")
+    return 0
 
 
 def _console_safe():
@@ -695,6 +764,14 @@ def main(argv=None) -> int:
     s.add_argument("--remote", action="store_true",
                    help="bring your own compute: let other computers use this Studio through a private access link")
     s.set_defaults(fn=cmd_studio)
+
+    s = sub.add_parser("subq", help="SubQ Snap: triage one request with your SUBQ_API_KEY and print the answers")
+    s.add_argument("text")
+    s.add_argument("--lint", action="store_true", help="only check the request's shape (no key needed)")
+    s.add_argument("--json", action="store_true", help="print SubQ's raw answers")
+    s.add_argument("--no-cache", action="store_true", help="ask SubQ even if the same request was answered this week")
+    s.add_argument("--timeout", type=float, default=15.0)
+    s.set_defaults(fn=cmd_subq)
 
     s = sub.add_parser("source", help="Darwin: shortlist agents that sell each part / build the PCB and prints")
     s.add_argument("name")

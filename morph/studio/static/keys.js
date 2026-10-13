@@ -9,6 +9,7 @@ const KEY_ICON = '<svg class="i sm" viewBox="0 0 24 24"><circle cx="7.5" cy="15.
 const SERVICE_NOTE = {
   Claude: 'Free-form chat. Without a key, the suggestion chips and common phrasings still work.',
   Keewano: 'Build memory: logs revisions and measurements in your Keewano project once Send build events is on (below). Grip-force calibration from that history is optional; the R Cubed demo history is seeded, not measured.',
+  SubQ: 'SubQ Snap answers quick yes/no and multiple-choice questions about a request in about a second, labelled "SubQ Snap (AI)". Requests go to SubQ (Subquadratic Inc.) under your own account. SubQ keeps requests per your organisation\'s retention setting (zero retention on request) and does not train on API content.',
 };
 const SETTINGS = [
   ['network_enabled', 'Allow network lookups (Darwin, SubQ, Claude)', 'Off: nothing leaves this computer. Chat uses the built-in rules and the BOM shows saved Darwin answers.'],
