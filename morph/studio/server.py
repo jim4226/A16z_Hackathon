@@ -457,7 +457,9 @@ class Studio:
                     return self._say(room, job, "error", "This project has no finished revision yet, so there is "
                                                          "nothing to change. Wait for its first build.")
                 cur = room.p.load_design(base)
-                it = interpret(msg, cur, ((self._results(room.p, base) or {}).get("summary") or {}).get("grip_target_n"))
+                target = ((self._results(room.p, base) or {}).get("summary") or {}).get("grip_target_n") or room.last_target
+                it = interpret(msg, cur, target)  # this room's grip target in, the one after the message out
+                room.last_target = it.get("last_target") or target
                 it["changes"] = {k: v for k, v in (it.get("changes") or {}).items() if k not in CHAT_FORBIDDEN}
                 if not it["changes"]:
                     return self._say(room, job, "noop", it["reply"], noop=True)

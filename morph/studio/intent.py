@@ -7,6 +7,7 @@ of dotted-key changes that the pipeline validates.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
 
@@ -191,11 +192,13 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
     return ch, said
 
 
-_LAST_TARGET = {}
+# The grip target (N) that "gentler" and "firmer" scale when the design sets none. It is the room's own: interpret()
+# gets it with each message and sets it only while that call runs, so rooms (and their threads) never share it.
+_LAST_TARGET = contextvars.ContextVar("last_grip_target", default=None)
 
 
 def _target(d: Design) -> float:
-    return d.electronics.target_force_n or _LAST_TARGET.get("value", 2.0)
+    return d.electronics.target_force_n or _LAST_TARGET.get() or 2.0
 
 
 TOOL = {
@@ -239,16 +242,27 @@ def _from_tool(args) -> dict:
 
 
 def interpret(msg: str, d: Design, last_target: float | None = None) -> dict:
+    """{changes, reply, source, last_target} for a chat message. `last_target` is the room's grip target (N); the
+    result's `last_target` is the target after this message, for the room to pass in with its next one."""
+    token = _LAST_TARGET.set(last_target or None)
+    try:
+        out = _interpret(msg, d)
+    finally:
+        _LAST_TARGET.reset(token)
+    new = out["changes"].get("electronics.target_force_n")
+    out["last_target"] = new if isinstance(new, (int, float)) and not isinstance(new, bool) and new > 0 else last_target
+    return out
+
+
+def _interpret(msg: str, d: Design) -> dict:
     from .. import settings
 
-    if last_target:
-        _LAST_TARGET["value"] = last_target
     try:
         if not settings.network_allowed():
             raise RuntimeError("network lookups are off")
         import anthropic
 
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(timeout=30, max_retries=1)  # a slow answer holds the room's queue a minute at most
         resp = client.messages.create(
             model=MODEL, max_tokens=4000, output_config={"effort": "low"},
             system="You are Morph's design assistant for a whole robot: a robot arm with a force-sensing parallel "
