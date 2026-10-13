@@ -140,7 +140,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Chat: a Claude call gives up after about a minute instead of holding the project's queue, and "gentler grip" scales
   that project's own grip target.
 - New robot: building the same brief twice (a double click, a retry) gives the project it is already building instead
-  of a second copy, and a brief whose first build failed can be built again.
+  of a second copy, and a brief whose first build failed can be built again. The dialog's stage list includes the
+  stages that finished before it joined the new project (Sizing used to stay "queued").
 - Teams: a teammate's comment or change request no longer clears the comment or change request you are writing; the
   panel updates when you leave the field. In a team Studio an export carries the team's record (`team.json`): the
   approvals, release gate and releases of that revision, or the project's whole team history, with names instead of

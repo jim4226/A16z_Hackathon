@@ -675,3 +675,53 @@ def test_a_build_that_ends_while_the_tab_switches_to_it_is_not_missed(tmp_path, 
             gate.set()
             browser.close()
             httpd.shutdown()
+
+
+def test_the_new_robot_dialog_shows_stages_that_ran_before_the_tab_joined(tmp_path, monkeypatch):
+    """Sizing takes a tenth of a second, so it is done before the dialog's tab joins the new project's room: the dialog
+    reads the room's state for what it missed instead of showing it still queued."""
+    pw = pytest.importorskip("playwright.sync_api")
+    chrome = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    from morph import keys
+    from morph.robot.pipeline2 import ORDER
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    gate, real_run = threading.Event(), RobotProject.run
+
+    def run(self, *a, on_event=None, **k):
+        if os.path.basename(self.root) == "sock-sorter":
+            emit = on_event or (lambda e: None)
+            emit({"type": "start", "rev": "r001", "parent": None, "changes": {}, "dirty": list(ORDER)})
+            emit({"type": "node", "node": "sizing", "status": "computing"})
+            emit({"type": "node", "node": "sizing", "status": "computed", "seconds": 0.1})
+            assert gate.wait(60)
+        return real_run(self, *a, on_event=on_event, **k)
+    monkeypatch.setattr(RobotProject, "run", run)
+    home = tmp_path / "projects"
+    st = server.Studio(make_project(home, "egg-picker"), str(home))
+    httpd = start(st)
+    port = httpd.server_address[1]
+    httpd.RequestHandlerClass = server.make_handler(st, {f"127.0.0.1:{port}", f"localhost:{port}"})
+    with pw.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(executable_path=chrome if os.path.exists(chrome) else None, args=["--no-sandbox"])
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"no Chromium for Playwright ({exc.__class__.__name__})")
+        try:
+            pg = browser.new_page(viewport={"width": 1400, "height": 900})
+            pg.goto(f"http://127.0.0.1:{port}/?tour=0", wait_until="domcontentloaded")
+            pg.wait_for_selector("#featHeader .nr-headbtn", timeout=120000)
+            pg.click(".nr-headbtn")
+            pg.fill("#nr-text", "help me sort socks")
+            pg.click("[data-a=start]")
+            pg.wait_for_selector("[data-a=defaults]", timeout=60000)
+            pg.click("[data-a=defaults]")
+            pg.wait_for_selector("[data-a=build]", timeout=60000)
+            pg.click("[data-a=build]")
+            until(lambda: pg.evaluate("[...document.querySelectorAll('.nr-st.computed')].map((e) => e.textContent.trim())") == ["Sizing"])
+            assert "1 of 9 stages" in pg.inner_text(".nr-build-h")
+            gate.set()
+            pg.wait_for_selector("[data-a=openproj]", timeout=60000)
+        finally:
+            gate.set()
+            browser.close()
+            httpd.shutdown()

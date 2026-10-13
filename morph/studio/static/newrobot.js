@@ -699,6 +699,15 @@ async function build() {
     try { await studio.openProject(st.project); } catch (e) { /* the tab stays where it is; events for the new room still arrive */ }
     // a build that ended before this tab joined the new project's room sent its done event elsewhere: the state has it
     const S = studio.S || {};
-    if (req === st.req && S.project === st.project && S.current && !S.busy) onDone({ project: st.project, current: S.current });
+    if (req === st.req && S.project === st.project && S.current && !S.busy) { onDone({ project: st.project, current: S.current }); return; }
+    // stages that ran before this tab joined the room (sizing is quick): the room's state says how they went
+    try {
+      const live = (await call(studio.api.get('/api/state'))).data?.building;
+      if (req !== st.req || st.view !== 'building' || !live?.nodes) return;
+      for (const [k] of STAGES) if ((st.stages[k] || 'queued') === 'queued' && live.nodes[k]) st.stages[k] = live.nodes[k];
+      const n = STAGES.filter(([k]) => ['computed', 'reused'].includes(st.stages[k])).length;
+      if (n && st.agents.pipeline?.status === 'start') st.agents.pipeline = { ...st.agents.pipeline, text: `${n} of ${STAGES.length} stages done` };
+      if (alive()) renderTimeline();
+    } catch (e) { /* the node events still come */ }
   }
 }
