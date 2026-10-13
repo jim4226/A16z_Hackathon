@@ -35,8 +35,10 @@ Morph Studio is a local app: a small web server on your computer, used from your
   timeout, and links only to github.com and Hugging Face over HTTPS, refusing private addresses on every redirect.
 - Team mode (`--team`): members sign in with single-use invite links or 15-minute sign-in links; session cookies are
   signed with the team's secret, codes and script tokens are stored hashed, wrong codes are throttled, revoking a
-  member ends their sessions, and the role table checks every request. The audit log is hash-chained
-  (`morph team audit --verify`).
+  member ends their sessions, and the role table checks every request. Order files of a revision nobody released
+  follow the team's download policy on Export as well as on direct downloads. The audit log is hash-chained
+  (`morph team audit --verify`) and records sign-ins, invites, member, role and policy changes, script tokens,
+  releases, key and settings changes, exports and draft order downloads, imports, resets and deleted projects.
 
 ## What it doesn't protect
 

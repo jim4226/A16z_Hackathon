@@ -60,12 +60,15 @@ Each service's own terms govern what it does with data you send it.
 | Cached answers from Darwin, BoardRepo and SubQ | `~/.cache/morph/` (on Windows, `%USERPROFILE%\.cache\morph`) |
 | New robot drafts (your request and answers), deleted after 7 days or once built; the final brief of a project | `projects/.briefs/`; `projects/<project>/brief.json` |
 | Imported robots with their licence and source, and import sessions (cleared after a day) | `projects/.robots/`; `projects/.imports/` |
-| World mode's room, including an uploaded room scan | `projects/<project>/world/` |
+| World mode's room, including an uploaded room scan and each saved version of the room | `projects/<project>/world/` |
 | Teams: members, hashed invite codes and tokens, the audit log (with sign-in IP addresses); comments, change requests, reviews and releases | `projects/.team/`; `projects/<project>/.team/` |
 
 **Export** (next to the revision number) zips one revision's engineering files with a manifest. It never includes
 keys, settings, chat, the ledger or hidden files. Review the design before you share it: names, dimensions and the
-request text can still be confidential.
+request text can still be confidential. In a team Studio it also carries the team's record as `team.json`, with
+members' names: the approvals, release gate and releases of that revision, or, for a project's whole history, its
+comments, change requests, reviews, branches and releases. It never carries member ids, invite codes, tokens or the
+audit log.
 
 To remove everything, delete the Morph folder and `~/.cache/morph`, and revoke your keys with each provider
 ([INSTALL.md](INSTALL.md#uninstalling)).

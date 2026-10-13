@@ -45,9 +45,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - **World mode** (beta): put the robot in a room (a built-in desk, kitchen counter or workbench, or your own .glb room
   scan with a two-point scale), place it by clicking a surface, walk through the room, and simulate pick and place
   against grey obstacle boxes with a carry path that keeps clear of them. Editing the room reruns only the
-  simulation. Check placement: measured checks set the verdict; an optional AI review (beta) of six rendered views
-  adds findings, suggested changes and a guided tour, and never changes pass or fail. It is not a motion planner.
-  Needs MuJoCo 3.1.6 or newer.
+  simulation, and each revision is simulated in exactly the room it names: every saved room is kept under its hash
+  (`world/saved/`), so editing the room while a build waits never changes what that build simulates. Check placement:
+  measured checks set the verdict; an optional AI review (beta) of six rendered views adds findings, suggested changes
+  and a guided tour, and never changes pass or fail. It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
 
 ### Studio
 
@@ -110,7 +111,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Teams: members sign in with a single-use invite or a 15-minute sign-in link (signed session cookies; codes and
   script tokens are stored hashed, and wrong codes are throttled); `MORPH_TOKEN` plays no part in team mode. Every
   route is checked against the team's role table, each member's tabs get only their own notifications, and gated
-  order packages of an unreleased revision follow the team's policy. Without `--team` the Studio has no Teams routes.
+  order packages of an unreleased revision follow the team's policy, on Export too (a viewer's export of an unreleased
+  revision leaves its order files out and lists them). Imports go into the audit log, with the link they came from.
+  Without `--team` the Studio has no Teams routes.
 - Imports treat every file and link as hostile: archive limits, no XML entities, meshes and paths kept inside the
   import, xacro expanded in a separate process, and links only from github.com and Hugging Face over HTTPS.
 - World mode names its room by id, never a path, and chat can't change it.
@@ -136,3 +139,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   jacks sit higher, over the board's edge, so the bay behind the board is shorter.
 - Chat: a Claude call gives up after about a minute instead of holding the project's queue, and "gentler grip" scales
   that project's own grip target.
+- New robot: building the same brief twice (a double click, a retry) gives the project it is already building instead
+  of a second copy, and a brief whose first build failed can be built again.
+- Teams: a teammate's comment or change request no longer clears the comment or change request you are writing; the
+  panel updates when you leave the field. In a team Studio an export carries the team's record (`team.json`): the
+  approvals, release gate and releases of that revision, or the project's whole team history, with names instead of
+  member ids.
+- A tab that switches projects tells world mode and Teams, so the other project's room and team panel no longer stay
+  on screen. It listens to the new project before loading it, so a build that ends during the switch is never missed,
+  and a project whose first build is still running no longer shows the previous project's revision as its own (the
+  New robot dialog could report the new robot as done with the old project's numbers).

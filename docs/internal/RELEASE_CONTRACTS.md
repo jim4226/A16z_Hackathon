@@ -46,7 +46,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
 | `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room |
 | `<p>/brief.json` | F1 | the final brief that created the project |
-| `<p>/world/world.json` + assets | F5 | world mode |
+| `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
 | `<p>/.team/comments.jsonl`, `reviews.jsonl`, `proposals.jsonl`, `branches.json`, `releases.json` | F4 | Teams |
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
 | `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h) |
@@ -101,8 +101,12 @@ class Request:
   every route, which checks the Teams role table (`teams/roles.py`; a declared role can only make it stricter) and
   raises 401 or 403. The hook is per Studio, so `routes.set_role_hook` stays a global hook for tests. `/?invite=` and
   `/?link=` get the join and sign-in pages before sign-in; a page load without a session gets the team's sign-in
-  page; `/files` checks gated order packages (`api_team.check_download`); the event stream feeds presence; keys,
-  settings, export, reset, project deletion and imports go into the team's audit log.
+  page; `/files` checks gated order packages (`api_team.check_download`), and `/api/export` applies the same policy
+  (`api_team.export_parts`: an unreleased revision's order files stay out of the export of a member who may not download
+  them, listed in the manifest's `left_out`) and adds `team.json` (`collab.revision_record` for a revision,
+  `collab.export_bundle` for a project's history; names, never member ids); the event stream feeds presence; keys,
+  settings, export, reset, project deletion and imports (`api_import._audit`, the link without its query) go into the
+  team's audit log.
 - JSON bodies are capped at 1 MiB by default. Raise the cap per route only when needed (video frames:
   16 MiB).
 - Also in routes.py: `HTTPError(status, message)` (raise it for a JSON error), `Request.arg(name)` (first
@@ -212,9 +216,14 @@ studio = {
   Teams dialogs); anything else is wrapped in one.
   `window.morph.studio` is the same object, for tests.
 - `init(studio)` runs after the first state load (and also when the server can't be reached).
+- When the tab switches projects (`openProject`), the bus gets `{type: "project", project, switched: true}` once the new
+  project's state is loaded (I2b): world mode and Teams reload what they show, as for Reset demo's `project` event.
 - The page subscribes to events before it loads its state, retries `/api/state` with backoff (1, 2, 4, 8, then
   every 15 s, and at once when the stream connects) instead of staying offline, follows a build already running from
-  `state.building` or from its `node` events, and reloads its state when the stream reconnects after a drop.
+  `state.building` or from its `node` events, and reloads its state when the stream reconnects after a drop. A project
+  switch listens first too (I2b): `openProject` waits for the new project's stream to open (at most 3 s) before loading
+  its state, and `/api/events` subscribes a stream before it answers, so a build that ends during the switch is in the
+  state or in the events. A project with no finished revision leaves `S.current` null (never the previous project's).
 - Features never edit another feature's file.
 - Edits to `app.js`, `index.html` and `style.css` are limited to one import line and one entry in the
   `FEATURES` array at the top of app.js, and an appended CSS section headed `/* ---- <feature> ---- */`.
@@ -523,6 +532,15 @@ The five feature branches are merged into the release branch and live in the Stu
   under the Studio's `no-referrer` policy a browser would post their forms with `Origin: null`, which the Origin check
   refuses. The New robot dialog switches its tab to the new project; it finishes from the state when the build ended
   before the tab joined the room. The import dialog stays on its tab and follows the relayed `import` events.
+- **I2b (finishing I2a):**
+  - `POST /api/brief {action: "build"}` on a brief that already created its project answers that project
+    (`already: true`) instead of creating a second one; a first build that failed puts the brief back to `ready`.
+  - Teams panel: a live update never redraws over what a member is writing (it waits while a field has focus or a
+    reply, request-changes, release or branch box holds text); change-request drafts, their preview and the comment
+    being typed are kept in state, so a redraw keeps them.
+  - A revision simulates the world its design pins: `worlds.save` keeps each world as `world/saved/<sha>.json` and
+    `RobotProject._sim_world` loads `worlds.load_pinned(root, world.id, world.sha)` (the saved copy, else `world.json`
+    when its id matches), so a world saved while a build waits or runs never changes what that build simulates.
 - **World (F5):** `design.world.id` must be a world id (`[a-z0-9][a-z0-9-]{0,39}`), never a path: the design limits,
   chat (`CHAT_FORBIDDEN`) and the simulation stage all check it, and the stage only ever reads
   `<project>/world/world.json` inside the project. A fork copies `world/`. MuJoCo 3.1.6 is the floor in
