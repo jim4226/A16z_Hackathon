@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import urllib.request
 from urllib.parse import unquote
 
 MAX_BODY = 1 << 20          # JSON request bodies; routes that need more (video frames) raise it explicitly
@@ -18,7 +19,8 @@ MAX_MESSAGE = 8000          # characters in one chat message
 PROJECT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 ROBOT_SOURCE = re.compile(r"[a-z0-9][a-z0-9_-]{0,47}")
 WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
-SECRET = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{8,}|kwpat-[A-Za-z0-9_-]{8,})")
+# Claude (sk-ant-), SubQ (sk- with a digit somewhere, so "sk-thin-and-light" is no key) and Keewano (kwpat-) keys
+SECRET = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{8,}|sk-(?=[A-Za-z_-]*[0-9])[A-Za-z0-9_-]{20,}|kwpat-[A-Za-z0-9_-]{8,})")
 
 
 def project_name(value) -> str:
@@ -63,6 +65,20 @@ def contained_path(root: str, relative: str, decode: bool = True) -> str | None:
 
 def looks_like_secret(text: str) -> bool:
     return bool(SECRET.search(text or ""))
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # the redirect becomes an HTTPError: urllib would resend the key's header to the new address
+
+
+_KEYED = urllib.request.build_opener(_NoRedirect)
+
+
+def open_keyed(request: urllib.request.Request, timeout: float):
+    """urlopen for a request that carries an API key (SubQ, Keewano): same proxies and TLS checks, but a redirect is
+    refused (HTTPError 30x) instead of followed, so the key never goes to another server."""
+    return _KEYED.open(request, timeout=timeout)
 
 
 class BodyError(ValueError):

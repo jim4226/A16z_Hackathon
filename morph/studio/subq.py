@@ -28,6 +28,8 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .security import open_keyed
+
 BASE = os.environ.get("SUBQ_BASE_URL", "https://api.subq.ai/v1")
 SNAP = "subq-snap-preview"
 LABEL = "SubQ Snap (AI)"
@@ -205,7 +207,7 @@ def _post(path: str, body: bytes, timeout: float, key: str | None) -> dict:
     if key:
         headers["Authorization"] = f"Bearer {key}"
     try:
-        with urlopen(Request(f"{BASE}{path}", data=body, method="POST", headers=headers), timeout=max(0.05, timeout)) as resp:
+        with open_keyed(Request(f"{BASE}{path}", data=body, method="POST", headers=headers), timeout=max(0.05, timeout)) as resp:
             raw = resp.read(MAX_BODY)
     except HTTPError as exc:
         raise _error(exc.code, exc.read(64 << 10), exc.headers.get("Retry-After")) from None

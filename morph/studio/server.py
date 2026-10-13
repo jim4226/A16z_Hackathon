@@ -27,6 +27,7 @@ import re
 import secrets
 import shutil
 import socket
+import stat
 import threading
 import time
 import traceback
@@ -41,7 +42,7 @@ from . import projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
 from .routes import HTTPError, route
-from .security import (MAX_BODY, MAX_MESSAGE, BodyError, contained_path, content_length, json_object, looks_like_secret,
+from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, json_object, looks_like_secret,
                        param_changes, project_name)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -610,6 +611,7 @@ DEFAULT_CSP = "frame-ancestors 'none'"
 ARTIFACT_CSP = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'none'"
 SIGN_IN_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 CLIENT_HEADER = "X-Morph-Client"
+DRAIN_MAX = 8 << 20  # a refused body up to this size is read and dropped, so the client still gets the answer
 
 
 def _sha256(text: str) -> str:
@@ -636,7 +638,33 @@ def artifact_path(p: RobotProject, rel: str) -> str | None:
     return contained_path(p.root, rel) if rev in p.revs() else None
 
 
+class Guesses:
+    """Wrong access codes per address. After LIMIT different wrong codes within WINDOW seconds, that address's codes
+    are not even compared until the window has passed, so a short MORPH_TOKEN can't be found by trying many. The same
+    wrong code sent again (a tab left open while the Studio restarted with a new code) counts once."""
+
+    LIMIT, WINDOW, ADDRESSES = 10, 900, 4096
+
+    def __init__(self):
+        self.lock, self.wrong = threading.Lock(), {}  # address -> {sha256 of a wrong code: when}
+
+    def blocked(self, ip: str) -> bool:
+        with self.lock:
+            now, codes = time.monotonic(), self.wrong.get(ip) or {}
+            for h in [h for h, t in codes.items() if now - t > self.WINDOW]:
+                del codes[h]
+            return len(codes) >= self.LIMIT
+
+    def failed(self, ip: str, code: str):
+        with self.lock:
+            if ip not in self.wrong and len(self.wrong) >= self.ADDRESSES:
+                self.wrong.pop(next(iter(self.wrong)))
+            self.wrong.setdefault(ip, {})[hashlib.sha256(code.encode()).hexdigest()] = time.monotonic()
+
+
 def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None):
+    guesses = Guesses()
+
     class H(BaseHTTPRequestHandler):
         timeout = 30  # a client that stops sending or reading frees its thread; the event stream pings every 15 s
 
@@ -669,8 +697,20 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
         def _cookie_name(self) -> str:
             return f"morph_access_{self.server.server_address[1]}"  # cookies ignore the port
 
+        def _code(self, code: str) -> bool | None:
+            """True for the access code, False for a wrong one, None (not compared) when this address has tried too
+            many different wrong codes lately."""
+            ip = self.client_address[0]
+            if guesses.blocked(ip):
+                return None
+            if hmac.compare_digest(code.encode(), token.encode()):
+                return True
+            guesses.failed(ip, code)
+            return False
+
         def _signed_in(self) -> bool:
             """Remote Studios: the browser opened the access link (its cookie), or a script sends the token."""
+            self._throttled = False
             if not token:
                 return True
             jar = SimpleCookie()
@@ -679,20 +719,32 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             except Exception:  # noqa: BLE001  (a malformed cookie header is just "not signed in")
                 pass
             got = jar[self._cookie_name()].value if self._cookie_name() in jar else (self.headers.get("X-Morph-Token") or "")
-            return hmac.compare_digest(got.encode(), token.encode())
+            if not got:
+                return False
+            ok = self._code(got)
+            self._throttled = ok is None
+            return bool(ok)
 
         def _sign_in_page(self, bad=False):
-            page = SIGN_IN.replace("HOST", html.escape(socket.gethostname())).replace(
-                "BAD", '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
-            return self._send(401, page.encode(), "text/html; charset=utf-8", csp=SIGN_IN_CSP)
+            note = ('<p class="bad">Too many wrong access codes from this computer. Wait 15 minutes, then try again.</p>'
+                    if bad == "throttled" else
+                    '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
+            page = SIGN_IN.replace("HOST", html.escape(socket.gethostname())).replace("BAD", note)
+            return self._send(429 if bad == "throttled" else 401, page.encode(), "text/html; charset=utf-8", csp=SIGN_IN_CSP)
+
+        def _refuse_sign_in(self):
+            if self._throttled:
+                return self._error(429, "Too many wrong access codes from this computer. Wait 15 minutes, then try again.")
+            return self._error(401, "open the access link printed where Morph Studio was started")
 
         def _access_link(self, u) -> bool:
             """GET /?token=...: a correct code signs this browser in (a cookie) and drops the code from the URL."""
             q = parse_qs(u.query)
             if not token or "token" not in q or u.path not in ("/", "/index.html"):
                 return False
-            if not hmac.compare_digest(q["token"][0].strip().encode(), token.encode()):
-                self._sign_in_page(bad=True)
+            ok = self._code(q["token"][0].strip())
+            if not ok:
+                self._sign_in_page(bad="throttled" if ok is None else True)
                 return True
             rest = urlencode([(k, v) for k, vs in q.items() if k != "token" for v in vs])
             self.send_response(302)
@@ -719,19 +771,20 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return self._json(code, {"ok": False, "error": message})
 
         def _drain(self):
-            """Read and drop a small request body refused before it was read, so the browser gets the answer
-            instead of a connection reset. Bounded: at most MAX_BODY bytes, for a quarter of a second."""
+            """Read and drop a request body refused before it was read (too big, wrong type, not signed in), so the
+            client gets the answer instead of a connection reset while it is still sending. Bounded: at most
+            DRAIN_MAX bytes, two seconds, and a quarter of a second without data."""
             if self.command not in ("POST", "PUT", "DELETE") or getattr(self, "_read", False):
                 return
             self._read = True
             try:
-                n = content_length(self.headers, MAX_BODY)
+                n = content_length(self.headers, DRAIN_MAX)
             except BodyError:
                 return
-            deadline, old = time.monotonic() + 0.25, self.connection.gettimeout()
+            deadline, old = time.monotonic() + 2.0, self.connection.gettimeout()
             try:
                 while n > 0 and time.monotonic() < deadline:
-                    self.connection.settimeout(max(0.01, deadline - time.monotonic()))
+                    self.connection.settimeout(max(0.01, min(0.25, deadline - time.monotonic())))
                     chunk = self.rfile.read1(min(n, 1 << 16))
                     if not chunk:
                         break
@@ -755,8 +808,10 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             elif path.endswith((".ino", ".nc", ".gbr", ".drl", ".csv", ".urdf", ".xml", ".dxf")):
                 ctype = "text/plain; charset=utf-8"
             try:
+                if not stat.S_ISREG(os.stat(path).st_mode):  # a folder, or a pipe or device that would never answer
+                    raise IsADirectoryError(path)
                 fh = open(path, "rb")
-            except OSError:  # missing, a folder, or unreadable
+            except OSError:  # missing, not a plain file, or unreadable
                 return self._error(404, "Not found.")
             with fh:
                 self.csp = csp
@@ -783,7 +838,10 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 req.member = routes.authorize(req, r.role)
                 if not r.raw_body and self.command != "GET":
                     self._read = True
-                    raw = self.rfile.read(n) if n else b""
+                    try:
+                        raw = self.rfile.read(n) if n else b""
+                    except OSError:  # the client stopped sending for `timeout` seconds, or went away
+                        raw = b""
                     if len(raw) != n:
                         raise BodyError(400, "The request body was cut off.")
                     req.body = json_object(raw)
@@ -812,8 +870,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 return None
             if not self._signed_in():
                 if u.path in ("/", "/index.html"):
-                    return self._sign_in_page()
-                return self._error(401, "open the access link printed where Morph Studio was started")
+                    return self._sign_in_page(bad="throttled" if self._throttled else False)
+                return self._refuse_sign_in()
             if u.path in ("/", "/index.html"):
                 return self._file(os.path.join(STATIC, "index.html"), csp=app_csp())
             if u.path.startswith("/static/"):
@@ -829,7 +887,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             if not self._trusted(post=True):
                 return self._error(403, "This Studio only answers its own page.")
             if not self._signed_in():
-                return self._error(401, "open the access link printed where Morph Studio was started")
+                return self._refuse_sign_in()
             if not self.headers.get(CLIENT_HEADER):
                 return self._error(403, f"Send the header {CLIENT_HEADER}: 1 with every POST, PUT and DELETE "
                                         "(the Studio page does).")

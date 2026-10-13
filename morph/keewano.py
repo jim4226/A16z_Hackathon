@@ -26,9 +26,10 @@ import threading
 import time
 import uuid
 import zlib
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from . import settings
+from .studio.security import open_keyed  # the key never follows a redirect
 
 API = "https://api.keewano.com/event/ingress/v1/json"
 MCP = "https://api.keewano.com/mcp"
@@ -130,7 +131,7 @@ def events_for(entry: dict, design: dict | None = None) -> list:
 def _post(path: str, body: dict, key: str):
     req = Request(f"{API}/{path}", data=json.dumps(body).encode(),
                   headers={"k-token": key, "Content-Type": "application/json"})
-    with urlopen(req, timeout=5) as resp:
+    with open_keyed(req, timeout=5) as resp:
         return json.load(resp)
 
 
@@ -214,7 +215,7 @@ def query(sql: str, max_rows: int = 100) -> list | None:
         req = Request(MCP, data=json.dumps(body).encode(),
                       headers={"k-token": pat, "Content-Type": "application/json",
                                "Accept": "application/json, text/event-stream"})
-        with urlopen(req, timeout=30) as resp:
+        with open_keyed(req, timeout=30) as resp:
             out = json.load(resp)
         res = out.get("result") or {}
         if res.get("isError") or "structuredContent" not in res:

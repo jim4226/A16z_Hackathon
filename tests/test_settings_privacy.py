@@ -138,9 +138,48 @@ def test_calibration_needs_three_non_synthetic_builds(keewano_query):
 def test_queries_stay_home_with_the_network_off(monkeypatch):
     monkeypatch.setenv("KEEWANO_PAT", "kwpat-test")
     monkeypatch.setenv("KEEWANO_PROJECT_ID", "p1")
-    monkeypatch.setattr(keewano, "urlopen", no_network)
+    monkeypatch.setattr(keewano, "open_keyed", no_network)
     settings.save({"network_enabled": False})
     assert keewano.query("SELECT 1") is None
+
+
+def test_keewano_keys_never_follow_a_redirect(monkeypatch):
+    """urllib resends the k-token header to wherever a 302 points; keyed requests refuse the redirect instead."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    seen = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            seen.append((self.command, self.path, self.headers.get("k-token")))
+            self.send_response(302)
+            self.send_header("Location", "/stolen")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_GET = do_POST
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    monkeypatch.setattr(keewano, "API", base)
+    monkeypatch.setattr(keewano, "MCP", base + "/mcp")
+    monkeypatch.setenv("KEEWANO_PAT", "kwpat-test-only")
+    monkeypatch.setenv("KEEWANO_PROJECT_ID", "p1")
+    try:
+        with pytest.raises(OSError):  # urllib's HTTPError: 302 refused
+            keewano._post("events", {"a": 1}, "test-only-key")
+        assert keewano.query("SELECT 1") is None
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert [path for _, path, _ in seen] == ["/events", "/mcp"]  # nothing went to /stolen
 
 
 def test_calibrated_target_says_logged_not_measured(monkeypatch):

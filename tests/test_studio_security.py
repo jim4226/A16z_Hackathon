@@ -117,6 +117,16 @@ def test_symlink_out_of_a_revision_is_not_served(local, tmp_path):
     assert request("/files/r001/cad/link.txt")[0] == 404
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX")
+def test_pipes_and_folders_are_never_opened(local):
+    st, request, _ = local
+    os.mkfifo(os.path.join(st.p.root, "r001", "cad", "pipe.txt"))  # open() on it would wait for a writer forever
+    started = time.monotonic()
+    assert request("/files/r001/cad/pipe.txt")[0] == 404
+    assert request("/files/r001/cad")[0] == 404
+    assert time.monotonic() - started < 3
+
+
 @pytest.mark.parametrize("path", ["/static/../server.py", "/static/..%2fserver.py", "/static/%2e%2e/security.py",
                                   "/static/.hidden", "/static/vendor/..%2f..%2fserver.py"])
 def test_static_files_stay_in_static(local, path):
@@ -223,6 +233,23 @@ def test_two_content_lengths_or_chunked_are_refused(local):
         assert answer.startswith(b"HTTP/1.0 400")
 
 
+def test_a_body_that_stops_arriving_is_refused_quietly(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    home = tmp_path / "projects"
+    st = server.Studio(make_project(home), str(home))
+    monkeypatch.setattr(st, "queue_chat", lambda *a, **k: pytest.fail("must not dispatch"))
+    httpd = _serve(st, None)
+    httpd.RequestHandlerClass.timeout = 0.5  # the Studio's is 30 s
+    try:
+        answer = raw(httpd.server_address[1], b"POST /api/chat HTTP/1.1\r\nHost: x\r\nX-Morph-Client: 1\r\n"
+                                              b"Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"message\":")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert answer.startswith(b"HTTP/1.0 400") and b"cut off" in answer
+    assert "Traceback" not in capsys.readouterr().err
+
+
 class _Job:
     def info(self):
         return {"id": "j1", "status": "queued"}
@@ -265,6 +292,7 @@ def test_chat_messages_are_checked(local, monkeypatch):
     code, _, out = request("/api/chat", "POST", {"message": "use this key sk-ant-api03-abcdefghijklmnop please"})
     assert code == 400 and "Keys" in json.loads(out)["error"]
     assert request("/api/chat", "POST", {"message": "kwpat-0123456789abcdef"})[0] == 400
+    assert request("/api/chat", "POST", {"message": "subq: sk-AbCdEf0123456789ghIJkl"})[0] == 400  # SubQ keys are sk-...
     time.sleep(0.2)
     assert sent == [] and st.hub.history == []
 
@@ -407,6 +435,43 @@ def test_remote_sign_in_page_and_refusals_carry_headers(tmp_path, monkeypatch):
         httpd.server_close()
 
 
+def test_wrong_access_codes_are_throttled_per_address(tmp_path, monkeypatch):
+    """A short MORPH_TOKEN can't be found by trying many: after 10 different wrong codes from one address, its codes
+    aren't compared for 15 minutes. A stale cookie sent again and again (a tab open across a restart) counts once."""
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    st = server.Studio(make_project(tmp_path / "projects"), str(tmp_path / "projects"))
+    code = "test-code-0123456"
+    httpd = _serve(st, None, token=code)
+
+    def get(path, headers=None):
+        conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=5)
+        try:
+            conn.request("GET", path, headers=headers or {})
+            res = conn.getresponse()
+            return res.status, res.read()
+        finally:
+            conn.close()
+
+    try:
+        stale = {"Cookie": f"morph_access_{httpd.server_address[1]}=an-old-code-from-before"}
+        assert all(get("/api/state", stale)[0] == 401 for _ in range(15))
+        assert get(f"/?token={code}")[0] == 302                                     # the stale tab didn't lock anyone out
+        for i in range(8):
+            assert get(f"/?token=guess-{i}")[0] == 401
+        assert get("/api/state", {"X-Morph-Token": "guess-8"})[0] == 401             # the 10th different wrong code
+        status, body = get(f"/?token={code}")
+        assert status == 429 and b"Too many wrong access codes" in body             # not even the right one is checked now
+        assert get("/api/state", {"X-Morph-Token": code})[0] == 429
+        server.Guesses.WINDOW, window = 0, server.Guesses.WINDOW
+        try:
+            assert get(f"/?token={code}")[0] == 302                                 # the window has passed
+        finally:
+            server.Guesses.WINDOW = window
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 # ------------------------------------------------------------------ keys
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
@@ -422,6 +487,10 @@ def test_env_file_is_private(tmp_path, monkeypatch):
     fresh = tmp_path / "fresh.env"
     assert keys.ensure_env_file(str(fresh))
     assert (os.stat(fresh).st_mode & 0o777) == 0o600
+    if os.name != "nt":  # a .env from before 0.2 (0644) is made private the next time the Studio starts
+        os.chmod(fresh, 0o644)
+        assert not keys.ensure_env_file(str(fresh))
+        assert (os.stat(fresh).st_mode & 0o777) == 0o600 and fresh.read_text(encoding="utf-8") == "ANTHROPIC_API_KEY=\n"
 
 
 def test_unwritable_env_is_a_clear_error(local, monkeypatch):

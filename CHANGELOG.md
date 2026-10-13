@@ -68,7 +68,11 @@ The feature teams add their entries here before the tag:
   security policy.
 - `arm.source` names a robot in a known folder; URDF meshes stay inside the robot's folder.
 - `.env` is written readable by your user only. Chat can't change the project name or the robot source, and a chat
-  message that looks like an API key is refused.
+  message that looks like an API key (Claude, SubQ or Keewano) is refused.
+- API keys are never sent on to another server when a service answers with a redirect (SubQ, Keewano). A `.env` from
+  an older Morph that others could read is made private when the Studio starts.
+- Remote mode: after 10 different wrong access codes from one address, that address waits 15 minutes.
+- The server never opens a pipe or device file, and a request whose body stops arriving gets an answer.
 
 ### Fixes
 

@@ -188,6 +188,14 @@ def test_unreachable_and_switched_off(stub, monkeypatch):
     assert not subq.enabled() and ask() is None and subq.status()["configured"] is False
 
 
+def test_a_redirect_is_never_followed_with_the_key(stub):
+    """urllib resends every header, Authorization included, to wherever a 302 points: keyed requests refuse it."""
+    stub.script = [(302, {}, 0, {"Location": stub.base + "/elsewhere"})] * 2
+    assert ask(cache=False, retries=0) is None
+    assert subq.check(timeout=5)["ok"] is False
+    assert stub.paths == ["/v1/systemone", "/v1/systemone"]          # nothing was sent to /elsewhere
+
+
 def test_bad_questions_never_raise(stub):
     for qs in ({}, {"q": subq.choice("one option", {"a": None})}, {"q": subq.score("x", ["one"])}, {"x" * 101: subq.noul("x")},
                {"q": {"type": "maybe", "instructions": "x"}}, {"q": subq.noul("")}, "q", None):

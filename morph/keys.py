@@ -108,9 +108,17 @@ def _write_private(path: str, text: str):
 
 
 def ensure_env_file(path: str | None = None) -> bool:
-    """Create .env from env.example on first run, so there is one obvious place to put keys."""
+    """Create .env from env.example on first run, so there is one obvious place to put keys. An existing .env that
+    other users of the computer can read (Morph before 0.2 wrote it so) is made private (0600)."""
     path = path or ENV_PATH
-    if os.path.exists(path) or not os.path.isfile(TEMPLATE):
+    if os.path.exists(path):
+        try:
+            if os.name != "nt" and os.stat(path).st_mode & 0o077:
+                os.chmod(path, 0o600)
+        except OSError:
+            pass
+        return False
+    if not os.path.isfile(TEMPLATE):
         return False
     with open(TEMPLATE, encoding="utf-8") as src:
         _write_private(path, src.read())

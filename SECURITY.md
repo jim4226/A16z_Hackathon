@@ -36,7 +36,8 @@ Morph Studio is a local app: a small web server on your computer, used from your
   anyone who can watch that network can copy them. Use remote mode only on a network you trust or over a VPN such as
   Tailscale. From anywhere else, use an SSH tunnel instead (`ssh -L 8765:127.0.0.1:8765 you@server`, no `--remote`).
   Never open port 8765 to the internet. Restarting Morph changes the code, unless `MORPH_TOKEN` in `.env` fixes it.
-  Wrong codes aren't rate-limited yet, so keep the generated code or make `MORPH_TOKEN` long (20 or more characters).
+  After 10 different wrong codes from one address, Morph stops checking that address's codes for 15 minutes. Still
+  keep the generated code, or make `MORPH_TOKEN` long (20 or more characters).
 - Programs running as your user can read your projects and `.env`.
 - Generated designs, wiring and firmware are not bench-validated. Check them before you power real hardware.
 

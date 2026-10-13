@@ -143,7 +143,10 @@ class Request:
         left = self.length
         self.handler._read = True
         while left > 0:
-            data = self.handler.rfile.read(min(chunk, left))
+            try:
+                data = self.handler.rfile.read(min(chunk, left))
+            except OSError:  # the client stopped sending for the handler's timeout, or went away
+                data = b""
             if not data:
                 raise HTTPError(400, "The upload was cut off.")
             left -= len(data)
