@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>World mode dev page</title>
+<!-- Serve the repository root (python -m http.server 8800) and open /tools/world_demo.html. The real RobotViewer and
+     world.js, the fixture robot from morph/studio/static/fixtures, and an in-page stand-in for the /api/world routes.
+     Pass a world as ?world=<url of a world.json> or call window.demo.load(world, simDoc) (tests do). -->
+<style>
+  :root { --bg0:#08090c; --bg1:#0d0f14; --bg2:#12151c; --bg3:#181c25; --bg4:#20252f; --line:#1c212b; --line2:#262c38; --line3:#343b49;
+    --ink:#e9ecf2; --ink2:#b9c0cd; --muted:#838c9d; --dim:#5d6676; --accent:#7091ff; --accent2:#9db2ff; --accent-bg:rgba(112,145,255,.12);
+    --accent-line:rgba(112,145,255,.45); --warn:#f5b942; --violet:#a78bfa; --sans:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:"JetBrains Mono",Menlo,Consolas,monospace; color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: var(--bg0); color: var(--ink); font: 13px var(--sans); overflow: hidden; }
+  #view { position: absolute; inset: 0; }
+  #bar { position: absolute; z-index: 9; right: 12px; top: 10px; display: flex; gap: 6px; align-items: center; }
+  #bar button { height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line2); background: var(--bg3); color: var(--ink2); font: 500 12px var(--sans); cursor: pointer; }
+  #bar button.on { background: var(--accent-bg); color: var(--accent2); border-color: var(--accent-line); }
+  #fps { font: 11px var(--mono); color: var(--muted); background: rgba(13,17,22,.7); padding: 4px 8px; border-radius: 6px; }
+  #toast { position: absolute; z-index: 9; right: 12px; bottom: 12px; max-width: 420px; padding: 8px 12px; border-radius: 8px; background: rgba(13,17,22,.9);
+    border: 1px solid var(--line2); color: var(--ink2); font-size: 12px; opacity: 0; transition: opacity .3s; }
+  #toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="bar"><span id="fps">-</span><button id="bWorld" class="on">World panel</button></div>
+<div id="toast"></div>
+<script type="module">
+import { RobotViewer } from '../morph/studio/static/viewer.js';
+import { WorldView, WorldPanel, NOTES, VIEWS, init } from '../morph/studio/static/world.js';
+
+const P = new URLSearchParams(location.search);
+const STATIC = '../morph/studio/static/';
+const $ = (id) => document.getElementById(id);
+let tt;
+const toast = (t) => { const e = $('toast'); e.textContent = t; e.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => e.classList.remove('on'), 4000); window.demo.toasts.push(t); };
+
+const viewer = window.viewer = new RobotViewer($('view'), { autoOrbit: false, intro: false, preserveDrawingBuffer: P.get('pdb') === '1' });
+await viewer.load(P.get('robot') || STATIC + 'fixtures/robot/robot.json');
+const STUDIO = P.get('studio') === '1';      // ?studio=1: through init(studio), as the Studio wires it
+
+// the /api/world routes, in the page (the real ones are morph/studio/api_world.py)
+const store = { world: null, starters: [], inspect: null, saved: [] };
+const api = {
+  async get(path) {
+    if (path === '/api/world') return { ok: true, world: store.world, starters: store.starters, notes: NOTES, sim: store.sim || null,
+      views: VIEWS.map(([name, title]) => ({ name, title })) };
+    throw new Error(`not in the demo: GET ${path}`);
+  },
+  async post(path, body) {
+    if (path === '/api/world') {
+      if (body.starter) { const w = store.starterWorlds?.[body.starter]; if (!w) throw new Error('unknown starter'); store.world = w; return { ok: true, world: w }; }
+      if (body.world) { store.world = body.world; store.saved.push(body.world); return { ok: true, world: body.world }; }
+      if (body.off) { store.world = null; return { ok: true }; }
+    }
+    if (path === '/api/world/inspect') {
+      store.lastViews = body.views;
+      if (!store.inspect) throw new Error('no inspection result in the demo');
+      return store.inspect(body);
+    }
+    if (path === '/api/world/obstacles/auto') {      // tests put the server's answer (worlds.auto_obstacles) in store.auto
+      if (!store.auto) throw new Error('upload a room in the Studio to find boxes');
+      store.autoBody = body;
+      return store.auto;
+    }
+    throw new Error(`not in the demo: POST ${path}`);
+  },
+  async put() { throw new Error('uploads need the Studio server'); },
+};
+let wv, panel, studio = null;
+if (STUDIO) {
+  const bus = new Map();
+  studio = { S: { project: 'demo', current: null }, project: () => 'demo', api, toast, esc: (x) => x, I: () => '',
+    on(type, fn) { if (!bus.has(type)) bus.set(type, new Set()); bus.get(type).add(fn); return () => bus.get(type).delete(fn); },
+    emit(type, ev = {}) { for (const fn of bus.get(type) || []) fn({ type, ...ev }); },
+    mount: { viewerTools: $('bar') }, viewer };
+  ({ wv, panel } = await init(studio));
+  $('bWorld').remove();
+} else {
+  wv = new WorldView(viewer);
+  panel = new WorldPanel($('view'), { wv, api, toast, doc: () => window.demo.doc });
+  $('bWorld').onclick = (e) => { panel.toggle(); e.target.classList.toggle('on', panel.open); };
+}
+
+window.demo = {
+  viewer, wv, panel, store, studio, toasts: [], doc: null,
+  async load(world, doc, { starters = {}, inspect = null, sim = null, open = true } = {}) {
+    store.world = world; store.starterWorlds = starters; store.sim = sim;
+    store.starters = Object.values(starters).map((w) => ({ id: w.id, name: w.name, description: '' }));
+    if (inspect) store.inspect = (body) => ({ ...inspect, review: { ...inspect.review } });
+    this.doc = doc || null;
+    if (studio) {                // a finished revision whose design names the world, as the Studio sends it
+      studio.S.current = { design: { 'world.id': world.id },
+        sims: doc ? { pick_place: { url: 'data:application/json,' + encodeURIComponent(JSON.stringify(doc)) } } : {} };
+      await new Promise((r) => { studio.emit('done'); setTimeout(r, 50); });
+      for (let i = 0; i < 100 && !wv.world; i++) await new Promise((r) => setTimeout(r, 50));
+      if (doc) { for (let i = 0; i < 100 && !wv._docCache; i++) await new Promise((r) => setTimeout(r, 50)); wv.play(wv._docCache || doc); }
+      if (open) document.querySelector('#bar .btn').click();
+      for (let i = 0; i < 100 && open && !panel.open; i++) await new Promise((r) => setTimeout(r, 50));
+      return true;
+    }
+    await wv.setWorld(world, {});
+    if (doc) wv.play(doc, { loop: true });
+    if (open) await panel.toggle(true);
+    return true;
+  },
+  frame: () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  // where a world point (mm, z up) is on the page, for clicking it
+  screenOf(p) {
+    wv.frame.updateMatrixWorld(true);
+    viewer.controls.update();                     // draw the camera as it is now: clicks map through what is on screen,
+    viewer._render();                             // and software frames can lag behind a camera move
+    const q = new (viewer.camera.position.constructor)(...p).applyMatrix4(wv.frame.matrixWorld).project(viewer.camera);
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    return { x: r.left + (q.x + 1) / 2 * r.width, y: r.top + (1 - q.y) / 2 * r.height, visible: q.z < 1 };
+  },
+  camera: () => ({ p: viewer.camera.position.toArray(), q: viewer.camera.quaternion.toArray() }),
+};
+
+if (P.get('world')) {
+  const w = await (await fetch(P.get('world'))).json();
+  const doc = P.get('sim') ? await (await fetch(P.get('sim'))).json() : await (await fetch(STATIC + 'fixtures/sims/sim_pick_place.json')).json();
+  await window.demo.load(w, doc);
+}
+
+// fps meter
+let n = 0, t0 = performance.now();
+(function tick() { n++; const t = performance.now(); if (t - t0 > 1000) { window.demo.fps = Math.round(n * 1000 / (t - t0)); $('fps').textContent = `${window.demo.fps} fps`; n = 0; t0 = t; } requestAnimationFrame(tick); })();
+window.ready = true;
+document.title = 'ready';
+</script>
+</body>
+</html>
