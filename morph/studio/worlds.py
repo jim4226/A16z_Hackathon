@@ -1270,9 +1270,11 @@ def review_messages(views: list, facts: dict) -> list:
 def _claude_ready() -> bool:
     try:
         import anthropic  # noqa: F401
+
+        from .. import settings
     except ImportError:
         return False
-    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")) and settings.network_allowed()
 
 
 def _clip(x, lo, hi):

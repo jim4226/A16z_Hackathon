@@ -14,7 +14,8 @@ import re
 from ..spec import Design
 
 MODEL = "claude-opus-5-5"
-CHAT_FORBIDDEN = {"name", "arm.source"}  # the project name and robot source come from the user, never from chat
+# the project name, robot source and world mode's room come from the user, never from chat
+CHAT_FORBIDDEN = {"name", "arm.source", "world.id", "world.sha"}
 
 OBJECTS = {  # rough real-world values; max_force_n = per-finger squeeze that damages it (0 = robust)
     "raw egg": dict(shape="cylinder", diameter_mm=44, length_mm=57, mass_g=60, friction=0.35, max_force_n=25),
@@ -260,7 +261,7 @@ def _target(d: Design) -> float:
 TOOL = {
     "name": "apply_design_changes",
     "description": "Apply parameter changes to the gripper design. Every key must be one of the dotted keys in "
-                   "the current design JSON, except name and arm.source, which never change here. "
+                   "the current design JSON, except name, arm.source and world.*, which never change here. "
                    "Keep changes minimal but complete: when the object changes, also set "
                    "its shape, diameter_mm, length_mm, mass_g, friction and max_force_n (per-finger squeeze that "
                    "damages it, 0 if robust), and resize finger.length_mm (~radius+30), finger.pad_height_mm and "
@@ -293,7 +294,7 @@ def _from_tool(args) -> dict:
                and isinstance(v, (str, int, float)) and not isinstance(v, bool)}
     reply = str(args.get("reply") or "")
     if any(k in CHAT_FORBIDDEN for k in raw):
-        reply = (reply + " (The project name and robot source stay as they are: chat can't change them.)").strip()
+        reply = (reply + " (The project name, robot source and world stay as they are: chat can't change them.)").strip()
     return {"changes": changes, "reply": reply, "source": "claude"}
 
 

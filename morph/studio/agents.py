@@ -53,10 +53,14 @@ def claude_configured() -> bool:
 
 
 def _claude():
-    """An Anthropic client with interactive limits (30 s, one retry), or None without credentials or SDK."""
+    """An Anthropic client with interactive limits (30 s, one retry), or None without credentials or SDK, or while
+    network lookups are off (Keys: privacy switches)."""
     if not claude_configured():
         return None
     try:
+        from .. import settings
+        if not settings.network_allowed():
+            return None
         import anthropic
         return anthropic.Anthropic(timeout=CLAUDE_TIMEOUT_S, max_retries=1)
     except Exception:  # noqa: BLE001

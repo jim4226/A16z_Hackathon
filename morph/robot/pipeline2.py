@@ -242,9 +242,11 @@ def artifact_problem(results: dict, node: str, revision_dir: str) -> str | None:
 
 class RobotProject(Project):
     def run(self, design: Design, parent: str | None = None, label: str = "", n_trials: int = 4,
-            verbose: bool = True, on_event=None, fast_sim: bool = False, by: str | None = None) -> str:
+            verbose: bool = True, on_event=None, fast_sim: bool = False, by: str | None = None,
+            proposed_by: str | None = None) -> str:
         """Build a revision of `design` (reusing what `parent` already has) and return its name. `by` is the team
-        member who asked for it (Teams), recorded in results.json and the ledger."""
+        member who asked for it (Teams), `proposed_by` the author of the change request it applies; both are recorded
+        in results.json and the ledger."""
         from . import arm
 
         emit = on_event or (lambda e: None)
@@ -262,6 +264,8 @@ class RobotProject(Project):
                "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "stage_status": {}, "timings_s": {}}
         if by:
             res["by"] = by
+        if proposed_by:
+            res["proposed_by"] = proposed_by
         emit({"type": "start", "rev": rev, "parent": parent, "changes": res["changes"], "dirty": todo})
         cache = {}
 
@@ -341,10 +345,13 @@ class RobotProject(Project):
 
         res["summary"] = summarize(res)
         res["pipeline_version"] = pipeline_version(design.arm.source)
-        with open(os.path.join(out, "results.json"), "w", encoding="utf-8") as fh:
+        tmp = os.path.join(out, ".results.json.tmp")  # results.json marks a finished revision: it appears whole
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(res, fh, indent=1, default=_jsonable)
+        os.replace(tmp, os.path.join(out, "results.json"))
         self.log({"type": "revision", "rev": rev, "parent": parent, "label": label, "changes": res["changes"],
-                  "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"], **({"by": by} if by else {})})
+                  "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"], **({"by": by} if by else {}),
+                  **({"proposed_by": proposed_by} if proposed_by else {})})
         return rev
 
     @staticmethod
@@ -360,7 +367,12 @@ class RobotProject(Project):
         if not design.world.id:
             return None
         from ..studio import worlds
+        from ..studio.security import contained_path
 
+        if not isinstance(design.world.id, str) or not worlds.SLUG.fullmatch(design.world.id):
+            raise RuntimeError("world mode: world.id must be a world's id (lower-case letters, digits and -), never a path")
+        if os.path.exists(worlds.world_path(self.root)) and not contained_path(self.root, "world/world.json", decode=False):
+            raise RuntimeError("world mode: world/world.json must be a file inside the project folder")
         w = worlds.load(self.root)
         if w is None or w["id"] != design.world.id:
             raise RuntimeError(f"world mode: {design.world.id} isn't this project's world (world/world.json); "

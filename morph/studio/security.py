@@ -139,6 +139,8 @@ DESIGN_LIMITS = {
     "safety_factor": (0.1, 100),
 }
 MAX_TEXT = 500  # characters in a design's text value (names, extras, actuator overrides)
+# text values with a fixed shape: world mode's room is named by id (never a path) and pinned by its hash
+DESIGN_TEXT = {"world.id": re.compile(r"(?:[a-z0-9][a-z0-9-]{0,39})?"), "world.sha": re.compile(r"[0-9a-f]{0,64}")}
 
 
 def design_values(flat: dict, defaults: dict, keys=None):
@@ -149,6 +151,8 @@ def design_values(flat: dict, defaults: dict, keys=None):
         if isinstance(like, str):
             if not isinstance(value, str) or len(value) > MAX_TEXT:
                 raise ValueError(f"{key} must be text of at most {MAX_TEXT} characters.")
+            if key in DESIGN_TEXT and not DESIGN_TEXT[key].fullmatch(value):
+                raise ValueError(f"{key} must be a world id (lower-case letters, digits and -) or its hash, never a path.")
             continue
         if like is None:
             continue

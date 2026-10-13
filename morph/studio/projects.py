@@ -229,6 +229,9 @@ def fork(home: str, project: str, rev: str | None = None, name=None, *, by: str 
     source = read_meta(src)
     info = create(home, name or project, design=design, need=source.get("need"), origin="fork", by=by, rename=False,
                   meta={"forked_from": {"project": project, "rev": rev}})
+    room = os.path.join(src, "world")  # world mode: the room the design names (world.id) comes along
+    if design.world.id and os.path.isdir(room) and not os.path.islink(room):
+        _copy_tree(room, os.path.join(info["root"], "world"))
     folder = p.rev_dir(rev)
     valid = results.get("pipeline_version") == pipeline_version(design.arm.source) and not any(
         stage_problem(results, n) or artifact_problem(results, n, folder) for n in ORDER)

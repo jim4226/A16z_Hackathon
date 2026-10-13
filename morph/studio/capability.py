@@ -228,7 +228,7 @@ _ENUMS = {"object.shape": SHAPES, "finger.pad": ("contour", "v", "flat"), "finge
           "fab.process": ("auto", "fdm_print", "laser_cut", "cnc_router"), "electronics.config": ("modules", "custom_pcb"),
           "electronics.servo": ("auto", "sg90", "mg90s", "mg996r", "ds3218", "sts3215"),
           "arm.actuator_family": FAMILIES, "build.config": CONFIGS}
-_LOCKED = ("name", "arm.source", "arm.actuator_overrides")  # never from a model
+_LOCKED = ("name", "arm.source", "arm.actuator_overrides", "world.id", "world.sha")  # never from a model
 
 
 def clamp(changes: dict, *, allow=()) -> tuple[dict, list]:

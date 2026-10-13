@@ -64,6 +64,45 @@ CUSTOM_EVENTS = [
     {"eventTypeId": 2019, "name": "SourcingAgentsFound", "dataType": "uint"},
     {"eventTypeId": 2020, "name": "SourcingTopAgent", "dataType": "string"},
     {"eventTypeId": 2021, "name": "SourcingGap", "dataType": "string"},
+    # brief (F1, morph/studio/agents.py)
+    {"eventTypeId": 2100, "name": "BriefStarted", "dataType": "string"},
+    {"eventTypeId": 2101, "name": "BriefRoute", "dataType": "string"},
+    {"eventTypeId": 2102, "name": "BriefTriageSource", "dataType": "string"},
+    {"eventTypeId": 2103, "name": "BriefQuestion", "dataType": "string"},
+    {"eventTypeId": 2104, "name": "BriefAnswer", "dataType": "string"},
+    {"eventTypeId": 2105, "name": "BriefDefaulted", "dataType": "string"},
+    {"eventTypeId": 2106, "name": "BriefRounds", "dataType": "uint"},
+    {"eventTypeId": 2107, "name": "BriefOutOfScope", "dataType": "string"},
+    {"eventTypeId": 2108, "name": "BriefRefused", "dataType": "string"},
+    {"eventTypeId": 2109, "name": "BriefRepair", "dataType": "string"},
+    {"eventTypeId": 2110, "name": "BriefPreflightMs", "dataType": "uint"},
+    {"eventTypeId": 2111, "name": "BriefEstimateUsd", "dataType": "uint"},
+    {"eventTypeId": 2112, "name": "BriefNearestAccepted", "dataType": "string"},
+    {"eventTypeId": 2113, "name": "BriefBuilt", "dataType": "string"},
+    {"eventTypeId": 2114, "name": "BriefBuildFeasible", "dataType": "uint"},
+    # video and photos (F3, morph/studio/api_video.py)
+    {"eventTypeId": 2160, "name": "VideoAnalysis", "dataType": "string"},
+    {"eventTypeId": 2161, "name": "VideoFrames", "dataType": "uint"},
+    {"eventTypeId": 2162, "name": "VideoAnalyzeMs", "dataType": "uint"},
+    {"eventTypeId": 2163, "name": "VideoSource", "dataType": "string"},
+    {"eventTypeId": 2164, "name": "VideoUsable", "dataType": "uint"},
+    {"eventTypeId": 2165, "name": "VideoQuestions", "dataType": "uint"},
+    {"eventTypeId": 2166, "name": "VideoCostMilliUsd", "dataType": "uint"},
+    {"eventTypeId": 2167, "name": "VideoChangesApplied", "dataType": "uint"},
+    {"eventTypeId": 2168, "name": "VideoDecodeMs", "dataType": "uint"},
+    {"eventTypeId": 2169, "name": "VideoDecoder", "dataType": "string"},
+    {"eventTypeId": 2170, "name": "VideoSecondOpinion", "dataType": "string"},
+    # teams (F4, morph/studio/teams/activity.py; hashed member ids, never names)
+    {"eventTypeId": 2180, "name": "TeamActor", "dataType": "string"},
+    {"eventTypeId": 2181, "name": "TeamRole", "dataType": "string"},
+    {"eventTypeId": 2182, "name": "CommentAdded", "dataType": "string"},
+    {"eventTypeId": 2183, "name": "ChangeRequestOpened", "dataType": "string"},
+    {"eventTypeId": 2184, "name": "ChangeRequestApplied", "dataType": "string"},
+    {"eventTypeId": 2185, "name": "ReviewRequested", "dataType": "string"},
+    {"eventTypeId": 2186, "name": "ReviewDecision", "dataType": "string"},
+    {"eventTypeId": 2187, "name": "ApprovedRevision", "dataType": "string"},
+    {"eventTypeId": 2188, "name": "ReleaseLevel", "dataType": "string"},
+    {"eventTypeId": 2189, "name": "ReviewDisciplines", "dataType": "uint"},
 ]
 _ID = {e["name"]: (e["eventTypeId"], e["dataType"]) for e in CUSTOM_EVENTS}
 EVENTS_HASH = zlib.crc32(json.dumps(CUSTOM_EVENTS, sort_keys=True).encode()) or 1
@@ -125,6 +164,9 @@ def events_for(entry: dict, design: dict | None = None) -> list:
             ev.append(("SourcingTopAgent", entry["top_agent"]))
         if entry.get("gap"):
             ev.append(("SourcingGap", entry["gap"]))
+    elif t in ("video_analysis", "video_apply", "video_decode"):  # counts and timings only (api_video)
+        from .studio.api_video import keewano_events
+        ev += keewano_events(entry)
     return [(n, v) for n, v in ev if v is not None and v != ""]
 
 
