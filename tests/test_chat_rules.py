@@ -67,6 +67,18 @@ def test_a_change_that_is_already_there_says_so():
     assert out["changes"] == {"arm.dof": 6} and out["reply"] == "Changing 6-DOF arm. (It already has an emergency stop.)"
 
 
+def test_replies_read_as_sentences_with_the_panel_names():
+    d = egg_arm()
+    assert say("add an e-stop", d)["reply"] == "Added an emergency stop."      # it said "Changing added estop."
+    assert say("add a wrist camera", d)["reply"] == "Added a wrist camera."
+    assert say("swap to Dynamixel servos", d)["reply"] == "Changing actuators → Dynamixel."
+    assert say("remove the force sensor", d)["reply"] == "Removed the force sensor."
+    assert say("make it 6-DOF and add a wrist camera", d)["reply"] == "Changing 6-DOF arm; added a wrist camera."
+    cam = egg_arm(**{"electronics.extras": "wrist_camera"})
+    assert say("remove the wrist camera", cam) == {"changes": {"electronics.extras": ""}, "source": "rules", "last_target": None,
+                                                   "reply": "Removed the wrist camera."}
+
+
 def test_questions_and_thanks_are_not_failed_edits():
     d = egg_arm()
     out = say("can it lift 2 kg?", d)

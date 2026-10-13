@@ -127,8 +127,10 @@ def robot_rules(t: str, d: Design, ch: dict, said: list):
     elif re.search(r"hobby|pwm servo|rc servo|cheap servo|mg996r servos|ds3218", t) and "gripper" not in t:
         fam = "hobby_pwm"
     if fam:
+        from .labels import show_value
+
         ch["arm.actuator_family"] = fam
-        said.append(f"actuators → {fam.replace('_', ' ')}")
+        said.append(f"actuators → {show_value('arm.actuator_family', fam)}")
     m = re.search(r"\b([456])\s*-?\s*(dof|axis|axes|degrees)", t) or re.search(r"\b(four|five|six)\s*-?\s*(dof|axis|axes|degrees)", t)
     if m:
         n = {"four": 4, "five": 5, "six": 6}.get(m.group(1), None) or int(m.group(1))
@@ -172,12 +174,12 @@ def robot_rules(t: str, d: Design, ch: dict, said: list):
             if re.search(r"(remove|no|without|drop) (the |a )?(wrist )?" + pat, t):
                 if key in extras:
                     extras = [e for e in extras if e != key]
-                    said.append(f"removed {key.replace('_', ' ')}")
+                    said.append(f"removed the {names[key][1]}")
                 else:
                     said.append(f"{NOTE}it has no {names[key][1]}")
             elif key not in extras:
                 extras.append(key)
-                said.append(f"added {key.replace('_', ' ')}")
+                said.append(f"added {' '.join(names[key])}")
             else:
                 said.append(f"{NOTE}it already has {' '.join(names[key])}")
     if ",".join(extras) != d.electronics.extras:
@@ -248,11 +250,11 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
         said.append(f"fab → 3D print {mat}")
     if re.search(r"(no|remove|without|drop)( the)? (force )?sensor", t):
         ch["finger.sensor"] = "none"
-        said.append("force sensor removed")
+        said.append("removed the force sensor")
     elif re.search(r"(add|with|use)( a)? force sensor|force feedback|fsr", t):
         ch.update({"finger.sensor": "fsr402", "finger.width_mm": 20.0, "fab.process": "fdm_print",
                    "finger.material": ch.get("finger.material", d.finger.material) if d.finger.material in ("PLA", "PETG", "Nylon-CF") else "PETG"})
-        said.append("FSR 402 force sensor added (20 mm printed finger)")
+        said.append("added an FSR 402 force sensor (20 mm printed finger)")
     m = re.search(r"(\d+(?:\.\d+)?)\s*mm\s*(longer|shorter)", t)
     if m:
         dl = float(m.group(1)) * (1 if m.group(2) == "longer" else -1)
@@ -401,6 +403,6 @@ def _interpret(msg: str, d: Design) -> dict:
                      "“use a custom PCB”, “make it 6-DOF”, “add a wrist camera”, “pilot build”, “reach 380 mm”, "
                      "“make it work for a strawberry”.")
         return {"changes": {}, "source": "rules", "reply": reply}
-    note = "; ".join(notes)
-    return {"changes": ch, "reply": "Changing " + "; ".join(said) + "." + (f" ({note[:1].upper() + note[1:]}.)" if note else ""),
-            "source": "rules"}
+    note, text = "; ".join(notes), "; ".join(said)
+    text = text[:1].upper() + text[1:] if re.match(r"(?:added|removed) ", text) else "Changing " + text  # "Added a wrist camera"
+    return {"changes": ch, "reply": text + "." + (f" ({note[:1].upper() + note[1:]}.)" if note else ""), "source": "rules"}

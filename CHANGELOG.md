@@ -218,8 +218,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   carry path changed only when it did (every room said it was "pulled in 12%"); walking starts on the room's own floor
   with the robot in sight (it started behind the kitchen scan's back wall), keys held when the window loses focus are
   let go, World off gives the camera back its usual range, and a new scan is never the cached old one.
-- Parameter edits read the way the Parameters panel names them, in the chat and the revision list: "Parameter edit:
-  Build → Pilot." instead of "config → pilot".
+- Parameter edits and the chat's built-in rules read the way the Parameters panel names things: "Parameter edit: Build →
+  Pilot." instead of "config → pilot" (in the chat and the revision list), "Added an emergency stop." instead of
+  "Changing added estop." and "Changing actuators → Dynamixel."
 - `morph studio --team --remote` prints the network address teammates use, and the owner's sign-in link starts with
   it; Share warns when the page that makes an invite was opened at an address only this computer can reach.
 - World mode's panel no longer covers the robot's stat chips.
