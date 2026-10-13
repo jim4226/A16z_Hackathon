@@ -100,7 +100,8 @@ class HeavyJobs:
                 raise StudyBusy(f"A robustness study is already {'waiting' if cur.status == 'queued' else 'running'} "
                                 f"for {project}.")
             if robust.active(root):
-                raise StudyBusy(f"A robustness study is already running for {project} (in another Morph window).")
+                raise StudyBusy(f"A robustness study is already running for {project} (started from another Studio or a "
+                                "terminal).")
             job = self.jobs[project] = Job(project, root, params, study, by)
             self.waiting.append(job)
             self._send(job, self._event(job, "queued"), force=True)

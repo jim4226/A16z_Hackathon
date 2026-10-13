@@ -205,6 +205,25 @@ def test_all_successes_get_the_exact_bound():
     assert "Succeeds in all 200 runs: at least 98.2% (95%, exact)." in text and text.isascii()
 
 
+def test_the_report_counts_single_runs_in_plain_english():
+    params = robust.default_spec(projects.template("egg-picker"))["params"]
+    outs = ["placed", "placed", "jam", "unstable", "error"]
+    rows = [{"i": i, "params": robust.sample(params, 1, i)[0], "outcome": o, "group": o, "success": o == "placed"}
+            for i, o in enumerate(outs)]
+    doc = {"project": "egg-picker", "rev": "r001", "id": "0" * 12, "n": 5, "done": 5, "seed": 1, "timestep": 0.001,
+           "status": "done", "stress": False, "summary": robust.analyze(rows, params), "spec": {"params": params},
+           "timing": {"workers": 1, "runs_per_s": 1.2, "first_result_s": 3.0}}
+    text = robust.report(doc)
+    assert "Succeeds in 2 of 3 runs: 66.7%" in text
+    assert "1 run was numerically unstable and is not counted (run 3)." in text
+    assert "1 run stopped with an error and is not counted (run 4)." in text
+    assert "\n     1 run  (33.3%, 95% CI" in text and "Timing: 5 runs, 1.2 runs/s on 1 worker," in text
+    one = {**doc, "n": 1, "done": 1, "summary": robust.analyze(rows[:1], params)}
+    text = robust.report(one)
+    assert "1 of 1 randomized run of pick and place" in text and "Succeeds in its one run: at least 2.5%" in text
+    assert "Timing: 1 run," in text and " 1 runs" not in text
+
+
 # ------------------------------------------------------------------ the robot, packed for workers
 
 def test_prepare_rebuilds_the_revisions_model_and_workers_run_it_exactly(project, prepared):
@@ -330,6 +349,12 @@ def test_replay_gives_a_runs_frames(project, prepared):
     for bad in (2, -1, True, "1"):
         with pytest.raises(robust.StudyError):
             robust.replay(project, doc["id"], bad, cache=CACHE)
+    with pytest.raises(robust.StudyError, match="use half_timestep or impratio_1"):
+        robust.replay(project, doc["id"], 0, "softer", cache=CACHE)
+    for rev, msg in (("r999", "This project has no finished revision r999."), ("../r001", "There is no such revision.")):
+        with pytest.raises(robust.StudyError) as err:
+            robust.new_study(project, rev, runs=2)
+        assert str(err.value) == msg
 
 
 # ------------------------------------------------------------------ acceptance (MORPH_SLOW=1)

@@ -233,8 +233,9 @@ def _revision(root, rev=None):
     done = [r for r in p.revs() if os.path.isfile(os.path.join(p.rev_dir(r), "results.json"))]
     rev = rev or (done[-1] if done else None)
     if not isinstance(rev, str) or not REV.fullmatch(rev) or rev not in done:
-        raise StudyError(f"{rev or 'This project'} has no finished revision to study." if rev else
-                         "This project has no finished revision to study yet.")
+        raise StudyError("This project has no finished revision to study yet." if not rev else
+                         f"This project has no finished revision {rev}." if isinstance(rev, str) and REV.fullmatch(rev)
+                         else "There is no such revision.")
     return p, rev, p.load_design(rev)
 
 
@@ -1414,7 +1415,7 @@ def replay(root: str, sid: str, run: int, variant: str | None = None, cache: dic
     if isinstance(run, bool) or not isinstance(run, int) or not 0 <= run < max(doc.get("n") or 0, doc.get("done") or 0):
         raise StudyError("There is no such run in this study.")
     if variant is not None and variant not in VARIANTS:
-        raise StudyError("Unknown check.")
+        raise StudyError(f"There is no such check; use {' or '.join(VARIANTS)}.")
     key = (os.path.realpath(root), doc["rev"], doc["design_sha"], doc["pipeline_version"], float(doc["timestep"]))
     prep = (cache or {}).get(key) or prepare(root, doc["rev"], doc["timestep"])
     r = Runner(prep["blob"])
@@ -1431,25 +1432,28 @@ def report(doc: dict) -> str:
     """The study as plain ASCII text (what `morph study` prints)."""
     s = doc.get("summary") or {}
     lines = [f"{doc.get('project')} {doc['rev']}: robustness study (beta), {doc.get('done', 0)} of {doc['n']} randomized "
-             f"runs of pick and place" + (", every range doubled (stress)" if doc.get("stress") else ""),
+             f"run{_s(doc['n'])} of pick and place" + (", every range doubled (stress)" if doc.get("stress") else ""),
              f"  study {doc['id']}, seed {doc['seed']}, {doc['timestep'] * 1000:g} ms steps, status {doc['status']}"]
     if s.get("n"):
         nom = ((doc.get("model") or {}).get("nominal") or {}).get("success")
-        line = f"Succeeds in {s['successes']} of {s['n']} runs: {_pct(s['p'])} (95% CI {_pct(s['wilson95'][0])}-{_pct(s['wilson95'][1])})."
+        line = f"Succeeds in {s['successes']} of {_runs(s['n'])}: {_pct(s['p'])} (95% CI {_pct(s['wilson95'][0])}-{_pct(s['wilson95'][1])})."
         if s.get("clopper_pearson95") and s["successes"] == s["n"]:
-            line = f"Succeeds in all {s['n']} runs: at least {_pct(s['clopper_pearson95'][0])} (95%, exact)."
+            line = ((f"Succeeds in all {s['n']} runs" if s["n"] > 1 else "Succeeds in its one run")
+                    + f": at least {_pct(s['clopper_pearson95'][0])} (95%, exact).")
         if nom is not None:
             line += " The nominal run " + ("succeeds." if nom else "fails.")
         lines += [line, NOTE]
-        if s.get("unstable"):
-            lines.append(f"{len(s['unstable'])} runs were numerically unstable and are not counted (runs {_ids(s['unstable'])}).")
-        if s.get("errors"):
-            lines.append(f"{len(s['errors'])} runs stopped with an error and are not counted (runs {_ids(s['errors'])}).")
+        for key, (one, many) in (("unstable", ("was numerically unstable", "were numerically unstable")),
+                                 ("errors", ("stopped with an error", "stopped with an error"))):
+            ids = s.get(key) or []
+            if ids:
+                lines.append(f"{_runs(len(ids))} {one if len(ids) == 1 else many} and {'is' if len(ids) == 1 else 'are'} "
+                             f"not counted (run{_s(len(ids))} {_ids(ids)}).")
         if s.get("groups"):
             lines.append("Failure groups:")
         for g in s.get("groups", []):
             lo, hi = g["wilson95"]
-            lines.append(f"  {g['count']:>4} runs ({_pct(g['rate'])}, 95% CI {_pct(lo)}-{_pct(hi)})  {g['label']}")
+            lines.append(f"  {g['count']:>4} run{_s(g['count']) or ' '} ({_pct(g['rate'])}, 95% CI {_pct(lo)}-{_pct(hi)})  {g['label']}")
             if g.get("rule"):
                 lines.append(f"       {g['rule']['text']}" + ("" if g["rule"]["significant"] else " (could be chance)"))
             ms = g.get("model_sensitive")
@@ -1478,9 +1482,9 @@ def report(doc: dict) -> str:
         lines.append(f"  {e['label']}: {rng}  [{e['source']}]")
     t = doc.get("timing") or {}
     if t.get("workers"):
-        bits = [f"{doc.get('done', 0)} runs"]
+        bits = [_runs(doc.get("done", 0))]
         if t.get("runs_per_s"):
-            bits.append(f"{t['runs_per_s']} runs/s on {t['workers']} workers")
+            bits.append(f"{t['runs_per_s']} runs/s on {t['workers']} worker{_s(t['workers'])}")
         if t.get("first_result_s") is not None:
             bits.append(f"first result after {t['first_result_s']} s")
         if t.get("checks_runs"):
@@ -1489,6 +1493,14 @@ def report(doc: dict) -> str:
     if doc["status"] == "error" and doc.get("error"):
         lines.append(f"Error: {doc['error']}")
     return "\n".join(lines)
+
+
+def _s(k: int) -> str:
+    return "" if k == 1 else "s"
+
+
+def _runs(k: int) -> str:
+    return f"{k} run{_s(k)}"
 
 
 def _ids(ids, k=12) -> str:

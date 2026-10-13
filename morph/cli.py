@@ -652,7 +652,8 @@ def cmd_study(a) -> int:
             out["error"] = f"{exc.__class__.__name__}: {exc}"
 
     n = a.workers or robust.default_workers()
-    print(f"{a.name}: robustness study (beta), {a.runs} randomized runs on {n} worker process{'es' if n != 1 else ''}. "
+    print(f"{a.name}: robustness study (beta), {a.runs} randomized run{'s' if a.runs != 1 else ''} on {n} worker "
+          f"process{'es' if n != 1 else ''}. "
           "Ctrl+C stops it and keeps the finished runs.")
     t = threading.Thread(target=work, daemon=True, name="morph-study")
     t.start()
