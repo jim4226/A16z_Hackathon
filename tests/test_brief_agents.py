@@ -285,3 +285,6 @@ def test_after_build_hooks():
     out = agents.after_build(b, "p", "r001", source=lambda rev: 1 / 0, keewano_send=None, on_event=ev.append)
     assert out == {"sourcing": "error", "memory": "skipped"}
     assert agents.after_build(b, "p")["sourcing"] == "skipped"
+    ev = []  # no sourcing: the timeline says why (the Studio passes Darwin lookups being off)
+    agents.after_build(b, "p", on_event=ev.append, no_source="Darwin lookups are off")
+    assert next(e["text"] for e in ev if e["role"] == "sourcing") == "Darwin lookups are off"
