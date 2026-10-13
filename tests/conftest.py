@@ -40,6 +40,8 @@ def _offline(request, monkeypatch, tmp_path):
         if k.startswith(SECRETS):
             monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("MORPH_HOME", str(tmp_path / "morph-home"))
+    from morph.importers import common as imports
+    monkeypatch.setattr(imports, "_HOME", None)  # a Studio sets the importers' home to its projects folder: not across tests
     if request.node.get_closest_marker("network"):
         yield
         return

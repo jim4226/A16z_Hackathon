@@ -34,19 +34,24 @@ FAMILY_SWAPS = {  # stock smart-bus robot -> other families, by joint position (
 
 def roots() -> list:
     """Where an arm.source name is looked up, in order: the robots shipped with Morph, then robots the user
-    imported (MORPH_HOME/.robots). Nowhere else: a design names a robot, never a folder."""
-    user = os.path.join(os.environ.get("MORPH_HOME") or "projects", ".robots")
+    imported (MORPH_HOME/.robots, the Studio's projects folder when it set one). Nowhere else: a design names a robot,
+    never a folder."""
+    from ..importers.robots import robots_dir
+
+    user = robots_dir()
     return [ROOT] + ([user] if os.path.isdir(user) else [])
 
 
 def robot_dir(source: str) -> str:
-    """The bundle folder for arm.source; ValueError for anything but the name of a robot in roots()."""
+    """The bundle folder for arm.source; ValueError for anything but the name of a robot in roots(). The lookup is
+    importers.robots.resolve(): shipped robots win, and an imported bundle's profile must name files inside it."""
+    from ..importers.robots import resolve
+
     name = robot_source(source)
-    for root in roots():
-        d = contained_path(root, name, decode=False)
-        if d and os.path.isfile(os.path.join(d, "morph_profile.json")):
-            return d
-    raise ValueError(f"no robot called {name}: arm.source must name a folder in robots/ (or an imported robot)")
+    try:
+        return resolve(name, ROOT)
+    except FileNotFoundError:
+        raise ValueError(f"no robot called {name}: arm.source must name a folder in robots/ (or an imported robot)") from None
 
 
 def bundle_file(d: str, rel) -> str:
@@ -58,7 +63,7 @@ def bundle_file(d: str, rel) -> str:
 
 
 def load_profile(source: str) -> tuple[dict, str]:
-    d = robot_dir(source)
+    d = robot_dir(source)  # shipped robots/ first, then MORPH_HOME/.robots/ (user imports)
     with open(os.path.join(d, "morph_profile.json"), encoding="utf-8") as fh:
         return json.load(fh), d
 
@@ -79,7 +84,8 @@ def actuator_plan(design, prof) -> dict:
     joints = list(stock)
     fam = design.arm.actuator_family
     overrides = dict(kv.split("=") for kv in design.arm.actuator_overrides.split(",") if "=" in kv)
-    if fam in FAMILY_SWAPS:
+    stock_families = {catalog.ACTUATORS.get(k, {}).get("family") for k in stock.values()}
+    if fam in FAMILY_SWAPS and fam not in stock_families:   # a swap, not the robot's own family (OMX: XM430 stays)
         keys = FAMILY_SWAPS[fam]
         out = {j: keys[min(i, len(keys) - 1)] for i, j in enumerate(joints)}
     else:
@@ -101,29 +107,62 @@ def _subtree(asm, link) -> list:
     return out
 
 
+def _pose_grid(asm, arm_joints) -> list:
+    """Poses over the range of the joints that tilt the arm (axis not vertical at q = 0; rolls skipped)."""
+    import itertools
+
+    T = asm.world_transforms({})
+    tilt = []
+    for n in arm_joints:
+        j = asm.joint(n)
+        ax = T[j.child][:3, :3] @ np.asarray(j.axis, float)
+        if "roll" not in n and abs(ax[2]) < 0.9 * np.linalg.norm(ax):
+            tilt.append(j)
+    tilt = tilt[:4]
+    k = {1: 13, 2: 13, 3: 9}.get(len(tilt), 5)
+    axes = [np.linspace(j.lower, j.upper, k) for j in tilt]
+    return [dict(zip([j.name for j in tilt], vals)) for vals in itertools.product(*axes)] if tilt else []
+
+
+def worst_case_torques(asm, arm_joints, gripper_joint, payload_kg, grid=True) -> tuple[dict, float | None]:
+    """|gravity torque| (N·m) per joint, worst case over q = 0 and (grid=True) a pose grid; and the reach: the
+    farthest tool position (mm, horizontal) over the same poses, above the table."""
+    tcp = asm.meta.get("tcp_link")
+    names = [n for n in list(arm_joints) + [gripper_joint] if n]
+    subs = {n: _subtree(asm, asm.joint(n).child) for n in names}
+    mass = {link: asm.link_mass(link) for link in asm.links}
+    out, reach = {n: 0.0 for n in names}, None
+    for q in [{}] + (_pose_grid(asm, arm_joints) if grid else []):
+        T = asm.world_transforms(q)
+        tp = T[tcp][:3, 3] if tcp else None
+        if tp is not None and (not grid or tp[2] >= 0.0):
+            reach = max(reach or 0.0, float(np.linalg.norm(tp[:2])))
+        for name in names:
+            j = asm.joint(name)
+            Tc = T[j.child]
+            axis_w, p = Tc[:3, :3] @ np.asarray(j.axis, float), Tc[:3, 3]
+            tau = 0.0
+            for link in subs[name]:
+                m, com = mass[link]
+                c = (T[link] @ np.r_[com, 1.0])[:3]
+                tau += float(np.cross((c - p) / 1000.0, m * G) @ axis_w)
+            if tp is not None and name != gripper_joint:
+                tau += float(np.cross((tp - p) / 1000.0, payload_kg * G) @ axis_w)
+            out[name] = max(out[name], abs(tau))
+    return out, reach
+
+
 def size(design) -> dict:
     prof, d = load_profile(design.arm.source)
     asm = load_urdf(bundle_file(d, _urdf(design, prof)), prof, bundle=d)
     acts = actuator_plan(design, prof)
-    q0 = {j: 0.0 for j in prof["arm_joints"]}           # zero pose = arm stretched out (worst case for SO-101)
-    T = asm.world_transforms(q0)
     payload = design.object.mass_g / 1000.0
-    tcp = T[asm.meta["tcp_link"]][:3, 3] if asm.meta.get("tcp_link") else None
-    joints, issues, reqs = [], [], {}
-    for name in prof["arm_joints"] + [prof["gripper_joint"]]:
-        j = asm.joint(name)
-        Tc = T[j.child]
-        axis_w, p = Tc[:3, :3] @ np.asarray(j.axis, float), Tc[:3, 3]
-        tau = 0.0
-        for link in _subtree(asm, j.child):
-            m, com = asm.link_mass(link)
-            c = (T[link] @ np.r_[com, 1.0])[:3]
-            tau += float(np.cross((c - p) / 1000.0, m * G) @ axis_w)
-        if tcp is not None and name != prof["gripper_joint"]:
-            tau += float(np.cross((tcp - p) / 1000.0, payload * G) @ axis_w)
-        if name == prof["gripper_joint"]:
-            tau = max(abs(tau), 0.15)                     # squeezing torque floor for the jaw
-        reqs[name] = abs(tau)
+    # hand-written profiles size at q = 0 (SO-101: the stretched-out pose); auto-imported arms have no such
+    # convention, so they size for the worst case over a pose grid of their tilting joints
+    grid = bool((prof.get("imported") or {}).get("auto")) or prof.get("sizing") == "grid"
+    reqs, reach = worst_case_torques(asm, prof["arm_joints"], prof["gripper_joint"], payload, grid=grid)
+    joints, issues = [], []
+    reqs[prof["gripper_joint"]] = max(reqs[prof["gripper_joint"]], 0.15)   # squeezing torque floor for the jaw
     pitch_max = max(reqs.values())
     for name in prof["arm_joints"] + [prof["gripper_joint"]]:
         # yaw/roll axes carry no gravity load: size them for acceleration + friction instead
@@ -135,7 +174,6 @@ def size(design) -> dict:
         joints.append({"name": name, "actuator": key, "torque_req_nm": round(req, 3),
                        "torque_with_margin_nm": round(req * design.arm.payload_margin, 3), "torque_avail_nm": avail,
                        "margin": round(avail / max(req, 1e-6), 2), "servo_id": prof.get("servo_ids", {}).get(name)})
-    reach = float(np.linalg.norm(tcp[:2])) if tcp is not None else None
     arm_joints = [j for j in joints if j["name"] != prof["gripper_joint"]]
     return {"source": design.arm.source, "title": prof.get("title"), "links_mm": {}, "reach_mm": round(reach or 0, 1),
             "payload_g": design.object.mass_g, "joints": arm_joints, "gripper_actuator": acts[prof["gripper_joint"]],

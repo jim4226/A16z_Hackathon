@@ -72,7 +72,7 @@ def test_pipeline_version_hashes_only_pipeline_code():
 def test_imported_robots_hash_their_bundle(tmp_path):
     bundle = tmp_path / "morph-home" / ".robots" / "testbot"   # MORPH_HOME is tmp_path/morph-home in every test
     (bundle / "meshes").mkdir(parents=True)
-    (bundle / "morph_profile.json").write_text("{}", encoding="utf-8")
+    (bundle / "morph_profile.json").write_text('{"urdf": "robot.urdf"}', encoding="utf-8")  # a bundle names its URDF
     mesh = bundle / "meshes" / "link.stl"
     mesh.write_bytes(b"solid a")
     code = pipeline_version()
