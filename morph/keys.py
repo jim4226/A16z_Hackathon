@@ -4,6 +4,10 @@ Keys live in the git-ignored `.env` next to the launchers (an installed wheel us
 resources.config_dir(), never site-packages) and in the process environment. Nothing here ever returns a key's
 value: the Studio only learns whether each key is set. Everything works without keys (Claude chat falls back to
 the built-in rules, Keewano switches itself off, Darwin Search needs no key), so keys only add capabilities.
+
+Besides the built-in services' keys (KEYS), the tools agents use (beta) bring their own: one entry per key a tool that
+is on needs, generated from its manifest (morph/studio/toolbox/catalog.py), named MORPH_TOOL_<NAME>, checked against
+the manifest's pattern when saved and sent only to that tool's own hosts.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ KEYS = [
      "where": "console.subq.ai, API keys", "url": "https://console.subq.ai"},
 ]
 NAMES = [k["name"] for k in KEYS]
+TOOL_KEY = re.compile(r"MORPH_TOOL_[A-Z0-9_]{2,40}")
 _LINE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 _LOCK = threading.Lock()  # two Save clicks must not interleave their writes
 
@@ -125,25 +130,44 @@ def ensure_env_file(path: str | None = None) -> bool:
     return True
 
 
-def status() -> list:
-    """Each key's description and whether it is set. Never the value."""
-    return [{**k, "set": bool(os.environ.get(k["name"]))} for k in KEYS]
+def tool_keys(home: str | None = None) -> list:
+    """The keys of the tools that are on, from their manifests: service, label, what it unlocks, where to get it, cost,
+    privacy, the hosts it is sent to and the pattern it must fit (`tool: true`). Never a value."""
+    from .studio.toolbox import catalog
+    return catalog.key_entries(home)
 
 
-def save(updates: dict, path: str | None = None) -> list:
+def status(home: str | None = None) -> list:
+    """Each key's description and whether it is set: the built-in services, then the tools' keys. Never the value."""
+    return [{**k, "set": bool(os.environ.get(k["name"]))} for k in [*KEYS, *tool_keys(home)]]
+
+
+def save(updates: dict, path: str | None = None, home: str | None = None) -> list:
     """Write keys into .env (other lines and comments kept; the file readable by this user only) and apply them
     to this process at once. An empty value removes the key. Returns the names changed. Raises ValueError for
-    anything that is not a key, OSError when .env can't be written."""
+    anything that is not a key, OSError when .env can't be written. A tool's key (MORPH_TOOL_*) must be declared by a
+    loaded manifest and fit its pattern; the error never repeats the value."""
     path = path or ENV_PATH
-    clean = {}
+    clean, specs = {}, None
     if not isinstance(updates or {}, dict):
         raise ValueError("send the keys as {NAME: value}")
     for k, v in (updates or {}).items():
-        if k not in NAMES:
-            raise ValueError(f"unknown key {k}")
+        if k not in NAMES and not (isinstance(k, str) and TOOL_KEY.fullmatch(k)):
+            raise ValueError(f"unknown key {str(k)[:60]}")
         if v is not None and not isinstance(v, str):
             raise ValueError(f"{k}: that does not look like a key")
         v = (v or "").strip()
+        if k not in NAMES:
+            if specs is None:
+                from .studio.toolbox import catalog
+                specs = catalog.key_specs(home)
+            spec = specs.get(k)
+            if spec is None:
+                raise ValueError(f"unknown key {k}: no tool in the catalog uses it")
+            if v and not spec.valid(v):
+                raise ValueError(f"{spec.label}: that does not look like a {spec.service} key")
+            clean[k] = v
+            continue
         if len(v) > 500 or any(c in v for c in "\r\n\x00\"'"):
             raise ValueError(f"{k}: that does not look like a key")
         clean[k] = v

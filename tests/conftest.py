@@ -10,11 +10,12 @@ import socket
 import pytest
 
 SECRETS = ("ANTHROPIC_", "KEEWANO_", "SUBQ_", "GEMINI_", "GOOGLE_API_KEY", "OPENAI_API_KEY", "MORPH_TOKEN",
-           "MORPH_TELEMETRY_ENABLED", "MORPH_OFFLINE", "MORPH_LOAD_DOTENV")
+           "MORPH_TELEMETRY_ENABLED", "MORPH_OFFLINE", "MORPH_LOAD_DOTENV", "MORPH_TOOL_")
 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "network: the test may open connections beyond this computer")
+    config.addinivalue_line("markers", "live: needs real keys and MORPH_LIVE=1; never part of a normal run")
 
 
 def _loopback(address) -> bool:
