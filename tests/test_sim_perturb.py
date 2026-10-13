@@ -1,7 +1,7 @@
 """The robustness hook in the whole-robot simulation (simulate.py perturb=): absent keys are nominal, the nominal model
 comes back bit for bit, every change reaches the model, the plan stays nominal, and the egg turned alone reproduces
 the tech lead's independent yaw sweep (the product's own _run_one with only the egg's start yaw changed). Without
-perturb nothing changes at all: tests/test_sim_golden.py. MORPH_SLOW=1 adds the whole 61-angle sweep."""
+perturb nothing changes at all: tests/test_sim_golden.py. MORPH_SLOW=1 adds the whole 61-angle sweeps."""
 
 import json
 import math
@@ -17,10 +17,17 @@ from morph.robot import arm, electronics2, simulate  # noqa: E402
 from morph.studio.projects import template  # noqa: E402
 
 SLOW = os.environ.get("MORPH_SLOW") == "1"
-# The tech lead's sweep (research, egg-picker r009 = this design and model): place error (mm) and outcome by yaw
-# offset, at 2 ms and at 1 ms steps, with the full plan.
+# The tech lead's spot check: its own patch of _simulate (the egg's start yaw only) on an earlier snapshot with the
+# egg-picker's saved r009 design, 61 yaw offsets from -15 to +15 degrees with the full plan. Place error (mm) and
+# outcome at 2 ms, and the offsets that fail at 2 ms and at 1 ms (with impratio=1 none fail).
 SWEEP_2MS = {0.0: (True, 0.1), 4.0: (False, 177.83), 12.0: (True, 0.1)}
-SWEEP_1MS_FAILS = [-7.5, -6.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.5, 7.0, 7.5]
+LEAD_2MS_FAILS = [-7.0, -6.5, -5.0, -4.5, -4.0, -3.5, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.0]
+LEAD_1MS_FAILS = [-7.5, -6.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.5, 7.0, 7.5]
+# Here the band's inner edge on the negative side is half a degree further in: the lead's nominal run placed 0.18 mm
+# off, this code's 0.19 mm, and that close to the edge it is enough to tip one offset. The rest agrees: the same
+# failures at 2 ms (58 of 61 runs to 0.01 mm) and at 0.5 ms, and all 61 runs with impratio=1 to 0.01 mm.
+SWEEP_1MS_FAILS = [-7.5, -6.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.0, 3.0, 3.5, 4.0, 4.5, 5.0, 6.5, 7.0, 7.5]
+YAWS = [round(-15 + 0.5 * i, 1) for i in range(61)]
 
 
 @pytest.fixture(scope="module")
@@ -166,20 +173,24 @@ def test_the_servo_model_at_nominal_settings_still_places(egg):
     assert a["success"] and b["success"] and abs(a["place_error_mm"] - b["place_error_mm"]) < 1.0
 
 
-@pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: the whole 61-angle sweep at 1 ms (about a minute)")
-def test_the_whole_sweep_at_1ms_and_with_softer_friction(egg):
+@pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 61-angle sweeps at 1 ms, with impratio=1 and at 2 ms (minutes)")
+def test_the_whole_sweeps_at_1_and_2_ms_and_with_softer_friction(egg):
+    """The jam band at 1 ms (runs alternating with impratio=1 on one model: a run leaves nothing behind), none with
+    softer friction, and the lead's band exactly at 2 ms."""
     d, asm = egg
-    rob = simulate._make_robot(asm, d, False, {})
-    plan, at = simulate._plan_pick_place(rob, d, False)
-    fails, soft = [], []
-    for yaw in [round(-15 + 0.5 * i, 1) for i in range(61)]:
-        for extra, out in (({}, fails), ({"impratio": 1.0}, soft)):
-            p = {"yaw_deg": yaw, **extra}
-            pl = simulate._Plan.__new__(simulate._Plan)
-            vars(pl).update(vars(plan))
-            pl.markers = [dict(mk) for mk in plan.markers]
-            with simulate._perturbed(rob, p):
-                _, metrics = simulate._run_pick_place(rob, d, pl, at, p)
-            if not metrics["success"]:
-                out.append(yaw)
-    assert fails == SWEEP_1MS_FAILS and soft == []
+    fails, soft, fails_2ms = [], [], []
+    for opts, settings in (({}, (({}, fails), ({"impratio": 1.0}, soft))), ({"timestep": 0.002}, (({}, fails_2ms),))):
+        rob = simulate._make_robot(asm, d, False, opts)
+        plan, at = simulate._plan_pick_place(rob, d, False)
+        for yaw in YAWS:
+            for extra, out in settings:
+                p = {"yaw_deg": yaw, **extra}
+                pl = simulate._Plan.__new__(simulate._Plan)
+                vars(pl).update(vars(plan))
+                pl.markers = [dict(mk) for mk in plan.markers]
+                with simulate._perturbed(rob, p):
+                    _, metrics = simulate._run_pick_place(rob, d, pl, at, p)
+                if not metrics["success"]:
+                    out.append(yaw)
+    assert fails == SWEEP_1MS_FAILS and set(fails) ^ set(LEAD_1MS_FAILS) == {-2.5, -2.0}
+    assert soft == [] and fails_2ms == LEAD_2MS_FAILS
