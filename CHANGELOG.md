@@ -169,6 +169,22 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   member ids.
 - Show Morph the job: cards you fill in yourself (no key, or kept on this computer) are described as yours, not as
   "seen in the video".
+- New robot: a typed reply such as "6 cm, 50 g, 10 per minute, people nearby" keeps the object it describes
+  (strawberries stay strawberries, with their damage force), "nobody nearby" means no, and "from the left side to the
+  right side" is kept as said. The plant waterer and the cat feeder set things down by the plant or the feeding spot,
+  not in a bin, and say that pouring isn't simulated. The summary says which sizes come from Morph's presets, and a
+  reload no longer starts a second brief from `?new=`.
+- Chat without Claude: "make it cheaper" steps down to the cheapest arm that still lifts the object, "faster" and
+  "slower" move the cycle time within what the arm can do, a change that is already there says so, and questions and
+  thanks get a fitting reply instead of "couldn't map that".
+- Import: picking one motor family keeps the arm on one supply voltage and sizes the motors as the build does, so the
+  SO-101 with Smart bus builds as feasible; the dialog says when an imported robot built but isn't feasible, and why.
+  An object mesh brings its own damage force and friction (never the previous object's) and, when fragile or narrow,
+  the force-sensing finger. An archive with nothing usable left says what was skipped, and a link pasted without
+  `https://` works.
+- Show Morph the job: a fragile object, or one narrower than the plain finger closes on, gets the force-sensing
+  finger in the list of changes, so Apply builds a robot that passes its own checks.
+- The project menu scrolls when there are many projects and refreshes its "building" tags each time it opens.
 - `morph studio --team --remote` prints the network address teammates use, and the owner's sign-in link starts with
   it; Share warns when the page that makes an invite was opened at an address only this computer can reach.
 - World mode's panel no longer covers the robot's stat chips.
