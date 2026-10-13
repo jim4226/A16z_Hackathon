@@ -42,8 +42,8 @@ from . import projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
 from .routes import HTTPError, route
-from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, json_object, looks_like_secret,
-                       param_changes, project_name)
+from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
+                       looks_like_secret, param_changes, project_name)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
@@ -232,6 +232,7 @@ class Studio:
         self.builds = threading.BoundedSemaphore(max_builds or _env_int("MORPH_MAX_BUILDS", 1))
         self.rooms = {self.start: Room(self.start, project)}
         self._rooms = threading.Lock()
+        projects.clear_uploads(self.home)  # uploads an earlier run never finished with
 
     @property
     def p(self) -> RobotProject:
@@ -413,6 +414,7 @@ class Studio:
                 changes = self._expand(changes)
                 try:
                     design = cur.with_changes(changes)
+                    design_values(design.flat(), projects.DEFAULTS, keys=changes)  # chat and models can ask for anything
                 except (KeyError, ValueError) as exc:
                     return self._say(room, job, "error", f"Couldn't apply that: {exc}")
                 if job is not None:

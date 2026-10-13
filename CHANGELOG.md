@@ -73,6 +73,8 @@ The feature teams add their entries here before the tag:
   an older Morph that others could read is made private when the Studio starts.
 - Remote mode: after 10 different wrong access codes from one address, that address waits 15 minutes.
 - The server never opens a pipe or device file, and a request whose body stops arriving gets an answer.
+- Every value a chat edit, Claude or a request can set must fit limits far wider than any robot Morph builds: a
+  kilometre-wide object used to hold the build slot for hours. Designs with unknown keys are refused.
 
 ### Fixes
 

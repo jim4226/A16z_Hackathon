@@ -193,6 +193,24 @@ def test_noop_and_errors_keep_their_messages(studio, builds, monkeypatch):
     assert room.live is None and not room.jobs.busy()
 
 
+def test_a_chat_or_model_edit_can_not_ask_for_an_impossible_robot(studio, builds, monkeypatch):
+    """Claude's tool output (and the rules) may name any design key: a size no robot can have would tie up the shared
+    build slot for hours (a 1 km object means millions of gear teeth), so it is refused before anything is built."""
+    room = studio.room()
+    events = collect(room.hub)
+    for changes in ({"object.diameter_mm": 1e9}, {"finger.length_mm": 5000}, {"arm.dof": 12}, {"object.friction": 0},
+                    {"fab.quantity": 10 ** 12}, {"task.cycle_time_s": float("nan")}, {"object.shape": ["torus"]}):
+        monkeypatch.setattr(server, "interpret", lambda *a, ch=changes: {"changes": ch, "reply": "sure", "source": "claude"})
+        job = studio.queue_chat(room, "make it enormous")
+        finish(job)
+        said = [e for e in events if e["type"] == "assistant"][-1]["text"]
+        assert job.status == "error" and said.startswith("Couldn't apply that:"), (changes, said)
+    assert builds.built == []
+    ok = studio.queue_changes(room, {"object.diameter_mm": 120, "finger.length_mm": 95}, label="big but possible")
+    finish(ok)
+    assert ok.status == "done" and len(builds.built) == 1
+
+
 def test_chat_is_interpreted_in_the_room_it_was_sent_from(studio, builds, monkeypatch):
     seen = []
 

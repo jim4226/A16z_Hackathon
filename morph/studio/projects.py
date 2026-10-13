@@ -12,10 +12,12 @@ it to MORPH_HOME/.trash/<name>-<UTC time>/; nothing is erased.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import threading
@@ -25,7 +27,7 @@ import unicodedata
 from ..pipeline import REV, utc_now
 from ..robot.pipeline2 import ORDER, PARAMS, RobotProject, artifact_problem, pipeline_version, stage_problem
 from ..spec import Design
-from .security import WINDOWS_RESERVED, contained_path, param_changes, project_name, robot_source
+from .security import WINDOWS_RESERVED, contained_path, design_values, param_changes, project_name, robot_source
 
 EGG_ROBOT = {"name": "egg-picker", "object.name": "raw egg", "object.shape": "cylinder", "object.diameter_mm": 44.0,
              "object.length_mm": 57.0, "object.mass_g": 60.0, "object.friction": 0.35, "object.max_force_n": 25.0,
@@ -36,6 +38,8 @@ NEEDS = {"": "Pick a raw egg and place it without cracking it.",
 ORIGINS = ("default", "brief", "import", "fork")
 DEMOS = ("egg-picker", "so101")
 TRASH = ".trash"
+UPLOADS = ".uploads"
+OWN_META = ("kind", "created_utc", "created_by", "origin", "demo", "source")  # set from create()'s own arguments only
 _LOCK = threading.Lock()  # two requests creating "egg-picker-2" at once get -2 and -3
 
 
@@ -124,11 +128,15 @@ def _check_source(source: str):
 
 
 def as_design(design) -> Design:
-    """A Design from a Design or a design dict; ValueError for anything Morph can't read."""
+    """A Design from a Design or a design dict; ValueError for anything Morph can't read, including keys a Design
+    doesn't have (a typo would otherwise build the default arm)."""
     if isinstance(design, Design):
         return design
     if not isinstance(design, dict):
         raise ValueError("Send the design as an object.")
+    unknown = sorted(str(k) for k in set(design) - {f.name for f in dataclasses.fields(Design)})
+    if unknown:
+        raise ValueError(f"That isn't a Morph design: it has no {unknown[0]}.")
     try:
         return Design.from_dict(json.loads(json.dumps(design)))
     except (TypeError, ValueError, KeyError, RecursionError) as exc:
@@ -136,11 +144,14 @@ def as_design(design) -> Design:
 
 
 CHECKED = {key for key, *_ in PARAMS} - {"object.name", "electronics.extras"}  # custom objects and extras are allowed
+DEFAULTS = Design().flat()  # each value's type
 
 
 def check_design(design: Design):
-    """ValueError when a design from outside (an API request) sets an editor parameter out of its range."""
+    """ValueError when a design from outside (an API request) sets an editor parameter out of its range, or any value to
+    something no robot of Morph's can have (security.design_values)."""
     flat = design.flat()
+    design_values(flat, DEFAULTS)
     for key in sorted(CHECKED):
         value = flat.get(key)
         if isinstance(value, float) and not math.isfinite(value):
@@ -163,12 +174,14 @@ def create(home: str, name=None, *, source: str = "", design=None, need: str | N
     `design` (a Design or a design dict) replaces the default arm; its arm.source must name a known robot. The design
     takes the project's name unless rename=False. Names: with unique=True `name` (any text) is slugged and gets
     -2, -3, ... when taken; with unique=False it must already be a valid name, and a taken name is an error unless
-    that folder has no revisions yet (a first build that failed can be tried again). ValueError for a bad name,
-    design or source; FileExistsError for a taken name."""
+    that folder has no revisions yet (a first build that failed can be tried again). `meta` adds keys to meta.json but
+    never sets those in OWN_META. ValueError for a bad name, design (security.design_values) or source;
+    FileExistsError for a taken name."""
     if origin not in ORIGINS:
         raise ValueError(f"origin must be one of {', '.join(ORIGINS)}")
     if design is not None:
         design = as_design(design)
+        design_values(design.flat(), DEFAULTS)
         source = design.arm.source
     if source:
         _check_source(source)
@@ -188,7 +201,7 @@ def create(home: str, name=None, *, source: str = "", design=None, need: str | N
             design = design.with_changes({"name": name})
         info = {"kind": "robot", "source": source, "need": need if need is not None else NEEDS.get(source, ""),
                 "origin": origin, "demo": bool(demo), "created_utc": utc_now(), **({"created_by": by} if by else {})}
-        info.update({k: v for k, v in (meta or {}).items() if k not in ("kind", "created_utc")})
+        info.update({k: v for k, v in (meta or {}).items() if k not in OWN_META})
         write_meta(root, info)
     return {"name": name, "root": root, "design": design, "meta": info}
 
@@ -255,6 +268,37 @@ def delete(home: str, name: str) -> str:
         dst = os.path.join(trash, f"{name}-{stamp}-{n}")
     os.rename(root, dst)
     return dst
+
+
+def upload_path(home: str, suffix: str = "") -> str:
+    """A new, unused file path in MORPH_HOME/.uploads/ for a raw upload (Request.save writes it). Move the file where it
+    belongs, or delete it, when done: the Studio clears what is left (clear_uploads) when it starts."""
+    folder = os.path.join(home, UPLOADS)
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, secrets.token_hex(12) + re.sub(r"[^A-Za-z0-9.]", "", str(suffix))[:16])
+
+
+def clear_uploads(home: str, older_than: float = 3600) -> int:
+    """Remove what earlier runs left in MORPH_HOME/.uploads/ (anything older than `older_than` seconds, so an upload
+    another Studio on the same folder is receiving right now survives). Returns how many entries went."""
+    folder = os.path.join(home, UPLOADS)
+    gone = 0
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return 0
+    for e in entries:
+        try:
+            if time.time() - e.stat(follow_symlinks=False).st_mtime < older_than:
+                continue
+            if e.is_dir(follow_symlinks=False):
+                shutil.rmtree(e.path)
+            else:
+                os.remove(e.path)
+            gone += 1
+        except OSError:
+            pass  # open elsewhere (Windows): next start
+    return gone
 
 
 def backfill_demo(home: str, names=DEMOS) -> list:

@@ -122,6 +122,46 @@ def json_object(raw: bytes) -> dict:
     return body
 
 
+# What a design value can be at all: far wider than the editor's PARAMS ranges or what Morph can build, but the
+# pipeline's work grows with these sizes (a 1 km egg means millions of gear teeth and hours of simulation), so a typo or
+# a model's answer must never tie up the Studio. Sizes in mm, masses in g, forces in N, inclusive.
+DESIGN_LIMITS = {
+    "object.diameter_mm": (1, 250), "object.length_mm": (1, 300), "object.mass_g": (0, 100_000),
+    "object.friction": (0.01, 5), "object.max_force_n": (0, 10_000),
+    "finger.length_mm": (5, 300), "finger.thickness_mm": (0.5, 50), "finger.width_mm": (0.5, 100),
+    "finger.pad_height_mm": (0.5, 300), "finger.pad_depth_mm": (0.1, 100), "finger.mount_hole_d_mm": (0.5, 50),
+    "finger.mount_hole_spacing_mm": (0, 200), "gripper.force_n": (0, 10_000), "gripper.stroke_mm": (1, 1000),
+    "fab.tool_d_mm": (0.1, 50), "fab.quantity": (1, 1_000_000), "electronics.supply_v": (0.5, 1000),
+    "electronics.pinion_radius_mm": (1, 200), "electronics.target_force_n": (0, 10_000), "arm.dof": (4, 6),
+    "arm.reach_mm": (50, 2000), "arm.base_height_mm": (10, 1000), "arm.payload_margin": (0.1, 100),
+    "task.pick_x_mm": (-2000, 2000), "task.pick_y_mm": (-2000, 2000), "task.place_x_mm": (-2000, 2000),
+    "task.place_y_mm": (-2000, 2000), "task.cycle_time_s": (0.1, 3600), "build.quantity": (1, 1_000_000),
+    "safety_factor": (0.1, 100),
+}
+MAX_TEXT = 500  # characters in a design's text value (names, extras, actuator overrides)
+
+
+def design_values(flat: dict, defaults: dict, keys=None):
+    """ValueError unless each value of `flat` (a Design.flat(); only `keys` when given) has its default's type, is
+    finite and is inside DESIGN_LIMITS: for a design from outside, or one a chat or model edit is about to build."""
+    for key in sorted(flat if keys is None else set(keys) & set(flat)):
+        value, like = flat[key], defaults.get(key)
+        if isinstance(like, str):
+            if not isinstance(value, str) or len(value) > MAX_TEXT:
+                raise ValueError(f"{key} must be text of at most {MAX_TEXT} characters.")
+            continue
+        if like is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"{key} must be a finite number.")
+        if isinstance(like, int) and value != int(value):
+            raise ValueError(f"{key} must be a whole number.")
+        lo, hi = DESIGN_LIMITS.get(key, (-math.inf, math.inf))
+        if not lo <= value <= hi:
+            num = lambda x: f"{x:,.0f}" if x == int(x) and abs(x) < 1e15 else f"{x:g}"  # noqa: E731
+            raise ValueError(f"{key} = {num(value)} is outside what Morph can work with ({num(lo)} to {num(hi)}).")
+
+
 def param_changes(changes, params) -> dict:
     """Parameter-editor changes: a non-empty dict of known PARAMS keys with in-range scalar values.
     `params` is pipeline2.PARAMS: (key, label, group, "select" | "number", {options | min, max, unit})."""

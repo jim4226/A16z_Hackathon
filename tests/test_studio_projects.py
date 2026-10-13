@@ -62,15 +62,19 @@ def test_create_writes_meta_and_builds_nothing(home):
                         meta={"brief_id": "b1", "kind": "evil"})
     assert d["design"].arm.dof == 6 and d["design"].name == "my-arm" and d["meta"]["brief_id"] == "b1"
     assert d["meta"]["kind"] == "robot" and d["meta"]["origin"] == "brief"
+    m = projects.create(str(home), "sneaky", meta={"demo": True, "origin": "import", "source": "so101", "created_by": "x",
+                                                   "created_utc": "1970", "brief_id": "b2"})["meta"]
+    assert (m["demo"], m["origin"], m["source"], m["brief_id"]) == (False, "default", "", "b2") and "created_by" not in m
     listed = {p["name"]: p for p in projects.list_projects(str(home))}
-    assert set(listed) == {"egg-picker", "egg-picker-2", "so101", "so101-2", "my-arm"}
+    assert set(listed) == {"egg-picker", "egg-picker-2", "so101", "so101-2", "my-arm", "sneaky"}
     assert listed["egg-picker"]["revs"] == 1 and listed["my-arm"]["revs"] == 0
 
 
 def test_create_refuses_bad_names_sources_and_designs_before_making_anything(home, tmp_path):
     before = sorted(os.listdir(home))
     for kwargs in ({"source": "../so101"}, {"source": "nope"}, {"source": "So101"}, {"design": {"arm": {"nope": 1}}},
-                   {"design": "arm.dof=6"}, {"design": {"arm": {"source": "../../etc"}}}, {"origin": "cloud"}):
+                   {"design": "arm.dof=6"}, {"design": {"arm": {"source": "../../etc"}}}, {"origin": "cloud"},
+                   {"design": {"bogus": 1}}, {"design": {"arms": {"dof": 6}}}, {"design": {"arm": 5}}):
         with pytest.raises(ValueError):
             projects.create(str(home), "x", **kwargs)
     for name in ("../pwned", "/tmp/abs", "Egg", "a/b", "con", ".hidden", 5):
@@ -83,14 +87,33 @@ def test_create_refuses_bad_names_sources_and_designs_before_making_anything(hom
     assert projects.create(str(home), "half-made", unique=False)["name"] == "half-made"
 
 
-def test_design_values_from_requests_are_checked():
+def test_design_values_from_requests_are_checked(home):
     d = projects.template("x")
     projects.check_design(d)
     for bad in ({"arm.reach_mm": 900}, {"arm.dof": 7}, {"build.config": "mass"}, {"arm.actuator_family": "banana"},
-                {"electronics.target_force_n": float("nan")}):
+                {"electronics.target_force_n": float("nan")}, {"object.diameter_mm": 1e9}, {"finger.pad_height_mm": 1e6},
+                {"gripper.stroke_mm": -5}, {"fab.quantity": 0}, {"object.shape": 5}, {"finger.material": "x" * 501},
+                {"task.cycle_time_s": float("inf")}):
         with pytest.raises(ValueError):
             projects.check_design(d.with_changes(bad))
+    with pytest.raises(ValueError):  # create() checks any design it is given, not only ones from the API
+        projects.create(str(home), "huge", design=d.with_changes({"object.diameter_mm": 5000}))
     projects.check_design(d.with_changes({"object.name": "sock", "electronics.extras": "imu"}))   # custom objects are fine
+
+
+def test_uploads_have_their_own_folder_cleared_when_the_studio_starts(home):
+    old, fresh = projects.upload_path(str(home), ".mp4"), projects.upload_path(str(home), "../x;.glb")
+    assert os.path.dirname(old) == os.path.dirname(fresh) == str(home / ".uploads") and old.endswith(".mp4") and old != fresh
+    for path in (old, fresh):
+        with open(path, "wb") as fh:
+            fh.write(b"data")
+    os.makedirs(home / ".uploads" / "session")
+    hour_ago = os.path.getmtime(old) - 3700
+    for path in (old, str(home / ".uploads" / "session")):
+        os.utime(path, (hour_ago, hour_ago))
+    server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    assert sorted(os.listdir(home / ".uploads")) == [os.path.basename(fresh)]  # one still being received survives
+    assert [p["name"] for p in projects.list_projects(str(home))] == ["egg-picker"]
 
 
 def test_backfill_marks_only_the_launchers_robots(home):

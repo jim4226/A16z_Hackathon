@@ -152,6 +152,12 @@ class Request:
             left -= len(data)
             yield data
 
+    def upload_path(self, suffix: str = "") -> str:
+        """A new file path in MORPH_HOME/.uploads/ to save() a raw body to; move it where it belongs (or delete it)
+        when done. What is left there is cleared when the Studio next starts."""
+        from .projects import upload_path
+        return upload_path(self.studio.home, suffix)
+
     def save(self, path: str, chunk: int = 1 << 20) -> int:
         """Stream the raw body into a new file (it must not exist yet); the file is removed again if the upload is
         cut off. Returns the number of bytes written."""
