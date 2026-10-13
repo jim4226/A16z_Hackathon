@@ -124,10 +124,10 @@ class Request:
 | Area | Routes |
 |---|---|
 | W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds and for the start project) |
-| W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
+| W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?, edit?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting; `edit: true` skips the chat routing of section 3); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
 | F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
-| F3 video | `POST /api/video/analyze {frames:[{t_s, jpeg_b64}], marks?, crop?, subq?: bool}` (16 MiB); `PUT /api/video/upload` (raw, ≤500 MB, ffmpeg fallback) → `{frames}`; `POST /api/video/apply {changes}` |
+| F3 video | `POST /api/video/analyze {frames:[{t_s, jpeg_b64}], marks?, crop?, subq?: bool}` (16 MiB); `PUT /api/video/upload` (raw, ≤500 MB, ffmpeg fallback) → `{frames}`; `POST /api/video/apply {changes, manual?}` (`manual: true`: the cards were filled in by hand, and the chat line says so) |
 | F4 teams | `GET /api/me`; `GET /api/team`; `POST /api/team/join`, `/invites`, `/revoke`, `/members`, `/policy`; `GET\|POST /api/comments`; `POST /api/comments/resolve`; `GET\|POST /api/proposals` (change requests); `POST /api/proposals/apply`; `GET\|POST /api/reviews`; `POST /api/reviews/decide`; `GET /api/activity`; `GET /api/inbox`; `POST /api/presence`; `GET /api/audit`; `GET\|POST /api/branches`; `GET\|POST /api/releases` |
 | F5 world | `GET /api/world?project=`; `POST /api/world` (save world.json); `PUT /api/world/upload` (raw .glb ≤300 MB); `POST /api/world/obstacles/auto`; `POST /api/world/inspect {views:[{name, jpeg_b64}]}` |
 
@@ -169,6 +169,17 @@ A job applies its changes to the newest revision when its turn comes. If one of 
 - `user` and `assistant` events carry the `job` they belong to. A conflict is an `assistant` event with
   `conflict {job, keys, base_rev, rev}`: the change was not applied because `keys` changed after
   `base_rev`; the tab offers "Apply to rev" or "Drop it" (`POST /api/jobs/resolve`).
+- Chat routing (I2b): a chat message that asks for another robot, or to bring in an existing one, is not interpreted
+  as an edit of the open project. `agents.chat_offer(text, design, open_project)` decides, in this order: harmful
+  text, questions, small talk and messages that open like an edit ("make it", "use", "swap" ...) stay edits; clear
+  new-robot wording (`NEW_ROBOT_WORDS`) is offered at once; messages the edit rules map to changes stay edits; import
+  wording is offered Import. Only what is left asks SubQ when it is on (`agents.route`, `CHAT_ROUTE_TIMEOUT_S` = 4 s,
+  with the project's name and robot source); without an answer, a message naming a task or an object is offered as
+  a new robot and anything else stays an edit. The job ends `noop` with an `assistant` event carrying
+  `offer {kind: "new_robot" | "import", text, source: "rules" | "subq"}` (the text ends "(SubQ Snap (AI) read it that
+  way.)" when SubQ decided); the tab offers "Start a new robot from this" (`newrobot.open(text)`) or "Open Import",
+  and "Change <project> instead", which posts the message again with `edit: true`. A SubQ answer is logged as a
+  `subq` ledger entry (`purpose: "chat_route"`, source, ms and input tokens, never the text).
 - Existing events: `user`, `assistant`, `start`, `node`, `done`, `sourcing`, `project`, and `resync`: a tab
   that stopped reading fell more than 500 events behind, lost the oldest ones and should reload its state.
 - New events:
@@ -211,7 +222,8 @@ studio = {
   `status` and `body`. `post(path, body)`; `put(path, blob, params)` sends the blob raw; `del(path, params)`
   (a `project` in params wins over this tab's). `on('*', fn)` gets every event. `modal.open()` returns the
   dialog element and takes `{wide, onClose}`. `mount.projMenu` is where "+ New robot" goes (F1); every slot
-  is hidden while empty. `mount.chatTools` sits inside the chat form, so its buttons need `type="button"`.
+  is hidden while empty. `mount.chatTools` sits inside the chat form, so its buttons need `type="button"`; while it
+  holds a button the form wraps into two rows (the message box on top, the tools and Send under it).
   `modal.open(el)` uses an element that already has the class `dlg` as the dialog itself (I2a: the import, video and
   Teams dialogs); anything else is wrapped in one.
   `window.morph.studio` is the same object, for tests.
@@ -232,6 +244,14 @@ studio = {
 - `FEATURES` (I2a): `newrobot` (header and project menu), `importer` (header, project menu, page-wide drop), `video`
   (chat tools), `team` (header and inspector tabs; adds nothing when `/api/me` says Teams is off), `world` (viewer
   tools; needs the WebGL viewer). Each injects or links its own CSS.
+- I2b: `app.js` keeps each started feature's `init()` result (`started`, a Map), so the chat's import offer can call
+  the importer's `open()`. Once the features started, an empty chat gets one assistant line naming the entry points
+  that were mounted (`featureTips`). A media-only drop (video or photo files) goes to Show Morph the job through
+  `window` event `morph:video-open {files}` when its button is there; every other drop goes to Import. At 1280 px or
+  narrower the inspector is an overlay opened by `#inspBtn` (`body.insp-open`; Escape closes it); Teams' `show(tab)`
+  opens it. Teams hides the other features' entry points for a viewer (`body.tm-readonly`: `#suggest`, `.nr-headbtn`,
+  `.nr-menubtn`, `#importBtn`, `.imp-menu`, `.vj-btn`, `#viewerTools`) and disables the chat box, Send and Apply, so
+  those class names are part of this contract.
 
 ## 5. SubQ client (`morph/studio/subq.py`)
 
@@ -447,9 +467,15 @@ members; a member can hold several.
 | world | 2230–2259 |
 | subq | 2260–2279 |
 
-Telemetry is opt-in (W0a). The brief (2100–2114), video (2160–2170) and Teams (2180–2189) event types are in
-`keewano.CUSTOM_EVENTS`, copied from the feature modules (a test keeps them equal); video ledger entries map through
-`api_video.keewano_events`. A brief's events go out after its first build, only when Keewano events are on.
+Telemetry is opt-in (W0a). The brief (2100–2114), import (2130–2134), video (2160–2170), Teams (2180–2189), world
+(2230–2235) and SubQ (2260–2263) event types are in `keewano.CUSTOM_EVENTS`, copied from the feature modules (a test
+keeps them equal). Ledger entries map through their feature: `video_*` through `api_video.keewano_events`, `import`
+(`importers.common.ledger_entry`: kind, format, upload/link/cli, motors picked, warning count) through
+`importers.common.keewano_events`, `world` (`worlds.ledger_entry`: room kind, boxes, people areas) and `world_inspect`
+(verdict, ms, which review) through `worlds.keewano_events`, `subq` (purpose, source, ms, input tokens) through
+`subq.keewano_events`. Never file names, links, robot names or the person's words. A brief's events go out after its
+first build, only when Keewano events are on. The Teams event types are registered but nothing sends them: team
+activity stays on the Studio computer.
 
 ## 11. File ownership (create only your files; shared files only as section 4 allows)
 
@@ -548,6 +574,18 @@ The five feature branches are merged into the release branch and live in the Stu
     still goes out, its record being the history.
   - `tools/newrobot_demo.html` answers `GET /api/state` from its simulated build, as the Studio's room does: the New
     robot dialog reads it after switching to the new project.
+- **I2b(2) (every feature usable from the Studio and the CLI):**
+  - Chat routing to New robot and Import (section 3), the narrow-window inspector, `featureTips`, media drops and the
+    viewer's read-only page (section 4).
+  - CLI: `morph robot new "<request>"` runs the brief (`agents.run_turn`; questions in a terminal, `--defaults`
+    without one, `--nearest` for an out-of-scope request, refusals exit 1), clamps it (`capability.clamp`) and builds
+    it through `projects.create(origin="brief")`, then writes `brief.json`. `morph export <project> [--rev] [--full]
+    -o` (with `team.json` when the home has a team), `morph world <project> [--starter desk|counter|workbench |
+    --off]` (saves the world, logs it, reruns the simulation), and `morph doctor` lists each feature's status (ffmpeg,
+    xacro, cascadio, the team, MuJoCo's `mj_geomDistance`). With `--team --remote`, `morph studio` prints the LAN
+    address and makes the owner's sign-in link with it.
+  - Ledger entries for Keewano (section 10): imports (Studio and CLI), world saves and checks, SubQ calls made for
+    chat routing and world checks.
 - **World (F5):** `design.world.id` must be a world id (`[a-z0-9][a-z0-9-]{0,39}`), never a path: the design limits,
   chat (`CHAT_FORBIDDEN`) and the simulation stage all check it, and the stage only ever reads
   `<project>/world/world.json` inside the project. A fork copies `world/`. MuJoCo 3.1.6 is the floor in

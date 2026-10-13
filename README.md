@@ -43,7 +43,8 @@ each one, so a mistyped key shows up at once.
 
 | Key | What it adds | Where to get it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Free-form chat requests (without it, the suggestion chips and common phrasings work) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| `ANTHROPIC_API_KEY` | Free-form chat requests, Claude reading a **New robot** request, the frame analysis in **Show Morph the job** and World mode's AI review (without it, the suggestion chips, common phrasings and built-in rules work, and you fill in the video cards yourself) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| `SUBQ_API_KEY` | SubQ Snap: quick yes/no and multiple-choice decisions, shown as "SubQ Snap (AI)" ([SubQ Snap](#subq-snap-optional)) | [console.subq.ai](https://console.subq.ai) |
 | `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: revisions and measurements logged once event sending is on, and an optional grip-force calibration from that history (seeded demo data unless your project holds real bench results) | Keewano settings ([docs/SPONSORS.md](docs/SPONSORS.md)) |
 | Darwin | Nothing to add: Darwin Search is public | |
 
@@ -60,13 +61,15 @@ for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIP
 **If something looks wrong or empty:**
 - Run `python -m morph.cli doctor` (inside `.venv`: `.venv\Scripts\python -m morph.cli doctor` on Windows,
   `.venv/bin/python -m morph.cli doctor` elsewhere). It checks Python, packages, keys, network and
-  whether every pipeline stage built, and says what to fix. Send its output to the team.
+  whether every pipeline stage built, lists which features are ready (New robot, Import, Show Morph the job, Teams,
+  World mode) with the optional tools they use, and says what to fix. Send its output to the team.
 - A stage marked *error* in the pipeline strip leaves its tab empty; the other stages still work.
   Delete the `projects` folder and start again to rebuild everything from scratch.
 - "Morph Studio is already running": close the other terminal window first.
 - Packages broken or half-installed: delete the `.venv` folder and run the launcher again.
-- The right panel (time card, grip force) is hidden when the window is narrower than 1280 px, as at
-  150 % Windows display scaling: zoom out once (**Ctrl** and **-**, or **Cmd** and **-** on a Mac).
+- The right panel (time card, grip force) folds away when the window is 1280 px wide or narrower, as at
+  150 % Windows display scaling: the panel button at the top right opens it over the robot, or zoom out once
+  (**Ctrl** and **-**, or **Cmd** and **-** on a Mac) to keep it beside the robot.
 
 ## Bring your own compute
 
@@ -110,6 +113,8 @@ regenerates only what depends on it.
 - **Export** (next to the revision number above the tabs): the revision as a ZIP of its CAD,
   simulations, electronics and firmware, manufacturing files and manual, with a manifest of which stages
   completed and the firmware marked unverified. Keys, settings, chat and the ledger are never included.
+  From a terminal: `morph export egg-picker -o egg-picker.zip` (`--rev r003` for an older revision, `--full` to add
+  every revision's design and results).
 - **Projects** (the menu next to the logo): each browser tab opens its own project (`?project=` in its
   address), so switching one tab moves no other tab and nobody else. Chat and parameter edits wait their turn
   in each project's queue, and each project keeps its chat.
@@ -117,6 +122,84 @@ regenerates only what depends on it.
 - More: [docs/SPONSORS.md](docs/SPONSORS.md) (Keewano and Darwin), [docs/TIME_SAVED.md](docs/TIME_SAVED.md)
   (time-saved sources), [docs/internal/PLATFORM_CONTRACTS.md](docs/internal/PLATFORM_CONTRACTS.md) (how the stages fit
   together), [CHANGELOG.md](CHANGELOG.md) (what changed in each release), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### New robot
+
+Describe a job in one sentence: **New robot** (top right, or in the project menu), then something like "help me sort
+socks". Morph asks up to three rounds of quick questions with chip answers (or takes its defaults when you skip
+them), shows every assumption and anything it adjusted to what it can build, checks the design in about 30 ms and
+builds the whole robot as a new project, with a timeline of each step. Requests it can't build get a plain reason
+and the nearest robot it can build; harmful requests are refused.
+
+Typing a new job into an open project's chat ("a robot that waters my plants") doesn't rebuild that robot: Morph
+offers **Start a new robot from this**, or **Change egg-picker instead** if you did mean the open robot.
+
+```bash
+morph robot new "help me sort socks"                           # the same questions, in the terminal
+morph robot new "help me sort socks" --defaults --name socks   # no questions: Morph's defaults
+```
+
+Morph's own code picks the questions and checks the design. With keys, SubQ Snap takes the first look at the request
+and Claude reads it and your answers; without them, built-in rules do both, and the build is the same pipeline.
+
+### Import
+
+**Import** (top right, or the project menu) brings in what you already have: a robot as a folder or zip of URDF,
+xacro or MuJoCo XML files, or a GitHub or Hugging Face link, built as a new project; the object the gripper should
+hold, as an STL, OBJ or GLB mesh; a parts list; a KiCad board; or a Morph export. You can also drop the files
+anywhere on the page. Morph asks only what the files can't tell, usually which motors drive the joints.
+
+```bash
+morph import robots/my-arm --family smart_bus                      # a folder, a zip, a URDF or a link
+morph import cup.stl --as object --project egg-picker --units mm   # the object of an existing project
+```
+
+Formats, limits, safety and how imported arms are sized: [docs/IMPORT.md](docs/IMPORT.md).
+
+### Show Morph the job
+
+**Show Morph the job** (under the chat box) takes a phone video or photos of the task, done by hand. Morph picks
+still frames in your browser, works out the object, the pick and place spots, the cycle time and safety needs, and
+lists every design change for you to check before **Apply**. The frames go to Claude only with an Anthropic key and
+after you agree; without a key (or with network lookups off), you fill in the same cards yourself, with a measuring
+tool on the frames. Dropping a video or photos on the page opens it too. Clips your browser can't play (often iPhone
+HEVC) need ffmpeg on the computer running Morph (install it, or `pip install morph[video]`; `morph doctor` says
+whether it found one).
+
+### Teams (preview)
+
+One Studio, shared by a team ("GitHub for physical things"): teammates sign in from their own browsers with an
+invite link, comment on revisions, propose changes that go to the people who own the stages they touch, approve them
+per discipline and release revisions for building. It runs on the owner's computer, with no Morph server or account.
+
+```bash
+morph team init --owner "Jim" --name "R Cubed"   # once
+morph studio --team --remote                     # or: ./run_studio.sh --team --remote
+```
+
+Roles, disciplines, reviews, releases and the security notes: [docs/TEAMS.md](docs/TEAMS.md).
+
+### World mode (beta)
+
+**World** (in the Robot tab's toolbar, over the robot) puts the robot in a room: a built-in desk, kitchen counter or
+workbench, or your own room scan as a `.glb`. Place the robot on a surface, mark walls and furniture as grey boxes
+and where people walk or sit, and save: the pick and place is simulated again in that room (no other stage reruns),
+and **Check placement** gives a measured verdict. The simulation sees only the grey boxes, and it is not a motion
+planner.
+
+```bash
+morph world egg-picker --starter desk     # or --off for the plain table again
+```
+
+Limits, the optional AI review and what it sends: [docs/WORLD.md](docs/WORLD.md).
+
+### SubQ Snap (optional)
+
+With a SubQ key (Keys, `SUBQ_API_KEY`), SubQ Snap makes quick yes/no and multiple-choice decisions, labelled
+"SubQ Snap (AI)": the first look at a New robot request, whether a chat message asks for a new robot when its wording
+alone can't tell, an optional second opinion in Show Morph the job, and an optional check in World mode. It is only
+called with your key and network lookups on, answers are cached on your computer for 7 days, and every decision has
+an offline fallback. `morph subq "help me sort socks"` tries a key by hand.
 
 ## The gripper-only prototype (command line)
 

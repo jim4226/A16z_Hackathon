@@ -14,6 +14,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   robot as a new project. Requests Morph can't build get a plain reason and the nearest robot it can build; harmful
   requests are refused, and nothing is sent anywhere when the local filter catches them. The agents timeline labels
   each step (SubQ Snap, Claude, Morph's own checks, Darwin, Keewano); without keys everything runs on built-in rules.
+  Typing a new job into an open project's chat ("a robot that waters my plants") offers **Start a new robot from
+  this** instead of rebuilding the open robot, and a request to bring in an existing robot offers Import; **Change
+  <project> instead** keeps it an edit. Clear wording decides on this computer; SubQ (with a key) settles only
+  wording the rules can't place, within 4 seconds. `morph robot new "help me sort socks"` runs the same brief in a
+  terminal: it asks the questions there (or takes the defaults with `--defaults`, and without a terminal), then
+  builds the project (`--name`, and `--nearest` for a request Morph can only build the nearest robot for).
 - Chat edits understand units (mm, cm, in, g, kg, lb, oz) and whole-word object names, and questions such as "can it
   lift 2 kg?" no longer change the design.
 - **Import** (beta): drop a robot folder or zip (URDF, xacro, MuJoCo XML) or paste a GitHub or Hugging Face link; drop
@@ -49,6 +55,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   (`world/saved/`), so editing the room while a build waits never changes what that build simulates. Check placement:
   measured checks set the verdict; an optional AI review (beta) of six rendered views adds findings, suggested changes
   and a guided tour, and never changes pass or fail. It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
+  `morph world <project> --starter desk` (or `--off`) does the same from a terminal; [docs/WORLD.md](docs/WORLD.md).
+- `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
+  a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
+  (whether ffmpeg was found), Teams and World mode.
 
 ### Studio
 
@@ -62,6 +72,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   **Reset demo** only touches the demo robots (egg-picker and so101), never projects you made.
 - Revisions sort by number (r1000 after r999) and a number is never reused; ledger times are UTC.
 - Only changes to pipeline code rebuild the demo robots at the next start.
+- The page fits smaller windows: at 1280 px wide or narrower the right panel folds away and a panel button opens it
+  over the robot; the header shortens its buttons to icons down to 910 px instead of running off the edge; the chat's
+  tools (Show Morph the job) sit under the message box. A new chat says where New robot, Import, Show Morph the job and
+  World are.
+- Dropping a video or photos on the page opens Show Morph the job; other files go to Import.
+- On a team Studio, a viewer's page has no editing tools: the chat box, Apply and the New robot, Import, video and
+  World buttons are off or gone, and the chat box says how viewers propose changes instead.
 
 ### Install and updates
 
@@ -78,8 +95,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - CI on Windows, macOS and Linux with Python 3.10 to 3.14, a lint job, and a check that the installed wheel builds
   both demo robots.
 - New docs: [INSTALL](docs/INSTALL.md), [PRIVACY](docs/PRIVACY.md), [SECURITY](SECURITY.md),
-  [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md), a [release checklist](docs/RELEASE_CHECKLIST.md). Internal planning
-  docs moved to `docs/internal/`.
+  [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md), a [release checklist](docs/RELEASE_CHECKLIST.md), and one page each
+  for [Teams](docs/TEAMS.md), [Import](docs/IMPORT.md) and [World mode](docs/WORLD.md). Internal planning docs moved
+  to `docs/internal/`.
 
 ### Privacy
 
@@ -88,6 +106,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Keewano build events and grip-force calibration are opt-in. Calibration never uses synthetic or thin data, and the
   UI says that the R Cubed demo history is seeded, not measured.
 - New switches under Keys, Privacy and network; `MORPH_OFFLINE=1` turns every network call off.
+- With Keewano events on, imports, world mode and SubQ calls add categories, counts and timings to them (the kind of
+  import and its format, the kind of room and its verdict, which SubQ decision and how long it took), never file
+  names, links, robot names, frames or what you typed. Team activity is never sent.
 - Board exports no longer carry Morph's licence; `morph kicad --license` adds one when you choose.
 
 ### Security
@@ -146,6 +167,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   panel updates when you leave the field. In a team Studio an export carries the team's record (`team.json`): the
   approvals, release gate and releases of that revision, or the project's whole team history, with names instead of
   member ids.
+- Show Morph the job: cards you fill in yourself (no key, or kept on this computer) are described as yours, not as
+  "seen in the video".
+- `morph studio --team --remote` prints the network address teammates use, and the owner's sign-in link starts with
+  it; Share warns when the page that makes an invite was opened at an address only this computer can reach.
+- World mode's panel no longer covers the robot's stat chips.
 - A tab that switches projects tells world mode and Teams, so the other project's room and team panel no longer stay
   on screen. It listens to the new project before loading it, so a build that ends during the switch is never missed,
   and a project whose first build is still running (or failed) no longer shows the previous project's revision as its
