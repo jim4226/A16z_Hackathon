@@ -1511,7 +1511,8 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
         raise SystemExit(f"Morph Studio couldn't listen on {host}:{port} ({exc}).") from None
     httpd.daemon_threads = True
     if team:
-        print(f"Morph Studio (Teams preview) is running on {socket.gethostname()} at http://{host}:{port}"
+        where = (lan_address() or socket.gethostname()) if host in ("0.0.0.0", "") else host
+        print(f"Morph Studio (Teams preview) is running on {socket.gethostname()} at http://{where}:{port}"
               + ("" if is_loopback(host) else " for other computers too") + ".")
         if link:
             print("Open this one-time link to sign in as the owner (it works once, within 15 minutes):")

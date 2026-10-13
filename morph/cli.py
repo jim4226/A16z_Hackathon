@@ -274,8 +274,11 @@ def cmd_studio(a):
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
             proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
     if team:  # a fresh one-time sign-in link for the owner (made now: it lasts 15 minutes)
+        from .studio.server import lan_address
         from .studio.teams import cli as teams_cli
-        link = teams_cli.team_link(home=HOME, base_url=f"http://{local}:{a.port}", out=None)["url"]
+        # with --remote, at the address teammates reach: the invite links Share makes start with the page's address
+        lan = lan_address() if a.host in ("0.0.0.0", "") else None
+        link = teams_cli.team_link(home=HOME, base_url=f"http://{lan or local}:{a.port}", out=None)["url"]
     headless = sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
     if a.open and not headless:  # a server without a screen: the link printed below is opened from another computer
         import threading

@@ -322,8 +322,11 @@ export class Team {
       inv.disabled = true;
       try {
         const r = await this.call('POST', '/api/team/invites', { role: role.value, disciplines: tags, name_hint: $('input[name="hint"]').value });
+        // a Studio others reach over the network, opened here at 127.0.0.1: that address works on this computer only
+        const local = this.s.S?.compute?.remote && /^(127\.|localhost$|\[::1\]$)/.test(location.hostname);
         this.showLink($('[data-out="invite"]'), location.origin + r.path,
-          `Works once, until ${new Date(r.invite.expires_utc).toLocaleString()}. Send it privately: whoever opens it first joins as ${r.invite.role}.`);
+          `Works once, until ${new Date(r.invite.expires_utc).toLocaleString()}. Send it privately: whoever opens it first joins as ${r.invite.role}.`
+          + (local ? ` This link starts with ${location.host}, which only works on this computer: open the Studio at the address teammates use (the one \`morph studio --team --remote\` prints, or your tunnel's) and make the invite there.` : ''));
         this.data.team = await this.call('GET', '/api/team');
       } catch (e) { this.toast(e.message); }
       inv.disabled = false;

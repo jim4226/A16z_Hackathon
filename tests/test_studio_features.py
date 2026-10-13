@@ -348,6 +348,7 @@ def test_morph_studio_team_needs_a_team_and_the_team_commands_work(tmp_path, mon
     monkeypatch.setenv("MORPH_TOKEN", "a-fixed-access-code")
     got = {}
     monkeypatch.setattr(server, "serve", lambda p, host, port, home=None, token=None, **kw: got.update(token=token, **kw))
+    monkeypatch.setattr(server, "lan_address", lambda: "192.168.1.20")  # the address other computers reach this one by
     a = lambda **k: argparse.Namespace(**{"name": "egg-picker", "host": "127.0.0.1", "port": 1, "open": False,  # noqa: E731
                                           "remote": False, "team": False, "allow_url_import": False, **k})
     with pytest.raises(SystemExit, match="morph team init"):
@@ -357,8 +358,12 @@ def test_morph_studio_team_needs_a_team_and_the_team_commands_work(tmp_path, mon
     assert cli.main(["team", "invite", "--role", "viewer", "--name", "Pat"]) == 0
     assert "?invite=mi_" in capsys.readouterr().out
     assert team_cli.team_audit_verify(home=str(home), out=None)["ok"]
+    cli.cmd_studio(a(team=True))
+    assert got["link"].startswith("http://127.0.0.1:1/?link=ml_")       # a team Studio for this computer only
     cli.cmd_studio(a(team=True, remote=True))
     assert got["team"] is True and got["token"] is None and "?link=ml_" in got["link"]   # MORPH_TOKEN plays no part
+    # for other computers: the owner signs in at the address teammates use, since Share's invites start with it
+    assert got["link"].startswith("http://192.168.1.20:1/?link=ml_")
     got.clear()
     cli.cmd_studio(a(remote=True, allow_url_import=True))
     assert got == {"token": "a-fixed-access-code", "allow_url_import": True}
