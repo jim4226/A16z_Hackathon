@@ -22,6 +22,7 @@ import inspect
 import json
 import os
 import threading
+import time
 import traceback
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
@@ -165,13 +166,69 @@ def link_page(code: str, error: str = "", home: str | None = None) -> tuple:
     return 200, _page("Morph Studio: sign in", body)
 
 
-def signed_out_page(home: str | None = None) -> tuple:
-    """(status, html bytes, content type, csp) for a page load without a session in team mode."""
-    team = (auth.team_info(home or CONFIG["home"]) or {}).get("name") or "a team"
-    body = (f"<h1>Morph Studio for {html.escape(team)}</h1><p>This Studio is shared with a team. Open the invite link the team "
-            "owner sent you, or a sign-in link from one of your signed-in devices.</p>"
-            "<p class=\"dim\">Owner: run <code>morph team link</code> on the Studio computer for a new sign-in link.</p>")
+def _session_value(handler) -> str | None:
+    jar = SimpleCookie()
+    try:
+        jar.load(handler.headers.get("Cookie") or "")
+    except Exception:  # noqa: BLE001
+        return None
+    name = auth.cookie_name(_port(handler))
+    return jar[name].value if name in jar else None
+
+
+def signed_out_page(home: str | None = None, handler=None) -> tuple:
+    """(status, html bytes, content type, csp) for a page load without a session in team mode. A browser whose member was
+    removed (or signed out everywhere) is told so, from its own genuine cookie; everyone else gets the general page."""
+    home = home or CONFIG["home"]
+    team = (auth.team_info(home) or {}).get("name") or "a team"
+    state, m = auth.session_state(_session_value(handler), home=home) if handler is not None else (None, None)
+    if state == "removed":
+        store = TeamStore(home)
+        by = (store.member((store.member(m["id"]) or {}).get("revoked_by") or "") or {}).get("name")
+        body = (f"<h1>You're no longer on {html.escape(team)}</h1><p>{html.escape(by or 'The team owner')} removed "
+                f"{html.escape(m['name'])} from this Studio, so this browser is signed out. Your name stays on the work you did.</p>"
+                "<p class=\"dim\">If that's a mistake, ask the team owner for a new invite link.</p>")
+    elif state == "ended":
+        body = (f"<h1>Signed out of {html.escape(team)}</h1><p>{html.escape(m['name'])} signed out everywhere, so this browser "
+                "needs a new sign-in link: make one under Team on a signed-in device, or ask the team owner.</p>"
+                "<p class=\"dim\">Owner: <code>morph team link</code> on the Studio computer prints one.</p>")
+    else:
+        body = (f"<h1>Morph Studio for {html.escape(team)}</h1><p>This Studio is shared with a team. Open the invite link the "
+                "team owner sent you, or a sign-in link from one of your signed-in devices.</p>"
+                "<p class=\"dim\">Owner: run <code>morph team link</code> on the Studio computer for a new sign-in link.</p>")
     return 401, _page("Morph Studio: sign in", body), "text/html; charset=utf-8", JOIN_CSP
+
+
+class StreamCheck:
+    """For an open event stream on a team Studio: is the member behind it still signed in? Checked at most every
+    `every` seconds (the cookie the stream opened with, against the team's current members and epochs), so removing a
+    member, or their "Sign out everywhere", ends their open streams within seconds. `goodbye()` is the stream's last event:
+    the page then shows why it was signed out."""
+
+    def __init__(self, handler, member: dict, home: str | None = None, every: float = 2.0):
+        self.handler, self.member, self.home, self.every = handler, member, home or CONFIG["home"], every
+        self.next, self.ok, self.why = 0.0, True, ""
+
+    def __call__(self) -> bool:
+        now = time.monotonic()
+        if self.ok and now >= self.next:
+            self.next = now + self.every
+            try:
+                m = authenticate(self.handler, home=self.home)
+            except Exception:  # noqa: BLE001  (a busy team file: keep the stream, check again)
+                return True
+            if not m or m.get("id") != self.member.get("id"):
+                cur = TeamStore(self.home).member(self.member.get("id")) or {}
+                self.ok, self.why = False, "removed" if cur.get("revoked") or not cur else "signed_out"
+        return self.ok
+
+    def goodbye(self, project: str) -> bytes:
+        return f"data: {json.dumps({'type': 'signed_out', 'project': project, 'reason': self.why})}\n\n".encode()
+
+
+def stream_check(handler, member: dict | None, home: str | None = None):
+    """server.py's /api/events: a StreamCheck for a member's stream (None without a member)."""
+    return StreamCheck(handler, member, home) if member else None
 
 
 def _write(handler, status: int, body: bytes, ctype: str = "application/json", headers=(), csp: str | None = None):
@@ -469,7 +526,15 @@ def team_revoke(req):
     if not b.get("member"):
         return _err(400, "Name the member or invite to revoke.")
     out = auth.revoke_member(str(b["member"]), m["id"], home=_home(req))
-    _emit(req, {"type": "member", "action": "revoked", "member": out})
+    ev = {"type": "member", "action": "revoked", "member": out, "by": m["id"]}
+    studio = getattr(req, "studio", None)
+    if callable(getattr(studio, "broadcast", None)):  # every project's tabs: the member may be on any of them
+        try:
+            studio.broadcast(ev)
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        _emit(req, ev)
     return 200, {"ok": True, "member": out}
 
 
