@@ -1007,8 +1007,9 @@ class VideoJob {
     const E = this.esc, mp = this.mapping || { items: [], notes: [] }, project = this.project();
     const fmt = (k, v) => (v == null || v === '' ? '<span class="dim">none</span>' : typeof v === 'number' ? `${+v.toFixed(3)}${/_mm$/.test(k) ? ' mm' : /_g$/.test(k) ? ' g' : /_n$/.test(k) ? ' N' : /_s$/.test(k) ? ' s' : ''}` : E(v));
     const SRC = { preset: 'Morph preset', video: 'from the video', photo: 'from the photo', marks: 'your marks', user: 'you set it', rules: "Morph's rule" };
+    const why = (it) => (it.source === 'user' && it.why === 'you entered it' ? '' : it.why || '');  // the tag says so already
     const rows = (mp.items || []).map((it) => `<tr><td>${E(it.label)}<small class="mono dim">${E(it.key)}</small></td><td class="mono">${fmt(it.key, it.old)}</td><td>${this.I('arrow', 'sm')}</td>
-      <td class="mono new">${fmt(it.key, it.new)}</td><td class="dim">${E(it.why || '')}<span class="tag neutral">${E(SRC[it.source] || it.source || '')}</span></td></tr>`).join('');
+      <td class="mono new">${fmt(it.key, it.new)}</td><td class="dim">${E(why(it))}<span class="tag neutral">${E(SRC[it.source] || it.source || '')}</span></td></tr>`).join('');
     const open = (mp.questions || []).filter((q) => q.chips?.length).length;
     return head(`These changes go to <b>${E(project || 'this project')}</b> as one new revision; all 9 stages update as usual.`)
       + `<table class="vj-items"><thead><tr><th>Setting</th><th>Now</th><th></th><th>After</th><th>Why</th></tr></thead><tbody>${rows}</tbody></table>
@@ -1027,7 +1028,8 @@ class VideoJob {
       btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Applying…';
       const label = (this.result?.object?.name || this.answers['object.name']) ? `video: ${String(this.answers['object.name'] || this.result.object.name).slice(0, 30)}` : 'from a video';
       const base = this.s.S?.current?.rev;  // the revision on screen: a newer change by someone else is asked about, not overwritten
-      const r = await call(() => this.s.api.post('/api/video/apply', { changes: this.mapping.changes, label, ...(base ? { base_rev: base } : {}) }));
+      const r = await call(() => this.s.api.post('/api/video/apply', { changes: this.mapping.changes, label, ...(base ? { base_rev: base } : {}),
+        ...(this.result?.manual ? { manual: true } : {}) }));  // filled in by hand: the chat says so, not "from the video"
       if (!r.ok) {
         btn.disabled = false; btn.textContent = 'Apply';
         const box = this.el.querySelector('.vj-apperr');

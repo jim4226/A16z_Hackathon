@@ -406,7 +406,7 @@ def apply(req):
         return 400, {"ok": False, "error": str(exc)}
     label = re.sub(r"[^\w .,:()/+-]", "", str(body.get("label") or ""))[:48].strip() or "from a video"
     items = [{"key": k, "label": vision.LABELS.get(k, k), "new": v} for k, v in changes.items()]
-    reply = vision.describe({"items": items})
+    reply = vision.describe({"items": items}, by_hand=body.get("manual") is True)
     queue = getattr(_studio(req), "queue_changes", None)
     if room is not None and callable(queue):
         base = body.get("base_rev")

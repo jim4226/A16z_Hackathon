@@ -1156,7 +1156,7 @@ def _map_object(m: _Mapping):
             shape = "cylinder" if d and ln and ln / d > 1.4 else "sphere"
             m.notes.append(f"The {label} is irregular: modelled as a {shape} (Morph's grippers model cylinders, boxes "
                            "and spheres).")
-        m.put("object.shape", shape, "seen in the video")
+        m.put("object.shape", shape, "seen in the video" if "object.shape" not in m.confirmed else "you entered it")
     dia, rng = o.get("diameter_mm"), o.get("size_range_mm")
     if dia is None and rng:
         dia = round(sum(rng) / 2, 1)
@@ -1484,8 +1484,9 @@ def _fmt(key: str, v) -> str:
     return f"{v:g}{unit}"
 
 
-def describe(mapping: dict) -> str:
-    """One line for the chat after Apply: what changed (the fingers follow the object, so they are left out)."""
+def describe(mapping: dict, by_hand: bool = False) -> str:
+    """One line for the chat after Apply: what changed (the fingers follow the object, so they are left out).
+    `by_hand`: the cards were filled in by the person (no model looked at the frames)."""
     ch = {it["key"]: it["new"] for it in mapping.get("items") or []}
     parts = []
     if "object.name" in ch:
@@ -1497,4 +1498,5 @@ def describe(mapping: dict) -> str:
     for k in KEY_ORDER:
         if k in ch and k != "object.name" and not k.startswith(("finger.", "task.pick_", "task.place_")):
             parts.append(f"{LABELS.get(k, k).lower()} {_fmt(k, ch[k])}")
-    return ("From the video: " + "; ".join(parts[:9]) + ".") if parts else "From the video: nothing to change."
+    head = "From the cards you filled in" if by_hand else "From the video"
+    return (f"{head}: " + "; ".join(parts[:9]) + ".") if parts else f"{head}: nothing to change."

@@ -137,6 +137,17 @@ def test_egg_clip_resolves_to_the_raw_egg_preset():
     assert set(m2["changes"]) == {"task.pick_x_mm", "task.pick_y_mm", "task.place_x_mm", "task.place_y_mm", "task.cycle_time_s"}
     assert Design().with_changes(EGG_ROBOT).with_changes(m2["changes"]).task.cycle_time_s == 6.5
     assert vision.describe(m).startswith("From the video: object raw egg; pick (230, -90) mm, place (170, 160) mm")
+    assert vision.describe(m, by_hand=True).startswith("From the cards you filled in: object raw egg")  # keyless: no model
+
+
+def test_cards_filled_in_by_hand_say_so():
+    """Keyless (no model looked at the frames): every value the person typed or chose reads "you entered it"."""
+    res = vision._empty("video")
+    res["manual"] = True
+    m = vision.map_to_changes(res, Design(), {"object.name": "parcel", "object.shape": "box", "object.diameter_mm": 60,
+                                              "object.mass_g": 120})
+    why = {i["key"]: i["why"] for i in m["items"]}
+    assert why["object.shape"] == why["object.name"] == why["object.diameter_mm"] == why["object.mass_g"] == "you entered it"
 
 
 def test_egg_clip_changes_run_through_all_nine_stages(tmp_path):
