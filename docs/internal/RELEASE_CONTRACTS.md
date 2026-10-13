@@ -41,7 +41,7 @@ decisions lives outside the repo; the essentials are summarized here.
 
 | Path | Owner | Contents |
 |---|---|---|
-| `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}` |
+| `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}`. `projects.create(meta=)` adds keys but never sets kind, created_utc, created_by, origin, demo or source (those come from its own arguments) |
 | `<p>/rNNN/` | pipeline | unchanged; names sort numerically (W0b) |
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
 | `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room |
@@ -50,7 +50,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/.team/comments.jsonl`, `reviews.jsonl`, `proposals.jsonl`, `branches.json`, `releases.json` | F4 | Teams |
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
 | `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h) |
-| `.uploads/` | W0a | temporary uploads; cleared at startup |
+| `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
 | `.team/` | F4 | `team.json`, `secret` (0600), `audit.jsonl` |
@@ -81,8 +81,10 @@ class Request:
 ```
 
 - Every request passes the existing checks first: Host/Origin, the access token or Teams session, the
-  body cap and the role check.
-- POST, PUT and DELETE also need the header `X-Morph-Client: 1` (403 without it); `studio.api` sends it.
+  body cap and the role check. In remote mode, an address that sent 10 different wrong access codes is
+  answered 429 for 15 minutes without its codes being compared.
+- POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; the page sends `1`; 403
+  without it); `studio.api` sends it.
 - Feature modules register their routes in `morph/studio/api_<feature>.py`. `server.py` imports every
   `api_*.py` in that folder at start, so a feature never edits server.py. Registering a method and path
   twice raises.
@@ -91,8 +93,14 @@ class Request:
 - Also in routes.py: `HTTPError(status, message)` (raise it for a JSON error), `Request.arg(name)` (first
   query value), `Request.length` (the checked Content-Length), `Request.stream(chunk)` and
   `Request.save(path)` (raw bodies in 1 MiB chunks; `save` removes the file again if the upload is cut
-  off), `set_role_hook(fn)` for Teams: `fn(req, role)` returns the member dict or raises `HTTPError(401|403)`.
-  An unexpected exception in a handler answers 500 with the error text.
+  off), `Request.upload_path(suffix)` (a new file in `.uploads/`), `set_role_hook(fn)` for Teams:
+  `fn(req, role)` returns the member dict or raises `HTTPError(401|403)`. A body that stops arriving answers
+  400 ("cut off"). An unexpected exception in a handler answers 500 with the error text.
+- Roles of the core routes (Teams' role table starts from these): **viewer**: `GET /api/state`, `/api/rev`,
+  `/api/events`, `/api/jobs`, `/api/projects`, `/api/settings`, `/api/export`, `/files/*`, and the old
+  `POST /api/project` (it only checks a name); **editor**: `POST /api/chat`, `/api/params`, `/api/jobs/cancel`,
+  `/api/jobs/resolve`, `/api/source`, `/api/projects`, `/api/projects/fork`; **owner**: `DELETE /api/projects`,
+  `POST /api/reset`, `GET`/`POST /api/keys`, `POST /api/keys/check`, `POST /api/settings`.
 
 | Area | Routes |
 |---|---|
@@ -124,16 +132,21 @@ projects (morph/studio/projects.py): create(home, name=None, *, source, design, 
 ```
 
 A job applies its changes to the newest revision when its turn comes. If one of its keys changed after its
-`base_rev` (default: the newest revision when it was queued), it ends as `conflict` instead.
+`base_rev` (default: the newest revision when it was queued), it ends as `conflict` instead. Every changed value
+(chat, Claude's tool output, parameters, a resolved conflict) must pass `security.design_values()` first, and
+`projects.create()` checks every value of a design it is given; a value no robot can have ends the job as `error`
+("Couldn't apply that: ...") or raises ValueError. `projects.as_design()` refuses keys a Design doesn't have.
 
 ## 3. Live events (SSE)
 
-- Every event carries `project`. With Teams on, events also carry `by: {id, name, color}`. An event with
-  `to` (a member id) reaches only that member's tabs and is never saved in the chat history.
+- Every event carries `project`. With Teams on, events about a person's request (`user`, `assistant`, the
+  jobs in `queue`) also carry `by`: their member id; tabs look up the name and colour from the team. An event
+  with `to` (a member id) reaches only that member's tabs and is never saved in the chat history.
 - `user` and `assistant` events carry the `job` they belong to. A conflict is an `assistant` event with
   `conflict {job, keys, base_rev, rev}`: the change was not applied because `keys` changed after
   `base_rev`; the tab offers "Apply to rev" or "Drop it" (`POST /api/jobs/resolve`).
-- Existing events: `user`, `assistant`, `start`, `node`, `done`, `sourcing`, `project`.
+- Existing events: `user`, `assistant`, `start`, `node`, `done`, `sourcing`, `project`, and `resync`: a tab
+  that stopped reading fell more than 500 events behind, lost the oldest ones and should reload its state.
 - New events:
   - `brief {id, status, round, questions, slots, assumptions, scope, preflight}`
   - `agent {role, provider, status: "start"\|"done"\|"error"\|"skipped", ms, text}`, the agents timeline
@@ -199,7 +212,10 @@ lint(body) -> (bool, str)                           # dev/CI only: no key, 401 m
 - **Images:** at most 4, `{"mediaType", "base64"}` with no `data:` prefix, ≤4 MiB each and ≤8 MiB in total.
   SubQ takes no video.
 - **Retries:** retry 429/503/timeouts once with backoff. 401/402/403 disable SubQ until the key changes.
-  503s trigger a 60 s cooldown.
+  422 is never retried. Any other failure that remains after the retry (503, 429, a timeout, an unreachable
+  server, an unexpected answer or redirect) pauses SubQ for 60 s.
+- **Redirects:** requests carrying the key go through `security.open_keyed()`, which refuses redirects
+  (urllib would resend `Authorization` to the new address). Keewano's requests do the same.
 - **Cache:** SHA-256 of the request in `~/.cache/morph/subq/` for 7 days. Store answers only. Never cache
   images.
 - **Thresholds:** act at `confidence >= 0.6`, treat `noul >= 0.5` as yes; otherwise ask the user. Label
@@ -367,6 +383,14 @@ members; a member can hold several.
   and output caps.
 - **Untrusted text.** Model inputs built from READMEs, comments or files are data, never instructions.
   Model outputs never set paths.
+- **Design values.** A design or change from a model, a request, an import or a video passes
+  `security.design_values()` (type, finite, and `DESIGN_LIMITS`, far wider than PARAMS) before it is built:
+  pipeline work grows with sizes, and one absurd value (a 1 km object) would hold the shared build slot for
+  hours. The capability envelope (section 6) clamps much tighter.
+- **Keys.** Requests carrying an API key use `security.open_keyed()` (never follow a redirect with the key).
+  Chat messages that look like a key (`looks_like_secret`) are refused before they are shown, saved or sent.
+- **Served files.** `/files` and `/static` serve regular files only (never a pipe or device); generated files
+  under `/files` get the sandbox policy, so they can't run script with the Studio's origin.
 
 ## 10. Keewano event id ranges
 
