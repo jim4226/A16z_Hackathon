@@ -44,6 +44,7 @@ FAMILY_BUS = {  # family -> (contract bus, protocol, baud)
     "smart_bus_7v4": ("ttl_half_duplex", "feetech_scs", 1_000_000),
     "dynamixel": ("ttl_half_duplex", "dynamixel_2", 1_000_000),
 }
+SPEAKS = {"pca9685_pwm": "pwm", "feetech_scs": "feetech_scs", "dynamixel_2": "dynamixel_2"}  # bus -> actuator protocol
 BUS_CONNECTOR = {"feetech_scs": "Molex 5264 3p (2.5 mm)", "dynamixel_2": "JST EH 3p (B3B-EH)", "pca9685_pwm": "Dupont/JR 3p (2.54 mm)"}
 
 # chassis-wiring ampacity (A) for short bundled runs in silicone insulation, and resistance (ohm/m)
@@ -141,16 +142,36 @@ def _family_of(key: str) -> str:
 
 
 def _gripper_key(design, sizing: dict, family: str) -> tuple[str, list]:
+    """The gripper actuator sizing chose (the CAD hand is built around it). One on another bus is a plan issue
+    (bus_problems), never swapped here, so the electronics always match the robot that gets built."""
     warns = []
     g = sizing.get("gripper") if isinstance(sizing.get("gripper"), dict) else None
     key = (g or {}).get("actuator") or sizing.get("gripper_actuator") or ""
-    fam_keys = catalog.FAMILY_ACTUATORS.get(family, [])
-    if key not in ACTUATORS or ACTUATORS[key]["interface"] != ACTUATORS[fam_keys[0]]["interface"]:
+    if key not in ACTUATORS:
+        fam_keys = catalog.FAMILY_ACTUATORS.get(family, [])
         fallback = {"hobby_pwm": "mg996r", "smart_bus": "sts3215", "dynamixel": "xl430_w250"}.get(family, fam_keys[0])
         if key:
-            warns.append(f"gripper actuator {key} does not match the {family} bus; using {fallback} on the same bus")
+            warns.append(f"gripper actuator {key} is not in the catalog; using {fallback} on the {family} bus")
         key = fallback
     return key, warns
+
+
+def bus_problems(acts: list, family: str) -> list:
+    """One line per actuator that can't share this family's bus: other wiring (PWM vs TTL) or another command
+    protocol (Feetech and DYNAMIXEL servos share the TTL wiring, not the commands). Firmware drives one protocol."""
+    bus, proto, _ = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])
+    want, out = SPEAKS[proto], []
+    for a in acts:
+        spec, have = ACTUATORS.get(a["key"]), catalog.protocol(a["key"])
+        if spec is None:
+            out.append(f"{a['joint']}: {a['key']} is not in the actuator catalog")
+        elif spec.get("interface") != ("pwm" if bus == "pwm" else "ttl_half_duplex"):
+            out.append(f"{a['joint']}: {a['key']} is not a {bus} actuator; all joints must share the {family} bus")
+        elif have != want:
+            out.append(f"{a['joint']}: {a['key']} speaks {catalog.PROTOCOLS.get(have, 'an unknown protocol')} but the "
+                       f"{family} bus speaks {catalog.PROTOCOLS[want]}; one bus can't mix protocols, so use a {family} "
+                       "actuator here or change arm.actuator_family for the whole arm")
+    return out
 
 
 def actuator_list(design, sizing: dict) -> tuple[list, list]:
@@ -325,9 +346,7 @@ def plan(design, sizing: dict) -> dict:
         warnings.append(f"unknown electronics.config '{design.electronics.config}', using modules")
     acts, w = actuator_list(design, sizing)
     warnings += w
-    for a in acts:
-        if ACTUATORS[a["key"]]["interface"] != ("pwm" if bus == "pwm" else "ttl_half_duplex"):
-            issues.append(f"{a['joint']}: {a['key']} is not a {bus} actuator; all joints must share the {family} bus")
+    issues += bus_problems(acts, family)
     if bus == "pwm" and len(acts) > 16:
         issues.append(f"{len(acts)} PWM servos exceed the PCA9685's 16 channels")
     if bus != "pwm":
@@ -1098,7 +1117,16 @@ def grip_motion(design, ep: dict, asm) -> dict:
             "open_speed": min(25.0 * scale, vmax), "backoff": scale, "force_gain": 10.0 * scale}
 
 
+def _one_protocol(ep: dict):
+    """ValueError when the plan puts actuators of another bus or protocol on this bus: its firmware would send
+    them commands they don't understand (Feetech packets to a DYNAMIXEL, or the reverse)."""
+    problems = [p.split(";")[0] for p in bus_problems(ep["actuators"], ep["family"])]
+    if problems:
+        raise ValueError(f"no wiring or firmware for a servo bus that mixes protocols ({'; '.join(problems)})")
+
+
 def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
+    _one_protocol(ep)
     fam, proto, cfg, ctrl = ep["family"], ep["protocol"], ep["config"], ep["controller"]
     pins = ARDUINO_PIN[ctrl]
     acts = ep["actuators"]
@@ -1692,8 +1720,9 @@ def _rev_of(outdir):
 
 
 def finalize(design, sizing: dict, eplan: dict, asm, outdir: str) -> dict:
-    os.makedirs(outdir, exist_ok=True)
     ep = eplan
+    _one_protocol(ep)       # before anything is written: no harness, board or firmware for a mixed bus
+    os.makedirs(outdir, exist_ok=True)
     issues, warnings = list(ep.get("issues", [])), list(ep.get("warnings", []))
     rev = _rev_of(outdir)
     import datetime

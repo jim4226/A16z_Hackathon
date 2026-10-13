@@ -449,7 +449,8 @@ def summarize(r: dict) -> dict:
     joints = sz.get("joints", [])
     issues = list(sz.get("issues", [])) + list(cad.get("issues", []) or []) + list((g.get("analysis") or {}).get("issues", [])) + \
         list((g.get("force") or {}).get("issues", [])) + list(cad.get("validate", []) or []) + \
-        list(el.get("issues", []) or []) + list(mfg.get("issues", []) or [])
+        list((r.get("eplan") or {}).get("issues", []) or []) + list(el.get("issues", []) or []) + list(mfg.get("issues", []) or [])
+    issues = list(dict.fromkeys(issues))   # the wiring stage repeats the plan's issues
     for node, err in (r.get("errors") or {}).items():
         issues.append(f"{node} stage error: {err}")
     if pp.get("success") is False:

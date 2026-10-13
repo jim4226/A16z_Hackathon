@@ -611,6 +611,26 @@ def _override_for(ov, jn):
     return ov.get(jn) or ov.get(short) or ov.get("all")
 
 
+def _override_issues(design, names) -> list:
+    """arm.actuator_overrides entries that can't apply (not joint=actuator, an actuator the catalog doesn't have, a
+    joint this arm doesn't have): reported, never silently dropped."""
+    joints = set(names) | {n.split("_")[0] for n in names} | {"all", "gripper"}
+    out = []
+    for kv in (design.arm.actuator_overrides or "").split(","):
+        k, eq, v = (s.strip() for s in kv.partition("="))
+        if not (k or v):
+            continue
+        if not (eq and k and v):
+            out.append(f"arm.actuator_overrides: '{kv.strip()}' is not joint=actuator (for example j2=xm430_w350)")
+        elif v not in catalog.ACTUATORS:
+            out.append(f"arm.actuator_overrides: {k}={v}: no actuator called {v} in the catalog "
+                       f"({', '.join(sorted(catalog.ACTUATORS))})")
+        elif k not in joints:
+            out.append(f"arm.actuator_overrides: {k}={v}: this {len(names)}-joint arm has no joint {k} "
+                       f"({', '.join(n.split('_')[0] for n in names)}, gripper or all)")
+    return out
+
+
 def gripper_actuator(design) -> str:
     """Same rule as the pipeline's gripper node: the gripper uses the arm's actuator family."""
     ov = _overrides(design)
@@ -912,7 +932,7 @@ def size(design) -> dict:
             break
         keys, counts = new_keys, new_counts
     tau = _torques(design, lay, config)
-    joints, issues = [], list(lay.issues)
+    joints, issues = [], list(lay.issues) + _override_issues(design, names)
     for jn in names:
         key, n_act = keys[jn], counts.get(jn, 1)
         avail = catalog.ACTUATORS[key]["torque_nm"] * (n_act * 0.95 if n_act > 1 else 1.0)
