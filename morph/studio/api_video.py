@@ -3,7 +3,8 @@
     POST /api/video/analyze   {id?, frames: [{t_s, jpeg_b64}], marks?: {grasp_s, release_s}, crop?, subq?: bool,
                               kind?: video|photos|photo}  (16 MiB)  -> {ok, id, result, mapping} or {ok, id, result: null, mode: "manual"}
     PUT  /api/video/upload?id=&count=   raw video bytes (500 MB): frames extracted on this computer by ffmpeg -> {ok, frames}
-    POST /api/video/apply     {changes, label?} -> 202 {ok, changes, notes}; {result, answers, preview: true} -> {ok, mapping}
+    POST /api/video/apply     {changes, label?, base_rev?} -> 202 {ok, job, changes, notes} (queued in the project's room);
+                              {result, answers, preview: true} -> {ok, mapping}
     GET  /api/video/info      what this Studio can do: Claude, SubQ, ffmpeg, limits
 
 Each handler takes the router's Request (morph/studio/routes.py) and returns (status, dict). Frames are checked before
@@ -28,6 +29,11 @@ try:  # Wave 0's router; until it is merged the handlers are plain functions (th
     from .routes import route
 except ImportError:  # pragma: no cover - depends on the merge order
     route = None
+try:  # Wave 0's room job queue: applied findings wait their turn like a parameter edit; a full queue answers 429
+    from .rooms import QueueFull
+except ImportError:  # pragma: no cover - depends on the merge order
+    class QueueFull(RuntimeError):
+        """Stands in for rooms.QueueFull until Wave 0 is merged (nothing raises it then)."""
 
 MAX_BODY = 16 << 20          # JSON with up to 12 base64 frames
 MAX_UPLOAD = 500 << 20       # a raw video for the ffmpeg fallback
@@ -104,6 +110,8 @@ def content_length(headers, max_body: int) -> int:
         try:
             return _cl(headers, max_body)
         except _SecError as exc:
+            if exc.status == 413:  # in MiB: "512000 KiB" means nothing to someone holding a phone video
+                raise BodyError(413, f"The request body is larger than the {max_body >> 20} MiB limit.") from None
             raise BodyError(exc.status, str(exc)) from None
     if headers.get("Transfer-Encoding"):
         raise BodyError(400, "Send the request body with a Content-Length header.")
@@ -120,6 +128,8 @@ def content_length(headers, max_body: int) -> int:
 
 
 def _room(req):
+    """The ?project= room (W0b), or None before Wave 0. The router's Request resolves it on first use and raises its
+    HTTPError (400 bad name, 404 unknown project): handlers touch it first, so a bad project fails before any work."""
     return getattr(req, "room", None)
 
 
@@ -153,25 +163,34 @@ def _hub(req):
     return None
 
 
+def _member(req) -> dict:
+    m = getattr(req, "member", None)
+    return m if isinstance(m, dict) and m.get("id") else {}
+
+
 def send(req, ev: dict):
-    """An event on the project's live channel; never raises (a closed tab or a missing hub must not break a request)."""
-    hub = _hub(req)
-    if hub is None:
-        return
-    ev = {**ev, "project": _project_name(req)}
-    member = getattr(req, "member", None)
-    if isinstance(member, dict) and member.get("id"):
-        ev.setdefault("by", {"id": member["id"], "name": member.get("name")})
+    """An event on the project's live channel; never raises (a closed tab, a missing hub or an unknown project must not
+    break a request). With Teams on it carries by: {id, name, color}."""
     try:
+        hub = _hub(req)
+        if hub is None:
+            return
+        ev = {**ev, "project": _project_name(req)}
+        member = _member(req)
+        if member:
+            ev.setdefault("by", {k: member[k] for k in ("id", "name", "color") if member.get(k) is not None})
         hub.send(ev)
     except Exception:  # noqa: BLE001
         pass
 
 
 def _design(req):
-    p = _project(req)
+    """The design a change would apply to: the room's newest finished revision (W0b), else the project's latest."""
+    room, p = _room(req), _project(req)
     try:
-        return p.load_design(p.latest()) if p is not None and p.latest() else None
+        latest = getattr(room, "latest", None)
+        rev = latest() if callable(latest) else p.latest() if p is not None else None
+        return p.load_design(rev) if p is not None and rev else None
     except Exception:  # noqa: BLE001  (a project without a finished revision: map without "old" values)
         return None
 
@@ -187,6 +206,9 @@ def _log(req, entry: dict):
     p = _project(req)
     if p is None:
         return
+    member = _member(req)
+    if member:  # Teams: the ledger names who did it by member id
+        entry = {**entry, "by": member["id"]}
     try:
         p.log(entry)
     except Exception:  # noqa: BLE001  (a read-only projects folder must not fail the request)
@@ -229,6 +251,7 @@ def info(req):
 def analyze(req):
     """Frames -> estimates and the design changes they imply (nothing is applied). Holds the request until Claude (and
     SubQ, when asked) answer, at most two minutes, while `video`/`agent` events report progress under the request's id."""
+    _room(req)  # an unknown ?project= is refused (404) before any work
     body = req.body if isinstance(getattr(req, "body", None), dict) else {}
     kind = body.get("kind") if body.get("kind") in vision.KINDS else "video"
     try:
@@ -269,21 +292,33 @@ def analyze(req):
     return 200, {"ok": True, "id": vid, "result": result, "mapping": mapping}
 
 
-def _receive(rfile, path: str, n: int) -> str:
-    """Stream exactly n bytes from the request into `path`, 1 MiB at a time; the first chunk must look like a video.
-    Returns the container ffmpeg should read it as."""
-    left, fmt = n, None
+def _chunks(req, n: int):
+    """The raw body, exactly n bytes in 1 MiB chunks: the router's stream (W0b; it marks the body as read and raises
+    its HTTPError 400 when the upload is cut off), else straight from the socket."""
+    stream = getattr(req, "stream", None)
+    if callable(stream) and getattr(req, "length", None) == n:
+        yield from stream(CHUNK)
+        return
+    rfile, left = req.handler.rfile, n
+    while left > 0:
+        chunk = rfile.read(min(CHUNK, left))
+        if not chunk:
+            raise BodyError(400, "The upload was cut off.")
+        left -= len(chunk)
+        yield chunk
+
+
+def _receive(chunks, path: str) -> str:
+    """Write the body's chunks into `path`; the first one must look like a video. Returns the container ffmpeg should
+    read it as."""
+    fmt = None
     with open(path, "wb") as fh:
-        while left > 0:
-            chunk = rfile.read(min(CHUNK, left))
-            if not chunk:
-                raise BodyError(400, "The upload was cut off.")
+        for chunk in chunks:
             if fmt is None:
                 fmt = ffmpeg.sniff(chunk[:64])
                 if fmt is None:
                     raise BodyError(415, NOT_VIDEO)
             fh.write(chunk)
-            left -= len(chunk)
     return fmt
 
 
@@ -297,6 +332,7 @@ def upload(req):
         n = content_length(handler.headers, MAX_UPLOAD)
     except BodyError as exc:
         return exc.status, {"ok": False, "error": str(exc)}
+    _room(req)  # an unknown ?project= is refused before the body is read
     exe = ffmpeg.find()
     if not exe:
         return 501, {"ok": False, "code": "no_ffmpeg", "error": NO_FFMPEG}
@@ -311,7 +347,7 @@ def upload(req):
         work = ffmpeg.new_workdir(home)
         send(req, {"type": "video", "id": vid, "stage": "upload", "status": "start",
                    "text": f"Receiving the video ({n / 1048576:.0f} MB) on the Studio computer"})
-        fmt = _receive(handler.rfile, os.path.join(work, "clip"), n)
+        fmt = _receive(_chunks(req, n), os.path.join(work, "clip"))
         send(req, {"type": "video", "id": vid, "stage": "decode", "status": "start", "text": "Extracting frames with ffmpeg"})
         out = ffmpeg.extract(os.path.join(work, "clip"), count=count, fmt=fmt, exe=exe, workdir=work)
         frames = [{"t_s": f["t_s"], "jpeg_b64": base64.b64encode(f["jpeg"]).decode("ascii"), "w": f["w"], "h": f["h"]}
@@ -335,19 +371,29 @@ def upload(req):
 
 
 def _target(req):
-    """Whoever runs pipeline edits for this request: the room (W0b) or the Studio itself; both take
-    apply(changes, label, user_text=None, reply=None, source="")."""
+    """Before Wave 0: whoever runs pipeline edits, the Studio itself, with apply(changes, label, user_text=None,
+    reply=None, source="")."""
     for owner in (_room(req), _studio(req)):
         if callable(getattr(owner, "apply", None)):
             return owner
     return None
 
 
+def _queued(room, job) -> dict:
+    """A queued job as the room's queue shows it (with its position), like /api/params answers."""
+    try:
+        return next((j for j in room.jobs.snapshot() if j.get("id") == job.id), None) or job.info()
+    except Exception:  # noqa: BLE001
+        return {"id": getattr(job, "id", None)}
+
+
 @_route("POST", "/api/video/apply", role="editor")
 def apply(req):
     """{result, answers, preview: true}: the exact list of design changes for the cards as edited (nothing applied).
-    {changes, label?}: apply them; they are checked again here (only the keys a video may set, clamped), then run
-    through the same pipeline path as a parameter edit. 202 when started, 409 while the project is regenerating."""
+    {changes, label?, base_rev?}: apply them; they are checked again here (only the keys a video may set, clamped),
+    then queued in the project's room like a parameter edit (W0b: 202 {ok, job, changes, notes}; 429 when the queue
+    is full; a conflict with someone else's newer change is asked about in the chat, as for any edit)."""
+    room = _room(req)
     body = req.body if isinstance(getattr(req, "body", None), dict) else {}
     if body.get("preview") is True:
         result, answers = body.get("result"), body.get("answers")
@@ -358,15 +404,29 @@ def apply(req):
         changes, notes = vision.validate_changes(body.get("changes"))
     except ValueError as exc:
         return 400, {"ok": False, "error": str(exc)}
-    target = _target(req)
+    label = re.sub(r"[^\w .,:()/+-]", "", str(body.get("label") or ""))[:48].strip() or "from a video"
+    items = [{"key": k, "label": vision.LABELS.get(k, k), "new": v} for k, v in changes.items()]
+    reply = vision.describe({"items": items})
+    queue = getattr(_studio(req), "queue_changes", None)
+    if room is not None and callable(queue):
+        base = body.get("base_rev")
+        try:
+            base = base if isinstance(base, str) and base in room.completed() else None
+        except Exception:  # noqa: BLE001
+            base = None
+        try:
+            job = queue(room, changes, label=label, reply=reply, source="video", base_rev=base,
+                        by=_member(req).get("id"))
+        except QueueFull as exc:
+            return 429, {"ok": False, "error": str(exc)}
+        _log(req, {"type": "video_apply", "changes": len(changes)})
+        return 202, {"ok": True, "job": _queued(room, job), "changes": changes, "notes": notes}
+    target = _target(req)  # before Wave 0: one project, applied in a thread while nothing else is building
     if target is None:
         return 409, {"ok": False, "error": "No project is open: start a new robot from the video instead."}
     busy = getattr(target, "busy", None) or getattr(_studio(req), "busy", None)
     if busy is not None and getattr(busy, "locked", lambda: False)():
         return 409, {"ok": False, "error": "Still regenerating the last change; apply again when the pipeline strip is idle."}
-    label = re.sub(r"[^\w .,:()/+-]", "", str(body.get("label") or ""))[:48].strip() or "from a video"
-    items = [{"key": k, "label": vision.LABELS.get(k, k), "new": v} for k, v in changes.items()]
-    reply = vision.describe({"items": items})
     threading.Thread(target=target.apply, args=(changes, label), kwargs={"reply": reply, "source": "video"}, daemon=True).start()
     _log(req, {"type": "video_apply", "changes": len(changes)})
     return 202, {"ok": True, "changes": changes, "notes": notes}

@@ -665,12 +665,13 @@ class FakeRFile:
         return out
 
 
-def req(studio, body=None, method="POST", path="/api/video/analyze", query=None, headers=None, rfile=None, member=None):
+def req(studio, body=None, method="POST", path="/api/video/analyze", query=None, headers=None, rfile=None, member=None,
+        room=None):
     h = email.message.Message()
     for k, v in (headers or {}).items():
         h[k] = v
     handler = types.SimpleNamespace(headers=h, rfile=rfile or FakeRFile())
-    return types.SimpleNamespace(method=method, path=path, query=query or {}, headers=h, body=body, studio=studio, room=None,
+    return types.SimpleNamespace(method=method, path=path, query=query or {}, headers=h, body=body, studio=studio, room=room,
                                  member=member, handler=handler)
 
 
@@ -792,6 +793,112 @@ def test_apply_route(studio):
     assert st == 409 and "Still regenerating" in out["error"]
     st, out = api_video.apply(types.SimpleNamespace(body={"changes": {"object.mass_g": 70}}, studio=None, room=None))
     assert st == 409 and "No project is open" in out["error"]
+
+
+class FakeJob:
+    def __init__(self, n):
+        self.id = f"job{n}"
+
+    def info(self, position=None):
+        return {"id": self.id, "status": "queued", "position": position}
+
+
+class FakeRoom:
+    """Wave 0's Room, as far as the video routes use it: name, p, hub, jobs.snapshot(), completed(), latest()."""
+    def __init__(self, project):
+        self.name, self.p, self.events, self.asked = "egg-picker", project, [], []
+        self.hub = types.SimpleNamespace(send=self.events.append)
+        self.jobs = types.SimpleNamespace(snapshot=lambda: [{"id": "job0", "position": 0}, {"id": "job1", "position": 1}])
+
+    def completed(self):
+        return ["r001", "r002"]
+
+    def latest(self):
+        self.asked.append("latest")
+        return "r002"
+
+
+class QueueStudio:
+    """Wave 0's Studio: queue_changes(room, changes, *, label, reply, source, user_text, base_rev, by, kind)."""
+    def __init__(self, home):
+        self.home, self.remote, self.queued, self.full = str(home), False, [], False
+
+    def queue_changes(self, room, changes, *, label, reply=None, source="", user_text=None, base_rev=None, by=None,
+                      kind="change"):
+        if self.full:
+            raise api_video.QueueFull("10 changes are already waiting for egg-picker.")
+        self.queued.append({"room": room, "changes": changes, "label": label, "reply": reply, "source": source,
+                            "base_rev": base_rev, "by": by})
+        return FakeJob(len(self.queued))
+
+
+def test_apply_queues_in_the_room_like_a_parameter_edit(tmp_path):
+    proj = FakeProject(tmp_path / "egg-picker")
+    room, st = FakeRoom(proj), QueueStudio(tmp_path)
+    ana = {"id": "m1", "name": "Ana", "role": "editor", "color": "#c60"}
+    code, out = api_video.apply(req(st, {"changes": {"object.max_force_n": 25}, "label": "video: raw egg", "base_rev": "r001"},
+                                    path="/api/video/apply", member=ana, room=room))
+    assert code == 202 and out["job"] == {"id": "job1", "position": 1} and out["changes"] == {"object.max_force_n": 25.0}
+    q = st.queued[0]
+    assert q["room"] is room and q["source"] == "video" and q["base_rev"] == "r001" and q["by"] == "m1"
+    assert q["label"] == "video: raw egg" and q["reply"].startswith("From the video:")
+    assert proj.ledger[-1] == {"type": "video_apply", "changes": 1, "by": "m1"}
+    # a revision the room doesn't have is not passed on; a full queue answers 429, like /api/params
+    api_video.apply(req(st, {"changes": {"object.mass_g": 70}, "base_rev": "r999"}, path="/api/video/apply", room=room))
+    assert st.queued[-1]["base_rev"] is None and st.queued[-1]["by"] is None
+    st.full = True
+    code, out = api_video.apply(req(st, {"changes": {"object.mass_g": 70}}, path="/api/video/apply", room=room))
+    assert code == 429 and "already waiting" in out["error"] and len(st.queued) == 2
+    # the preview maps against the room's newest finished revision; events go to the room, with the member
+    code, out = api_video.apply(req(st, {"preview": True, "result": result()}, path="/api/video/apply", room=room))
+    assert code == 200 and out["mapping"]["items"] and room.asked == ["latest"]
+    api_video.send(req(st, member=ana, room=room), {"type": "video", "id": "x"})
+    assert room.events[-1]["by"] == {"id": "m1", "name": "Ana", "color": "#c60"} and room.events[-1]["project"] == "egg-picker"
+
+
+class NoSuchProject:
+    """The router's Request for ?project=nope: resolving the room raises (the router answers 404)."""
+    def __init__(self, studio, body=None, length=0):
+        self.studio, self.body, self.member, self.query, self.length = studio, body, None, {}, length
+        h = email.message.Message()
+        h["Content-Length"] = str(length)
+        self.headers = h
+        self.handler = types.SimpleNamespace(headers=h, rfile=FakeRFile(forbid=True))
+
+    @property
+    def room(self):
+        raise LookupError("There is no robot project called nope.")
+
+
+def test_an_unknown_project_is_refused_before_any_work(studio, keys):
+    api_video.send(NoSuchProject(studio), {"type": "video"})  # events never raise
+    for fn, body in ((api_video.analyze, {"frames": []}), (api_video.apply, {"changes": {"object.mass_g": 70}})):
+        with pytest.raises(LookupError):
+            fn(NoSuchProject(studio, body))
+    with pytest.raises(LookupError):
+        api_video.upload(NoSuchProject(studio, length=5000))  # before a byte of the body is read
+    assert all(api_video._analyses.acquire(blocking=False) for _ in range(api_video.MAX_ANALYSES))
+    for _ in range(api_video.MAX_ANALYSES):
+        api_video._analyses.release()
+    assert not studio.applied and not studio.events
+
+
+def test_uploads_read_through_the_router_stream(studio, monkeypatch):
+    """With Wave 0's Request the body comes from req.stream() (which marks it read), not from the socket."""
+    monkeypatch.setattr(api_video.ffmpeg, "find", lambda: "/usr/bin/ffmpeg-not-run")
+    seen = []
+
+    def extract(path, **kw):
+        with open(path, "rb") as fh:
+            seen.append(fh.read())
+        return {"frames": [{"t_s": 0.5, "jpeg": b"\xff\xd8x", "w": 4, "h": 3}], "duration_s": 1.0, "ms": 5}
+    monkeypatch.setattr(api_video.ffmpeg, "extract", extract)
+    clip = b"\x00\x00\x00\x20ftypisom" + b"v" * 3000
+    r = req(studio, method="PUT", path="/api/video/upload", headers={"Content-Length": str(len(clip))},
+            rfile=FakeRFile(forbid=True))
+    r.length, r.stream = len(clip), lambda chunk: iter([clip[:1000], clip[1000:]])
+    code, out = api_video.upload(r)
+    assert code == 200 and seen == [clip] and out["frames"][0]["jpeg_b64"] == "/9h4"
 
 
 def test_events_carry_the_member_when_teams_is_on(studio):

@@ -230,6 +230,7 @@ def fakes():
     for k in ("ANTHROPIC_AUTH_TOKEN", "MORPH_OFFLINE", "MORPH_FFMPEG"):
         mp.delenv(k, raising=False)
     mp.setenv("ANTHROPIC_API_KEY", "test-not-a-key")
+    mp.setattr(vision, "claude_ready", lambda: True)  # a conftest that clears keys before every test leaves the fake on
     mp.setattr(vision, "_claude_client", lambda: FakeClaude(payload=egg(motion__confidence=0.5), delay=1.0))
     mp.setattr(vision, "subq", fake_subq(AGREE, delay=0.3))
     yield mp
@@ -393,6 +394,20 @@ def test_unplayable_clip_goes_to_the_studio_computer(server, browser, media, fak
     assert "extracted on the Studio computer" in page.inner_text(".dlg-h .s")
     assert not os.listdir(os.path.join(studio.home, ".uploads"))  # the uploaded clip is already deleted
     shot(page, "fallback_frames")
+    assert not page.errors, page.errors
+
+
+def test_a_clip_too_big_for_the_studio_is_not_uploaded(server, browser, media, fakes, tmp_path, monkeypatch):
+    studio, base = server
+    monkeypatch.setattr(api_video, "MAX_UPLOAD", 1 << 20)  # the page reads the limit from /api/video/info
+    big = tmp_path / "long.mp4"
+    big.write_bytes(media["mp4"].read_bytes() + bytes(3 << 19))
+    page = page_for(browser, base)
+    page.evaluate("localStorage.setItem('morph.video.consent', 'cloud')")
+    page.click(".vj-btn")
+    page.set_input_files(".vj-file", str(big))
+    page.wait_for_selector("text=the Studio computer takes videos up to 1 MB")
+    assert page.locator("[data-a='upload']").count() == 0 and vision_copy("unplayable") in page.inner_text(".vjob")
     assert not page.errors, page.errors
 
 

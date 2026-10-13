@@ -447,9 +447,11 @@ class VideoJob {
       html = head(opts.photos ? 'Re-saving the photos here in your browser (location data dropped)…' : 'Picking frames here in your browser…')
         + `<div class="vj-extract"><div class="vj-bar"><b style="width:0%"></b></div><span class="vj-pn mono">0 of ${opts.total}</span></div>`;
     } else if (view === 'unplayable') {
-      const ff = this.info?.ffmpeg, size = this.files[0] ? mb(this.files[0].size) : '?';
+      const f0 = this.files[0], size = f0 ? mb(f0.size) : '?', capMb = this.info?.limits?.upload_mb || 500;
+      const big = !!f0 && f0.size > capMb * 1048576, ff = this.info?.ffmpeg && !big;
       html = head(E(this.name)) + `<div class="kchk bad">${I('alert', 'sm')}<span>${E(COPY.unplayable)}</span></div>
-        ${ff ? '' : `<div class="kchk">${I('alert', 'sm')}<span>${E(COPY.noFfmpeg)}</span></div>`}${ff ? remote : ''}
+        ${this.info?.ffmpeg ? '' : `<div class="kchk">${I('alert', 'sm')}<span>${E(COPY.noFfmpeg)}</span></div>`}
+        ${big ? `<div class="kchk">${I('alert', 'sm')}<span>${E(`This video is ${size}: the Studio computer takes videos up to ${capMb} MB. Trim it, or export it as H.264 MP4.`)}</span></div>` : ''}${ff ? remote : ''}
         <div class="vj-why dim mono">${E(opts.err?.message || '')}</div>
         <div class="dlg-f"><button class="btn" type="button" data-a="pick">Choose another file</button><span class="grow"></span>
           ${ff ? `<button class="btn primary" type="button" data-a="upload">${svg(ICON.upload)}Extract on the Studio computer (${size})</button>` : ''}</div>`;
@@ -1024,14 +1026,15 @@ class VideoJob {
       const btn = this.el.querySelector('[data-a="apply"]');
       btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Applying…';
       const label = (this.result?.object?.name || this.answers['object.name']) ? `video: ${String(this.answers['object.name'] || this.result.object.name).slice(0, 30)}` : 'from a video';
-      const r = await call(() => this.s.api.post('/api/video/apply', { changes: this.mapping.changes, label }));
+      const base = this.s.S?.current?.rev;  // the revision on screen: a newer change by someone else is asked about, not overwritten
+      const r = await call(() => this.s.api.post('/api/video/apply', { changes: this.mapping.changes, label, ...(base ? { base_rev: base } : {}) }));
       if (!r.ok) {
         btn.disabled = false; btn.textContent = 'Apply';
         const box = this.el.querySelector('.vj-apperr');
         if (box) box.innerHTML = `<div class="kchk bad">${this.I('alert', 'sm')}<span>${this.esc(r.error || 'Could not apply the changes.')}</span></div>`;
         return;
       }
-      this.toast('Applying the changes: the robot regenerates');
+      this.toast(r.job?.position > 1 ? 'Queued after the changes already waiting: the robot regenerates when its turn comes' : 'Applying the changes: the robot regenerates');
       this.close();
     });
   }
