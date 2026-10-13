@@ -46,16 +46,22 @@ async function replay(events) {  // the SSE stream, replayed in order a little a
   for (const ev of events) { await sleep(ev.type === 'agent' && ev.status === 'start' ? PACE * 2 : PACE); emit(ev); }
 }
 
+const live = {};  // project -> the build in progress, as a room keeps it for GET /api/state: {rev, parent, dirty, nodes}
+
 async function fakeBuild(project) {  // what the Studio streams while it builds: project_created, start, node x 9, done, agents
   const stages = ['sizing', 'gripper', 'electronics', 'cad', 'sim', 'wiring', 'manufacturing', 'bom', 'manual'];
   await sleep(PACE); emit({ type: 'project_created', project, origin: 'brief' });
+  live[project] = { rev: 'r001', parent: null, dirty: stages, nodes: {} };
   emit({ type: 'start', project, rev: 'r001', parent: null, changes: {}, dirty: stages });
   for (const node of stages) {
+    live[project].nodes[node] = 'computing';
     emit({ type: 'node', project, node, status: 'computing' });
     await sleep(PACE * 1.4);
+    live[project].nodes[node] = 'computed';
     emit({ type: 'node', project, node, status: 'computed', seconds: 1.2 });
   }
   emit({ type: 'agent', project, role: 'sourcing', provider: 'darwin', status: 'start', ms: null, text: 'Darwin is shortlisting suppliers for every bought part' });
+  delete live[project];
   emit({ type: 'done', project, seconds: 17.4, current: { rev: 'r001', summary: { feasible: true, unit_cost: 289.4, pick_place_success: true,
     cycle_time_s: 5.8, max_payload_g: 980, issues: [] } }, previous: null });
   await sleep(PACE * 3);
@@ -68,6 +74,10 @@ const studio = {
   project: () => studio.S.project,
   api: {
     async get(path, params) {
+      if (path === '/api/state') {  // the room's state as the Studio answers it; the page simulates the build, so it answers here
+        const p = studio.S.project, b = live[p];
+        return { ok: true, project: p, current: null, building: b ? { ...b, nodes: { ...b.nodes } } : null };
+      }
       return fetch(path + (params ? `?${new URLSearchParams(params)}` : ''), { cache: 'no-store', headers: { 'X-Morph-Client': 'demo' } });
     },
     async post(path, body) {

@@ -541,6 +541,8 @@ The five feature branches are merged into the release branch and live in the Stu
   - A revision simulates the world its design pins: `worlds.save` keeps each world as `world/saved/<sha>.json` and
     `RobotProject._sim_world` loads `worlds.load_pinned(root, world.id, world.sha)` (the saved copy, else `world.json`
     when its id matches), so a world saved while a build waits or runs never changes what that build simulates.
+  - `tools/newrobot_demo.html` answers `GET /api/state` from its simulated build, as the Studio's room does: the New
+    robot dialog reads it after switching to the new project.
 - **World (F5):** `design.world.id` must be a world id (`[a-z0-9][a-z0-9-]{0,39}`), never a path: the design limits,
   chat (`CHAT_FORBIDDEN`) and the simulation stage all check it, and the stage only ever reads
   `<project>/world/world.json` inside the project. A fork copies `world/`. MuJoCo 3.1.6 is the floor in
