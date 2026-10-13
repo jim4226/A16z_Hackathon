@@ -1,7 +1,8 @@
 """A robustness study in World mode (morph/services/robust.py): the revision's room comes along the way the pipeline
 loads it, the mount and every box get their tolerances, a run whose arm or egg touches a box is grouped by the phase
-it happened in, a run MuJoCo had to reset is not counted, and the study never changes the revision. Offline; the
-built-in desk with a bin 20 mm outside the carry arc, 2 ms simulations, stress mode so boxes get hit."""
+it happened in, a run MuJoCo had to reset is not counted (and leaves no MuJoCo log behind), and the study never
+changes the revision. Offline; the built-in desk with a bin 20 mm outside the carry arc, 2 ms simulations, stress
+mode so boxes get hit."""
 
 import hashlib
 import json
@@ -58,7 +59,7 @@ def _tree_sha(folder):
     return h.hexdigest()
 
 
-def test_a_study_in_a_room(tmp_path):
+def test_a_study_in_a_room(tmp_path, monkeypatch):
     root, nominal = make_world_revision(tmp_path / "home")
     assert nominal["success"] and nominal["clearance_ok"] and nominal["arc"]["usual"] is False   # it goes round the bin
     spec = robust.tolerances(root)
@@ -67,12 +68,14 @@ def test_a_study_in_a_room(tmp_path):
                                                                    "box_error_mm"]
     assert (world["mount_dx_mm"]["lo"], world["box_error_mm"]["hi"]) == (-10.0, 15.0)
     before = _tree_sha(os.path.join(root, "r001")), _tree_sha(os.path.join(root, "world"))
+    monkeypatch.chdir(tmp_path)             # the workers start here: MuJoCo would write its log of a bad run here
     doc = robust.run_study(root, runs=8, seed=5, stress=True, workers=2, timestep=0.002, checks=False, nice=0)
     assert (_tree_sha(os.path.join(root, "r001")), _tree_sha(os.path.join(root, "world"))) == before
     assert doc["model"]["world"] == "desk" and doc["model"]["boxes"] == len(worlds.starter("desk")["obstacles"]) + 1
     assert doc["model"]["matches_revision"] is True
     rows = robust.load(root, doc["id"], rows=True)["runs"]
     assert len(rows) == 8 and all("mount_dx_mm" in r["params"] and "min_clearance_mm" in r for r in rows if r["outcome"] != "error")
+    assert any(r.get("warnings") for r in rows) and not (tmp_path / "MUJOCO_LOG.TXT").exists()
     hit = [r for r in rows if r["outcome"] == "world_collision"]
     assert hit, [r["outcome"] for r in rows]
     for r in hit:

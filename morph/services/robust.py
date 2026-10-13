@@ -952,6 +952,16 @@ def _rss_mb() -> float | None:
         return None
 
 
+def _mute_mujoco():
+    """MuJoCo's own warning handler writes MUJOCO_LOG.TXT into the current folder and prints each first warning: study
+    processes read the warning counters instead (the Studio's own process keeps the handler)."""
+    try:
+        import mujoco
+        mujoco.set_mju_user_warning(lambda msg: None)
+    except (ImportError, AttributeError):
+        pass
+
+
 def _worker(conn, nice: int = 0):
     """A study worker process: loads the packed robot once, then runs the batches of trials it is sent."""
     _quiet(nice)
@@ -962,6 +972,7 @@ def _worker(conn, nice: int = 0):
             msg = conn.recv()
             if msg[0] == "load":
                 t0 = time.time()
+                _mute_mujoco()
                 runner = Runner(msg[1])
                 conn.send(("loaded", round(time.time() - t0, 3), _rss_mb()))
             elif msg[0] == "runs":
@@ -976,6 +987,7 @@ def _worker(conn, nice: int = 0):
 def _preparer(conn, nice, root, rev, timestep):
     """The short-lived process that rebuilds the robot and plans (its memory goes when it exits)."""
     _quiet(nice)
+    _mute_mujoco()
     try:
         conn.send(("prepared", prepare(root, rev, timestep)))
     except StudyError as exc:
