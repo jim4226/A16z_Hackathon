@@ -322,12 +322,148 @@ def _checked(design, changes: dict):
     return design
 
 
+def _one_liner(a) -> bool:
+    """`morph robot new "help me sort socks"`: a request in words (it has a space, or --defaults or --name came with
+    it) goes through the New robot brief; a bare name keeps building the default arm under that name."""
+    return a.action == "new" and (any(c.isspace() for c in a.name or "") or bool(getattr(a, "defaults", False))
+                                  or bool(getattr(a, "project_name", None)))
+
+
+def _ask(prompt: str) -> str | None:
+    try:
+        return input(prompt).strip()
+    except EOFError:
+        return None
+
+
+def _brief_questions(b) -> dict | None:
+    """Ask the brief's open questions in the terminal: {slot: chip value}, {} for defaults, None to stop."""
+    answers = {}
+    for i, q in enumerate(b.questions, 1):
+        print(f"\n{i}. {q['text']}" + ("" if q.get("required") else " (optional)"))
+        if q.get("why"):
+            print(f"   {q['why']}")
+        default = next((n for n, c in enumerate(q["chips"], 1) if c.get("default")), 1)
+        for n, c in enumerate(q["chips"], 1):
+            print(f"   {n}) {c['label']}" + ("  [default]" if n == default else "") + (f"  ({c['note']})" if c.get("note") else ""))
+        while True:
+            got = _ask(f"   Choose 1-{len(q['chips'])}, Enter for the default, d for defaults everywhere, q to stop: ")
+            if got is None or got.lower() == "q":
+                return None
+            if got.lower() == "d":
+                return {}
+            if got == "" or (got.isdigit() and 1 <= int(got) <= len(q["chips"])):
+                answers[q["slot"]] = q["chips"][(int(got) if got else default) - 1]["value"]
+                break
+    return answers
+
+
+def cmd_robot_brief(a) -> int:
+    """`morph robot new "<one-liner>"`: the New robot conversation in a terminal (questions as numbered choices; with
+    --defaults, or without a terminal, the sensible defaults), then the brief is checked, the project made through the
+    project service (origin "brief") and the whole robot built. Exit status 1 when nothing was built or stages failed."""
+    from . import keewano, settings
+    from .robot.pipeline2 import ORDER, RobotProject
+    from .spec import Design
+    from .studio import agents, capability, projects
+    from .studio import brief as B
+
+    text = " ".join(a.name.split())
+    if a.need or getattr(a, "source", None):
+        sys.exit("Describe the robot in the one quoted request, or give a name with --need/--source; not both.")
+    name = getattr(a, "project_name", None)
+    if name and not B.NAME_RE.match(name):
+        sys.exit(f"--name {name}: use lower-case letters, digits and dashes (up to 40).")
+    if len(text) > 2000:
+        sys.exit("Keep the request under 2,000 characters.")
+    asking = not a.defaults and sys.stdin.isatty() and sys.stdout.isatty()
+
+    def timeline(ev):  # the agents timeline, as the Studio's dialog shows it
+        if ev.get("type") == "agent" and ev.get("status") != "start":
+            prov = {"subq": "SubQ Snap (AI)", "cache": "SubQ, cached", "claude": "Claude", "rules": "built-in rules",
+                    "code": "Morph's code"}.get(ev.get("provider"), ev.get("provider"))
+            print(f"  {ev['role']:<11} {prov}: {ev.get('text', '')}")
+
+    print(f"New robot: {text}")
+    b = agents.run_turn(text=text, on_event=timeline, home=HOME)
+    while b.status in ("asking", "out_of_scope"):
+        if b.status == "out_of_scope":
+            for n in (b.scope or {}).get("notes") or []:
+                print(f"  out of scope: {n}")
+            near = (b.scope or {}).get("nearest")
+            if not near:
+                return 1
+            print(f"  nearest robot Morph can build: {near.get('summary')}")
+            if not (a.nearest or (asking and (_ask("Build that instead? [y/N] ") or "").lower().startswith("y"))):
+                print("Nothing built." + ("" if asking else " Add --nearest to build the nearest robot."))
+                return 1
+            b = agents.run_turn(b, action="nearest", on_event=timeline, home=HOME)
+            continue
+        answers = _brief_questions(b) if asking else {}
+        if answers is None:
+            print("Stopped; nothing was built.")
+            return 1
+        if not asking:
+            n = len(b.questions)
+            print(f"  defaults    {n} open question{'s' if n != 1 else ''} ({', '.join(q['slot'] for q in b.questions)}) take "
+                  "Morph's default answers" + ("" if a.defaults else " (no terminal to ask in)"))
+        b = agents.run_turn(b, answers=answers or None, action=None if answers else "defaults", on_event=timeline, home=HOME)
+    if b.status == "refused":
+        print("Refused: " + ((b.scope or {}).get("notes") or ["Morph doesn't design that."])[0])
+        return 1
+    if b.status != "ready":
+        print(f"The brief isn't ready to build ({b.status}).")
+        return 1
+    pay = B.build_payload(b, name, HOME)
+    pre = b.preflight or {}
+    print(f"\n{b.summary or b.request}")
+    for x in b.assumptions:
+        if x.get("text"):
+            print(f"  - {x['text']}")
+    for issue in pre.get("issues") or []:
+        print(f"  ! preflight: {issue}")
+    if b.estimate:
+        print(f"  parts cost: {b.estimate['label']}")
+    if asking and (_ask(f"Build {pay['name']} now? [Y/n] ") or "y").lower().startswith("n"):
+        print("Nothing built.")
+        return 1
+    changes, notes = capability.clamp(pay["changes"], allow=("name", "arm.source", "arm.actuator_overrides"))
+    for n in notes:
+        print(f"  adjusted: {n}")
+    try:
+        info = projects.create(HOME, pay["name"], design=Design().with_changes(changes), need=pay["meta"]["need"],
+                               origin="brief", meta={"brief_id": b.id}, unique=not name)
+    except FileExistsError:
+        sys.exit(f"{os.path.join(HOME, name)} already exists: choose another --name.")
+    except ValueError as exc:
+        sys.exit(f"Couldn't create the project: {exc}")
+    p = RobotProject(info["root"])
+    print(f"\nBuilding {info['name']} (all nine stages, from scratch):")
+    rev = p.run(info["design"], label="first design", n_trials=a.trials, fast_sim=a.fast)
+    B.mark_built(b, info["name"], rev)
+    B.write_final(b, info["root"])
+    failed = _robot_summary(p, rev)
+    if settings.telemetry_enabled() and os.environ.get("KEEWANO_API_KEY"):  # opt-in, as in the Studio: categories only
+        try:
+            summary = p.load_results(rev).get("summary")
+        except (OSError, ValueError):
+            summary = None
+        keewano.send(info["name"], agents.memory_events(b, "ready") + agents.memory_events(b, "built", summary))
+    if failed:
+        print(f"\n{len(failed)} of {len(ORDER)} stages did not complete: {', '.join(failed)} (details above)")
+    print(f"\nOpen it: morph studio {info['name']}   Suppliers: morph source {info['name']}   "
+          f"Export: morph export {info['name']} -o {info['name']}.zip")
+    return 1 if failed else 0
+
+
 def cmd_robot(a) -> int:
     """Exit status: 1 when the new revision has stages that did not complete (show never fails)."""
     from .robot.pipeline2 import ORDER, RobotProject
     from .studio import projects
     from .studio.security import project_name
 
+    if _one_liner(a):
+        return cmd_robot_brief(a)
     root = os.path.join(HOME, a.name)
     source = getattr(a, "source", None) or ("so101" if a.name == "so101" else "")
     failed = []
@@ -371,6 +507,114 @@ def cmd_robot(a) -> int:
     if failed:
         print(f"\n{len(failed)} of {len(ORDER)} stages did not complete: {', '.join(failed)} (details above)")
     return 1 if failed else 0
+
+
+def _robot_project(name: str):
+    """The robot project `name` in HOME, or SystemExit saying why (checked before anything is read)."""
+    from .robot.pipeline2 import RobotProject
+    from .studio.security import project_name
+
+    try:
+        project_name(name)
+    except ValueError as exc:
+        sys.exit(f"{name}: {exc}")
+    root = os.path.join(HOME, name)
+    if not os.path.isdir(root):
+        sys.exit(f"no project {name} in {os.path.abspath(HOME)}")
+    return RobotProject(root)
+
+
+def cmd_export(a) -> int:
+    """`morph export NAME [--rev rNNN] [--full] -o FILE`: what the Studio's Export button downloads. In a team's projects
+    folder the export also carries team.json, the team's record (names, never member ids)."""
+    import shutil
+
+    from .studio import export
+
+    p = _robot_project(a.name)
+    rev = a.rev or (None if a.full else p.latest())
+    if not a.full and not rev:
+        sys.exit(f"{a.name} has no finished revision to export yet.")
+    extra = None
+    from .studio.teams import store as team_store
+    if team_store.exists(HOME):
+        from .studio.teams import collab
+        try:
+            t = team_store.TeamStore(HOME)
+            members = t.read().get("members") or {}
+            extra = {"team.json": collab.export_bundle(p.root, members) if a.full
+                     else collab.revision_record(p.root, rev, members, t.policy())}
+        except collab.CollabError as exc:
+            print(f"note: the team's record is left out ({exc})")
+    try:
+        archive, filename = export.build_export(p, rev, full=a.full, extra=extra)
+    except export.ExportError as exc:
+        sys.exit(f"{a.name}: {exc}")
+    out = a.out or filename
+    if os.path.isdir(out):
+        out = os.path.join(out, filename)
+    with archive, open(out, "wb") as fh:
+        shutil.copyfileobj(archive, fh, 1 << 16)
+    import zipfile
+    with zipfile.ZipFile(out) as z:
+        manifest = json.loads(z.read("export-manifest.json"))
+    what = f"{a.name} history" + (f" with {rev}'s files" if rev else "") if a.full else f"{a.name} {rev}"
+    print(f"{out}: {what}, {len(manifest.get('files') or [])} files, {os.path.getsize(out) / 1e6:.1f} MB")
+    if manifest.get("left_out"):
+        print(f"  left out: {len(manifest['left_out'])} order files ({manifest.get('left_out_note')})")
+    print(f"  {manifest.get('note')}")
+    return 0
+
+
+def cmd_world(a) -> int:
+    """`morph world NAME [--starter desk|counter|workbench | --off]`: World mode (beta) from a terminal. Without an
+    option it shows the project's room and how the newest simulation went in it; --starter saves a built-in room and
+    reruns the simulation in it; --off simulates on the plain table again. Rooms of your own: World in the Studio."""
+    from .studio import worlds
+
+    p = _robot_project(a.name)
+    base = p.latest()
+    if not base:
+        sys.exit(f"{a.name} has no finished revision yet.")
+    design = p.load_design(base)
+    if a.starter or a.off:
+        if a.off:
+            if not design.world.id:
+                print(f"{a.name} {base} already simulates on the plain table.")
+                return 0
+            changes, label, w = {"world.id": "", "world.sha": ""}, "world: off", None
+        else:
+            try:
+                w, sha = worlds.save(p.root, worlds.starter(a.starter))
+            except worlds.WorldError as exc:
+                sys.exit(str(exc))
+            if design.world.id == w["id"] and design.world.sha == sha:
+                print(f"{a.name} {base} already simulates in {w['name']}.")
+                return 0
+            changes, label = {"world.id": w["id"], "world.sha": sha}, f"world: {w['name']}"
+        design = _checked(design, changes)
+        p.log(worlds.ledger_entry(w))  # the kind of room and its counts (Keewano, when its events are on)
+        rev = p.run(design, parent=base, label=label, n_trials=a.trials, fast_sim=a.fast)
+        base, design = rev, p.load_design(rev)
+    try:
+        w = worlds.load(p.root)
+    except worlds.WorldError as exc:
+        w = None
+        print(f"world/world.json can't be read: {exc}")
+    if w:
+        print(f"room: {w['name']} ({w['source'].get('kind')}), {len(w.get('obstacles') or [])} grey boxes, "
+              f"{len(w.get('zones') or [])} people areas")
+    pp = ((((p.load_results(base).get("sims") or {}).get("scenarios") or {}).get("pick_place") or {}).get("metrics") or {})
+    if not design.world.id:
+        print(f"{a.name} {base} simulates on the plain table" + (" (World mode is off)." if w else "."))
+        return 0
+    clear = pp.get("min_clearance_mm")
+    print(f"{a.name} {base} simulates in {design.world.id} ({design.world.sha}): pick and place "
+          f"{'succeeds' if pp.get('success') else 'fails'}"
+          + (f", closest {clear:.0f} mm to a box" if isinstance(clear, (int, float)) else "")
+          + (f", {len(pp['world_contacts'])} contacts" if pp.get("world_contacts") else ""))
+    print("  " + worlds.NOTES["world"])
+    return 0 if pp.get("success") else 1
 
 
 def cmd_source(a):
@@ -589,6 +833,7 @@ def cmd_doctor(a):
     from . import settings
     line(None, f"settings ({settings.path()}): {settings.describe()}"
                + (" (MORPH_OFFLINE=1: network off whatever the settings say)" if settings.offline() else ""))
+    _doctor_features(line)
     for name in ("egg-picker", "so101"):
         root = os.path.join(HOME, name)
         from .robot.pipeline2 import RobotProject
@@ -628,6 +873,64 @@ def cmd_doctor(a):
     start = ("double-click run_studio.bat (Windows) or run ./run_studio.sh (macOS/Linux)" if checkout
              else "run `morph studio --open`")
     print(f"\nAll good: {start}." if ok_all else "\nFix the lines marked FIX, then run this again.")
+
+
+def _doctor_features(line):
+    """One line per 0.2 feature: whether it loads here, and the optional tools it uses (ffmpeg, xacro, cascadio)."""
+    import importlib
+    import importlib.util
+
+    def loads(*mods):
+        for m in mods:
+            try:
+                importlib.import_module(m)
+            except Exception as exc:  # noqa: BLE001
+                return f"{m} does not import ({exc.__class__.__name__}: {exc})"
+        return None
+
+    fix = "send this output to the team; reinstall with the launcher (delete .venv first) if packages are broken"
+    bad = loads("morph.studio.brief", "morph.studio.agents", "morph.studio.capability", "morph.studio.api_brief")
+    line(not bad, "New robot (one-sentence brief): " + (bad or "ready; built-in rules, plus SubQ and Claude when "
+                                                                       "their keys are set"), fix)
+    bad = loads("morph.importers", "morph.studio.api_import")
+    if bad:
+        line(False, f"Import: {bad}", fix)
+    else:
+        from .importers import xacro_sandbox
+        xacro = xacro_sandbox.available()
+        cad = importlib.util.find_spec("cascadio") is not None
+        line(True, "Import: ready (URDF, MuJoCo XML, STL/OBJ/GLB meshes, parts lists, KiCad boards, Morph exports); "
+                   f"xacro {'installed' if xacro else 'not installed (pip install morph[xacro])'}; STEP files "
+                   f"{'readable (cascadio)' if cad else 'need cascadio (pip install morph[cad])'}")
+    bad = loads("morph.studio.vision", "morph.studio.api_video", "morph.studio.ffmpeg")
+    if bad:
+        line(False, f"Show Morph the job: {bad}", fix)
+    else:
+        from .studio import ffmpeg
+        f = ffmpeg.status()
+        line(True, "Show Morph the job: ready; " + (f"ffmpeg {f.get('version') or ''} at {f['path']}".replace("  ", " ")
+             if f["available"] else "no ffmpeg (clips the browser plays still work; for others, e.g. iPhone HEVC, "
+             "install ffmpeg or pip install morph[video])") + (f"; {f['warning']}" if f.get("warning") else ""))
+    bad = loads("morph.studio.teams.store", "morph.studio.api_team")
+    if bad:
+        line(False, f"Teams (preview): {bad}", fix)
+    else:
+        from .studio.teams import store as team_store
+        if team_store.exists(HOME):
+            t = team_store.TeamStore(HOME).read()
+            n = sum(1 for m in (t.get("members") or {}).values() if not m.get("revoked"))
+            line(True, f"Teams (preview): team \"{t.get('name') or 'unnamed'}\" with {n} member{'s' if n != 1 else ''}; "
+                       "start it with `morph studio --team`")
+        else:
+            line(None, "Teams (preview): no team here (`morph team init --owner <your name>`, then `morph studio --team`)")
+    bad = loads("morph.studio.worlds", "morph.studio.api_world")
+    if bad:
+        line(False, f"World mode (beta): {bad}", fix)
+    else:
+        import mujoco
+        ok = hasattr(mujoco, "mj_geomDistance")
+        line(ok, f"World mode (beta): {'ready' if ok else 'needs MuJoCo 3.1.6 or newer'} (MuJoCo {mujoco.__version__})",
+             "python -m pip install -U mujoco")
 
 
 SUBQ_ROUTES = {"new_robot": "Design a new robot for a task or an object",
@@ -784,12 +1087,20 @@ def main(argv=None) -> int:
     s.add_argument("rev", nargs="?", help="revision that was fabricated")
     s.set_defaults(fn=cmd_time)
 
-    s = sub.add_parser("robot", help="whole-robot projects: new | change | show")
+    s = sub.add_parser("robot", help="whole-robot projects: new | change | show",
+                       description='new "<what it should do>": the New robot brief (questions, then a whole robot); '
+                                   "new NAME: the default arm under that name; change NAME key=value ...; show NAME")
     s.add_argument("action", choices=["new", "change", "show"])
-    s.add_argument("name", nargs="?", default="egg-picker")
+    s.add_argument("name", nargs="?", default="egg-picker",
+                   help='a project name, or for new a request in quotes: "help me sort socks"')
     s.add_argument("changes", nargs="*", help="dotted.key=value (change)")
-    s.add_argument("--need", help="natural-language request applied to the default robot (new)")
+    s.add_argument("--need", help="natural-language request applied to the default robot (new NAME)")
     s.add_argument("--source", help="start from an imported open-source robot in robots/<source>/ (e.g. so101)")
+    s.add_argument("--defaults", action="store_true",
+                   help="new from a request: no questions, Morph's sensible defaults (also without a terminal)")
+    s.add_argument("--nearest", action="store_true",
+                   help="new from a request Morph can't build as asked: build the nearest robot it can")
+    s.add_argument("--name", dest="project_name", help="new from a request: the project's name (default: Morph suggests one)")
     s.add_argument("--from", dest="base")
     s.add_argument("--trials", type=int, default=4)
     s.add_argument("--fast", action="store_true", help="shorter simulations")
@@ -820,6 +1131,23 @@ def main(argv=None) -> int:
     from . import importers
     importers.add_arguments(s)
     s.set_defaults(fn=lambda a: importers.run_cli(a))
+
+    s = sub.add_parser("export", help="a revision as a ZIP (CAD, simulations, electronics and firmware, manufacturing "
+                                      "files, manual and a manifest), or with --full the project's whole design history")
+    s.add_argument("name")
+    s.add_argument("--rev", help="the revision (default: the newest)")
+    s.add_argument("--full", action="store_true", help="every revision's design and results (plus --rev's files)")
+    s.add_argument("-o", "--out", help="the ZIP to write, or a folder (default: <project>-<rev>.zip here)")
+    s.set_defaults(fn=cmd_export)
+
+    s = sub.add_parser("world", help="World mode (beta): simulate a project's robot in a built-in room, or show how it went")
+    s.add_argument("name")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--starter", choices=["desk", "counter", "workbench"], help="save this built-in room and simulate in it")
+    g.add_argument("--off", action="store_true", help="simulate on the plain table again")
+    s.add_argument("--trials", type=int, default=4)
+    s.add_argument("--fast", action="store_true", help="shorter simulations")
+    s.set_defaults(fn=cmd_world)
 
     s = sub.add_parser("subq", help="SubQ Snap: triage one request with your SUBQ_API_KEY and print the answers")
     s.add_argument("text")
