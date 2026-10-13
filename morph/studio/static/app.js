@@ -7,6 +7,9 @@ import {
 import { Presenter } from './present.js';
 import { KeysDialog } from './keys.js';
 
+// Feature modules (static/<feature>.js) export init(studio); each adds one import line above and one entry here.
+const FEATURES = [];
+
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const QS = new URLSearchParams(location.search);
@@ -269,7 +272,7 @@ function applyChanges(changes) {
 function renderProjects() {
   const list = S.projects || [];
   $('#projBtn').classList.toggle('multi', list.length > 1);
-  $('#projMenu').innerHTML = `<div class="mh">Projects</div>` + list.map((p) => `<button type="button" data-p="${esc(p.name)}" class="${p.name === S.project ? 'on' : ''}"><b>${esc(p.name)}</b>${p.source ? `<span class="tag acc">imported · ${esc(p.source)}</span>` : '<span class="tag neutral">generated</span>'}${p.busy ? '<span class="tag warn">building</span>' : ''}${p.need ? `<small>${esc(p.need)}</small>` : ''}</button>`).join('');
+  $('#projList').innerHTML = list.map((p) => `<button type="button" data-p="${esc(p.name)}" class="${p.name === S.project ? 'on' : ''}"><b>${esc(p.name)}</b>${p.source ? `<span class="tag acc">imported · ${esc(p.source)}</span>` : '<span class="tag neutral">generated</span>'}${p.busy ? '<span class="tag warn">building</span>' : ''}${p.need ? `<small>${esc(p.need)}</small>` : ''}</button>`).join('');
   $$('#projMenu button[data-p]').forEach((b) => (b.onclick = () => {
     $('#projMenu').classList.remove('on');
     openProject(b.dataset.p);
@@ -278,6 +281,7 @@ function renderProjects() {
 function setupProjects() {
   $('#projBtn').onclick = (e) => { e.stopPropagation(); $('#projMenu').classList.toggle('on'); };
   document.addEventListener('click', (e) => { if (!e.target.closest('#projMenu')) $('#projMenu').classList.remove('on'); });
+  $('#projActions').addEventListener('click', (e) => { if (e.target.closest('button')) $('#projMenu').classList.remove('on'); });  // a feature's item
 }
 async function refreshProjects() {
   if (!backend?.q) return;
@@ -305,7 +309,12 @@ function reloadProject() {  // one at a time; a request during a reload runs onc
   if (reloading) { reloadAgain = true; return reloading; }
   reloading = (async () => {
     try {
-      do { reloadAgain = false; await loadState(await backend.state(), { fresh: true }); } while (reloadAgain);
+      do {
+        reloadAgain = false;
+        const st = await backend.state();
+        if (backend.name && st.project !== backend.name) { reloadAgain = true; continue; }  // the tab switched meanwhile
+        await loadState(st, { fresh: true });
+      } while (reloadAgain);
     } finally { reloading = null; }
   })();
   return reloading;
@@ -323,7 +332,6 @@ async function loadState(st, { fresh = false } = {}) {
   S.latest = st.current?.rev || null; S.queue = st.queue || [];
   S.integrations = st.integrations || S.integrations;
   S.compute = st.compute || S.compute;
-  if (backend?.setProject && backend.name !== st.project) backend.name = st.project;
   setUrlProject(st.project);
   renderKeysDot();
   renderProjects();
@@ -862,6 +870,7 @@ function onEvent(ev) {
     }
     default: break;
   }
+  emitBus(ev);  // feature modules: studio.on(type, fn)
 }
 
 // ------------------------------------------------------------------ present mode (press-through demo)
@@ -929,6 +938,82 @@ function presentApi() {
   };
 }
 
+// ------------------------------------------------------------------ feature contract (docs/internal/RELEASE_CONTRACTS.md, 4)
+// One object for every feature module's init(studio): state, this tab's project, the API (with ?project= and
+// X-Morph-Client), live events by type, the chat, one shared dialog, and DOM slots to add buttons and panels to.
+const bus = new Map();
+function emitBus(ev) {
+  for (const fn of [...(bus.get(ev.type) || []), ...(bus.get('*') || [])]) {
+    try { fn(ev); } catch (e) { console.error(`[morph] ${ev.type} listener failed`, e); }
+  }
+}
+async function apiCall(method, path, params, body, raw = false) {
+  const url = backend?.q ? backend.q(path, params) : path;
+  const headers = method === 'GET' ? {} : { 'X-Morph-Client': '1' };
+  let data;
+  if (body != null) {
+    data = raw ? body : JSON.stringify(body);
+    headers['Content-Type'] = raw ? (body.type || 'application/octet-stream') : 'application/json';
+  }
+  const r = await fetch(url, { method, headers, body: data, cache: 'no-store' });
+  const json = (r.headers.get('Content-Type') || '').includes('application/json');
+  const out = json ? await r.json().catch(() => null) : await r.text().catch(() => '');
+  if (!r.ok) throw Object.assign(new Error((json && out?.error) || `${r.status} ${path}`), { status: r.status, body: out });
+  return out;
+}
+let modalEl = null, modalClose = null;
+const modal = {
+  open(content, { wide = false, onClose = null } = {}) {  // one dialog at a time, styled like the Keys dialog
+    if (!modalEl) {
+      modalEl = h('div', 'modal');
+      modalEl.id = 'featModal';
+      modalEl.addEventListener('click', (e) => { if (e.target === modalEl) modal.close(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modalEl.classList.contains('on')) modal.close(); });
+      document.body.appendChild(modalEl);
+    }
+    modalClose?.();
+    const dlg = h('div', `glass dlg${wide ? ' wide' : ''}`);
+    dlg.setAttribute('role', 'dialog');
+    if (typeof content === 'string') dlg.innerHTML = content; else dlg.appendChild(content);
+    modalEl.replaceChildren(dlg);
+    modalEl.classList.add('on');
+    modalClose = onClose;
+    return dlg;
+  },
+  close() {
+    if (!modalEl?.classList.contains('on')) return;
+    modalEl.classList.remove('on');
+    modalEl.replaceChildren();
+    const fn = modalClose;
+    modalClose = null;
+    fn?.();
+  },
+};
+const studio = {
+  S,
+  project: () => S.project,
+  api: {
+    get: (path, params) => apiCall('GET', path, params),
+    post: (path, body) => apiCall('POST', path, null, body ?? {}),
+    put: (path, blob, params) => apiCall('PUT', path, params, blob, true),
+    del: (path, params) => apiCall('DELETE', path, params),
+  },
+  on(type, fn) {
+    if (!bus.has(type)) bus.set(type, new Set());
+    bus.get(type).add(fn);
+    return () => bus.get(type)?.delete(fn);
+  },
+  toast, addMsg, esc, I, modal,
+  openProject: (name) => openProject(name),
+  reload: () => reloadProject(),
+  mount: {},
+};
+async function initFeatures() {
+  for (const f of FEATURES) {
+    try { await f.init?.(studio); } catch (e) { console.error('[morph] a feature failed to start', e); }
+  }
+}
+
 // ------------------------------------------------------------------ boot
 async function boot() {
   document.body.style.opacity = '1';
@@ -948,6 +1033,10 @@ async function boot() {
     mfg: new MfgPanel(views.mfg, ctx), asm: new AsmPanel(views.asm, ctx), bom: new BomPanel(views.bom, ctx),
   };
   viewer.onState = () => panels.robot.sync();
+  const viewerTools = h('div', 'feat-slot');
+  viewerTools.id = 'viewerTools';
+  panels.robot.tb.appendChild(viewerTools);
+  studio.mount = { header: $('#featHeader'), projMenu: $('#projActions'), chatTools: $('#chatTools'), inspectorTabs: $('#inspTabs'), viewerTools };
   $$('#tabs .tab').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
   $('#tabsInfo').addEventListener('click', (e) => { const b = e.target.closest('[data-export]'); if (b) exportRev(b.dataset.export); });
   document.addEventListener('keydown', (e) => {
@@ -980,6 +1069,7 @@ async function boot() {
       backend.name = '';
       st = await backend.state();
     }
+    if (backend.setProject) backend.name = st.project;
     await loadState(st);
     backend.connect(onEvent, (k) => setConn(k));
     if (FIXTURE) setConn('fixture');
@@ -991,7 +1081,8 @@ async function boot() {
     setConn('off', 'Offline');
     $('#insp').innerHTML = `<div class="empty"><div><div class="ill">${I('alert', 'lg')}</div><h4>Can't reach the Studio server</h4><p>Start it with <span class="mono">python -m morph.cli studio &lt;project&gt;</span>, or open <span class="mono">?fixture=1</span> for the offline demo data.</p></div></div>`;
   }
+  await initFeatures();
 }
 
-window.morph = { show, showTab, state: S, get viewer() { return viewer; }, get panels() { return panels; }, get presenter() { return presenter; }, onEvent, sendChat };
+window.morph = { show, showTab, state: S, studio, get viewer() { return viewer; }, get panels() { return panels; }, get presenter() { return presenter; }, onEvent, sendChat };
 boot();

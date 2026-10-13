@@ -1190,11 +1190,18 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
         pass
 
 
+FEATURE_ERRORS = {}  # feature module -> why it didn't load (its routes are off; the rest of the Studio works)
+
+
 def _load_feature_routes():
     """Feature modules (morph/studio/api_<feature>.py) register their routes when imported."""
     for m in sorted(pkgutil.iter_modules([os.path.dirname(__file__)]), key=lambda m: m.name):
         if m.name.startswith("api_"):
-            importlib.import_module(f"{__package__}.{m.name}")
+            try:
+                importlib.import_module(f"{__package__}.{m.name}")
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                FEATURE_ERRORS[m.name] = f"{exc.__class__.__name__}: {exc}"
 
 
 _load_feature_routes()

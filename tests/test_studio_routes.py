@@ -159,6 +159,10 @@ def test_changes_need_the_client_header(api):
         code, out = call(method, "/api/test-echo", {"a": 1}, client=False)
         assert code == 403 and "X-Morph-Client" in out["error"]
     assert [s for s in SEEN if s[0] != "echo"] == []
+    for path, body in (("/api/reset", {}), ("/api/keys", {"values": {"ANTHROPIC_API_KEY": "sk-ant-x"}}),
+                       ("/api/chat", {"message": "hi"}), ("/api/settings", {"values": {"network_enabled": False}})):
+        assert call("POST", path, body, client=False)[0] == 403, path
+    assert "ANTHROPIC_API_KEY" not in os.environ
     assert call("GET", "/api/test-echo")[0] == 200                    # reads don't need it
     assert call("POST", "/api/test-echo", {"a": 1}, headers={"Origin": "http://evil.example"})[0] == 403
 
@@ -184,6 +188,10 @@ def test_role_hook_sees_every_routed_request(api):
     assert [s for s in SEEN if s[0] == "post"] == []                  # refused before the handler ran
     routes.set_role_hook(None)
     assert call("POST", "/api/test-echo", {"a": 1})[0] == 201
+
+
+def test_every_feature_module_loaded():
+    assert server.FEATURE_ERRORS == {}
 
 
 def test_core_routes_carry_their_roles():

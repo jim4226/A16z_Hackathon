@@ -36,11 +36,12 @@
     </div>
     <div class="crumb"><span class="sep">/</span>
       <div class="projwrap"><button class="proj" id="projBtn" type="button" title="Project"><i></i><span id="project">loading…</span><svg class="i sm chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
-        <div class="menu glass" id="projMenu"></div></div></div>
+        <div class="menu glass" id="projMenu"><div class="mh">Projects</div><div id="projList"></div><div class="feat-slot" id="projActions"></div></div></div></div>
     <div id="revs" class="revs"></div>
     <div class="grow"></div>
     <div id="tourPill" class="tourpill"></div>
     <div id="badges" class="badges"></div>
+    <div class="feat-slot" id="featHeader"></div>
     <button class="btn keysbtn" id="keysBtn" type="button" title="API keys for Claude, Keewano and SubQ (optional)"><svg class="i sm" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M16 7l3 3M13.5 9.5l2 2"/></svg>Keys<i class="kdot"></i></button>
     <button class="btn presbtn" id="presentBtn" type="button" title="Press-through demo: each → runs the next step (P)"><svg class="i sm" viewBox="0 0 24 24"><path d="M3 4h18v12H3z"/><path d="M8 20h8M12 16v4"/><path d="M10 7.5v5l4-2.5z"/></svg>Present</button>
     <label class="tourctl" title="After each change, walk through the views that were regenerated">
@@ -56,6 +57,7 @@
         <div id="messages"></div>
         <div id="suggest"></div>
         <form id="form" autocomplete="off">
+          <div class="feat-slot" id="chatTools"></div>
           <textarea id="input" rows="1" placeholder="Ask for a change…"></textarea>
           <button id="send" type="submit" title="Send (Enter)"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
         </form>
@@ -97,7 +99,7 @@
       </div>
     </section>
 
-    <aside id="inspector"><div class="in" id="insp"></div></aside>
+    <aside id="inspector"><div class="feat-slot" id="inspTabs"></div><div class="in" id="insp"></div></aside>
   </main>
 </div>
 <div id="viewerHost"></div>

@@ -795,3 +795,13 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .msg .qacts { display: flex; gap: 6px; margin-top: 7px; }
 .msg .qacts .btn { height: 26px; padding: 0 10px; font-size: 12px; }
 #projMenu .tag.warn { margin-left: 4px; }
+
+/* ---- feature slots: hidden until a feature adds something to them ---- */
+.feat-slot { display: none; }
+#featHeader:not(:empty) { display: flex; align-items: center; gap: 6px; }
+#projActions:not(:empty) { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; padding-top: 4px; border-top: 1px solid var(--line2); }
+#chatTools:not(:empty) { display: flex; align-items: center; gap: 2px; align-self: center; margin-left: -5px; }
+#inspTabs:not(:empty) { position: sticky; top: 0; z-index: 2; display: flex; gap: 4px; padding: 8px 14px 0; background: var(--bg1); }
+#viewerTools:not(:empty) { display: flex; align-items: center; gap: 3px; }
+#viewerTools:not(:empty)::before { content: ""; width: 1px; height: 18px; background: var(--line3); margin: 0 4px; }
+.modal .dlg.wide { width: min(980px, calc(100vw - 32px)); }
