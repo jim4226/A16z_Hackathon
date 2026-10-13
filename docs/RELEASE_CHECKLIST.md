@@ -12,6 +12,8 @@ line. A release ships only when every line is ticked or has a written reason in 
 - [ ] `python tools/check_constraints.py --extras` passes. If `constraints.txt` changed, the CI matrix ran on the new
       pins.
 - [ ] `python -m pytest -q` passes locally with no keys set and the network off.
+- [ ] `MORPH_E2E=1 python -m pytest tests/e2e` passes: the end-to-end browser tests
+      ([INSTALL](INSTALL.md#for-developers) says what they need).
 - [ ] [PRIVACY.md](PRIVACY.md) lists every network call the release makes. Check against the code: `urlopen`,
       `anthropic`, `subq` and `requests` calls, and any new service in Keys.
 - [ ] [SECURITY.md](../SECURITY.md) still describes what the release protects, and

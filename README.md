@@ -147,7 +147,9 @@ and Claude reads it and your answers; without them, built-in rules do both, and 
 **Import** (top right, or the project menu) brings in what you already have: a robot as a folder or zip of URDF,
 xacro or MuJoCo XML files, or a GitHub or Hugging Face link, built as a new project; the object the gripper should
 hold, as an STL, OBJ or GLB mesh; a parts list; a KiCad board; or a Morph export. You can also drop the files
-anywhere on the page. Morph asks only what the files can't tell, usually which motors drive the joints.
+anywhere on the page. Morph asks only what the files can't tell, usually which motors drive the joints (pick one
+motor family and Morph sizes every joint for its worst pose, on one supply voltage), and says why when an imported
+robot builds but doesn't pass its own checks.
 
 ```bash
 morph import robots/my-arm --family smart_bus                      # a folder, a zip, a URDF or a link
@@ -170,7 +172,9 @@ whether it found one).
 
 One Studio, shared by a team ("GitHub for physical things"): teammates sign in from their own browsers with an
 invite link, comment on revisions, propose changes that go to the people who own the stages they touch, approve them
-per discipline and release revisions for building. It runs on the owner's computer, with no Morph server or account.
+per discipline and release revisions for building. A change request shows what it would change in numbers before
+anything builds (torque margins, servos, wiring and firmware, cost), and above prototype nobody approves their own
+work. It runs on the owner's computer, with no Morph server or account.
 
 ```bash
 morph team init --owner "Jim" --name "R Cubed"   # once

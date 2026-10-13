@@ -189,7 +189,9 @@ A job applies its changes to the newest revision when its turn comes. If one of 
   - `project {project, reset: true}`: Reset demo changed this project; tabs on it reload
   - `import {id, stage, status, text}`; while a new project from an import builds, the importing tab's room also
     gets `import {id, stage: "build", status: "progress", node, node_status, built_project}` per stage, then
-    `status: "done"` (with `rev`) or `"error"` (a page shows only its own project's pipeline events)
+    `status: "done"` (with `rev`) or `"error"` (a page shows only its own project's pipeline events). Since E1 `"done"`
+    carries the build's verdict: `feasible`, `issues` (at most 4, each at most 240 characters), `pick_place` and, on the
+    relayed path, `stages` (node → status), so a robot that built but isn't feasible never reads as ready
   - `video {id, stage, status, text, result?}`
   - `queue {jobs:[{id, by, status, position, kind, label, base_rev, rev?, conflict?}]}`: the running job
     (position 0), the waiting ones (1, 2, ...) and, once, a job that just ended (position null) with its
@@ -605,3 +607,53 @@ The five feature branches are merged into the release branch and live in the Stu
   `<project>/world/world.json` inside the project. A fork copies `world/`. MuJoCo 3.1.6 is the floor in
   `pyproject.toml` and `requirements.txt` (`mj_geomDistance`). `morph/studio/worlds.py` is not in the pipeline hash:
   a world's content is pinned by `world.sha` in the design.
+
+## 14. End-to-end hardening (E1 New robot, Import and video; E2 Teams; E3 World mode; merged in I3)
+
+Three engineers drove the features end to end in a real Studio and merged their fixes; E2's Teams contract changes are
+in sections 3, 4 and 8. The rest that other code relies on:
+
+- **Electronics (pipeline code):** `electronics2.plan()` adds an issue for every servo whose shared rail runs below 70 %
+  of its rated voltage (`_underpowered`: a 12 V STS3215 beside 7.4 V ones runs at 6 V, about half its torque).
+  `electronics.MCUS` has `esp32_s3_devkit`, the Parameters panel's ESP32-S3 DevKit (its gripper stage raised KeyError).
+- **Import:** a motor family is sized within one voltage group (`autoprofile.FAMILY_GROUPS`: the 7.4 V STS3215 while it
+  holds every joint, else the 12 V one; XL330s never with XL430/XM430), on the masses the build sizes with (motor meshes
+  are bought parts), and the dialog offers the families for every robot. `mesh_object.handling(name, shape, width)`
+  gives an object mesh its preset's friction and damage force (else robust, 0 N) and, when fragile or narrower than
+  `capability.min_width(shape, "none")`, the force-sensing finger (`FSR_FINGER`). `GET /api/import/<id>` (the session's
+  state, with `fetch {status, error}`) settles a link whose download ended before the page knew its id. An archive with
+  nothing usable left says what was skipped; a link without `https://` to an allowed host gets it added.
+- **Show Morph the job:** `GET /api/video/info` adds `offline` (network lookups off, so no Claude: the cards say which).
+  `vision.map_to_changes` adds the force-sensing finger for a new object that is fragile or narrow (`_map_finger`;
+  `finger.sensor`, `finger.width_mm`, `finger.material` and `fab.process` are in `vision.KEYS` only as that finger needs
+  them). Review waits for the last card edit, and so does the hand-off to New robot.
+- **New robot and chat:** typed answers keep the object being discussed (`brief._typed_answer`); `LAYOUTS` has the
+  typed-only `left_to_right`; an archetype's `place` ("plant", "feeding spot") replaces the bin in its layout's words.
+  Without Claude, `intent.cost_down` steps "cheaper" down the cost ladder only while the arm still lifts the object at
+  2x margin (`capability.payload_g`), "faster"/"slower" scale the cycle time within `capability.CYCLE_S`, and a
+  `said` entry starting with `intent.NOTE` reports a change that is already there instead of making one.
+  `agents.after_build(no_source=)` says why sourcing was skipped.
+- **World mode:** `GET /api/world` adds `ai {claude, subq}` (which reviewers would answer now) and, for the newest
+  simulation, `failure`, `min_clearance_at`, `arc` and `detours`; `asset_url` carries the scan's hash (`&v=`).
+  `POST /api/world/inspect` with `ai` but no Claude answers the measured review with `review.skipped` and an `agent`
+  event (`reviewer`, `skipped`); nothing is rendered or sent. `normalize_review` drops findings outside the schema's
+  enums and mount moves off the surface. `worlds.load_pinned` returns None for a pinned hash with no saved copy unless
+  `world.json` is that room, so the simulation stage fails instead of running another room. The simulation (world
+  mode only) sends the approach and the return to rest along the carry arc when the straight move would come within
+  10 mm of a box, and reports `detours` and `arc.usual`; every no-world simulation is unchanged.
+- **World ids elsewhere:** `collab.validate_changes` refuses `world.id`/`world.sha` values that aren't an id or a hash
+  (`security.DESIGN_TEXT`); `importers.project_zip.plan` turns world mode off, with a warning, for an export that names
+  a room (exports don't carry `world/`).
+- **Readable names (I3):** `morph/studio/labels.py` (`VALUES`, `show_value`, `show_key`, `describe`) names design keys
+  and values as the Parameters panel does. Parameter edits read "Parameter edit: Build → Pilot." (chat) and
+  "edit: Build → Pilot" (the revision label); Teams' change request titles and diffs use the same helpers
+  (`collab` re-exports them).
+- **End-to-end tests:** `tests/e2e/` holds browser tests that start real `morph studio` subprocesses (offline, no keys,
+  full simulations) and drive Chromium through Playwright: New robot, Import and Show Morph the job (`live_studio.py`
+  is their helper, a module rather than a conftest), the Teams flagship workflow with three people, and World mode.
+  They are skipped unless `MORPH_E2E=1`. `MORPH_E2E_SHOTS=<dir>` saves screenshots; `MORPH_E2E_PORTS=lo-hi` picks the
+  ports of the New robot, Import, video and World mode Studios (Teams always takes free ones); `MORPH_E2E_DEMO=<dir>`
+  and `MORPH_E2E_WORLD_HOME=<dir>` keep the built demo robots between runs; `MORPH_E2E_WEBGL=1` turns WebGL on for the
+  New robot, Import and video browsers and the Teams owner's (World mode always has it, through SwiftShader); and
+  `PLAYWRIGHT_CHROMIUM` names the browser. A page fails on script or console errors, requests to
+  other sites or sideways scrolling; a Studio fails on any traceback.

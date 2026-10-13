@@ -99,6 +99,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   site-packages. Running from the git folder is unchanged.
 - CI on Windows, macOS and Linux with Python 3.10 to 3.14, a lint job, and a check that the installed wheel builds
   both demo robots.
+- End-to-end browser tests (`MORPH_E2E=1 python -m pytest tests/e2e`) start a real Studio, offline and without keys,
+  and drive Chromium through New robot, Import, Show Morph the job, a three-person Teams change request and World mode
+  with full simulations; [INSTALL](docs/INSTALL.md#for-developers) says how to run them.
 - New docs: [INSTALL](docs/INSTALL.md), [PRIVACY](docs/PRIVACY.md), [SECURITY](SECURITY.md),
   [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md), a [release checklist](docs/RELEASE_CHECKLIST.md), and one page each
   for [Teams](docs/TEAMS.md), [Import](docs/IMPORT.md) and [World mode](docs/WORLD.md). Internal planning docs moved
@@ -210,6 +213,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   lookups are off or there is no Claude key.
 - New robot: with Darwin lookups off, the sourcing step says so after a build.
 - The project menu scrolls when there are many projects and refreshes its "building" tags each time it opens.
+- World mode: a full simulation's return to rest no longer sweeps through the box the carry path just avoided (the run
+  failed at its end). The line under the room's name names the closest box, points out passes under 10 mm and says the
+  carry path changed only when it did (every room said it was "pulled in 12%"); walking starts on the room's own floor
+  with the robot in sight (it started behind the kitchen scan's back wall), keys held when the window loses focus are
+  let go, World off gives the camera back its usual range, and a new scan is never the cached old one.
+- Parameter edits read the way the Parameters panel names them, in the chat and the revision list: "Parameter edit:
+  Build → Pilot." instead of "config → pilot".
 - `morph studio --team --remote` prints the network address teammates use, and the owner's sign-in link starts with
   it; Share warns when the page that makes an invite was opened at an address only this computer can reach.
 - World mode's panel no longer covers the robot's stat chips.

@@ -107,3 +107,15 @@ Python; `python tools/check_constraints.py --extras` checks that all of them ins
 and Linux. `python -m build` makes a wheel that carries the robots, the Darwin cache and the licences;
 `python -I tools/package_smoke.py`, run with the Python the wheel is installed into, checks it. CI runs all of this:
 [.github/workflows/ci.yml](../.github/workflows/ci.yml).
+
+The end-to-end browser tests in `tests/e2e/` are skipped unless you ask for them. They start a real Studio (offline,
+no keys, full simulations) and drive Chromium through New robot, Import, Show Morph the job, a three-person Teams change
+request and World mode, so they take about 20 minutes on 4 cores and need Playwright and, for the video test, ffmpeg:
+
+```bash
+python -m pip install playwright && python -m playwright install chromium
+MORPH_E2E=1 python -m pytest tests/e2e -v
+```
+
+`MORPH_E2E_SHOTS=<folder>` keeps screenshots of every step, and `MORPH_E2E_DEMO=<folder>` (New robot, Import and video)
+and `MORPH_E2E_WORLD_HOME=<folder>` (World mode) keep the demo robots they build between runs.
