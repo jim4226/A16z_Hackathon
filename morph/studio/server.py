@@ -696,6 +696,7 @@ DRAIN_MAX = 8 << 20  # a refused body up to this size is read and dropped, so th
 HEADER_TIMEOUT = 20.0
 MAX_CONNECTIONS = 64
 MAX_STREAMS = 48
+LINGER = 2.0  # seconds a client turned away at the cap has to finish sending before its socket is closed
 BUSY = (b'{"ok": false, "error": "The Studio is answering as many connections as it can. Try again in a few seconds."}')
 
 
@@ -1441,6 +1442,7 @@ class _Server(ThreadingHTTPServer):
 
     def __init__(self, *args, **kwargs):
         self.slots, self.connections, self.streams = threading.Lock(), 0, 0
+        self.turned_away, self.closer = queue.SimpleQueue(), None
         super().__init__(*args, **kwargs)
 
     def process_request(self, request, client_address):
@@ -1478,17 +1480,52 @@ class _Server(ThreadingHTTPServer):
             self.streams -= 1
 
     def _busy(self, request):
+        """The 503, sent before the client has necessarily said anything. Its request may still be on the way, and
+        closing a socket that then receives data resets the connection (Windows throws away an answer the client
+        hasn't read yet), so the socket goes to the closer thread, which reads what the client sends until it
+        closes or LINGER seconds pass. The accept loop never waits on a turned-away client."""
         try:
             request.settimeout(0.5)
             request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n"
                             b"X-Content-Type-Options: nosniff\r\nRetry-After: 5\r\nConnection: close\r\n"
                             b"Content-Length: %d\r\n\r\n%s" % (len(BUSY), BUSY))
+            request.shutdown(socket.SHUT_WR)
             request.setblocking(False)
-            while request.recv(65536):  # what the client already sent, so closing doesn't reset the answer away
-                pass
         except OSError:
-            pass
-        self.shutdown_request(request)
+            return self.shutdown_request(request)
+        with self.slots:
+            if self.closer is None:
+                self.closer = threading.Thread(target=self._linger, name="morph-closer", daemon=True)
+                self.closer.start()
+        self.turned_away.put((request, time.monotonic() + LINGER))
+
+    def _linger(self):
+        sel, due = selectors.DefaultSelector(), {}
+        while True:
+            try:
+                while True:  # wait for a socket only while none lingers
+                    s, until = self.turned_away.get(block=not due)
+                    try:
+                        if len(due) >= self.max_connections:  # a flood: no room to wait for this one
+                            raise ValueError
+                        sel.register(s, selectors.EVENT_READ)
+                        due[s] = until
+                    except (ValueError, OSError):
+                        self.close_request(s)
+            except queue.Empty:
+                pass
+            for key, _ in sel.select(timeout=0.05):
+                try:
+                    if key.fileobj.recv(65536):
+                        continue
+                except OSError:
+                    pass
+                due[key.fileobj] = 0  # the client closed (or the connection broke): nothing left to wait for
+            now = time.monotonic()
+            for s in [s for s, until in due.items() if until <= now]:
+                sel.unregister(s)
+                del due[s]
+                self.close_request(s)
 
     def handle_error(self, request, client_address):
         # a browser tab closing mid-response is normal; don't print a traceback for it

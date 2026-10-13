@@ -139,3 +139,26 @@ def test_connections_past_the_cap_get_503_at_once(live):
     for s in streams:
         s.close()
     assert wait_for(lambda: httpd.streams == 0 and httpd.connections == 0, timeout=5)   # closed tabs free their slots
+
+
+def test_a_client_turned_away_at_the_cap_reads_its_whole_503(live):
+    """Past the cap the Studio answers before the client has sent anything. If the request then reached a socket the
+    Studio had already closed, the connection would be reset, and Windows throws away a 503 the client hasn't read yet.
+    So the Studio keeps reading what a turned-away client sends for a moment before it closes."""
+    studio, httpd, port, connect = live
+    held = [connect() for _ in range(4)]                  # every slot taken by connections that haven't asked yet
+    assert wait_for(lambda: httpd.connections == 4)
+    late = connect()
+    time.sleep(0.3)                                       # the 503 is on its way before the client says anything
+    late.sendall(f"GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n".encode())
+    time.sleep(0.2)                                       # and the request reaches the Studio before the client reads
+    got = b""
+    while True:
+        data = late.recv(4096)                            # a reset raises here (ConnectionResetError, WinError 10053)
+        if not data:
+            break
+        got += data
+    assert got.startswith(b"HTTP/1.0 503") and got.endswith(server.BUSY)
+    assert late.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0   # no reset arrived (Linux reads past one)
+    for s in held:
+        s.close()
