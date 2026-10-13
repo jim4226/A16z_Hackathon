@@ -196,6 +196,9 @@ A job applies its changes to the newest revision when its turn comes. If one of 
     final status: done, noop, error, conflict, cancelled, dropped or resolved
   - `presence {members}`
   - `comment`, `proposal`, `review`, `activity`, `inbox` (addressed to one member only)
+  - `signed_out {reason: "removed" | "signed_out"}` (E2): the last event of a member's stream once the owner removed them
+    or they signed out everywhere (the stream checks its member every 2 s, `api_team.StreamCheck`); the page then opens
+    the sign-in page, which tells that browser why
   - `world {stage, status, text, result?}`
 - Agent roles for `agent` events: `triage` (SubQ), `designer` (Claude), `feasibility` (code),
   `pipeline`, `sourcing` (Darwin), `memory` (Keewano), `vision` (Claude/SubQ on frames), `reviewer`.
@@ -250,8 +253,9 @@ studio = {
   `window` event `morph:video-open {files}` when its button is there; every other drop goes to Import. At 1280 px or
   narrower the inspector is an overlay opened by `#inspBtn` (`body.insp-open`; Escape closes it); Teams' `show(tab)`
   opens it. Teams hides the other features' entry points for a viewer (`body.tm-readonly`: `#suggest`, `.nr-headbtn`,
-  `.nr-menubtn`, `#importBtn`, `.imp-menu`, `.vj-btn`, `#viewerTools`) and disables the chat box, Send and Apply, so
-  those class names are part of this contract.
+  `.nr-menubtn`, `#importBtn`, `.imp-menu`, `.vj-btn`, `#viewerTools`, and since E2 `#presentBtn` and `#paramsBar`, with
+  `#paramsBody` read-only) and disables the chat box, Send and Apply, so those class names are part of this contract. It
+  hides `#keysBtn` from every member who isn't an owner (`body.tm-nokeys`): keys and settings are owner-only routes.
 
 ## 5. SubQ client (`morph/studio/subq.py`)
 
@@ -404,6 +408,11 @@ members; a member can hold several.
 | production | every affected discipline's owner plus the owner |
 
 **Approvals are per discipline and tied to the exact revision.**
+- Above prototype nobody approves, or requests changes on, work they made (E2; GitHub's rule for pull requests):
+  `collab.decision_scope(root, review, member)` gives `{covers, authored, why}`, where a revision's work is judged per
+  discipline (whoever made the revisions that computed its stages) and a change request's by its author. `decide()`
+  refuses with `why` (403), and `GET /api/reviews` and `/api/proposals` give each member their own `mine`, so the page
+  shows the same buttons and reasons.
 - An approval records `{rev, design_sha256, discipline, stage_artifact_hashes}`.
 - On a later revision, a discipline's approval carries forward only if every stage that discipline owns
   was reused unchanged (provenance "reused from rNNN"). Otherwise it is stale and that discipline must
@@ -411,7 +420,12 @@ members; a member can hold several.
 
 **Flagship acceptance workflow** (the release demo, and an end-to-end test):
 1. An editor proposes a servo substitution.
-2. The proposal previews what it affects: geometry, torques, wiring, firmware and BOM.
+2. The proposal previews what it affects: geometry, torques, wiring, firmware and BOM. Since E2 in numbers:
+   `teams/impact.py` runs the fast stages (sizing, the brief's preflight checks, `electronics2.plan`) on the changed
+   design and compares them with the base revision's results (torque margins per joint, servos, protocol, controller,
+   supply, connectors, firmware library, servo bodies and links, grip force, the purchased parts priced as the
+   electronics stage prices them, issues added or cleared); `preview()` returns it as `impact` and a change request
+   keeps it, every row labelled an estimate. An applied request also reports what its revision built (`built`).
 3. Review is routed to the owning disciplines: mechanical, electronics, manufacturing, sourcing; a
    generalist covers any discipline with no specialist.
 4. Approvals are recorded against the exact revision, and the approved revision is exported.

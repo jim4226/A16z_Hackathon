@@ -81,15 +81,25 @@ reviewer.
 ## Change requests, reviews and releases
 
 1. Anyone who may propose opens **Changes**, *Propose a change*: parameter values, or a stage to look at. *Preview*
-   lists every stage the change recomputes and who must review it (for example, a servo swap touches nearly every
-   stage). A discipline's specialists are asked first; the author is never asked to review their own request, so
-   when they are the only specialist the generalists are asked instead, and the team owners when there are none.
+   says what the change does before anything builds, in numbers: the torque margin of each joint, the servos, the bus
+   protocol, controller and supply, the connectors and firmware library, the geometry the CAD is rebuilt around, the
+   grip force, the purchased parts' cost and the issues it would add or clear (a Dynamixel servo on a Feetech bus, for
+   example). These are estimates from the pipeline's fast stages (sizing, the gripper checks, the electronics plan) and
+   catalog prices; the build decides. The preview also lists every stage the change recomputes and who must review it
+   (a servo swap touches nearly every stage). A discipline's specialists are asked first; the author is never asked to
+   review their own request, so when they are the only specialist the generalists are asked instead, and the team
+   owners when there are none. The change request keeps its preview for its reviewers, and once built it shows what
+   the build measured.
 2. The owners of those disciplines get it in their inbox. *Approve as Electronics and Manufacturing* records one
-   approval per discipline for that exact revision; *Request changes* sends it back with a note.
+   approval per discipline for that exact revision; *Request changes* sends it back with a note. Above prototype nobody
+   approves (or asks for changes on) work they made: the page says who can approve it instead.
 3. An editor *Apply*s it: the room's queue builds it like any edit, built by the editor and credited to the author.
-4. **Review** shows the release gate of the revision on screen. A later edit keeps an approval only if every stage of
-   that discipline was reused unchanged; otherwise that discipline must approve again (GitHub's "dismiss stale
-   reviews", scoped to the work it touched).
+4. **Review** shows the release gate of the revision on screen: which disciplines are approved, by whom, and who can
+   approve the rest. A later edit keeps an approval only if every stage of that discipline was reused unchanged;
+   otherwise that discipline must approve again (GitHub's "dismiss stale reviews", scoped to the work it touched).
+   Switching the electronics to a custom PCB, for example, reruns everything from the electronics plan on but not
+   sizing, the gripper or the simulation, so Simulation's approval carries forward and the other disciplines approve
+   again. A wrist camera rides on the hand, so it re-sizes the joints and every discipline approves again.
 
 | Build level (`build.config`) | A release needs |
 |---|---|
@@ -113,10 +123,11 @@ open and what they're looking at.
   browsers and the Studio. Use it on a network you trust, over a VPN such as Tailscale, or through an SSH tunnel
   (`ssh -L 8765:127.0.0.1:8765 you@server` on each laptop, with the Studio started without `--remote`).
 - **Links and sessions.** Invite codes (128-bit) and script tokens are stored hashed. Invites work once for 7 days;
-  sign-in links once for 15 minutes. Sessions are signed cookies valid for 30 days; revoking a member signs them out
-  everywhere. An address that sends 10 wrong codes within 10 minutes is refused until the oldest of them is 10 minutes
-  old (behind a tunnel everyone shares one address, so a script with a wrong token can hold up new sign-ins for up to
-  10 minutes; existing sessions are unaffected).
+  sign-in links once for 15 minutes. Sessions are signed cookies valid for 30 days; removing a member (Share, *Remove*,
+  or `morph team revoke`) signs them out everywhere, and their open pages stop within seconds and say why. An address
+  that sends 10 wrong codes within 10 minutes is refused until the oldest of them is 10 minutes old (behind a tunnel
+  everyone shares one address, so a script with a wrong token can hold up new sign-ins for up to 10 minutes; existing
+  sessions are unaffected).
 - **What is logged.** The audit log (`projects/.team/audit.jsonl`, hash-chained) records sign-ins with IP addresses,
   invites, role changes, API key and settings changes (names only, never values), exports, imports (with their links),
   Reset demo and deleted projects.

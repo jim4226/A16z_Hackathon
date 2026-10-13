@@ -43,11 +43,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - **Morph Teams** (preview, "GitHub for physical things"): `morph team init --owner <name>`, then `morph studio
   --team`. Invite teammates with a single-use link and a role (owner, editor, viewer) plus disciplines; comment on
   revisions, stages, BOM lines and parameters; change requests are routed to the owners of the stages they touch, and
-  a generalist covers any discipline with no specialist; reviews are tied to the exact revision, and an approval goes
-  stale only when a later edit recomputes that discipline's stages; releases are gated by build level; branches,
-  an activity feed, an inbox, and a hash-chained audit log (`morph team audit --verify`). Team data stays on the
-  Studio computer. Links travel as plain HTTP unless the Studio is behind HTTPS (use a tunnel or VPN), and an
-  approval doesn't certify that a robot is safe.
+  a generalist covers any discipline with no specialist; a change request's preview says what it does in numbers
+  before anything builds (torque margins joint by joint, the servos, bus protocol, controller and supply, connectors
+  and firmware library, geometry, grip force, the purchased parts' cost and the issues it adds or clears, estimated
+  from the pipeline's fast stages); above prototype nobody approves their own work, and the page says who can instead;
+  reviews are tied to the exact revision, and an approval goes stale only when a later edit recomputes that
+  discipline's stages; releases are gated by build level; branches, an activity feed, an inbox, and a hash-chained
+  audit log (`morph team audit --verify`). Team data stays on the Studio computer. Links travel as plain HTTP unless
+  the Studio is behind HTTPS (use a tunnel or VPN), and an approval doesn't certify that a robot is safe.
 - **World mode** (beta): put the robot in a room (a built-in desk, kitchen counter or workbench, or your own .glb room
   scan with a two-point scale), place it by clicking a surface, walk through the room, and simulate pick and place
   against grey obstacle boxes with a carry path that keeps clear of them. Editing the room reruns only the
@@ -167,6 +170,18 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   panel updates when you leave the field. In a team Studio an export carries the team's record (`team.json`): the
   approvals, release gate and releases of that revision, or the project's whole team history, with names instead of
   member ids.
+- Teams: the author of a change could approve it above prototype; the approval was recorded and shown ("You approved")
+  but the release gate ignored it. Above prototype nobody approves or asks for changes on their own work now, and the
+  page says who can approve instead. Removing a member (or their "sign out everywhere") ends their open pages within
+  seconds: an open tab used to keep receiving the project's live updates; it now stops and shows why it was signed
+  out. The record of an applied change request names who applied it (`applied_by` in `team.json`), inbox items name
+  change requests by number and title, a viewer is told how to propose a change instead of "ask an owner", and the
+  Share dialog lists a new invite at once (with "expires in 7 days"; it said "expires just now") and keeps what the
+  owner is typing when a teammate joins. The right panel scrolls to its end at 1280x720 (a change request's Apply
+  button was out of reach), Keys is hidden from members who aren't owners, and switching to a new revision no longer
+  shows the previous one's comments under its name for a moment.
+- Robots with Controller = ESP32-S3 DevKit build their gripper stage (it stopped with KeyError 'esp32_s3_devkit'), and
+  the quick checks of New robot and of a change request's preview run for them.
 - Show Morph the job: cards you fill in yourself (no key, or kept on this computer) are described as yours, not as
   "seen in the video".
 - `morph studio --team --remote` prints the network address teammates use, and the owner's sign-in link starts with
