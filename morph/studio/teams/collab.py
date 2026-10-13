@@ -22,6 +22,7 @@ import unicodedata
 
 from ...robot.pipeline2 import ORDER, PARAMS, RobotProject
 from ...spec import Design, diff
+from ..labels import VALUES, show_key, show_value  # noqa: F401  (people's names for keys and values)
 from . import audit
 from .disciplines import (DISCIPLINES, LABELS, LEVELS, STAGE_TITLES, STAGES, affected_stages, disciplines_for_stages, eligible,
                           route_discipline)
@@ -39,32 +40,7 @@ MENTION_RX = re.compile(r"(?<![\w@])@([\w.-]{1,40})", re.UNICODE)
 ORDER_FILES = ("mfg/*.zip", "mfg/*/gerbers.zip", "mfg/*/jlc_*.csv", "electronics/board/gerbers/*", "electronics/board/jlc_*.csv")
 MAX_BODY, MAX_TITLE, MAX_CHANGES = 4000, 120, 40
 _PARAMS = {k: (label, typ, extra) for k, label, _, typ, extra in PARAMS}
-_GROUPS = {k: group for k, _, group, _, _ in PARAMS}
 _DEFAULTS = Design().flat()
-VALUES = {"hobby_pwm": "Hobby PWM", "smart_bus": "Smart bus", "dynamixel": "Dynamixel", "modules": "Off-the-shelf modules",
-          "custom_pcb": "Custom PCB", "prototype": "Prototype", "pilot": "Pilot", "production": "Production", "fsr402": "FSR 402",
-          "esp32_devkit": "ESP32 DevKit", "esp32_s3_devkit": "ESP32-S3 DevKit", "arduino_nano": "Arduino Nano",
-          "rp2040_pico": "RP2040 Pico", "v": "V-groove", "wrist_camera": "wrist camera", "estop": "e-stop", "imu": "IMU"}
-
-
-def show_value(key: str, value) -> str:
-    """A design value as people read it: option names and numbers with their unit ("Dynamixel", "70 g", "wrist camera +
-    e-stop"), the way the Parameters panel shows them."""
-    if value is None or value == "":
-        return "none"
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if isinstance(value, (int, float)):
-        unit = ((_PARAMS.get(key) or (None, None, {}))[2] or {}).get("unit") or ""
-        return f"{value:g}{unit}" if unit == "×" else f"{value:g} {unit}".strip()
-    s = str(value)
-    return " + ".join(VALUES.get(x, x.replace("_", " ")) for x in s.split(",")) if "," in s else VALUES.get(s, s)
-
-
-def show_key(key: str) -> str:
-    """A design key as the Parameters panel names it ("Arm · Actuators"), else the key itself."""
-    p = _PARAMS.get(key)
-    return f"{_GROUPS.get(key)} · {p[0]}" if p else key
 
 
 class CollabError(ValueError):

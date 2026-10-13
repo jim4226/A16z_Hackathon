@@ -100,6 +100,16 @@ def test_each_project_gets_its_own_room_and_events(studio, builds):
     assert [b[:2] for b in builds.built] == [("so101", "r002")]
 
 
+def test_a_parameter_edit_reads_the_way_the_parameters_panel_names_it(studio, builds):
+    room = studio.room("so101")
+    q = room.hub.subscribe()
+    finish(studio.queue_params(room, {"build.config": "pilot", "arm.reach_mm": 380.0}))
+    finish(studio.queue_params(room, {"electronics.extras": "wrist_camera,estop"}))
+    said = [e["text"] for e in (q.get_nowait() for _ in range(q.qsize())) if e["type"] == "assistant"]
+    assert said == ["Parameter edit: Build → Pilot, Reach → 380 mm.", "Parameter edit: Extras → wrist camera + e-stop."], said
+    assert [b[3] for b in builds.built] == ["edit: Build → Pilot, Reach → 380 mm", "edit: Extras → wrist camera + e-stop"]
+
+
 def test_payload_urls_name_the_project(studio, builds):
     finish(studio.queue_params(studio.room("so101"), {"arm.dof": 6}))
     st = studio.state(studio.room("so101"))

@@ -40,7 +40,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from ..pipeline import REV
 from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline_version
 from ..spec import diff
-from . import projects, routes
+from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
 from .routes import HTTPError, route
@@ -526,7 +526,7 @@ class Studio:
             return self.apply(it["changes"], msg, reply=it["reply"], source=it["source"], room=room, job=job)
 
     def params(self, changes: dict, room: Room | None = None, job=None) -> str | None:
-        desc = ", ".join(f"{k.split('.')[-1].replace('_', ' ')} → {v}" for k, v in changes.items())
+        desc = labels.describe(changes)  # "Build → Pilot", as the Parameters panel names them
         return self.apply(changes, f"edit: {desc}", reply=f"Parameter edit: {desc}.", room=room, job=job)
 
     def build(self, design, room: Room | None = None, label: str = "first design", job=None) -> str | None:
@@ -585,7 +585,7 @@ class Studio:
                                 by=by, label=label, base_rev=base_rev or room.latest(), announce=say)
 
     def queue_params(self, room: Room, changes: dict, *, base_rev: str | None = None, by: str | None = None):
-        desc = ", ".join(f"{k.split('.')[-1].replace('_', ' ')} → {v}" for k, v in changes.items())
+        desc = labels.describe(changes)  # "Build → Pilot", as the Parameters panel names them
         return self.queue_changes(room, changes, label=f"edit: {desc}", reply=f"Parameter edit: {desc}.",
                                   base_rev=base_rev, by=by, kind="params")
 
