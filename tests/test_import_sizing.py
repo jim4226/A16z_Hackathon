@@ -1,6 +1,7 @@
 """Import as people use it in the Studio (found by driving the Import dialog): picking one actuator family gives a
-robot the build calls feasible, an object mesh brings its own handling, an archive with nothing left says what was
-skipped, and the build's verdict reaches the importing tab. Offline, no pipeline runs."""
+robot the build calls feasible, a servo picked per joint that would run far below its rated voltage is an issue, an
+object mesh brings its own handling, an archive with nothing left says what was skipped, and the build's verdict
+reaches the importing tab. Offline, no pipeline runs."""
 
 import io
 import os
@@ -142,3 +143,25 @@ def test_an_egg_stl_dropped_on_a_robust_object_arm_gets_the_force_sensing_finger
     assert c["preset"] == "raw egg" and c["changes"]["object.max_force_n"] == 25 and c["changes"]["finger.sensor"] == "fsr402"
     plan = s.commit(0)
     assert plan["changes"]["finger.sensor"] == "fsr402" and plan["changes"]["object.friction"] == 0.35
+
+
+def test_a_servo_far_below_its_rated_voltage_is_an_issue():
+    # per-joint picks may put a 12 V STS3215 beside 7.4 V ones: their ranges overlap, so the shared rail runs at the
+    # 7.4 V servos' supply (6 V) and the stronger servo gives about half the torque it was sized with
+    from morph.cli import EGG_ROBOT
+    from morph.robot import electronics2, imported
+    from morph.spec import Design
+
+    design = Design().with_changes({**EGG_ROBOT, "arm.actuator_family": "smart_bus", "arm.source": "so101"})
+    joints = imported.load_profile("so101")[0]["arm_joints"]
+
+    def plan(shoulder):
+        return electronics2.plan(design, {"joints": [{"name": n, "actuator": shoulder if n == "shoulder_lift" else "sts3215_7v4"}
+                                                     for n in joints], "gripper_actuator": "sts3215_7v4"})
+    mixed = plan("sts3215")
+    assert mixed["supply"]["servo_v"] == 6.0 and mixed["issues"] == [
+        "shoulder_lift: sts3215 is rated at 12 V but the shared servo rail runs at 6 V, so it gives roughly 50% of the "
+        "torque it was sized with; put every servo on one voltage class"]
+    assert plan("sts3215_7v4")["issues"] == []                       # one voltage class: nothing to say
+    assert electronics2._underpowered([{"joint": "j2", "key": "ds3218"}, {"joint": "j3", "key": "sg90"}], 5.0) == []
+
