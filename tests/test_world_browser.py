@@ -172,10 +172,18 @@ def test_desk_world_place_walk_views_and_tour(server, browser):
         img.save(os.path.join(SHOTS, f"f5_view_{v['name']}.png"))
     assert worlds.clean_views([{"name": v["name"], "jpeg_b64": v["b"]} for v in views])     # the server accepts them
 
-    # ---- check through the panel, then the guided tour
+    # ---- check through the panel (it needs the world saved: the check uses its simulation), then the guided tour
     page.evaluate("window.demo.panel.el.style.display = 'block'; window.demo.panel.render()")
+    assert page.is_disabled('.wv-panel [data-a="check"]') and page.is_disabled('.wv-panel [data-a="review"]')
+    page.click('.wv-panel [data-a="save"]')
+    page.wait_for_function("!window.demo.panel.state.busy && !window.demo.wv.world._dirty", timeout=60000)
+    assert page.evaluate("window.demo.store.saved.at(-1).mount.yaw_deg") == pytest.approx(-75.0)
     page.click('.wv-panel [data-a="check"]')
     page.wait_for_function("window.demo.panel.state.result && !window.demo.panel.state.busy", timeout=180000)
+    assert page.evaluate("window.demo.store.lastViews.length") == 0         # measured only: no pictures go anywhere
+    page.click('.wv-panel [data-a="review"]')
+    page.wait_for_function("window.demo.panel.state.result && !window.demo.panel.state.busy && window.demo.store.lastViews.length",
+                           timeout=180000)
     assert page.evaluate("window.demo.store.lastViews.length") == 6
     assert page.inner_text(".wv-panel .wv-verdict") == inspect["verdict"].replace("_", " ")
     page.click('.wv-panel [data-a="tour"]')
@@ -218,7 +226,9 @@ def test_glb_room_scale_place_and_boxes(server, browser, tmp_path):
     page.route("**/room.glb*", lambda r: r.fulfill(body=data, headers={"Content-Type": "model/gltf-binary"}))
     page.goto(f"{server}/tools/world_demo.html", timeout=120000)
     page.wait_for_function("window.ready === true", timeout=120000)
-    page.evaluate("async ([w]) => { await window.demo.wv.setWorld(w, {assetUrl: '/room.glb'}); await window.demo.panel.toggle(true); }", [draft])
+    # as the panel's upload leaves it: an unsaved draft (the panel keeps it however the server's world is)
+    page.evaluate("async ([w]) => { await window.demo.wv.setWorld(w, {assetUrl: '/room.glb'}); window.demo.wv.world._dirty = true; "
+                  "await window.demo.panel.toggle(true); }", [draft])
     assert page.evaluate("!!window.demo.wv.assetG && window.demo.wv.assetTris") > 500
     # 3-D clicks must reach the canvas: the panel is hidden while clicking in the room
     page.evaluate("window.demo.panel.el.style.display = 'none'; window.demo.wv.flyToView({eye: [0, -950, 750], target: [0, 0, 450]}, 0)")

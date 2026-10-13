@@ -225,6 +225,10 @@ def plan(path: str, name: str | None = None, home_dir: str | None = None) -> dic
         except (ValueError, FileNotFoundError):
             raise ImportFailed(f"This project uses the robot {source!r}, which isn't in the export or installed here. "
                                "Import that robot first, or export the project with its robot.") from None
+    if (latest.get("world") or {}).get("id"):    # World mode: an export carries the revision's files, not the room
+        changes.update({"world.id": "", "world.sha": ""})
+        warnings.append("This project was simulated in a World mode room, which exports don't carry: the import is "
+                        "simulated on the plain table. Set the room up again in World mode.")
     meta = info["meta"] if isinstance(info["meta"], dict) else {}
     need = str(meta.get("need") or "")[:500]
     return {"kind": "project", "project": slug(name or info["project"], maxlen=36, fallback="imported"),

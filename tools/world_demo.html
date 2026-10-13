@@ -45,15 +45,16 @@ const STUDIO = P.get('studio') === '1';      // ?studio=1: through init(studio),
 const store = { world: null, starters: [], inspect: null, saved: [] };
 const api = {
   async get(path) {
-    if (path === '/api/world') return { ok: true, world: store.world, starters: store.starters, notes: NOTES, sim: store.sim || null,
-      views: VIEWS.map(([name, title]) => ({ name, title })) };
+    if (path === '/api/world') return { ok: true, world: store.world, sha: store.world ? 'demo' : null, starters: store.starters, notes: NOTES,
+      sim: store.sim || null, active: store.world && !store.off ? { id: store.world.id, sha: 'demo' } : { id: '', sha: '' },
+      ai: { claude: true, subq: false }, views: VIEWS.map(([name, title]) => ({ name, title })) };
     throw new Error(`not in the demo: GET ${path}`);
   },
   async post(path, body) {
     if (path === '/api/world') {
-      if (body.starter) { const w = store.starterWorlds?.[body.starter]; if (!w) throw new Error('unknown starter'); store.world = w; return { ok: true, world: w }; }
-      if (body.world) { store.world = body.world; store.saved.push(body.world); return { ok: true, world: body.world }; }
-      if (body.off) { store.world = null; return { ok: true }; }
+      if (body.starter) { const w = store.starterWorlds?.[body.starter]; if (!w) throw new Error('unknown starter'); store.world = w; store.off = false; return { ok: true, world: w, sha: 'demo' }; }
+      if (body.world) { store.world = body.world; store.off = false; store.saved.push(body.world); return { ok: true, world: body.world, sha: 'demo' }; }
+      if (body.off) { store.off = true; return { ok: true, world: null }; }
     }
     if (path === '/api/world/inspect') {
       store.lastViews = body.views;
