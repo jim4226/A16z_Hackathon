@@ -328,3 +328,38 @@ def test_the_inspector_fits_the_narrow_column(demo):
 
 def shots_dir(d):
     return d["shots"]
+
+
+def test_live_updates_never_take_what_you_are_writing(demo):
+    """A teammate's comment or change request redraws the panel: a comment being typed, and a change request being
+    written (its form, title and preview), stay as they were; the new item shows once you leave the field."""
+    ctx, page, errors = _signed_in(demo, "Ana")
+    room, root, ids, ms = demo["room"], demo["root"], demo["ids"], members(demo["home"])
+    box = ".tm-compose textarea"
+    page.click(box)
+    page.keyboard.type("Half a comment about the jaw")
+    collab.add_comment(root, ids["Raj"], "Raj checked the jaw", {"rev": "r003"}, members=ms)
+    room.hub.send({"type": "comment", "action": "add", "project": "egg-picker"})
+    time.sleep(1.5)                                                   # well past the 250 ms the panel waits for events
+    assert page.input_value(box) == "Half a comment about the jaw" and "Raj checked the jaw" not in page.inner_text(".tm-body")
+    page.click(".tm-filter b")                                        # done typing: the update comes in
+    page.wait_for_function("document.querySelector('.tm-body').innerText.includes('Raj checked the jaw')")
+    assert page.input_value(box) == "Half a comment about the jaw"    # and the comment being written is still there
+    page.click(".tm-tabs [data-tab=changes]")
+    page.wait_for_selector(".tm-new")
+    page.click(".tm-new summary")
+    page.select_option("[data-a=param]", "build.quantity")
+    page.fill(".tm-val input", "25")
+    page.click("[data-a=add]")
+    page.fill("[data-a=title]", "A batch of 25")
+    page.click("[data-a=preview]")
+    page.wait_for_selector(".tm-preview .tm-chip")
+    chips = page.locator(".tm-preview .tm-chip").all_inner_texts()
+    collab.create_proposal(root, ids["Raj"], "Thicker base plate", {"finger.thickness_mm": 7.0}, members=ms)
+    room.hub.send({"type": "proposal", "action": "open", "project": "egg-picker"})
+    page.wait_for_function("[...document.querySelectorAll('.tm-pr b')].some((b) => b.textContent.includes('Thicker base plate'))")
+    assert page.locator(".tm-preview .tm-chip").all_inner_texts() == chips and chips
+    assert page.input_value("[data-a=title]") == "A batch of 25" and page.locator(".tm-new[open]").count() == 1
+    assert "build.quantity" in page.inner_text(".tm-draft")
+    assert errors == []
+    ctx.close()
