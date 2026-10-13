@@ -283,14 +283,14 @@ function applyChanges(changes) {
 function renderProjects() {
   const list = S.projects || [];
   $('#projBtn').classList.toggle('multi', list.length > 1);
-  $('#projList').innerHTML = list.map((p) => `<button type="button" data-p="${esc(p.name)}" class="${p.name === S.project ? 'on' : ''}"><b>${esc(p.name)}</b>${p.source ? `<span class="tag acc">imported · ${esc(p.source)}</span>` : '<span class="tag neutral">generated</span>'}${p.busy ? '<span class="tag warn">building</span>' : ''}${p.need ? `<small>${esc(p.need)}</small>` : ''}</button>`).join('');
+  $('#projList').innerHTML = list.map((p) => `<button type="button" data-p="${esc(p.name)}" class="${p.name === S.project ? 'on' : ''}" title="${esc(p.need || p.name)}"><b>${esc(p.name)}</b>${p.source ? `<span class="tag acc">imported · ${esc(p.source)}</span>` : '<span class="tag neutral">generated</span>'}${p.busy ? '<span class="tag warn">building</span>' : ''}${p.need ? `<small>${esc(p.need)}</small>` : ''}</button>`).join('');
   $$('#projMenu button[data-p]').forEach((b) => (b.onclick = () => {
     $('#projMenu').classList.remove('on');
     openProject(b.dataset.p);
   }));
 }
 function setupProjects() {
-  $('#projBtn').onclick = (e) => { e.stopPropagation(); $('#projMenu').classList.toggle('on'); };
+  $('#projBtn').onclick = (e) => { e.stopPropagation(); if ($('#projMenu').classList.toggle('on')) refreshProjects(); };  // fresh "building" tags
   document.addEventListener('click', (e) => { if (!e.target.closest('#projMenu')) $('#projMenu').classList.remove('on'); });
   $('#projActions').addEventListener('click', (e) => { if (e.target.closest('button')) $('#projMenu').classList.remove('on'); });  // a feature's item
 }
