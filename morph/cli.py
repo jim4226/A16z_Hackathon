@@ -290,27 +290,55 @@ def _robot_summary(p, rev) -> list:
     return [n for n in ORDER if stage_problem(res, n)]
 
 
+def _checked(design, changes: dict):
+    """`design` with `changes`, each changed value inside the design limits (security.design_values, as in the
+    Studio); SystemExit with the reason otherwise, before anything is built: one absurd value (a kilometre-wide
+    object) would hold the computer for hours."""
+    from .studio.projects import DEFAULTS
+    from .studio.security import design_values
+
+    for key, value in changes.items():
+        try:
+            design = design.with_changes({key: value})
+        except KeyError:
+            sys.exit(f"Couldn't apply that: unknown parameter: {key}")
+        except (TypeError, ValueError):
+            sys.exit(f"Couldn't apply that: {key} can't be {value!r}")
+    try:
+        design_values(design.flat(), DEFAULTS, keys=changes)
+    except ValueError as exc:
+        sys.exit(f"Couldn't apply that: {exc}")
+    return design
+
+
 def cmd_robot(a) -> int:
     """Exit status: 1 when the new revision has stages that did not complete (show never fails)."""
     from .robot.pipeline2 import ORDER, RobotProject
     from .studio import projects
+    from .studio.security import project_name
 
     root = os.path.join(HOME, a.name)
     source = getattr(a, "source", None) or ("so101" if a.name == "so101" else "")
     failed = []
-    if a.action == "new":  # the name and source are checked before anything is created
+    if a.action == "new":  # the name, the source and what --need asks for are checked before anything is created
+        design = None
+        if a.need:
+            from .studio.intent import interpret
+            try:
+                design = projects.template(project_name(a.name), source)
+            except ValueError as exc:
+                sys.exit(f"{a.name}: {exc}")
+            it = interpret(a.need, design)
+            design = _checked(design, {k: v for k, v in it["changes"].items() if k not in ("name", "arm.source")})
+            print(it["reply"])
         try:
-            info = projects.create(HOME, a.name, source=source, need=a.need, demo=getattr(a, "demo", False), unique=False)
+            info = projects.create(HOME, a.name, source=source, design=design, need=a.need, demo=getattr(a, "demo", False),
+                                   unique=False)
         except ValueError as exc:
             sys.exit(f"{a.name}: {exc}")
         except FileExistsError:
             sys.exit(f"{root} already exists")
         p, design = RobotProject(info["root"]), info["design"]
-        if a.need:
-            from .studio.intent import interpret
-            it = interpret(a.need, design)
-            design = design.with_changes({k: v for k, v in it["changes"].items() if k not in ("name", "arm.source")})
-            print(it["reply"])
         failed = _robot_summary(p, p.run(design, label="first design", n_trials=a.trials, fast_sim=a.fast))
     else:
         if not os.path.isdir(root):
@@ -318,9 +346,13 @@ def cmd_robot(a) -> int:
         p = RobotProject(root)
         if a.action == "change":
             base = a.base or p.latest()
-            changes = dict(kv.split("=", 1) for kv in a.changes)
-            rev = p.run(p.load_design(base).with_changes(changes), parent=base, label=" ".join(a.changes)[:48],
-                        n_trials=a.trials, fast_sim=a.fast)
+            if base not in p.revs():
+                sys.exit(f"{a.name} has no revision {base}" if base else f"{a.name} has no revisions yet")
+            bad = [kv for kv in a.changes if "=" not in kv]
+            if bad or not a.changes:
+                sys.exit("Give each change as dotted.key=value, for example arm.dof=6" + (f" (not {bad[0]})" if bad else "."))
+            design = _checked(p.load_design(base), dict(kv.split("=", 1) for kv in a.changes))
+            rev = p.run(design, parent=base, label=" ".join(a.changes)[:48], n_trials=a.trials, fast_sim=a.fast)
             failed = _robot_summary(p, rev)
         elif a.action == "show":
             for r in ([a.base] if a.base else p.revs()):
