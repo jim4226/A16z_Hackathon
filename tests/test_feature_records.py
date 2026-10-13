@@ -78,18 +78,30 @@ def test_feature_claude_calls_follow_the_network_switch(monkeypatch):
 
 
 def test_feature_telemetry_ids_are_registered_in_their_ranges():
+    from morph.importers import common as imports
+    from morph.studio import subq
     from morph.studio.teams import activity
     ids = {e["name"]: (e["eventTypeId"], e["dataType"]) for e in keewano.CUSTOM_EVENTS}
-    for evs, lo, hi in ((agents.KEEWANO_EVENTS, 2100, 2129), (api_video.KEEWANO_EVENTS, 2160, 2179),
-                        (activity.KEEWANO_EVENTS, 2180, 2229)):
+    assert len(ids) == len(keewano.CUSTOM_EVENTS) == len({e["eventTypeId"] for e in keewano.CUSTOM_EVENTS})
+    for evs, lo, hi in ((agents.KEEWANO_EVENTS, 2100, 2129), (imports.KEEWANO_EVENTS, 2130, 2159),
+                        (api_video.KEEWANO_EVENTS, 2160, 2179), (activity.KEEWANO_EVENTS, 2180, 2229),
+                        (worlds.KEEWANO_EVENTS, 2230, 2259), (subq.KEEWANO_EVENTS, 2260, 2279)):
         for e in evs:
             assert ids[e["name"]] == (e["eventTypeId"], e["dataType"]) and lo <= e["eventTypeId"] <= hi
     names = set(ids)
     for entry in ({"type": "video_analysis", "kind": "video", "frames": 8, "ms": 900, "source": "claude", "usable": True,
                    "questions": 1, "cost_usd": 0.06, "second_opinion": "none"},
-                  {"type": "video_apply", "changes": 3}, {"type": "video_decode", "decoder": "ffmpeg", "ms": 40, "frames": 8}):
+                  {"type": "video_apply", "changes": 3}, {"type": "video_decode", "decoder": "ffmpeg", "ms": 40, "frames": 8},
+                  imports.ledger_entry({"kind": "robot", "format": "urdf", "picked_motors": True, "warnings": ["x"],
+                                        "source": "my-arm", "file": "secret/arm.urdf"}, "upload"),
+                  worlds.ledger_entry(worlds.starter("desk")), worlds.ledger_entry(None),
+                  {"type": "world_inspect", "verdict": "ready", "review": "rules", "ms": 1200},
+                  {"type": "subq", "purpose": "chat_route", "source": "cache", "ms": 12.6, "input_tokens": 900}):
         evs = keewano.events_for(entry)
         assert evs and {n for n, _ in evs} <= names
+        for n, v in evs:  # uint events carry whole numbers; nothing carries a name, a file or a link
+            assert isinstance(v, int) if ids[n][1] == "uint" else isinstance(v, str), (n, v)
+            assert "secret" not in str(v) and "my-arm" not in str(v)
     assert {n for n, _ in agents.memory_events(_brief(), "built", {"feasible": True})} <= names
 
 

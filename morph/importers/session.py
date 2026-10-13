@@ -31,7 +31,8 @@ import time
 import traceback
 
 from . import detect as _detect
-from .common import LIMITS, MB, PROJECT_RX, SESSION_RX, ImportFailed, contained, home, safe_relpath, set_home, slug, utcnow
+from .common import (LIMITS, MB, PROJECT_RX, SESSION_RX, ImportFailed, contained, home, ledger_entry, safe_relpath, set_home,
+                     slug, utcnow)
 
 MAX_AGE_S = 24 * 3600
 _LOCK = threading.Lock()
@@ -573,7 +574,7 @@ class Session:
             emit("commit", "done", f"Object: {c['changes'].get('object.shape')} {c['changes'].get('object.diameter_mm')} mm")
             return {"kind": "object", "file": c["file"], "changes": c["changes"], "fit": c.get("fit"),
                     "mass": c.get("mass"), "units": c.get("units"), "warnings": c.get("warnings", []),
-                    "label": f"object from {os.path.basename(c['file'])}"[:48]}
+                    "label": f"object from {os.path.basename(c['file'])}"[:48], "format": c.get("format")}
         if c["kind"] == "bom":
             from . import bom
             res = bom.parse(os.path.join(self.files, *c["file"].split("/")), c["format"], table=answers.get("table"))
@@ -588,7 +589,7 @@ class Session:
             from . import project_zip
             plan = project_zip.plan(os.path.join(self.files, *c["file"].split("/")), name=name, home_dir=self.home)
             emit("commit", "done", f"Project {plan['project']}: rebuilding its latest design")
-            return plan
+            return {**plan, "format": c.get("format")}
         raise ImportFailed(f"Can't commit a {c['kind']}.")
 
     def _commit_robot(self, c: dict, name: str | None, answers: dict, emit) -> dict:
@@ -638,7 +639,8 @@ class Session:
                          "need": f"Imported {title}: auto-calibrated, please confirm the gripper, tool point and actuators."},
                 "label": f"imported {title}"[:48], "license": lic, "warnings": c.get("warnings") or [],
                 "confirm": ["gripper", "tcp", "actuators"], "actuators": {n: a["key"] for n, a in c["actuators"].items()},
-                "gripper": (c.get("gripper") or {}).get("joint"), "tcp": c.get("tcp")}
+                "gripper": (c.get("gripper") or {}).get("joint"), "tcp": c.get("tcp"), "format": c.get("format"),
+                "picked_motors": bool(answers.get("actuators") or answers.get("family"))}
 
 
 # ------------------------------------------------------------------- helpers
@@ -836,6 +838,10 @@ def build(plan: dict, home_dir: str | None = None, on_event=None, fast_sim: bool
     if on_event:
         on_event({"type": "import", "stage": "build", "status": "start", "text": f"Building {name}", "project": name})
     p = RobotProject(root)
+    try:  # categories and counts only (keewano.events_for, when Keewano events are on)
+        p.log(ledger_entry(plan, "cli"))
+    except OSError:
+        pass
     rev = p.run(design, label=plan.get("label") or "imported", n_trials=n_trials, verbose=verbose,
                 on_event=on_event, fast_sim=fast_sim)
     res = p.load_results(rev)

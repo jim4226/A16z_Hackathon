@@ -60,6 +60,14 @@ def _json(path: str, limit: int = 64 << 20):
         return None
 
 
+def _log(room, entry: dict):
+    """A world entry in the project's ledger (Keewano gets its categories and counts when its events are on)."""
+    try:
+        room.p.log(entry)
+    except Exception:  # noqa: BLE001  (a ledger that can't be written never fails the request)
+        pass
+
+
 def _rev(room, body_rev=None) -> str | None:
     revs = room.completed() if hasattr(room, "completed") else room.p.revs()
     if body_rev is not None:
@@ -137,6 +145,7 @@ def save_world(req):
         return _err(429, str(exc))
     _send(room, {"type": "world", "stage": "save", "status": "done",
                  "text": f"Saved {w['name']}; the simulation reruns in it." if w else "World mode off."})
+    _log(room, worlds.ledger_entry(w))
     return 202, {"ok": True, "world": w, "sha": h, "job": job.info() if hasattr(job, "info") else None}
 
 
@@ -292,6 +301,11 @@ def inspect_world(req):
         if sq:
             res["review"]["findings"] = res["review"]["findings"] + sq["findings"]
     res["review"]["verdict"] = res["verdict"]
+    _log(room, {"type": "world_inspect", "verdict": res["verdict"], "ms": int((time.time() - t0) * 1000),
+                "review": res["review"].get("source") if ai and views else "none"})
+    if res.get("subq"):
+        _log(room, {"type": "subq", "purpose": "world_check", "source": res["subq"].get("source") or "subq",
+                    "ms": res["subq"].get("ms")})
     _send(room, {"type": "world", "stage": "inspect", "status": "done", "text": f"Verdict: {res['verdict'].replace('_', ' ')}",
                  "result": {"rev": rev, "verdict": res["verdict"], "source": res["review"]["source"]}})
     return 200, {"ok": True, "rev": rev, "world": w["id"], "verdict": res["verdict"], "checks": res["checks"],

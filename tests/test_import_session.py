@@ -340,10 +340,14 @@ def test_kicad_board_candidate_keeps_its_kind(home, tmp_path):
 
 def test_build_tags_import_events_and_records_the_creator(home, tmp_path, monkeypatch):
     from morph.robot import pipeline2
+    logged = []
 
     class FakeProject:
         def __init__(self, root):
             self.root = root
+
+        def log(self, entry):
+            logged.append(entry)
 
         def run(self, design, label=None, n_trials=2, verbose=False, on_event=None, fast_sim=False):
             on_event({"type": "node", "node": "sizing", "status": "computed"})
@@ -354,9 +358,13 @@ def test_build_tags_import_events_and_records_the_creator(home, tmp_path, monkey
 
     monkeypatch.setattr(pipeline2, "RobotProject", FakeProject)
     plan = {"kind": "robot", "source": "box-arm", "project": "box-arm", "changes": {"arm.source": "so101"},
-            "meta": {"kind": "robot", "source": "so101", "origin": "import", "demo": False, "need": "Imported"}}
+            "meta": {"kind": "robot", "source": "so101", "origin": "import", "demo": False, "need": "Imported"},
+            "format": "urdf"}
     events = []
     out = sess.build(plan, home, on_event=events.append, session_id="0123456789abcdef", created_by="m-7")
+    # the ledger (Keewano, when its events are on) gets categories and counts, never the robot's name or files
+    assert logged == [{"type": "import", "kind": "robot", "format": "urdf", "via": "cli", "picked_motors": False,
+                       "warnings": 0}]
     assert out["project"] == "box-arm" and out["rev"] == "r001"
     start = next(e for e in events if e["type"] == "import")
     assert start["id"] == "0123456789abcdef" and start["project"] == "box-arm" and start["stage"] == "build"

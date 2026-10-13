@@ -50,6 +50,24 @@ DETAIL = {401: "SubQ rejected this key: copy it again from console.subq.ai",
           503: "SubQ is temporarily unavailable: try again shortly"}
 B64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 
+# Keewano event types for SubQ use (RELEASE_CONTRACTS section 10: ids 2260-2279), copied into keewano.CUSTOM_EVENTS
+# (append-only). A project's ledger gets {"type": "subq", purpose, source, ms, input_tokens} where a decision was about
+# that project (chat routing, the world check); never the question, the request or an image.
+KEEWANO_EVENTS = [
+    {"eventTypeId": 2260, "name": "SubqDecision", "dataType": "string"},     # chat_route | world_check
+    {"eventTypeId": 2261, "name": "SubqSource", "dataType": "string"},       # subq | cache
+    {"eventTypeId": 2262, "name": "SubqMs", "dataType": "uint"},
+    {"eventTypeId": 2263, "name": "SubqInputTokens", "dataType": "uint"},
+]
+
+
+def keewano_events(entry: dict) -> list:
+    """A subq ledger entry -> [(event name, value)]."""
+    ev = [("SubqDecision", entry.get("purpose")), ("SubqSource", entry.get("source")), ("SubqMs", entry.get("ms")),
+          ("SubqInputTokens", entry.get("input_tokens"))]
+    return [(n, int(v) if n in ("SubqMs", "SubqInputTokens") else v) for n, v in ev
+            if v is not None and v != "" and (n not in ("SubqMs", "SubqInputTokens") or isinstance(v, (int, float)))]
+
 _state = {"disabled": None, "key": None, "cool_until": 0.0, "last_error": None}
 _lock = threading.Lock()
 

@@ -26,7 +26,7 @@ import threading
 import traceback
 
 from ..importers import ImportFailed, session as sess
-from ..importers.common import LIMITS, set_home
+from ..importers.common import LIMITS, ledger_entry, set_home
 
 _busy: dict = {}
 _doomed: dict = {}            # sessions deleted while a download or build was running: removed when it ends
@@ -276,6 +276,7 @@ def commit(req, sid):
         if queued is not None:
             if queued[0] == 202:
                 _audit(req, s, kind="object", project=req.room.name, file=str(plan.get("file") or "")[:160])
+                _ledger(req.room.p, s, plan)
             return queued if queued[0] != 202 else (202, {"ok": True, **plan, "applied": True, "job": queued[1]})
         if _apply_async(req, plan["changes"], plan.get("label") or "imported object"):
             return 202, {"ok": True, **plan, "applied": True}
@@ -283,6 +284,16 @@ def commit(req, sid):
     if plan["kind"] == "object":
         out["applied"] = False                   # no edit path on this Studio: the dialog shows the keys to type
     return 200, out
+
+
+def _ledger(p, s, plan: dict):
+    """The import in the project's ledger: what kind of thing in which format, from files or a link, whether the motors
+    were picked, how many warnings (Keewano gets these when its events are on; never names, files or links)."""
+    try:
+        st = s.state()
+        p.log(ledger_entry(plan, "link" if (st.get("url") or st.get("source_url")) else "upload"))
+    except Exception:  # noqa: BLE001  (a ledger that can't be written never fails the import)
+        traceback.print_exc()
 
 
 def _create_project(req, sid: str, s, plan: dict, emit):
@@ -312,6 +323,7 @@ def _create_project(req, sid: str, s, plan: dict, emit):
         except (OSError, TypeError, ValueError):
             break
     _audit(req, s, kind=plan["kind"], project=room.name, source=plan.get("source") or "")  # before _follow removes the session
+    _ledger(room.p, s, plan)
     _follow(sid, s, room, job, emit, sub.get("q") or room.hub.subscribe())
     emit({"type": "import", "id": sid, "stage": "build", "status": "start", "text": f"Building {room.name}",
           "built_project": room.name})

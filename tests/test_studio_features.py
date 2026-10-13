@@ -185,6 +185,10 @@ def test_an_imported_robot_builds_in_its_own_room_and_the_tab_follows(studio, tm
     assert any(e.get("node") == "sizing" for e in mine) and mine[-1]["built_project"] == "box-arm"
     assert any(e["type"] == "project_created" and e["project"] == "box-arm" for e in events)
     until(lambda: not os.path.isdir(os.path.join(st.home, ".imports", sid)))  # the session goes when the build ends
+    # the project's ledger records what came in (categories and counts, for Keewano when its events are on)
+    entry = next(e for e in room.p.entries() if e.get("type") == "import")
+    assert entry == {"ts": entry["ts"], "type": "import", "kind": "robot", "format": "urdf", "via": "upload",
+                     "picked_motors": False, "warnings": entry["warnings"]} and isinstance(entry["warnings"], int)
 
 
 def test_an_imported_object_is_a_room_job(studio, tmp_path):
@@ -199,6 +203,7 @@ def test_an_imported_object_is_a_room_job(studio, tmp_path):
     room = st.room()
     until(lambda: room.latest() == "r002")
     assert room.p.load_design("r002").object.shape == "cylinder"
+    assert [(e["kind"], e["format"]) for e in room.p.entries() if e.get("type") == "import"] == [("object", "stl")]
 
 
 def test_a_world_save_is_a_room_job_that_reruns_only_the_simulation(studio):
@@ -213,6 +218,10 @@ def test_a_world_save_is_a_room_job_that_reruns_only_the_simulation(studio):
     assert d.world.id == "desk" and d.world.sha == out["sha"]
     start_ev = next(e for e in drain(q) if e["type"] == "start")
     assert start_ev["dirty"] == ["sim"]
+    logged = [e for e in room.p.entries() if e.get("type") == "world"]   # the kind of room and its counts, never its contents
+    assert [(e["room"], e["boxes"], e["areas"]) for e in logged] == [("desk", 5, 2)] and set(logged[0]) == {"ts", "type", "room", "boxes", "areas"}
+    assert call("POST", "/api/world", {"off": True})[0] == 202
+    until(lambda: [e.get("room") for e in room.p.entries() if e.get("type") == "world"] == ["desk", "off"])
 
 
 def test_folders_starting_with_a_dot_are_never_projects(studio):

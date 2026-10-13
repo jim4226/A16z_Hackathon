@@ -31,6 +31,30 @@ class ImportFailed(ValueError):
     """An actionable message for the person importing; safe to show in the UI and return over HTTP."""
 
 
+# Keewano event types for imports (RELEASE_CONTRACTS section 10: ids 2130-2159), copied into keewano.CUSTOM_EVENTS
+# (append-only). Categories and counts only: never file names, links, robot names or licences.
+KEEWANO_EVENTS = [
+    {"eventTypeId": 2130, "name": "ImportCommitted", "dataType": "string"},     # robot | object | project
+    {"eventTypeId": 2131, "name": "ImportFormat", "dataType": "string"},        # urdf | xacro | mjcf | stl | glb | morph_zip ...
+    {"eventTypeId": 2132, "name": "ImportFrom", "dataType": "string"},          # upload | link | cli
+    {"eventTypeId": 2133, "name": "ImportMotorsPicked", "dataType": "uint"},    # 1 when the person chose the motors
+    {"eventTypeId": 2134, "name": "ImportWarnings", "dataType": "uint"},
+]
+
+
+def ledger_entry(plan: dict, via: str) -> dict:
+    """What an import that became (or changed) a project puts in that project's ledger, for keewano.events_for."""
+    return {"type": "import", "kind": str(plan.get("kind") or ""), "format": str(plan.get("format") or "")[:24],
+            "via": via, "picked_motors": bool(plan.get("picked_motors")), "warnings": len(plan.get("warnings") or [])}
+
+
+def keewano_events(entry: dict) -> list:
+    """An import ledger entry -> [(event name, value)]."""
+    ev = [("ImportCommitted", entry.get("kind")), ("ImportFormat", entry.get("format")), ("ImportFrom", entry.get("via")),
+          ("ImportMotorsPicked", int(bool(entry.get("picked_motors")))), ("ImportWarnings", entry.get("warnings"))]
+    return [(n, v) for n, v in ev if v is not None and v != ""]
+
+
 def set_home(path: str | None):
     """The Studio calls this with its projects folder; the CLI and tests rely on MORPH_HOME."""
     global _HOME

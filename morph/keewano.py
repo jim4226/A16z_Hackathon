@@ -103,6 +103,24 @@ CUSTOM_EVENTS = [
     {"eventTypeId": 2187, "name": "ApprovedRevision", "dataType": "string"},
     {"eventTypeId": 2188, "name": "ReleaseLevel", "dataType": "string"},
     {"eventTypeId": 2189, "name": "ReviewDisciplines", "dataType": "uint"},
+    # import (importers.common.KEEWANO_EVENTS): categories and counts, never file names, links or robot names
+    {"eventTypeId": 2130, "name": "ImportCommitted", "dataType": "string"},
+    {"eventTypeId": 2131, "name": "ImportFormat", "dataType": "string"},
+    {"eventTypeId": 2132, "name": "ImportFrom", "dataType": "string"},
+    {"eventTypeId": 2133, "name": "ImportMotorsPicked", "dataType": "uint"},
+    {"eventTypeId": 2134, "name": "ImportWarnings", "dataType": "uint"},
+    # world mode (studio.worlds.KEEWANO_EVENTS): the kind of room, counts, the measured verdict, timings
+    {"eventTypeId": 2230, "name": "WorldSaved", "dataType": "string"},
+    {"eventTypeId": 2231, "name": "WorldBoxes", "dataType": "uint"},
+    {"eventTypeId": 2232, "name": "WorldPeopleAreas", "dataType": "uint"},
+    {"eventTypeId": 2233, "name": "WorldVerdict", "dataType": "string"},
+    {"eventTypeId": 2234, "name": "WorldReview", "dataType": "string"},
+    {"eventTypeId": 2235, "name": "WorldInspectMs", "dataType": "uint"},
+    # SubQ (studio.subq.KEEWANO_EVENTS): which decision, cached or not, time and input tokens
+    {"eventTypeId": 2260, "name": "SubqDecision", "dataType": "string"},
+    {"eventTypeId": 2261, "name": "SubqSource", "dataType": "string"},
+    {"eventTypeId": 2262, "name": "SubqMs", "dataType": "uint"},
+    {"eventTypeId": 2263, "name": "SubqInputTokens", "dataType": "uint"},
 ]
 _ID = {e["name"]: (e["eventTypeId"], e["dataType"]) for e in CUSTOM_EVENTS}
 EVENTS_HASH = zlib.crc32(json.dumps(CUSTOM_EVENTS, sort_keys=True).encode()) or 1
@@ -166,6 +184,15 @@ def events_for(entry: dict, design: dict | None = None) -> list:
             ev.append(("SourcingGap", entry["gap"]))
     elif t in ("video_analysis", "video_apply", "video_decode"):  # counts and timings only (api_video)
         from .studio.api_video import keewano_events
+        ev += keewano_events(entry)
+    elif t == "import":  # categories and counts only (importers.common)
+        from .importers.common import keewano_events
+        ev += keewano_events(entry)
+    elif t in ("world", "world_inspect"):  # room kind, counts, verdict and timings (studio.worlds)
+        from .studio.worlds import keewano_events
+        ev += keewano_events(entry)
+    elif t == "subq":  # which decision, cached or not, time and tokens (studio.subq)
+        from .studio.subq import keewano_events
         ev += keewano_events(entry)
     return [(n, v) for n, v in ev if v is not None and v != ""]
 

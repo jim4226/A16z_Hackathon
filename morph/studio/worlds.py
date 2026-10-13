@@ -76,6 +76,38 @@ class WorldError(ValueError):
     """A world (or room file) the Studio refuses; the message is safe to show."""
 
 
+# Keewano event types for world mode (RELEASE_CONTRACTS section 10: ids 2230-2259), copied into keewano.CUSTOM_EVENTS
+# (append-only). Categories, counts and timings only: never room names, labels, positions or rendered views.
+KEEWANO_EVENTS = [
+    {"eventTypeId": 2230, "name": "WorldSaved", "dataType": "string"},        # desk | counter | workbench | glb | user | off
+    {"eventTypeId": 2231, "name": "WorldBoxes", "dataType": "uint"},
+    {"eventTypeId": 2232, "name": "WorldPeopleAreas", "dataType": "uint"},
+    {"eventTypeId": 2233, "name": "WorldVerdict", "dataType": "string"},      # ready | needs_changes | blocked
+    {"eventTypeId": 2234, "name": "WorldReview", "dataType": "string"},       # claude | rules | none
+    {"eventTypeId": 2235, "name": "WorldInspectMs", "dataType": "uint"},
+]
+
+
+def ledger_entry(world: dict | None) -> dict:
+    """A saved world (None: world mode off) as a project ledger entry, for keewano.events_for."""
+    if not world:
+        return {"type": "world", "room": "off", "boxes": 0, "areas": 0}
+    src = world.get("source") or {}
+    return {"type": "world", "room": src.get("starter") or src.get("kind") or "user",
+            "boxes": len(world.get("obstacles") or []), "areas": len(world.get("zones") or [])}
+
+
+def keewano_events(entry: dict) -> list:
+    """A world or world_inspect ledger entry -> [(event name, value)]."""
+    if entry.get("type") == "world":
+        ev = [("WorldSaved", entry.get("room")), ("WorldBoxes", entry.get("boxes")), ("WorldPeopleAreas", entry.get("areas"))]
+    elif entry.get("type") == "world_inspect":
+        ev = [("WorldVerdict", entry.get("verdict")), ("WorldReview", entry.get("review")), ("WorldInspectMs", entry.get("ms"))]
+    else:
+        return []
+    return [(n, v) for n, v in ev if v is not None and v != ""]
+
+
 # ====================================================================== validation
 
 def _num(v, what, lo=-LIMIT_MM, hi=LIMIT_MM, nd=1) -> float:
