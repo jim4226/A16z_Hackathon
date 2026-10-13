@@ -1,7 +1,7 @@
 """Import as people use it in the Studio (found by driving the Import dialog): picking one actuator family gives a
 robot the build calls feasible, a servo picked per joint that would run far below its rated voltage is an issue, an
-object mesh brings its own handling, an archive with nothing left says what was skipped, and the build's verdict
-reaches the importing tab. Offline, no pipeline runs."""
+object mesh brings its own handling, an archive with nothing left says what was skipped, a link that fails at once can
+still be asked about, and the build's verdict reaches the importing tab. Offline, no pipeline runs."""
 
 import io
 import os
@@ -165,3 +165,21 @@ def test_a_servo_far_below_its_rated_voltage_is_an_issue():
     assert plan("sts3215_7v4")["issues"] == []                       # one voltage class: nothing to say
     assert electronics2._underpowered([{"joint": "j2", "key": "ds3218"}, {"joint": "j3", "key": "sg90"}], 5.0) == []
 
+
+def test_a_link_that_fails_at_once_can_still_be_asked_about(home, monkeypatch):
+    # offline, a link fails before the page has the session's id, so its event can't be matched: the session's state
+    # says how it went (the Import dialog asks once after the POST)
+    from test_import_session import _req, _Studio
+    monkeypatch.setenv("MORPH_OFFLINE", "1")
+    st = _Studio(home)
+    status, out = api_import.dispatch(_req(st, "POST", "/api/import", {"url": "https://github.com/a/b"}))
+    assert status == 200 and out["fetching"] is True
+    sent = lambda: [e["status"] for e in list(st.hub.events) if e.get("stage") == "fetch"]  # noqa: E731
+    for _ in range(500):  # the state is saved just before the event goes out
+        got = api_import.dispatch(_req(st, "GET", f"/api/import/{out['id']}"))[1]
+        if (got.get("fetch") or {}).get("status") == "error" and "error" in sent():
+            break
+        time.sleep(0.02)
+    assert got["fetch"] == {"status": "error",
+                            "error": "Morph is offline (network turned off), so links can't be fetched; drop the files instead."}
+    assert sent()[-1] == "error"

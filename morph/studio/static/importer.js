@@ -233,6 +233,7 @@ export class Importer {
   reset() {
     this.view = 'pick'; this.id = null; this.det = null; this.sel = 0; this.rows = []; this.error = ''; this.answers = {};
     this.progress = 0; this.building = null; this.result = null; this.flagMissing = false; this.nameValue = null; this.early = null;
+    this.urlValue = '';
   }
 
   subscribe() {
@@ -304,6 +305,7 @@ export class Importer {
 
   async fetchUrl(url) {
     url = (url || '').trim();
+    this.urlValue = url;  // a refused link stays in the box to be corrected
     if (/^(?:www\.)?(?:github\.com|raw\.githubusercontent\.com|huggingface\.co|[a-z0-9-]+\.hf\.co)\//i.test(url)) url = `https://${url}`;  // pasted without https://
     if (!/^https:\/\//i.test(url)) { this.fail('Paste a link that starts with https:// (github.com, raw.githubusercontent.com or huggingface.co).'); return; }
     this.error = '';
@@ -315,7 +317,18 @@ export class Importer {
       this.id = r.id;
       this.fetching = true;
       if (!this.s.on) await this.pollFetch();
+      else this.checkFetch();
     } catch (e) { this.fail(e.message); }
+  }
+
+  // a download that ended before this tab knew its session (offline it fails at once) sent its event too early to be
+  // matched: ask once how it went; a later event settles it otherwise
+  async checkFetch() {
+    const id = this.id;
+    const st = await this.call('GET', `/api/import/${id}`).catch(() => null);
+    if (!this.fetching || this.id !== id) return;
+    if (st?.fetch?.status === 'done' && this.view === 'working') { this.fetching = false; this.detect(); }
+    else if (st?.fetch?.status === 'error') { this.fetching = false; this.fail(st.fetch.error); }
   }
 
   async pollFetch() {   // only used when the host has no live events
@@ -449,7 +462,7 @@ export class Importer {
           <div class="btns"><button class="btn" type="button" data-a="files">Choose files</button><button class="btn" type="button" data-a="folder">Choose folder</button></div>
           <div class="fmt">Up to 300 MB and 2,000 files per import</div></div>
         <div class="imp-or">or paste a link</div>
-        <form class="imp-url" data-a="url" novalidate><input type="url" name="url" placeholder="https://github.com/owner/repo  or  https://huggingface.co/owner/repo" aria-label="GitHub or Hugging Face link" autocomplete="off" spellcheck="false">
+        <form class="imp-url" data-a="url" novalidate><input type="url" name="url" value="${E(this.urlValue || '')}" placeholder="https://github.com/owner/repo  or  https://huggingface.co/owner/repo" aria-label="GitHub or Hugging Face link" autocomplete="off" spellcheck="false">
           <button class="btn primary" type="submit">Fetch</button></form>
         <div class="imp-note">github.com, raw.githubusercontent.com and huggingface.co only (public repositories).</div>
         <input type="file" data-in="files" multiple hidden><input type="file" data-in="folder" webkitdirectory multiple hidden>${err}`;
@@ -532,16 +545,19 @@ export class Importer {
     const fam = this.answers.family;
     const opt = (sel) => `<option value="">${fam ? 'sized by Morph' : 'pick a model'}</option>${FAMILIES.map(([f, label]) => `<optgroup label="${E(label)}">${cat.filter((k) => k.family === f).map((k) => `<option value="${E(k.key)}"${k.key === sel ? ' selected' : ''} title="${E(k.name)}">${E(shortName(k.key, k.name))} (${k.torque_nm} N·m)</option>`).join('')}</optgroup>`).join('')}`;
     const need = acts.some(([, a]) => !a.key);
+    const famName = fam ? FAMILIES.find((f) => f[0] === fam)[1] : '';
     const actRows = acts.map(([j, a]) => {
-      const pick = (this.answers.actuators || {})[j] || a.key || (fam ? '' : a.suggest) || '';
-      const why = (this.answers.actuators || {})[j] ? 'you picked it' : a.key ? a.basis : fam ? `${FAMILIES.find((f) => f[0] === fam)[1]} family, sized for the worst-case pose` : a.suggest ? `suggested: ${a.suggest_basis}` : a.options ? `the files mention ${a.options.map((k) => shortName(k)).join(' and ')}` : a.basis;
+      // a family sizes every joint the person didn't pick, the files' motors too (as the commit does)
+      const mine = (this.answers.actuators || {})[j];
+      const pick = mine || (fam ? '' : a.key || a.suggest) || '';
+      const why = mine ? 'you picked it' : fam ? `${famName} family, sized for the worst-case pose` : a.key ? a.basis : a.suggest ? `suggested: ${a.suggest_basis}` : a.options ? `the files mention ${a.options.map((k) => shortName(k)).join(' and ')}` : a.basis;
       return `<tr class="${!a.key && !pick && !fam ? `need${this.flagMissing ? ' miss' : ''}` : ''}"><td class="j">${E(j)}</td><td><select data-act="${E(j)}" aria-label="Actuator for ${E(j)}">${opt(pick)}</select></td><td class="why">${E(why)}</td></tr>`;
     }).join('');
-    const famBtns = need ? `<div class="imp-note" style="margin:0 0 5px">One family for every joint (Morph sizes each joint):</div><div class="imp-fam">${FAMILIES.map(([f, label, ex]) => `<button type="button" class="btn${fam === f ? ' on' : ''}" data-fam="${f}">${E(label)}<small>${E(ex)}</small></button>`).join('')}</div>` : '';
+    const famBtns = acts.length ? `<div class="imp-note" style="margin:0 0 5px">${need ? 'One family for every joint (Morph sizes each joint):' : 'Or one family for every joint, each sized by Morph on one supply voltage:'}</div><div class="imp-fam">${FAMILIES.map(([f, label, ex]) => `<button type="button" class="btn${fam === f ? ' on' : ''}" data-fam="${f}">${E(label)}<small>${E(ex)}</small></button>`).join('')}</div>` : '';
     const detail = `<label class="imp-lab" for="imp-name">Robot name</label><input id="imp-name" class="imp-in" data-k="name" value="${E(c.name || '')}" maxlength="40" spellcheck="false">
       ${this.checklist(rows)}
       <div class="imp-sec"><h4>Gripper joint<span class="grow"></span>${gSel}</h4></div>
-      <div class="imp-sec"><h4>Actuators ${need ? '<span class="tag warn">your choice needed</span>' : '<span class="tag good">from the files</span>'}</h4>
+      <div class="imp-sec"><h4>Actuators ${fam ? `<span class="tag acc">${E(famName)} family</span>` : need ? '<span class="tag warn">your choice needed</span>' : '<span class="tag good">from the files</span>'}</h4>
         ${need ? '<div class="imp-note" style="margin:0 0 6px">The files don\'t say which motors drive the joints (URDF effort values are simulation numbers, not ratings). Pick a model per joint, or one family and Morph sizes each joint.</div>' : ''}
         ${famBtns}<table class="imp-acts">${actRows}</table></div>${this.warnings(c.warnings)}`;
     const side = `<div class="imp-prev" data-prev>${this.previewHtml(c)}<span class="cap">Ready pose · ${E(c.file.split('/').pop())}</span></div>
@@ -598,7 +614,7 @@ export class Importer {
         const torque = (b.issues || []).some((x) => /N·m with margin/.test(x));
         fin = `<div class="imp-row warn" style="margin-top:12px"><span class="dot">${ROW_ICON.warn}</span><span><b>${E(b.project)}</b> is built${b.rev ? ` (${E(b.rev)})` : ''}, but it isn't feasible yet:</span></div>
           ${this.warnings(b.issues)}
-          <div class="imp-note">${torque ? 'A joint needs a stronger servo: import the files again and pick a stronger one for it under Actuators (Morph sizes for the worst pose, with a 2x torque margin).'
+          <div class="imp-note">${torque ? 'A joint needs a stronger servo: import the files again and pick one family under Actuators, so Morph sizes every joint for the worst pose (2x torque margin) on one supply voltage.'
             : 'Open it to see each stage\'s report, then change what it flags in the chat or the parameters.'}</div>`;
       } else if (b.done) {
         fin = `<div class="imp-row done" style="margin-top:12px"><span class="dot">${ROW_ICON.done}</span><span><b>${E(b.project)}</b> is ready: ${this.result?.kind === 'project'
