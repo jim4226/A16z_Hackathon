@@ -469,6 +469,10 @@ def validate_changes(changes) -> dict:
         like = _DEFAULTS[k]
         if k == "arm.source" and v != "" and not (isinstance(v, str) and ROBOT_SOURCE.match(v)):
             raise CollabError(400, "arm.source names a robot folder such as so101, never a path.")
+        if k in ("world.id", "world.sha"):     # World mode names its room by id and pins it by hash, never by a path
+            from ..security import DESIGN_TEXT
+            if not (isinstance(v, str) and DESIGN_TEXT[k].fullmatch(v)):
+                raise CollabError(400, f"{k} must be a world id (lower-case letters, digits and -) or its hash, never a path.")
         if k in _PARAMS:
             label, typ, extra = _PARAMS[k]
             if typ == "select":
