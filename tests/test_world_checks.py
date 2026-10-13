@@ -208,8 +208,8 @@ def test_review_request_shape_and_the_ai_never_changes_pass_or_fail():
     # the measured verdict stands; the model's lean is shown separately
     assert out["verdict"] == "blocked" and out["ai_verdict"] == "ready" and "measured verdict stays blocked" in out["note"]
     assert out["source"] == "claude"
-    assert [f["category"] for f in out["findings"]] == ["clearance", "safety"]
-    assert out["findings"][1]["severity"] == "info" and out["findings"][1]["viewpoint"] == "overview"
+    # strictly the schema's enums: an unknown category, severity or view drops the finding (nothing is guessed)
+    assert [f["category"] for f in out["findings"]] == ["clearance"]
     ch = {c["kind"]: c for c in out["suggested_changes"]}
     assert set(ch) == {"move_target", "move_mount", "add_obstacle"}
     assert ch["move_target"]["changes"] == {"task.place_x_mm": 400.0, "task.place_y_mm": -50.0}     # clamped to PARAMS
@@ -222,6 +222,10 @@ def test_review_request_shape_and_the_ai_never_changes_pass_or_fail():
     ready = run()[0]["facts"]
     out = W.review_request(v, ready, client=FakeClaude({**AI, "verdict": "blocked"}), world=world)
     assert out["verdict"] == "ready" and out["ai_verdict"] == "blocked"
+    # a mount move that would take the base off the desk top can't be applied: it is dropped
+    far = {**AI, "suggested_changes": [{**AI["suggested_changes"][1], "x_mm": 1000, "y_mm": -1000, "yaw_deg": 0}]}
+    out = W.review_request(v, ready, client=FakeClaude(far), world=world)
+    assert out["suggested_changes"] == []
 
 
 def test_review_falls_back_to_the_measured_review(monkeypatch):

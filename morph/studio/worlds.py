@@ -480,14 +480,17 @@ def load(root: str) -> dict | None:
 def load_pinned(root: str, world_id: str, world_sha: str = "") -> dict | None:
     """The world a design names: the one saved under its hash (world.sha), so a revision simulates exactly that room even
     when the room was edited again since (a queued or running build, a fork, a conflict left unapplied); else world.json
-    when its id matches (a design without a saved copy). None when the project has no such world."""
+    when its id matches and it is that room (or the design pins no hash). None when the project has no such world: a
+    hash with no saved copy is never quietly another room."""
     p = saved_path(root, world_sha)
     if p and os.path.isfile(p):
         w = _read(p)
         if w["id"] == world_id and sha(w) == world_sha:
             return w
     w = load(root)
-    return w if w is not None and w["id"] == world_id else None
+    if w is None or w["id"] != world_id or (p and sha(w) != world_sha):
+        return None
+    return w
 
 
 def _write(path: str, w: dict):
@@ -1040,9 +1043,11 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
         where = f" ({at.get('link', '').replace('_', ' ')} near {at.get('obstacle', '')} at {at.get('t', 0):.1f} s)" if at else ""
         if hits:
             h = hits[0]
-            out.append(_check("clearance", "Clearance along the path", "fail",
-                              f"The {str(h.get('link', 'arm')).replace('_', ' ')} hits {h.get('obstacle')} at {h.get('t', 0):.1f} s.",
-                              mc, "mm", "along_path", where=at, contacts=hits[:5]))
+            part = str(h.get("link", "arm")).replace("_", " ")
+            text = (f"The {part} touches {h.get('obstacle')} in the arm's starting pose: move that box or the robot."
+                    if (h.get("t") or 0.0) < 0.05 else f"The {part} hits {h.get('obstacle')} at {h.get('t', 0):.1f} s.")
+            out.append(_check("clearance", "Clearance along the path", "fail", text, mc, "mm", "along_path", where=at,
+                              contacts=hits[:5]))
         elif mc is None or mc < 0:
             out.append(_check("clearance", "Clearance along the path", "fail", f"The arm passes through a box{where}.",
                               mc, "mm", "along_path", where=at))
@@ -1240,7 +1245,7 @@ def _facts(world, sw, out, verdict, pp, ws, flat, robot, results) -> dict:
                                  "size_mm": [round(2 * h) for h in o["half"]]} for o in near],
                   "zones": [{"label": z["label"], "kind": z["kind"]} for z in sw["zones"]],
                   "candidate_mounts": [c["label"] for c in world.get("candidates") or []]},
-        "checks": [{k: c[k] for k in ("id", "label", "status", "text", "value") if k in c} for c in out],
+        "checks": [{k: c[k] for k in ("id", "label", "status", "text", "value", "view") if k in c} for c in out],
     }
 
 
@@ -1362,10 +1367,11 @@ def normalize_review(raw: dict, facts: dict, views=VIEWS, source: str = "claude"
     views = [v for v in views if v in VIEWS] or list(VIEWS)
     find = []
     for f in (raw.get("findings") or [])[:12]:
-        if not isinstance(f, dict) or f.get("category") not in CATEGORIES:
+        # the schema's enums, strictly: a finding outside them (or about a view that wasn't sent) is dropped, not guessed
+        if not isinstance(f, dict) or f.get("category") not in CATEGORIES or f.get("severity") not in SEVERITIES \
+                or f.get("viewpoint") not in views:
             continue
-        find.append({"category": f["category"], "severity": f.get("severity") if f.get("severity") in SEVERITIES else "info",
-                     "viewpoint": f.get("viewpoint") if f.get("viewpoint") in views else views[0],
+        find.append({"category": f["category"], "severity": f["severity"], "viewpoint": f["viewpoint"],
                      "evidence": _text(f.get("evidence"), "", 400), "recommendation": _text(f.get("recommendation"), "", 300),
                      "source": source})
     changes = []
@@ -1378,8 +1384,13 @@ def normalize_review(raw: dict, facts: dict, views=VIEWS, source: str = "claude"
                  "yaw_deg": _clip(c.get("yaw_deg"), -180, 180)}
             item = {"kind": kind, "params": p, "reason": why, "source": source}
             if world:
-                item["mount"] = {"position": [round(v, 1) for v in to_world(world, [p["x_mm"], p["y_mm"], 0.0])],
-                                 "yaw_deg": _yaw(world["mount"]["yaw_deg"] + p["yaw_deg"])}
+                pos = to_world(world, [p["x_mm"], p["y_mm"], 0.0])
+                s = world.get("surface")
+                if s:                       # a move that takes the base off the surface it stands on can't be applied
+                    loc = _box_local(s, pos)
+                    if abs(loc[0]) > s["half"][0] or abs(loc[1]) > s["half"][1]:
+                        continue
+                item["mount"] = {"position": [round(v, 1) for v in pos], "yaw_deg": _yaw(world["mount"]["yaw_deg"] + p["yaw_deg"])}
             changes.append(item)
         elif kind == "move_target" and c.get("target") in ("pick", "place"):
             t = c["target"]

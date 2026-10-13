@@ -190,12 +190,17 @@ def test_inspect_route(tmp_path, monkeypatch):
     st, body = api_world.inspect_world(Req(room, body={"views": views, "ai": False}))
     assert st == 200 and body["verdict"] == "blocked" and body["review"]["source"] == "rules"
     assert {c["id"]: c["status"] for c in body["checks"]}["clearance"] == "fail"
+    assert "skipped" not in body["review"]
+    # the AI review asked for without a key: the measured review, and it says why (nothing was sent)
+    st, body = api_world.inspect_world(Req(room, body={"views": views}))
+    assert st == 200 and body["review"]["source"] == "rules" and "Anthropic key" in body["review"]["skipped"]
     seen = []
 
     def fake_review(views, facts, **kw):
         seen.append(len(views))
         return {**worlds.rules_review(facts), "source": "claude", "verdict": "ready", "ai_verdict": "ready", "ms": 5}
     monkeypatch.setattr(worlds, "review_request", fake_review)
+    monkeypatch.setattr(worlds, "_claude_ready", lambda: True)
     st, body = api_world.inspect_world(Req(room, body={"views": views}))
     assert seen == [6] and body["verdict"] == "blocked" and body["review"]["verdict"] == "blocked"   # the AI can't pass it
     agents = [(e["role"], e["provider"], e["status"]) for e in room.events if e["type"] == "agent"]

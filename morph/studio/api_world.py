@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import time
 
@@ -75,6 +76,28 @@ def _rev(room, body_rev=None) -> str | None:
     return revs[-1] if revs else None
 
 
+def _asset_url(room, w: dict | None, sha: str = "") -> str | None:
+    """Where the page loads the room scan: its hash in the address, so a new upload is never the old file again."""
+    if not (w is None or w.get("asset")):
+        return None
+    v = sha or (w or {}).get("asset_sha") or ""
+    return f"/api/world?project={room.name}&file={worlds.ASSET}" + (f"&v={v}" if v else "")
+
+
+def _ai_ready() -> dict:
+    """Which optional reviewers would answer now: Claude (a key and network lookups on) and SubQ."""
+    try:
+        from . import subq
+        sq = bool(subq.enabled())
+    except Exception:  # noqa: BLE001  (no SubQ client: it is simply off)
+        sq = False
+    return {"claude": bool(worlds._claude_ready()), "subq": sq}
+
+
+AI_OFF = ("AI review is off: it needs an Anthropic key (Keys, top right) and network lookups on. This is the measured "
+          "review; no pictures were sent.")
+
+
 # ---------------------------------------------------------------------- GET /api/world
 
 def get_world(req):
@@ -97,11 +120,13 @@ def get_world(req):
         res = _json(os.path.join(room.p.rev_dir(rev), "results.json")) or {}
         pp = (((res.get("sims") or {}).get("scenarios") or {}).get("pick_place") or {}).get("metrics") or {}
         sim = {"rev": rev, "world": pp.get("world") or "", "world_sha": pp.get("world_sha") or "",
-               "min_clearance_mm": pp.get("min_clearance_mm"), "clearance_ok": pp.get("clearance_ok"),
-               "world_contacts": pp.get("world_contacts") or [], "success": pp.get("success")}
+               "min_clearance_mm": pp.get("min_clearance_mm"), "min_clearance_at": pp.get("min_clearance_at"),
+               "clearance_ok": pp.get("clearance_ok"), "world_contacts": pp.get("world_contacts") or [],
+               "success": pp.get("success"), "failure": pp.get("failure"), "arc": pp.get("arc"),
+               "detours": pp.get("detours")}
     return 200, {"ok": True, "world": w, "sha": worlds.sha(w) if w else None, "problem": problem,
                  "active": {"id": d.world.id, "sha": d.world.sha} if d else {"id": "", "sha": ""}, "sim": sim,
-                 "asset_url": f"/api/world?project={room.name}&file={worlds.ASSET}" if w and w.get("asset") else None,
+                 "asset_url": _asset_url(room, w) if w else None, "ai": _ai_ready(),
                  "starters": worlds.starters(), "views": [{"name": v, "title": worlds.VIEW_TITLES[v]} for v in worlds.VIEWS],
                  "notes": worlds.NOTES}
 
@@ -189,13 +214,13 @@ def upload_world(req):
                 os.remove(tmp)
             except OSError:
                 pass
-    name = os.path.basename(str(req.arg("name") or ""))
+    name = re.split(r"[\\/]", str(req.arg("name") or ""))[-1]      # a label only: the file is always room.glb
     draft = worlds.draft_from_glb(info, name)
     draft["asset_sha"] = info["sha"]
     _send(room, {"type": "world", "stage": "upload", "status": "done",
                  "text": f"Room received: {info['faces']:,} triangles. Click a level surface to place the robot."})
     return 200, {"ok": True, "bytes": n, "faces": info["faces"], "bounds_m": info["bounds_m"], "warnings": info["warnings"],
-                 "draft": draft, "asset_url": f"/api/world?project={room.name}&file={worlds.ASSET}"}
+                 "draft": draft, "asset_url": _asset_url(room, None, info["sha"])}
 
 
 # ---------------------------------------------------------------------- POST /api/world/obstacles/auto
@@ -285,7 +310,12 @@ def inspect_world(req):
     ms = int((time.time() - t0) * 1000)
     _send(room, {"type": "agent", "role": "feasibility", "provider": "code", "status": "done", "ms": ms,
                  "text": f"Measured verdict: {res['verdict'].replace('_', ' ')}"})
-    if ai and views:
+    if ai and not worlds._claude_ready():      # asked for, but there is no key (or lookups are off): say so
+        res["review"]["skipped"] = AI_OFF
+        _send(room, {"type": "agent", "role": "reviewer", "provider": "claude", "status": "skipped", "ms": 0, "text": AI_OFF})
+    elif ai and not views:
+        res["review"]["skipped"] = "The AI review needs the six rendered views; none came with this check."
+    elif ai:
         _send(room, {"type": "agent", "role": "reviewer", "provider": "claude", "status": "start", "ms": 0,
                      "text": f"Reviewing {len(views)} views"})
         rv = worlds.review_request(views, res["facts"], world=w)
@@ -302,7 +332,7 @@ def inspect_world(req):
             res["review"]["findings"] = res["review"]["findings"] + sq["findings"]
     res["review"]["verdict"] = res["verdict"]
     _log(room, {"type": "world_inspect", "verdict": res["verdict"], "ms": int((time.time() - t0) * 1000),
-                "review": res["review"].get("source") if ai and views else "none"})
+                "review": res["review"].get("source") if ai and views and not res["review"].get("skipped") else "none"})
     if res.get("subq"):
         _log(room, {"type": "subq", "purpose": "world_check", "source": res["subq"].get("source") or "subq",
                     "ms": res["subq"].get("ms")})
