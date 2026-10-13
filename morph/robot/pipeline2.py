@@ -361,9 +361,10 @@ class RobotProject(Project):
                 "manual": ["manual"]}[node]
 
     def _sim_world(self, design, nd):
-        """World mode: the project's room (world/world.json) in robot base millimetres when design.world.id names
-        it, also kept as sim/world.json so the revision shows what it was simulated against. A named world that is
-        missing or broken fails the stage rather than silently simulating the plain table."""
+        """World mode: the room design.world names, in robot base millimetres: the world saved under design.world.sha
+        (world/saved/<sha>.json; the room may have been edited again since), else world/world.json; also kept as
+        sim/world.json so the revision shows what it was simulated against. A named world that is missing or broken
+        fails the stage rather than silently simulating the plain table."""
         if not design.world.id:
             return None
         from ..studio import worlds
@@ -371,10 +372,13 @@ class RobotProject(Project):
 
         if not isinstance(design.world.id, str) or not worlds.SLUG.fullmatch(design.world.id):
             raise RuntimeError("world mode: world.id must be a world's id (lower-case letters, digits and -), never a path")
-        if os.path.exists(worlds.world_path(self.root)) and not contained_path(self.root, "world/world.json", decode=False):
-            raise RuntimeError("world mode: world/world.json must be a file inside the project folder")
-        w = worlds.load(self.root)
-        if w is None or w["id"] != design.world.id:
+        kept = worlds.saved_path(self.root, design.world.sha)
+        for path in (worlds.world_path(self.root), kept):
+            rel = os.path.relpath(path, self.root).replace(os.sep, "/") if path else None
+            if rel and os.path.lexists(path) and not contained_path(self.root, rel, decode=False):
+                raise RuntimeError(f"world mode: {rel} must be a file inside the project folder")
+        w = worlds.load_pinned(self.root, design.world.id, design.world.sha)
+        if w is None:
             raise RuntimeError(f"world mode: {design.world.id} isn't this project's world (world/world.json); "
                                "save the world again or turn world mode off")
         sw = worlds.sim_world(w)

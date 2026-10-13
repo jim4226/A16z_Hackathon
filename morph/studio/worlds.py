@@ -415,11 +415,18 @@ def asset_path(root: str) -> str:
     return os.path.join(world_dir(root), ASSET)
 
 
-def load(root: str) -> dict | None:
-    """The project's world (validated), None when it has none; WorldError when world.json is unreadable."""
-    path = world_path(root)
-    if not os.path.isfile(path):
+SAVED = "saved"  # world/saved/<sha>.json: every world save() wrote, under its hash
+
+
+def saved_path(root: str, world_sha) -> str | None:
+    """world/saved/<sha>.json, where save() keeps each world under its hash (a design's world.sha); None for anything
+    that isn't such a hash."""
+    if not isinstance(world_sha, str) or not re.fullmatch(r"[0-9a-f]{16}", world_sha):
         return None
+    return os.path.join(world_dir(root), SAVED, world_sha + ".json")
+
+
+def _read(path: str) -> dict:
     if os.path.getsize(path) > MAX_WORLD_BYTES:
         raise WorldError("world.json is larger than 2 MB.")
     try:
@@ -430,24 +437,54 @@ def load(root: str) -> dict | None:
     return validate(raw)
 
 
-def save(root: str, world: dict) -> tuple:
-    """Validate and write <root>/world/world.json atomically. Returns (world, sha)."""
-    w = validate(world)
-    if w["asset"] and not os.path.isfile(asset_path(root)):
-        raise WorldError("Upload the room (.glb) first: this world names room.glb, which isn't there.")
-    os.makedirs(world_dir(root), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".world.", suffix=".tmp", dir=world_dir(root))
+def load(root: str) -> dict | None:
+    """The project's world (validated), None when it has none; WorldError when world.json is unreadable."""
+    path = world_path(root)
+    if not os.path.isfile(path):
+        return None
+    return _read(path)
+
+
+def load_pinned(root: str, world_id: str, world_sha: str = "") -> dict | None:
+    """The world a design names: the one saved under its hash (world.sha), so a revision simulates exactly that room even
+    when the room was edited again since (a queued or running build, a fork, a conflict left unapplied); else world.json
+    when its id matches (a design without a saved copy). None when the project has no such world."""
+    p = saved_path(root, world_sha)
+    if p and os.path.isfile(p):
+        w = _read(p)
+        if w["id"] == world_id and sha(w) == world_sha:
+            return w
+    w = load(root)
+    return w if w is not None and w["id"] == world_id else None
+
+
+def _write(path: str, w: dict):
+    fd, tmp = tempfile.mkstemp(prefix=".world.", suffix=".tmp", dir=os.path.dirname(path))
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             json.dump(w, fh, indent=1)
-        os.replace(tmp, world_path(root))
+        os.replace(tmp, path)
     except BaseException:
         try:
             os.remove(tmp)
         except OSError:
             pass
         raise
-    return w, sha(w)
+
+
+def save(root: str, world: dict) -> tuple:
+    """Validate and write <root>/world/world.json atomically, and keep a copy under its hash (world/saved/<sha>.json: what
+    a design pinned to that hash is simulated in). Returns (world, sha)."""
+    w = validate(world)
+    if w["asset"] and not os.path.isfile(asset_path(root)):
+        raise WorldError("Upload the room (.glb) first: this world names room.glb, which isn't there.")
+    h = sha(w)
+    kept = saved_path(root, h)
+    os.makedirs(os.path.dirname(kept), exist_ok=True)
+    if not os.path.isfile(kept):
+        _write(kept, w)
+    _write(world_path(root), w)
+    return w, h
 
 
 # ====================================================================== room files (.glb)

@@ -96,3 +96,49 @@ def test_feature_telemetry_ids_are_registered_in_their_ranges():
 def _brief():
     from morph.studio import brief as B
     return B.start("help me sort socks")
+
+
+def test_a_revision_simulates_the_world_its_design_pins(tmp_path):
+    """The room saved again while a build of the earlier one waits or runs (or a starter switched): that build simulates
+    the world its design pins (world/saved/<sha>.json), never the newer world.json."""
+    p = RobotProject(str(tmp_path / "egg"))
+    w1, sha1 = worlds.save(p.root, worlds.starter("desk"))
+    moved = json.loads(json.dumps(w1))
+    moved["obstacles"][0]["center"][0] += 50.0
+    w2, sha2 = worlds.save(p.root, moved)
+    assert sha1 != sha2 and worlds.load(p.root) == w2                        # world.json is the newest
+    nd = str(tmp_path / "sim")
+    os.makedirs(nd)
+    pinned = lambda wid, sha: p._sim_world(Design().with_changes({"world.id": wid, "world.sha": sha}), nd)  # noqa: E731
+    assert pinned("desk", sha2)["sha"] == sha2
+    sw = pinned("desk", sha1)
+    assert sw["sha"] == sw["design_sha"] == sha1 and sw["obstacles"] == worlds.sim_world(w1)["obstacles"] != \
+        worlds.sim_world(w2)["obstacles"]
+    with open(os.path.join(nd, "world.json"), encoding="utf-8") as fh:
+        assert json.load(fh)["sha"] == sha1                                  # the revision records what it ran in
+    _, sha3 = worlds.save(p.root, worlds.starter("counter"))                 # a starter switch while a desk build waits
+    assert pinned("desk", sha1)["sha"] == sha1 and pinned("counter", sha3)["sha"] == sha3
+    os.remove(worlds.saved_path(p.root, sha3))                               # no saved copy: world.json when its id matches
+    assert pinned("counter", sha3)["sha"] == sha3
+    with pytest.raises(RuntimeError, match="isn't this project's world"):
+        pinned("workbench", sha1)
+    with open(worlds.saved_path(p.root, sha1), "w", encoding="utf-8") as fh:  # a copy edited by hand: not its hash any more
+        json.dump(w2, fh)
+    with pytest.raises(RuntimeError, match="isn't this project's world"):
+        pinned("desk", sha1)                                                 # (world.json is the counter now)
+    assert worlds.saved_path(p.root, "../../etc") is None and worlds.saved_path(p.root, "") is None
+
+
+def test_a_pinned_world_outside_the_project_is_refused(tmp_path):
+    p = RobotProject(str(tmp_path / "egg"))
+    outside = tmp_path / "elsewhere"
+    w, sha = worlds.save(str(outside), worlds.starter("desk"))               # a world in another folder
+    os.makedirs(os.path.join(p.root, "world"))
+    try:
+        os.symlink(os.path.join(str(outside), "world", "saved"), os.path.join(p.root, "world", "saved"))
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+    nd = str(tmp_path / "sim")
+    os.makedirs(nd)
+    with pytest.raises(RuntimeError, match="inside the project folder"):
+        p._sim_world(Design().with_changes({"world.id": "desk", "world.sha": sha}), nd)
