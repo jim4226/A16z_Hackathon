@@ -30,6 +30,46 @@ OBJECTS = {  # rough real-world values; max_force_n = per-finger squeeze that da
 ALIASES = {"egg": "raw egg", "strawberr": "strawberry", "tomato": "tomato", "grape": "grape",
            "ping pong": "ping pong ball", "pingpong": "ping pong ball", "bulb": "light bulb", "can": "soda can",
            "soda": "soda can", "marker": "marker", "pen": "marker", "bottle": "water bottle"}
+# Whole words only (plurals allowed), so "eggplant", "grapefruit", "penguin" and "candy" match nothing. "can" counts only
+# as a noun ("a can", "the can", "cans", "soda can"), never the verb in "a robot that can pour" or "can it lift 2 kg?".
+_VERB_AFTER_CAN = r"(?:i|you|it|we|they|he|she|be|do|lift|pick|hold|carry|move|grab|reach|handle|go|make|pour|sort|help)"
+ALIAS_PATTERNS = [
+    (r"\beggs?\b", "raw egg"), (r"\bstrawberr(?:y|ies)\b", "strawberry"), (r"\btomato(?:e?s)?\b", "tomato"),
+    (r"\bgrapes?\b", "grape"), (r"\bping[ -]?pong\b", "ping pong ball"), (r"\b(?:light ?)?bulbs?\b", "light bulb"),
+    (r"\bsodas?\b|\bcans\b|\b(?:soda|beer|tin|drink|food|coke|pop|aluminium|aluminum|empty)\s+can\b"
+     rf"|\b(?:a|an|the|one|each|every|my|your|this)\s+can\b(?!['’]|\s+{_VERB_AFTER_CAN}\b)", "soda can"),
+    (r"\bmarkers?\b", "marker"), (r"\bpens?\b", "marker"), (r"\bbottles?\b", "water bottle"),
+]
+
+_NUM = r"(\d+(?:\.\d+)?)"
+_UNITS = [  # every length becomes "<n> mm" and every mass "<n> g", so the rules below only parse mm and g
+    (_NUM + r"\s*(?:kgs?|kilos?|kilograms?)\b", 1000.0, "g"),
+    (_NUM + r"\s*(?:lbs?|pounds?)\b", 453.592, "g"),
+    (_NUM + r"\s*(?:oz|ounces?)\b", 28.3495, "g"),
+    (_NUM + r"\s*(?:grams?|gr)\b", 1.0, "g"),
+    (_NUM + r"\s*(?:cm|centimet(?:er|re)s?)\b", 10.0, "mm"),
+    (_NUM + r"\s*(?:millimet(?:er|re)s?)\b", 1.0, "mm"),
+    (_NUM + r"\s*(?:met(?:er|re)s?)\b", 1000.0, "mm"),
+    # "in" only when it cannot be the preposition: "2 in wide", "a 3 in cube", "2 inches"
+    (_NUM + r"\s*(?:inch(?:es)?\b|in\.?(?=\s*(?:wide|long|tall|high|thick|across|diameter|dia\b|cube|box|ball|sphere|"
+             r"cylinder|tube|object)\b|\s*(?:$|[,;)?!])))", 25.4, "mm"),
+    (_NUM + r'\s*(?:"|”)', 25.4, "mm"),
+]
+
+
+def normalize_units(text: str) -> str:
+    """'38 cm' -> '380 mm', '2 kg' -> '2000 g', '1.5 lb' -> '680 g', '2 in wide' -> '51 mm wide' (text is lower case)."""
+    for pat, k, unit in _UNITS:
+        text = re.sub(pat, lambda m: f"{round(float(m.group(1)) * k, 1):g} {unit}", text)
+    return text
+
+
+def object_alias(text: str) -> str | None:
+    """The intent.OBJECTS preset a (lower-case) message names, if any."""
+    for pat, key in ALIAS_PATTERNS:
+        if re.search(pat, text):
+            return key
+    return None
 
 
 def fit_finger(obj: dict) -> dict:
@@ -107,16 +147,32 @@ def robot_rules(t: str, d: Design, ch: dict, said: list):
 
 
 def rules(msg: str, d: Design) -> tuple[dict, list]:
-    t = msg.lower()
+    t = normalize_units(msg.lower())
     ch, said = {}, []
+    if re.match(r"\s*(?:can|could|will|would|does|do|is|are)\s+(?:it|this|that|the (?:robot|arm|gripper|design))\b", t) \
+            and t.rstrip().endswith("?"):
+        return ch, said  # "can it lift 2 kg?" asks about the design; it is not an edit
     robot_rules(t, d, ch, said)
-    for alias, key in ALIASES.items():
-        if re.search(rf"\b{alias}", t):
-            ch.update(object_changes(key))
-            o = OBJECTS[key]
-            said.append(f"object → {key} (Ø{o['diameter_mm']} mm, {o['mass_g']} g"
-                        + (f", damages above ~{o['max_force_n']} N)" if o["max_force_n"] else ")"))
-            break
+    key = object_alias(t)
+    if key:
+        ch.update(object_changes(key))
+        o = OBJECTS[key]
+        said.append(f"object → {key} (Ø{o['diameter_mm']} mm, {o['mass_g']} g"
+                    + (f", damages above ~{o['max_force_n']} N)" if o["max_force_n"] else ")"))
+    else:
+        m = re.search(r"(?:ø|⌀|diameter(?: of)?|dia\.?)\s*(\d+(?:\.\d+)?)\s*mm|(\d+(?:\.\d+)?)\s*mm\s*(?:wide|across|"
+                      r"diameter|dia\b|thick|ball|sphere|cube|box|block|brick|cylinder|tube|object)", t)
+        if m and not re.search(r"reach|finger|hole|mount|spacing|longer|shorter", t[max(0, m.start() - 24):m.end()]):
+            dia = float(m.group(1) or m.group(2))
+            ch.update({"object.diameter_mm": dia, **fit_finger({"diameter_mm": dia})})
+            said.append(f"object width → {dia:g} mm")
+            shape = next((s for pat, s in ((r"\b(?:box|cube|block|brick)", "box"), (r"\b(?:ball|sphere)", "sphere"),
+                                           (r"\b(?:tube|cylinder|rod|bottle|can)s?\b", "cylinder")) if re.search(pat, t)), None)
+            if shape:
+                ch["object.shape"] = shape
+                if shape == "box":
+                    ch["finger.pad"] = "flat"
+                said.append(f"object shape → {shape}")
     for s in ("sg90", "mg90s", "mg996r", "ds3218"):
         if s in t.replace(" ", "").replace("-", "") and ("gripper" in t or "arm.actuator_family" not in ch):
             ch["electronics.servo"] = s
