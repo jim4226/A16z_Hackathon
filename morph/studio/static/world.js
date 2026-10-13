@@ -107,6 +107,19 @@ function injectCSS() {
   border:1px solid rgba(255,255,255,.08);color:var(--ink2,#b9c0cd);font:500 12px var(--sans,system-ui);display:none}
 .wv-walk.on{display:block}
 .wv-walk kbd{font:11px var(--mono,monospace);padding:1px 5px;border-radius:4px;border:1px solid var(--line3,#343b49);color:var(--ink,#e9ecf2)}
+.wv-panel.min{width:auto;padding-bottom:10px}.wv-panel.min>:not(h3){display:none}
+.wv-panel h3 .wv-min{margin-left:auto}.wv-panel h3 .wv-min+.wv-x{margin-left:0}
+.wv-status{margin-top:6px;padding:5px 8px;border-radius:7px;background:var(--bg2,#12151c);border:1px solid var(--line,#1c212b);font-size:11.5px;color:var(--ink2,#b9c0cd)}
+.wv-status.ok{border-color:rgba(61,214,140,.3)}.wv-status.bad{border-color:rgba(255,107,107,.35)}.wv-status.run{border-color:rgba(112,145,255,.35)}
+.wv-edit{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px 6px;margin-top:6px;padding:6px;border-radius:7px;background:var(--bg2,#12151c);border:1px solid var(--accent-line,rgba(112,145,255,.45))}
+.wv-edit label{display:flex;flex-direction:column;gap:2px;font-size:10px;color:var(--dim,#5d6676);text-transform:uppercase;letter-spacing:.06em}
+.wv-edit .wv-in{width:100%;min-width:0}
+.wv-edit .wide{grid-column:1/-1;text-transform:none;letter-spacing:0;font-size:11px;color:var(--muted,#838c9d)}
+.wv-item.prop i{background:${C.auto}}.wv-item.prop.hl{border-color:rgba(245,185,66,.6)}
+/* while walking or on a guided tour, the robot tab's kinematic-chain card (bottom right) would cover the hint and the
+   tour's Back / Next buttons */
+body.wv-overlay .ov.kchain{opacity:0;pointer-events:none}
+@media (max-width:1100px){body.wv-open .ov.kchain{display:none}}   /* a narrow 3D view: the World panel needs the room */
 `;
   document.head.appendChild(s);
 }
@@ -155,7 +168,14 @@ export class WorldView {
     c.addEventListener('pointerdown', this._onDown, true);
     c.addEventListener('pointerup', this._onUp, true);
     c.addEventListener('pointermove', this._onMove, true);
-    this._offLoaded = viewer.on('loaded', () => { if (this.world) this._stage(true); });
+    this._offLoaded = viewer.on('loaded', () => {
+      if (this.world) {
+        // the viewer just sized its camera for this model: that is what World off gives back, not the older model's
+        if (this._saved) Object.assign(this._saved, { maxDist: viewer.controls.maxDistance, near: viewer.camera.near, far: viewer.camera.far });
+        this._stage(true);
+      }
+      if (this._robotHidden) this.robotVisible(false);
+    });
     this.stats = { fps: 0 };
   }
 
@@ -181,7 +201,10 @@ export class WorldView {
     return this.world;
   }
 
-  clear() {
+  /** Take the room away and give the plain table back: the viewer's floor, auto-orbit and camera limits as they were,
+   * the robot shown; `reframe` flies the camera back to the robot the way the viewer frames it. */
+  clear({ reframe = false } = {}) {
+    const had = !!this.world;
     this.walk(false);
     this.setMode('orbit');
     this.stopTour();
@@ -191,8 +214,15 @@ export class WorldView {
     this.world = null;
     this.octree = null;
     this.proposals = [];
+    this.contacts = [];
+    this.selected = null;
+    this.scaleRef = null;
+    this.doc = null;
+    this.reach = null;
     this.frame.visible = this.base.visible = false;
+    this.robotVisible(true);
     this._stage(false);
+    if (had && reframe) this.v.frame?.(null, { ms: 700, dir: this.v._defaultDir?.() });
     this._emit('world', null);
     this._dirty();
   }
@@ -204,6 +234,7 @@ export class WorldView {
     c.removeEventListener('pointerup', this._onUp, true);
     c.removeEventListener('pointermove', this._onMove, true);
     this._offLoaded?.();
+    if (this.tc) { this.tc.detach(); this.tc.dispose(); this.tc.parent?.remove(this.tc); this.tc = null; }
     this.frame.parent?.remove(this.frame);
     this.base.parent?.remove(this.base);
     this.hintEl.remove(); this.walkEl.remove(); this.capEl.remove();
@@ -214,7 +245,10 @@ export class WorldView {
     const v = this.v;
     for (const k of ['_floor', '_shadowPlane', '_blob']) if (v[k]) v[k].visible = !on;
     if (on) {
-      if (this._saved == null) this._saved = { orbit: v._orbitOn, maxPolar: v.controls.maxPolarAngle, maxDist: v.controls.maxDistance };
+      if (this._saved == null) {
+        this._saved = { orbit: v._orbitOn, maxPolar: v.controls.maxPolarAngle, maxDist: v.controls.maxDistance,
+          near: v.camera.near, far: v.camera.far };
+      }
       v.setAutoOrbit?.(false);
       v.controls.maxPolarAngle = Math.PI * 0.94;
       v.controls.maxDistance = 40000;
@@ -224,10 +258,40 @@ export class WorldView {
     } else if (this._saved) {
       v.controls.maxPolarAngle = this._saved.maxPolar;
       v.controls.maxDistance = this._saved.maxDist;
+      v.camera.near = this._saved.near;
+      v.camera.far = this._saved.far;
+      v.camera.updateProjectionMatrix();
       v.setAutoOrbit?.(this._saved.orbit);
       this._saved = null;
     }
     this._dirty();
+  }
+
+  // the robot itself, hidden while a just-uploaded room waits for it to be placed (it would stand at the scan's origin)
+  robotVisible(on) {
+    const root = this.v.model?.root;
+    if (root && root.visible !== !!on) { root.visible = !!on; this._dirty(); }
+    this._robotHidden = !on;
+  }
+
+  // the whole room scan in view, from above the front, so a surface can be clicked
+  frameAsset(ms = 0) {
+    if (!this.assetG) return Promise.resolve(false);
+    this.frame.updateMatrixWorld(true);
+    this.assetG.updateMatrixWorld(true);
+    let box = null;
+    this.assetG.traverse((o) => {
+      if (!o.isMesh) return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      const b = o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);
+      box = box ? box.union(b) : b;
+    });
+    if (!box || box.isEmpty()) return Promise.resolve(false);
+    const c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() / 2;
+    const v = this.v;
+    const dir = new THREE.Vector3(Math.sin(20 * DEG) * Math.cos(38 * DEG), Math.sin(38 * DEG), Math.cos(20 * DEG) * Math.cos(38 * DEG));
+    const fit = v._fitDistance ? v._fitDistance(r * 0.75) : r * 2.2;
+    return v._flyTo(c, fit, dir, ms);
   }
 
   // ---------------------------------------------------------------- frames
@@ -308,10 +372,15 @@ export class WorldView {
       this.boxes.add(g);
     }
     for (const o of this.proposals) {
-      const g = this._box(o, { color: C.auto, opacity: 0.14, dashed: true });
+      const g = this._box(o, { color: C.auto, opacity: this.hlProposal === o.id ? 0.34 : 0.14, dashed: this.hlProposal !== o.id });
       g.userData.id = o.id;
       g.userData.proposal = true;
       this.boxes.add(g);
+    }
+    // the gizmo follows the selected box into the rebuilt group (a removed group would leave it on nothing)
+    if (this.tc) {
+      const g = this.mode === 'edit' && this.selected && this.boxes.children.find((c) => c.userData.id === this.selected && !c.userData.proposal);
+      if (g) this.tc.attach(g); else this.tc.detach();
     }
     this._dirty();
   }
@@ -483,23 +552,61 @@ export class WorldView {
     return true;
   }
 
-  addBox(label = 'Box') {
+  /** A new 10 x 10 x 12 cm box on the surface beside the work: outside the middle of pick and place (`targets`, base
+   * frame, from the simulation), clear of both spots, so it shows up next to the job; move or size it from there. */
+  addBox(label = 'Box', targets = null) {
     const w = this.world;
-    const p = this.baseToWorld([200, 120, this.surfaceTop + 60]);
+    const pick = targets?.pick || [220, -80], place = targets?.place || [160, 170];
+    const mx = (pick[0] + place[0]) / 2, my = (pick[1] + place[1]) / 2, ml = Math.hypot(mx, my) || 1;
+    const p = this.baseToWorld([mx + (mx / ml) * 150, my + (my / ml) * 150, this.surfaceTop + 60]);
     const o = { id: slug(`${label}-${uid()}`), label, center: p.map(r1), half: [50, 50, 60], yaw_deg: w.mount.yaw_deg, source: 'user' };
     w.obstacles = [...(w.obstacles || []), o];
-    this._buildBoxes();
     this.select(o.id);
     this.changed('boxes');
     return o;
   }
   deleteBox(id) {
     this.world.obstacles = (this.world.obstacles || []).filter((o) => o.id !== id);
-    if (this.selected === id) this.select(null);
+    if (this.selected === id) this.selected = null;
     this._buildBoxes();
+    this._emit('select', this.selected);
     this.changed('boxes');
   }
-  setProposals(list) { this.proposals = (list || []).map((o) => ({ ...o, id: o.id || `auto-${uid()}` })); this._buildBoxes(); }
+
+  /** A box's place and size as the panel shows them: from the robot base (mm, x forward, y left), its bottom above the
+   * mount surface, its size along its own axes and its turn relative to the robot. */
+  boxInBase(o) {
+    const c = this.worldToBase(o.center);
+    return { x: r1(c[0]), y: r1(c[1]), bottom: r1(c[2] - o.half[2] - this.surfaceTop), w: r1(2 * o.half[0]), d: r1(2 * o.half[1]),
+      h: r1(2 * o.half[2]), turn: r1((((o.yaw_deg || 0) - this.world.mount.yaw_deg + 180) % 360 + 360) % 360 - 180) };
+  }
+  setBoxFromBase(id, vals) {
+    const o = (this.world.obstacles || []).find((x) => x.id === id);
+    if (!o) return false;
+    const b = { ...this.boxInBase(o), ...vals };
+    const size = [b.w, b.d, b.h].map((x) => clamp(Number.isFinite(x) ? x : 100, 10, 20000));
+    o.half = size.map((x) => r1(x / 2));
+    o.center = this.baseToWorld([b.x, b.y, this.surfaceTop + clamp(b.bottom || 0, -5000, 5000) + size[2] / 2]).map(r1);
+    o.yaw_deg = r1((((this.world.mount.yaw_deg + (b.turn || 0)) + 180) % 360 + 360) % 360 - 180);
+    this._buildBoxes();
+    this.changed('boxes');
+    return true;
+  }
+
+  /** The first grey box the robot's base would stand in (its footprint circle, up to 15 cm above the surface): a
+   * placement the simulation would start in contact. Label or null. */
+  baseClash() {
+    if (!this.world?.surface) return null;
+    const r = (this.v.model?.footprint || 120) * 0.95, top = this.surfaceTop;
+    for (const o of this.world.obstacles || []) {
+      const c = this.worldToBase(o.center), a = ((o.yaw_deg || 0) - this.world.mount.yaw_deg) * DEG;
+      const lx = Math.cos(a) * -c[0] + Math.sin(a) * -c[1], ly = -Math.sin(a) * -c[0] + Math.cos(a) * -c[1];
+      const dx = Math.max(Math.abs(lx) - o.half[0], 0), dy = Math.max(Math.abs(ly) - o.half[1], 0);
+      if (Math.hypot(dx, dy) < r && c[2] - o.half[2] < top + 150 && c[2] + o.half[2] > top + 1) return o.label || 'a box';
+    }
+    return null;
+  }
+  setProposals(list) { this.proposals = (list || []).map((o) => ({ ...o, id: o.id || `auto-${uid()}` })); this.hlProposal = null; this._buildBoxes(); }
   keepProposals(ids = null) {
     const keep = this.proposals.filter((o) => !ids || ids.includes(o.id));
     const have = new Set((this.world.obstacles || []).map((o) => o.id));
@@ -508,7 +615,12 @@ export class WorldView {
     this._buildBoxes();
     this.changed('boxes');
   }
-  dropProposals() { this.proposals = []; this._buildBoxes(); }
+  dropProposals(ids = null) {
+    this.proposals = ids ? this.proposals.filter((o) => !ids.includes(o.id)) : [];
+    this._buildBoxes();
+    this._emit('change', 'proposals');
+  }
+  highlightProposal(id) { this.hlProposal = this.hlProposal === id ? null : id; this._buildBoxes(); }
   addZone(kind, a, b) {
     const fz = this.world.floor_z ?? 0;
     const [x0, x1] = [Math.min(a[0], b[0]), Math.max(a[0], b[0])], [y0, y1] = [Math.min(a[1], b[1]), Math.max(a[1], b[1])];
@@ -524,13 +636,8 @@ export class WorldView {
 
   select(id) {
     this.selected = id;
-    this._buildBoxes();
-    const g = id && this.boxes.children.find((c) => c.userData.id === id && !c.userData.proposal);
-    if (this.tc) this.tc.detach();
-    if (g && this.mode === 'edit') {
-      this._ensureTC();
-      this.tc.attach(g);
-    }
+    if (id && this.mode === 'edit') this._ensureTC();
+    this._buildBoxes();                     // recolours the selection and moves the gizmo onto it
     this._emit('select', id);
   }
 
@@ -558,6 +665,7 @@ export class WorldView {
       o.yaw_deg = r1(((g.rotation.z / DEG + 180) % 360 + 360) % 360 - 180);
       this.changed('boxes');
     });
+    tc.enabled = this.mode === 'edit';
     v.scene.add(tc);
   }
   setGizmo(mode) {                         // translate | rotate | scale
@@ -573,7 +681,10 @@ export class WorldView {
     this.mode = mode;
     this._pending = null;
     if (this.ring) this.ring.visible = mode === 'place';
-    if (mode !== 'edit' && this.tc) this.tc.detach();
+    if (this.tc) {                          // a gizmo left listening would grab the pointer in the other modes
+      this.tc.enabled = mode === 'edit';
+      if (mode !== 'edit') this.tc.detach();
+    }
     if (mode === 'edit' && this.selected) this.select(this.selected);
     const hints = { place: 'Click a level surface to put the robot there; drag the white knob to turn it',
       scale: 'Click two points a known distance apart', zone: 'Click two opposite corners on the floor',
@@ -679,7 +790,10 @@ export class WorldView {
     this.setMount([h.point[0], h.point[1], top], w.mount.yaw_deg);
     this._build();
     this._applyMount(false);
-    this.hint('Placed. Drag the white knob to turn the robot, or click elsewhere to move it');
+    this.robotVisible(true);
+    const clash = this.baseClash();
+    this.hint(clash ? `The base stands in ${clash}: click another spot, or move that box`
+      : 'Placed. Drag the white knob to turn the robot, or click elsewhere to move it');
     this._emit('placed', w.mount);
   }
 
@@ -721,16 +835,25 @@ export class WorldView {
       v.controls.update = () => false;          // the camera is ours while walking
       this.walking = { keys: new Set(), vel: new THREE.Vector3(), onFloor: false, t: performance.now() };
       this._buildOctree();
-      const start = this._walkStart();
-      const fy = this.floorZ;
+      const start = this._walkStart(), fy = Math.max(start.y, this.floorZ);
       this.capsule = new Capsule(new THREE.Vector3(start.x, fy + CAPSULE_R + 1, start.z), new THREE.Vector3(start.x, fy + EYE_MM - 60, start.z), CAPSULE_R);
       v.camera.position.set(start.x, fy + EYE_MM, start.z);
       v.camera.lookAt(this.baseToScene([0, 0, this.surfaceTop + 150]));
-      try { this.plc = new PointerLockControls(v.camera, v.renderer.domElement); this.plc.addEventListener('change', () => this._dirty()); } catch (e) { this.plc = null; }
+      try {
+        this.plc = new PointerLockControls(v.camera, v.renderer.domElement);
+        this.plc.addEventListener('change', () => this._dirty());
+        // a refused pointer lock (some browsers, embeds, headless) is expected: drag-to-look takes over, no console error
+        this.plc.disconnect();
+        this.plc._onPointerlockError = () => { this._noLock = true; };
+        this.plc.connect();
+      } catch (e) { this.plc = null; }
       this._kd = (e) => this._key(e, true);
       this._ku = (e) => this._key(e, false);
+      this._lost = () => this.walking?.keys.clear();    // another window or tab: its key-ups never arrive here
       document.addEventListener('keydown', this._kd, true);
       document.addEventListener('keyup', this._ku, true);
+      window.addEventListener('blur', this._lost);
+      document.addEventListener('visibilitychange', this._lost);
       this.walkEl.classList.add('on');
       this._tick = this._tick.bind(this);
       this._raf = requestAnimationFrame(this._tick);
@@ -739,6 +862,8 @@ export class WorldView {
       cancelAnimationFrame(this._raf);
       document.removeEventListener('keydown', this._kd, true);
       document.removeEventListener('keyup', this._ku, true);
+      window.removeEventListener('blur', this._lost);
+      document.removeEventListener('visibilitychange', this._lost);
       if (this.plc) { try { this.plc.unlock(); } catch (e) { /* not locked */ } this.plc.dispose(); this.plc = null; }
       v.controls.update = this._ctl.update;
       v.controls.enabled = true;
@@ -749,11 +874,15 @@ export class WorldView {
       this.walkEl.classList.remove('on');
       this._emit('mode', 'orbit');
     }
+    this._overlay();
     this._dirty();
   }
 
+  _overlay() { document.body.classList.toggle('wv-overlay', !!(this.walking || this._tourNav)); }
+
   _walkStart() {
-    // stand where people are (walkways first, then seats, then a ring around the robot) on a spot with room to move
+    // stand where people are (walkways first, then seats, then a ring around the robot) on a spot with room to move;
+    // the point returned is on the floor there (scene frame, its y the floor's height)
     const zones = (this.world.zones || []).map((z) => {
       const p = this._zonePoly(z);
       const b = this.worldToBase([p.reduce((s, q) => s + q[0], 0) / p.length, p.reduce((s, q) => s + q[1], 0) / p.length, 0]);
@@ -763,16 +892,41 @@ export class WorldView {
     for (const [x, y, d] of zones) for (const k of [1, 0.85, 1.15, 0.7]) cands.push([x * k, y * k, d * k]);
     for (const r of [1500, 1900, 2400, 1100]) for (let a = 0; a < 360; a += 30) cands.push([Math.cos(a * DEG) * r, Math.sin(a * DEG) * r, r]);
     const fy = this.floorZ;
-    const free = (x, y) => {
-      const p = this.baseToScene([x, y, fy]);
-      return !this.octree.capsuleIntersect(new Capsule(new THREE.Vector3(p.x, fy + CAPSULE_R + 5, p.z), new THREE.Vector3(p.x, fy + EYE_MM - 60, p.z), CAPSULE_R));
+    if (!this.octree) { const c = cands.find((q) => q[2] >= 700); return this.baseToScene([c[0], c[1], fy]); }
+    const ray = new THREE.Ray(), down = new THREE.Vector3(0, -1, 0);
+    // the floor under a spot: a scan's own floor sits a little off floor_z (its lowest point); a counter or a box
+    // there is no floor (null)
+    const floorAt = (p) => {
+      ray.set(new THREE.Vector3(p.x, fy + EYE_MM, p.z), down);
+      const hit = this.octree.rayIntersect(ray);
+      const y = hit ? hit.position.y : fy;
+      return y < fy + 250 ? Math.max(y, fy) : null;
     };
+    const free = (x, y) => {
+      const p = this.baseToScene([x, y, fy]), f = floorAt(p);
+      if (f == null) return null;
+      p.y = f;
+      return this.octree.capsuleIntersect(new Capsule(new THREE.Vector3(p.x, f + CAPSULE_R + 5, p.z), new THREE.Vector3(p.x, f + EYE_MM - 60, p.z), CAPSULE_R)) ? null : p;
+    };
+    // the robot in sight from eye height (not from behind a wall: the floor under everything reaches past the room)
+    const goal = this.baseToScene([0, 0, this.surfaceTop + 150]);
+    const seen = (p) => {
+      const eye = new THREE.Vector3(p.x, p.y + EYE_MM, p.z), d = eye.distanceTo(goal);
+      ray.set(eye, goal.clone().sub(eye).normalize());
+      const hit = this.octree.rayIntersect(ray);
+      return !hit || hit.distance > d - 300;
+    };
+    // and in a room scan, over the scan rather than outside it (a scan of just a counter has no inside: then anywhere)
+    const foot = this.assetG ? new THREE.Box3().setFromObject(this.assetG) : null;
+    const inside = (p) => !foot || foot.isEmpty() || (p.x > foot.min.x + CAPSULE_R && p.x < foot.max.x - CAPSULE_R
+      && p.z > foot.min.z + CAPSULE_R && p.z < foot.max.z - CAPSULE_R);
+    const ok = [];
     for (const [x, y, d] of cands) {
       if (d < 700 || d > 3200) continue;
-      if (!this.octree) return this.baseToScene([x, y, fy]);
-      if (free(x, y) && [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([u, v]) => free(x + u * 350, y + v * 350))) return this.baseToScene([x, y, fy]);
+      const p = free(x, y);
+      if (p && [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([u, v]) => free(x + u * 350, y + v * 350))) ok.push(p);
     }
-    return this.baseToScene([1600, 0, fy]);
+    return ok.find((p) => inside(p) && seen(p)) || ok.find(seen) || ok[0] || this.baseToScene([1600, 0, fy]);
   }
 
   _buildOctree() {
@@ -859,6 +1013,7 @@ export class WorldView {
 
   _tick(now) {
     if (!this.walking) return;
+    if (!this.v._w || !this.v._h) { this.walk(false); return; }   // the 3D view was put away (another tab): stop
     this._raf = requestAnimationFrame(this._tick);
     const W = this.walking, dt = clamp((now - W.t) / 1000, 0, 0.25);      // real time even at a few frames per second
     W.t = now;
@@ -949,7 +1104,11 @@ export class WorldView {
     const T = (name) => (doc?.markers || []).find((m) => (m.label || '').startsWith(name))?.t;
     const tGrasp = T('at grasp') ?? T('contact') ?? 0, tMove = T('lifted') ?? tGrasp;
     const out = {};
-    const az = 35 * DEG;
+    let az = 35 * DEG;
+    if (this.assetG) {          // a scanned room: from its open middle (a robot on a counter has a wall behind it)
+      const c = this.sceneToBase(new THREE.Box3().setFromObject(this.assetG).getCenter(new THREE.Vector3()));
+      if (Math.hypot(c[0], c[1]) > 200) az = Math.atan2(c[1], c[0]) + 20 * DEG;   // a little to one side of the arm
+    }
     out.overview = { eye: [Math.cos(az) * reach * 2.3, Math.sin(az) * reach * 2.3, Math.max(fz + EYE_MM, top + reach * 1.1)], target: [mid[0] * 0.5, mid[1] * 0.5, top + 120], t: tMove };
     out.top_down = { eye: [mid[0] * 0.5, mid[1] * 0.5, top + reach * 3.1 + 250], target: [mid[0] * 0.5, mid[1] * 0.5, top], up: [1, 0, 0], t: tMove };
     const dx = place[0] - pick[0], dy = place[1] - pick[1], dl = Math.hypot(dx, dy) || 1;
@@ -1246,6 +1405,7 @@ export class WorldView {
       if (live() && (vw.ghost?.length || vw.cut)) this._uncut = this._cutLive(vw);
     };
     this._tourNav = { next: () => go(i + 1), prev: () => go(i - 1), stop: () => this.stopTour() };
+    this._overlay();
     await go(0);
     while (live() && auto && i < steps.length - 1) {
       const words = (steps[i].caption || '').split(/\s+/).length;
@@ -1298,87 +1458,149 @@ export class WorldView {
     this._tourHold = false;
     this.capEl.classList.remove('on');
     this._tourNav = null;
+    this._overlay();
   }
 }
 
 // ================================================================== WorldPanel: the Studio UI for world mode
+const SEC = { room: 'room', place: 'place', boxes: 'boxes', zones: 'zones', sim: 'sim', check: 'check' };
+const SRC = { claude: 'Claude (AI)', subq: 'SubQ Snap (AI)', rules: 'Measured' };
+const pct = (x) => `${Math.round(x * 100)}%`;
+
 export class WorldPanel {
   /** host: the viewer container; wv: a WorldView; api: {get, post, put} like studio.api; doc(): the current
-   * pick_place simulation document (or null); toast(text). */
-  constructor(host, { wv, api, toast = () => {}, doc = () => null, project = () => '' } = {}) {
-    this.wv = wv; this.api = api; this.toast = toast; this.doc = doc; this.project = project;
+   * pick_place simulation document (or null); toast(text); queue(): the room's running and waiting jobs (studio.S.queue);
+   * onToggle(open): the panel opened or closed. */
+  constructor(host, { wv, api, toast = () => {}, doc = () => null, project = () => '', queue = () => [], onToggle = () => {} } = {}) {
+    this.wv = wv; this.api = api; this.toast = toast; this.doc = doc; this.project = project; this.queue = queue;
+    this.onToggle = onToggle;
     this.el = el('div', 'wv-panel');
     this.el.style.display = 'none';
     host.appendChild(this.el);
-    this.state = { notes: NOTES, starters: [], checks: null, review: null, busy: '' };
+    this.state = { notes: NOTES, starters: [], result: null, busy: null, active: null, saved: null, pending: null, ai: {} };
     wv.on((type) => { if (['change', 'mode', 'world', 'select', 'measured', 'placed'].includes(type)) this.render(); });
     this.el.addEventListener('click', (e) => this._click(e));
     this.el.addEventListener('change', (e) => this._change(e));
+    // a redraw while a field has focus would throw away what is being typed: it waits for the field to let go
+    this.el.addEventListener('focusout', () => { if (this._later) { this._later = false; setTimeout(() => this.render(), 0); } });
+    this.el.addEventListener('input', (e) => { if (e.target.dataset.f === 'len') this.state.len = e.target.value; });
   }
 
   get open() { return this.el.style.display !== 'none'; }
+  /** World mode is on: the newest revision simulates in a room, or a room was just saved for the next one. */
+  get on() { const p = this.state.pending; return p ? !p.off : !!this.state.active?.id; }
+
   async toggle(on = !this.open) {
     this.el.style.display = on ? 'block' : 'none';
     if (on) await this.refresh();
-    else { this.wv.walk(false); this.wv.setMode('orbit'); }
+    else {
+      const wv = this.wv;
+      wv.walk(false); wv.setMode('orbit'); wv.stopTour();
+      if (!this.on && wv.world) {           // world mode is off: the plain table again (an unsaved draft is kept)
+        this.state.draft = wv.world._dirty ? { world: wv.world, assetUrl: wv.assetUrl } : null;
+        wv.clear({ reframe: true });
+      }
+    }
+    this.onToggle(this.open);
     this.render();
+  }
+
+  reset() {          // another project: nothing of the last one's checks, proposals or drafts carries over
+    Object.assign(this.state, { result: null, active: null, saved: null, pending: null, draft: null, surfaceProposal: null,
+      views: null, problem: null, sim: null, busy: null });
+  }
+
+  _busy(sec, text = '') {
+    if (sec) { this.wv.stopTour(); this.wv.walk(false); }   // a tour or a walk would fight the work over the camera
+    this.state.busy = sec ? { sec, text } : null;
+    this.render();
+  }
+
+  // a world (or "off") the Studio queued a revision for: shown as on its way until that job ends
+  _queued(r) {
+    if (r?.job?.id) this.state.pending = { job: r.job.id, sha: r.sha || '', name: r.world?.name || '', off: !r.world, t: Date.now() };
+  }
+
+  /** A job of this room ended (studio `queue` event): the world it was simulating is in, or it failed. */
+  jobEnded(job) {
+    const p = this.state.pending;
+    if (!p || job.id !== p.job) return false;
+    this.state.pending = null;
+    if (job.status === 'error') this.toast(p.off ? "Couldn't turn world mode off: see the chat" : `The simulation in ${p.name || 'the room'} didn't finish: see the chat`);
+    return true;
   }
 
   async refresh() {
     try {
       const r = await this.api.get('/api/world');
-      this.state.notes = r.notes || NOTES;
-      this.state.starters = r.starters || [];
-      this.state.sim = r.sim;
-      this.state.active = r.active;
-      this.state.problem = r.problem;
-      if (r.world && (!this.wv.world || this.wv.world._dirty !== true)) await this.wv.setWorld(r.world, { assetUrl: r.asset_url });
+      const s = this.state;
+      Object.assign(s, { notes: r.notes || NOTES, starters: r.starters || [], sim: r.sim, active: r.active || { id: '', sha: '' },
+        problem: r.problem, ai: r.ai || {}, saved: r.world ? { world: r.world, sha: r.sha, assetUrl: r.asset_url } : null });
+      const p = s.pending;
+      if (p && ((!p.off && s.active.sha === p.sha) || (p.off && !s.active.id) ||
+          (Date.now() - p.t > 3000 && !(this.queue() || []).some((j) => j.id === p.job)))) s.pending = null;
+      if (s.result && s.sim && s.result.rev !== s.sim.rev) s.result = { ...s.result, stale: true };
+      const wv = this.wv;
+      if (wv.world?._dirty) { /* being edited: keep it */ }
+      else if (r.world && this.on) await wv.setWorld(r.world, { assetUrl: r.asset_url });
+      else if (!this.on && s.draft) { await wv.setWorld(s.draft.world, { assetUrl: s.draft.assetUrl }); wv.world._dirty = true; s.draft = null; }
+      else if (!this.on && wv.world) wv.clear({ reframe: true });
     } catch (e) { this.toast(`World mode: ${e.message || e}`); }
     this.render();
   }
 
   async useStarter(id) {
+    if (this.state.busy) return;
     const st = this.state.starters.find((s) => s.id === id);
-    this.state.busy = 'Loading…';
-    this.render();
+    this._busy(SEC.room, `Saving ${st?.name || id}…`);
     try {
       const r = await this.api.post('/api/world', { starter: id });
+      this._queued(r);
       if (r.world) await this.wv.setWorld(r.world, {});
+      this.state.result = null;
       this.toast(r.unchanged ? `${st?.name || id} is already simulated` : `World saved: the simulation reruns in ${r.world?.name || id}`);
     } catch (e) { this.toast(`Couldn't load the starter: ${e.message || e}`); }
-    this.state.busy = '';
-    this.render();
+    this._busy(null);
+  }
+
+  async useSaved() {         // world mode is off: simulate in the last saved room again (saved by Save and simulate)
+    const s = this.state.saved;
+    if (!s || this.state.busy) return;
+    await this.wv.setWorld(s.world, { assetUrl: s.assetUrl });
+    this.wv.world._dirty = true;
+    this.wv.changed('reuse');
   }
 
   async upload(file) {
-    if (!file) return;
+    if (!file || this.state.busy) return;
     if (file.size > 300 * 1024 * 1024) return this.toast('The room file is larger than 300 MB');
-    this.state.busy = 'Uploading the room…';
-    this.render();
+    this._busy(SEC.room, 'Uploading the room…');
     try {
       const r = await this.api.put('/api/world/upload', file, { name: file.name });
-      const draft = { ...r.draft, mount: { position: [0, 0, 0], yaw_deg: 0 }, surface: null };
-      await this.wv.setWorld({ ...draft, surface: null }, { assetUrl: r.asset_url, frame: false });
-      this.wv.frame.matrix.identity(); this.wv.frame.updateMatrixWorld(true);
-      this.wv.setMode('place');
+      const wv = this.wv;
+      await wv.setWorld({ ...r.draft, mount: { position: [0, 0, 0], yaw_deg: 0 }, surface: null }, { assetUrl: r.asset_url, frame: false });
+      wv.world._dirty = true;                  // not saved: Place, then Save and simulate
+      wv.robotVisible(false);                  // until it is placed (it would stand at the scan's origin)
+      this.state.result = null;
+      await wv.frameAsset(600);
+      wv.setMode('place');
       for (const n of r.draft.notes || []) this.toast(n);
       this.toast(`Room received (${r.faces.toLocaleString()} triangles). Set the scale, then click a level surface for the robot.`);
     } catch (e) { this.toast(`Upload failed: ${e.message || e}`); }
-    this.state.busy = '';
-    this.render();
+    this._busy(null);
   }
 
   async autoBoxes() {
-    this.state.busy = 'Finding boxes in the scan…';
-    this.render();
+    if (this.state.busy) return;
+    this._busy(SEC.boxes, 'Finding boxes in the scan…');
     try {
       const r = await this.api.post('/api/world/obstacles/auto', { world: this.worldBody() });
       this.wv.setProposals(r.obstacles);
       if (r.surface) { this.state.surfaceProposal = r.surface; }
-      this.toast(`${r.obstacles.length} boxes proposed${r.stats?.truncated ? ' (the scan was cut short)' : ''}: keep the ones that match real things`);
+      this.toast(r.obstacles.length ? `${r.obstacles.length} boxes proposed${r.stats?.truncated ? ' (the scan was cut short)' : ''}: keep the ones that match real things`
+        : 'No boxes found near the robot in the scan');
     } catch (e) { this.toast(`Couldn't box the scan: ${e.message || e}`); }
-    this.state.busy = '';
-    this.render();
+    this._busy(null);
   }
 
   worldBody() {
@@ -1388,134 +1610,250 @@ export class WorldPanel {
   }
 
   async save() {
-    this.state.busy = 'Saving…';
-    this.render();
+    const wv = this.wv;
+    if (this.state.busy) return;
+    if (!wv.world?.surface) return this.toast('Place the robot on a surface first');
+    this._busy(SEC.sim, 'Saving…');
     try {
       const r = await this.api.post('/api/world', { world: this.worldBody() });
-      if (r.world) { const keep = this.wv.doc; await this.wv.setWorld(r.world, { assetUrl: this.wv.assetUrl, frame: false }); this.wv.doc = keep; }
+      this._queued(r);
+      if (r.world) { const keep = wv.doc; await wv.setWorld(r.world, { assetUrl: wv.assetUrl, frame: false }); wv.doc = keep; }
+      wv.setMode('orbit');
+      this.state.result = null;                // that check was about the world before this save
       this.toast(r.unchanged ? 'Nothing changed: this world is already simulated' : 'World saved: only the simulation reruns');
     } catch (e) { this.toast(`Couldn't save the world: ${e.message || e}`); }
-    this.state.busy = '';
-    this.render();
+    this._busy(null);
   }
 
   async turnOff() {
-    try { await this.api.post('/api/world', { off: true }); this.wv.clear(); this.toast('World mode off: the simulation runs on the plain table again'); }
-    catch (e) { this.toast(`${e.message || e}`); }
-    this.render();
+    if (this.state.busy) return;
+    this._busy(SEC.sim, 'Turning world mode off…');
+    try {
+      const r = await this.api.post('/api/world', { off: true });
+      this._queued(r);
+      this.state.result = null;
+      this.state.draft = null;
+      this.wv.clear({ reframe: true });
+      this.toast('World mode off: the simulation runs on the plain table again');
+    } catch (e) { this.toast(`${e.message || e}`); }
+    this._busy(null);
   }
 
+  /** The placement check (measured), and with `ai` the AI review of six rendered views. Only for a saved world whose
+   * simulation is in: an unsaved edit would be checked against the old simulation. */
   async check(ai) {
-    const doc = this.doc() || this.wv.doc;
-    this.state.busy = ai ? 'Rendering six views for the AI review…' : 'Checking…';
-    this.render();
+    const s = this.state, wv = this.wv;
+    if (s.busy) return;
+    if (wv.world?._dirty) return this.toast('Save and simulate first: the check uses the saved world\'s simulation');
+    if (s.pending) return this.toast('The simulation in this world is still running');
+    const doc = this.doc() || wv.doc;
+    const render = (ai && s.ai.claude) || (s.subq && s.ai.subq);    // pictures only go to a reviewer that is on
+    this._busy(SEC.check, render ? 'Rendering six views…' : 'Checking…');
     try {
-      const views = await this.wv.snapshotViews(doc);
-      this.state.views = views;
-      this.state.busy = ai ? 'AI review (up to 30 s)…' : 'Checking…';
-      this.render();
-      const r = await this.api.post('/api/world/inspect', { views: views.map(({ name, jpeg_b64 }) => ({ name, jpeg_b64 })), ai, subq: !!this.state.subq });
-      this.state.result = r;
+      let views = [];
+      if (render) {
+        views = await wv.snapshotViews(doc);
+        s.views = views;
+        this._busy(SEC.check, ai && s.ai.claude ? 'AI review (up to a minute)…' : 'Asking SubQ…');
+      }
+      s.result = await this.api.post('/api/world/inspect', { views: views.map(({ name, jpeg_b64 }) => ({ name, jpeg_b64 })), ai: !!ai,
+        subq: !!(s.subq && s.ai.subq) });
+      s.result.asked = { ai: !!ai, subq: !!s.subq };
     } catch (e) { this.toast(`Check failed: ${e.message || e}`); }
-    this.state.busy = '';
-    this.render();
+    this._busy(null);
   }
 
   async apply(i) {
     const ch = this.state.result?.review?.suggested_changes?.[i];
-    if (!ch) return;
+    if (!ch || ch.applied || this.state.busy) return;
     const wv = this.wv;
     if (ch.kind === 'move_mount' && ch.mount) { wv.setMount(ch.mount.position, ch.mount.yaw_deg); this.toast('Moved the robot: save the world to simulate it there'); }
-    else if (ch.kind === 'add_obstacle' && ch.obstacle) { wv.world.obstacles.push({ ...ch.obstacle, id: slug(ch.obstacle.label) + '-' + uid() }); wv._buildBoxes(); wv.changed('boxes'); this.toast('Box added: save the world to simulate with it'); }
-    else if (ch.kind === 'move_target' && ch.changes) {
-      try { await this.api.post('/api/params', { changes: ch.changes }); this.toast('Target moved: the arm is re-sized and simulated again'); }
-      catch (e) { this.toast(`${e.message || e}`); }
-    }
+    else if (ch.kind === 'add_obstacle' && ch.obstacle) {
+      wv.world.obstacles.push({ ...ch.obstacle, id: slug(ch.obstacle.label) + '-' + uid() }); wv._buildBoxes(); wv.changed('boxes');
+      this.toast('Box added: save the world to simulate with it');
+    } else if (ch.kind === 'move_target' && ch.changes) {
+      try { await this.api.post('/api/params', { changes: ch.changes }); this.toast('Target moved: the arm is re-sized for it and simulated again'); }
+      catch (e) { this.toast(`${e.message || e}`); return; }
+    } else return;
     ch.applied = true;
     this.render();
   }
 
   _click(e) {
     const b = e.target.closest('[data-a]');
-    if (!b) return;
+    if (!b || b.disabled) return;
     const a = b.dataset.a, wv = this.wv, arg = b.dataset.arg;
     const act = {
-      close: () => this.toggle(false), mode: () => wv.setMode(wv.mode === arg ? 'orbit' : arg), rot: () => wv.rotate(+arg),
-      scale: () => { const n = +this.el.querySelector('[data-f="len"]').value; if (!wv.applyScale(n)) this.toast('Measure two points, then enter their true distance in mm'); },
-      auto: () => this.autoBoxes(), keep: () => wv.keepProposals(), drop: () => wv.dropProposals(),
-      surface: () => { const s = this.state.surfaceProposal; if (s) { wv.world.surface = { ...s }; delete wv.world.surface.edge_clipped; wv.setMount([...wv.world.mount.position.slice(0, 2), s.center[2] + s.half[2]]); wv._build(); wv._applyMount(false); this.state.surfaceProposal = null; } },
-      add: () => { wv.setMode('edit'); wv.addBox(); }, del: () => wv.deleteBox(arg), sel: () => { wv.setMode('edit'); wv.select(arg); },
+      close: () => this.toggle(false), min: () => { this.state.min = !this.state.min; this.render(); },
+      mode: () => wv.setMode(wv.mode === arg ? 'orbit' : arg), rot: () => wv.rotate(+arg),
+      scale: () => {
+        const n = +(this.el.querySelector('[data-f="len"]')?.value || this.state.len);
+        if (!wv.applyScale(n)) return this.toast('Measure two points, then enter their true distance in mm');
+        this.state.len = '';
+        wv.setMode('orbit');
+        this.toast(`Scale set: ${Math.round(n)} mm between the two points`);
+      },
+      auto: () => this.autoBoxes(), keep: () => wv.keepProposals(arg ? [arg] : null), drop: () => wv.dropProposals(arg ? [arg] : null),
+      hlprop: () => wv.highlightProposal(arg),
+      surface: () => {
+        const s = this.state.surfaceProposal;
+        if (!s) return;
+        wv.world.surface = { ...s };
+        delete wv.world.surface.edge_clipped;
+        this.state.surfaceProposal = null;
+        wv.setMount([...wv.world.mount.position.slice(0, 2), s.center[2] + s.half[2]]);
+        wv._build(); wv._applyMount(false);
+      },
+      add: () => { wv.setMode('edit'); wv.addBox('Box', (this.doc() || wv.doc)?.targets); this._scrollToSelected(); },
+      del: () => wv.deleteBox(arg), sel: () => { wv.setMode('edit'); wv.select(arg); },
       gizmo: () => wv.setGizmo(arg), zone: () => { wv.zoneKind = arg; wv.setMode('zone'); }, delzone: () => wv.deleteZone(arg),
       walk: () => wv.walk(!wv.walking), play: () => { const d = this.doc() || wv.doc; if (d) wv.play(d); else this.toast('No simulation for this revision yet'); },
       save: () => this.save(), off: () => this.turnOff(), check: () => this.check(false), review: () => this.check(true),
-      tour: () => { const r = this.state.result?.review; if (r) wv.tour(r.tour, this.doc() || wv.doc, { source: r.source === 'rules' ? 'measured' : r.source === 'claude' ? 'Claude (AI)' : r.source }); },
+      reuse: () => this.useSaved(),
+      tour: () => { const r = this.state.result?.review; if (r) wv.tour(r.tour, this.doc() || wv.doc, { source: r.source === 'claude' ? 'Claude (AI)' : 'measured' }); },
       apply: () => this.apply(+arg), subq: () => { this.state.subq = !this.state.subq; this.render(); },
     };
     act[a]?.();
   }
 
+  _scrollToSelected() {
+    const it = this.el.querySelector('.wv-item.sel');
+    const list = it?.closest('.wv-list');
+    if (list) list.scrollTop = Math.max(0, it.offsetTop - list.offsetTop - 4);
+  }
+
   _change(e) {
-    const f = e.target.dataset.f;
-    if (f === 'starter' && e.target.value) this.useStarter(e.target.value);
-    if (f === 'file') this.upload(e.target.files?.[0]);
-    if (f === 'label') { const o = this.wv.world.obstacles.find((x) => x.id === e.target.dataset.id); if (o) { o.label = e.target.value.slice(0, 60); this.wv._buildBoxes(); this.wv.changed('boxes'); } }
+    const t = e.target, f = t.dataset.f, wv = this.wv;
+    if (f === 'starter' && t.value) this.useStarter(t.value);
+    if (f === 'file') { this.upload(t.files?.[0]); t.value = ''; }
+    if (f === 'label') { const o = wv.world.obstacles.find((x) => x.id === t.dataset.id); if (o) { o.label = t.value.slice(0, 60) || o.label; wv._buildBoxes(); wv.changed('boxes'); } }
+    const box = { bx: 'x', by: 'y', bz: 'bottom', bw: 'w', bd: 'd', bh: 'h', bt: 'turn' }[f];
+    if (box && t.dataset.id) {
+      const v = parseFloat(t.value);
+      if (Number.isFinite(v)) wv.setBoxFromBase(t.dataset.id, { [box]: v }); else this.render();
+    }
+  }
+
+  // one line under the room's name: is the newest revision simulated in it, and how did it go
+  _status() {
+    const s = this.state, w = this.wv.world, sim = s.sim, p = s.pending;
+    if (p) return ['run', p.off ? 'Turning world mode off: the simulation reruns on the plain table…'
+      : `Simulating in ${p.name || 'the room'}… only the simulation stage reruns.`];
+    if (w?._dirty && w.asset && w.asset_sha && w.asset_sha !== s.saved?.world?.asset_sha) {     // a scan just uploaded
+      return ['', `${w.name}: a new room, not simulated yet. Place the robot, then Save and simulate.`
+        + (this.on && sim?.world ? ` (${sim.rev} simulates in ${s.saved?.world?.name || sim.world}.)` : '')];
+    }
+    if (!this.on) return ['', 'World mode is off: the robot is simulated on the plain table.'];
+    if (!sim || !sim.world) return ['', 'Not simulated in this world yet: Save and simulate.'];
+    const same = sim.world === s.active?.id && (!s.saved || sim.world_sha === s.saved.sha);
+    let t = `${sim.rev} in ${s.saved?.world?.name || sim.world}: pick and place ${sim.success ? 'succeeds' : 'fails'}`;
+    if (!sim.success && sim.failure) t += ` (${sim.failure})`;
+    if (sim.min_clearance_mm != null) t += `; closest ${Math.round(sim.min_clearance_mm)} mm, to ${sim.min_clearance_at?.obstacle || 'a grey box'}`;
+    else t += '; no grey boxes to keep clear of';
+    const arc = sim.arc, back = sim.detours?.retreat, there = sim.detours?.approach;
+    const ways = [];
+    if (arc && arc.clear && arc.usual === false) ways.push(`the carry path pulled in ${pct(arc.inward)}${arc.bump_mm ? `, raised ${Math.round(arc.bump_mm)} mm` : ''} to keep clear`);
+    if (there?.via && there.via !== 'direct') ways.push('the approach goes along the carry path');
+    if (back?.via && back.via !== 'direct') ways.push(back.via === 'direct, hand closed' ? 'the hand closes before going back to rest' : 'it goes back to rest along the carry path');
+    const said = ways.join('; ');
+    t += said ? `. ${said[0].toUpperCase()}${said.slice(1)}.` : '.';
+    const tight = sim.success && sim.clearance_ok === false && !(sim.world_contacts || []).length;
+    if (tight) t += ' Under 10 mm: check that spot in the real room.';
+    if (!same) t += ' The saved room changed since: Save and simulate.';
+    if (w?._dirty) t += ' Unsaved changes: Save and simulate to test them.';
+    return [sim.success && same && !tight ? 'ok' : (sim.success ? '' : 'bad'), t];
   }
 
   render() {
+    document.body.classList.toggle('wv-open', !!(this.open && !this.state.min));
     if (!this.open) return;
-    const wv = this.wv, w = wv.world, s = this.state, N = s.notes || NOTES;
-    const B = (a, label, { arg = '', on = false, primary = false, dis = false, title = '' } = {}) =>
-      `<button class="wv-btn${on ? ' on' : ''}${primary ? ' primary' : ''}" data-a="${a}" data-arg="${esc(arg)}" ${dis ? 'disabled' : ''} title="${esc(title)}">${label}</button>`;
-    const busy = s.busy ? `<div class="wv-note">${esc(s.busy)}</div>` : '';
-    let h = `<h3>World <span class="wv-beta">beta</span><button class="wv-x" data-a="close" title="Close">&times;</button></h3>
-      <div class="wv-note">${esc(N.world)}</div>${busy}
-      <div class="wv-sec"><b>Room</b><div class="wv-row"><select class="wv-sel" data-f="starter"><option value="">Start from…</option>
+    const f = document.activeElement;
+    if (f && f !== document.body && this.el.contains(f) && f.matches('input:not([type]), input[type="text"], input[type="number"]')) {
+      this._later = true;
+      return;
+    }
+    const wv = this.wv, w = wv.world, s = this.state, N = s.notes || NOTES, busy = !!s.busy;
+    this.el.classList.toggle('min', !!s.min);
+    const B = (a, label, { arg = '', on = false, primary = false, dis = false, title = '', any = false } = {}) =>
+      `<button type="button" class="wv-btn${on ? ' on' : ''}${primary ? ' primary' : ''}" data-a="${a}" data-arg="${esc(arg)}" ${dis || (busy && !any) ? 'disabled' : ''} title="${esc(title)}">${label}</button>`;
+    const busyIn = (sec) => (s.busy?.sec === sec ? `<div class="wv-note warn">${esc(s.busy.text)}</div>` : '');
+    const [cls, line] = this._status();
+    let h = `<h3>World <span class="wv-beta">beta</span><button type="button" class="wv-x wv-min" data-a="min" title="${s.min ? 'Show the panel' : 'Fold the panel away'}">${s.min ? '+' : '&minus;'}</button><button type="button" class="wv-x" data-a="close" title="Close">&times;</button></h3>
+      <div class="wv-note">${esc(N.world)}</div>
+      <div class="wv-sec"><b>Room</b><div class="wv-row"><select class="wv-sel" data-f="starter" ${busy ? 'disabled' : ''}><option value="">Start from…</option>
       ${(s.starters || []).map((x) => `<option value="${esc(x.id)}" title="${esc(x.description)}">${esc(x.name)}</option>`).join('')}</select>
-      <label class="wv-btn" title="A room scan as a single .glb file (y up, metres), up to 300 MB">Upload .glb<input type="file" accept=".glb,model/gltf-binary" data-f="file" hidden></label></div>
-      ${w ? `<div class="wv-note">${esc(w.name)}${w.asset ? ` · scan, ${esc(w.units)}, scale ${(+w.scale).toFixed(3)}` : ' · built from boxes'}${s.problem ? ` · ${esc(s.problem)}` : ''}</div>` : `<div class="wv-note">${esc(N.release)}</div>`}</div>`;
+      <label class="wv-btn" title="A room scan as a single .glb file (y up, metres), up to 300 MB">Upload .glb<input type="file" accept=".glb,model/gltf-binary" data-f="file" hidden ${busy ? 'disabled' : ''}></label></div>
+      ${w ? `<div class="wv-note">${esc(w.name)}${w.asset ? ` · scan, ${esc(w.units)}, scale ${(+w.scale).toFixed(3)}` : ' · built from boxes'}${s.problem ? ` · ${esc(s.problem)}` : ''}</div>`
+        : `<div class="wv-note">${esc(N.release)}</div>`}
+      <div class="wv-status ${cls}">${esc(line)}</div>
+      ${!this.on && !w && s.saved ? `<div class="wv-row">${B('reuse', `Use ${esc(s.saved.world.name)} again`)}</div>` : ''}${busyIn(SEC.room)}</div>`;
     if (w) {
       const m = w.mount || { position: [0, 0, 0], yaw_deg: 0 };
+      const clash = w.surface ? wv.baseClash() : null;
       h += `<div class="wv-sec"><b>Robot placement</b><div class="wv-row">${B('mode', 'Place', { arg: 'place', on: wv.mode === 'place', title: 'Click a level surface' })}
-        ${B('rot', '-15°', { arg: -15 })}${B('rot', '+15°', { arg: 15 })}<span class="wv-note" style="margin:0">yaw ${Math.round(m.yaw_deg)}°</span></div>
-        ${w.asset ? `<div class="wv-row">${B('mode', 'Scale: 2 points', { arg: 'scale', on: wv.mode === 'scale' })}<input class="wv-in" data-f="len" type="number" min="1" placeholder="true mm">${B('scale', 'Apply')}</div>
-        ${wv.scaleRef ? `<div class="wv-note">Measured ${Math.round(wv.scaleRef.measured)} mm between the two points.</div>` : ''}` : ''}
-        ${s.surfaceProposal ? `<div class="wv-row">${B('surface', `Use the scanned surface (${Math.round(s.surfaceProposal.half[0] * 2)} × ${Math.round(s.surfaceProposal.half[1] * 2)} mm)`)}</div>` : ''}</div>`;
+        ${B('rot', '-15°', { arg: -15, dis: !w.surface })}${B('rot', '+15°', { arg: 15, dis: !w.surface })}<span class="wv-note" style="margin:0">yaw ${Math.round(m.yaw_deg)}°</span></div>
+        ${!w.surface ? '<div class="wv-note warn">Not placed yet: Place, then click a level surface (a table, counter or shelf top).</div>' : ''}
+        ${clash ? `<div class="wv-note warn">The base stands in ${esc(clash)}: the simulation would start in contact. Place it elsewhere or move that box.</div>` : ''}
+        ${w.asset ? `<div class="wv-row">${B('mode', 'Scale: 2 points', { arg: 'scale', on: wv.mode === 'scale' })}<input class="wv-in" data-f="len" type="number" min="1" placeholder="true mm" value="${esc(s.len || '')}" aria-label="True distance in mm">${B('scale', 'Apply', { dis: !wv.scaleRef })}</div>
+        ${wv.scaleRef ? `<div class="wv-note">Measured ${Math.round(wv.scaleRef.measured)} mm between the two points: type their real distance.</div>` : ''}
+        ${w.scale_ref ? `<div class="wv-note">Scale set from ${Math.round(w.scale_ref.length_mm)} mm between two points.</div>` : ''}` : ''}
+        ${s.surfaceProposal ? `<div class="wv-row">${B('surface', `Use the scanned surface (${Math.round(s.surfaceProposal.half[0] * 2)} × ${Math.round(s.surfaceProposal.half[1] * 2)} mm)`)}</div>` : ''}${busyIn(SEC.place)}</div>`;
       const obs = w.obstacles || [];
+      const sel = obs.find((o) => o.id === wv.selected);
       h += `<div class="wv-sec"><b>Grey boxes (what the simulation sees) · ${obs.length}</b><div class="wv-row">
-        ${w.asset ? B('auto', 'Find boxes in the scan') : ''}${B('add', 'Add box')}${B('mode', 'Edit', { arg: 'edit', on: wv.mode === 'edit' })}
-        ${wv.mode === 'edit' ? `${B('gizmo', 'Move', { arg: 'translate' })}${B('gizmo', 'Turn', { arg: 'rotate' })}${B('gizmo', 'Size', { arg: 'scale' })}` : ''}</div>
-        ${wv.proposals.length ? `<div class="wv-row"><span class="wv-note" style="margin:0">${wv.proposals.length} proposed (amber)</span>${B('keep', 'Keep all', { primary: true })}${B('drop', 'Drop')}</div>` : ''}
+        ${w.asset ? B('auto', 'Find boxes in the scan', { dis: !w.surface, title: w.surface ? '' : 'Place the robot first' }) : ''}${B('add', 'Add box', { dis: !w.surface })}${B('mode', 'Edit', { arg: 'edit', on: wv.mode === 'edit' })}
+        ${wv.mode === 'edit' && sel ? `${B('gizmo', 'Move', { arg: 'translate' })}${B('gizmo', 'Turn', { arg: 'rotate' })}${B('gizmo', 'Size', { arg: 'scale' })}` : ''}</div>
+        ${wv.proposals.length ? `<div class="wv-row"><span class="wv-note" style="margin:0;flex:1">${wv.proposals.length} proposed (amber): keep the ones that match something real</span>${B('keep', 'Keep all', { primary: true })}${B('drop', 'Drop all')}</div>
+          <div class="wv-list">${wv.proposals.map((o) => `<div class="wv-item prop${wv.hlProposal === o.id ? ' hl' : ''}"><i></i><span data-a="hlprop" data-arg="${esc(o.id)}" title="Show it">${esc(o.label)}</span>
+            <small>${o.half.map((x) => Math.round(2 * x)).join('×')}</small>${B('keep', 'Keep', { arg: o.id })}<button type="button" class="wv-x" data-a="drop" data-arg="${esc(o.id)}" title="Drop" ${busy ? 'disabled' : ''}>&times;</button></div>`).join('')}</div>` : ''}
         <div class="wv-list">${obs.map((o) => `<div class="wv-item${wv.selected === o.id ? ' sel' : ''}"><i style="background:${o.source === 'auto' ? C.auto : C.box}"></i>
-          ${wv.selected === o.id ? `<input class="wv-in" style="flex:1;width:auto" data-f="label" data-id="${esc(o.id)}" value="${esc(o.label)}">` : `<span data-a="sel" data-arg="${esc(o.id)}">${esc(o.label)}</span>`}
-          <small>${o.half.map((x) => Math.round(2 * x)).join('×')}</small><button class="wv-x" data-a="del" data-arg="${esc(o.id)}" title="Delete">&times;</button></div>`).join('')}</div></div>`;
+          ${wv.selected === o.id ? `<input class="wv-in" style="flex:1;width:auto" data-f="label" data-id="${esc(o.id)}" value="${esc(o.label)}" aria-label="Box label">` : `<span data-a="sel" data-arg="${esc(o.id)}">${esc(o.label)}</span>`}
+          <small>${o.half.map((x) => Math.round(2 * x)).join('×')}</small><button type="button" class="wv-x" data-a="del" data-arg="${esc(o.id)}" title="Delete" ${busy ? 'disabled' : ''}>&times;</button></div>`).join('')}</div>
+        ${sel ? this._editor(sel) : ''}${busyIn(SEC.boxes)}</div>`;
       const zs = w.zones || [];
       h += `<div class="wv-sec"><b>People areas · ${zs.length}</b><div class="wv-row">${B('zone', 'Add walkway', { arg: 'walkway', on: wv.mode === 'zone' && wv.zoneKind === 'walkway' })}
         ${B('zone', 'Add seat', { arg: 'seat', on: wv.mode === 'zone' && wv.zoneKind === 'seat' })}</div>
         <div class="wv-list">${zs.map((z) => `<div class="wv-item"><i style="background:${C[z.kind]}"></i><span>${esc(z.label)}</span><small>${esc(z.kind)}</small>
-          <button class="wv-x" data-a="delzone" data-arg="${esc(z.id)}" title="Delete">&times;</button></div>`).join('')}</div></div>`;
-      const sim = s.sim;
-      const simLine = sim && sim.world ? `Simulated in this world: ${sim.success ? 'success' : 'fails'}${sim.min_clearance_mm != null ? `, min clearance ${sim.min_clearance_mm} mm` : ', no grey boxes to keep clear of'}${(sim.world_contacts || []).length ? `, ${sim.world_contacts.length} contact(s)` : ''}.` : 'Not simulated in this world yet.';
-      h += `<div class="wv-sec"><b>Simulate</b><div class="wv-row">${B('save', w._dirty ? 'Save and simulate' : 'Save world', { primary: !!w._dirty })}${B('play', 'Play in the room')}
-        ${B('walk', wv.walking ? 'Stop walking' : 'Walk', { on: !!wv.walking, title: 'Walk through the room: WASD and the mouse' })}${B('off', 'World off', { title: 'Simulate on the plain table again' })}</div>
-        <div class="wv-note">${esc(simLine)}</div>${wv.octreeNote ? `<div class="wv-note">${esc(wv.octreeNote)}</div>` : ''}</div>`;
-      const r = s.result;
-      h += `<div class="wv-sec"><b>Check</b><div class="wv-row">${B('check', 'Check placement')}${B('review', 'AI review', { title: 'Sends 6 pictures to Claude' })}
-        <label class="wv-note" style="margin:0;display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-a="subq" ${s.subq ? 'checked' : ''}>also SubQ</label></div>
-        <div class="wv-note">${esc(N.review)}</div>${s.subq ? `<div class="wv-note">${esc(N.subq || '')}</div>` : ''}`;
-      if (r) {
-        const rv = r.review || {};
-        const src = { claude: 'Claude (AI)', subq: 'SubQ Snap (AI)', rules: 'Measured' };
-        h += `<div class="wv-row"><span class="wv-verdict ${esc(r.verdict)}">${esc(r.verdict.replace('_', ' '))}</span><span class="wv-note" style="margin:0">measured by geometry and the simulation</span></div>
-          ${rv.note ? `<div class="wv-note warn">${esc(rv.note)}</div>` : ''}${rv.error ? `<div class="wv-note warn">${esc(rv.error)}</div>` : ''}
-          <div style="margin-top:6px">${(r.checks || []).map((c) => `<div class="wv-check"><span class="st ${esc(c.status)}">${esc(c.status)}</span><span>${esc(c.text)}</span></div>`).join('')}</div>
-          ${(rv.findings || []).length ? `<div style="margin-top:7px">${rv.findings.map((f) => `<div class="wv-find ${esc(f.severity)}"><span class="src">${esc(src[f.source] || f.source)} · ${esc(f.category)} · ${esc(VIEW_TITLE[f.viewpoint] || f.viewpoint)}</span>
-            <div>${esc(f.evidence)}</div><div class="wv-note" style="margin-top:2px">${esc(f.recommendation)}</div></div>`).join('')}</div>` : ''}
-          ${(rv.suggested_changes || []).map((c, i) => `<div class="wv-row"><span class="wv-note" style="margin:0;flex:1">${esc(c.kind.replace('_', ' '))}: ${esc(c.reason)}</span>${B('apply', c.applied ? 'Applied' : 'Apply', { arg: i, dis: !!c.applied })}</div>`).join('')}
-          <div class="wv-row">${B('tour', 'Guided tour', { primary: true, dis: !(rv.tour || []).length })}<span class="wv-note" style="margin:0">${esc(src[rv.source] || '')}</span></div>`;
-      }
-      h += '</div>';
+          <button type="button" class="wv-x" data-a="delzone" data-arg="${esc(z.id)}" title="Delete" ${busy ? 'disabled' : ''}>&times;</button></div>`).join('')}</div></div>`;
+      h += `<div class="wv-sec"><b>Simulate</b><div class="wv-row">${B('save', w._dirty ? 'Save and simulate' : 'Save world', { primary: !!w._dirty, dis: !w.surface || !!s.pending })}${B('play', 'Play in the room')}
+        ${B('walk', wv.walking ? 'Stop walking' : 'Walk', { on: !!wv.walking, title: 'Walk through the room: WASD and the mouse', any: !!wv.walking })}${B('off', 'World off', { title: 'Simulate on the plain table again', dis: !this.on })}</div>
+        ${wv.octreeNote ? `<div class="wv-note">${esc(wv.octreeNote)}</div>` : ''}${busyIn(SEC.sim)}</div>`;
+      h += this._checkSection(B, busyIn);
     }
     this.el.innerHTML = h;
+  }
+
+  _editor(o) {
+    const b = this.wv.boxInBase(o), id = esc(o.id);
+    const f = (k, label, v, title = '') => `<label title="${esc(title)}">${label}<input class="wv-in" type="number" step="5" data-f="${k}" data-id="${id}" value="${v}"></label>`;
+    return `<div class="wv-edit"><span class="wide">${esc(o.label)}: millimetres from the robot's base (forward, left), bottom above the surface</span>
+      ${f('bx', 'Forward', b.x)}${f('by', 'Left', b.y)}${f('bz', 'Bottom', b.bottom, 'Height of its underside above the surface the robot stands on')}${f('bt', 'Turn °', b.turn)}
+      ${f('bw', 'Width', b.w, 'Along its own x')}${f('bd', 'Depth', b.d, 'Along its own y')}${f('bh', 'Height', b.h)}</div>`;
+  }
+
+  _checkSection(B, busyIn) {
+    const s = this.state, w = this.wv.world, N = s.notes || NOTES, r = s.result;
+    const blocked = w?._dirty ? 'Save and simulate first: the check uses the saved world\'s simulation.'
+      : s.pending ? 'Wait for the simulation in this world to finish.' : '';
+    const noAi = !s.ai.claude ? 'AI review needs an Anthropic key (Keys, top right) and network lookups on; without one it shows the measured review.' : '';
+    let h = `<div class="wv-sec"><b>Check</b><div class="wv-row">${B('check', 'Check placement', { dis: !!blocked })}${B('review', 'AI review', { dis: !!blocked, title: s.ai.claude ? 'Sends 6 pictures to Claude' : noAi })}
+      <label class="wv-note" style="margin:0;display:inline-flex;gap:4px;align-items:center" title="${s.ai.subq ? 'SubQ Snap answers yes/no questions about 4 of the views' : 'Needs a SubQ key (Keys)'}"><input type="checkbox" data-a="subq" ${s.subq ? 'checked' : ''} ${s.ai.subq ? '' : 'disabled'}>also SubQ</label></div>
+      ${blocked ? `<div class="wv-note warn">${esc(blocked)}</div>` : ''}
+      <div class="wv-note">${esc(s.ai.claude ? N.review : noAi)}</div>${s.subq && s.ai.subq ? `<div class="wv-note">${esc(N.subq || '')}</div>` : ''}${busyIn(SEC.check)}`;
+    if (r) {
+      const rv = r.review || {};
+      h += `<div class="wv-row"><span class="wv-verdict ${esc(r.verdict)}">${esc(r.verdict.replace('_', ' '))}</span><span class="wv-note" style="margin:0">${esc(r.rev)}, measured by geometry and the simulation</span></div>
+        ${r.stale ? '<div class="wv-note warn">A newer revision is in: check again.</div>' : ''}
+        ${rv.skipped ? `<div class="wv-note warn">${esc(rv.skipped)}</div>` : ''}${rv.note ? `<div class="wv-note warn">${esc(rv.note)}</div>` : ''}${rv.error ? `<div class="wv-note warn">${esc(rv.error)}</div>` : ''}
+        ${r.asked?.subq && !r.subq ? '<div class="wv-note warn">SubQ didn\'t answer (no SubQ key, it is paused, or it declined the pictures): only the checks above.</div>' : ''}
+        <div style="margin-top:6px">${(r.checks || []).map((c) => `<div class="wv-check"><span class="st ${esc(c.status)}">${esc(c.status)}</span><span>${esc(c.text)}</span></div>`).join('')}</div>
+        ${rv.summary && rv.source === 'claude' ? `<div class="wv-note">${esc(SRC.claude)}: ${esc(rv.summary)}</div>` : ''}
+        ${(rv.findings || []).length ? `<div style="margin-top:7px">${rv.findings.map((f) => `<div class="wv-find ${esc(f.severity)}"><span class="src">${esc(SRC[f.source] || f.source)} · ${esc(f.category)} · ${esc(VIEW_TITLE[f.viewpoint] || f.viewpoint)}</span>
+          <div>${esc(f.evidence)}</div><div class="wv-note" style="margin-top:2px">${esc(f.recommendation)}</div></div>`).join('')}</div>` : ''}
+        ${(rv.suggested_changes || []).map((c, i) => `<div class="wv-row"><span class="wv-note" style="margin:0;flex:1"><b class="src">${esc(SRC[c.source] || c.source)}</b> ${esc(c.kind.replace('_', ' '))}: ${esc(c.reason)}</span>${B('apply', c.applied ? 'Applied' : 'Apply', { arg: i, dis: !!c.applied })}</div>`).join('')}
+        <div class="wv-row">${B('tour', 'Guided tour', { primary: true, dis: !(rv.tour || []).length })}<span class="wv-note" style="margin:0">${esc(SRC[rv.source] || '')}</span></div>`;
+    }
+    return h + '</div>';
   }
 }
 
@@ -1546,23 +1884,28 @@ export async function init(studio) {
     try { const r = await fetch(url); wv._docCache = r.ok ? await r.json() : null; wv._docUrl = url; } catch (e) { wv._docCache = null; }
     return wv._docCache;
   };
-  const panel = new WorldPanel(viewer.container, { wv, api, toast: studio.toast, doc: () => wv._docCache, project: studio.project });
   const btn = el('button', 'btn', 'World <small style="opacity:.6">beta</small>');
+  btn.type = 'button';
   btn.title = 'World mode (beta): put the robot in a room';
-  btn.onclick = async () => { await panel.toggle(); btn.classList.toggle('on', panel.open); if (panel.open) { await simDoc(); } };
+  const panel = new WorldPanel(viewer.container, { wv, api, toast: studio.toast, doc: () => wv._docCache, project: studio.project,
+    queue: () => studio.S?.queue || [], onToggle: (open) => btn.classList.toggle('on', open) });
+  btn.onclick = async () => { await panel.toggle(); if (panel.open) await simDoc(); };
   (studio.mount?.viewerTools || studio.mount?.header)?.appendChild(btn);
   // a revision whose design names a world shows its room (the Simulation tab then plays in it), panel open or not
   const sync = async () => {
-    const id = studio.S?.current?.design?.['world.id'];
-    if (!id && !panel.open) { if (wv.world) wv.clear(); return; }
+    const id = studio.S?.current?.design?.['world.id'], p = panel.state.pending;
+    if (!panel.open && !(p ? !p.off : id)) { if (wv.world) wv.clear({ reframe: true }); return; }
     await simDoc();
     if (panel.open) return panel.refresh();
-    if (id && !wv.world) {
+    if (id && (!wv.world || (wv.world.id !== id && !wv.world._dirty))) {
       try { const r = await api.get('/api/world'); if (r.world) await wv.setWorld(r.world, { assetUrl: r.asset_url, frame: false }); } catch (e) { /* offline */ }
     }
   };
   studio.on('done', sync);
-  studio.on('project', () => { wv.clear(); sync(); });
+  studio.on('project', () => { wv.clear(); panel.reset(); sync(); });
+  studio.on('queue', (ev) => {
+    for (const j of ev.jobs || []) if (j.position == null && panel.jobEnded(j) && panel.open) panel.refresh();
+  });
   sync();
   studio.on('world', (ev) => { if (panel.open && ev.status === 'error') studio.toast(ev.text); });
   window.morphWorld = { wv, panel };
