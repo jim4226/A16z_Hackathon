@@ -178,7 +178,7 @@ def test_morph_study_prints_a_report_and_carries_on(home, monkeypatch, capsys):
     assert "5 of 5 randomized runs" in capsys.readouterr().out
     assert cli.main(["study", "egg-picker-2", "--rev", "r009", "--runs", "1", "--workers", "1"]) == 1
     out = capsys.readouterr()
-    assert "no finished revision" in out.err and "1 randomized run on 1 worker process." in out.out
+    assert "no finished revision" in out.err and "randomized run" not in out.out   # refused before the banner
 
 
 def test_the_studios_hooks_stop_a_projects_study(home):

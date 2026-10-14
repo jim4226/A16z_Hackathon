@@ -257,7 +257,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   and tool keys through; drafts saved before this stay until their 7-day cleanup.
 - Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
   access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
-  teammates behind one router are unaffected. Many addresses together can still fill the slots (SECURITY.md).
+  teammates behind one router don't run into it in normal use. Many addresses together can still fill the slots
+  (SECURITY.md).
 - Wrong codes from one address no longer lock out the person there who has the link: Morph's own access code and
   every Teams invite, sign-in link and script token are random, so a right one is always checked and works (only a
   `MORPH_TOKEN` you chose still makes that address wait). A script's live updates no longer end when someone at the
@@ -356,3 +357,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - A change waiting for Apply or Drop keeps its buttons after a reload and in tabs opened later; once anyone answers it,
   every other tab's buttons go (a late click used to fail), and a viewer is told an editor can answer instead of being
   shown buttons.
+- With its output going to a log file or a pipe (nohup, a service), the Studio's access link and the owner's sign-in
+  link reach it at once: they used to wait in a buffer, and a Studio stopped with SIGTERM never wrote them.
+- `morph subq --lint` sends nothing while network lookups are off or `MORPH_OFFLINE=1` (it sent the request text to
+  SubQ anyway). `morph ask` tells "not configured" apart from "network lookups are off" and a failed query, and exits
+  1 without rows; `morph study` says why it can't study a project or revision before announcing a study. Relaunching
+  on a Linux server without a screen while a Studio runs no longer opens a text browser in the terminal.

@@ -31,6 +31,7 @@ import selectors
 import shutil
 import socket
 import stat
+import sys
 import threading
 import time
 import traceback
@@ -1644,7 +1645,6 @@ class _Server(ThreadingHTTPServer):
 
     def handle_error(self, request, client_address):
         # a browser tab closing mid-response is normal; don't print a traceback for it
-        import sys
         if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
             return
         super().handle_error(request, client_address)
@@ -1696,6 +1696,10 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
         print(f"Access code: {token}   Project {project.root}; Ctrl+C to stop.")
     else:
         print(f"Morph Studio: http://{host}:{port}  (project {project.root}; Ctrl+C to stop)")
+    try:
+        sys.stdout.flush()  # into a log file or a pipe now, not when its buffer fills: the links are needed while it runs
+    except (AttributeError, OSError, ValueError):
+        pass
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
