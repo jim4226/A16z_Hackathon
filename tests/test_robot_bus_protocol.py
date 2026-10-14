@@ -88,3 +88,37 @@ def test_pipeline_marks_a_mixed_bus_infeasible(tmp_path):
     assert s["feasible"] is False and "protocol" in s["issues"][0]
     assert res["stage_status"]["wiring"] == "error" and "mixes protocols" in res["errors"]["wiring"]
     assert not [f for _, _, fs in os.walk(p.rev_dir(r)) for f in fs if f.endswith(".ino")]
+
+
+@pytest.mark.parametrize("fam", ["smart_bus", "dynamixel", "hobby_pwm"])
+@pytest.mark.parametrize("overrides", ["", "gripper=xm430_w350", "gripper=xl330_m288", "gripper=ds3218", "gripper=sts3215_7v4",
+                                       "all=sts3215", "gripper=nonexistent"])
+def test_the_gripper_stage_uses_the_gripper_sizing_picks(fam, overrides):
+    """A gripper= override changes the CAD hand and the electronics; the gripper stage (force plan, grasp simulation, the
+    stall force shown) must use the same actuator, not the family's default."""
+    from morph.robot import pipeline2
+
+    d = _design(fam, overrides)
+    sized = arm.size(d)["gripper_actuator"]
+    assert pipeline2.gripper_actuator(d) == arm.gripper_actuator(d) == sized
+    if overrides.startswith("gripper=") and overrides != "gripper=nonexistent":
+        assert sized == overrides.split("=")[1]
+
+
+@pytest.mark.parametrize("key", ["xl330_m288", "sts3215_7v4", "xm430_w350"])
+def test_the_gripper_force_plan_runs_with_any_catalog_actuator(key):
+    from morph import analysis, electronics
+    from morph.design import build_profile
+
+    d = _design("dynamixel" if key.startswith("x") else "smart_bus", f"gripper={key}")
+    gd = d.with_changes({"electronics.servo": key, "electronics.supply_v": catalog.ACTUATORS[key]["nominal_v"]})
+    f = electronics.plan(gd, analysis.analyze(gd, build_profile(gd)), None)
+    stall = catalog.ACTUATORS[key]["torque_nm"] * electronics.GEAR_EFF / (d.electronics.pinion_radius_mm / 1000.0)
+    assert f["servo"] == key and f["servo_stall_force_n"] == pytest.approx(stall, abs=0.1)
+
+
+def test_a_hobby_gripper_servo_the_catalog_lacks_falls_back_in_every_stage():
+    from morph.robot import pipeline2
+
+    d = _design("hobby_pwm").with_changes({"electronics.servo": "mg90s"})      # chat: "use an MG90S gripper servo"
+    assert pipeline2.gripper_actuator(d) == arm.size(d)["gripper_actuator"] == "mg996r"   # was mg90s: KeyError

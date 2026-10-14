@@ -46,9 +46,21 @@ SERVOS = {  # stall torque kgf*cm at the listed voltage, stall current A, voltag
 }
 
 
+def servo_spec(servo: str) -> dict:
+    """SERVOS[servo], or a robot actuator in the same shape: a robot's gripper may use any actuator in its catalog
+    (an XL330 or a 7.4 V STS3215 through arm.actuator_overrides), at its rated voltage."""
+    if servo in SERVOS:
+        return SERVOS[servo]
+    from .robot import catalog, catalog_extra  # noqa: F401  (catalog_extra registers the imported robots' servos)
+
+    a = catalog.ACTUATORS[servo]
+    return dict(name=a["name"], torque=a["torque_nm"] / (G / 100.0), stall_a=a["stall_a"], v=tuple(a["voltage"]),
+                price=catalog.price(servo))
+
+
 def servo_max_force(servo: str, pinion_radius_mm: float) -> float:
     """Per-finger force at stall through the jaw drive."""
-    return SERVOS[servo]["torque"] * G * GEAR_EFF / (pinion_radius_mm / 10.0)
+    return servo_spec(servo)["torque"] * G * GEAR_EFF / (pinion_radius_mm / 10.0)
 
 
 def choose_servo(design: Design, target: float) -> str:
@@ -97,7 +109,7 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
         warnings.append(f"target {target:.2f} N is outside the window {lo:.2f}-{hi:.2f} N")
 
     servo = choose_servo(design, target)
-    s = SERVOS[servo]
+    s = servo_spec(servo)
     f_stall = servo_max_force(servo, e.pinion_radius_mm)
     crush_open_loop = o.max_force_n > 0 and f_stall > o.max_force_n
     if f_stall < 1.5 * target:
@@ -242,7 +254,7 @@ def write_firmware(design: Design, ep: dict, outdir: str) -> str:
     lo, hi = ep["window_n"]
     code = FIRMWARE.format(
         design_name=design.name, rev_hint="see results.json", mcu_name=mcu["name"],
-        servo_name=SERVOS[ep["servo"]]["name"], sensor=ep["sensor"], servo_lib=mcu["servo_lib"],
+        servo_name=servo_spec(ep["servo"])["name"], sensor=ep["sensor"], servo_lib=mcu["servo_lib"],
         servo_pin_num=pin(mcu["servo_pin"]), fsr_pin_num=mcu["fsr_pin"] if mcu["fsr_pin"].startswith("A") else pin(mcu["fsr_pin"]),
         vcc=mcu["vcc"], adc_max=2 ** mcu["adc_bits"] - 1, r_div=sensing["divider_ohm"], k_fsr=FSR_K_OHM_N,
         target=ep["target_force_n"], lo=lo, hi=hi if hi else "inf", limit=ep["limit_n"],

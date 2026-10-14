@@ -336,3 +336,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   waiting for a key or still working, as it already stopped the project's robustness study: such a run could carry
   on later in a new project that took the same name, or for a revision Reset demo had removed, and price the parts
   of a robot it was never started for. Its card says why it stopped.
+- A `gripper=` entry in `arm.actuator_overrides` reaches the gripper stage too: its force plan, grasp simulation and
+  the servo stall force it shows used the family's default servo while the CAD hand and the electronics used the
+  override. A hobby arm asked for an MG90S gripper servo (not in the robot catalog) gets the MG996R its hand is
+  built around in that stage too, instead of a gripper stage that stopped with KeyError 'mg90s'.

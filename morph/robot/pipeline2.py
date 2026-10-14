@@ -104,15 +104,12 @@ def dirty_nodes(changed_keys) -> list:
     return [n for n in ORDER if n in dirty]
 
 
-HOBBY = ("sg90", "mg90s", "mg996r", "ds3218")
-
-
 def gripper_actuator(design: Design) -> str:
-    """The gripper uses the arm's actuator family (one bus, one spare-parts list)."""
-    fam, servo = design.arm.actuator_family, design.electronics.servo
-    if fam == "hobby_pwm":
-        return servo if servo in HOBBY else "mg996r"
-    return "sts3215" if fam == "smart_bus" else "xl430_w250"
+    """The gripper actuator of a Morph-generated arm: the one sizing picks and the CAD hand is built around (the arm's
+    family, or a gripper= override in arm.actuator_overrides), so the force plan and the grasp simulation use it too."""
+    from .arm import gripper_actuator as sized
+
+    return sized(design)
 
 
 # The morph/*.py modules the robot pipeline computes with (its import graph, without keewano.py and settings.py:

@@ -1309,3 +1309,13 @@ The simulation track (section 16) and the tool broker (section 15) are merged in
 - **Known gaps:** a run that ended in a deleted project still lists in a new project of the same name, so its card
   (stopped, with no actions) shows there for half an hour after it ended, as every recent card does; deleting a
   project leaves the drafts of tools started from its cards (they belong to the owner's catalog, not the project).
+
+## 18. Grip force, servo rail and stock grippers (release review fixes, track E1)
+
+Fixes of the release review's engineering findings. What other code relies on since:
+
+- **The gripper actuator (ENG-15).** `pipeline2.gripper_actuator(design)` is `arm.gripper_actuator(design)`: the
+  actuator sizing picks and the CAD hand is built around, a `gripper=` entry in `arm.actuator_overrides` included. The
+  gripper stage (force plan, grasp simulation, the stall force shown) used the family's default servo while the CAD
+  hand and the electronics used the override. `morph.electronics.servo_spec(key)` gives any robot catalog actuator in
+  the shape of the gripper-only `SERVOS` table, so the gripper stage runs with an XL330 or a 7.4 V STS3215 too.
