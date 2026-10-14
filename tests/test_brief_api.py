@@ -76,6 +76,23 @@ def test_build_from_asking_fills_defaults(tmp_path):
     assert "project" not in out                        # no project service passed: integration creates it
 
 
+def test_build_now_stops_at_the_confirm_card_when_the_preflight_has_issues(tmp_path):
+    # New robot's Build now skips the questions, never the issues: a brief nobody confirmed comes back ready, unbuilt
+    calls = []
+    make = lambda payload: calls.append(payload) or {"project": payload["name"]}  # noqa: E731
+    _, out, _ = post(tmp_path, {"text": "pick up 200 g glass jars without breaking them"})
+    st, out, ev = post(tmp_path, {"brief_id": out["brief_id"], "action": "build", "stop_on_issues": True}, create_project=make)
+    b = out["brief"]
+    assert st == 200 and out["stopped"] == "preflight" and "build" not in out and not calls
+    assert b["status"] == "ready" and ev[-1]["type"] == "brief" and ev[-1]["status"] == "ready"
+    assert any(i.startswith("no safe grip force") and "Morph's reading of 'without breaking'" in i for i in b["preflight"]["issues"])
+    st, out, _ = post(tmp_path, {"brief_id": b["id"], "action": "build", "stop_on_issues": True}, create_project=make)
+    assert st == 200 and out["project"] == calls[0]["name"]       # seen on the card: Build anyway builds it as it is
+    _, out, _ = post(tmp_path, {"text": "help me sort socks"})    # no issues: Build now builds at once
+    st, out, _ = post(tmp_path, {"brief_id": out["brief_id"], "action": "build", "stop_on_issues": True}, create_project=make)
+    assert st == 200 and out["project"] == "sock-sorter" and "stopped" not in out
+
+
 def test_out_of_scope_then_nearest(tmp_path):
     _, out, _ = post(tmp_path, {"text": "a drone that delivers packages"})
     assert out["brief"]["status"] == "out_of_scope" and out["brief"]["scope"]["nearest"]

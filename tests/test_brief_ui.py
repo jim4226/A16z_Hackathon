@@ -125,6 +125,30 @@ def test_answer_in_free_text_and_defaults(page):
     assert "socks" in pg.inner_text(".nr-summary") and pg.locator(".nr-assume li").count() >= 3
 
 
+def test_build_now_stops_at_the_confirm_card_on_preflight_issues(page):
+    pg = page
+    pg.goto(pg.base)
+    pg.click(".nr-headbtn")
+    pg.fill("#nr-text", "pick up 200 g glass jars without breaking them")
+    pg.click('[data-a="start"]')
+    pg.wait_for_selector(".nr-q", timeout=15000)
+    pg.click('[data-a="buildnow"]')
+    pg.wait_for_selector(".nr-stopped", timeout=15000)       # not built: the issues and what they come from first
+    shot(pg, "buildnow_stopped")
+    assert pg.locator(".nr-build-h").count() == 0 and "Not built yet" in pg.inner_text(".nr-stopped")
+    assert "Morph's reading of 'without breaking'" in pg.inner_text(".nr-issues")
+    assert pg.inner_text('[data-a="build"]').strip() == "Build anyway"
+    pg.click('.nr-alt:has-text("It takes a firm squeeze")')   # the assumption's option clears the issue
+    pg.wait_for_function("() => document.querySelector('[data-a=\"build\"]')?.textContent.trim() === 'Build robot'", timeout=15000)
+    assert pg.locator(".nr-stopped").count() == 0 and "passed" in pg.inner_text(".nr-confirm")
+    pg.click('[data-a="restart"]')
+    pg.fill("#nr-text", "help me sort socks")
+    pg.click('[data-a="start"]')
+    pg.wait_for_selector(".nr-q", timeout=15000)
+    pg.click('[data-a="buildnow"]')                           # nothing to look at: straight to the build
+    pg.wait_for_selector(".nr-build-h", timeout=15000)
+
+
 def test_out_of_scope_and_nearest(page):
     pg = page
     pg.goto(pg.base)

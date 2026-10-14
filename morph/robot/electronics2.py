@@ -168,8 +168,9 @@ def grip_problems(design, grip: dict) -> list:
     """Plan issues for a grip the firmware would ship outside its own window or above its hard stop."""
     lo, hi = grip["window_n"]
     t, name = grip["target_n"], design.object.name or "object"
-    if not grip["ok"]:
-        return [f"no safe grip force: holding needs {lo} N but the object limit is {hi} N"]
+    if not grip["ok"]:  # the same sentence as the gripper stage's own issue for it
+        from ..electronics import no_safe_grip
+        return [no_safe_grip(lo, hi, design.object, grip["sensor"] if grip["sensor"] != "none" else None, grip["jaw"])]
     if t < lo:
         return [f"grip target {t:g} N is below the {lo:g} N the {name} needs not to slip (window {lo:g}-"
                 f"{'' if hi is None else f'{hi:g} '}N): set the Grip force target inside the window, or 0 for Morph's"]

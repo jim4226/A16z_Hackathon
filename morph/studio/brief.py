@@ -460,7 +460,7 @@ def parse(text: str) -> dict:
     except the layout, which is inferred from where things go."""
     raw = (text or "")[:2000]
     t = normalize_units(raw.lower())
-    out = {"slots": {}, "inferred": {}, "hints": {}, "implicit": [], "oos": out_of_scope_kinds(t), "harm": harmful(t)}
+    out = {"slots": {}, "inferred": {}, "hints": {}, "implicit": [], "oos": out_of_scope_kinds(t), "harm": harmful(t), "said": {}}
     s, inf = out["slots"], out["inferred"]
     key, conf = detect_archetype(t)
     out["archetype"] = (key, conf)
@@ -525,13 +525,15 @@ def parse(text: str) -> dict:
         obj["stated"] = [k for k, v in (("diameter_mm", dia), ("mass_g", mass)) if v is not None]
     if obj is not None:
         s["object"] = obj
-    # fragility
-    if re.search(r"\b(fragile|delicate|without (?:crushing|damaging|bruising|breaking|cracking)|bruis\w+|squash\w*|crush\w*|crack\w*)\b", t):
-        s["fragility"] = "fragile"
-    elif re.search(r"\b(gentle|gently|careful(?:ly)?|soft grip)\b", t):
-        s["fragility"] = "care"
-    elif re.search(r"\b(robust|sturdy|tough|unbreakable|heavy[- ]duty)\b", t):
-        s["fragility"] = "robust"
+    # fragility (the words it came from are kept: a damage force they set is explained in those words)
+    for pat, frag in ((r"\b(fragile|delicate|without (?:crushing|damaging|bruising|breaking|cracking)|bruis\w+|squash\w*|crush\w*|"
+                       r"crack\w*)\b", "fragile"), (r"\b(gentle|gently|careful(?:ly)?|soft grip)\b", "care"),
+                      (r"\b(robust|sturdy|tough|unbreakable|heavy[- ]duty)\b", "robust")):
+        m = re.search(pat, t)
+        if m:
+            s["fragility"] = frag
+            out["said"]["fragility"] = m.group(0)
+            break
     # layout (inferred: the coordinates are always an assumption)
     lr = re.search(r"\b(left|right)(?:[- ]hand)?(?:\s+side)?\s+(?:to|into|onto|over to|across to)\s+(?:the\s+|its\s+|my\s+)?"
                    r"(left|right)\b", t)
@@ -715,12 +717,13 @@ def _archetype_for_object(o: dict) -> str | None:
 
 def merge(b: Brief, parsed: dict, source: str = "user", evidence: str = ""):
     """Apply a parse() result: user-stated slots, inferred layout, design hints, scope flags."""
+    said = parsed.get("said") or {}
     for name, v in parsed.get("slots", {}).items():
         v2 = coerce(name, v)
         if v2 is not None:
             if name == "object" and isinstance(v, dict) and v.get("stated"):
                 v2["stated"] = list(v["stated"])
-            set_slot(b, name, v2, source, 1.0, evidence)
+            set_slot(b, name, v2, source, 1.0, f"{evidence}: {said[name]}" if name in said else evidence)
     for name, v in parsed.get("inferred", {}).items():
         v2 = coerce(name, v)
         if v2 is not None:
@@ -824,6 +827,9 @@ def make_question(b: Brief, slot: str) -> dict:
                          [_chip("USB cable", "none"), _chip("Wi-Fi", "wifi")]),
         "quantity": ("How many do you want to build?", "Larger runs move from printed parts to CNC or molded parts.",
                      [_chip("Just one", 1), _chip("A batch of 10", 10), _chip("A pilot run of 100", 100), _chip("1,000 units", 1000)]),
+        "fragility": ("How easily is it damaged?", "Sets the most the fingers may squeeze it with.",
+                      [_chip("It takes a firm squeeze", "robust"), _chip(f"Handle with care, about {FRAGILITY_N['care']:g} N", "care"),
+                       _chip(f"Fragile, about {FRAGILITY_N['fragile']:g} N", "fragile")]),
         "existing_hardware": ("Design a new arm, or use one you have?", "An SO-101 keeps its own servos and gripper.",
                               [_chip("Design a new arm", "none"), _chip("I have an SO-101", "so101")]),
         "environment": ("Where will it work?", "Labs and kitchens add an emergency stop.",
@@ -1042,7 +1048,7 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
         keep = {"slots": {k: v for k, v in p["slots"].items() if k in ("object", "throughput", "budget", "quantity", "precision",
                                                                          "fragility", "people_nearby", "perception", "connectivity",
                                                                          "environment", "task")},
-                "inferred": p["inferred"], "hints": p["hints"], "oos": p["oos"], "implicit": p["implicit"]}
+                "inferred": p["inferred"], "hints": p["hints"], "oos": p["oos"], "implicit": p["implicit"], "said": p["said"]}
         merge(b, keep, "user", "answer")
         a2 = _archetype_for_object(b.get("object"))
         if _arch(b).key == "generic_arm" and a2:
@@ -1082,6 +1088,33 @@ def progress(b: Brief, *, defaults_now: bool = False, nearest: bool = False, dee
 
 
 # ------------------------------------------------------------------ slots -> design
+def damage_force(b: Brief) -> tuple[float, str]:
+    """(N, where it comes from) for the object's damage force. A measured value wins: Morph's preset or catalog object
+    (an egg is 25 N), or the object a video, a photo or a model described. A stated category ("fragile", "gently")
+    gives one only to an object without one of its own: saying an egg is fragile never makes it a 3 N strawberry,
+    which no grip could both hold and spare. `where` finishes "the N N damage force is ..." on the confirm card."""
+    o = value(b, "object")
+    maxf, key = float(o.get("max_force_n") or 0.0), o.get("key")
+    lab = _object_label(o, short=True).lower()
+    if maxf > 0:
+        if key in OBJECTS:
+            return maxf, f"Morph's preset for {lab}"
+        if key in CATALOG:
+            return maxf, f"Morph's value for {lab}"
+        s = b.slots.get("object")
+        return maxf, {"video": "from the video", "photo": "from the photo"}.get(s.source if s else "", "the object's estimate")
+    fr = b.slots.get("fragility")
+    if fr is not None and fr.source in ("user", "video", "photo") and FRAGILITY_N.get(fr.value, 0) > 0:
+        return FRAGILITY_N[fr.value], f"Morph's reading of '{_fragility_words(fr)}'"
+    return 0.0, ""
+
+
+def _fragility_words(fr: Slot) -> str:
+    """The person's words for a stated fragility ("without cracking"), else the category's own."""
+    words = fr.evidence.split(": ", 1)[1] if fr.source == "user" and ": " in fr.evidence else ""
+    return words or {"fragile": "fragile", "care": "handle with care", "robust": "robust"}.get(fr.value, str(fr.value))
+
+
 def _family_label(f: str) -> str:
     return {"hobby_pwm": "hobby PWM", "smart_bus": "smart-bus", "dynamixel": "Dynamixel"}.get(f, f)
 
@@ -1102,11 +1135,7 @@ def brief_to_changes(b: Brief) -> dict:
     ch["object.name"] = str(o.get("name") or key or "object")[:60]
     ch.update(fit_finger({"diameter_mm": obj.get("diameter_mm", 45.0)}))
     ch["finger.pad"] = "flat" if obj.get("shape") == "box" else "contour"
-    # fragility: the preset / catalog value wins; a stated category sets it for custom objects or makes it stricter
-    maxf = float(obj.get("max_force_n") or 0.0)
-    fr = b.slots.get("fragility")
-    if fr is not None and fr.source in ("user", "video", "photo") and FRAGILITY_N[fr.value] > 0:
-        maxf = min(maxf, FRAGILITY_N[fr.value]) if maxf > 0 else FRAGILITY_N[fr.value]
+    maxf = damage_force(b)[0]
     ch["object.max_force_n"] = maxf
     small = obj.get("diameter_mm", 45.0) < cap.min_width(obj.get("shape", "cylinder"), "none")
     sensor = "fsr402" if (maxf > 0 or small) else "none"
@@ -1232,6 +1261,15 @@ ISSUE_KINDS = (("torque", r"needs [\d.]+ N·m"), ("supply", r"^supply .*margin")
 
 def classify(issues: list) -> set:
     return {k for i in issues for k, p in ISSUE_KINDS if re.search(p, i)}
+
+
+def explain_issues(b: Brief, issues: list) -> list:
+    """Preflight issues as the confirm card shows them: a grip that no force fits says where the damage force came from
+    (Morph's preset, the video, or the person's own words read as a category), so the person can tell what to change."""
+    maxf, where = damage_force(b)
+    if not (maxf and where):
+        return list(issues)
+    return [f"{i}; the {maxf:g} N damage force is {where}" if "grip" in classify([i]) else i for i in issues]
 
 
 def deep_check(changes: dict) -> list:
@@ -1454,10 +1492,16 @@ def assumptions_for(b: Brief, ch: dict) -> list:
         out.append({"slot": "object", "text": text, "kind": "default", "options": [{"label": lab, "value": v} for lab, v in choices][:3],
                     "alternatives": alts[:3]})
 
-    for slot in ("object", "layout", "throughput", "people_nearby", "perception", "budget", "quantity"):
+    for slot in ("object", "fragility", "layout", "throughput", "people_nearby", "perception", "budget", "quantity"):
         s = b.slots.get(slot)
         if slot == "object" and s is not None and s.source in ("user", "video", "photo"):
             object_gap(s.value)
+            continue
+        if slot == "fragility":  # words turned into newtons are Morph's reading of them: say so, with the other readings
+            maxf, where = damage_force(b)
+            if maxf and s is not None and s.source in ("user", "video", "photo") and not value(b, "object").get("max_force_n"):
+                cat = {"fragile": "fragile", "care": "needing care"}[s.value]
+                add(slot, f"I read '{_fragility_words(s)}' as {cat}: damaged above about {maxf:g} N per finger.", "inferred")
             continue
         if s is not None and s.source in ("user", "video", "photo") or (s is not None and s.source == "memory"):
             continue
@@ -1515,6 +1559,7 @@ def finalize(b: Brief, *, deep: bool = True, home: str | None = None) -> Brief:
         b.name = suggest_name(b, home)
     ch = brief_to_changes(b)
     ch, repairs, pre = repair(ch, b, deep=deep)
+    pre["issues"] = explain_issues(b, pre["issues"])
     b.changes = ch
     b.preflight = {k: pre[k] for k in ("issues", "ms", "checks", "dof", "family", "reach_mm", "min_margin", "grip_target_n")
                    if k in pre}
@@ -1549,7 +1594,9 @@ def card(b: Brief) -> list:
             src = s.source if s is not None and s.value is not None else "default"
             v = value(b, slot)
             if slot == "object":
-                txt = _object_label(v) + (f", damaged above {v['max_force_n']:g} N" if v.get("max_force_n") else "")
+                maxf, where = damage_force(b)   # what gets built, a stated category included
+                txt = _object_label(v) + (f", damaged above {maxf:g} N" if maxf else "") + \
+                    (f" ({where})" if maxf and not v.get("max_force_n") and where else "")
                 gaps = [w for k, w in (("diameter_mm", "width"), ("mass_g", "weight")) if v.get("stated") and k not in v["stated"]]
                 preset = "from Morph's preset"
                 if gaps:  # what the person didn't give: Morph's preset for a named object, else an assumption

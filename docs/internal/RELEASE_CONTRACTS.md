@@ -354,7 +354,8 @@ Slot{value, source: user|inferred|default|memory|video|photo, confidence, eviden
   `layout` (pick/place), `throughput`, `environment`, `people_nearby`, `precision`, `budget`,
   `perception`, `connectivity`, `quantity`, `existing_hardware`.
 - **Mapping:** a deterministic `brief_to_changes()` maps slots to design keys. Object presets in
-  `intent.OBJECTS` win over model guesses: an egg is 25 N.
+  `intent.OBJECTS` win over model guesses: an egg is 25 N. A stated fragility ("fragile", "gently") gives a damage
+  force only to an object without one of its own (`brief.damage_force`, section 19).
 - **Questions:** at most 3 rounds, each with ≤3 questions of 2 to 4 chips. "Use sensible defaults" and
   "Build now" are always available.
 - **Harm:** a local keyword pre-filter plus SubQ's `harm` noul. Refuse when either fires; build nothing
@@ -1378,3 +1379,24 @@ Fixes of the release review's engineering findings. What other code relies on si
   under `GRIP_SENSE_N` through a whole close stops at `GRIP_CLOSED` after probing `GRIP_PROBE` past it and prints
   `!GRIP no force reading`; it never closes to `GRIP_MIN` on no reading. `tests/fw_stubs/grip_harness.cpp` runs the
   generated sketch's control loop on the host for the tests.
+
+## 19. Brief, inspector and pipeline (release review fixes, track E2)
+
+Fixes of the release review's brief, inspector and pipeline findings. What other code relies on since:
+
+- **Damage force (UX-1).** `brief.damage_force(b) -> (N, where)` is the object's damage force and where it comes from:
+  a measured value wins (Morph's preset or catalog object, or the object a video, a photo or a model described), and a
+  stated category (`FRAGILITY_N`: "fragile" 3 N, "care" 10 N) gives one only to an object without it. Saying an egg is
+  fragile once made it a 3 N strawberry while the card showed 25 N, and no grip both holds a 60 g egg and stays under
+  2 N, so the README's example built a robot that failed its own pick and place. `brief_to_changes`, the card's object
+  row and a new fragility assumption (its options are the other categories, as answers to the `fragility` slot) all use
+  it; `parse()` returns the words a slot came from in `said`, kept in the slot's evidence ("request: without cracking").
+  A grip issue on the confirm card ends with where the damage force came from (`brief.explain_issues`).
+  `morph.electronics.no_safe_grip(lo, hi, o, sensor, jaw)` is the one sentence for a window with no force in it (the
+  gripper stage's and the electronics plan's were two), and names what sets its top (`limit_source`: the object's
+  damage force / 1.5, or the force sensor's range).
+- **Build now (UX-1).** `POST /api/brief {action: "build", stop_on_issues: true}` on a brief that is still asking or out
+  of scope fills the defaults and, when the preflight then has issues, answers 200 `{ok, brief_id, busy: false, brief,
+  stopped: "preflight"}` without building; on a brief that is already ready it builds as before. New robot's Build now
+  sends it, so the confirm card shows the issues first ("Not built yet"), with Build anyway.
+

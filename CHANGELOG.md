@@ -377,3 +377,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   holding keeps the jaw where it is.
 - The manual's first pick-and-place test names the robot's own object (it asked for a hard-boiled egg and a raw one
   whatever the robot picks), and a robot without force sensors is told what to watch instead of a grip-force readout.
+- New robot: saying an object is fragile ("pick up a raw egg without cracking it", the README's example, or the
+  egg-picker's own description) no longer lowers the damage force Morph has measured for it. The egg became a 3 N
+  strawberry while the card showed 25 N, and no grip both holds a 60 g egg and stays under 2 N, so the robot failed its
+  own pick and place; it now builds with the egg's 25 N and passes. A stated fragility still gives an object without a
+  damage force one (3 N for "fragile", 10 N for "gently"), and the card says so with the other readings to pick from. A
+  "no safe grip force" issue now says where both numbers come from, and Build now stops at the confirm card when the
+  preflight has issues instead of building straight away.

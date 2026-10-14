@@ -114,3 +114,32 @@ def test_the_timeline_never_says_zero_facts():
     events = []
     agents.run_turn(text="pick 60 g eggs every 5 s", on_event=events.append)
     assert next(e["text"] for e in events if e["role"] == "designer").startswith("Built-in rules: 2 facts from your words")
+
+
+@pytest.mark.parametrize("text", ["pick up a raw egg without cracking it", "Pick a raw egg and place it without cracking it.",
+                                  "pick up eggs without breaking them", "handle eggs gently, they crack easily"])
+def test_saying_an_egg_is_fragile_keeps_the_eggs_measured_damage_force(text):
+    # the README's example and the egg-picker's description: 'fragile' (3 N, a strawberry's) once overrode the egg's 25 N
+    # while the card showed 25 N; no grip both holds a 60 g egg and stays under 2 N, so that robot failed its pick and place
+    b = agents.run_turn(text=text)
+    if b.status == "asking":
+        b = agents.run_turn(b, action="defaults")
+    assert b.status == "ready" and b.changes["object.max_force_n"] == 25 and b.preflight["issues"] == []
+    assert "damaged above 25 N" in next(r["text"] for r in b.to_dict()["card"] if r["slot"] == "object")
+    assert B.damage_force(b) == (25, "Morph's preset for eggs")
+
+
+def test_a_stated_fragility_gives_an_object_without_one_its_damage_force_and_says_so():
+    b = agents.run_turn(agents.run_turn(text="pick up 200 g glass jars without breaking them"), action="defaults")
+    assert b.changes["object.max_force_n"] == 3.0
+    row = next(r["text"] for r in b.to_dict()["card"] if r["slot"] == "object")
+    assert "damaged above 3 N (Morph's reading of 'without breaking')" in row
+    a = next(a for a in b.assumptions if a.get("slot") == "fragility")
+    assert a["text"] == "I read 'without breaking' as fragile: damaged above about 3 N per finger."
+    assert [o["value"] for o in a["options"]] == ["robust", "care"]
+    # a 200 g jar slips below 2.08 N and is damaged above 3 / 1.5 N: the issue says where both numbers come from
+    issue, = b.preflight["issues"]
+    assert issue.startswith("no safe grip force: holding needs 2.08 N but the limit is 2.00 N (the glass jar's 3 N damage "
+                            "force / 1.5)") and issue.endswith("the 3 N damage force is Morph's reading of 'without breaking'")
+    b = agents.run_turn(b, answers={"fragility": "robust"})          # the card's option: it takes a firm squeeze
+    assert b.changes["object.max_force_n"] == 0.0 and b.preflight["issues"] == []

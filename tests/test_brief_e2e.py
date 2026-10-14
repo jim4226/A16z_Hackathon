@@ -1,5 +1,5 @@
 """One-liner -> brief -> defaults -> a real RobotProject build (fast sims): every stage computes and the robot is feasible.
-The default run builds one repaired design (about 15 s); MORPH_E2E=1 builds two more."""
+The default run builds a repaired design and the README's egg request (about 15 s each); MORPH_E2E=1 builds four more."""
 
 import json
 import os
@@ -12,11 +12,14 @@ from morph.studio import agents
 from morph.studio import brief as B
 
 CASES = [("a robot that picks up 300 g cans", "can-mover", True),        # repaired: 4 joints, 7.5 mm finger beams
+         ("pick up a raw egg without cracking it", "egg-picker", True),  # the README's example: the egg keeps its 25 N
          ("something to pick strawberries", "strawberry-picker", False),
-         ("help me sort socks", "sock-sorter", False)]
+         ("help me sort socks", "sock-sorter", False),
+         ("Pick a raw egg and place it without cracking it.", "egg-picker", False),
+         ("pick up eggs without breaking them", "egg-picker", False)]
 
 
-@pytest.mark.parametrize("text,name,default", CASES, ids=[c[1] for c in CASES])
+@pytest.mark.parametrize("text,name,default", CASES, ids=[f"{c[1]}-{i}" for i, c in enumerate(CASES)])
 def test_one_liner_builds(tmp_path, monkeypatch, text, name, default):
     if not default and not os.environ.get("MORPH_E2E"):
         pytest.skip("set MORPH_E2E=1 for the full end-to-end set")

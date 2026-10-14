@@ -90,7 +90,7 @@ const studio = {
         replay(events);
         return { ok: true, status: 202, brief_id: data.brief_id, busy: true, brief: { ...data.brief, questions: [], status: 'asking' } };
       }
-      if (path === '/api/brief' && body.action === 'build' && r.ok) { replay(events); fakeBuild(data.project || data.build.name); }
+      if (path === '/api/brief' && body.action === 'build' && r.ok) { replay(events); if (!data.stopped) fakeBuild(data.project || data.build.name); }
       return { ...data, status: r.status, ok: r.ok && data.ok !== false };
     },
   },

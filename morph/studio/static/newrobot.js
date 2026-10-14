@@ -486,6 +486,7 @@ function confirmView() {
   return `<div class="nr-two">
       <section class="nr-conv">
         ${requestBubble()}
+        ${st.notice && issues.length ? `<div class="nr-note warn nr-stopped">${I('alert', 'sm')}<div><b>Not built yet</b><p>${esc(st.notice)}</p></div></div>` : ''}
         <div class="nr-summary">${esc(b.summary || '')}</div>
         <div class="nr-facts">${facts(b)}</div>
         <div class="sec-t">Assumptions<span class="r">click an option to change it</span></div>
@@ -662,7 +663,7 @@ async function act(a, el) {
     return;
   }
   if (a === 'defaults' || a === 'nearest') { await send({ action: 'defaults' }); return; }
-  if (a === 'buildnow' || a === 'build') { await build(); return; }
+  if (a === 'buildnow' || a === 'build') { await build(a === 'buildnow'); return; }
   if (a === 'restart' || a === 'rephrase') {
     stopTimers();
     const id = st.id;  // fire and forget: a failed cancel only leaves a draft that expires in 7 days
@@ -680,17 +681,23 @@ async function act(a, el) {
   }
 }
 
-async function build() {
+async function build(now = false) {
   if (st.busy || !st.id) return;
   st.busy = true;
   const req = (st.req = ++reqSeq);
   render();
   const body = { brief_id: st.id, action: 'build' };
   if (NAME_RE.test(st.name || '')) body.name = st.name;
+  if (now) body.stop_on_issues = true;  // Build now skips the questions, never the preflight's issues
   const out = await post(body);
   if (req !== st.req) return;
   st.busy = false;
   if (!out) return;
+  if (out.stopped) {
+    st.notice = 'The preflight found issues with the defaults. Check them below, change an assumption, or build anyway.';
+    update(out.brief);
+    return;
+  }
   st.build = out.build;
   st.name = out.build?.name || st.name;
   if (out.build?.brief) st.brief = out.build.brief;

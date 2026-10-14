@@ -96,6 +96,20 @@ def force_window(o, hold: float, sensor: str | None = None, target: float = 0.0,
     return lo, hi, max(t, min(floor, hi))
 
 
+def limit_source(o, sensor: str | None = None) -> str:
+    """Where the top of the grip window comes from: the object's damage force, or the force sensor's range below it."""
+    if sensor and not (0 < o.max_force_n / CRUSH_MARGIN <= FSR[sensor]["max_n"] * 0.8):
+        return "80 % of the FSR 402 force sensor's range" if sensor == "fsr402" else f"80 % of the {sensor} force sensor's range"
+    return f"the {o.name or 'object'}'s {o.max_force_n:g} N damage force / {CRUSH_MARGIN:g}"
+
+
+def no_safe_grip(lo: float, hi: float, o, sensor: str | None = None, jaw: str = "rack") -> str:
+    """The issue for a grip window with no force in it (the gripper stage's and the electronics plan's are one sentence)."""
+    fix = ("try a contour pad, higher-friction pad, or a different object orientation" if jaw == "rack" else
+           "the stock jaws need a lighter object, or one with a grippier surface")
+    return f"no safe grip force: holding needs {lo:.2f} N but the limit is {hi:.2f} N ({limit_source(o, sensor)}); {fix}"
+
+
 def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) -> dict:
     e, o, f = design.electronics, design.object, design.finger
     issues, warnings = [], []
@@ -114,8 +128,7 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
                             f"logged {f.pad}/{f.material} builds (seeded demo data unless your project has real bench results)")
     lo, hi, target = force_window(o, hold, sensor, e.target_force_n)
     if lo > hi:
-        issues.append(f"no safe grip force: holding needs {lo:.2f} N but the limit is {hi:.2f} N; "
-                      f"try a contour pad, higher-friction pad, or a different object orientation")
+        issues.append(no_safe_grip(lo, hi, o, sensor))
     elif not lo <= target <= hi:
         warnings.append(f"target {target:.2f} N is outside the window {lo:.2f}-{hi:.2f} N")
 
