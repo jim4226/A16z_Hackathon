@@ -15,7 +15,7 @@ import pytest
 from morph.studio import api_tools
 from morph.studio.toolbox import runs as runs_mod
 from test_tools_api import CATS, OFFERS, World, _start
-from toolbox_helpers import ENV, KEY, final, search_and_call
+from toolbox_helpers import ENV, KEY, KEY2, final, search_and_call
 
 pw = pytest.importorskip("playwright.sync_api")
 CHROME = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
@@ -145,6 +145,28 @@ def test_a_key_needed_card_add_key_continuing_and_the_card_after_a_reload(browse
     until(lambda: "412 in stock" in page.card(), what="the card after a reload")
     assert page.pg.evaluate("[...document.querySelectorAll('.tl-run .tl-lines li')].map(li => li.innerText.replace(/\\d+ ms/, 'ms'))") == lines
     assert page.pg.evaluate("document.querySelectorAll('.tl-run').length") == 1
+    assert not page.errors, page.errors
+
+
+def test_a_key_the_service_refuses_can_be_replaced_from_the_card(browser, make_world):
+    w = make_world(search_and_call(OFFERS), final("STS3215: 412 in stock at FixParts."))
+    assert w.call("POST", "/api/keys", {"values": {ENV: KEY}})[0] == 200
+    w.vendor.reject = True  # the service answers 401 to this key
+    page = Page(browser, w).open()
+    w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"})
+    until(lambda: "FixParts (test fixture) refused the key" in page.card(), what="the refused-key card")
+    assert page.acts() == ["key", "skip", "stop"] and page.pg.inner_text('.tl-run [data-act="key"]').strip() == "Replace key"
+    page.shot("key_refused")
+    page.pg.click('.tl-run [data-act="key"]')
+    until(lambda: page.pg.evaluate(f"document.querySelector('#keysDlg.on .kf.kfocus')?.dataset.k === '{ENV}'"), what="Keys on the key")
+    w.vendor.reject = False
+    page.pg.fill("#keysDlg .kf.kfocus input", KEY2)
+    page.pg.click('#keysDlg [data-a="save"]')
+    until(lambda: page.pg.evaluate("!!document.querySelector('#keysDlg .kchk.good')"), what="the saved note")
+    page.pg.keyboard.press("Escape")
+    until(lambda: "Done" in page.card() and "412 in stock" in page.card(), what="the run with the new key")
+    assert "FixParts API key added: the run continued" in page.card()
+    assert w.vendor.calls[-1][2]["Authorization"] == f"Bearer {KEY2}" and KEY2 not in page.pg.content()
     assert not page.errors, page.errors
 
 
