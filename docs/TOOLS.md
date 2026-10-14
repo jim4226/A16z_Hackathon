@@ -75,6 +75,8 @@ off), or under "Keys no tool uses" (its manifest is gone), where it can only be 
 - **Check live prices after a build changes the purchased parts** (off by default) starts Live prices by itself; it
   uses Claude on your Anthropic key.
 - A run or draft untouched for 7 days is gone: it can't be continued or approved, and the next start deletes its file.
+- Deleting a project ends its runs that still wait or work, and Reset demo ends those of the revisions it removes:
+  their cards say "Stopped" and why, and a new project that takes the name starts with nothing waiting.
 
 ## Where things are kept
 

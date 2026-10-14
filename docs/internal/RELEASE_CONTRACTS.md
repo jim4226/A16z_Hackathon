@@ -259,6 +259,8 @@ studio = {
   Simulation tab's result column, section 16): it places itself after `#views .view[data-view="sim"] .side > .success`
   while the tab's `[data-scen] button.on` is `pick_place` (the tab redraws that column, so it is put back each time) and
   plays a replayed run through `window.morph.viewer`, as world.js does; those selectors are part of this contract.
+  B2-T: `tools` (the agent run cards in the chat and Live prices in the BOM tab's `.bm .filters`; it imports
+  `tooldraft.js`, section 15.1). Since B2-M the array is `[newrobot, importer, video, team, world, study, tools]`.
 - I2b: `app.js` keeps each started feature's `init()` result (`started`, a Map), so the chat's import offer can call
   the importer's `open()`. Once the features started, an empty chat gets one assistant line naming the entry points
   that were mounted (`featureTips`). A media-only drop (video or photo files) goes to Show Morph the job through
@@ -520,6 +522,7 @@ activity stays on the Studio computer.
 | F4 | `morph/studio/teams/` (package), `morph/studio/api_team.py`, `static/team.js`, `tests/test_team*.py` |
 | F5 | `morph/studio/worlds.py`, `morph/studio/api_world.py`, `static/world.js`, the vendored three r160 examples (PointerLockControls, Octree, Capsule, TransformControls) in `static/vendor/`, `simulate.py` world support, `tests/test_world*.py` |
 | B2-T (tool broker, section 15) | `morph/studio/toolbox/` (package, with its `catalog/*.json`), `morph/studio/api_tools.py`, `static/tools.js`, `static/tooldraft.js`, `static/tooldraft.css`, `tests/test_toolbox*.py`, `tests/test_tools_*.py`, `tests/toolbox_helpers.py`, `tests/fake_claude.py`, `tests/fixtures/tools/`, `tests/e2e/test_e2e_tool*.py`, `docs/TOOLS.md`. Edits to `keys.py`, `settings.py`, `security.py`, `agents.py` (Live prices), `darwin.py`, `server.py`, `teams/roles.py`, `keys.js`, `cli.py` (doctor) and the tools section of style.css |
+| B2-S (simulation track, section 16) | `morph/services/` (package: `robust.py`), `morph/studio/jobs.py`, `morph/studio/api_study.py`, `static/study.js`, `docs/ROBUSTNESS.md`, `tests/test_robust*.py`, `tests/test_study_*.py`, `tests/test_sim_golden.py` with `tests/sim_golden_data.py`, `tests/test_sim_perturb.py`, `tests/study_fixture.py`, `tests/test_world_path.py`, `tests/test_world_scan.py`, `tests/e2e/test_e2e_study.py`. Edits to `simulate.py` (the study hook and the whole-path check), `worlds.py`/`api_world.py`/`world.js` (the scan check, Add box here), `server.py` (studies stop on delete, reset and exit), `teams/roles.py` and `cli.py` (`morph study`) |
 
 ## 12. Correctness fixes from the external review (owner: W0c, after Wave 0)
 
@@ -1274,3 +1277,35 @@ field failure rate (section 0, honesty).
 - **Docs:** `docs/ROBUSTNESS.md` (what a study is, its tolerances and their sources, how to read the card,
   model-sensitive results, restarts, `--remote`, limits); `docs/WORLD.md` covers the whole-path check, the scan warning
   and Add box here.
+
+## 17. Integration of the B2 tracks (B2-M)
+
+The simulation track (section 16) and the tool broker (section 15) are merged into the release branch, in that order
+(`--no-ff`), on top of three release fixes made after their base. What other code relies on since:
+
+- **Shared files.** `FEATURES` is `[newrobot, importer, video, team, world, study, tools]` (section 4); this file has
+  section 15 before 16; `teams/roles.py` has the study routes after world mode's and the agent tools' at the end; the
+  release checklist's manual QA rows 16-17 are the simulation track's and 18-23 the tools'.
+- **The Studio's lifecycle (server.py), in order:**
+  - start: the features load (`_start_features`), then the toolbox (`api_tools.attach`, which `recover()`s); the study
+    manager is made on first use (`jobs.manager`).
+  - a finished build (`Studio.apply` and `Studio.build`, after `done`): `api_tools.after_build`.
+  - Delete project: `jobs.stop(studio, name)` (the study stops; its runs go to the trash with the project), then
+    `api_tools.project_gone(studio, name)`, then `projects.delete`.
+  - Reset demo, per demo project: `jobs.stop`, then the revisions after the kept build are removed and
+    `project_gone(studio, name, revs)` gets the ones that were.
+  - stop (`serve()`'s `finally`): `jobs.shutdown` (studies stop and keep their runs); agent runs left working become
+    interrupted pauses at the next start.
+- **`api_tools.project_gone(studio, project, revs=None) -> [run ids]`**: the project's agent runs that are running or
+  paused end as `cancelled` (`Toolbox.cancel(run_id, by=, note=)`, whose `note` defaults to "Stopped by the person."):
+  all of them when the project is deleted ("Stopped: <project> was deleted."), and only those whose `context.rev` is in
+  `revs` on Reset demo ("Stopped: Reset demo removed the revision it was for."). Finished runs are left as they are.
+  Runs live in `MORPH_HOME/.runs` under the project's *name* and revision, and both come back (a new robot from the same
+  request gets the same name; Reset demo reuses revision names), so a run waiting for a key could otherwise continue,
+  once the key was saved, in a project or on a revision it was never started for (`tests/test_tools_lifecycle.py`).
+- **End-to-end tests:** `MORPH_E2E_PORTS` covers every Studio and stand-in the browser tests start and is shared out
+  between pytest-xdist workers (`live_studio.ports()`, section 14); the World mode and Teams flagship tests take their
+  ports from `live_studio.free_port()` and give them back with `release_port()`.
+- **Known gaps:** a run that ended in a deleted project still lists in a new project of the same name, so its card
+  (stopped, with no actions) shows there for half an hour after it ended, as every recent card does; deleting a
+  project leaves the drafts of tools started from its cards (they belong to the owner's catalog, not the project).

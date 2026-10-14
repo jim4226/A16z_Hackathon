@@ -61,25 +61,28 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   move from the rest pose would sweep through a box, the approach and the return to rest follow the carry path too.
   It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
   `morph world <project> --starter desk` (or `--off`) does the same from a terminal; [docs/WORLD.md](docs/WORLD.md).
-- **Robustness studies** (beta): one nominal simulation says a
-  design works once, exactly as drawn. A study runs a revision's own pick-and-place plan hundreds of times in worlds
-  drawn from the project's tolerances (the object off its mark, turned, its size and mass, pad friction, grip-force
-  calibration, servo torque, deadband, encoder noise, the host's set-point rate and, in World mode, the mount and every
-  box; each range says where it comes from), labels every run (placed, jaws stayed shut, dragged, missed grasp, dropped,
-  over-force, hit the room in a named phase) and reports the success rate with a Wilson 95 % interval, the rule that
-  best isolates each failure group, and whether that failure holds at half the timestep and with softer friction
-  ("model-sensitive: test it on the real robot"). The default egg-picker succeeds in 140 of 200 runs (63-76 %); 58 of
-  the 60 failures are the jaws staying shut at release (half the runs with the egg turned 3-9 degrees end that way), and
-  that failure changes with the solver's settings. Runs are reproducible from the seed on any number of worker
-  processes, saved as they finish and resumable (Ctrl+C keeps them): `morph study egg-picker [--runs N] [--stress]`.
-  In the Studio, the **Robustness** card under the Simulation tab's pick-and-place result runs a study of the revision
-  on screen (50, 200 or 1,000 runs, or a stress test with every range doubled), shows its progress live, stops it on
-  request within seconds (the finished runs stay, and it carries on later), says what the result means and what it
-  doesn't, replays a failing run in the 3D view, and lists every tolerance with where its range comes from. Editors
-  start studies and change tolerances (a change marks older studies outdated); every member of a team reads them.
-  Studies run on the Studio's computer, so `morph studio --remote` on a bigger machine is how a team brings its own
-  compute; one study at a time per project, at most 10,000 runs from the Studio. Where no study exists the card says
-  so: one nominal run tests nothing around it. Simulation, for the tolerances shown; not a field failure rate.
+- `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
+  a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
+  (whether ffmpeg was found), Teams and World mode.
+- **Robustness studies** (beta): one nominal simulation says a design works once, exactly as drawn. A study runs a
+  revision's own pick-and-place plan hundreds of times in worlds drawn from the project's tolerances (the object off its
+  mark, turned, its size and mass, pad friction, grip-force calibration, servo torque, deadband, encoder noise, the
+  host's set-point rate and, in World mode, the mount and every box; each range says where it comes from), labels every
+  run (placed, jaws stayed shut, dragged, missed grasp, dropped, over-force, hit the room in a named phase) and reports
+  the success rate with a Wilson 95 % interval, the rule that best isolates each failure group, and whether that failure
+  holds at half the timestep and with softer friction ("model-sensitive: test it on the real robot"). The default
+  egg-picker succeeds in 140 of 200 runs (63-76 %); 58 of the 60 failures are the jaws staying shut at release (half the
+  runs with the egg turned 3-9 degrees end that way), and that failure changes with the solver's settings. Runs are
+  reproducible from the seed on any number of worker processes, saved as they finish and resumable (Ctrl+C keeps them):
+  `morph study egg-picker [--runs N] [--stress]`. In the Studio, the **Robustness** card under the Simulation tab's
+  pick-and-place result runs a study of the revision on screen (50, 200 or 1,000 runs, or a stress test with every range
+  doubled), shows its progress live, stops it on request within seconds (the finished runs stay, and it carries on
+  later), says what the result means and what it doesn't, replays a failing run in the 3D view, and lists every
+  tolerance with where its range comes from. Editors start studies and change tolerances (a change marks older studies
+  outdated); every member of a team reads them. Studies run on the Studio's computer, so `morph studio --remote` on a
+  bigger machine is how a team brings its own compute; one study at a time per project, at most 10,000 runs from the
+  Studio. Where no study exists the card says so: one nominal run tests nothing around it. Simulation, for the
+  tolerances shown; not a field failure rate.
 - **World mode checks the whole path** (beta): every move of the pick and place (the approach, the descent to the
   object, the grasp, the lift, the carry, the set-down, the release, the rise and the way back to rest) is checked
   against the grey boxes every 10 ms, with the object while it is carried. A move that comes within 10 mm tries its
@@ -102,9 +105,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   a study whose revision was replaced or whose Morph code changed since, are refused before anything starts, with the
   reason. A failure group that holds every run gets no rule, and successful runs that fail under other solver settings
   are flagged as well: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
-- `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
-  a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
-  (whether ffmpeg was found), Teams and World mode.
 - **Live prices** (beta): in the BOM tab, Claude checks current distributor prices and stock for the purchased parts
   with Morph's read-only distributor tools (Mouser, and Farnell, element14 and Newark; written from their API
   documentation and marked "Not yet tried with a real key"). Each run gets a card in the chat that says what it used
@@ -169,8 +169,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - CI on Windows, macOS and Linux with Python 3.10 to 3.14, a lint job, and a check that the installed wheel builds
   both demo robots.
 - End-to-end browser tests (`MORPH_E2E=1 python -m pytest tests/e2e`) start a real Studio, offline and without keys,
-  and drive Chromium through New robot, Import, Show Morph the job, a three-person Teams change request and World mode
-  with full simulations; [INSTALL](docs/INSTALL.md#for-developers) says how to run them.
+  and drive Chromium through New robot, Import, Show Morph the job, a three-person Teams change request, World mode,
+  a robustness study, Live prices and drafting a tool (with a local stand-in for Claude), all with full simulations;
+  `MORPH_E2E_PORTS` keeps every Studio they start inside one port range, shared out between pytest-xdist workers.
+  [INSTALL](docs/INSTALL.md#for-developers) says how to run them.
 - New docs: [INSTALL](docs/INSTALL.md), [PRIVACY](docs/PRIVACY.md), [SECURITY](SECURITY.md),
   [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md), a [release checklist](docs/RELEASE_CHECKLIST.md), and one page each
   for [Teams](docs/TEAMS.md), [Import](docs/IMPORT.md) and [World mode](docs/WORLD.md). Internal planning docs moved
@@ -330,3 +332,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   and a project whose first build is still running (or failed) no longer shows the previous project's revision as its
   own: the New robot dialog could report the new robot as done with the old project's numbers, and the robot, its
   tabs, its parameters and its Export button stayed on screen. They wait for the project's first revision now.
+- Deleting a project, or Reset demo removing revisions, also ends the project's agent runs (Live prices) that were
+  waiting for a key or still working, as it already stopped the project's robustness study: such a run could carry
+  on later in a new project that took the same name, or for a revision Reset demo had removed, and price the parts
+  of a robot it was never started for. Its card says why it stopped.
