@@ -19,6 +19,7 @@ import hmac
 import html
 import importlib
 import io
+import ipaddress
 import json
 import mimetypes
 import os
@@ -735,6 +736,10 @@ DRAIN_MAX = 8 << 20  # a refused body up to this size is read and dropped, so th
 HEADER_TIMEOUT = 20.0
 MAX_CONNECTIONS = 64
 MAX_STREAMS = 48
+# connections one address may hold before it has signed in (loopback addresses aside: every tab of a local Studio, and
+# everyone behind a reverse proxy on this computer, comes from 127.0.0.1), so one address without the access code can't
+# take every slot; signed-in connections (event streams, uploads) don't count
+MAX_UNSIGNED_PER_ADDRESS = 16
 LINGER = 2.0  # seconds a client turned away at the cap has to finish sending before its socket is closed
 BUSY = (b'{"ok": false, "error": "The Studio is answering as many connections as it can. Try again in a few seconds."}')
 
@@ -890,8 +895,11 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             self._throttled, self._member = False, None
             if team is not None:
                 self._member = team.authenticate(self, home=studio.home)
+                if self._member is not None:
+                    self._counted_out()
                 return self._member is not None
             if not token:
+                self._counted_out()
                 return True
             jar = SimpleCookie()
             try:
@@ -903,7 +911,15 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 return False
             ok = self._code(got)
             self._throttled = ok is None
+            if ok:
+                self._counted_out()
             return bool(ok)
+
+        def _counted_out(self):
+            """Signed in: this connection stops counting against its address's cap (_Server.signed_in)."""
+            done = getattr(self.server, "signed_in", None)
+            if done is not None:
+                done(self.request)
 
         def _sign_in_page(self, bad=False):
             if team is not None:  # invites and sign-in links are the way in (a removed member's browser is told why)
@@ -1486,32 +1502,65 @@ class _Server(ThreadingHTTPServer):
 
     def __init__(self, *args, **kwargs):
         self.slots, self.connections, self.streams = threading.Lock(), 0, 0
+        self.unsigned, self.unsigned_by = {}, {}  # connection -> its address, and per address, until it signs in
         self.turned_away, self.closer = queue.SimpleQueue(), None
         super().__init__(*args, **kwargs)
 
+    @staticmethod
+    def exempt(address: str) -> bool:
+        """Loopback addresses have no per-address cap (a local Studio's tabs, or a reverse proxy on this computer)."""
+        try:
+            ip = ipaddress.ip_address(address.split("%")[0])
+        except ValueError:
+            return False
+        return ip.is_loopback or bool(getattr(ip, "ipv4_mapped", None) and ip.ipv4_mapped.is_loopback)
+
     def process_request(self, request, client_address):
-        """A thread per connection, up to max_connections at once; past that, a 503 straight from here, without
-        reading the request, so idle or slow clients can never take every thread."""
+        """A thread per connection, up to max_connections at once, and up to MAX_UNSIGNED_PER_ADDRESS from one address
+        that hasn't signed in yet; past either, a 503 straight from here, without reading the request, so idle or slow
+        clients can never take every thread."""
+        addr = str(client_address[0]) if client_address else ""
+        counted = not self.exempt(addr)
         with self.slots:
-            ok = self.connections < self.max_connections
-            self.connections += ok
+            ok = self.connections < self.max_connections and not (
+                counted and self.unsigned_by.get(addr, 0) >= MAX_UNSIGNED_PER_ADDRESS)
+            if ok:
+                self.connections += 1
+                if counted:
+                    self.unsigned[request] = addr
+                    self.unsigned_by[addr] = self.unsigned_by.get(addr, 0) + 1
         if not ok:
             return self._busy(request)
         try:
             super().process_request(request, client_address)
         except BaseException:
-            self._release()
+            self._release(request)
             raise
 
     def process_request_thread(self, request, client_address):
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self._release()
+            self._release(request)
 
-    def _release(self):
+    def signed_in(self, request):
+        """The connection presented a valid access code or session: it no longer counts against its address."""
+        with self.slots:
+            self._forget(request)
+
+    def _forget(self, request):
+        addr = self.unsigned.pop(request, None)
+        if addr is not None:
+            n = self.unsigned_by.get(addr, 0) - 1
+            if n > 0:
+                self.unsigned_by[addr] = n
+            else:
+                self.unsigned_by.pop(addr, None)
+
+    def _release(self, request=None):
         with self.slots:
             self.connections -= 1
+            self._forget(request)
 
     def open_stream(self) -> bool:
         with self.slots:

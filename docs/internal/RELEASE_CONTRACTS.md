@@ -90,7 +90,9 @@ class Request:
 - POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; the page sends `1`; 403
   without it); `studio.api` sends it.
 - A connection has `HEADER_TIMEOUT` (20 s) in all for its request line and headers. The server serves at most
-  `MAX_CONNECTIONS` (64) connections at once, `MAX_STREAMS` (48) of them `/api/events` streams; past either cap the
+  `MAX_CONNECTIONS` (64) connections at once, `MAX_STREAMS` (48) of them `/api/events` streams, and at most
+  `MAX_UNSIGNED_PER_ADDRESS` (16) from one address that haven't signed in yet (loopback addresses aside, `_Server.exempt`;
+  a connection stops counting once its access code or Teams session checks out, `_Server.signed_in`); past any cap the
   answer is 503 at once. A stream notices a closed tab within a second and frees its slot. A route that holds its
   connection open for long (a stream of its own) should take a slot the same way (`req.handler.server.open_stream()` /
   `close_stream()`).

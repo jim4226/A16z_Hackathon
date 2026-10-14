@@ -122,6 +122,9 @@ open and what they're looking at.
 - **Plain HTTP.** Sign-in and invite links, session cookies and everything the team does travel unencrypted between
   browsers and the Studio. Use it on a network you trust, over a VPN such as Tailscale, or through an SSH tunnel
   (`ssh -L 8765:127.0.0.1:8765 you@server` on each laptop, with the Studio started without `--remote`).
+- **Connections.** One address may hold at most 16 connections that haven't signed in, so someone without a link
+  can't take every connection by opening idle ones; signed-in pages don't count, so teammates behind one router are
+  unaffected. Many addresses together still can fill the Studio's 64 connections: keep it on a network you trust.
 - **Links and sessions.** Invite codes (128-bit) and script tokens are stored hashed. Invites work once for 7 days;
   sign-in links once for 15 minutes. Sessions are signed cookies valid for 30 days; removing a member (Share, *Remove*,
   or `morph team revoke`) signs them out everywhere, and their open pages stop within seconds and say why. An address

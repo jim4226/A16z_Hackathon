@@ -24,8 +24,11 @@ Morph Studio is a local app: a small web server on your computer, used from your
   type, shape) are checked before anything is created or read. Generated files open sandboxed, so they can't run
   scripts with the Studio's rights. The page loads nothing from other sites.
 - A connection gets 20 seconds in all to send its request line and headers, and the Studio serves at most 64
-  connections at once, 48 of them live event streams. More get a "busy" answer (503) straight away, so slow or idle
-  connections can't tie the server up.
+  connections at once, 48 of them live event streams. One address may hold at most 16 connections that haven't signed
+  in (with the access link or a team session; this computer's own addresses aside), and signed-in pages don't count
+  towards that. More get a "busy" answer (503) straight away, so one client without the access link can't tie the
+  server up. Many addresses together still can fill every slot, which is one more reason to use remote mode only on
+  a network you trust.
 - API keys live in `.env`, readable by your user only on macOS and Linux. The Studio never sends a key back to the
   browser or prints it. Text you type anywhere else (chat, New robot, Show Morph the job, Teams comments and names)
   that looks like an API key or a Morph access code is refused before it is saved, shown or sent.

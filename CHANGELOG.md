@@ -254,6 +254,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   or a Teams script token, invite or sign-in code before anything is saved, shown or sent. New robot used to keep such
   a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ
   and tool keys through; drafts saved before this stay until their 7-day cleanup.
+- Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
+  access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
+  teammates behind one router are unaffected. Many addresses together can still fill the slots (SECURITY.md).
 
 ### Fixes
 
