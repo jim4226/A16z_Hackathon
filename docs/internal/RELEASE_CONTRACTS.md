@@ -1425,4 +1425,18 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   stall, and Quick facts' "Payload" (the object's mass) is "Object mass"; New robot's done card says "Max payload" with
   where it was measured. The egg-picker: 1,729 g top-down at 216 mm, 720 g stretched out at 476 mm (elbow-limited); the
   SO-101: 732 g at 252 mm, 216 g at 465 mm (shoulder).
+- **Stage reuse follows every key a stage reads (ENG-4).** `GRAPH` adds `electronics.pinion_radius_mm` to sizing (the
+  hand's rack-and-pinion drive), `task.*` to the manual (it prints the target cycle time) and `build.config` to the
+  gripper stage, and drops `electronics.supply_v` from it. The gripper stage of a generated arm analyses
+  `pipeline2.gripper_design(design)`: the gripper actuator at its rated voltage and the fingers the robot's CAD makes for
+  its build config (`arm.LOOK`: printed PETG, machined Al6061, molded PC, the last in `materials.MOLDED`), with no
+  controller; it no longer reads `finger.material`, `fab.process` or `electronics.mcu`, which the robot doesn't build
+  with, and its force plan has no `mcu`, `wiring`, `parts` or `sensing` (the electronics plan's, for a robot). So a
+  controller change no longer reruns the gripper stage (the electronics, the CAD whose base bay holds the board, and
+  what follows them still rerun), a fabrication-process change reruns manufacturing, the BOM and the manual only (no
+  Mechanical review in Teams), and a cycle-time change reruns the manual and asks Documentation. New robot's preflight
+  analyses the same design.
+  `tests/test_robot_stage_reads.py` computes every stage on a design that records each key it reads and fails on any
+  key outside the stage's patterns and its upstream stages' (for the egg-picker and the SO-101); the simulation's only
+  allowed exception is the project name, robot.xml's model name.
 

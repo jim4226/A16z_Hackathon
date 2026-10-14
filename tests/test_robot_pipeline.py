@@ -9,16 +9,39 @@ from morph.studio.intent import rules
 
 
 def test_dependency_graph_is_selective():
-    assert dirty_nodes(["task.cycle_time_s"]) == ["sim"]
+    assert dirty_nodes(["task.cycle_time_s"]) == ["sim", "manual"]      # the manual prints the target cycle time
     assert "sim" not in dirty_nodes(["electronics.config"])
     assert {"sizing", "gripper", "sim"}.isdisjoint(dirty_nodes(["electronics.config"]))
     assert dirty_nodes(["arm.actuator_family"])[0] == "sizing"
+    # the controller is the electronics' business (and the CAD's, whose base bay holds it), never the gripper stage's;
+    # a fabrication process is manufacturing's alone
+    assert {"sizing", "gripper", "sim"}.isdisjoint(dirty_nodes(["electronics.mcu"]))
+    assert dirty_nodes(["fab.process"]) == ["manufacturing", "bom", "manual"]
+    assert {"sizing", "gripper", "sim"}.isdisjoint(dirty_nodes(["electronics.supply_v"]))
 
 
 def test_sizing_reruns_for_everything_it_reads():
-    # arm.size() reads the build config (metal links are heavier) and the pick/place positions (reach)
-    assert "sizing" in dirty_nodes(["build.config"]) and "gripper" not in dirty_nodes(["build.config"])
-    assert "sizing" in dirty_nodes(["task.pick_x_mm"]) and "sizing" not in dirty_nodes(["task.cycle_time_s"])
+    # arm.size() reads the build config (metal links are heavier), the pick/place positions (reach) and the pinion
+    # radius (the hand's rack-and-pinion drive); tests/test_robot_stage_reads.py checks every read against GRAPH
+    assert "sizing" in dirty_nodes(["build.config"]) and "sizing" not in dirty_nodes(["task.cycle_time_s"])
+    assert "sizing" in dirty_nodes(["task.pick_x_mm"]) and "sizing" in dirty_nodes(["electronics.pinion_radius_mm"])
+    assert "gripper" in dirty_nodes(["build.config"])      # the build config decides what the fingers are made of
+
+
+def test_the_gripper_stage_analyses_the_fingers_the_build_makes():
+    from morph.robot.pipeline2 import gripper_design, gripper_stage
+
+    d = Design().with_changes({**EGG_ROBOT, "fab.process": "laser_cut", "finger.material": "Acrylic",
+                               "electronics.mcu": "rp2040_pico"})
+    for cfg, mat, printed in (("prototype", "PETG", True), ("pilot", "Al6061", False), ("production", "PC", False)):
+        gd = gripper_design(d.with_changes({"build.config": cfg}))[0]
+        g = gripper_stage(d.with_changes({"build.config": cfg}), simulate=False)
+        assert (gd.finger.material, g["analysis"]["material"], g["analysis"]["printed"]) == (mat, mat, printed), cfg
+    # the standalone gripper's finger.material, fab.process and controller don't reach it: the robot builds neither
+    base = gripper_stage(Design().with_changes(EGG_ROBOT), simulate=False)
+    g = gripper_stage(d, simulate=False)
+    assert g["analysis"] == base["analysis"] and g["force"] == base["force"]
+    assert not {"mcu", "wiring", "parts", "sensing"} & set(g["force"])   # the electronics plan's, for a robot
 
 
 def test_moving_accessories_resize_and_resimulate():
@@ -76,6 +99,11 @@ def test_pipeline_runs_and_reuses(tmp_path):
     prov = res2["provenance"]
     assert prov["sim"] == "computed" and prov["cad"].startswith("reused")
     assert not res2.get("errors") and res2["stage_status"]["cad"] == "reused"
+    # the manual is rebuilt and gives the new target cycle (it was reused and said 6 s)
+    assert prov["manual"] == "computed"
+    with open(tmp_path / "egg" / r2 / "manual" / "manual.json", encoding="utf-8") as fh:
+        text = " ".join(st.get("instructions", "") for st in json.load(fh)["steps"])
+    assert "target cycle 8 s" in text and "target cycle 6 s" not in text
 
 
 def test_server_payload_shape(tmp_path):

@@ -1297,8 +1297,7 @@ def preflight(changes: dict) -> dict:
     from .. import analysis
     from ..design import build_profile
     from ..robot import electronics2
-    from ..robot.catalog import ACTUATORS
-    from ..robot.pipeline2 import gripper_actuator
+    from ..robot.pipeline2 import gripper_design
     from ..spec import Design
 
     t0 = time.perf_counter()
@@ -1312,8 +1311,7 @@ def preflight(changes: dict) -> dict:
         else:
             from ..robot import arm
             sz = arm.size(d)
-            ga = gripper_actuator(d)
-            gd = d.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"]})
+            gd = gripper_design(d)[0]    # the fingers and servo the gripper stage analyses
             a = analysis.analyze(gd, build_profile(gd))
             f = _grip_force(gd, a)
             issues += a["issues"]

@@ -396,3 +396,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   static check at full stretch), "Top-down reach" (280 mm) and "Reach, any pose" (475 mm), with a note that payloads are
   what holds before a servo stalls. Quick facts' "Payload" was the object's mass and now says so, and New robot's done
   card says where its payload was measured.
+- Revisions no longer reuse a stage that a change affects. A new cycle time left the manual saying the old one (and
+  Teams kept its Documentation approval); a new pinion radius left the sizing (gear teeth, grip force, hand mass) at the
+  old one under freshly built CAD and simulation; a new controller left the gripper stage's force plan with the old
+  board's pins. The gripper stage now analyses the fingers the build really makes (printed PETG for a prototype,
+  machined aluminium for a pilot, molded polycarbonate for production; it analysed printed PETG for every build) and
+  leaves the controller to the electronics, so a controller or fabrication-process change no longer reruns it. A test
+  reads every key each stage uses and checks that a change to it reruns the stage.

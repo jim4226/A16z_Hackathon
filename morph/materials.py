@@ -27,6 +27,9 @@ MATERIALS = {
     "HDPE": Material("HDPE", 0.9, 0.95, 25, 8, ("cnc_router",)),
     "Al6061": Material("Al6061", 69.0, 2.70, 276, 8, ("cnc_router",)),
 }
+# Finger materials only a robot arm's production build uses (morph.robot.arm.LOOK: molded polycarbonate): the gripper
+# analysis reads them, the standalone gripper never offers them (none of its processes makes a finger from them).
+MOLDED = {"PC": Material("PC", 2.35, 1.20, 62, 4, ("injection_mold",))}
 
 # 1/8" (3.175 mm) end mill on a hobby/desktop router. feed = rpm * flutes * chipload.
 CNC_FEEDS = {

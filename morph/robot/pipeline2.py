@@ -31,10 +31,12 @@ GRAPH = {
     # (gripper/finger set the payload, a wrist camera or IMU in electronics.extras rides on it), so a pilot build
     # re-sizes the joints instead of reusing prototype torques; and the servo rail every torque is worked out at
     "sizing": (["arm.*", "object.*", "electronics.servo", "electronics.servo_v", "electronics.extras", "build.*",
-                "task.pick_*", "task.place_*", "finger.*", "gripper.*"], [], None),
+                "task.pick_*", "task.place_*", "finger.*", "gripper.*", "electronics.pinion_radius_mm"], [], None),
+    # the gripper stage analyses the fingers the build config makes (gripper_design), and leaves the controller and
+    # the supply to the electronics plan: a controller or process change never reruns it (nor asks Mechanical again)
     "gripper": (["finger.*", "object.*", "gripper.*", "safety_factor", "electronics.target_force_n",
-                 "electronics.servo", "electronics.supply_v", "electronics.pinion_radius_mm", "arm.actuator_family",
-                 "arm.source", "arm.actuator_overrides"],
+                 "electronics.servo", "electronics.pinion_radius_mm", "arm.actuator_family", "arm.source",
+                 "arm.actuator_overrides", "build.config"],
                 [], "gripper"),
     "electronics": (["electronics.*"], ["sizing", "gripper"], None),
     "cad": (["finger.*", "object.shape", "object.diameter_mm", "object.length_mm", "build.*", "name", "arm.source"],
@@ -47,7 +49,7 @@ GRAPH = {
     "wiring": ([], ["electronics", "cad"], "electronics"),
     "manufacturing": (["build.*", "fab.*"], ["cad", "wiring"], "mfg"),
     "bom": ([], ["manufacturing", "wiring"], None),
-    "manual": ([], ["cad", "manufacturing", "wiring"], "manual"),
+    "manual": (["task.*"], ["cad", "manufacturing", "wiring"], "manual"),   # it prints the cycle time and the task
 }
 ORDER = ["sizing", "gripper", "electronics", "cad", "sim", "wiring", "manufacturing", "bom", "manual"]
 LABELS = [("sizing", "Sizing"), ("gripper", "Gripper + grasp"), ("electronics", "Electronics plan"),
@@ -112,23 +114,38 @@ def gripper_actuator(design: Design) -> str:
     return sized(design)
 
 
+def gripper_design(design: Design) -> tuple:
+    """(the design the gripper stage analyses, the gripper actuator) for a generated arm: the gripper actuator at its
+    rated voltage, and the fingers the robot's CAD makes for its build config (arm.LOOK: printed PETG for a prototype,
+    machined aluminium for a pilot, molded polycarbonate for production), not the standalone gripper's finger.material
+    and fab.process, which the robot doesn't build with. A robot's controller and supply are the electronics plan's
+    (electronics2), so none is chosen here."""
+    from .arm import LOOK, _config
+    from .catalog import ACTUATORS
+
+    ga = gripper_actuator(design)
+    material, _, process, _ = LOOK[_config(design)]["finger"]
+    return design.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"],
+                                "electronics.mcu": "auto", "finger.material": material, "fab.process": process}), ga
+
+
 def gripper_stage(design: Design, sizing: dict | None = None, n_trials: int = 4, simulate: bool = True) -> dict:
     """The gripper stage's result (results.json "gripper"). Its "force" plan is the grip's one source of truth: the
     electronics plan, the firmware, the simulation and the manual take its window, target and limit. An imported robot
     keeps its stock jaw (imported.gripper_summary, from `sizing` when given); a generated arm's gripper is analysed, its
     grasp simulated (simulate=False: the closed-form holding force instead, as the force plan's own fallback) and its force
-    planned with the gripper actuator at that actuator's rated voltage."""
+    planned on gripper_design(design)."""
     if design.arm.source:
         from . import imported
         return imported.gripper_summary(design, sizing if (sizing or {}).get("gripper") else imported.size(design))
-    from .catalog import ACTUATORS
-
-    ga = gripper_actuator(design)
-    gd = design.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"]})
+    gd, ga = gripper_design(design)
     geom = build_profile(gd)
     a = grip_analysis.analyze(gd, geom)
     s = grip_sim.simulate(gd, geom, n_trials) if simulate else None
-    out = {"actuator": ga, "analysis": a, "force": grip_electronics.plan(gd, a, s)}
+    force = grip_electronics.plan(gd, a, s)
+    for k in ("mcu", "wiring", "parts", "sensing"):   # the standalone gripper's controller, pins and parts list
+        force.pop(k, None)
+    out = {"actuator": ga, "analysis": a, "force": force}
     if s is not None:
         out["sim"] = {k: v for k, v in s.items() if k != "trials"}
     return out
