@@ -38,6 +38,8 @@ query, so Darwin's cache still hits.
 
 ## 2. Publishing a revision
 
+In a terminal set up as in [Commands in a terminal](../README.md#commands-in-a-terminal):
+
 ```shell
 morph kicad raw-egg r004
 ```

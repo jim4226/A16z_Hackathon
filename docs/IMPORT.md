@@ -8,8 +8,8 @@ drop files anywhere on the page, or use `morph import` in a terminal.
 
 | You have | Morph reads | What happens |
 |---|---|---|
-| A robot | a folder or `.zip` with a URDF, a xacro file (needs `pip install morph[xacro]`) or MuJoCo XML, plus its meshes | Morph finds the gripper joint, the tool point, the base and a ready pose, asks only what the files can't tell (usually which motors drive the joints), saves the robot and builds it as a **new project** |
-| The object to grasp | an STL, OBJ, PLY, OFF, GLB or glTF mesh, or STEP with `pip install morph[cad]` | its size, shape and (with a density) mass become the open project's object: one new revision, like a parameter edit. An object Morph knows by name (an egg, a strawberry) brings its damage force and friction; a fragile one, or one narrower than the plain finger closes on, gets the force-sensing finger |
+| A robot | a folder or `.zip` with a URDF, a xacro file (needs the `xacro` and `PyYAML` packages: `morph doctor` gives the command) or MuJoCo XML, plus its meshes | Morph finds the gripper joint, the tool point, the base and a ready pose, asks only what the files can't tell (usually which motors drive the joints), saves the robot and builds it as a **new project** |
+| The object to grasp | an STL, OBJ, PLY, OFF, GLB or glTF mesh, or STEP with the `cascadio` package (`morph doctor` gives the command) | its size, shape and (with a density) mass become the open project's object: one new revision, like a parameter edit. An object Morph knows by name (an egg, a strawberry) brings its damage force and friction; a fragile one, or one narrower than the plain finger closes on, gets the force-sensing finger |
 | A parts list | CSV, TSV, XLSX or a Markdown table | the rows, the total and the parts Darwin can look up; the dialog offers them as a CSV. Nothing is changed |
 | A board | a KiCad 6 or newer `.kicad_pcb` or `.kicad_sch` | its size, footprints and layers. Nothing is changed |
 | A Morph export | the ZIP from **Export** (or `morph export`) | its newest design is rebuilt as a new project; earlier designs are kept next to it for reference |
@@ -19,9 +19,10 @@ Refused with a reason: native CAD files (SolidWorks, Fusion, Inventor, Onshape d
 USD and SDF scenes (convert to URDF), KiCad 5 files (save them again in KiCad 6 or newer), 7-Zip and RAR archives
 (unzip them first). COLLADA (`.dae`) and 3MF meshes need packages Morph doesn't install; export STL, OBJ or GLB.
 
-In a terminal: a folder, a `.zip`, a URDF or a mesh; a link, with one motor family for every joint; a URDF with a motor
-for each joint; the object for an existing project; and a parts list, showing what Morph found without changing
-anything:
+In a terminal (set up as in
+[Commands in a terminal](../README.md#commands-in-a-terminal)): a folder, a `.zip`, a URDF or a mesh; a link, with
+one motor family for every joint; a URDF with a motor for each joint; the object for an existing project; and a parts
+list, showing what Morph found without changing anything:
 
 ```shell
 morph import robots/my-arm

@@ -90,7 +90,8 @@ off), or under "Keys no tool uses" (its manifest is gone), where it can only be 
 | The log of every tool decision and call | `.tools/audit.jsonl` |
 
 The log records names, hosts, outcomes, timings and costs, never a key, a tool's arguments or an answer. Each line
-carries the hash of the one before it, so an edited, removed or reordered line shows up; in the Morph folder,
+carries the hash of the one before it, so an edited, removed or reordered line shows up; in a terminal set up as in
+[Commands in a terminal](../README.md#commands-in-a-terminal),
 `python -c "from morph.studio.toolbox import audit; print(audit.verify())"` checks the chain.
 
 ## The manifest format

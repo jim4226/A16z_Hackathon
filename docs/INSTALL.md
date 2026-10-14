@@ -54,15 +54,16 @@ Documents (not inside the zip viewer, and not a read-only or cloud-synced folder
 
 Paste commands from these docs as they are. If one comes with a comment (`#` and words after it, as older versions of
 this guide had), the launchers stop reading options at the `#` and say so: Command Prompt, and zsh on a Mac, would
-otherwise hand the comment's words to Morph as options.
+otherwise hand the comment's words to Morph as options. (zsh refuses a comment with parentheses in it before any
+launcher runs: leave the comment out.)
 
 The first launch:
 
 1. finds a supported Python (Windows tries `py -3.13`, `-3.12`, `-3.11`, `-3.10`, `-3.14`, then `python`; macOS and
    Linux try `python3.13` down to `python3.10`, then `python3.14` and `python3`) and says what to install if there
    is none;
-2. creates `.venv` in the Morph folder and installs the packages, showing pip's progress (a few minutes, depending on
-   the connection);
+2. creates `.venv` in the Morph folder and installs the packages and Morph itself (which gives `.venv` the `morph`
+   command), showing pip's progress (a few minutes, depending on the connection);
 3. builds the two demo robots (the generated egg-picker arm and the imported SO-101), printing each stage, which takes
    about a minute;
 4. opens the Studio.
@@ -70,6 +71,10 @@ The first launch:
 Later launches start in seconds and use neither git nor the network. Keep the terminal window open while you work:
 closing it stops Morph. Other options are passed on to the Studio, for example `--remote` (see
 [Bring your own compute](../README.md#bring-your-own-compute)) or `--port 8766`.
+
+The `morph` commands in these docs (`morph doctor`, `morph team init` and the rest) run in a terminal opened in the
+Morph folder, after one command that makes `.venv`'s commands the ones it runs:
+[Commands in a terminal](../README.md#commands-in-a-terminal).
 
 ## 4. Add keys (optional)
 
@@ -81,29 +86,40 @@ folder and take effect at once. What each key adds, and what it sends where: [RE
 
 - **Git clone:** `.\run_studio.bat --update` (Windows) or `./run_studio.sh --update` fetches the release tags from
   GitHub, switches to the newest release (a `v` tag such as `v0.2.0b1`) and starts it. It won't switch if you changed
-  files that belong to Morph (`git status` lists them). Your `projects` folder, `.env` and `.venv` stay as they are. The
-  launcher reinstalls packages only if the release changed them, and both demo robots are rebuilt once if the
+  files that belong to Morph (`git status` lists them), and it leaves a clone that already has commits made after that
+  release (a branch, or `main` once it moves on) as it is. Your `projects` folder, `.env` and `.venv` stay as they are.
+  The launcher reinstalls packages only if the release changed them, and both demo robots are rebuilt once if the
   pipeline changed.
 - **Zip download:** download the new release into a new folder, copy your `projects` folder and `.env` across, and
   start it there.
 - **On a branch, or before the first release:** until there is a `v` tag, `--update` says there is no release yet and
   starts the version you have. To get the newest code of the branch your clone is on (a teammate's branch, or `main`
-  after `git checkout main`), run `git pull`, then start the launcher as usual; it reinstalls packages only if
-  `requirements.txt` or `constraints.txt` changed.
+  after `git checkout main`), close Morph, run `git pull`, then start the launcher as usual; it reinstalls packages
+  only if `requirements.txt`, `constraints.txt` or `pyproject.toml` changed.
 - Morph never updates itself when it starts.
 
 ### A clone made before v0.2
 
-Launchers before v0.2 ran `git pull` every time they started. The first start after this version reaches the branch
-such a clone follows (`main`, once this release is merged) pulls it one last time:
+Launchers before v0.2 ran `git pull` every time they started. Once this version is on the branch your clone follows
+(`main`, after this release is merged), your next start pulls it one last time:
 
 - **Windows:** the pull replaces `run_studio.bat` while it runs, and the new launcher takes over where the old one
-  stopped, with the options you gave it. It installs the tested packages (a few minutes, once) and starts the Studio.
-- **macOS and Linux:** the old launcher finishes that start itself, as it was (bash keeps running the file it opened);
-  the next start uses the new one, which installs the tested package versions once.
+  stopped, with the options you gave it (`--update` included). It installs the tested packages and the `morph`
+  command (a few minutes, once) and starts the Studio. If that pull fails (no network, or files you changed, which
+  `git status` lists), the old launcher starts the version you had, which doesn't know `--update`: start it without
+  `--update` until the pull works.
+- **macOS and Linux:** the old launcher finishes that start itself (bash keeps running the file it opened). It installs
+  the packages quietly, with no progress and without the tested versions, which can take a few minutes, then starts
+  the new version of Morph; if you gave it `--update`, Morph says it ignores it and starts. The next start uses the new
+  launcher, which installs the tested versions and the `morph` command once.
 
 From then on the launcher never pulls: use `--update` to switch to each new release, or `git pull` on a branch, as
 above.
+
+**A clone of a pre-release branch on Windows** (a launcher from the weeks before v0.2.0b1 that already never pulls):
+its `--update` switches to the release and then stops with "... is not recognized" instead of starting it. Close
+Morph and run `git pull` once before your first `--update`, or start the launcher again after that message: the
+release's launcher opens it.
 
 ## Uninstalling
 
@@ -122,10 +138,18 @@ If you installed Morph as a package with pip instead, run `pip uninstall morph` 
 - **Installing the packages failed:** check the internet connection (behind a proxy, set `HTTPS_PROXY`), then run
   the launcher again. To start from scratch, delete the `.venv` folder.
 - **"Morph Studio is already running":** close the other terminal window, or start this one with `--port 8766`.
+- **The `--remote` link doesn't open on the other computer:** the Studio computer's firewall is the usual reason. On
+  Windows, allow Python through Windows Defender Firewall for the network you are on (Windows Security, Firewall &
+  network protection, Allow an app through firewall), or make that network Private (Settings, Network & internet).
+  On a Mac, allow incoming connections for Python when macOS asks (System Settings, Network, Firewall). Both
+  computers must be on the same network or VPN.
 - **Anything else:** run `.venv\Scripts\python -m morph.cli doctor` (Windows) or `.venv/bin/python -m morph.cli
   doctor`. It checks Python, the packages, keys, the network and whether every stage built, and says what to fix.
 
 ## For developers
+
+Start the launcher once (it makes `.venv`), then in a terminal set up as in
+[Commands in a terminal](../README.md#commands-in-a-terminal):
 
 ```shell
 python -m pip install -e ".[dev]" -c constraints.txt

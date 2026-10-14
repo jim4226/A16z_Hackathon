@@ -39,7 +39,9 @@ or on **macOS and Linux**:
 Later, double-click `run_studio.bat` in Explorer (Windows) or run `./run_studio.sh` (macOS, Linux).
 
 `--update` switches the clone to the latest release (the newest `v` tag) and starts it; use it whenever you want
-to update. Without it, the launcher never runs git, and after the first install it starts offline. No Git?
+to update. A clone that already has commits made after that release (a branch, or `main` once it moves on) stays as
+it is: `git pull` updates it, with Morph closed. Without `--update`, the launcher never runs git, and after the first
+install it starts offline. No Git?
 Download *Source code (zip)* from the [latest release](https://github.com/jim4226/A16z_Hackathon/releases) and run
 the launcher in the unzipped folder.
 
@@ -73,8 +75,8 @@ receives, and when anything leaves your computer: [docs/PRIVACY.md](docs/PRIVACY
 for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
 **If something looks wrong or empty:**
-- Run `python -m morph.cli doctor` (inside `.venv`: `.venv\Scripts\python -m morph.cli doctor` on Windows,
-  `.venv/bin/python -m morph.cli doctor` elsewhere). It checks Python, packages, keys, network and
+- Run the doctor in a terminal in the Morph folder: `.venv\Scripts\python -m morph.cli doctor` on Windows,
+  `.venv/bin/python -m morph.cli doctor` on macOS and Linux. It checks Python, packages, keys, network and
   whether every pipeline stage built, lists which features are ready (New robot, Import, Show Morph the job, Teams,
   World mode) with the optional tools they use, and says what to fix. Send its output to the team.
 - A stage marked *error* in the pipeline strip leaves its tab empty; the other stages still work.
@@ -84,6 +86,32 @@ for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIP
 - The right panel (time card, grip force) folds away when the window is 1280 px wide or narrower, as at
   150 % Windows display scaling: the panel button at the top right opens it over the robot, or zoom out once
   (**Ctrl** and **-**, or **Cmd** and **-** on a Mac) to keep it beside the robot.
+
+### Commands in a terminal
+
+The Studio needs no terminal of its own. The `morph` and `python` commands in this README and in `docs/` run in a
+terminal opened in the Morph folder, after the launcher has made `.venv` (which has the `morph` command in it). First
+make `.venv`'s commands the ones that terminal runs. In Command Prompt:
+
+```cmd
+.venv\Scripts\activate
+```
+
+In PowerShell (which may refuse to run `.venv\Scripts\Activate.ps1`, a script):
+
+```powershell
+$env:Path = "$PWD\.venv\Scripts;$env:Path"
+```
+
+On macOS and Linux:
+
+```sh
+source .venv/bin/activate
+```
+
+Then `morph doctor`, `morph robot new "help me sort socks"` and the rest work in that terminal, and `python` there is
+`.venv`'s. Without this step, give the path instead: `.venv\Scripts\morph doctor` on Windows, `.venv/bin/morph doctor`
+on macOS and Linux.
 
 ## Bring your own compute
 
@@ -108,8 +136,12 @@ Open it on the laptop. That browser stays signed in (for 30 days, or until Morph
 code); anyone without the code gets a page asking for it. To keep the same link across restarts, put
 `MORPH_TOKEN=` and a code of your choice (8 or more letters and digits) in `.env`. Keys added with the
 **Keys** button are saved on the computer running Morph, and the header reads **Live on** that
-computer's name, so it is clear which machine does the work. `python -m morph.cli doctor` shows each
-machine's CPU cores.
+computer's name, so it is clear which machine does the work. `morph doctor` shows each machine's CPU cores.
+
+If the link doesn't open on the laptop, the stronger computer's firewall is the usual reason. On Windows, allow Python
+through Windows Defender Firewall for the network you are on (Windows Security, Firewall & network protection), or
+make it a Private network; on a Mac, allow incoming connections for Python when macOS asks. Morph prints this next to
+the link on both.
 
 The link is plain HTTP ([SECURITY.md](SECURITY.md)), so use it on a network you trust or over a VPN such as
 Tailscale. From anywhere else, use an SSH tunnel, which needs no `--remote`: start Morph normally on the server, run
@@ -153,7 +185,8 @@ and the nearest robot it can build; harmful requests are refused.
 Typing a new job into an open project's chat ("a robot that waters my plants") doesn't rebuild that robot: Morph
 offers **Start a new robot from this**, or **Change egg-picker instead** if you did mean the open robot.
 
-In a terminal, the first command asks the same questions there; the second asks none and takes Morph's defaults:
+In a terminal ([Commands in a terminal](#commands-in-a-terminal)), the first command asks the same questions
+there; the second asks none and takes Morph's defaults:
 
 ```shell
 morph robot new "help me sort socks"
@@ -188,8 +221,9 @@ still frames in your browser, works out the object, the pick and place spots, th
 lists every design change for you to check before **Apply**. The frames go to Claude only with an Anthropic key and
 after you agree; without a key (or with network lookups off), you fill in the same cards yourself, with a measuring
 tool on the frames. Dropping a video or photos on the page opens it too. Clips your browser can't play (often iPhone
-HEVC) need ffmpeg on the computer running Morph (install it, or `pip install morph[video]`; `morph doctor` says
-whether it found one).
+HEVC) need ffmpeg on the computer running Morph: install it, or the `imageio-ffmpeg` package with
+`python -m pip install imageio-ffmpeg -c constraints.txt` in a terminal set up as in
+[Commands in a terminal](#commands-in-a-terminal). `morph doctor` says whether it found one.
 
 ### Teams (preview)
 
@@ -199,7 +233,8 @@ per discipline and release revisions for building. A change request shows what i
 anything builds (torque margins, servos, wiring and firmware, cost), and above prototype nobody approves their own
 work. It runs on the owner's computer, with no Morph server or account.
 
-Make the team once, then start the team Studio:
+Make the team once, then start the team Studio, in a terminal set up as in
+[Commands in a terminal](#commands-in-a-terminal):
 
 ```shell
 morph team init --owner "Jim" --name "R Cubed"
@@ -277,7 +312,8 @@ can add tools as JSON manifests, or have Claude draft one from an API's document
 ## The gripper-only prototype (command line)
 
 Before the whole-robot platform, R Cubed started as a command-line pipeline for one force-sensing
-gripper. It still works and produces an HTML report rather than opening in the Studio:
+gripper. It still works and produces an HTML report rather than opening in the Studio. In a terminal set up as in
+[Commands in a terminal](#commands-in-a-terminal):
 
 ```shell
 python -m morph.cli demo
@@ -325,7 +361,7 @@ morph send egg r00X --grbl COM3
 morph research "FSR 402 vs load cell for a hobby gripper"
 ```
 
-Run `pip install -e .` to get the `morph` command, or use `python -m morph.cli …`.
+These run in a terminal set up as in [Commands in a terminal](#commands-in-a-terminal).
 `new` and `research` use Claude when `ANTHROPIC_API_KEY` is set; everything else runs offline.
 
 ## Modules
@@ -363,7 +399,8 @@ firmware ships the simulation-based number.
 
 Sending needs `KEEWANO_API_KEY` (in Keewano: Settings, Project, API Keys); querying needs `KEEWANO_PAT` (Settings,
 Personal, Security) and `KEEWANO_PROJECT_ID` (Settings, Details). Add them with **Keys** or in `.env`. This sends two
-weeks of `synthetic-*` builds for the dashboards (calibration ignores them):
+weeks of `synthetic-*` builds for the dashboards (calibration ignores them), in a terminal set up as in
+[Commands in a terminal](#commands-in-a-terminal):
 
 ```shell
 python tools/keewano_backfill.py --send
@@ -388,9 +425,9 @@ In PowerShell (`--%` passes the rest of the line on as typed):
 morph --% ask "SELECT \"PadStyle\", avg(\"HoldForceRatioPct\") FROM events GROUP BY \"PadStyle\""
 ```
 
-**Darwin: who sells the parts and builds the rest.** R Cubed designs and programs; `morph source
-<project> [rev]` asks Darwin Search for an agent per purchased BOM line plus the engineering
-handoffs (PCB fab from the Gerbers, printing the STLs, a design review), writes
+**Darwin: who sells the parts and builds the rest.** R Cubed designs and programs; `morph source egg-picker` (a
+project, then optionally a revision such as `r004`) asks Darwin Search for an agent per purchased BOM line plus the
+engineering handoffs (PCB fab from the Gerbers, printing the STLs, a design review), writes
 `<rev>/sourcing_darwin.json`, and logs every lookup, including gaps, to Keewano. It stops at a
 shortlist: ordering is Darwin Act, which needs the user's own account and approval.
 

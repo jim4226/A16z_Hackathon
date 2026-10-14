@@ -409,14 +409,22 @@ def test_doc_commands_paste_as_is_into_every_shell():
             for n, line in enumerate(lines, start):
                 problems += [f"{name}:{n}: ```{label} must paste into {SHELLS[label]}: {p}: {line}"
                              for p in _problems(label, line)]
-        text = path.read_text(encoding="utf-8")
-        for m in re.finditer(r"`([^`\n]+)`", text):
-            code = m[1]
+        # inline code, which may wrap onto the next line, outside the fenced blocks (their ``` would pair up wrongly)
+        text = re.sub(r"(?ms)^\s*```.*?^\s*```[^\n]*$", lambda b: "\n" * b[0].count("\n"),
+                      path.read_text(encoding="utf-8"))
+        for m in re.finditer(r"`([^`]+)`", text):
+            code = " ".join(m[1].split())
             line = text.count("\n", 0, m.start()) + 1
             if re.search(r"(?<!\.\\)run_studio\.bat\s+-", code) or re.search(r"run_studio\s+-", code):
                 problems.append(rf"{name}:{line}: write .\run_studio.bat (Command Prompt and PowerShell): `{code}`")
             if re.match(r"[A-Z][A-Z0-9_]*=\S*\s+\w", code):
                 problems.append(f"{name}:{line}: VAR=value command works in bash and zsh only: `{code}`")
-            if re.search(r"\s#\s", code) and re.match(r"(morph|python|git|\.?[/\\]?run_studio)\b", code):
+            command = re.match(r"(morph|python|pip|git|\.venv|\.?[/\\]?run_studio)\b", code)
+            if command and re.search(r"\s#\s", code):
                 problems.append(f"{name}:{line}: a # comment on a command: `{code}`")
+            if command and re.search(r"[\[\]<>]", _unquoted(code, singles=True)):
+                problems.append(f"{name}:{line}: [ ] < or > outside quotes (a glob in zsh, a redirection elsewhere): "
+                                f"write a real command: `{code}`")
+            if command and re.search(r"\binstall\s+[\"']?morph\b", code):
+                problems.append(f"{name}:{line}: installs 'morph' from PyPI, another project: name the package: `{code}`")
     assert problems == [], "\n".join(problems)

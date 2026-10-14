@@ -19,16 +19,17 @@ computer.
 
 On the computer that will do the work (the owner's):
 
-Make the team once, with you as its owner, then start the Studio, reachable from other computers:
+Make the team once, with you as its owner, then start the Studio, reachable from other computers. In a terminal in
+the Morph folder, set up as in [Commands in a terminal](../README.md#commands-in-a-terminal):
 
 ```shell
 morph team init --owner "Jim" --name "R Cubed"
 morph studio --team --remote
 ```
 
-From a git checkout, run `morph team init` through the launcher's Python (`.venv/bin/python -m morph.cli team init
-...`; on Windows `.venv\Scripts\python -m morph.cli team init ...`), then start the Studio with the launcher, which
-passes its options on: `./run_studio.sh --team --remote` or, on Windows, `.\run_studio.bat --team --remote`.
+Without that setup, name `.venv`'s command by its path: `.venv\Scripts\morph team init --owner "Jim"` on Windows,
+`.venv/bin/morph team init --owner "Jim"` on macOS and Linux. The launcher starts the team Studio too, passing its
+options on: `.\run_studio.bat --team --remote` on Windows, `./run_studio.sh --team --remote` on macOS and Linux.
 
 `morph studio --team` prints a **one-time sign-in link** for the owner; open it in your browser (it works once, within
 15 minutes). Without `--remote` the Studio answers only on this computer, which is what you want behind an SSH tunnel.

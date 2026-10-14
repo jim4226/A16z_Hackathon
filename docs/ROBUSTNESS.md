@@ -19,7 +19,7 @@ the same settings again) continues from them. *Run N more* deepens a finished st
 the new ones are the ones a bigger study would have made. *Details* lists every failure group, what matters most, every
 tolerance with its source, and the project's studies.
 
-**In a terminal:**
+**In a terminal** ([Commands in a terminal](../README.md#commands-in-a-terminal)):
 
 ```shell
 morph study egg-picker

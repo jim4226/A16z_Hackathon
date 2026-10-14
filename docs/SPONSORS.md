@@ -35,8 +35,8 @@ Or edit `.env` yourself (the first launch creates it from `env.example`):
 `.env` is read at every start (`run_studio.bat` needs nothing else). Keys set in the terminal win
 over the file.
 
-Check: `python -m morph.cli doctor` tests every key that is set, or
-`python -m morph.cli ask "SELECT count(*) FROM events"` prints a number.
+Check, in a terminal set up as in [Commands in a terminal](../README.md#commands-in-a-terminal): `morph doctor` tests
+every key that is set, or `morph ask "SELECT count(*) FROM events"` prints a number.
 
 **If the keys are for a project other than R cubed**, it has no build history yet, so calibration has
 nothing to use until builds are logged (`morph measure`, or `morph bench` on real hardware).

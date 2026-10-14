@@ -35,8 +35,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   your browser, estimates the object, the pick and place spots, the cycle time and safety needs, and lists every
   change before Apply. Only the chosen frames are sent, after you agree: to Claude, plus up to 4 to SubQ as an
   optional second opinion. With no key, or network lookups off, you fill in the cards by hand with a measuring tool.
-  Clips your browser can't play (often iPhone HEVC) can go to the Studio computer's ffmpeg (install ffmpeg, or
-  `pip install morph[video]`), and the video is deleted once its frames are out.
+  Clips your browser can't play (often iPhone HEVC) can go to the Studio computer's ffmpeg (install ffmpeg, or the
+  `imageio-ffmpeg` package: `morph doctor` gives the command), and the video is deleted once its frames are out.
 - SubQ Snap: an optional SubQ key (Keys, `SUBQ_API_KEY`) for quick yes/no and multiple-choice decisions, shown as
   "SubQ Snap (AI)". It is only called with your key and network lookups on, retries once, switches itself off for a
   refused or out-of-credit key, caches answers (never requests or photos) for 7 days, and every use has an offline
@@ -76,15 +76,15 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   egg-picker succeeds in 140 of 200 runs (63-76 %); 58 of the 60 failures are the jaws staying shut at release (half the
   runs with the egg turned 3-9 degrees end that way), and that failure changes with the solver's settings. Runs are
   reproducible from the seed on any number of worker processes, saved as they finish and resumable (Ctrl+C keeps them):
-  `morph study egg-picker [--runs N] [--stress]`. In the Studio, the **Robustness** card under the Simulation tab's
-  pick-and-place result runs a study of the revision on screen (50, 200 or 1,000 runs, or a stress test with every range
-  doubled), shows its progress live, stops it on request within seconds (the finished runs stay, and it carries on
-  later), says what the result means and what it doesn't, replays a failing run in the 3D view, and lists every
-  tolerance with where its range comes from. Editors start studies and change tolerances (a change marks older studies
-  outdated); every member of a team reads them. Studies run on the Studio's computer, so `morph studio --remote` on a
-  bigger machine is how a team brings its own compute; one study at a time per project, at most 10,000 runs from the
-  Studio. Where no study exists the card says so: one nominal run tests nothing around it. Simulation, for the
-  tolerances shown; not a field failure rate.
+  `morph study egg-picker` (with `--runs 1000` or `--stress`). In the Studio, the **Robustness** card under the
+  Simulation tab's pick-and-place result runs a study of the revision on screen (50, 200 or 1,000 runs, or a stress
+  test with every range doubled), shows its progress live, stops it on request within seconds (the finished runs
+  stay, and it carries on later), says what the result means and what it doesn't, replays a failing run in the 3D view,
+  and lists every tolerance with where its range comes from. Editors start studies and change tolerances (a change
+  marks older studies outdated); every member of a team reads them. Studies run on the Studio's computer, so
+  `morph studio --remote` on a bigger machine is how a team brings its own compute; one study at a time per project, at
+  most 10,000 runs from the Studio. Where no study exists the card says so: one nominal run tests nothing around it.
+  Simulation, for the tolerances shown; not a field failure rate.
 - **World mode checks the whole path** (beta): every move of the pick and place (the approach, the descent to the
   object, the grasp, the lift, the carry, the set-down, the release, the rise and the way back to rest) is checked
   against the grey boxes every 10 ms, with the object while it is carried. A move that comes within 10 mm tries its
@@ -160,12 +160,21 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 
 - Launchers find Python 3.10 to 3.14 and say what to install when there is none (Python 3.15 is too new for now).
   They rebuild a broken `.venv`, show pip's progress on the first install, and skip pip on later launches.
-- Launchers no longer pull `main` on every start. `--update` switches a git clone to the newest release tag; without
-  it, the launchers never run git, and after the first install they start offline.
+- Launchers no longer pull `main` on every start. `--update` switches a git clone to the newest release tag, and
+  leaves a clone that already has commits made after it (a branch, or `main` once it moves on) as it is; without it,
+  the launchers never run git, and after the first install they start offline.
+- The launchers install Morph itself into `.venv` too, so `.venv` has the `morph` command. README, *Commands in a
+  terminal*, says how a terminal uses it, and the docs' `morph` and `python` commands run there. Messages that name a
+  command give one that works in a terminal in the Morph folder, and name optional packages as they are
+  (`imageio-ffmpeg`, `cascadio`, `xacro`): a package called morph on PyPI is an unrelated project.
 - A clone whose launcher pulled on every start upgrades cleanly on Windows, where that last pull replaces the launcher
-  while it runs: the new one takes over with the options given. Both launchers ignore a `#` comment pasted along with a
-  command instead of passing it to the Studio, Windows options containing `)` work, and every command in the docs
-  pastes as is into Command Prompt, PowerShell, bash and zsh. CI runs both launchers, the upgrade included.
+  while it runs: the new one takes over with the options given. On macOS and Linux the old launcher finishes that start
+  itself, and `morph studio` ignores the `--update` it passes on. Both launchers ignore a `#` comment pasted along with
+  a command instead of passing it to the Studio (so does `morph studio`), Windows options containing `)` work, and
+  every command in the docs pastes as is into Command Prompt, PowerShell, bash and zsh. Nothing more is read from
+  `run_studio.bat` once the Studio starts, so a `git pull` in another window can't make it misread the new file. CI
+  runs both launchers, from Command Prompt and PowerShell on Windows, the upgrade and `--update` included.
+- `--remote` says how to let the link through the firewall on Windows and macOS when another computer can't open it.
 - `constraints.txt` pins tested versions with wheels for Python 3.10 to 3.14 on Windows x64, macOS 12+ on Apple
   silicon and Linux x64.
 - One version number, in `morph/__init__.py`. The package metadata now has the licence, project links, supported
