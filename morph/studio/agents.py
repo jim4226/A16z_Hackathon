@@ -589,6 +589,7 @@ def after_build(b: B.Brief, project: str, rev: str | None = None, summary: dict 
 # catalog by tool search; these four core tools are loaded up front and run without asking. What it found is recorded
 # through morph_prices_record, which keeps only lines it can match to a tool's answer in this run (the view's `result`).
 PRICE_AGENT = "price_check"
+_PRICE_START = threading.Lock()  # one check-then-start at a time: two clicks at once make one run, not two
 PRICE_SKIP = ("pcb", "material", "fabricated")  # a custom board's quote, bulk stock and made parts aren't catalogue items
 PRICE_SYSTEM = (
     "You are the price-check agent in Morph Studio, which designs robots. The person wants current distributor prices "
@@ -798,14 +799,15 @@ def start_price_check(studio, room, body: dict, by=None, *, auto: bool = False):
     if not lines:
         raise ValueError(f"{rev} has no purchased parts a distributor sells.")
     tb = toolbox(studio)
-    for v in tb.runs(project=room.name, agent=PRICE_AGENT, limit=20):
-        if v["status"] in ("running", "paused") and (v.get("context") or {}).get("rev") == rev:
-            return v, True
-    view = tb.start(agent=PRICE_AGENT, system=PRICE_SYSTEM, project=room.name, core=[b.name for b in PRICE_CORE], by=by,
-                    prompt=f"Check live prices for {room.name} {rev}: {len(lines)} purchased lines. Morph's estimates are "
-                           "in US dollars.", context={"rev": rev, "auto": bool(auto), "lines": len(lines)},
-                    title=f"Live prices for {rev}",
-                    effort="medium")
+    with _PRICE_START:
+        for v in tb.runs(project=room.name, agent=PRICE_AGENT, limit=20):
+            if v["status"] in ("running", "paused") and (v.get("context") or {}).get("rev") == rev:
+                return v, True
+        view = tb.start(agent=PRICE_AGENT, system=PRICE_SYSTEM, project=room.name, core=[b.name for b in PRICE_CORE],
+                        by=by, prompt=f"Check live prices for {room.name} {rev}: {len(lines)} purchased lines. Morph's "
+                                      "estimates are in US dollars.",
+                        context={"rev": rev, "auto": bool(auto), "lines": len(lines)}, title=f"Live prices for {rev}",
+                        effort="medium")
     return view, False
 
 

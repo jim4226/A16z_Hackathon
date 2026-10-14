@@ -196,6 +196,32 @@ def test_starting_a_price_check_needs_a_built_revision_with_purchased_parts(env)
     assert api_tools.AGENTS["price_check"]["title"] == "Live prices"
 
 
+def test_two_starts_at_once_make_one_run(env, monkeypatch):
+    """Two people press Live prices together: the slower listing of runs can't let both through."""
+    import threading
+    import time
+
+    claude = ScriptedClaude(search_and_call(("morph_bom_read", "toolu_b", {}), query="parts list"),
+                            search_and_call(("mouser_search_keyword", "toolu_m", {"keyword": "STS3215"})))
+    st, _ = studio(env, claude)
+    tb, real = st.toolbox, st.toolbox.runs
+
+    def slow_runs(*a, **k):
+        out = real(*a, **k)
+        time.sleep(0.3)
+        return out
+
+    monkeypatch.setattr(tb, "runs", slow_runs)
+    room, out = st.room(), []
+    threads = [threading.Thread(target=lambda: out.append(agents.price_check(st, room, {}, None))) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    assert sorted(already for _, already in out) == [False, True] and len({v["id"] for v, _ in out}) == 1
+    assert [v["status"] for v in real(project=room.name)] == ["paused"]  # waiting for the Mouser key, once
+
+
 # ------------------------------------------------------------------ after a build
 def test_after_a_build_live_prices_start_only_when_on_and_the_purchased_parts_changed(env, monkeypatch):
     started = []
