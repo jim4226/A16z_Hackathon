@@ -119,3 +119,5 @@ MORPH_E2E=1 python -m pytest tests/e2e -v
 
 `MORPH_E2E_SHOTS=<folder>` keeps screenshots of every step, and `MORPH_E2E_DEMO=<folder>` (New robot, Import and video)
 and `MORPH_E2E_WORLD_HOME=<folder>` (World mode) keep the demo robots they build between runs.
+`MORPH_E2E_PORTS=8790-8799` keeps every Studio they start on those ports; with `-n 4` each test process takes every
+fourth one, so give each at least two.

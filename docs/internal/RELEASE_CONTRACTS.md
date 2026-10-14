@@ -668,8 +668,9 @@ in sections 3, 4 and 8. The rest that other code relies on:
   full simulations) and drive Chromium through Playwright: New robot, Import and Show Morph the job (`live_studio.py`
   is their helper, a module rather than a conftest), the Teams flagship workflow with three people, and World mode.
   They are skipped unless `MORPH_E2E=1`. `MORPH_E2E_SHOTS=<dir>` saves screenshots; `MORPH_E2E_PORTS=lo-hi` picks the
-  ports of the New robot, Import, video and World mode Studios (Teams always takes free ones); `MORPH_E2E_DEMO=<dir>`
-  and `MORPH_E2E_WORLD_HOME=<dir>` keep the built demo robots between runs; `MORPH_E2E_WEBGL=1` turns WebGL on for the
+  ports of every Studio and stand-in they start, never one outside the range, which pytest-xdist workers share out
+  (each takes every n-th port; B2-M); `MORPH_E2E_DEMO=<dir>` and `MORPH_E2E_WORLD_HOME=<dir>` keep the built demo
+  robots between runs; `MORPH_E2E_WEBGL=1` turns WebGL on for the
   New robot, Import and video browsers and the Teams owner's (World mode always has it, through SwiftShader); and
   `PLAYWRIGHT_CHROMIUM` names the browser. A page fails on script or console errors, requests to
   other sites or sideways scrolling; a Studio fails on any traceback.

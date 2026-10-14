@@ -65,20 +65,7 @@ def env(home: str) -> dict:
     return e
 
 
-_TAKEN = set()
-
-
-def free_port() -> int:
-    """A port nobody listens on: from MORPH_E2E_PORTS ("8835-8838") when set, else one the system picks."""
-    m = re.fullmatch(r"\s*(\d+)\s*-\s*(\d+)\s*", os.environ.get("MORPH_E2E_PORTS", ""))
-    for p in range(int(m.group(1)), int(m.group(2)) + 1) if m else ():
-        with socket.socket() as s:
-            if p not in _TAKEN and s.connect_ex(("127.0.0.1", p)) != 0:
-                _TAKEN.add(p)
-                return p
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from live_studio import free_port, release_port  # noqa: E402  (MORPH_E2E_PORTS, shared out between xdist workers)
 
 
 def until(fn, timeout=60.0, what="the page", step=0.25):
@@ -138,7 +125,7 @@ class Studio:
             self.proc.wait(15)
         except subprocess.TimeoutExpired:
             self.proc.kill()
-        _TAKEN.discard(self.port)
+        release_port(self.port)
 
 
 @pytest.fixture(scope="session")

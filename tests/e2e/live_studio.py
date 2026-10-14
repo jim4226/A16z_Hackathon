@@ -11,9 +11,9 @@
 
 Environment: MORPH_E2E=1 runs these tests; MORPH_E2E_SHOTS=<dir> saves screenshots; MORPH_E2E_WEBGL=1 gives the
 browsers WebGL (by default the 3D view says it is unavailable: software WebGL redraws the orbiting robot every frame
-and slows every click on a machine without a GPU); MORPH_E2E_PORTS=8812-8819 picks the Studios' ports from a range
-(default: any free port); MORPH_E2E_DEMO=<dir> keeps the built demo robots between runs; PLAYWRIGHT_CHROMIUM names
-the Chromium to use.
+and slows every click on a machine without a GPU); MORPH_E2E_PORTS=8812-8819 picks the Studios' ports from a range,
+shared out between xdist workers (default: any free port); MORPH_E2E_DEMO=<dir> keeps the built demo robots between
+runs; PLAYWRIGHT_CHROMIUM names the Chromium to use.
 """
 
 import ipaddress
@@ -56,17 +56,36 @@ def morph(home: str, *args, timeout=900) -> str:
 _TAKEN = set()
 
 
+def ports() -> list:
+    """MORPH_E2E_PORTS ("8812-8819") as the ports this test process may use; [] when it isn't set. Under pytest-xdist
+    each worker takes every n-th port of the range (gw0 the first, gw1 the second, ...), so two workers never pick the
+    same one."""
+    lo_hi = os.environ.get("MORPH_E2E_PORTS", "").strip()
+    if not lo_hi:
+        return []
+    m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", lo_hi)
+    if not m or int(m.group(1)) > int(m.group(2)):
+        raise ValueError(f'MORPH_E2E_PORTS should read like "8812-8819", not {lo_hi!r}')
+    out = list(range(int(m.group(1)), int(m.group(2)) + 1))
+    worker, n = os.environ.get("PYTEST_XDIST_WORKER", ""), os.environ.get("PYTEST_XDIST_WORKER_COUNT", "")
+    if re.fullmatch(r"gw\d+", worker) and n.isdigit() and int(n) > 1:
+        out = out[int(worker[2:]) % int(n)::int(n)]
+    return out
+
+
 def free_port() -> int:
-    """A port nobody listens on: from MORPH_E2E_PORTS ("8812-8819") when set, else one the system picks."""
-    lo_hi = os.environ.get("MORPH_E2E_PORTS", "")
-    m = re.fullmatch(r"\s*(\d+)\s*-\s*(\d+)\s*", lo_hi)
-    for p in range(int(m.group(1)), int(m.group(2)) + 1) if m else ():
+    """A port nobody listens on: from MORPH_E2E_PORTS when set (never one outside it), else one the system picks."""
+    mine = ports()
+    for p in mine:
         if p in _TAKEN:
             continue
         with socket.socket() as s:
             if s.connect_ex(("127.0.0.1", p)) != 0:
                 _TAKEN.add(p)
                 return p
+    if mine:
+        raise RuntimeError(f"MORPH_E2E_PORTS: no free port left for this test process (it may use {mine}); give it a "
+                           "wider range")
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]

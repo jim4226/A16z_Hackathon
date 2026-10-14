@@ -13,7 +13,8 @@ pages show comes from a real build.
 - test_viewer_presence_inbox_and_revocation_on_a_local_team_studio: `morph studio --team` on this computer only; a
   viewer who comments and proposes but can't edit, presence, the inbox, and revoking a member whose page is open.
 
-These take minutes and build robots, so they run only with MORPH_E2E=1 (screenshots go to MORPH_E2E_SHOTS when set).
+These take minutes and build robots, so they run only with MORPH_E2E=1 (screenshots go to MORPH_E2E_SHOTS when set;
+MORPH_E2E_PORTS picks the Studios' ports, as in live_studio.py).
 The browsers start without WebGL (the 3D view says so and every other view works): on a machine without a GPU the
 software renderer redraws the auto-orbiting robot every frame and slows every click on that page several-fold.
 MORPH_E2E_WEBGL=1 gives Jaron's browser WebGL.
@@ -24,7 +25,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -58,10 +58,7 @@ def morph(home: str, *args, timeout=900) -> str:
     return r.stdout
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from live_studio import free_port, release_port  # noqa: E402  (MORPH_E2E_PORTS, shared out between xdist workers)
 
 
 def until(fn, timeout=60.0, what="the page", step=0.25):
@@ -121,6 +118,7 @@ class Studio:
             self.proc.wait(10)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+        release_port(self.port)
 
 
 @pytest.fixture(scope="module")
@@ -139,6 +137,7 @@ def template(tmp_path_factory):
     finally:
         p.terminate()
         p.wait(10)
+        release_port(port)
     morph(home, "robot", "change", "egg-picker", "build.config=pilot")
     return home
 
