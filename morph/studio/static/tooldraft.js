@@ -25,6 +25,7 @@ const esc = (s) => (studio?.esc ? studio.esc(s) : String(s ?? '').replace(/[&<>"
 const KEY = '<circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M16 7l3 3M13.5 9.5l2 2"/>';
 const I = (name, size = 'sm') => (name === 'key' ? `<svg class="i ${size}" viewBox="0 0 24 24" aria-hidden="true">${KEY}</svg>` : studio?.I ? studio.I(name, size) : '');
 const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
+const linkable = (url) => /^https:\/\/[^\s/?#@\\]+(?:[/?#]|$)/i.test(url || '');  // anything else in a draft shows as text only
 
 // ------------------------------------------------------------------ public
 export function init(s, h = {}) {
@@ -78,8 +79,8 @@ export function suggestionsHTML(s, max = 4, compact = false) {  // compact: the 
     : "Suggestions from Darwin's public search: Morph hasn't checked them and never connects, signs in or pays for you. If one has an API with documentation, a tool can be drafted from it.";
   if (!list.length) return `<div class="td-sg dim">${d.error && d.cached !== true ? "Darwin couldn't be reached for suggestions." : "Darwin's public search knows no service for it."}</div>`;
   return `<div class="td-sg"><div class="tl-k">Darwin knows</div><ul>${list.map((x) => `<li><b>${esc(x.name)}</b>${x.owner ? ` by ${esc(x.owner)}` : ''}
-      ${x.website ? ` · <a href="${esc(x.website)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(x.website))}</a>` : ''}
-      ${x.darwin_url ? ` · <a href="${esc(x.darwin_url)}" target="_blank" rel="noopener noreferrer">on Darwin</a>` : ''}
+      ${linkable(x.website) ? ` · <a href="${esc(x.website)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(x.website))}</a>` : ''}
+      ${linkable(x.darwin_url) ? ` · <a href="${esc(x.darwin_url)}" target="_blank" rel="noopener noreferrer">on Darwin</a>` : ''}
       ${x.paid ? ' <span class="tag warn">paid per call</span>' : ''}${x.sign_in ? ' <span class="tag neutral">needs a sign-in</span>' : ''}</li>`).join('')}</ul>
     ${q}<div class="dim">${note}</div></div>`;
 }
@@ -237,7 +238,7 @@ function review(d) {
       <div class="dim">Sends ${esc(t.sends)}.${t.params.length ? ` Inputs: ${t.params.map((p) => `${esc(p.name)} (${esc(p.type)}${p.required ? '' : ', optional'}${p.choices.length ? `: ${esc(p.choices.join(', '))}` : ''})`).join('; ')}.` : ''} Keeps ${esc(t.extract.join(', ') || 'the whole answer')}.</div>
       <div class="td-snip">${t.found ? `In the documentation: ${esc(t.found)}` : "Morph didn't find this path in the documentation: check it."}</div></div>`).join('');
   const k = c.key;
-  const key = k ? `<b>${esc(k.label)}</b>, in the <span class="mono">${esc(k.name)}</span> ${k.in === 'query' ? 'query parameter' : 'header'}, sent only to <span class="mono">${esc(k.hosts.join(', '))}</span>. Kept in Keys as <span class="mono">${esc(k.env)}</span>; the owner gets it at ${esc(k.where)}${k.url ? ` (<a href="${esc(k.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(k.url))}</a>)` : ''}.${k.cost ? ` ${esc(k.cost)}.` : ''}` : 'None needed.';
+  const key = k ? `<b>${esc(k.label)}</b>, in the <span class="mono">${esc(k.name)}</span> ${k.in === 'query' ? 'query parameter' : 'header'}, sent only to <span class="mono">${esc(k.hosts.join(', '))}</span>. Kept in Keys as <span class="mono">${esc(k.env)}</span>; the owner gets it at ${esc(k.where)}${linkable(k.url) ? ` (<a href="${esc(k.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(k.url))}</a>)` : ''}.${k.cost ? ` ${esc(k.cost)}.` : ''}` : 'None needed.';
   const pages = (v.pages || []).map((p) => `<div><span class="mono">${esc(p.url)}</span> ${p.ok ? `<span class="tag good">read</span>${p.title ? ` ${esc(p.title)}` : ''}` : `<span class="tag bad">${esc(p.error || 'failed')}</span>`}</div>`).join('');
   const html = `<div class="dlg-h"><div class="kicon">${I('wrench')}</div><div class="grow"><div class="t">New tool: ${esc(c.service || v.title || '')} <span class="tag acc">preview</span></div>
       <div class="s">Drafted by Claude from the documentation you named; checked by Morph. ${owner ? 'Approving installs exactly this spec. Any later change to it turns the tool off until a new draft is approved.' : v.status === 'ready' ? 'Only the owner can approve it.' : 'Morph refused it, so it can\'t be installed.'}</div></div>

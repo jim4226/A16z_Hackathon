@@ -21,8 +21,11 @@ A run pauses for a key (credential_needed: missing, or rejected when the service
 approval (tool_request) or because it was interrupted (a Studio restart, Claude unreachable or its key refused). Saving
 the awaited key resumes it exactly once, however often it is saved; Skip answers Claude with a needs_credential result.
 A refusal, an answer cut off at max_tokens and the turn limit end it. After a restart a call that had started but not
-finished is never repeated unless it only reads: Claude gets an "interrupted" result instead. One thread of one process
-drives a run at a time (store.Claim); runs untouched for 7 days are deleted at start.
+finished is never repeated unless it only reads: Claude gets an "interrupted" result instead. Turning agent tools or
+network lookups off stops a working run before its next request or call (an interrupted pause, reason tools_off or
+offline), and Stop pressed while a call or Claude's answer is under way ends the run when it returns, even if that
+answer would have paused it. One thread of one process drives a run at a time (store.Claim); a run untouched for 7 days
+never resumes, and its file is deleted at the next start.
 
 Events (emit(event); each carries `project` and never a key, a tool's answer or message text): run_started,
 credential_needed, tool_request (also reason "capability": a core tool's ctx.need_tool), tool_used ({tool, title, ok, ms,
@@ -163,6 +166,19 @@ def _network_allowed() -> bool:
     return settings.network_allowed()
 
 
+def _agent_tools_on() -> bool:
+    from ... import settings
+    return settings.load()["agent_tools_enabled"]
+
+
+def _age(doc) -> float:
+    """Seconds since a run (or draft) last changed; a file without a readable time counts as old."""
+    try:
+        return time.time() - float(doc.get("updated") or 0)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
 def _thread(fn):
     threading.Thread(target=fn, daemon=True, name="morph-run").start()
 
@@ -179,7 +195,7 @@ class Toolbox:
     def __init__(self, home: str | None = None, *, emit: Callable | None = None, client_factory: Callable | None = None,
                  spawn: Callable | None = None, env=None, curated_dirs=None, http_policy=http_tool.DEFAULT_POLICY,
                  http_transport=None, http_resolver=None, builtins=None, model: str | None = None,
-                 max_turns: int = policy.MAX_TURNS, max_calls: int = policy.MAX_CALLS_PER_TOOL, network=None):
+                 max_turns: int = policy.MAX_TURNS, max_calls: int = policy.MAX_CALLS_PER_TOOL, network=None, tools_on=None):
         self.home = store.home_dir(home)
         self.emit_fn = emit
         self.client_factory = client_factory or default_client
@@ -190,7 +206,8 @@ class Toolbox:
         self.builtins = builtins  # {name: Builtin} for this toolbox only (tests); else the registry
         self.model = model
         self.max_turns, self.max_calls = max_turns, max_calls
-        self.network = network or _network_allowed
+        self.network = network or _network_allowed   # network lookups on (Keys, Privacy and network; MORPH_OFFLINE)
+        self.tools_on = tools_on or _agent_tools_on  # "Let agents use tools": checked before every request and call
         self.approvals = policy.Approvals(self.home)
         self._lock = threading.Lock()
         self._active: dict = {}
@@ -425,10 +442,11 @@ class Toolbox:
         run = self._must_load(run_id)
         if run["status"] in ENDED:
             return self.view(run)
-        claim = self._claim(run_id)
-        if claim is None:  # being driven: the loop stops at its next step
-            with self._lock:
+        with self._lock:  # the same lock the driving thread frees the run under (_release): a Stop is never lost between
+            claim = self._claim(run_id)
+            if claim is None:  # being driven: the loop stops at its next step, or ends it when it lets go
                 self._cancel.add(run_id)
+        if claim is None:
             audit.append("run_cancel_requested", home=self.home, by=by, run=run_id)
             return {**self.view(run), "cancelling": True}
         try:
@@ -498,10 +516,10 @@ class Toolbox:
             if claim is None:
                 continue
             try:
-                run = self._load(run_id)
+                run = self._load(run_id, expired=True)
                 if run is None:
                     continue
-                if now - float(run.get("updated") or 0) > TTL_S:
+                if _age(run) > TTL_S:
                     try:
                         os.remove(self._path(run_id))
                     except OSError:
@@ -562,14 +580,9 @@ class Toolbox:
             except Exception as exc:  # noqa: BLE001  a bug must not leave a run "running" forever
                 self._crash(run, exc)
             finally:
-                claim.release()
-                with self._lock:
-                    if self._active.get(run_id) is ev:
-                        self._active.pop(run_id, None)
-                    self._cancel.discard(run_id)
-                ev.set()
-            if self._keys_arrived(run):  # a key saved while this thread held the run: the save couldn't resume it
-                self._resume_for_keys(run_id)
+                self._release(run, claim, ev)
+            if self._keys_arrived(run) and self.tools_on():  # a key saved while this thread held the run: the save
+                self._resume_for_keys(run_id)                # couldn't resume it
 
         claim.handed_off = True
         try:
@@ -582,10 +595,44 @@ class Toolbox:
             ev.set()
             raise
 
+    def _release(self, run: dict, claim, ev):
+        """The driving thread lets go of the run. A Stop that came after the loop's last look (while a call or Claude's
+        answer was under way, which then paused the run) ends it first; cancel() asks under the same lock, so it either
+        lands before this look or finds the run free and ends it itself."""
+        run_id = run["id"]
+        while True:
+            with self._lock:
+                if run_id not in self._cancel or run.get("status") in ENDED:
+                    claim.release()
+                    self._cancel.discard(run_id)
+                    if self._active.get(run_id) is ev:
+                        self._active.pop(run_id, None)
+                    break
+            try:
+                self._finish(run, "cancelled", "Stopped by the person.")
+            except Exception:  # noqa: BLE001  (its status is set first, so this loop ends either way)
+                run["status"] = "cancelled"
+        ev.set()
+
+    def _halted(self, run: dict) -> bool:
+        """Network lookups or agent tools were turned off while the run worked: it waits as interrupted instead of sending
+        its next request to Claude or making its next call; Continue picks it up once they are on again."""
+        if not self.network():
+            self._interrupt(run, "offline", "Network lookups were turned off, so this run stopped before its next step. "
+                                            "Turn them on (Keys, Privacy and network), then continue it.")
+        elif not self.tools_on():
+            self._interrupt(run, "tools_off", 'Agent tools were turned off, so this run stopped before its next step. Turn '
+                                              'on "Let agents use tools" (Keys, Privacy and network), then continue it.')
+        else:
+            return False
+        return True
+
     def _drive(self, run: dict, client):
         while True:
             if self._cancelled(run):
                 return self._finish(run, "cancelled", "Stopped by the person.")
+            if self._halted(run):
+                return
             if client is None:  # checked before any tool runs: results nobody can send to Claude help no one
                 client = self.client_factory()
                 if client is None:
@@ -597,6 +644,10 @@ class Toolbox:
                 return
             if run["turns"] >= self.max_turns:
                 return self._finish(run, "failed", f"Stopped after {self.max_turns} turns, the most Morph allows in one run.")
+            if self._cancelled(run):
+                return self._finish(run, "cancelled", "Stopped by the person.")
+            if self._halted(run):  # the calls above may have taken a while: look again before Claude hears from this run
+                return
             data = self._call(client, run)
             if data is None:
                 return
@@ -720,6 +771,8 @@ class Toolbox:
             if self._cancelled(run):
                 self._finish(run, "cancelled", "Stopped by the person.")
                 return "ended"
+            if self._halted(run):  # the calls already answered stay in pending: Continue runs only the rest
+                return "paused"
             p["started"].append(tid)
             self._save(run)  # the intent is on disk before the call: a restart never repeats it blindly
             out = self._execute(run, tu, cat)
@@ -813,6 +866,9 @@ class Toolbox:
 
     # ---------------------------------------------------------------- pauses and endings
     def _pause(self, run: dict, blocked: dict) -> str:
+        if self._cancelled(run):  # Stop came while the call that needs the person was under way: no card for it
+            self._finish(run, "cancelled", "Stopped by the person.")
+            return "ended"
         p = run["pending"]
         p["needs"] = blocked
         run["status"] = "paused"
@@ -828,6 +884,8 @@ class Toolbox:
         return "paused"
 
     def _interrupt(self, run: dict, reason: str, note: str):
+        if self._cancelled(run):  # Stop came while Claude answered (busy, unreachable): it ends instead of waiting
+            return self._finish(run, "cancelled", "Stopped by the person.")
         run["status"], run["waiting_on"] = "paused", ["interrupted"]
         run["interrupted"] = {"reason": reason, "note": note, "at": time.time()}
         self._save(run)
@@ -847,9 +905,10 @@ class Toolbox:
 
     def _crash(self, run: dict, exc: Exception):
         try:
-            fresh = self._load(run["id"]) or run
+            fresh = self._load(run["id"], expired=True) or run
             if fresh.get("status") not in ENDED:
                 self._finish(fresh, "failed", f"Morph hit an internal error ({exc.__class__.__name__}); the run stopped.")
+            run["status"] = fresh.get("status")  # what the thread lets go of (_release) is what the file says
         except Exception:  # noqa: BLE001
             pass
 
@@ -958,7 +1017,9 @@ class Toolbox:
         run["updated"] = time.time()
         store.write_json(self._path(run["id"]), run)
 
-    def _load(self, run_id: str):
+    def _load(self, run_id: str, expired: bool = False):
+        """The run, or None; a run untouched for 7 days is gone (it never resumes, though only a Studio start deletes
+        its file) unless `expired` asks for it anyway (recover, which deletes it)."""
         try:
             p = self._path(run_id)
         except ToolboxError:
@@ -966,7 +1027,7 @@ class Toolbox:
         run = store.read_json(p, None)
         if not isinstance(run, dict) or run.get("schema") != RUN_SCHEMA or run.get("id") != run_id:
             return None
-        return run
+        return run if expired or _age(run) <= TTL_S else None
 
     def _must_load(self, run_id: str) -> dict:
         run = self._load(run_id)

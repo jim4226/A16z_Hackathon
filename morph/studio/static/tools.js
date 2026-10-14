@@ -26,6 +26,10 @@ const FAIL = {  // a failed call's line, from its error code and HTTP status (ne
   other: (e) => `failed${e.status ? ` (${e.status})` : ''}`,
 };
 const ENDED = ['done', 'failed', 'refused', 'cancelled'];
+const STOPPED = {  // why an interrupted run waits (its card's heading); the note under it says what to do
+  restart: 'The Studio restarted while this ran', claude_key: 'Claude refused the Anthropic key', claude_unavailable: 'Claude was unavailable',
+  offline: 'Network lookups were turned off', tools_off: 'Agent tools were turned off',
+};
 const RECENT_MS = 30 * 60 * 1000;  // finished runs shown again after a reload: the last half hour's
 
 let studio = null;
@@ -264,7 +268,7 @@ function untried(tool) { return catalog[tool]?.verified && catalog[tool].verifie
 
 function needHTML(r, c) {
   if (c.type === 'run_interrupted') {
-    return `<div class="tl-card"><div class="tl-ch">${I('alert')}<span class="tl-cht">${c.reason === 'restart' ? 'The Studio restarted while this ran' : c.reason === 'claude_key' ? 'Claude refused the Anthropic key' : 'Claude was unavailable'}</span></div>
+    return `<div class="tl-card"><div class="tl-ch">${I('alert')}<span class="tl-cht">${esc(STOPPED[c.reason] || STOPPED.claude_unavailable)}</span></div>
       <p>${esc(c.note || '')}</p>${can.start ? `<div class="qacts"><button class="btn primary" type="button" data-act="continue">${I('replay')}Continue</button></div>` : '<div class="tl-ask">Ask an editor or the owner to continue it.</div>'}</div>`;
   }
   if (c.type === 'credential_needed') {

@@ -21,9 +21,10 @@ manifest that wasn't installed from a draft.
 The documentation is third-party data: it reaches Claude only as web_fetch results in the draft's own conversation,
 never in a system prompt, and Morph keeps only the pages' addresses and the snippets that name each host.
 
-Storage: MORPH_HOME/.tools/drafts/<id>.json (0600; deleted 7 days after its last change). Events (emit): tool_draft
-{draft, status, project, title}. Audit: tool_draft_started, tool_draft_ready, tool_draft_refused, tool_draft_not_possible,
-tool_draft_failed, tool_draft_approved, tool_draft_discarded.
+Storage: MORPH_HOME/.tools/drafts/<id>.json (0600; gone 7 days after its last change: never approved after that, and
+deleted at the next start). Turning agent tools or network lookups off fails a draft before its next request. Events
+(emit): tool_draft {draft, status, project, title}. Audit: tool_draft_started, tool_draft_ready, tool_draft_refused,
+tool_draft_not_possible, tool_draft_failed, tool_draft_approved, tool_draft_discarded.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ import urllib.parse
 
 from .. import security
 from . import audit, catalog, http_tool, store
-from .runs import FALLBACK_BETA, RUN_ID, ToolboxError, _api_message
+from .runs import FALLBACK_BETA, RUN_ID, ToolboxError, _age, _api_message
 
 SCHEMA = "morph.tool_draft/1"
 DRAFT_ID = re.compile(r"draft_[0-9a-f]{16}")
@@ -256,6 +257,13 @@ def _path(url: str) -> str:
 
 def _on(host: str, docs_host: str) -> bool:
     return host == docs_host or host.endswith("." + docs_host)
+
+
+def _link(url) -> str:
+    """`url` when the review may show it as a link (https on the standard port to a public DNS name, no user name), else
+    '': a refused draft's addresses are shown as text only."""
+    m = re.fullmatch(r"https://([^/?#@:\s\\]+)(?::443)?(?:[/?#][^\s\"'<>\\]*)?", url if isinstance(url, str) else "")
+    return url if m and http_tool.public_host(m.group(1).lower()) else ""
 
 
 # ------------------------------------------------------------------------------------------------ the pages Claude read
@@ -581,7 +589,7 @@ def check(form, *, pages: list, docs_url: str, cat, pins: dict, policy=http_tool
             evidence["dns"][host] = "unchecked"
             continue
         try:
-            http_tool.vet_addresses(host, 443, policy, resolver)
+            http_tool.vet_within(host, 443, 10.0, policy, resolver)
             evidence["dns"][host] = "public"
         except PermissionError as exc:
             evidence["dns"][host] = "private"
@@ -631,7 +639,7 @@ def review_card(manifest: dict, evidence: dict, replaces: dict | None = None) ->
             "hosts": [{"host": h, "named": (evidence.get("hosts") or {}).get(h), "addresses": (evidence.get("dns") or {}).get(h, "unchecked")}
                       for h in manifest.get("hosts") or []],
             "key": None if not cred else {"env": cred["env"], "label": cred["label"], "what": cred["what"], "where": cred["where"],
-                                          "url": cred["url"], "hosts": cred["hosts"], "cost": cred.get("cost", ""),
+                                          "url": _link(cred["url"]), "hosts": cred["hosts"], "cost": cred.get("cost", ""),
                                           "in": (auth or {}).get("in"), "name": (auth or {}).get("name"),
                                           "named": (evidence.get("hosts") or {}).get(_host(cred["url"]))},
             "cost": "No fee per call: a drafted tool never spends money in this preview.",
@@ -751,6 +759,9 @@ class Drafts:
             request, messages = d["request"], [{"role": "user", "content": d["prompt"]}]
             contents, log, usage, stop = [], [], {}, None
             for _ in range(MAX_CONTINUATIONS + 1):
+                if not self.tb.network() or not self.tb.tools_on():  # switched off since: nothing more goes to Claude
+                    raise _Failed(("Network lookups" if not self.tb.network() else "Agent tools") + " were turned off while "
+                                  "Claude drafted this tool; draft it again once they are on.")
                 data = self._call(client, request, messages)
                 content, stop = data["content"], data.get("stop_reason")
                 contents.append(content)
@@ -829,8 +840,10 @@ class Drafts:
 
     # ---------------------------------------------------------------- the owner's answer
     def approve(self, draft_id: str, sha256, *, by: str | None = None) -> dict:
-        """Install a ready draft whose spec still has the sha256 the owner reviewed: the manifest file, its pin, its tools
-        on and approved. ToolboxError 404 no such draft, 409 not ready, another spec, or a clash that appeared since."""
+        """Install a ready draft whose spec still has the sha256 the owner reviewed: the manifest file (<id>.json, or
+        <id>-<sha8>.json when that name is taken or is a Windows device name such as aux), its pin, its tools on and
+        approved. ToolboxError 404 no such draft (or one older than 7 days), 409 not ready, another spec, or a clash that
+        appeared since."""
         with store.locked(self._folder()):
             d = self._must_load(draft_id)
             if d["status"] == "installed" and d.get("sha256") == sha256:
@@ -860,8 +873,9 @@ class Drafts:
                 raise ToolboxError(d["problems"][0]["message"], 409)
             folder = catalog.user_dir(self.home)
             fn = (pins.get(pid) or {}).get("file") if old is not None else None
-            if not (isinstance(fn, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,60}\.json", fn)):
-                fn = f"{pid}.json" if not os.path.exists(os.path.join(folder, f"{pid}.json")) else f"{pid}-{sha256[:8]}.json"
+            if not (isinstance(fn, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,60}\.json", fn)) or fn[:-5] in security.WINDOWS_RESERVED:
+                free = pid not in security.WINDOWS_RESERVED and not os.path.exists(os.path.join(folder, f"{pid}.json"))
+                fn = f"{pid}.json" if free else f"{pid}-{sha256[:8]}.json"  # aux.json would be a device on Windows
             store.write_text(os.path.join(folder, fn), json.dumps(spec, indent=2, ensure_ascii=False) + "\n")
             catalog.pin(pid, sha256, self.home, file=fn, by=by, draft=draft_id, docs=d["docs_url"])
             cat = self.tb.catalog()
@@ -915,10 +929,10 @@ class Drafts:
     def recover(self) -> dict:
         """At Studio start: a draft left drafting (the Studio stopped while Claude worked) fails; drafts untouched for 7
         days are deleted."""
-        out, now = {"failed": [], "expired": []}, time.time()
+        out = {"failed": [], "expired": []}
         with store.locked(self._folder()):
             for d in self._all(expired=True):
-                if now - float(d.get("updated") or 0) > TTL_S:
+                if _age(d) > TTL_S:
                     try:
                         os.remove(self._path(d["id"]))
                         out["expired"].append(d["id"])
@@ -943,13 +957,15 @@ class Drafts:
         d["updated"] = time.time()
         store.write_json(self._path(d["id"]), d)
 
-    def _load(self, draft_id):
+    def _load(self, draft_id, expired: bool = False):
+        """The draft, or None; one untouched for 7 days is gone (never approved, discarded or shown) unless `expired`."""
         try:
             p = self._path(draft_id)
         except ToolboxError:
             return None
         d = store.read_json(p, None)
-        return d if isinstance(d, dict) and d.get("schema") == SCHEMA and d.get("id") == draft_id else None
+        ok = isinstance(d, dict) and d.get("schema") == SCHEMA and d.get("id") == draft_id
+        return d if ok and (expired or _age(d) <= TTL_S) else None
 
     def _must_load(self, draft_id) -> dict:
         d = self._load(draft_id)
@@ -963,9 +979,7 @@ class Drafts:
             names = [fn[:-5] for fn in os.listdir(self._folder()) if fn.endswith(".json") and DRAFT_ID.fullmatch(fn[:-5])]
         except OSError:
             return []
-        now = time.time()
-        return [d for d in (self._load(n) for n in names) if d is not None
-                and (expired or now - float(d.get("updated") or 0) <= TTL_S)]
+        return [d for d in (self._load(n, expired) for n in names) if d is not None]
 
     def _emit(self, d: dict):
         if self.tb.emit_fn is None:

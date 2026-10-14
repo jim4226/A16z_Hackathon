@@ -200,8 +200,12 @@ def test_a_careful_draft_from_a_page_that_injects_instructions_is_ready_with_a_w
 
 def test_offline_lookups_unclear_patterns_and_unnamed_homepages_are_warnings(home):
     form = F.gearbase_form(homepage="https://www.gearbase-shop-morph.com", key_pattern="", key_prefix="gb")
-    tb, _ = make(home, F.drafting(form=form))
-    tb.network = lambda: False
+    answer = F.drafting(form=form)
+
+    def offline_meanwhile(body):  # network lookups go off while Claude drafts: Morph's own address check can't run
+        tb.network = lambda: False
+        return answer(body)
+    tb, _ = make(home, offline_meanwhile)
     d = drafted(tb)
     assert d["status"] == "ready", d["problems"]
     assert "homepage" not in d["spec"] and d["card"]["hosts"][0]["addresses"] == "unchecked"

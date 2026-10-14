@@ -278,8 +278,16 @@ def test_bad_arguments_and_offline_get_a_result_not_a_card(home):
                             search_and_call(("fixparts_categories", "toolu_b", {"query": "servo"})), final("ok"))
     tb = toolbox(home, claude)
     assert start(tb)["status"] == "done" and text(last_results(claude.requests[1])[0])["error"] == "invalid_arguments"
-    assert start(toolbox(home, claude, network=lambda: False))["status"] == "done"
-    assert text(last_results(claude.requests[3])[0])["error"] == "offline"
+    # network lookups off: nothing goes out, not even to Claude; the run waits until they are on again (B2-T4: it used
+    # to send the call an "offline" result and keep talking to Claude)
+    off = start(toolbox(home, claude, network=lambda: False))
+    assert off["status"] == "paused" and off["cards"][0]["reason"] == "offline" and len(claude.requests) == 2
+    from morph.studio.toolbox import policy
+    tool = toolbox(home, claude).catalog().tool("fixparts_categories")
+    chk = policy.check({"calls": {}, "pending": {}}, {"id": "toolu_b", "name": tool.name, "input": {"query": "servo"}}, tool=tool,
+                       frozen={"fingerprint": tool.fingerprint}, enabled=True, approvals=toolbox(home, claude).approvals, env={},
+                       network=False)
+    assert chk.action == "result" and chk.code == "offline"  # the policy still answers a call that slipped past
 
 
 # ------------------------------------------------------------------ restarts
