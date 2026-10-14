@@ -63,6 +63,19 @@ def test_heuristic_parser():
     assert n.diameter_mm == 66 and n.mass_g == 370 and n.object_name == "soda can"
 
 
+def test_without_a_key_morph_new_says_it_uses_the_offline_parser(capsys, monkeypatch):
+    """`morph new` and `morph demo` without an Anthropic key: the reason in plain words, never "Claude unavailable:
+    TypeError" (the SDK's complaint that it found no credentials, raised only once a request is made)."""
+    from morph import agent
+    design, need, src = agent.propose("pick up a raw egg")
+    out = capsys.readouterr().out
+    assert src == "heuristic" and need.object_name == "raw egg"
+    assert "(no Anthropic key: using the offline parser)" in out and "TypeError" not in out and "unavailable" not in out
+    monkeypatch.setenv("MORPH_OFFLINE", "1")
+    agent.propose("pick up a raw egg")
+    assert "(network lookups are off: using the offline parser)" in capsys.readouterr().out
+
+
 def test_time_study_counts_human_time(tmp_path):
     from morph.timestudy import study
 

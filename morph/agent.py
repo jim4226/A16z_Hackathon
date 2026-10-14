@@ -40,15 +40,28 @@ class NeedSpec(BaseModel):
 
 
 def _client():
+    """An Anthropic client, or None (with the reason in `_client.why`) when network lookups are off, the SDK is
+    missing or no credentials are configured: no key, auth token or profile, which the SDK would only report as an
+    error on the first request."""
     from . import settings
 
     if not settings.network_allowed():  # Keys, Privacy and network: everything stays on this computer
+        _client.why = "network lookups are off"
         return None
     try:
         import anthropic
-        return anthropic.Anthropic()
+        client = anthropic.Anthropic()
     except Exception:
+        _client.why = "the Anthropic SDK isn't available"
         return None
+    if client.api_key is None and client.auth_token is None and getattr(client, "credentials", None) is None:
+        _client.why = "no Anthropic key"
+        return None
+    _client.why = None
+    return client
+
+
+_client.why = None
 
 
 def _to_design(n: NeedSpec) -> Design:
@@ -128,7 +141,9 @@ def propose(need: str) -> tuple[Design, NeedSpec, str]:
             if resp.stop_reason != "refusal" and resp.parsed_output is not None:
                 return _to_design(resp.parsed_output), resp.parsed_output, "claude"
         except Exception as exc:
-            print(f"  (Claude unavailable: {exc.__class__.__name__}; using offline parser)")
+            print(f"  (Claude unavailable: {exc.__class__.__name__}; using the offline parser)")
+    else:
+        print(f"  ({_client.why or 'Claude unavailable'}: using the offline parser)")
     spec = heuristic(need)
     return _to_design(spec), spec, "heuristic"
 
