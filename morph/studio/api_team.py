@@ -31,7 +31,7 @@ from ..services import durable
 from .rooms import STARTED
 from .teams import activity, audit, auth, collab, roles
 from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing, watching
-from .teams.store import TeamStore, exists
+from .teams.store import TeamFileError, TeamStore, exists
 
 CONFIG = {"home": None, "secure": False, "enabled": False}
 MAX_FORM = 8192
@@ -105,11 +105,15 @@ def role_hook(req, role: str, member: dict | None = None) -> dict | None:
     from .routes import HTTPError
 
     home = _home(req)
-    if member is None:
-        member = authenticate(req.handler, home=home)
-    if role == roles.PUBLIC:
-        return member
-    if not authorize(member, req.method, req.path, declared=role, home=home):
+    try:
+        if member is None:
+            member = authenticate(req.handler, home=home)
+        if role == roles.PUBLIC:
+            return member
+        allowed = authorize(member, req.method, req.path, declared=role, home=home)
+    except TeamFileError as exc:  # team.json can't be read: nothing is allowed until it is fixed
+        raise HTTPError(503, str(exc)) from None
+    if not allowed:
         if member is None:
             raise HTTPError(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
         raise HTTPError(403, refusal(member, req.method, req.path, role))
@@ -383,6 +387,8 @@ def _safe(fn):
             if getattr(exc, "gate", None):
                 out["gate"] = exc.gate
             return exc.status, out
+        except TeamFileError as exc:  # team.json can't be read: nothing changes until it is fixed
+            return _err(503, str(exc))
         except ValueError as exc:
             return _err(400, str(exc))
         except TimeoutError as exc:

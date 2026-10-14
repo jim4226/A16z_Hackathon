@@ -385,4 +385,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.
+- Teams: a damaged `team.json` (cut off, or a bad hand edit) is no longer read as "no team": `morph team members`
+  printed nothing, the team Studio said "The team has no owner", and the suggested `morph team init` replaced every
+  member, invite, token and the policy. Now every team command and the team Studio name the line and column that
+  can't be read, nobody signs in, nothing writes over it, and Morph keeps the copy from before its last change as
+  `team.json.bak` to put back.
 

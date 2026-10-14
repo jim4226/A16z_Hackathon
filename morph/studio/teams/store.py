@@ -208,9 +208,36 @@ def exists(home: str | None = None) -> bool:
     return os.path.isfile(os.path.join(team_dir(home), "team.json"))
 
 
+class TeamFileError(ValueError):
+    """team.json is there but can't be read: Morph refuses to treat it as no team, or to write over it."""
+
+
+def _team_json(path: str) -> dict:
+    """team.json's object; {} when there is none; TeamFileError, naming the line and column and the backup Morph kept
+    (team.json.bak, the copy before its last change), when it is there but doesn't parse."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        where = f" at line {exc.lineno}, column {exc.colno}" if isinstance(exc, json.JSONDecodeError) else ""
+        data, why = None, f"can't be read{where} (damaged, or edited by hand)"
+    else:
+        why = "doesn't hold a team"
+    if isinstance(data, dict):
+        return data
+    bak = path + ".bak"
+    fix = (f"Fix it, or put back the copy Morph kept before its last change ({bak})" if os.path.isfile(bak) else
+           "Fix it, or restore it from a backup")
+    raise TeamFileError(f"{path} {why}. Morph won't use or overwrite it: no one can sign in and no team command works "
+                        f"until it is fixed. {fix}, then start again.")
+
+
 class TeamStore:
     """team.json in MORPH_HOME/.team/: read() is cached by the file's mtime and size (it runs on every request);
-    update(fn) re-reads under the lock, lets fn change the dict, then writes it atomically."""
+    update(fn) re-reads under the lock, lets fn change the dict, then writes it atomically, keeping the copy before the
+    change as team.json.bak. A team.json that can't be read raises TeamFileError from both: never "no team"."""
 
     _cache: dict = {}
 
@@ -236,19 +263,18 @@ class TeamStore:
         if key is None:
             return {}
         if hit is None or hit[0] != key:
-            data = read_json(self.path, {})
-            if not isinstance(data, dict):
-                data = {}
+            data = _team_json(self.path)
             hit = self._cache[self.path] = (key, data)
         return copy.deepcopy(hit[1])
 
     def update(self, fn):
         with locked(self.dir):
-            data = read_json(self.path, {}) if self.exists() else {}
-            if not isinstance(data, dict):
-                data = {}
+            data = _team_json(self.path)
+            before = copy.deepcopy(data) if data else None
             out = fn(data)
             data["version"] = VERSION
+            if before is not None:  # the last good copy, for the day this one is damaged
+                write_json(self.path + ".bak", before, private=True)
             write_json(self.path, data, private=True)
             self._cache.pop(self.path, None)
             return out

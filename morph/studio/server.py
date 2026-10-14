@@ -1014,9 +1014,13 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
         def _signed_in(self) -> bool:
             """Remote Studios: the browser opened the access link (its cookie), or a script sends the token. Team
             Studios: a member's session cookie or script token (self._member)."""
-            self._throttled, self._member = False, None
+            self._throttled, self._member, self._team_problem = False, None, None
             if team is not None:
-                self._member = team.authenticate(self, home=studio.home)
+                try:
+                    self._member = team.authenticate(self, home=studio.home)
+                except ValueError as exc:  # team.json can't be read (TeamFileError): nobody is signed in until it is fixed
+                    self._team_problem = str(exc)
+                    return False
                 if self._member is not None:
                     self._counted_out()
                 return self._member is not None
@@ -1044,8 +1048,13 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 done(self.request)
 
         def _sign_in_page(self, bad=False):
+            if getattr(self, "_team_problem", None):
+                return self._error(503, self._team_problem)
             if team is not None:  # invites and sign-in links are the way in (a removed member's browser is told why)
-                status, page, ctype, csp = team.signed_out_page(home=studio.home, handler=self)
+                try:
+                    status, page, ctype, csp = team.signed_out_page(home=studio.home, handler=self)
+                except ValueError as exc:  # team.json can't be read (TeamFileError)
+                    return self._error(503, str(exc))
                 return self._send(status, page, ctype, csp=csp)
             note = (f'<p class="bad">{html.escape(wait_note)}</p>' if bad == "throttled" else
                     '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
@@ -1053,6 +1062,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return self._send(429 if bad == "throttled" else 401, page.encode(), "text/html; charset=utf-8", csp=SIGN_IN_CSP)
 
         def _refuse_sign_in(self):
+            if getattr(self, "_team_problem", None):
+                return self._error(503, self._team_problem)
             if team is not None:
                 return self._error(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
             if self._throttled:
@@ -1198,8 +1209,11 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 return self._error(403, "This Studio only answers its own page.")
             if self._access_link(u):
                 return None
-            if team is not None and team.landing(self, home=studio.home):  # /?invite= and /?link= pages, before sign-in
-                return None
+            try:
+                if team is not None and team.landing(self, home=studio.home):  # /?invite= and /?link= pages, before sign-in
+                    return None
+            except ValueError as exc:  # team.json can't be read (TeamFileError)
+                return self._error(503, str(exc))
             if not self._signed_in():
                 if u.path in ("/", "/index.html"):
                     return self._sign_in_page(bad="throttled" if self._throttled else False)

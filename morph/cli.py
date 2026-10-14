@@ -275,7 +275,10 @@ def cmd_studio(a):
         from .studio.teams import cli as teams_cli
         # with --remote, at the address teammates reach: the invite links Share makes start with the page's address
         lan = lan_address() if a.host in ("0.0.0.0", "") else None
-        link = teams_cli.team_link(home=HOME, base_url=f"http://{lan or local}:{a.port}", out=None)["url"]
+        try:
+            link = teams_cli.team_link(home=HOME, base_url=f"http://{lan or local}:{a.port}", out=None)["url"]
+        except ValueError as exc:  # team.json can't be read (teams.store.TeamFileError): never "no owner", never a traceback
+            sys.exit(str(exc))
     if a.open and not headless:  # a server without a screen: the link printed below is opened from another computer
         import threading
         threading.Timer(1.5, open_app_window, args=(link,)).start()

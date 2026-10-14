@@ -54,7 +54,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
-| `.team/` | F4 | `team.json`, `secret` (0600), `audit.jsonl` |
+| `.team/` | F4 | `team.json` (+ `team.json.bak`: the copy before its last change, 0600, W3), `secret` (0600), `audit.jsonl` |
 | `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
 | `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
 
@@ -535,6 +535,10 @@ members; a member can hold several.
 - Invite links: single-use, 7-day expiry, 128-bit code stored hashed.
 - Signed session cookies: `id.issued.HMAC(secret, id|issued|epoch)`. Revoking bumps the epoch.
 - The audit log is hash-chained.
+- A team.json that doesn't parse is never read as "no team" (W3): `TeamStore.read()`/`update()` raise
+  `teams.store.TeamFileError` (a ValueError naming the line and column and `team.json.bak`). Every `morph team` command
+  exits with it, `morph team init` never writes over it, `morph studio --team` refuses to start with it, and a running
+  team Studio answers 503 with it to every request and page (nobody is signed in) until the file is fixed.
 
 ## 9. Security rules for all features
 
