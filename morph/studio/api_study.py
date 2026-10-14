@@ -46,6 +46,7 @@ NOTES = {
     "none": "One nominal run. Small differences in placement or hardware aren't tested.",
     "simulation": "This is simulation, for the tolerances shown; not a field failure rate.",
     "sensitive": robust.SENSITIVE,
+    "successes_sensitive": robust.SUCCESSES_SENSITIVE,
     "robust": "Still fails the same way at half the timestep and with softer friction (impratio=1): not a quirk of the "
               "simulator's settings.",
     "unchecked": "Not re-run under other solver settings yet.",
@@ -117,11 +118,14 @@ def headline(doc: dict) -> str | None:
     CI 63-76%); the nominal run succeeds." None before its first counted run."""
     s = doc.get("summary") or {}
     n, k = s.get("n") or 0, s.get("successes") or 0
-    if not n:
+    void = len(s.get("unstable") or []) + len(s.get("errors") or [])
+    if not n and not void:
         return None
     runs = "randomized run" + ("" if n == 1 else "s")
     cp = s.get("clopper_pearson95")
-    if k == n and cp:
+    if not n:                                  # runs were made but none can be counted: never "One nominal run"
+        text = robust.uncounted(void)[:-1]
+    elif k == n and cp:
         text = (f"Succeeds in all {n} {runs}" if n > 1 else "Succeeds in its one randomized run") + \
                f" (at least {_pct(cp[0], True, True)}% with 95% confidence)"
     elif k == 0 and cp:
@@ -130,7 +134,7 @@ def headline(doc: dict) -> str | None:
         lo, hi = s.get("wilson95") or robust.wilson(k, n)
         text = f"Succeeds in {k} of {n} {runs} (95% CI {interval(lo, hi)})"
     if doc.get("stress"):
-        text = "With every tolerance doubled (stress test), s" + text[1:]
+        text = "With every tolerance doubled (stress test), " + text[0].lower() + text[1:]
     nominal = ((doc.get("model") or {}).get("nominal") or {}).get("success")
     if nominal is not None:
         text += "; the nominal run " + ("succeeds." if nominal else "fails.")
@@ -175,6 +179,8 @@ def card(doc: dict) -> dict:
         flags.append(NOTES["other_code"].format(rev=doc.get("rev")))
     if (doc.get("spec") or {}).get("world_preset") in robust.ROOM_ONLY:
         flags.append(NOTES["room_only"])
+    if s.get("successes_sensitive"):
+        flags.append(NOTES["successes_sensitive"])
     groups = []
     for g in s.get("groups") or []:
         rule = g.get("rule") or None

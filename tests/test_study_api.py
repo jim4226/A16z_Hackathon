@@ -152,7 +152,7 @@ def test_the_card_says_what_the_study_shows_and_no_more():
     assert api_study.interval(0.6331, 0.7589) == "63-76%" and api_study.interval(0.9817, 0.9999) == "98.1-100.0%"
     group = {"id": "jam", "label": "Jaws stayed shut at release: the egg was carried away", "count": 58, "rate": 0.29,
              "wilson95": [0.2311, 0.3568], "example_run": 107, "model_sensitive": True,
-             "rule": {"text": "egg turned 3.4-9.4 deg: 49% fail vs 13% otherwise", "significant": True},
+             "rule": {"text": "egg turned 3.4-9.4 deg: 49% fail this way vs 13% otherwise", "significant": True},
              "checks": {"half_timestep": {"runs": 20, "still_fail": 16}, "impratio_1": {"runs": 20, "still_fail": 1}}}
     doc = _doc(140, 200, outdated=True)
     doc["summary"]["groups"] = [group, {**group, "id": "drag", "label": "Dragged off the target", "count": 2,

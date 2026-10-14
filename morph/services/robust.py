@@ -61,6 +61,8 @@ CHECK_RUNS, CHECK_SUCCESSES = 20, 15
 CACHED = 4                          # packed robots a long-running process keeps (about 5 MB each)
 NOTE = "Simulation, for the tolerances shown; not a field failure rate."
 SENSITIVE = "This result changes with the simulator's friction or timestep settings. Test it on the real robot."
+SUCCESSES_SENSITIVE = ("Some runs that succeed here fail when re-run at half the timestep or with impratio=1: the success "
+                       "rate depends on the simulator's settings as well as the design. Test it on the real robot.")
 # A bad position, velocity, acceleration or control makes MuJoCo reset the run to its start (and its warning counters,
 # all but that one), and a full contact or constraint buffer drops contacts: either way the run is not counted.
 UNSTABLE = ("mjWARN_BADQPOS", "mjWARN_BADQVEL", "mjWARN_BADQACC", "mjWARN_BADCTRL", "mjWARN_CONTACTFULL",
@@ -471,7 +473,7 @@ def _fmt(v, unit) -> str:
 def rule_text(rule: dict, obj: str = "object") -> str:
     tpl = PHRASES.get(rule["param"], ("{lo} to {hi}", "{lo}-{hi} off nominal"))[rule["on"] == "deviation"]
     region = tpl.format(obj=obj, lo=_fmt(rule["lo"], rule["unit"]), hi=_fmt(rule["hi"], rule["unit"]))
-    return f"{region}: {rule['rate_in']:.0%} fail vs {rule['rate_out']:.0%} otherwise"
+    return f"{region}: {rule['rate_in']:.0%} fail this way vs {rule['rate_out']:.0%} otherwise"
 
 
 def _rule(feats, y, params, seed, obj) -> dict | None:
@@ -567,7 +569,8 @@ def analyze(rows: list, params: list, checks: list | None = None, seed: int = DE
         Xi = np.array([[r["params"][e["name"]] for e in on] for r in rs]) if on else np.zeros((len(rs), 0))
         ex = rs[int(np.argmin(np.linalg.norm((Xi - nom) / span, axis=1)))] if on else rs[0]
         item = {"id": g, "label": group_label(g, obj), "count": len(rs), "rate": round(len(rs) / n, 4),
-                "wilson95": [round(v, 4) for v in wilson(len(rs), n)], "rule": _rule(feats, y, params, seed, obj) if feats else None,
+                "wilson95": [round(v, 4) for v in wilson(len(rs), n)],
+                "rule": _rule(feats, y, params, seed, obj) if feats and len(rs) < n else None,   # every run: nothing to isolate
                 "example_run": ex["i"], "runs": [r["i"] for r in rs][:500]}
         if checks is not None:
             item.update(_sensitivity(g, pick.get(g, []), ok_ids, checks))
@@ -590,6 +593,15 @@ def analyze(rows: list, params: list, checks: list | None = None, seed: int = DE
         by = {(c["variant"], c["i"]): c for c in checks}
         out["checks"] = {v: {"successes": len([i for i in ok_ids if (v, i) in by]),
                              "still_succeed": sum(by[(v, i)]["success"] for i in ok_ids if (v, i) in by)} for v in VARIANTS}
+        # the success rate itself is model-sensitive when, under either setting, at least 20 % (and 2) of the counted
+        # re-runs of successful runs fail: a study where nothing fails can depend on the solver as much as one that does
+        flip = None
+        for v in VARIANTS:
+            cs = [by[(v, i)] for i in ok_ids if (v, i) in by and by[(v, i)]["outcome"] not in ("unstable", "error")]
+            if cs:
+                bad = sum(not c["success"] for c in cs)
+                flip = bool(flip) or bad >= max(2, 0.2 * len(cs))
+        out["successes_sensitive"] = flip
     return out
 
 
@@ -1655,6 +1667,12 @@ def _pct(v) -> str:
     return f"{v * 100:.1f}%"
 
 
+def uncounted(k: int) -> str:
+    """What a study says when none of its runs could be counted."""
+    return ("No run could be counted: " + ("its one run was" if k == 1 else f"all {k} runs were")
+            + " numerically unstable or stopped with an error.")
+
+
 def report(doc: dict) -> str:
     """The study as plain ASCII text (what `morph study` prints)."""
     s = doc.get("summary") or {}
@@ -1670,6 +1688,8 @@ def report(doc: dict) -> str:
         if nom is not None:
             line += " The nominal run " + ("succeeds." if nom else "fails.")
         lines += [line, NOTE]
+        if s.get("successes_sensitive"):
+            lines.append(SUCCESSES_SENSITIVE)
         for key, (one, many) in (("unstable", ("was numerically unstable", "were numerically unstable")),
                                  ("errors", ("stopped with an error", "stopped with an error"))):
             ids = s.get(key) or []
@@ -1697,6 +1717,8 @@ def report(doc: dict) -> str:
         if top:
             lines.append("Most influential: " + ", ".join(f"{x['label'].lower()} (J {x['J']:.2f})" for x in top)
                          + f"; chance level J {s.get('chance_J', 0):.2f}.")
+    elif s.get("unstable") or s.get("errors"):
+        lines.append(uncounted(len(s.get("unstable") or []) + len(s.get("errors") or [])))
     elif doc["status"] in ("cancelled", "error", "interrupted"):
         lines.append("No finished runs.")
     m = doc.get("model") or {}

@@ -185,7 +185,7 @@ def test_failure_groups_get_rules_rates_and_model_sensitivity():
     jam, miss = g["jam"], g["missed_grasp"]
     assert jam["rule"]["param"] == "object_yaw_deg" and jam["rule"]["on"] == "deviation" and jam["rule"]["significant"]
     assert 2.5 <= jam["rule"]["lo"] <= 4.5 and 8 <= jam["rule"]["hi"] <= 10
-    assert jam["rule"]["text"].startswith("egg turned ") and " fail vs " in jam["rule"]["text"]
+    assert jam["rule"]["text"].startswith("egg turned ") and " fail this way vs " in jam["rule"]["text"]
     assert jam["model_sensitive"] is True and jam["checks"]["impratio_1"]["still_fail"] == 0
     assert miss["rule"]["param"] == "object_across_mm" and miss["model_sensitive"] is False
     assert jam["label"] == "Jaws stayed shut at release: the egg was carried away"

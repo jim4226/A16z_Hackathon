@@ -1,8 +1,9 @@
 """The robustness studies under attack (B2-S4): what an adversarial review found, each pinned by a test that failed
 before its fix. A Studio killed mid-study (its lock, its saved runs, carrying on), studies whose revision was replaced or
 whose Morph code changed (never carried on or replayed as theirs), revisions that can't be studied (refused before
-anything starts), gripper-only projects, absurd worker counts and tolerance edits, and replays waiting for their turn.
-Offline; study records and their runs are written directly, so nothing is simulated."""
+anything starts), gripper-only projects, absurd worker counts and tolerance edits, replays waiting for their turn, and
+numbers that could mislead (a rule for a group that holds every run, successes that depend on the solver, a study where
+no run could be counted). Offline; study records and their runs are written directly, so nothing is simulated."""
 
 import json
 import os
@@ -82,6 +83,61 @@ def lock(root, sid, pid, host=None, age=0.0):
     if age:
         t = time.time() - age
         os.utime(path, (t, t))
+
+
+# ------------------------------------------------------------------ numbers that could mislead
+
+def test_a_group_that_holds_every_run_gets_no_rule_and_rules_say_fail_this_way():
+    """All runs failing one way: no "100% fail vs 100% otherwise" rule. Several groups: a rule's rates are of failing
+    that way (outside the band the runs still fail, the other way)."""
+    one = robust.analyze(rows_for(PARAMS, 40, lambda i, v: "missed_grasp"), PARAMS, None, 1, "egg")
+    assert one["successes"] == 0 and one["groups"][0]["count"] == 40 and one["groups"][0]["rule"] is None
+    card = api_study.card({"summary": one, "status": "done", "done": 40, "n": 40, "rev": "r001",
+                           "model": {"nominal": {"success": True}}})
+    assert card["groups"][0]["rule"] is None and "100% otherwise" not in json.dumps(card)
+    two = robust.analyze(rows_for(PARAMS, 40, lambda i, v: "jam" if v["object_yaw_deg"] > -0.5 else "missed_grasp"),
+                         PARAMS, None, 1, "egg")
+    assert len(two["groups"]) == 2
+    for g in two["groups"]:
+        assert " fail this way vs " in g["rule"]["text"], g["rule"]["text"]
+
+
+def test_successes_that_fail_under_other_solver_settings_are_flagged():
+    """Nothing failed, but re-run at half the timestep 4 of the 15 re-run successes fail: the success rate itself is
+    model-sensitive, and the card and the report say so. One of 15 is not enough."""
+    rows = rows_for(PARAMS, 40, lambda i, v: None)
+    _, ok = robust.check_selection(rows, 1)
+    assert len(ok) == robust.CHECK_SUCCESSES
+
+    def checks(failing):
+        out = []
+        for v in robust.VARIANTS:
+            for k, i in enumerate(ok):
+                bad = v == "half_timestep" and k < failing
+                out.append({"i": i, "variant": v, "params": {}, "outcome": "jam" if bad else "placed",
+                            "group": "jam" if bad else "placed", "success": not bad})
+        return out
+
+    for failing, flagged in ((4, True), (1, False)):
+        s = robust.analyze(rows, PARAMS, checks(failing), 1, "egg")
+        assert s["successes"] == 40 and s["successes_sensitive"] is flagged
+        doc = {"summary": s, "status": "done", "done": 40, "n": 40, "rev": "r001", "id": "0" * 12, "seed": 1,
+               "timestep": 0.001, "spec": {"params": PARAMS}, "model": {"nominal": {"success": True}}}
+        assert (api_study.NOTES["successes_sensitive"] in api_study.card(doc)["flags"]) is flagged
+        assert (robust.SUCCESSES_SENSITIVE in robust.report(doc)) is flagged
+    assert robust.analyze(rows, PARAMS, None, 1, "egg").get("successes_sensitive") is None   # not checked: no claim
+
+
+def test_a_study_where_no_run_could_be_counted_says_so():
+    """Every run numerically unstable: never the "One nominal run" note, as if no study had been made."""
+    rows = [dict(r, outcome="unstable", group="unstable", success=False) for r in rows_for(PARAMS, 5, lambda i, v: None)]
+    s = robust.analyze(rows, PARAMS, None, 1, "egg")
+    doc = {"summary": s, "status": "done", "done": 5, "n": 5, "rev": "r001", "id": "0" * 12, "seed": 1, "timestep": 0.001,
+           "spec": {"params": PARAMS}, "model": {"nominal": {"success": True}}}
+    assert api_study.headline(doc) == ("No run could be counted: all 5 runs were numerically unstable or stopped with an "
+                                       "error; the nominal run succeeds.")
+    assert "No run could be counted" in robust.report(doc)
+    assert api_study.headline({**doc, "stress": True}).startswith("With every tolerance doubled (stress test), no run")
 
 
 # ------------------------------------------------------------------ a Studio killed mid-study
