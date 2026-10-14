@@ -298,6 +298,25 @@ def test_live_prices_starts_from_the_bom_tab_and_stops_from_its_card(browser, ma
     assert not page.errors, page.errors
 
 
+def test_stop_while_claude_answers_says_stopping_until_the_run_ends(browser, make_world):
+    """Stop pressed while Claude's answer is under way can't cut it short: the card says Stopping (no second Stop) until
+    the answer comes back, then the run ends cancelled without running the call the answer asked for."""
+    gate = threading.Event()
+    w = make_world(held(search_and_call(CATS), gate), final("never sent"))
+    page = Page(browser, w).open()
+    w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"})
+    until(lambda: "Working" in page.card() and "stop" in page.acts(), what="the working card")
+    page.pg.click('.tl-run [data-act="stop"]')
+    until(lambda: "Stopping" in page.card(), what="Stopping")
+    assert "Working" not in page.card() and "stop" not in page.acts()
+    page.shot("stopping")
+    gate.set()
+    until(lambda: "Cancelled" in page.card(), what="the stopped run")
+    assert "Stopping" not in page.card() and page.acts() == []
+    assert len(w.claude.requests) == 1 and w.vendor.calls == []
+    assert not page.errors, page.errors
+
+
 def _purchased(w):
     """The fixture BOM's lines bought or made the way the pipeline's BOM stage says (Live prices reads bought lines)."""
     import json
