@@ -18,6 +18,7 @@ import shutil
 import time
 
 from . import analysis, board, design as cad, electronics, fab, keewano, mechanism, sim
+from .services.durable import append_line
 from .spec import Design, diff
 
 # node: (parameter patterns it reads, upstream nodes)
@@ -119,8 +120,7 @@ class Project:
 
     def log(self, entry: dict):
         entry = {"ts": utc_now(), **entry}
-        with open(self.ledger_path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry) + "\n")
+        append_line(self.ledger_path, json.dumps(entry))  # a line cut off by a crash or a full disk never swallows this one
         design = None
         if entry.get("type") == "measurement":
             try:
@@ -131,10 +131,22 @@ class Project:
         keewano.emit(os.path.basename(os.path.normpath(self.root)), entry, design)
 
     def entries(self) -> list:
+        """The ledger's entries, oldest first. A line that doesn't parse (cut off by a crash or a full disk) is skipped:
+        one bad line never hides the rest."""
         if not os.path.exists(self.ledger_path):
             return []
-        with open(self.ledger_path, encoding="utf-8") as fh:
-            return [json.loads(line) for line in fh if line.strip()]
+        out = []
+        with open(self.ledger_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(e, dict):
+                    out.append(e)
+        return out
 
     # -- the pipeline
     def run(self, design: Design, parent: str | None = None, label: str = "", n_trials: int = 8,

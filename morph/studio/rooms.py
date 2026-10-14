@@ -21,6 +21,7 @@ import time
 import traceback
 
 from ..robot.pipeline2 import RobotProject
+from ..services import durable
 
 
 # The client whose request is being handled: the page's tab (its X-Morph-Client value) or a script. Set by the server
@@ -85,8 +86,7 @@ class Hub:
                 os.replace(tmp, self.path)
                 self._lines = len(self.history)
             else:
-                with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
-                    fh.write(json.dumps(event) + "\n")
+                durable.append_line(self.path, json.dumps(event))  # a cut-off last line never swallows this one
                 self._lines += 1
         except (OSError, TypeError, ValueError):
             traceback.print_exc()  # a full disk loses saved chat, never the build

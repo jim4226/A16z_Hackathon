@@ -135,7 +135,8 @@ open and what they're looking at.
   anyone else's sign-in.
 - **What is logged.** The audit log (`projects/.team/audit.jsonl`, hash-chained) records sign-ins with IP addresses,
   invites, role changes, API key and settings changes (names only, never values), exports, imports (with their links),
-  Reset demo and deleted projects.
+  Reset demo and deleted projects. `morph team audit --verify` reports an edited, removed or reordered line; a line cut
+  off by a crash or a full disk is named as that (its event is lost), not as tampering.
 - **Where the data is.** Members, invites and the audit log are in `projects/.team/`; comments, change requests,
   reviews, branches and releases in each `projects/<project>/.team/`. Nothing is sent anywhere: Teams makes no Claude,
   SubQ or Keewano calls, and team activity is never sent to Keewano.

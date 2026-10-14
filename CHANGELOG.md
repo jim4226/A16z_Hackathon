@@ -363,3 +363,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   SubQ anyway). `morph ask` tells "not configured" apart from "network lookups are off" and a failed query, and exits
   1 without rows; `morph study` says why it can't study a project or revision before announcing a study. Relaunching
   on a Linux server without a screen while a Studio runs no longer opens a text browser in the terminal.
+- A crash or a full disk that cut off the last line of a log no longer loses the next one too: the next chat
+  message, ledger entry (the Time saved card disappeared), robustness run or Teams record joined the cut-off line and
+  was lost with it. The team and tool audit logs report such a line as cut off by a crash or a full disk instead of
+  "edited by hand", and a stop between writing an entry and its `audit.head` is no longer flagged as tampering.

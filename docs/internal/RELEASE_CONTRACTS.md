@@ -60,6 +60,18 @@ decisions lives outside the repo; the essentials are summarized here.
 
 Folders starting with `.` are never projects: `projects()` and `reset()` must skip them.
 
+**Durability (W3).** A crash, a power cut or a full disk can stop any write half way; it may cost the record being
+written, never the ones around it (`morph/services/durable.py`, outside pipeline_version):
+- Every JSON-lines file is appended with `durable.append_line(path, line)` (chat, ledger, study rows, Teams records,
+  tool requests): a last line left without its newline is ended first, so the new record never joins it. Every reader
+  skips a line that doesn't parse (and decodes with `errors="replace"`): `Project.entries()`, `read_jsonl`,
+  `read_rows`, `Hub._load`.
+- The hash-chained audit logs (`.team/audit.jsonl`, `.tools/audit.jsonl`) share `morph/studio/chainlog.py`. The entry
+  after a cut-off line carries `cut: {bytes, sha256}` of it and chains on from the last whole entry, and an entry whose
+  `audit.head` update didn't happen (a stop between the two writes) is chained on, not flagged. `verify()` answers ok
+  with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line
+  as before; `morph team audit --verify` prints the note.
+
 ## 2. Server routing contract (W0b implements; everyone else uses)
 
 `morph/studio/routes.py`:

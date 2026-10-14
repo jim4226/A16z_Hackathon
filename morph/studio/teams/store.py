@@ -191,17 +191,18 @@ def read_json(path: str, default=None):
 
 
 def append_jsonl(path: str, obj: dict):
-    """One JSON object per line. Callers hold locked(folder), so lines never interleave."""
+    """One JSON object per line. Callers hold locked(folder), so lines never interleave; a line cut off by a crash or a
+    full disk is ended first, so it never swallows this one (read_jsonl skips it)."""
+    from ...services.durable import append_line
     ensure_dir(os.path.dirname(path))
-    with open(path, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + "\n")
+    append_line(path, json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
 
 
 def read_jsonl(path: str) -> list:
     """Every parseable object line; a torn last line (a crash mid-write) is skipped."""
     out = []
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:  # a line cut inside a character must not stop the rest
             for line in fh:
                 line = line.strip()
                 if not line:

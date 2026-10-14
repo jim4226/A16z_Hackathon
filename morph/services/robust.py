@@ -648,15 +648,15 @@ def study_dir(root: str, sid: str) -> str:
 
 
 def _append(path: str, row: dict):
-    with open(path, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(row, separators=(",", ":")) + "\n")
+    from .durable import append_line
+    append_line(path, json.dumps(row, separators=(",", ":")))  # a row cut off by a crash never swallows the next one
 
 
 def read_rows(path: str) -> list:
     """Rows of runs.jsonl / checks.jsonl; a line cut off by a crash is skipped, a run written twice counts once."""
     out, seen = [], set()
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 try:
                     r = json.loads(line)
