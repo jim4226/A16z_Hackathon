@@ -170,6 +170,31 @@ def test_a_key_the_service_refuses_can_be_replaced_from_the_card(browser, make_w
     assert not page.errors, page.errors
 
 
+def test_parallel_calls_share_one_card_and_one_answer(browser, make_world):
+    """Claude often looks several parts up at once: one Key needed card for the key, one Tool request card for the
+    tool, and one answer covers every call."""
+    w = make_world(search_and_call(("fixparts_offers", "toolu_a", {"mpn": "STS3215"}), ("fixparts_offers", "toolu_b", {"mpn": "SCS0009"})),
+                   search_and_call(("fixparts_categories", "toolu_c", {"query": "servo"}), ("fixparts_categories", "toolu_d", {"query": "board"})),
+                   final("Skipped the prices; listed two categories."))
+    page = Page(browser, w).open()
+    w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"})
+    until(lambda: "Key needed: FixParts (test fixture)" in page.card(), what="the Key needed card")
+    assert page.pg.evaluate("[...document.querySelectorAll('.tl-run')].pop().querySelectorAll('.tl-card').length") == 1
+    assert "2 lookups wait for it." in page.card()
+    page.pg.click('.tl-run [data-act="skip"]')
+    until(lambda: "Allow FixParts categories?" in page.card(), what="the Tool request card for both calls")
+    assert page.pg.evaluate("[...document.querySelectorAll('.tl-run')].pop().querySelectorAll('.tl-card').length") == 1
+    assert "and 1 more call of it in this step: your answer covers them all." in page.card()
+    page.shot("parallel_calls")
+    page.pg.click('.tl-run [data-act="allow_once"]')
+    until(lambda: "Done" in page.card(), what="the finished run")
+    text = page.card()
+    assert text.count("FixParts price and stock · skipped") == 2 and text.count("FixParts categories · api.fixparts-morph.com") == 2
+    sent = w.claude.requests[-1]["messages"][-1]["content"]
+    assert [b["tool_use_id"] for b in sent] == ["toolu_c", "toolu_d"] and not any(b.get("is_error") for b in sent)
+    assert not page.errors, page.errors
+
+
 def test_a_tab_whose_event_stream_opens_late_still_shows_the_run(browser, make_world):
     """A slow stream: the page loads its state (after waiting 3 s for the stream), the run starts and pauses before the
     stream is open, so its events never reach this tab; the card comes from the refresh when the stream opens."""
@@ -241,6 +266,22 @@ def _purchased(w):
     for r in res["bom"]["rows"]:
         r["make_or_buy"] = "make" if r["category"] == "fabricated" else "buy"
     json.dump(res, open(path, "w", encoding="utf-8"))
+
+
+def test_without_claude_the_bom_button_says_so_and_opens_keys_on_the_anthropic_key(browser, make_world):
+    w = make_world()
+    w.studio.toolbox.client_factory = lambda: None  # no Anthropic key (or network lookups off)
+    w.studio.toolbox.builtins = None
+    _purchased(w)
+    page = Page(browser, w).open(tab="bom")
+    until(lambda: page.pg.evaluate("document.querySelector('.tl-bom')?.innerText === 'Live prices (beta)'"), what="the BOM tab's button")
+    page.pg.click(".tl-bom")
+    until(lambda: page.pg.evaluate("document.querySelector('#keysDlg.on .kf.kfocus')?.dataset.k === 'ANTHROPIC_API_KEY'"),
+          what="Keys open on the Anthropic key")
+    assert page.pg.evaluate("window.lastToast || document.querySelector('#toast')?.innerText || ''").startswith("Live prices need Claude")
+    assert w.call("GET", "/api/runs?project=egg-picker")[1]["runs"] == [] and page.pg.evaluate("document.querySelectorAll('.tl-run').length") == 0
+    page.shot("no_claude")
+    assert [e for e in page.errors if "status of 503" not in e] == []  # the start's own 503 is the answer it reads
 
 
 def test_prices_found_show_on_the_card_in_show_prices_and_on_the_bom_button(browser, make_world):

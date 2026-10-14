@@ -857,7 +857,9 @@ status, a line per step, Key needed (service, what, cost, privacy, hosts; Add ke
 dispatches `morph:keys` with that key; Get a key; Skip), Tool request (what is sent and where, cost, the call's
 arguments; Allow once, Always for read-only tools, Skip), interrupted runs (Continue), capability requests, "Key added,
 continuing…" while a run resumed by a saved key works, the prices found (Show prices: a table with "from <service>" or
-"check it"), Claude's closing text and Stop. Members who can't act see "Ask the owner to add the <key> in Keys." or
+"check it"), Claude's closing text and Stop. Parallel calls share a card: one per key, and one per read tool asking for
+its first (or changed) use, whose answer is sent for every call it covers; a tool that asks before every call keeps one
+card per call. Members who can't act see "Ask the owner to add the <key> in Keys." or
 "Ask the owner to allow it." (editors: "Or skip it"). The BOM tab's filters bar gets "Live prices (beta)" for editors
 (and for everyone once prices exist): it starts a run, says what a working run waits for, or opens the prices; without
 Claude (503) it says so and opens Keys on `ANTHROPIC_API_KEY`. The Keys dialog lists "Tools agents can use" with an

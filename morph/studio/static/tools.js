@@ -118,7 +118,7 @@ async function act(r, what, arg) {
     let out;
     if (what === 'stop') out = await studio.api.post('/api/runs/cancel', { run: id });
     else if (what === 'continue') out = await studio.api.post('/api/runs/resume', { run: id });
-    else out = await studio.api.post('/api/runs/decide', { run: id, decisions: { [arg]: what } });
+    else out = await studio.api.post('/api/runs/decide', { run: id, decisions: Object.fromEntries(String(arg || '').split(',').filter(Boolean).map((tu) => [tu, what])) });
     if (out?.run) { r.view = out.run; paint(r); }
     refresh();
   } catch (e) {
@@ -199,7 +199,7 @@ function cardHTML(r) {
   const who = v.context?.auto ? 'started after the build' : '';
   const steps = v.steps?.length ? v.steps : Object.entries(v.calls || {}).map(([tool, n]) => ({ type: 'calls', tool, n }));
   const lines = steps.map(lineHTML);
-  const needs = v.status === 'paused' ? (v.cards || []).map((c) => needHTML(r, c)).join('') : '';
+  const needs = v.status === 'paused' ? group(v.cards || []).map((c) => needHTML(r, c)).join('') : '';
   const acts = [];
   if (!ENDED.includes(v.status) && can.start) acts.push(`<button class="btn ghost" type="button" data-act="stop">${I('x')}Stop</button>`);
   if (v.result?.lines?.length) acts.unshift(`<button class="btn" type="button" data-act="prices">${I('tags')}Show prices</button>`);
@@ -213,6 +213,21 @@ function cardHTML(r) {
     ${r.answer ? `<div class="tl-sum"><div class="tl-k">Claude's summary (beta)</div><p>${esc(r.answer)}</p></div>` : ''}
     ${['failed', 'refused', 'cancelled'].includes(v.status) && v.note ? `<div class="tl-note bad">${esc(v.note)}</div>` : ''}
     ${acts.length ? `<div class="qacts">${acts.join('')}</div>` : ''}`;
+}
+
+// Claude often calls a tool for several parts at once: one card per key, and one per tool asking for its first (or
+// changed) use, answers all of those calls; a tool that asks before every call keeps a card per call
+function group(cards) {
+  const out = [], by = new Map();
+  for (const c of cards) {
+    const k = c.type === 'credential_needed' ? `key ${c.env} ${c.reason}` : c.type === 'tool_request' && c.reason !== 'per_call' ? `tool ${c.tool} ${c.reason}` : '';
+    const g = k && by.get(k);
+    if (g) { g.ids.push(c.tool_use_id); continue; }
+    const card = { ...c, ids: [c.tool_use_id] };
+    if (k) by.set(k, card);
+    out.push(card);
+  }
+  return out;
 }
 
 function title(tool) { return catalog[tool]?.title || { morph_bom_read: 'Parts list', darwin_search: 'Darwin search', morph_tools_request: 'Tool request', morph_prices_record: 'Price record' }[tool] || tool; }
@@ -235,22 +250,24 @@ function needHTML(r, c) {
   }
   if (c.type === 'credential_needed') {
     const rejected = c.reason === 'rejected';
-    return `<div class="tl-card key" data-tu="${esc(c.tool_use_id)}"><div class="tl-ch">${I('key')}<span class="tl-cht">${rejected ? `${esc(c.service)} refused the key` : `Key needed: ${esc(c.service)}`}</span>${untried(c.tool)}</div>
-      <p>${esc(c.what || '')}</p>
+    const ids = esc(c.ids.join(','));
+    return `<div class="tl-card key" data-tu="${ids}"><div class="tl-ch">${I('key')}<span class="tl-cht">${rejected ? `${esc(c.service)} refused the key` : `Key needed: ${esc(c.service)}`}</span>${untried(c.tool)}</div>
+      <p>${esc(c.what || '')}${c.ids.length > 1 ? ` ${c.ids.length} lookups wait for it.` : ''}</p>
       <dl class="tl-dl">${c.cost ? `<dt>Cost</dt><dd>${esc(c.cost)}</dd>` : ''}${c.privacy ? `<dt>Privacy</dt><dd>${esc(c.privacy)}</dd>` : ''}<dt>Sent to</dt><dd class="mono">${esc((c.hosts || []).join(', '))} only</dd></dl>
       <div class="qacts">${can.keys ? `<button class="btn primary" type="button" data-act="key" data-env="${esc(c.env)}">${I('key')}${rejected ? 'Replace key' : 'Add key'}</button>` : ''}
         ${c.url && can.keys ? `<a class="btn ghost" href="${esc(c.url)}" target="_blank" rel="noopener">${I('ext')}Get a key</a>` : ''}
-        ${can.skip ? `<button class="btn ghost" type="button" data-act="skip" data-tu="${esc(c.tool_use_id)}">Skip</button>` : ''}</div>
+        ${can.skip ? `<button class="btn ghost" type="button" data-act="skip" data-tu="${ids}">Skip</button>` : ''}</div>
       ${can.keys ? '' : `<div class="tl-ask">Ask the owner to add the ${esc(c.label || 'key')} in Keys.${can.skip ? ' Or skip it: the run carries on without it.' : ''}</div>`}</div>`;
   }
   const per = c.reason === 'per_call';
   const head = per ? `Allow this call to ${esc(c.title)}?` : c.reason === 'changed' ? `${esc(c.title)} changed since you allowed it: allow it again?` : `Allow ${esc(c.title)}?`;
-  return `<div class="tl-card ask" data-tu="${esc(c.tool_use_id)}"><div class="tl-ch">${I('alert')}<span class="tl-cht">${head}</span>${untried(c.tool)}</div>
+  const ids = esc(c.ids.join(','));
+  return `<div class="tl-card ask" data-tu="${ids}"><div class="tl-ch">${I('alert')}<span class="tl-cht">${head}</span>${untried(c.tool)}</div>
     <p>${esc(SIDE[c.side_effect] || '')} Sends ${esc(c.sends || 'its arguments')} to <span class="mono">${esc(c.host || '')}</span>.</p>
     <dl class="tl-dl"><dt>Cost</dt><dd>${c.cost_usd ? `About $${esc(c.cost_usd)} a call` : 'No fee per call'}${c.cost_note ? `. ${esc(c.cost_note)}` : ''}</dd>${c.privacy ? `<dt>Privacy</dt><dd>${esc(c.privacy)}</dd>` : ''}</dl>
-    ${c.input ? `<pre class="tl-args mono">${esc(c.input)}</pre>` : ''}
-    <div class="qacts">${can.allow ? `<button class="btn primary" type="button" data-act="allow_once" data-tu="${esc(c.tool_use_id)}">Allow once</button>${c.side_effect === 'read' && !per ? `<button class="btn" type="button" data-act="allow_always" data-tu="${esc(c.tool_use_id)}">Always</button>` : ''}` : ''}
-      ${can.skip ? `<button class="btn ghost" type="button" data-act="skip" data-tu="${esc(c.tool_use_id)}">Skip</button>` : ''}</div>
+    ${c.input ? `<pre class="tl-args mono">${esc(c.input)}</pre>` : ''}${c.ids.length > 1 ? `<div class="tl-ask">and ${c.ids.length - 1} more call${c.ids.length > 2 ? 's' : ''} of it in this step: your answer covers them all.</div>` : ''}
+    <div class="qacts">${can.allow ? `<button class="btn primary" type="button" data-act="allow_once" data-tu="${ids}">Allow once</button>${c.side_effect === 'read' && !per ? `<button class="btn" type="button" data-act="allow_always" data-tu="${ids}">Always</button>` : ''}` : ''}
+      ${can.skip ? `<button class="btn ghost" type="button" data-act="skip" data-tu="${ids}">Skip</button>` : ''}</div>
     ${can.allow ? '' : `<div class="tl-ask">Ask the owner to allow it.${can.skip ? ' Or skip it: the run carries on without it.' : ''}</div>`}</div>`;
 }
 
