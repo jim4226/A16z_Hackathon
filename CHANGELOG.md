@@ -75,6 +75,16 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   unless you turn on "Check live prices after a build changes the purchased parts" (off by default); "Let agents use
   tools (beta)" under Keys turns them off. On a team only the owner adds keys and allows tools; editors start runs and
   may skip; viewers see the cards and are told to ask the owner.
+- **Morph writes a tool** (preview): when a run needs a tool Morph doesn't have, its card offers **Draft a tool** to
+  the owner (also **New tool (preview)** in Keys). You name the need and the API's official documentation; Claude reads
+  that documentation site only and fills in a form, never code, and Morph builds a declarative read-only tool from it
+  (GET lookups to hosts the documentation names; nothing written, uploaded or paid) and checks it. The review shows the
+  hosts and where the documentation names them, each lookup's address and what it sends, where the key goes, cost,
+  privacy, the pages read and the spec's sha256. **Approve and install** installs exactly that spec for the next run,
+  which asks for the new key in the chat; a later change to the installed file turns its tools off until a new draft
+  is approved. A draft that breaks a rule says why and is never installed. The need card also lists services
+  Darwin's public search knows for the need, with their websites, as suggestions only: Morph never connects to them,
+  signs in or pays. Drafting uses Claude on your Anthropic key; on a team only the owner drafts and approves.
 
 ### Studio
 
@@ -133,6 +143,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   your key for that distributor, and sends the parts list to Claude; cards, events and logs never carry a key, a
   tool's answer or Claude's messages. Farnell's terms don't allow storing its data, so its answers stay only in the
   run, which is deleted after 7 days.
+- Drafting a tool (preview) sends Claude the need you typed, the documentation's address and the tool ids and key
+  names Morph already uses; Claude's web fetch reads pages of that documentation site only. Morph keeps the pages'
+  addresses and the lines that name each host, not the pages. Darwin's suggestions send the need to Darwin's public
+  search (no account); its answers and each suggested service's public details are cached on this computer.
 
 ### Security
 
@@ -169,6 +183,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   never to Claude, and chat refuses it like any other key.
   Agent runs that wait for a key, an approval or a restart are kept in `projects/.runs/` (private, deleted after 7
   days); every tool decision and call goes into a hash-chained log, `projects/.tools/audit.jsonl`.
+- A drafted tool (preview) is checked before the owner sees it: GET only, at most 4 lookups; every address HTTPS to a
+  public DNS name that the documentation pages Claude read name outside any text aimed at AI agents, resolving to
+  public addresses; its key a `MORPH_TOOL_*` name sent only to those hosts; no wording that addresses an AI; no clash
+  with Morph's own tools. Documentation text reaches Claude only as fetched pages, never as instructions, and pages
+  that talk to AI agents are quoted in the review. Approval is bound to the spec's sha256 (`projects/.tools/pins.json`),
+  and every step goes into the audit log.
 
 ### Fixes
 
