@@ -23,6 +23,7 @@ takes larger ones.
 
 from __future__ import annotations
 
+import itertools
 import math
 import os
 import socket
@@ -77,7 +78,8 @@ def _may_edit(req) -> bool:
 
 
 def _study_error(exc: robust.StudyError):
-    """A StudyError as an HTTP answer: busy 409, something that isn't there 404, a bad request 400."""
+    """A StudyError as an HTTP answer: busy 409, something that isn't there 404, a replay to try again 503, a bad
+    request 400."""
     text = str(exc)
     if isinstance(exc, robust.StudyBusy):
         return _err(409, text)
@@ -85,6 +87,8 @@ def _study_error(exc: robust.StudyError):
         return _err(404, text)
     if text.startswith("This project has no finished revision"):
         return _err(409, text)
+    if text.startswith("The replay"):        # it took too long or its process stopped: worth another try later
+        return _err(503, text)
     return _err(400, text)
 
 
@@ -199,10 +203,19 @@ def _newest(studies: list, rev: str, stress: bool):
     return None
 
 
-def _rate(studies_full: list) -> dict:
-    """Runs per second per worker process at 1 ms on this computer: the newest finished study's, else the estimate."""
-    for doc in studies_full:
-        t = doc.get("timing") or {}
+def _result(hj, project: str, sid: str):
+    try:
+        return hj.result(project, sid)
+    except robust.StudyError:
+        return None
+
+
+def _rate(hj, project: str, listing: list, shown: list) -> dict:
+    """Runs per second per worker process at 1 ms on this computer: the shown studies' timing, else the project's
+    newest timed study (of the eight newest), else the estimate."""
+    seen = {d["id"] for d in shown}
+    for doc in itertools.chain(shown, (_result(hj, project, s["id"]) for s in listing[:8] if s["id"] not in seen)):
+        t = (doc or {}).get("timing") or {}
         if t.get("runs_per_s") and t.get("workers") and (t.get("runs") or 0) >= 8:
             per = t["runs_per_s"] / t["workers"] * (0.001 / (doc.get("timestep") or 0.001))  # a run at 1 ms costs ~2x 2 ms
             return {"per_worker": round(per, 3), "measured": True}
@@ -238,7 +251,7 @@ def get_study(req):
         obj = "object"
     labels = {g: robust.group_label(g, obj) for g in robust.LABELS if g != "world_collision"}
     labels.update({f"world_collision:{ph}": robust.group_label(f"world_collision:{ph}", obj) for ph in robust.PHASES})
-    timed = [d for d in (full["latest"], full["latest_stress"]) if d]
+    rate = _rate(hj, project, listing, [d for d in (full["latest"], full["latest_stress"]) if d])
     remote = bool(getattr(req.studio, "remote", False))
     job = hj.status(project)
     live = job["id"] if job and job["status"] in robust.LIVE else None
@@ -249,7 +262,7 @@ def get_study(req):
                  "limits": {"max_runs": MAX_RUNS, "max_workers": _cores(), "workers": min(robust.default_workers(), _cores()),
                             "timesteps_ms": list(TIMESTEPS_MS), "default_runs": DEFAULT_RUNS},
                  "host": {"name": socket.gethostname(), "cores": _cores(), "remote": remote},
-                 "rate": _rate(timed), "may": {"start": _may_edit(req)}, "notes": NOTES, "group_labels": labels,
+                 "rate": rate, "may": {"start": _may_edit(req)}, "notes": NOTES, "group_labels": labels,
                  "scenario": robust.SCENARIO}
 
 
@@ -373,6 +386,9 @@ def replay(req):
             study = hj.result(room.name, sid, rows=True) or {}
         except robust.StudyError as exc:
             return _study_error(exc)
+        except OSError as exc:               # no process to replay it in (memory, open files)
+            return _err(503, "The Studio couldn't start a simulation process for the replay "
+                             f"({exc.strerror or exc.__class__.__name__}); try again in a moment.")
         finally:
             _REPLAY.release()
         rows = study.get("checks") if variant else study.get("runs")

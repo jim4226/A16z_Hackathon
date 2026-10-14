@@ -91,7 +91,7 @@ def test_a_deselected_box_leaves_no_gizmo_after_an_ai_review(server, browser):
     desk, doc, inspect = _desk_inputs()
     page.evaluate("([w, d, i]) => window.demo.load(w, d, {starters: {desk: w}, inspect: i})", [desk, doc, inspect])
     box = desk["obstacles"][0]["id"]
-    page.evaluate("window.demo.wv.frameOverview(0)")
+    page.evaluate("window.demo.wv.frameOverview(0); window.demo.viewer.pause()")  # a still scene: software WebGL draws on demand
 
     # select a box from the panel's list: Edit mode, the gizmo on the box
     _press(page, f'.wv-panel [data-a="sel"][data-arg="{box}"]')

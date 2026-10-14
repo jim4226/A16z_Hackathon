@@ -12,6 +12,7 @@ import re
 import shutil
 import threading
 import time
+import types
 
 import pytest
 
@@ -186,6 +187,26 @@ def test_every_study_route_has_its_role_in_the_team_table():
         assert roles.authorize(viewer, method, path) is (role == "viewer")
 
 
+
+def test_the_time_estimate_uses_this_computers_newest_timed_study():
+    class Hj:
+        def __init__(self):
+            self.read = []
+
+        def result(self, project, sid):
+            self.read.append(sid)
+            if sid == "gone":
+                raise robust.StudyError("There is no such study.")
+            return {"b": {"id": "b", "timestep": 0.002, "timing": {"runs_per_s": 1.2, "workers": 3, "runs": 40}}}.get(sid)
+
+    hj, cut = Hj(), {"id": "a", "timing": {"workers": 3, "first_result_s": 7.3}}     # stopped before its runs were timed
+    listing = [{"id": "a"}, {"id": "gone"}, {"id": "b"}, {"id": "c"}]
+    assert api_study._rate(hj, "p", listing, [cut]) == {"per_worker": 0.2, "measured": True}   # 2 ms runs: half the cost
+    assert hj.read == ["gone", "b"]                     # the shown study is not read again; the first timed one is enough
+    assert api_study._rate(Hj(), "p", [], []) == {"per_worker": api_study.RATE_PER_WORKER, "measured": False}
+    few = {"id": "s", "timing": {"runs_per_s": 2.0, "workers": 2, "runs": 6}}           # too few runs to time
+    assert api_study._rate(Hj(), "p", [], [few])["measured"] is False
+
 # ------------------------------------------------------------------ a study over HTTP
 
 def test_a_study_runs_with_live_progress_and_reads_back_with_its_card(site):
@@ -240,6 +261,28 @@ def test_a_study_runs_with_live_progress_and_reads_back_with_its_card(site):
         assert call("GET", f"/api/study/replay?id={sid}&{q}")[0] == status, q
     assert call("GET", "/api/study/replay?id=nope&run=1")[0] == 404
 
+
+
+def test_a_replay_that_cannot_run_now_says_to_try_again(monkeypatch):
+    class Busy:
+        def __init__(self, exc):
+            self.exc = exc
+
+        def replay(self, *a):
+            raise self.exc
+
+    room = types.SimpleNamespace(name="egg-picker", p=types.SimpleNamespace(root="/nowhere"))
+    req = types.SimpleNamespace(room=room, studio=None, arg={"id": "s1", "run": "3"}.get)
+    for exc, status, words in (
+            (robust.StudyError("The replay took too long; try again when the computer is less busy."), 503, "took too long"),
+            (robust.StudyError("The replay's simulation process stopped."), 503, "process stopped"),
+            (OSError(24, "Too many open files"), 503, "couldn't start a simulation process for the replay (Too many open "
+                                                      "files); try again in a moment."),
+            (robust.StudyError("Run 3 stopped with an error in the simulation: unstable"), 400, "Run 3 stopped")):
+        monkeypatch.setattr(jobs, "manager", lambda studio, hj=Busy(exc): hj)
+        got, body = api_study.replay(req)
+        assert got == status and words in body["error"] and body["ok"] is False, (exc, body)
+    assert api_study._REPLAY.acquire(timeout=0) and api_study._REPLAY.release() is None   # every failure let go of it
 
 def test_sizes_and_bad_requests_are_refused_in_plain_english(site):
     call = site["call"]
