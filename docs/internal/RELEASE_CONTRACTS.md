@@ -1439,4 +1439,10 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   `tests/test_robot_stage_reads.py` computes every stage on a design that records each key it reads and fails on any
   key outside the stage's patterns and its upstream stages' (for the egg-picker and the SO-101); the simulation's only
   allowed exception is the project name, robot.xml's model name.
+- **Print orientation fits the bed (ENG-10).** `Geo.pose_for(process)` picks the lowest-scoring print pose among those
+  whose height fits the process's bed (`manufacturing.BEDS`: FDM 250 x 210 x 220 mm, SLA, MJF) and whose footprint fits
+  either way round, and turns the part 90 degrees about z when its footprint only fits that way; the STL, 3MF, print
+  height and the FDM cost model use that pose. When no pose fits, the DFM check says "<x>x<y>x<z> mm (its best way up)
+  exceeds the ... build volume: split the part". The egg-picker's base shell prints "+y down", 244 x 38 x 144 mm (it
+  stood 244 mm tall).
 

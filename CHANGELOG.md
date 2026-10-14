@@ -403,3 +403,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   machined aluminium for a pilot, molded polycarbonate for production; it analysed printed PETG for every build) and
   leaves the controller to the electronics, so a controller or fabrication-process change no longer reruns it. A test
   reads every key each stage uses and checks that a change to it reruns the stage.
+- Print files stand inside the printer. The base shell's print file and 3MF stood it 244 mm tall on a 220 mm-tall bed,
+  and its manufacturing check, which compared sorted dimensions, said it fit. The print orientation is now the best one
+  that fits the process's build volume (turned 90 degrees on the bed when that is what fits), and a part that fits no way
+  up is told to split, with its size as it would stand.

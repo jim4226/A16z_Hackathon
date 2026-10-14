@@ -448,6 +448,37 @@ def test_real_generator_if_available(tmp_path):
     b = manufacturing.bom(d, asm, mfg, mock_efinal())
     man = manual.build(d, asm, mfg, mock_efinal(), str(tmp_path / "manual"))
     assert mfg["parts"] and b["totals"]["total"] > 0 and man["steps"]
+    # every print file stands inside the printer's build volume as oriented (the 244 mm base shell stood 244 mm tall
+    # on a 220 mm-tall bed, and the DFM check, comparing sorted extents, never said so)
+    bed = manufacturing.FDM_BED
+    printed = [e for e in mfg["parts"] if e["process"] == "fdm_print"]
+    assert any(e["group"] == "base_shell" for e in printed)
+    for e in printed:
+        stl = trimesh.load(tmp_path / "mfg" / e["group"] / f"{e['group']}.stl")
+        x, y, z = stl.extents
+        assert z <= bed[2] and x <= bed[0] and y <= bed[1], (e["group"], e["print"]["orientation"], stl.extents)
+        assert e["print"]["height_mm"] <= bed[2] and not any("build volume" in m for m in e.get("dfm", []))
+    with zipfile.ZipFile(tmp_path / "mfg" / "base_shell" / "base_shell.3mf") as z:
+        model = z.read("3D/3dmodel.model").decode()
+    v = np.array([[float(a) for a in m] for m in re.findall(r'<vertex x="([-\d.]+)" y="([-\d.]+)" z="([-\d.]+)"', model)])
+    assert np.ptp(v, axis=0)[2] <= bed[2]
+
+
+def test_a_part_too_big_for_the_bed_in_every_orientation_says_split_it():
+    from morph.robot.assembly import Part
+
+    # the parts that fit some way up are placed that way: the base shell's 244 mm stood on end (taller than 220 mm), a
+    # 240 mm-deep plate turns 90 degrees to lie along the 250 mm axis; 245 x 215 x 215 fits no way up
+    cases = (((300.0, 30.0, 20.0), True), ((245.0, 215.0, 215.0), True), ((230.0, 230.0, 30.0), True),
+             ((244.0, 144.0, 38.0), False), ((200.0, 240.0, 60.0), False))
+    for size, big in cases:
+        part = Part(name="slab", link="base", mesh=trimesh.creation.box(extents=size), process="fdm_print", group="slab")
+        g = manufacturing.Geo(part)
+        dfm = manufacturing.dfm_checks({"process": "fdm_print", "class": "shell", "material": "PETG"}, g)
+        e = g.print_pose["mesh"].extents
+        assert any("split the part" in m for m in dfm) is big, (size, dfm)
+        if not big:                                   # placed to fit: height and footprint inside 250 x 210 x 220 mm
+            assert e[2] <= 220 and e[0] <= 250 and e[1] <= 210, e
 
 
 # ------------------------------------------------------------------ generator conventions
