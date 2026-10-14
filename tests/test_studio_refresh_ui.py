@@ -131,3 +131,22 @@ def test_events_show_the_result_even_while_the_state_keeps_failing(live):
     page.wait_for_function("() => window.morph.state.loaded === true", timeout=40000)
     assert page.evaluate("window.morph.state.revs") == ["r001", "r002"] and len(tries) >= 3
     assert conn(page) == "Live"
+
+
+def test_a_project_opened_during_its_first_build_gets_the_welcome_when_it_is_done(live):
+    """New robot opens the new project while its first build runs: the chat says the build is running, and once it is
+    done that message becomes the welcome (with the feature tips), never "no finished revision yet" above "r001 ready"."""
+    studio, build, page, url = live
+    room, _ = studio.create_project("plant-helper")
+    assert build.started.wait(10)
+    page.goto(f"{url}&project={room.name}")
+    page.wait_for_function("() => window.morph && window.morph.state.loaded === true", timeout=30000)
+    first = "document.querySelector('#messages .msg.assistant .b')?.textContent || ''"
+    assert page.evaluate(first) == f"{room.name} has no finished revision yet: its first build is running."
+    build.gate.set()
+    page.wait_for_function("() => window.morph.state.current?.rev === 'r001' && !window.morph.state.busy", timeout=30000)
+    page.wait_for_function("() => document.querySelector('#messages').innerText.includes('Also here:')", timeout=30000)
+    assert page.evaluate(first).startswith(f"Loaded {room.name} at r001. Ask for a change")
+    text = page.inner_text("#messages")
+    assert "no finished revision" not in text and "r001 ready" in text
+    assert text.index(f"Loaded {room.name}") < text.index("r001 ready") < text.index("Also here:")

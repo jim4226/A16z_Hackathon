@@ -355,10 +355,12 @@ async function loadState(st, { fresh = false, first = false } = {}) {
   renderProjects();
   for (const m of st.history || []) addMsg(m.type, m.text, m);
   S.chatEmpty = !(st.history || []).length;
+  S.waitingFirst = null;
   if (S.chatEmpty) {
-    addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : ''}.`
+    const msg = addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : ''}.`
       : fresh && !first ? `Opened ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`
-        : `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`);
+        : welcomeText(st.project, st.current.rev));
+    if (!st.current) S.waitingFirst = msg;  // replaced by the welcome once the first build is done
   }
   if (st.current) await show(st.current, st.previous, { tour: false });
   else {  // a project whose first build hasn't finished: nothing of the project shown before stays as its revision
@@ -381,6 +383,19 @@ async function loadState(st, { fresh = false, first = false } = {}) {
   S.reloads = (S.reloads || 0) + 1;
   S.loaded = true;
   for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
+}
+
+function welcomeText(project, rev) {
+  return `Loaded ${project} at ${rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`;
+}
+// A project opened before its first revision says so; when that build is done, the welcome (and the feature tips)
+// take that message's place, as for a project opened with a finished revision.
+function firstBuildDone(cur) {
+  const msg = S.waitingFirst;
+  S.waitingFirst = null;
+  if (!msg?.isConnected || $('#messages .msg.user')) return;
+  $('.b', msg).textContent = welcomeText(S.project, cur.rev);
+  featureTips();
 }
 
 function renderKeysDot() {
@@ -920,7 +935,8 @@ function onEvent(ev) {
       liveProv = null;
       S.busy = false;
       setConn(backend.label === 'Fixture' ? 'fixture' : 'live');
-      show(cur, ev.previous, { tour: true });
+      const firstRev = S.waitingFirst && !cur.parent;
+      Promise.resolve(show(cur, ev.previous, { tour: true })).then(() => { if (firstRev) firstBuildDone(cur); }).catch((e) => console.warn(e));
       break;
     }
     default: break;
