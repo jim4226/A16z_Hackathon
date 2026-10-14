@@ -847,6 +847,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             pass
 
         def send_response(self, *a, **k):
+            self._drain()  # whatever answers, a body nobody read is read first, so the answer isn't reset away
             self._responded = True
             super().send_response(*a, **k)
 
@@ -955,9 +956,10 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return self._json(code, {"ok": False, "error": message})
 
         def _drain(self):
-            """Read and drop a request body refused before it was read (too big, wrong type, not signed in), so the
-            client gets the answer instead of a connection reset while it is still sending. Bounded: at most
-            DRAIN_MAX bytes, two seconds, and a quarter of a second without data."""
+            """Read and drop a request body nobody read (refused: too big, wrong type, not signed in; or a route that
+            answered without it), so the client gets the answer instead of a connection reset while it is still
+            sending. Bounded: at most DRAIN_MAX bytes, two seconds, and one second without data (on Windows a small
+            body can trail its headers by a delayed ACK, about 200 ms, more under load)."""
             if self.command not in ("POST", "PUT", "DELETE") or getattr(self, "_read", False):
                 return
             self._read = True
@@ -968,7 +970,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             deadline, old = time.monotonic() + 2.0, self.connection.gettimeout()
             try:
                 while n > 0 and time.monotonic() < deadline:
-                    self.connection.settimeout(max(0.01, min(0.25, deadline - time.monotonic())))
+                    self.connection.settimeout(max(0.01, min(1.0, deadline - time.monotonic())))
                     chunk = self.rfile.read1(min(n, 1 << 16))
                     if not chunk:
                         break

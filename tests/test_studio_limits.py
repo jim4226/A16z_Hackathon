@@ -162,3 +162,25 @@ def test_a_client_turned_away_at_the_cap_reads_its_whole_503(live):
     assert late.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0   # no reset arrived (Linux reads past one)
     for s in held:
         s.close()
+
+
+@pytest.mark.parametrize("path,body,gap", [("/api/team/join", b'{"code": "mi_x"}', 0.05),  # Teams is off: answered unread
+                                           ("/api/nope", b'{"a": 1}', 0.6)])                 # refused, the body trails
+def test_an_answer_given_before_the_body_arrives_is_not_reset_away(live, path, body, gap):
+    """http.client sends headers and body in two writes, and on Windows a small body can trail its headers by a
+    delayed ACK. An answer sent before reading it, then a close, would reset the connection: Windows then throws the
+    answer away (CI saw ConnectionAbortedError on the 404 for /api/team/join)."""
+    studio, httpd, port, connect = live
+    s = connect()
+    s.sendall(f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Morph-Client: 1\r\nContent-Type: application/json\r\n"
+              f"Content-Length: {len(body)}\r\n\r\n".encode())
+    time.sleep(gap)
+    s.sendall(body)
+    got = b""
+    while True:
+        data = s.recv(4096)
+        if not data:
+            break
+        got += data
+    assert got.startswith(b"HTTP/1.0 404")
+    assert s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0   # no reset arrived (Linux reads past one)

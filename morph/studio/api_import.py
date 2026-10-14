@@ -199,6 +199,7 @@ def upload(req, sid):
         return _err(413, f"That file is {length / (1 << 20):.0f} MB; the limit is {LIMITS['upload_file'] >> 20} MB.")
     if _busy.get(sid):
         return _err(409, "This import is busy (downloading, detecting or building); start a new import to add files.")
+    req.handler._read = True
     out = s.add_file(rel, req.handler.rfile, length)
     st = s.state()
     return 200, {"ok": True, **out, "files": len(st["files"]), "bytes": st["bytes"]}

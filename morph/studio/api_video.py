@@ -300,6 +300,7 @@ def _chunks(req, n: int):
     if callable(stream) and getattr(req, "length", None) == n:
         yield from stream(CHUNK)
         return
+    req.handler._read = True
     rfile, left = req.handler.rfile, n
     while left > 0:
         chunk = rfile.read(min(CHUNK, left))

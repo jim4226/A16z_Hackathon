@@ -489,6 +489,7 @@ def _join_body(req) -> tuple:
         n = -1
     if n < 0 or n > MAX_FORM:
         raise auth.AuthError(413, "That request is too large.")
+    h._read = True  # the body is this route's own to read: nothing is drained after it
     raw = h.rfile.read(n) if n else b""
     ctype = (h.headers.get("Content-Type") or "").split(";")[0].strip().lower()
     if ctype == "application/x-www-form-urlencoded":
