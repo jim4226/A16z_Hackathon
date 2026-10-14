@@ -420,3 +420,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   are generated and not bench-tested.
 - The assembly manual no longer asks you to fit an "Upper arm logo" that has no print file and isn't in the BOM: the
   logo inlay is decoration in the 3D view only, and the manual's parts tables list exactly the parts with make files.
+- Production cost no longer reads as a per-unit price when it is mostly molds. At quantity 1 the BOM tab said
+  "Production $77,742"; it now says $4,771 per unit + $72,971 tooling, once, and the Manufacturing cards and the
+  inspector say how much of the unit cost is tooling spread over how many units.

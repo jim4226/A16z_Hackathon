@@ -1468,4 +1468,12 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   Every bought fastener and standoff in the BOM is in a step (the M3x6 brass standoffs in the Electronics bay step's
   parts table). The first pick-and-place test names the project's object ("a stand-in for the strawberry (or a 30 mm
   ball) ... then repeat with a real strawberry"); only an egg project uses a hard-boiled egg first.
+- **Mold tooling is shown apart from the unit cost (ENG-14).** The BOM tab's per-config panel is "Per unit at qty N":
+  each config's parts + purchased cost per unit at the build quantity (`manufacturing.configs[k].parts_cost +
+  purchased_cost`), with "+ $X tooling, once" under a config that needs molds; the unit-cost stat says "incl. $X tooling
+  over N units" when the current config has tooling. The Manufacturing tab's config cards show the same per-unit cost,
+  "+ tooling $X once" and "$Y each at qty N with tooling" (`unit_cost`, which adds tooling / quantity). The inspector's
+  Unit cost row reads "Unit cost (incl. $X tooling over N units)" when `summary.tooling_cost` is set. The data are
+  unchanged: `bom.totals.per_config` and `configs[k].unit_cost` still include tooling / quantity. The egg-picker in
+  production at quantity 1: $4,771 per unit + $72,971 tooling ($77,742 each with tooling).
 

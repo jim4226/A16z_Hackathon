@@ -23,6 +23,12 @@ SUMMARY = {"dof": 5, "reach_mm": 475.2, "payload_g": 60.0, "actuators": "sts3215
            "unit_cost": 302.0, "feasible": True, "issues": []}
 
 
+def tab(pg, name):
+    """Open a tab the way a click does (a loaded test machine can keep Playwright waiting for the header to settle)."""
+    pg.wait_for_selector(f'#tabs .tab[data-tab="{name}"]', state="visible", timeout=60000)
+    pg.evaluate("n => document.querySelector(`#tabs .tab[data-tab='${n}']`).click()", name)
+
+
 def make_project(home, name, results):
     root = home / name
     (root / "r001").mkdir(parents=True)
@@ -111,9 +117,47 @@ def test_the_studio_says_generated_files_are_not_bench_validated(inspect, tmp_pa
     pg.reload(wait_until="domcontentloaded")          # the page fetched the firmware before the file was there
     pg.wait_for_selector("#insp .mt-table", timeout=60000)
     assert "not bench-validated" in pg.get_attribute("#tabsInfo .xport", "title")
-    pg.click('#tabs .tab[data-tab="elec"]')
+    tab(pg, "elec")
     pg.click('.subtabs button[data-p="fw"]')
     pg.wait_for_selector(".code .fw-note", timeout=20000)
     note = pg.inner_text(".code .fw-note")
     assert "not bench-tested" in note and "compiled" in note, note
     assert "void loop" in pg.inner_text(".code")
+
+
+def _cfg(parts, tooling, nq=1):
+    return {"unit_cost": round(parts + 209.94 + tooling / nq, 2), "tooling_cost": tooling, "parts_cost": parts,
+            "purchased_cost": 209.94, "setup_cost": 0.0, "lead_days": 30 if tooling else 7, "summary": "", "curve": []}
+
+
+def test_production_cost_shows_mold_tooling_apart(inspect):
+    # production at quantity 1 read "$77,742" per unit: $72,971 of it is the molds, paid once
+    configs = {"prototype": _cfg(94.87, 0.0), "pilot": _cfg(330.61, 0.0), "production": _cfg(4561.15, 72971.29)}
+    rows = [{"item": "Base shell", "category": "fabricated", "qty": 1, "make_or_buy": "make", "vendors": [],
+             "selected": {"vendor": "protolabs", "unit_price": 4561.15}, "ext_price": 4561.15},
+            {"item": "Injection-mold tooling (9 tools, $72,971 amortized over 1 units)", "category": "fabricated", "qty": 1,
+             "make_or_buy": "make", "vendors": [], "selected": None, "ext_price": 72971.29},
+            {"item": "STS3215 servo", "category": "actuator", "qty": 1, "make_or_buy": "buy", "vendors": [],
+             "selected": {"vendor": "feetech", "unit_price": 209.94}, "ext_price": 209.94}]
+    res = {"summary": {**SUMMARY, "unit_cost": 77742.38, "tooling_cost": 72971.29, "build_config": "production"},
+           "manufacturing": {"config": "production", "quantity": 1, "configs": configs, "parts": [],
+                             "totals": {"tooling_cost": 72971.29, "parts_cost": 4561.15, "purchased_cost": 209.94,
+                                        "unit_cost": 77742.38, "lead_days": 30}},
+           "bom": {"rows": rows, "totals": {"buy": 209.94, "make": 77532.44, "total": 77742.38, "tooling": 72971.29,
+                                            "per_config": {k: c["unit_cost"] for k, c in configs.items()}, "quantity": 1,
+                                            "config": "production"}}}
+    pg = inspect(res)
+    rows_ = dict(pg.evaluate("[...document.querySelectorAll('#insp .mt-table tr')].map(r => [...r.cells].map(c => c.innerText))"))
+    assert "Unit cost (incl. $72,971 tooling over 1 unit)" in rows_, list(rows_)
+    tab(pg, "bom")
+    pg.wait_for_selector(".pcfg .row", timeout=20000)
+    pcfg = " ".join(pg.inner_text(".pcfg").split())
+    assert "Per unit at qty 1" in pcfg and "Production $4,771" in pcfg and "+ $72,971 tooling, once" in pcfg, pcfg
+    assert "$77,742" not in pcfg
+    assert "incl. $72,971 tooling over 1 unit" in pg.inner_text(".bm .stats .stat")
+    tab(pg, "mfg")
+    pg.wait_for_selector('.ccard[data-v="production"]', timeout=20000)
+    card = " ".join(pg.inner_text('.ccard[data-v="production"]').split())
+    assert "$4,771/ unit" in card.replace(" / unit", "/ unit") and "+ tooling $72,971 once" in card, card
+    assert "$77,742 each at qty 1 with tooling" in card, card
+    assert "tooling $0" in " ".join(pg.inner_text('.ccard[data-v="prototype"]').split())

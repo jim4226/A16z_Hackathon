@@ -723,7 +723,9 @@ function renderInspector(cur, prev) {
       : unit === '$' ? money(v) : fmt(v, unit);
     // say where each payload was measured: the sweep's top-down pose, or stretched straight out
     const at = { max_payload_g: s.payload_test_reach_mm, stretch_payload_g: s.stretch_reach_mm }[k];
+    const nq = +(d['build.quantity'] ?? 1) || 1;   // mold tooling is paid once: say how much of the unit cost it is
     const lab = k === 'min_torque_margin' && s.torque_margin_basis ? `${label} (at ${s.torque_margin_basis})`
+      : k === 'unit_cost' && s.tooling_cost ? `${label} (incl. ${money(s.tooling_cost, false)} tooling over ${nq.toLocaleString('en-US')} unit${nq === 1 ? '' : 's'})`
       : at ? `${label} at ${Math.round(at)} mm` : label;
     rows.push(`<tr class="${fl.trim()}"><td>${esc(lab)}</td><td class="v">${val}${delta}</td></tr>`);
   }

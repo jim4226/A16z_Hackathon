@@ -71,6 +71,9 @@ export function kmoney(v) {
   if (v == null || isNaN(v)) return '–';
   return Math.abs(v) >= 1000 ? `$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : money(v, false);
 }
+// a build config's cost per unit at the build quantity with mold tooling left out (manufacturing.configs[k]: parts +
+// purchased; its unit_cost adds tooling / quantity, which at quantity 1 is the whole mold)
+const unitCost = (c) => (c && c.parts_cost != null && c.purchased_cost != null ? Math.round((c.parts_cost + c.purchased_cost) * 100) / 100 : null);
 export function money(v, cents) {
   if (v == null || isNaN(v)) return '–';
   const big = Math.abs(v) >= 1000;
@@ -1268,13 +1271,16 @@ export class MfgPanel {
     nodata(this.root.querySelector('.tablewrap'), !m, emptyHTML('factory', 'No manufacturing plan yet', 'Per-part processes, vendors, costs, DFM checks and machine files appear here once the manufacturing stage runs.'));
     if (!m) { this.root.querySelector('.cfgs').innerHTML = ''; this.root.querySelector('.tscroll').innerHTML = ''; this.root.querySelector('.totbar').innerHTML = ''; return; }
     const cfgs = m.configs || {}, pc = prev?.manufacturing?.configs || {};
+    const qty = m.quantity ?? d['build.quantity'] ?? 1;
     const regen = changedNode(cur, 'manufacturing');
     this.root.querySelector('.cfgs').innerHTML = ['prototype', 'pilot', 'production'].filter((k) => cfgs[k]).map((k) => {
       const c = cfgs[k], on = m.config === k;
-      const dl = pc[k] && pc[k].unit_cost !== c.unit_cost ? c.unit_cost - pc[k].unit_cost : null;
+      const u = unitCost(c) ?? c.unit_cost, pu = pc[k] ? unitCost(pc[k]) ?? pc[k].unit_cost : null;
+      const dl = pu != null && pu !== u ? u - pu : null;
       return `<div class="ccard${on ? ' on' : ''}${on && regen ? ' fade-in' : ''}" data-v="${k}"><div class="t">${I(k === 'prototype' ? 'box' : k === 'pilot' ? 'wrench' : 'factory', 'sm')}${esc(pretty(k))}${on ? '<span class="tag acc">current</span>' : ''}</div>
-        <div class="big">${money(c.unit_cost)}<small>/ unit</small>${dl ? `<span class="delta ${dl < 0 ? 'up' : 'down'}" style="font-size:11px;vertical-align:middle">${dl < 0 ? '▼' : '▲'} ${money(Math.abs(dl))}</span>` : ''}</div>
-        <div class="row"><span>tooling <b>${money(c.tooling_cost, false)}</b></span><span>lead <b>${c.lead_days ?? '–'} d</b></span></div><div class="d">${esc(c.summary || '')}</div></div>`;
+        <div class="big">${money(u)}<small>/ unit</small>${dl ? `<span class="delta ${dl < 0 ? 'up' : 'down'}" style="font-size:11px;vertical-align:middle">${dl < 0 ? '▼' : '▲'} ${money(Math.abs(dl))}</span>` : ''}</div>
+        <div class="row"><span>${c.tooling_cost ? `+ tooling <b>${money(c.tooling_cost, false)}</b> once` : `tooling <b>${money(0, false)}</b>`}</span><span>lead <b>${c.lead_days ?? '–'} d</b></span></div>
+        ${c.tooling_cost ? `<div class="row allin"><span>${money(c.unit_cost, false)} each at qty ${qty.toLocaleString('en-US')} with tooling</span></div>` : ''}<div class="d">${esc(c.summary || '')}</div></div>`;
     }).join('');
     this.root.querySelectorAll('.ccard').forEach((c) => (c.onclick = () => { if (!c.classList.contains('on')) { this.ctx.postParams({ 'build.config': c.dataset.v }); } }));
     const parts = m.parts || [];
@@ -1476,19 +1482,23 @@ export class BomPanel {
     const buy = t.buy ?? rows.filter((r) => r.make_or_buy === 'buy').reduce((a, r) => a + r.ext_price, 0);
     const make = t.make ?? rows.filter((r) => r.make_or_buy === 'make').reduce((a, r) => a + r.ext_price, 0);
     const pcs = rows.reduce((a, r) => a + (r.qty || 0), 0);
-    const per = t.per_config || {};
+    // per unit at the build quantity with mold tooling apart (it is paid once: $72,971 over one unit is not a unit cost)
+    const cfgs = cur.manufacturing?.configs || {};
+    const per = Object.fromEntries(Object.entries(t.per_config || {}).map(([k, v]) => [k, unitCost(cfgs[k]) ?? v]));
+    const tool = (k) => (cfgs[k] ? cfgs[k].tooling_cost || 0 : 0);
     const curCfg = cur.manufacturing?.config || cur.design?.['build.config'];
     const pmax = Math.max(...Object.values(per), 1);
+    const nq = t.quantity ?? cur.design?.['build.quantity'] ?? 1;
     const dTot = pt.total != null && pt.total !== total ? total - pt.total : null;
     const vendors = new Set(rows.flatMap((r) => (r.vendors || []).map((v) => v.vendor)));
     this.root.querySelector('.stats').innerHTML = `
-      <div class="stat"><div class="l">${I('cart', 'sm')}Unit cost · ${esc(pretty(curCfg || ''))}</div><div class="v">${money(total)}</div><div class="s">${dTot ? `<span class="delta ${dTot < 0 ? 'up' : 'down'}" style="margin:0">${dTot < 0 ? '▼' : '▲'} ${money(Math.abs(dTot))}</span> vs ${esc(prev.rev)}` : `${rows.length} line items · ${pcs} pieces${nMat ? ` · ${nMat} bulk materials` : ''}`}</div></div>
+      <div class="stat"><div class="l">${I('cart', 'sm')}Unit cost · ${esc(pretty(curCfg || ''))}</div><div class="v">${money(total)}</div><div class="s">${dTot ? `<span class="delta ${dTot < 0 ? 'up' : 'down'}" style="margin:0">${dTot < 0 ? '▼' : '▲'} ${money(Math.abs(dTot))}</span> vs ${esc(prev.rev)}` : t.tooling ? `incl. ${money(t.tooling, false)} tooling over ${nq.toLocaleString('en-US')} unit${nq === 1 ? '' : 's'}` : `${rows.length} line items · ${pcs} pieces${nMat ? ` · ${nMat} bulk materials` : ''}`}</div></div>
       <div class="stat"><div class="l"><span class="mob buy">buy</span>Purchased</div><div class="v">${money(buy)}</div><div class="s">${rows.filter((r) => r.make_or_buy === 'buy').length} items · ${vendors.size} vendors</div></div>
       <div class="stat"><div class="l"><span class="mob make">make</span>Built in-house</div><div class="v">${money(make)}</div><div class="s">${rows.filter((r) => r.make_or_buy === 'make').length} items · printed / fabricated</div></div>
       <div class="stat"><div class="l">${I('target', 'sm')}Buy vs build</div><div class="v">${total ? Math.round(buy / total * 100) : 0}<small style="font-size:13px;color:var(--muted)">% bought</small></div>
         <div class="stack"><b style="width:${total ? buy / total * 100 : 0}%;background:var(--accent)"></b><b style="width:${total ? make / total * 100 : 0}%;background:var(--cyan)"></b></div></div>
-      <div class="stat pcfg"><div class="l" style="margin-bottom:4px">${I('factory', 'sm')}Per build config</div>
-        ${['prototype', 'pilot', 'production'].filter((k) => per[k] != null).map((k) => `<div class="row"><span class="n${k === curCfg ? ' on' : ''}">${esc(pretty(k))}</span><span class="meter"><b class="${k === curCfg ? 'acc' : ''}" style="width:${per[k] / pmax * 100}%;${k === curCfg ? '' : 'background:var(--bg5);filter:brightness(1.6)'}"></b></span><span class="p">${money(per[k], false)}</span></div>`).join('')}</div>`;
+      <div class="stat pcfg"><div class="l" style="margin-bottom:4px">${I('factory', 'sm')}Per unit at qty ${nq.toLocaleString('en-US')}</div>
+        ${['prototype', 'pilot', 'production'].filter((k) => per[k] != null).map((k) => `<div class="row"><span class="n${k === curCfg ? ' on' : ''}">${esc(pretty(k))}</span><span class="meter"><b class="${k === curCfg ? 'acc' : ''}" style="width:${per[k] / pmax * 100}%;${k === curCfg ? '' : 'background:var(--bg5);filter:brightness(1.6)'}"></b></span><span class="p">${money(per[k], false)}</span></div>${tool(k) ? `<div class="tl">+ ${money(tool(k), false)} tooling, once</div>` : ''}`).join('')}</div>`;
     this.renderFilters();
     if (this.view === 'darwin') this.renderDarwin(); else this.renderTable(changedNode(cur, 'bom'));
   }
