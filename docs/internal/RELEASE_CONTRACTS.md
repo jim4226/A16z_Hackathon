@@ -1445,4 +1445,9 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   height and the FDM cost model use that pose. When no pose fits, the DFM check says "<x>x<y>x<z> mm (its best way up)
   exceeds the ... build volume: split the part". The egg-picker's base shell prints "+y down", 244 x 38 x 144 mm (it
   stood 244 mm tall).
+- **A study's model check compares what moves (ENG-8).** `robust.prepare` compares the rebuilt robot.xml with the
+  revision's after `_norm_xml`: the option time step and the inertial, geom and site elements of every world body with
+  no joint (the base welded to the table), with the mesh assets only they used, are left out. A controller or
+  `electronics.config` revision reuses its parent's simulation (`GRAPH`); its rebuilt base differs in mass and shapes
+  only, so `matches_revision` stays true. Any change to a moving body (a servo's torque, a link) still makes it false.
 

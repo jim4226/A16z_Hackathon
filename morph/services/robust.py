@@ -875,13 +875,37 @@ def studyable(p, rev: str) -> dict:
 
 
 def _norm_xml(xml: str) -> str:
-    return re.sub(r'timestep="[^"]*"', 'timestep=""', xml)
+    """What of a robot.xml the motion depends on: the time step is left out (a study picks its own), and so is the base
+    welded to the table (a body on the world with no joint): its mass and shapes change with the controller, supply
+    and boards inside it, which move nothing, and the pipeline reuses the simulation across those edits."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return re.sub(r'timestep="[^"]*"', 'timestep=""', xml)
+    for opt in root.iter("option"):
+        opt.attrib.pop("timestep", None)
+    world, meshes = root.find("worldbody"), set()
+    for body in (world.findall("body") if world is not None else []):
+        if body.find("joint") is not None or body.find("freejoint") is not None:
+            continue
+        for el in list(body):
+            if el.tag in ("inertial", "geom", "site"):
+                meshes.add(el.get("mesh"))
+                body.remove(el)
+    asset = root.find("asset")
+    for m in (list(asset) if asset is not None else []):
+        if m.tag == "mesh" and m.get("name") in meshes:
+            asset.remove(m)
+    return ET.tostring(root, encoding="unicode")
 
 
 def prepare(root: str, rev: str, timestep: float = 0.001) -> dict:
     """The revision's robot and its nominal pick-and-place plan, packed for the workers (pickled: it only ever travels
     between this study's own processes, never through a file). Checks the rebuilt model against the revision's
-    sim/robot.xml: `matches_revision` False means the revision was simulated with other Morph code."""
+    sim/robot.xml, the moving robot only (_norm_xml): `matches_revision` False means the revision was simulated with
+    other Morph code."""
     from ..robot import simulate as S
 
     t0 = time.time()

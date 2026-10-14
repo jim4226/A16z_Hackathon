@@ -95,7 +95,8 @@ never the "One nominal run" note.
 - *Its revision was replaced*: Reset demo (or a deleted revision) reused the name for another design. The study is not
   of what that revision is now; it can't be carried on or replayed.
 - *Simulated with other Morph code*: the robot rebuilt for the study differs from the one the revision was simulated
-  with.
+  with. Only what moves counts: a revision that changed the controller or the electronics build reuses its parent's
+  simulation, and the boards in the base (welded to the table) change nothing the study measures, so it isn't flagged.
 
 ## Model-sensitive results
 

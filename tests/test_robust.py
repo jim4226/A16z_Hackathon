@@ -377,6 +377,31 @@ def test_a_replay_in_a_study_process_matches_one_in_this_process(project, prepar
         robust.replay(project, doc["id"], 1, cache={}, process=True, nice=0, timeout=0.05)
 
 
+@pytest.mark.parametrize("change", [{"electronics.mcu": "rp2040_pico"}, {"electronics.config": "custom_pcb"}])
+def test_an_electronics_only_revision_matches_the_simulation_it_reuses(tmp_path_factory, tmp_path, monkeypatch, change):
+    # a controller or custom-PCB edit reuses the simulation (the boards sit in the base, welded to the table): the
+    # rebuilt model differs only in the base's mass and shapes, so a study of it isn't "simulated with other Morph code"
+    import shutil
+
+    from morph.robot import catalog
+
+    root = egg_project(tmp_path_factory, tmp_path / "home", name="pcb-check")
+    r2 = os.path.join(root, "r002")
+    shutil.copytree(os.path.join(root, "r001"), r2)
+    with open(os.path.join(r2, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(projects.template("egg-picker").with_changes(change).dumps())
+    with open(os.path.join(r2, "results.json"), encoding="utf-8") as fh:
+        res = json.load(fh)
+    with open(os.path.join(r2, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump({**res, "rev": "r002", "parent": "r001", "provenance": {"sim": "reused from r001"},
+                   "stage_status": {"sim": "reused"}}, fh)
+    assert robust.prepare(root, "r002", 0.002)["matches_revision"] is True
+    # a change to what moves (here every servo 10 % weaker) is still told apart
+    torque = catalog.torque_at
+    monkeypatch.setattr(catalog, "torque_at", lambda key, volts: 0.9 * torque(key, volts))
+    assert robust.prepare(root, "r002", 0.002)["matches_revision"] is False
+
+
 def test_a_study_of_a_revision_that_now_holds_another_design_says_so(project, prepared):
     doc = robust.run_study(project, runs=1, workers=1, timestep=0.002, checks=False, seed=17, nice=0, cache=CACHE)
     assert robust.load(project, doc["id"])["rev_changed"] is False

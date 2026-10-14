@@ -407,3 +407,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   and its manufacturing check, which compared sorted dimensions, said it fit. The print orientation is now the best one
   that fits the process's build volume (turned 90 degrees on the bed when that is what fits), and a part that fits no way
   up is told to split, with its size as it would stand.
+- A robustness study of a revision that only changed the controller or the electronics build no longer says it was
+  "simulated with other Morph code". Such a revision reuses its parent's simulation, and the study compared the whole
+  rebuilt model, including the boards' mass in the base welded to the table; it now compares what moves.
