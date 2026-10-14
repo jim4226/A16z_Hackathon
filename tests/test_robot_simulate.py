@@ -186,6 +186,11 @@ def test_payload_sweep(egg_run):
     assert any(f["phase"] == "recover" for f in doc["frames"])
     pct = [c["pct"][m["limited_by"]] for c in m["curve"] if c.get("ok")]
     assert pct[-1] > pct[0]
+    # the sweep is measured top-down well inside the reach; stretched straight out (a longer lever on every joint) the
+    # arm holds less: what "at full reach" means
+    reach = egg_run["asm"].meta["sizing"]["reach_mm"]
+    assert m["test_reach_mm"] < 0.6 * reach and m["stretch_reach_mm"] >= 0.97 * reach
+    assert 0 < m["stretch_payload_g"] < 0.6 * m["max_payload_g"] and m["stretch_limited_by"] in arm_joints
 
 
 def test_workspace(egg_run):

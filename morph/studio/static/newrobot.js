@@ -545,12 +545,13 @@ function progress() {
 
 function doneView() {
   const s = st.done?.summary || {};
-  const m = (k, v) => `<div class="nr-metric"><span>${esc(k)}</span><b class="num">${v}</b></div>`;
+  const m = (k, v, sub = '') => `<div class="nr-metric"><span>${esc(k)}</span><b class="num">${v}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
   const money = (v) => (v == null ? '–' : `$${Math.round(v).toLocaleString('en-US')}`);
   return `<div class="nr-done-h">${s.feasible === false ? `<span class="tag warn">${I('alert', 'sm')}${(s.issues || []).length} issue(s)</span>`
       : `<span class="tag good">${I('check', 'sm')}Feasible</span>`}<span class="muted">${esc(st.project || st.name)} · ${esc(st.done?.rev || 'r001')}</span></div>
     <div class="nr-metrics">${m('Parts cost (est.)', money(s.unit_cost))}${m('Pick and place', s.pick_place_success == null ? '–' : s.pick_place_success ? 'succeeds' : 'fails')}
-      ${m('Cycle time', s.cycle_time_s ? `${(+s.cycle_time_s).toFixed(1)} s` : '–')}${m('Payload at full reach', s.max_payload_g ? `${Math.round(s.max_payload_g)} g` : '–')}</div>
+      ${m('Cycle time', s.cycle_time_s ? `${(+s.cycle_time_s).toFixed(1)} s` : '–')}${m('Max payload', s.max_payload_g ? `${Math.round(s.max_payload_g)} g` : '–',
+        s.payload_test_reach_mm ? `top-down at ${Math.round(s.payload_test_reach_mm)} mm, servos at stall` : '')}</div>
     ${(s.issues || []).length ? `<ul class="nr-issues">${s.issues.slice(0, 4).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     ${doneAssumptions()}
     ${timeline(['pipeline', 'sourcing', 'memory'])}`;

@@ -134,6 +134,7 @@
 .nr-metric { padding: 10px 12px; border-radius: 9px; background: var(--bg2); border: 1px solid var(--line2); }
 .nr-metric span { display: block; color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; font-weight: 600; }
 .nr-metric b { display: block; margin-top: 3px; font-size: 16px; font-weight: 650; }
+.nr-metric small { display: block; margin-top: 2px; color: var(--dim); font-size: 10.5px; line-height: 1.3; }
 .nr-nearest { margin-top: 12px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--accent-line); background: var(--accent-bg); }
 .nr-nearest p { margin: 0 0 6px; font-size: 13.5px; line-height: 1.5; color: var(--ink); }
 .nr-b > .nr-msg.user { width: fit-content; margin: 0 0 10px auto; }

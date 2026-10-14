@@ -594,6 +594,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px;
 .mt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .mt-table td { padding: 6px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .mt-table td:first-child { color: var(--ink2); }
+.mt-note { margin-top: 7px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .mt-table td.v { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink); }
 .delta { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 0 5px; border-radius: 4px; font: 10.5px var(--mono); }
 .delta.up { color: var(--good); background: var(--good-bg); } .delta.down { color: var(--bad); background: var(--bad-bg); } .delta.neutral { color: var(--hot); background: var(--hot-bg); }

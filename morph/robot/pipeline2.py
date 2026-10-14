@@ -514,7 +514,12 @@ def summarize(r: dict) -> dict:
         "grasp_hold_force_n": (g.get("sim") or {}).get("min_hold_force_n"),
         "grip_target_n": (g.get("force") or {}).get("target_force_n"),
         "pick_place_success": pp.get("success"), "cycle_time_s": pp.get("cycle_time_s"),
-        "max_payload_g": pay.get("max_payload_g"), "workspace_reach_mm": ws.get("reach_mm"),
+        # the payload sweep's measured maximum is top-down at payload_test_reach_mm from the base, not at full reach;
+        # stretch_payload_g is the static capacity stretched straight out (both with a servo at stall)
+        "max_payload_g": pay.get("max_payload_g"), "payload_test_reach_mm": pay.get("test_reach_mm"),
+        "stretch_payload_g": pay.get("stretch_payload_g"), "stretch_reach_mm": pay.get("stretch_reach_mm"),
+        "workspace_reach_mm": ws.get("reach_mm"),
+        "top_down_reach_mm": (ws.get("top_down_reach_mm") or [None, None])[1],
         "max_torque_pct": max((pp.get("max_torque_pct") or {}).values(), default=None),
         "electronics_config": el.get("config"), "bus": el.get("bus"),
         "pcb": bool(el.get("board")), "harness_wires": len(el.get("harness", []) or []),

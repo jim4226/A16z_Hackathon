@@ -34,8 +34,9 @@ const DEFAULT_NODES = [['sizing', 'Sizing'], ['gripper', 'Gripper + grasp'], ['e
   ['sim', 'Simulation'], ['wiring', 'Schematic · PCB · FW'], ['manufacturing', 'Manufacturing'], ['bom', 'BOM + sourcing'], ['manual', 'Assembly manual']];
 const METRICS = [
   ['Unit cost', 'unit_cost', '$', 'lo'], ['Pick & place', 'pick_place_success', '', 'hi'], ['Cycle time', 'cycle_time_s', 's', 'lo'],
-  ['Payload at full reach', 'max_payload_g', 'g', 'hi'], ['Peak joint torque', 'max_torque_pct', '%', 'lo'],
-  ['Min torque margin', 'min_torque_margin', '×', 'hi'], ['Top-down reach', 'workspace_reach_mm', 'mm', 'hi'],
+  ['Max payload, top-down', 'max_payload_g', 'g', 'hi'], ['Payload stretched out', 'stretch_payload_g', 'g', 'hi'],
+  ['Peak joint torque', 'max_torque_pct', '%', 'lo'], ['Min torque margin', 'min_torque_margin', '×', 'hi'],
+  ['Top-down reach', 'top_down_reach_mm', 'mm', 'hi'], ['Reach, any pose', 'workspace_reach_mm', 'mm', 'hi'],
   ['Robot mass', 'robot_mass_kg', 'kg', 'lo'], ['Grip force target', 'grip_target_n', 'N', null], ['Harness wires', 'harness_wires', '', 'lo'],
   ['Fab lead time', 'fab_lead_days', 'd', 'lo'], ['Tooling', 'tooling_cost', '$', 'lo'], ['Assembly time', 'assembly_time_min', 'min', 'lo'],
   ['Part count', 'parts', '', null],
@@ -688,7 +689,7 @@ function renderInspector(cur, prev) {
   const nAct = (s.dof || +d['arm.dof'] || 0) + 1;
   const facts = [
     ['DOF', s.dof ?? d['arm.dof'], '', 'dof'], ['Reach', s.reach_mm ?? d['arm.reach_mm'], 'mm', 'reach_mm'],
-    ['Payload', s.payload_g ?? d['object.mass_g'], 'g', 'payload_g'],
+    ['Object mass', s.payload_g ?? d['object.mass_g'], 'g', 'payload_g'],
     ['Actuators', acts.length === 1 ? `${acts[0].toUpperCase()} <small>×${nAct}</small>` : acts.length ? `${acts.length} types <small>×${nAct}</small>` : '–', null, 'actuators'],
     ['Mass', s.robot_mass_kg != null ? (+s.robot_mass_kg).toFixed(2) : '–', 'kg', 'robot_mass_kg'],
     ['Unit cost', s.unit_cost != null ? money(s.unit_cost) : '–', null, 'unit_cost'],
@@ -713,7 +714,10 @@ function renderInspector(cur, prev) {
     }
     const val = typeof v === 'boolean' ? (v ? '<span class="tag good">pass</span>' : '<span class="tag bad">fail</span>')
       : unit === '$' ? money(v) : fmt(v, unit);
-    const lab = k === 'min_torque_margin' && s.torque_margin_basis ? `${label} (at ${s.torque_margin_basis})` : label;
+    // say where each payload was measured: the sweep's top-down pose, or stretched straight out
+    const at = { max_payload_g: s.payload_test_reach_mm, stretch_payload_g: s.stretch_reach_mm }[k];
+    const lab = k === 'min_torque_margin' && s.torque_margin_basis ? `${label} (at ${s.torque_margin_basis})`
+      : at ? `${label} at ${Math.round(at)} mm` : label;
     rows.push(`<tr class="${fl.trim()}"><td>${esc(lab)}</td><td class="v">${val}${delta}</td></tr>`);
   }
   const force = cur.gripper?.force;
@@ -729,7 +733,8 @@ function renderInspector(cur, prev) {
     <div class="isec"><div class="sec-t">What changed${prev ? `<span class="r">vs ${esc(prev.rev)}</span>` : ''}</div>
       ${changes.length ? `<div class="chg">${changes.map(([k, [a, b]]) => `<div class="c"><div class="k">${esc(k)}</div><div class="vv"><span class="o">${esc(pretty(a, true))}</span>${I('arrow', 'sm')}<span class="n">${esc(pretty(b, true))}</span></div></div>`).join('')}</div>`
         : `<div class="muted" style="font-size:12px">${cur.parent ? 'No parameter changes.' : 'First revision: everything was generated from the request.'}</div>`}</div>
-    <div class="isec"><div class="sec-t">Metrics${prev ? `<span class="r">Δ vs ${esc(prev.rev)}</span>` : ''}</div><table class="mt-table">${rows.join('')}</table></div>
+    <div class="isec"><div class="sec-t">Metrics${prev ? `<span class="r">Δ vs ${esc(prev.rev)}</span>` : ''}</div><table class="mt-table">${rows.join('')}</table>
+      ${s.max_payload_g != null || s.stretch_payload_g != null ? '<div class="mt-note">Payloads are the most the arm holds before a servo stalls, at that distance from the base axis: not a working load. Sizing keeps a torque margin over the object for that.</div>' : ''}</div>
     ${force?.window_n && force.window_n[0] != null && force.window_n[1] != null ? `<div class="isec"><div class="sec-t">Grip force window<span class="r">per finger</span></div><div class="fw">${forceWindowSVG(force)}</div>${keewanoLine(cur)}</div>` : ''}
     <div class="isec"><div class="sec-t">Issues &amp; warnings</div>
       ${errs.map(([n, e]) => `<div class="issue bad">${I('x', 'sm')}<span><b>${esc(n)}</b>: ${esc(e)}</span></div>`).join('')}

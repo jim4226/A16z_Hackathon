@@ -390,3 +390,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   pills", "for me") puts people next to it, so it gets an emergency stop. Pills get a pill-bottle robot with a note
   about pills, not one about screws; every width note gives the gripper's real minimum for the shape, and a water
   bottle is "too heavy", not "outside 26 to 75 mm".
+- The inspector's "Payload at full reach" was measured top-down at less than half the reach (216 of 475 mm on the
+  egg-picker) and overstated what the arm holds stretched out by 2.4 to 3x; "Top-down reach" showed the any-pose
+  maximum. They now read "Max payload, top-down at 216 mm" (1,729 g), "Payload stretched out at 476 mm" (720 g, a new
+  static check at full stretch), "Top-down reach" (280 mm) and "Reach, any pose" (475 mm), with a note that payloads are
+  what holds before a servo stalls. Quick facts' "Payload" was the object's mass and now says so, and New robot's done
+  card says where its payload was measured.

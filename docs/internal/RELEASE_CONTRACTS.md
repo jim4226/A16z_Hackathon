@@ -1413,4 +1413,16 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   hand-over defaults to people next to it and a sorting archetype asked to hand things over gets no camera. Every
   width in a note is `capability.min_width` for the shape (26 mm round, 21.5 mm flat-sided), and a preset outside the
   band says which limit it breaks (`brief.unfit_note`: "too heavy", "too narrow", "too wide").
+- **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
+  at `test_reach_mm` (about 45 % of the egg-picker's reach), so the inspector's "Payload at full reach" overstated the
+  arm 2.4 to 3x. The sweep now also reports the arm stretched straight out (`simulate._stretch_pose`: the tool point at
+  shoulder height, as far along the pick direction as it reaches, position only): `stretch_reach_mm`,
+  `stretch_payload_g` (`_static_capacity` there: what holds with a servo at stall, statically) and
+  `stretch_limited_by`; nothing more is simulated and every other output is bit-identical. The summary adds
+  `payload_test_reach_mm`, `stretch_payload_g`, `stretch_reach_mm` and `top_down_reach_mm` (the top-down band's outer
+  edge; `workspace_reach_mm` stays the any-pose maximum). The inspector labels them "Max payload, top-down at
+  <r> mm", "Payload stretched out at <r> mm", "Top-down reach" and "Reach, any pose", with a note that payloads are at
+  stall, and Quick facts' "Payload" (the object's mass) is "Object mass"; New robot's done card says "Max payload" with
+  where it was measured. The egg-picker: 1,729 g top-down at 216 mm, 720 g stretched out at 476 mm (elbow-limited); the
+  SO-101: 732 g at 252 mm, 216 g at 465 mm (shoulder).
 

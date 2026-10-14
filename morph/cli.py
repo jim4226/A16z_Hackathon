@@ -297,7 +297,8 @@ def _robot_summary(p, rev) -> list:
     res = p.load_results(rev)
     s = res["summary"]
     keys = ["dof", "reach_mm", "actuators", "min_torque_margin", "parts", "robot_mass_kg", "pick_place_success",
-            "cycle_time_s", "max_payload_g", "electronics_config", "pcb", "build_config", "unit_cost", "assembly_steps"]
+            "cycle_time_s", "max_payload_g", "payload_test_reach_mm", "stretch_payload_g", "electronics_config", "pcb",
+            "build_config", "unit_cost", "assembly_steps"]
     print(f"\n{rev}: " + "  ".join(f"{k}={s.get(k)}" for k in keys))
     for i in s.get("issues", []):
         print(f"  x {i}")

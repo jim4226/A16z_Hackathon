@@ -2388,6 +2388,27 @@ def _far_pose(rob, design):
     return q, np.r_[u[:2] * r, z], lo
 
 
+def _stretch_pose(rob, design):
+    """The arm stretched straight out: the tool point at shoulder height, as far out along the pick direction as the
+    arm reaches (position only), where every joint's lever is longest. (q, radius in mm), or (None, 0.0)."""
+    info = rob.info
+    pitch = [n for n in info.arm_joints if n != info.arm_joints[0]]
+    if not pitch:
+        return None, 0.0
+    a = math.atan2(design.task.pick_y_mm, design.task.pick_x_mm)
+    u = np.array([math.cos(a), math.sin(a), 0.0])
+    z = rob.asm.world_transforms({n: 0.0 for n in info.arm_joints})[rob.asm.joint(pitch[0]).child][2, 3]
+    lo, hi, best = 0.0, 1500.0, None
+    for _ in range(16):
+        r = 0.5 * (lo + hi)
+        q, ep, _ = rob.ik_robust(u * r + [0, 0, z], None, seeds=[best] if best is not None else [], iters=200, free=1.0)
+        if ep < 0.5:
+            lo, best = r, q
+        else:
+            hi = r
+    return best, lo
+
+
 def _static_capacity(rob, q):
     """Payload (kg) at the TCP each joint can hold statically at q: (effort - arm gravity torque) / lever."""
     mj, m, d = rob._mj, rob.model, rob.dik
@@ -2410,6 +2431,8 @@ def _payload_sweep(rob: _Robot, design, fast=False):
     info = rob.info
     q_far, p_far, _ = _far_pose(rob, design)
     cap, _ = _static_capacity(rob, q_far)
+    q_str, r_str = _stretch_pose(rob, design)       # statics on the same model: nothing more is simulated
+    cap_str = _static_capacity(rob, q_str)[0] if q_str is not None else None
     mobj = design.object.mass_g / 1000.0
     est = float(np.min(cap)) - mobj
     ramp_T = 3.0 if fast else 5.0
@@ -2499,6 +2522,10 @@ def _payload_sweep(rob: _Robot, design, fast=False):
         "grip_limited_payload_g": round(grip_cap, 0),
         "far_pose_mm": [round(float(v), 1) for v in p_far], "far_radius_mm": round(float(np.linalg.norm(p_far[:2])), 1),
         "test_reach_mm": round(float(np.linalg.norm(p_far[:2])), 1),
+        # stretched straight out (tool point at shoulder height, as far as it reaches): what holds at stall, statically
+        "stretch_reach_mm": round(float(r_str), 1) if cap_str is not None else None,
+        "stretch_payload_g": round(float(np.min(cap_str)) * 1000.0, 0) if cap_str is not None else None,
+        "stretch_limited_by": info.arm_joints[int(np.argmin(cap_str))] if cap_str is not None else None,
         "torque_margin": round(max_payload_g / max(design.object.mass_g, 1e-6), 2),
         "curve": curve, "max_torque_pct": run.stats["max_torque_pct"],
     }
