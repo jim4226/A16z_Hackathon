@@ -75,17 +75,39 @@ cached answer is used and labelled **cached**.
 
 ## Command line
 
-```
-python -m morph.cli source egg-picker          # Darwin shortlist for the latest revision
+Darwin's shortlist for the latest revision, and a Darwin search:
+
+```shell
+python -m morph.cli source egg-picker
 python -m morph.cli darwin "PCB fabrication quote from Gerber files"
+```
+
+SQL on the Keewano events names its columns in double quotes, which each shell passes on its own way. On macOS and
+Linux:
+
+```sh
+python -m morph.cli ask 'SELECT "PadStyle", avg("HoldForceRatioPct") FROM events GROUP BY "PadStyle"'
+```
+
+In Command Prompt:
+
+```cmd
 python -m morph.cli ask "SELECT \"PadStyle\", avg(\"HoldForceRatioPct\") FROM events GROUP BY \"PadStyle\""
 ```
-That quoting works in Windows cmd and in bash (in PowerShell, run it from cmd). The commands read `.env` too.
+
+In PowerShell (`--%` passes the rest of the line on as typed):
+
+```powershell
+python --% -m morph.cli ask "SELECT \"PadStyle\", avg(\"HoldForceRatioPct\") FROM events GROUP BY \"PadStyle\""
+```
+
+The commands read `.env` too.
 
 ## Claude Code: Darwin and Keewano as MCP servers (for a live agent call or a judge's question)
 
 Run in a terminal, not inside a Claude Code session:
-```
+
+```shell
 claude mcp add --scope user --transport http darwin https://mcp.darwin.so/mcp
 claude mcp add --scope user --transport http keewano https://api.keewano.com/mcp --header "k-token: <your KEEWANO_PAT>"
 ```

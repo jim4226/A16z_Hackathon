@@ -24,9 +24,9 @@ keys are optional.
 
 ## 2. Get Morph
 
-**With Git** (updates are one command):
+**With Git** (updates are one command), in a terminal (Command Prompt or PowerShell on Windows):
 
-```bash
+```shell
 git clone https://github.com/jim4226/A16z_Hackathon
 cd A16z_Hackathon
 ```
@@ -37,10 +37,24 @@ Documents (not inside the zip viewer, and not a read-only or cloud-synced folder
 
 ## 3. Start it
 
-- **Windows:** double-click `run_studio.bat`. In a git clone you can run `run_studio.bat --update` in a terminal
-  instead, to switch to the latest release first.
-- **macOS and Linux:** `./run_studio.sh` (or `./run_studio.sh --update`). If you get *permission denied*, run
-  `bash run_studio.sh`.
+- **Windows:** double-click `run_studio.bat`. In a git clone you can run it from Command Prompt or PowerShell
+  instead, to switch to the latest release first:
+
+  ```bat
+  .\run_studio.bat --update
+  ```
+
+- **macOS and Linux:**
+
+  ```sh
+  ./run_studio.sh --update
+  ```
+
+  or `./run_studio.sh` without `--update`. If you get *permission denied*, run `bash run_studio.sh`.
+
+Paste commands from these docs as they are. If one comes with a comment (`#` and words after it, as older versions of
+this guide had), the launchers stop reading options at the `#` and say so: Command Prompt, and zsh on a Mac, would
+otherwise hand the comment's words to Morph as options.
 
 The first launch:
 
@@ -65,15 +79,31 @@ folder and take effect at once. What each key adds, and what it sends where: [RE
 
 ## Updating
 
-- **Git clone:** `run_studio.bat --update` or `./run_studio.sh --update` fetches the release tags from GitHub,
-  switches to the newest release (a `v` tag such as `v0.2.0b1`) and starts it. It won't switch if you changed files
-  that belong to Morph (`git status` lists them). Your `projects` folder, `.env` and `.venv` stay as they are. The
+- **Git clone:** `.\run_studio.bat --update` (Windows) or `./run_studio.sh --update` fetches the release tags from
+  GitHub, switches to the newest release (a `v` tag such as `v0.2.0b1`) and starts it. It won't switch if you changed
+  files that belong to Morph (`git status` lists them). Your `projects` folder, `.env` and `.venv` stay as they are. The
   launcher reinstalls packages only if the release changed them, and both demo robots are rebuilt once if the
   pipeline changed.
 - **Zip download:** download the new release into a new folder, copy your `projects` folder and `.env` across, and
   start it there.
-- Morph never updates itself when it starts. To follow the newest unreleased code instead (for development):
-  `git checkout main` and `git pull`.
+- **On a branch, or before the first release:** until there is a `v` tag, `--update` says there is no release yet and
+  starts the version you have. To get the newest code of the branch your clone is on (a teammate's branch, or `main`
+  after `git checkout main`), run `git pull`, then start the launcher as usual; it reinstalls packages only if
+  `requirements.txt` or `constraints.txt` changed.
+- Morph never updates itself when it starts.
+
+### A clone made before v0.2
+
+Launchers before v0.2 ran `git pull` every time they started. The first start after this version reaches the branch
+such a clone follows (`main`, once this release is merged) pulls it one last time:
+
+- **Windows:** the pull replaces `run_studio.bat` while it runs, and the new launcher takes over where the old one
+  stopped, with the options you gave it. It installs the tested packages (a few minutes, once) and starts the Studio.
+- **macOS and Linux:** the old launcher finishes that start itself, as it was (bash keeps running the file it opened);
+  the next start uses the new one, which installs the tested package versions once.
+
+From then on the launcher never pulls: use `--update` to switch to each new release, or `git pull` on a branch, as
+above.
 
 ## Uninstalling
 
@@ -97,7 +127,7 @@ If you installed Morph as a package with pip instead, run `pip uninstall morph` 
 
 ## For developers
 
-```bash
+```shell
 python -m pip install -e ".[dev]" -c constraints.txt
 python -m pytest -q
 ```
@@ -112,9 +142,29 @@ The end-to-end browser tests in `tests/e2e/` are skipped unless you ask for them
 no keys, full simulations) and drive Chromium through New robot, Import, Show Morph the job, a three-person Teams change
 request and World mode, so they take about 20 minutes on 4 cores and need Playwright and, for the video test, ffmpeg:
 
-```bash
-python -m pip install playwright && python -m playwright install chromium
+```shell
+python -m pip install playwright
+python -m playwright install chromium
+```
+
+Then run them with `MORPH_E2E=1` set. On macOS and Linux:
+
+```sh
 MORPH_E2E=1 python -m pytest tests/e2e -v
+```
+
+In PowerShell:
+
+```powershell
+$env:MORPH_E2E = "1"
+python -m pytest tests/e2e -v
+```
+
+In Command Prompt:
+
+```cmd
+set MORPH_E2E=1
+python -m pytest tests/e2e -v
 ```
 
 `MORPH_E2E_SHOTS=<folder>` keeps screenshots of every step, and `MORPH_E2E_DEMO=<folder>` (New robot, Import and video)

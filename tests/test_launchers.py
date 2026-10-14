@@ -1,6 +1,7 @@
 """The launchers, offline: run_studio.bat lets a launcher from before v0.2 (whose fifth line was "git pull") hand over
-to it in the middle of a run; neither launcher passes a pasted "# comment" on to the Studio; and the Windows launcher
-keeps options out of parenthesized blocks."""
+to it in the middle of a run; neither launcher passes a pasted "# comment" on to the Studio; the Windows launcher keeps
+options out of parenthesized blocks; and every command in the docs pastes as is into Command Prompt, PowerShell, bash
+and zsh. The launchers job in .github/workflows/ci.yml runs both launchers for real, on Windows, macOS and Linux."""
 
 import hashlib
 import os
@@ -202,3 +203,87 @@ def test_shell_launcher_option_handling():
     sh = (REPO / "run_studio.sh").read_text(encoding="utf-8")
     assert "'#'*)" in sh and COMMENT_NOTE in sh and "--update) want_update=1 ;;" in sh
     assert sh.rstrip().endswith('if ! (return 0 2>/dev/null); then\n  main "$@"; exit $?\nfi')
+
+
+# ------------------------------------------------------------------ the docs
+
+DOCS = [REPO / "README.md", REPO / "SECURITY.md", REPO / "CHANGELOG.md"] + sorted((REPO / "docs").glob("*.md"))
+# command blocks by label: which shells each must paste into as is
+SHELLS = {"shell": "Command Prompt, PowerShell, bash and zsh", "bat": "Command Prompt and PowerShell",
+          "cmd": "Command Prompt", "powershell": "PowerShell", "sh": "bash and zsh"}
+NOT_COMMANDS = {"json", "python", "js", "text"}
+
+
+def _blocks(path: Path):
+    """(label, first line number, lines) of each fenced code block."""
+    label, start, lines = None, 0, []
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        m = re.match(r"\s*```(.*)$", line)
+        if m and label is None:
+            label, start, lines = m[1].strip(), n + 1, []
+        elif m:
+            yield label, start, lines
+            label = None
+        elif label is not None:
+            lines.append(line)
+
+
+def _unquoted(line: str, singles: bool) -> str:
+    """The line without its quoted strings: what each shell sees as operators and globs. Command Prompt has no
+    single quotes, and it toggles quoting at every double quote, \\" included."""
+    return re.sub(r"\"[^\"]*\"|'[^']*'" if singles else r'"[^"]*"', " ", line)
+
+
+def _problems(label: str, line: str) -> list:
+    out = []
+    bare = _unquoted(line, singles=label in ("sh", "powershell"))
+    if re.search(r"(^|\s)#", bare):
+        out.append("a # comment (zsh and Command Prompt pass it on as arguments)")
+    if "&&" in bare or "||" in bare:
+        out.append("&& or || (Windows PowerShell 5.1 has neither): one command per line")
+    if label in ("shell", "bat", "cmd") and "'" in bare:
+        out.append("single quotes (Command Prompt doesn't treat them as quotes)")
+    if label in ("shell", "bat"):
+        bad = sorted(set(re.findall(r"[$`%!;&|<>(){}\[\]*?,^]", bare)) | ({"\\"} if label == "shell" and "\\" in line else set()))
+        if bad:
+            out.append(f"{' '.join(bad)} outside double quotes")
+        if re.search(r"(^|\s)[@~]", bare):
+            out.append("@ or ~ starting a word")
+    if label == "shell" and re.search(r"(^|\s)\.[/\\]|run_studio\.", line):
+        out.append("a launcher or a ./ path: Windows and macOS/Linux need their own blocks")
+    if label == "sh" and re.search(r"[()*?\[\]{}!;]", bare):
+        out.append("a glob or a parenthesis outside quotes")
+    if label == "sh" and re.search(r"run_studio\.bat|\.\\", line):
+        out.append("a Windows command in a macOS/Linux block")
+    if label in ("bat", "cmd", "powershell") and re.search(r"run_studio\.sh|(^|\s)\./", line):
+        out.append("a macOS/Linux command in a Windows block")
+    if label in ("bat", "cmd", "powershell") and re.search(r"(?<!\.\\)run_studio\.bat", line):
+        out.append(r"run_studio.bat without .\ (PowerShell doesn't run it from the current folder)")
+    return out
+
+
+def test_doc_commands_paste_as_is_into_every_shell():
+    problems = []
+    for path in DOCS:
+        name = path.relative_to(REPO)
+        for label, start, lines in _blocks(path):
+            if label in NOT_COMMANDS:
+                continue
+            if label not in SHELLS:
+                problems.append(f"{name}:{start - 1}: label the block: " + ", ".join(
+                    f"{k} ({v})" for k, v in SHELLS.items()) + " or text")
+                continue
+            for n, line in enumerate(lines, start):
+                problems += [f"{name}:{n}: ```{label} must paste into {SHELLS[label]}: {p}: {line}"
+                             for p in _problems(label, line)]
+        text = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"`([^`\n]+)`", text):
+            code = m[1]
+            line = text.count("\n", 0, m.start()) + 1
+            if re.search(r"(?<!\.\\)run_studio\.bat\s+-", code) or re.search(r"run_studio\s+-", code):
+                problems.append(rf"{name}:{line}: write .\run_studio.bat (Command Prompt and PowerShell): `{code}`")
+            if re.match(r"[A-Z][A-Z0-9_]*=\S*\s+\w", code):
+                problems.append(f"{name}:{line}: VAR=value command works in bash and zsh only: `{code}`")
+            if re.search(r"\s#\s", code) and re.match(r"(morph|python|git|\.?[/\\]?run_studio)\b", code):
+                problems.append(f"{name}:{line}: a # comment on a command: `{code}`")
+    assert problems == [], "\n".join(problems)

@@ -21,12 +21,15 @@ tolerance with its source, and the project's studies.
 
 **In a terminal:**
 
-```bash
-morph study egg-picker                     # 200 runs and the solver checks: about 2 minutes on 4 cores
-morph study egg-picker --runs 1000         # deeper: the first 200 are kept
-morph study egg-picker --stress            # every tolerance range doubled
+```shell
+morph study egg-picker
+morph study egg-picker --runs 1000
+morph study egg-picker --stress
 morph study egg-picker --rev r003 --seed 7 --timestep 2 --workers 2 --no-checks
 ```
+
+The first makes 200 runs and the solver checks (about 2 minutes on 4 cores), `--runs 1000` goes deeper (the first 200
+are kept), `--stress` doubles every tolerance range, and the last shows the other options.
 
 Ctrl+C keeps the finished runs and the same command carries on. It prints the result as plain text and where it is
 saved; it exits 0 when the study finished, 130 when it was stopped and 1 when it couldn't run.
@@ -132,11 +135,13 @@ study): run a new one.
 ## Bringing your own compute (`--remote`)
 
 Studies run on the computer that runs the Studio, in their own processes beside the build queue: a build never waits for
-a study. Start the Studio on a machine with more cores and everyone's browser uses them:
+a study. Start the Studio on a machine with more cores and everyone's browser uses them: the first command prints a
+link with an access code for the other computers, the second starts a team Studio instead (viewers read studies,
+editors run them).
 
-```bash
-morph studio --remote                 # prints a link with an access code for the other computers
-morph studio --team --remote          # or a team Studio: viewers read studies, editors run them
+```shell
+morph studio --remote
+morph studio --team --remote
 ```
 
 The card names that computer and estimates the time from the project's own measured speed. A run takes about one second

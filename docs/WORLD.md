@@ -36,12 +36,13 @@ is not there when the browser has no WebGL).
 Each revision is simulated in exactly the room its design names: every saved room is kept under its hash in
 `<project>/world/saved/`, so editing the room while a build waits never changes what that build simulates, and a
 design naming a room this project doesn't have fails its simulation stage instead of running in another one. *World
-off* simulates on the plain table again. From a terminal:
+off* simulates on the plain table again. From a terminal: save the desk and simulate again in it; show the room and
+how the newest simulation went in it; go back to the plain table:
 
-```bash
-morph world egg-picker --starter desk     # save the desk and rerun the simulation in it
-morph world egg-picker                    # the room and how the newest simulation went in it
-morph world egg-picker --off              # back to the plain table
+```shell
+morph world egg-picker --starter desk
+morph world egg-picker
+morph world egg-picker --off
 ```
 
 ## Clearance to the room scan (a warning)

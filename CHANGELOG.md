@@ -1,7 +1,8 @@
 # Changelog
 
-Morph Studio by R Cubed. Releases are git tags (`v0.2.0b1`); `run_studio --update` switches a clone to the newest
-one. Versions follow [PEP 440](https://peps.python.org/pep-0440/): `b1` is a beta.
+Morph Studio by R Cubed. Releases are git tags (`v0.2.0b1`); the launchers' `--update` (`.\run_studio.bat --update` on
+Windows, `./run_studio.sh --update` on macOS and Linux) switches a clone to the newest one. Versions follow
+[PEP 440](https://peps.python.org/pep-0440/): `b1` is a beta.
 
 ## 0.2.0b1 (beta, not yet tagged)
 
@@ -26,8 +27,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   an STL, OBJ or GLB of the object to grasp, a parts list (CSV, XLSX, Markdown), a KiCad board or a Morph export.
   Morph finds the gripper, tool point, base and ready pose, asks only what the files can't tell (usually the motors)
   and builds the robot as a new project. Imported robots are kept in `projects/.robots/` with their licence and where
-  they came from; `morph import <path|url>` does the same from a terminal. Auto-imported arms are sized for their
-  worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
+  they came from; `morph import` does the same from a terminal, given a path or a link. Auto-imported arms are sized
+  for their worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
   stretched-out pose). On a Studio other computers use, links are off unless it was started with
   `--allow-url-import`.
 - **Show Morph the job** (beta): add a phone video or photos of the task done by hand. Morph picks still frames in
@@ -39,8 +40,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - SubQ Snap: an optional SubQ key (Keys, `SUBQ_API_KEY`) for quick yes/no and multiple-choice decisions, shown as
   "SubQ Snap (AI)". It is only called with your key and network lookups on, retries once, switches itself off for a
   refused or out-of-credit key, caches answers (never requests or photos) for 7 days, and every use has an offline
-  fallback. `morph doctor` checks it; `morph subq "<text>"` tries a key by hand.
-- **Morph Teams** (preview, "GitHub for physical things"): `morph team init --owner <name>`, then `morph studio
+  fallback. `morph doctor` checks it; `morph subq "help me sort socks"` tries a key by hand.
+- **Morph Teams** (preview, "GitHub for physical things"): `morph team init --owner "Jim"`, then `morph studio
   --team`. Invite teammates with a single-use link and a role (owner, editor, viewer) plus disciplines; comment on
   revisions, stages, BOM lines and parameters; change requests are routed to the owners of the stages they touch, and
   a generalist covers any discipline with no specialist; a change request's preview says what it does in numbers
@@ -60,10 +61,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   and a guided tour, and never changes pass or fail (without a key it says so and sends nothing). When the straight
   move from the rest pose would sweep through a box, the approach and the return to rest follow the carry path too.
   It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
-  `morph world <project> --starter desk` (or `--off`) does the same from a terminal; [docs/WORLD.md](docs/WORLD.md).
-- `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
-  a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
-  (whether ffmpeg was found), Teams and World mode.
+  `morph world egg-picker --starter desk` (or `--off`) does the same from a terminal; [docs/WORLD.md](docs/WORLD.md).
+- `morph export egg-picker -o egg-picker.zip` (`--rev r003` for an older revision, `--full` to add every revision's
+  design and results): the Studio's Export from a terminal, with `team.json` on a team. `morph doctor` lists each
+  feature's status: New robot, Import (xacro and STEP support), Show Morph the job (whether ffmpeg was found), Teams
+  and World mode.
 - **Robustness studies** (beta): one nominal simulation says a design works once, exactly as drawn. A study runs a
   revision's own pick-and-place plan hundreds of times in worlds drawn from the project's tolerances (the object off its
   mark, turned, its size and mass, pad friction, grip-force calibration, servo torque, deadband, encoder noise, the
@@ -158,8 +160,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 
 - Launchers find Python 3.10 to 3.14 and say what to install when there is none (Python 3.15 is too new for now).
   They rebuild a broken `.venv`, show pip's progress on the first install, and skip pip on later launches.
-- Launchers no longer pull `main` on every start. `run_studio --update` switches a git clone to the newest release
-  tag; without it, the launchers never run git, and after the first install they start offline.
+- Launchers no longer pull `main` on every start. `--update` switches a git clone to the newest release tag; without
+  it, the launchers never run git, and after the first install they start offline.
+- A clone whose launcher pulled on every start upgrades cleanly on Windows, where that last pull replaces the launcher
+  while it runs: the new one takes over with the options given. Both launchers ignore a `#` comment pasted along with a
+  command instead of passing it to the Studio, Windows options containing `)` work, and every command in the docs
+  pastes as is into Command Prompt, PowerShell, bash and zsh. CI runs both launchers, the upgrade included.
 - `constraints.txt` pins tested versions with wheels for Python 3.10 to 3.14 on Windows x64, macOS 12+ on Apple
   silicon and Linux x64.
 - One version number, in `morph/__init__.py`. The package metadata now has the licence, project links, supported
@@ -168,7 +174,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   site-packages. Running from the git folder is unchanged.
 - CI on Windows, macOS and Linux with Python 3.10 to 3.14, a lint job, and a check that the installed wheel builds
   both demo robots.
-- End-to-end browser tests (`MORPH_E2E=1 python -m pytest tests/e2e`) start a real Studio, offline and without keys,
+- End-to-end browser tests (`tests/e2e`, run with `MORPH_E2E=1` set) start a real Studio, offline and without keys,
   and drive Chromium through New robot, Import, Show Morph the job, a three-person Teams change request, World mode,
   a robustness study, Live prices and drafting a tool (with a local stand-in for Claude), all with full simulations;
   `MORPH_E2E_PORTS` keeps every Studio they start inside one port range, shared out between pytest-xdist workers.

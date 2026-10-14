@@ -17,12 +17,26 @@ tick "Add python.exe to PATH"), **Git**, and for the app window **Chrome or Edge
 http://127.0.0.1:8765). Morph runs on Windows 10 and 11, macOS 12 or newer on Apple silicon, and 64-bit Linux.
 Step by step, updating, uninstalling and fixes for common problems: [docs/INSTALL.md](docs/INSTALL.md).
 
-```bash
+In a terminal (Command Prompt or PowerShell on Windows, Terminal on macOS and Linux):
+
+```shell
 git clone https://github.com/jim4226/A16z_Hackathon
 cd A16z_Hackathon
-run_studio.bat --update     # Windows (later, double-click run_studio.bat in Explorer)
-./run_studio.sh --update    # macOS / Linux (later, ./run_studio.sh)
 ```
+
+Then start it on **Windows**:
+
+```bat
+.\run_studio.bat --update
+```
+
+or on **macOS and Linux**:
+
+```sh
+./run_studio.sh --update
+```
+
+Later, double-click `run_studio.bat` in Explorer (Windows) or run `./run_studio.sh` (macOS, Linux).
 
 `--update` switches the clone to the latest release (the newest `v` tag) and starts it; use it whenever you want
 to update. Without it, the launcher never runs git, and after the first install it starts offline. No Git?
@@ -77,11 +91,16 @@ Morph runs entirely on the computer that starts it. CAD, simulations, PCB routin
 manual are all computed there; only the optional services (Claude, Keewano, Darwin, SubQ) are called over
 the network ([docs/PRIVACY.md](docs/PRIVACY.md)), and no GPU is needed. To do the work on a stronger computer
 (a desktop, a workstation or a cloud VM) and use it from a laptop, start Morph on that computer with
-`--remote` and open it in the laptop's browser:
+`--remote` and open it in the laptop's browser. On Windows:
 
-```bash
-run_studio.bat --remote         # Windows, on the stronger computer
-./run_studio.sh --remote        # macOS / Linux, including a server without a screen
+```bat
+.\run_studio.bat --remote
+```
+
+On macOS and Linux, including a server without a screen:
+
+```sh
+./run_studio.sh --remote
 ```
 
 The terminal prints a private link with an access code, such as `http://192.168.1.20:8765/?token=...`.
@@ -134,9 +153,11 @@ and the nearest robot it can build; harmful requests are refused.
 Typing a new job into an open project's chat ("a robot that waters my plants") doesn't rebuild that robot: Morph
 offers **Start a new robot from this**, or **Change egg-picker instead** if you did mean the open robot.
 
-```bash
-morph robot new "help me sort socks"                           # the same questions, in the terminal
-morph robot new "help me sort socks" --defaults --name socks   # no questions: Morph's defaults
+In a terminal, the first command asks the same questions there; the second asks none and takes Morph's defaults:
+
+```shell
+morph robot new "help me sort socks"
+morph robot new "help me sort socks" --defaults --name socks
 ```
 
 Morph's own code picks the questions and checks the design. With keys, SubQ Snap takes the first look at the request
@@ -151,9 +172,11 @@ anywhere on the page. Morph asks only what the files can't tell, usually which m
 motor family and Morph sizes every joint for its worst pose, on one supply voltage), and says why when an imported
 robot builds but doesn't pass its own checks.
 
-```bash
-morph import robots/my-arm --family smart_bus                      # a folder, a zip, a URDF or a link
-morph import cup.stl --as object --project egg-picker --units mm   # the object of an existing project
+In a terminal: a robot (a folder, a zip, a URDF or a link), then the object for an existing project:
+
+```shell
+morph import robots/my-arm --family smart_bus
+morph import cup.stl --as object --project egg-picker --units mm
 ```
 
 Formats, limits, safety and how imported arms are sized: [docs/IMPORT.md](docs/IMPORT.md).
@@ -176,10 +199,14 @@ per discipline and release revisions for building. A change request shows what i
 anything builds (torque margins, servos, wiring and firmware, cost), and above prototype nobody approves their own
 work. It runs on the owner's computer, with no Morph server or account.
 
-```bash
-morph team init --owner "Jim" --name "R Cubed"   # once
-morph studio --team --remote                     # or: ./run_studio.sh --team --remote
+Make the team once, then start the team Studio:
+
+```shell
+morph team init --owner "Jim" --name "R Cubed"
+morph studio --team --remote
 ```
+
+The launchers start it too: `.\run_studio.bat --team --remote` (Windows) or `./run_studio.sh --team --remote`.
 
 Roles, disciplines, reviews, releases and the security notes: [docs/TEAMS.md](docs/TEAMS.md).
 
@@ -192,8 +219,10 @@ and **Check placement** gives a measured verdict. The simulation sees only the g
 planner. With a room scan, the check also measures the simulated path against the scan itself (a warning, never the
 verdict), and **Add box here** turns a near miss into a grey box the next simulation keeps clear of.
 
-```bash
-morph world egg-picker --starter desk     # or --off for the plain table again
+From a terminal (`--off` instead of `--starter desk` brings the plain table back):
+
+```shell
+morph world egg-picker --starter desk
 ```
 
 Limits, the optional AI review and what it sends: [docs/WORLD.md](docs/WORLD.md).
@@ -206,11 +235,14 @@ friction, grip-force calibration, servo torque and deadband, encoder noise, the 
 the mount and every box) and reports how often it succeeds with a 95 % interval, what the failures have in common, and
 whether they hold up under other simulator settings.
 
-```bash
-morph study egg-picker                 # 200 runs and the solver checks: about 2 minutes on 4 cores
-morph study egg-picker --runs 1000     # deeper: the first 200 are kept
-morph study egg-picker --stress        # every tolerance range doubled
+```shell
+morph study egg-picker
+morph study egg-picker --runs 1000
+morph study egg-picker --stress
 ```
+
+The first makes 200 runs and the solver checks (about 2 minutes on 4 cores), `--runs 1000` goes deeper (the first 200
+are kept), and `--stress` doubles every tolerance range.
 
 Results are saved in the project (`.studies/`) as each run finishes, so Ctrl+C keeps them and the same command
 carries on. It is simulation, for the tolerances shown; not a field failure rate.
@@ -247,32 +279,49 @@ can add tools as JSON manifests, or have Claude draft one from an API's document
 Before the whole-robot platform, R Cubed started as a command-line pipeline for one force-sensing
 gripper. It still works and produces an HTML report rather than opening in the Studio:
 
-```bash
-python -m morph.cli demo           # ~25 s -> projects/raw-egg/report.html (open it in a browser)
+```shell
+python -m morph.cli demo
 ```
+
+In about 25 seconds it writes `projects/raw-egg/report.html`; open it in a browser.
 
 To see a finished run without installing, open the committed example at `examples/raw-egg/report.html`.
 
 ## Live hardware loop
 
-```bash
-morph new egg --need "pick up a raw egg (44 mm wide, 57 mm long, 60 g) on its side without cracking it, MG996R gripper"
-morph explore egg                                   # pad styles × sections, simulated, ranked
-# print  projects/egg/r00X/fab/plate.stl            (finger + pad, ×2)
-# flash  projects/egg/r00X/electronics/morph_grip/morph_grip.ino   (Arduino IDE; set OPEN_DEG/CLOSED_DEG)
-morph bench egg r00X --port COM5                    # live force bar in the terminal; trace + result logged
-morph bench egg r00X --simulate                     # rehearsal without hardware (labelled SIMULATED everywhere)
-morph clock egg test 12                             # log human minutes so the time claim counts them
-morph time egg r00X                                 # before/after time study
-```
+1. Describe the need, then explore pad styles × sections, simulated and ranked:
 
-Other commands:
+   ```shell
+   morph new egg --need "pick up a raw egg (44 mm wide, 57 mm long, 60 g) on its side without cracking it, MG996R gripper"
+   morph explore egg
+   ```
 
-```bash
-morph change egg electronics.servo=sg90             # rebuilds the affected artifacts
-morph change egg object.max_force_n=3               # e.g. a strawberry; window and firmware update
+2. Print `projects/egg/r00X/fab/plate.stl` (finger and pad, ×2) and flash
+   `projects/egg/r00X/electronics/morph_grip/morph_grip.ino` with the Arduino IDE (set `OPEN_DEG`/`CLOSED_DEG`).
+3. Bench it: a live force bar in the terminal, with the trace and the result logged (`r00X` is the revision, `COM5`
+   the board's serial port). The second command rehearses without hardware, labelled SIMULATED everywhere:
+
+   ```shell
+   morph bench egg r00X --port COM5
+   morph bench egg r00X --simulate
+   ```
+
+4. Log human minutes so the time claim counts them, then make the before/after time study:
+
+   ```shell
+   morph clock egg test 12
+   morph time egg r00X
+   ```
+
+Other commands: `change` rebuilds only the affected artifacts (a 3 N object such as a strawberry also updates the force
+window and the firmware), `compare` puts revisions side by side, `send` sends the CNC or laser parts (non-sensor
+fingers) to a GRBL machine, and `research` looks a question up:
+
+```shell
+morph change egg electronics.servo=sg90
+morph change egg object.max_force_n=3
 morph compare egg r001 r004 r005
-morph send egg r00X --grbl COM3                     # CNC/laser parts (non-sensor fingers)
+morph send egg r00X --grbl COM3
 morph research "FSR 402 vs load cell for a hobby gripper"
 ```
 
@@ -312,11 +361,31 @@ target by that ratio: only from 3 or more builds, and never from `synthetic-*` p
 only as real as the project's history; the R Cubed demo project is seeded. With calibration off, the
 firmware ships the simulation-based number.
 
-```bash
-export KEEWANO_API_KEY=...                       # send (Settings -> Project -> API Keys)
-export KEEWANO_PAT=kwpat-... KEEWANO_PROJECT_ID=<uuid>   # query (Settings -> Personal -> Security)
-python tools/keewano_backfill.py --send          # 2 weeks of synthetic-* builds for dashboards (calibration ignores them)
+Sending needs `KEEWANO_API_KEY` (in Keewano: Settings, Project, API Keys); querying needs `KEEWANO_PAT` (Settings,
+Personal, Security) and `KEEWANO_PROJECT_ID` (Settings, Details). Add them with **Keys** or in `.env`. This sends two
+weeks of `synthetic-*` builds for the dashboards (calibration ignores them):
+
+```shell
+python tools/keewano_backfill.py --send
+```
+
+`morph ask` runs SQL on the logged events. The column names need double quotes, which each shell passes on its own
+way. On macOS and Linux:
+
+```sh
 morph ask 'SELECT "PadStyle", avg("HoldForceRatioPct") FROM events GROUP BY "PadStyle"'
+```
+
+In Command Prompt:
+
+```cmd
+morph ask "SELECT \"PadStyle\", avg(\"HoldForceRatioPct\") FROM events GROUP BY \"PadStyle\""
+```
+
+In PowerShell (`--%` passes the rest of the line on as typed):
+
+```powershell
+morph --% ask "SELECT \"PadStyle\", avg(\"HoldForceRatioPct\") FROM events GROUP BY \"PadStyle\""
 ```
 
 **Darwin: who sells the parts and builds the rest.** R Cubed designs and programs; `morph source
@@ -334,10 +403,13 @@ mismatches and 0 ERC errors for every MCU. Darwin's PCB-fab handoff includes it.
 packages a revision for [BoardRepo](https://boardrepo.com), which takes a zipped KiCad project and
 renders schematic, PCB, 3D and BOM. The README inside the zip lists related open designs.
 
-```bash
-morph kicad raw-egg r004      # projects/raw-egg/r004/boardrepo/raw-egg-r004/*-kicad.zip + upload steps
-morph boardrepo               # reference boards with live licence and views
+```shell
+morph kicad raw-egg r004
+morph boardrepo
 ```
+
+The first writes `projects/raw-egg/r004/boardrepo/raw-egg-r004/*-kicad.zip` and prints the upload steps; the second
+lists the reference boards with their live licence and views.
 
 Uploading needs your own BoardRepo sign-in, so R Cubed stops at the zip. More in `docs/BOARDREPO.md`.
 

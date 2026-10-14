@@ -19,14 +19,16 @@ computer.
 
 On the computer that will do the work (the owner's):
 
-```bash
-morph team init --owner "Jim" --name "R Cubed"   # once: the team, with you as its owner
-morph studio --team --remote                     # the Studio, reachable from other computers
+Make the team once, with you as its owner, then start the Studio, reachable from other computers:
+
+```shell
+morph team init --owner "Jim" --name "R Cubed"
+morph studio --team --remote
 ```
 
 From a git checkout, run `morph team init` through the launcher's Python (`.venv/bin/python -m morph.cli team init
 ...`; on Windows `.venv\Scripts\python -m morph.cli team init ...`), then start the Studio with the launcher, which
-passes its options on: `./run_studio.sh --team --remote` or `run_studio.bat --team --remote`.
+passes its options on: `./run_studio.sh --team --remote` or, on Windows, `.\run_studio.bat --team --remote`.
 
 `morph studio --team` prints a **one-time sign-in link** for the owner; open it in your browser (it works once, within
 15 minutes). Without `--remote` the Studio answers only on this computer, which is what you want behind an SSH tunnel.
@@ -42,13 +44,14 @@ link Ana` for a member; a signed-in member can make one for another device under
 ## Invite people
 
 **Share** (top right; owners only) makes a single-use invite link with a role and disciplines, valid for 7 days. Send it
-privately: whoever opens it first joins under the name they type. From a terminal:
+privately: whoever opens it first joins under the name they type. From a terminal, make an invite, list who is on
+the team, sign Ana out everywhere (her name stays on past work) and print the audit log with its hash chain checked:
 
-```bash
+```shell
 morph team invite --role editor --disciplines electronics --name Ana --url http://192.168.1.20:8765
-morph team members                    # who is on the team
-morph team revoke Ana                 # signs Ana out everywhere; her name stays on past work
-morph team audit --verify             # the audit log, with its hash chain checked
+morph team members
+morph team revoke Ana
+morph team audit --verify
 ```
 
 ### Roles

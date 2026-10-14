@@ -11,7 +11,7 @@ We aim to reply within a week. Morph is a beta from a small team, and there is n
 
 ## Supported versions
 
-Only the latest release gets security fixes. In a git clone, `run_studio.bat --update` (Windows) or
+Only the latest release gets security fixes. In a git clone, `.\run_studio.bat --update` (Windows) or
 `./run_studio.sh --update` (macOS, Linux) switches to it.
 
 ## What Morph protects

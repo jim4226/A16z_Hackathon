@@ -19,14 +19,16 @@ Refused with a reason: native CAD files (SolidWorks, Fusion, Inventor, Onshape d
 USD and SDF scenes (convert to URDF), KiCad 5 files (save them again in KiCad 6 or newer), 7-Zip and RAR archives
 (unzip them first). COLLADA (`.dae`) and 3MF meshes need packages Morph doesn't install; export STL, OBJ or GLB.
 
-In a terminal:
+In a terminal: a folder, a `.zip`, a URDF or a mesh; a link, with one motor family for every joint; a URDF with a motor
+for each joint; the object for an existing project; and a parts list, showing what Morph found without changing
+anything:
 
-```bash
-morph import robots/my-arm                     # a folder, a .zip, a URDF or a mesh
-morph import https://github.com/owner/repo --family smart_bus   # one motor family for every joint
-morph import arm.urdf --actuators shoulder=sts3215_7v4,elbow=xl430_w250 --name my-arm
-morph import cup.stl --as object --project egg-picker --units mm   # the object of an existing project
-morph import parts.xlsx --dry-run              # show what Morph found, change nothing
+```shell
+morph import robots/my-arm
+morph import https://github.com/owner/repo --family smart_bus
+morph import arm.urdf --actuators "shoulder=sts3215_7v4,elbow=xl430_w250" --name my-arm
+morph import cup.stl --as object --project egg-picker --units mm
+morph import parts.xlsx --dry-run
 ```
 
 `--dry-run` detects and reports without saving anything; `--json` prints the result for scripts. `morph import --help`
