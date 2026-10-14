@@ -10,6 +10,7 @@ pipeline builds run at once across rooms.
 from __future__ import annotations
 
 import collections
+import contextvars
 import json
 import os
 import queue
@@ -20,6 +21,11 @@ import time
 import traceback
 
 from ..robot.pipeline2 import RobotProject
+
+
+# The client whose request is being handled: the page's tab (its X-Morph-Client value) or a script. Set by the server
+# around each route; a job queued meanwhile remembers it, so one tab's quick edits aren't conflicts with each other.
+REQUESTER = contextvars.ContextVar("morph_requester", default=None)
 
 
 class UnknownProject(LookupError):
@@ -144,6 +150,8 @@ class Job:
         self.id = secrets.token_hex(6)
         self.kind, self.fn, self.by, self.base_rev, self.label = kind, fn, by, base_rev, label or kind
         self.status, self.result, self.error, self.conflict, self.data = "queued", None, None, None, {}
+        self.origin = REQUESTER.get()  # the tab or script that asked
+        self.after = ()                # its own requests (same member and tab) still waiting or building when it asked
         self.created, self.started, self.finished = time.time(), None, None
         self._done = threading.Event()
 
@@ -163,10 +171,12 @@ class Job:
 
 class JobQueue:
     """First in, first out, one job at a time per room. The worker thread starts with the first job and ends when the
-    queue is empty. Every change is published to the room as a `queue` event."""
+    queue is empty. Every change is published to the room as a `queue` event. A job that ended as a conflict waits for
+    an answer (Apply or Drop) in `waiting` until someone gives one, however many jobs run meanwhile."""
 
     MAX_QUEUED = 10
-    KEEP = 50  # finished jobs remembered for wait/resolve
+    KEEP = 50            # finished jobs remembered for wait/resolve
+    MAX_CONFLICTS = 50   # conflicts waiting for an answer; past it the oldest is dropped (and the room is told)
 
     def __init__(self, room: "Room"):
         self.room = room
@@ -174,6 +184,7 @@ class JobQueue:
         self.pending = collections.deque()
         self.running = None
         self.jobs = collections.OrderedDict()
+        self.waiting = collections.OrderedDict()  # job id -> a conflict nobody has answered yet
         self.worker = None
 
     def submit(self, kind: str, fn, *, by: str | None = None, base_rev: str | None = None, label: str = "",
@@ -185,6 +196,10 @@ class JobQueue:
                 raise QueueFull(f"{self.MAX_QUEUED} changes are already waiting for {self.room.name}. Try again when "
                                 "some of them have been built.")
             job = Job(kind, fn, by=by, base_rev=base_rev, label=label)
+            # what the same person asked from the same tab before this and is still waiting or building: this request
+            # builds on it, so a change it makes is never a conflict for this one (server.Studio._conflict)
+            job.after = tuple(j for j in [self.running, *self.pending]
+                              if j is not None and j.by == job.by and j.origin == job.origin)
             if announce:
                 announce(job)
             self.pending.append(job)
@@ -199,7 +214,48 @@ class JobQueue:
 
     def get(self, job_id) -> Job | None:
         with self.cond:
-            return self.jobs.get(job_id) if isinstance(job_id, str) else None
+            if not isinstance(job_id, str):
+                return None
+            return self.jobs.get(job_id) or self.waiting.get(job_id)
+
+    def hold(self, job: Job, conflict: dict):
+        """`job` ends as a conflict and waits for an answer: listed in conflicts() (state, `queue` events) until
+        take_conflict() hands it to whoever answers first."""
+        with self.cond:
+            job.status, job.conflict = "conflict", conflict
+            self.waiting[job.id] = job
+            gone = []
+            while len(self.waiting) > self.MAX_CONFLICTS:
+                _, old = self.waiting.popitem(last=False)
+                old.status = "dropped"
+                gone.append(old)
+        for old in gone:
+            self.publish(old)
+            self.room.hub.send({"type": "assistant", "text": f"Dropped without an answer: {old.label[:80]} "
+                                f"({self.MAX_CONFLICTS} newer changes were waiting for one).", "noop": True, "job": old.id,
+                                **({"by": old.by} if old.by else {})})
+
+    def take_conflict(self, job_id) -> Job | None:
+        """The waiting conflict `job_id` for the one answer it gets (two tabs answering at once: one gets it), or None."""
+        with self.cond:
+            job = self.waiting.pop(job_id, None) if isinstance(job_id, str) else None
+            return job if job is not None and job.status == "conflict" else None
+
+    def drop_conflicts(self) -> list:
+        """Every waiting conflict ends as dropped (Reset demo removed the revisions, and the chat, they were about)."""
+        with self.cond:
+            gone = list(self.waiting.values())
+            self.waiting.clear()
+            for job in gone:
+                job.status = "dropped"
+        for job in gone:
+            self.publish(job)
+        return gone
+
+    def conflicts(self) -> list:
+        """The conflicts waiting for an answer, oldest first (position None, status "conflict", conflict {...})."""
+        with self.cond:
+            return [j.info() for j in self.waiting.values()]
 
     def cancel(self, job_id) -> Job | None:
         """Take a job that has not started out of the queue."""
@@ -229,7 +285,7 @@ class JobQueue:
         with self.cond:
             jobs = self.snapshot() + ([finished.info()] if finished is not None else [])
             try:
-                self.room.hub.send({"type": "queue", "jobs": jobs})
+                self.room.hub.send({"type": "queue", "jobs": jobs, "conflicts": self.conflicts()})
             except Exception:  # noqa: BLE001  (an event that can't be sent must not stop the queue)
                 traceback.print_exc()
 
@@ -254,6 +310,7 @@ class JobQueue:
                 self.room.hub.send({"type": "assistant", "text": f"Error: {exc}", "job": job.id})
             finally:
                 job.finished = time.time()
+                job.after = ()  # read when it started; a chain of quick edits keeps no finished job alive through it
                 with self.cond:
                     self.running = None
                     self.publish(job)

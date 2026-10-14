@@ -91,8 +91,9 @@ class Request:
   the CLI passes) is always compared, so the person at that address with the link still signs in. Teams codes are all
   random (`auth.Throttle`): past 10 wrong ones in 10 minutes an address's wrong codes are answered 429, and a right
   invite, sign-in link or script token still works.
-- POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; the page sends `1`; 403
-  without it); `studio.api` sends it.
+- POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; 403 without it); `studio.api` sends
+  it. Its value names the client: the page sends its tab's id (16 hex digits, kept in `sessionStorage` across reloads),
+  and the server holds it in `rooms.REQUESTER` while a route runs, so the jobs that route queues know which tab asked.
 - A connection has `HEADER_TIMEOUT` (20 s) in all for its request line and headers. The server serves at most
   `MAX_CONNECTIONS` (64) connections at once, `MAX_STREAMS` (48) of them `/api/events` streams, and at most
   `MAX_UNSIGNED_PER_ADDRESS` (16) from one address that haven't signed in yet (loopback addresses aside, `_Server.exempt`;
@@ -165,7 +166,13 @@ projects (morph/studio/projects.py): create(home, name=None, *, source, design, 
 ```
 
 A job applies its changes to the newest revision when its turn comes. If one of its keys changed after its
-`base_rev` (default: the newest revision when it was queued), it ends as `conflict` instead. Every changed value
+`base_rev` (default: the newest revision when it was queued), it ends as `conflict` instead. A change made by the same
+client's earlier requests does not count (W3): `Job.after` lists the jobs of the same member (`by`) from the same tab or
+script (`Job.origin`, the `X-Morph-Client` value) that were waiting or building when it was queued, and the revisions
+they made are left out of the comparison, so one tab's quick second edit builds on its first instead of being held
+back; another tab's or another member's change, or a revision that had finished before the request was made, still
+counts. The question names the keys as the Parameters panel does (`labels.names`: "Reach and Build changed after
+r001, ..."); `conflict.keys` stays the raw keys. Every changed value
 (chat, Claude's tool output, parameters, a resolved conflict) must pass `security.design_values()` first, and
 `projects.create()` checks every value of a design it is given; a value no robot can have ends the job as `error`
 ("Couldn't apply that: ...") or raises ValueError. `projects.as_design()` refuses keys a Design doesn't have.
@@ -177,7 +184,14 @@ A job applies its changes to the newest revision when its turn comes. If one of 
   with `to` (a member id) reaches only that member's tabs and is never saved in the chat history.
 - `user` and `assistant` events carry the `job` they belong to. A conflict is an `assistant` event with
   `conflict {job, keys, base_rev, rev}`: the change was not applied because `keys` changed after
-  `base_rev`; the tab offers "Apply to rev" or "Drop it" (`POST /api/jobs/resolve`).
+  `base_rev`; the tab offers "Apply to rev" or "Drop it" (`POST /api/jobs/resolve`). Since W3 a conflict waits for its
+  answer in `JobQueue.waiting` (at most `MAX_CONFLICTS`, 50; past that the oldest is dropped and the room told), however
+  many jobs run meanwhile: `GET /api/state` and `GET /api/jobs` list the waiting ones in `conflicts` (job infos with
+  `status: "conflict"`, `position: null` and `conflict`), and every `queue` event carries the current `conflicts`. A tab
+  shows the buttons (`.qacts.qconf`) on a conflict message while its job is listed, after a reload too, and replaces
+  them with "No longer waiting for an answer." once it isn't. The first answer takes it (`JobQueue.take_conflict`);
+  another tab's later Apply or Drop gets 409, and an Apply that meets a full queue (429) leaves it waiting. Reset demo
+  drops a demo project's waiting conflicts with its chat (`JobQueue.drop_conflicts`).
 - Chat routing (I2b): a chat message that asks for another robot, or to bring in an existing one, is not interpreted
   as an edit of the open project. `agents.chat_offer(text, design, open_project)` decides, in this order: harmful
   text, questions, small talk and messages that open like an edit ("make it", "use", "swap" ...) stay edits; clear
@@ -274,7 +288,8 @@ studio = {
   narrower the inspector is an overlay opened by `#inspBtn` (`body.insp-open`; Escape closes it); Teams' `show(tab)`
   opens it. Teams hides the other features' entry points for a viewer (`body.tm-readonly`: `#suggest`, `.nr-headbtn`,
   `.nr-menubtn`, `#importBtn`, `.imp-menu`, `.vj-btn`, `#viewerTools`, and since E2 `#presentBtn` and `#paramsBar`, with
-  `#paramsBody` read-only) and disables the chat box, Send and Apply, so those class names are part of this contract. It
+  `#paramsBody` read-only, and since W3 the conflict buttons `.msg .qacts.qconf .btn`, whose `.qnote` says an editor can
+  answer) and disables the chat box, Send and Apply, so those class names are part of this contract. It
   hides `#keysBtn` from every member who isn't an owner (`body.tm-nokeys`): keys and settings are owner-only routes.
 
 ## 5. SubQ client (`morph/studio/subq.py`)

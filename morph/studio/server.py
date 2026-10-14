@@ -43,7 +43,7 @@ from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline
 from ..spec import diff
 from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
-from .rooms import Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
+from .rooms import REQUESTER, Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
                        looks_like_secret, param_changes, project_name, secret_refused)
@@ -390,7 +390,7 @@ class Studio:
         revs = room.completed()
         out = {"project": room.name, "start": self.start, "projects": self.projects(), "revs": revs,
                "history": list(room.hub.history), "integrations": integrations(), "compute": compute_info(self.remote),
-               "queue": room.jobs.snapshot(), "building": room.building()}
+               "queue": room.jobs.snapshot(), "conflicts": room.jobs.conflicts(), "building": room.building()}
         if revs:
             out["current"] = rev_payload(room.p, revs[-1], room.name)
             parent = out["current"]["parent"]
@@ -436,21 +436,27 @@ class Studio:
 
     def _conflict(self, room: Room, job, base: str, changes: dict) -> bool:
         """A queued change whose keys were changed by someone else after it was asked for (on job.base_rev) is not
-        applied over them: the job is marked conflict and the room is asked to apply it on `base` or drop it."""
+        applied over them: the job is marked conflict and the room is asked to apply it on `base` or drop it. The
+        revisions that the same person's requests from the same tab made meanwhile (job.after: still waiting or
+        building when this one was asked, so it builds on them) are no one else's change."""
         if job is None or not job.base_rev or job.base_rev == base:
             return False
-        since = None
-        if job.base_rev in room.completed():
+        since, revs = None, room.completed()
+        if job.base_rev in revs and base in revs:
+            own = {j.result for j in getattr(job, "after", ()) if j.result}
+            chain = revs[revs.index(job.base_rev):revs.index(base) + 1]
             try:
-                since = set(diff(room.p.load_design(job.base_rev), room.p.load_design(base)))
+                since = set()
+                for a, b in zip(chain, chain[1:]):
+                    if b not in own:
+                        since |= set(diff(room.p.load_design(a), room.p.load_design(b)))
             except (OSError, ValueError, KeyError, TypeError):
                 since = None
         keys = sorted(set(changes) & since) if since is not None else sorted(changes)
         if not keys:
             return False
-        job.status = "conflict"
-        job.conflict = {"keys": keys, "base_rev": job.base_rev, "rev": base}
-        why = (f"{', '.join(keys)} changed after {job.base_rev}, which this request was based on" if since is not None
+        room.jobs.hold(job, {"keys": keys, "base_rev": job.base_rev, "rev": base})  # waits for Apply or Drop
+        why = (f"{labels.names(keys)} changed after {job.base_rev}, which this request was based on" if since is not None
                else f"{job.base_rev}, which this request was based on, no longer exists")
         room.emit({"type": "assistant", "text": f"Not applied yet: {why}. Apply it to {base} anyway, or drop it?",
                    "changes": changes, "conflict": {"job": job.id, **job.conflict}, **self._tag(job)})
@@ -632,8 +638,8 @@ class Studio:
     def resolve(self, room: Room, job_id, action: str, by: str | None = None):
         """Answer a conflict: "apply" queues the same changes on the newest revision (checked again when they run),
         "drop" forgets them. Returns the new job (apply) or None (drop); LookupError when there is no such conflict."""
-        job = room.jobs.get(job_id)
-        if job is None or job.status != "conflict":
+        job = room.jobs.take_conflict(job_id)  # one answer: a second tab's Apply or Drop finds nothing to answer
+        if job is None:
             raise LookupError("That change is no longer waiting for an answer.")
         if action == "drop":
             job.status = "dropped"
@@ -641,8 +647,12 @@ class Studio:
             room.emit({"type": "assistant", "text": f"Dropped: {job.label[:80]}", "noop": True, **self._tag(job)})
             return None
         d = job.data
-        new = self.queue_changes(room, d["changes"], label=d["label"], reply=d.get("reply"), source=d.get("source", ""),
-                                 base_rev=room.latest(), by=by or job.by, kind=job.kind, proposed_by=d.get("proposed_by"))
+        try:
+            new = self.queue_changes(room, d["changes"], label=d["label"], reply=d.get("reply"), source=d.get("source", ""),
+                                     base_rev=room.latest(), by=by or job.by, kind=job.kind, proposed_by=d.get("proposed_by"))
+        except QueueFull:
+            room.jobs.hold(job, job.conflict)  # still waiting: it can be applied once the queue has room
+            raise
         job.status = "resolved"
         room.jobs.publish(job)
         return new
@@ -707,6 +717,7 @@ class Studio:
                         keep = p.run(p.load_design(keep), parent=None, label="rebuilt with latest Morph", verbose=False)
                 p.log({"type": "demo_reset", "rev": keep, "complete": complete})
                 room.hub.clear_history()
+                room.jobs.drop_conflicts()  # their questions were in the chat just cleared, about revisions now gone
             for room in rooms:
                 room.hub.send({"type": "project", "project": room.name, "reset": True})
             return True
@@ -1055,7 +1066,11 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                     if len(raw) != n:
                         raise BodyError(400, "The request body was cut off.")
                     req.body = json_object(raw)
-                out = r.fn(req)
+                asking = REQUESTER.set((self.headers.get(CLIENT_HEADER) or "")[:64] or None)  # this tab or script
+                try:
+                    out = r.fn(req)
+                finally:
+                    REQUESTER.reset(asking)
             except HTTPError as exc:
                 return self._error(exc.status, exc.message)
             except BodyError as exc:
@@ -1238,7 +1253,7 @@ def _files(req):
 
 @route("GET", "/api/jobs", role="viewer")
 def _api_jobs(req):
-    return 200, {"jobs": req.room.jobs.snapshot()}
+    return 200, {"jobs": req.room.jobs.snapshot(), "conflicts": req.room.jobs.conflicts()}
 
 
 @route("POST", "/api/chat")

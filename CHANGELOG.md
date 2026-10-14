@@ -350,3 +350,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   waiting for a key or still working, as it already stopped the project's robustness study: such a run could carry
   on later in a new project that took the same name, or for a revision Reset demo had removed, and price the parts
   of a robot it was never started for. Its card says why it stopped.
+- A quick second edit of the same setting, made while the first still builds, builds on it: the newest choice used to
+  come back as a conflict with your own first edit and be held back. A change another tab or teammate made meanwhile
+  is still asked about, by name ("Build changed after r001") instead of its key.
+- A change waiting for Apply or Drop keeps its buttons after a reload and in tabs opened later; once anyone answers it,
+  every other tab's buttons go (a late click used to fail), and a viewer is told an editor can answer instead of being
+  shown buttons.

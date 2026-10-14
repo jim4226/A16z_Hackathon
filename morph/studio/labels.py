@@ -32,7 +32,18 @@ def show_key(key: str) -> str:
     return f"{p[1]} · {p[0]}" if p else key
 
 
+def name(key: str) -> str:
+    """A design key's short name as the Parameters panel shows it ("Build", "Reach"); a key the panel doesn't list is
+    named by its last part ("servo", "target force n")."""
+    return (_PARAMS.get(key) or (key.split(".")[-1].replace("_", " "),))[0]
+
+
 def describe(changes: dict) -> str:
     """Parameter edits in a line: "Build → Pilot, Reach → 380 mm" (a key the panel doesn't list keeps its own name)."""
-    return ", ".join(f"{(_PARAMS.get(k) or (k.split('.')[-1].replace('_', ' '),))[0]} → {show_value(k, v)}"
-                     for k, v in changes.items())
+    return ", ".join(f"{name(k)} → {show_value(k, v)}" for k, v in changes.items())
+
+
+def names(keys) -> str:
+    """Several keys in a phrase: "Build", "Build and Reach", "Build, Reach and DOF"."""
+    out = [name(k) for k in keys]
+    return " and ".join(out) if len(out) < 3 else ", ".join(out[:-1]) + " and " + out[-1]

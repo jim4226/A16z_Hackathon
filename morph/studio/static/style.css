@@ -806,6 +806,9 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .msg .qacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .msg.assistant > div { min-width: 0; }
 .msg .qacts .btn { height: 26px; padding: 0 10px; font-size: 12px; }
+.msg .qacts .qnote, .msg .qgone { color: var(--muted); font-size: 11.5px; }
+.msg .qacts .qnote { align-self: center; }
+.msg .qgone { margin-top: 6px; }
 #projMenu .tag.warn { margin-left: 4px; }
 /* many projects: the list scrolls and New robot / Import under it stay in reach; long descriptions show two lines */
 #projList { max-height: calc(100vh - 190px); overflow-y: auto; overscroll-behavior: contain; }

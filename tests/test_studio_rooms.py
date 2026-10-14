@@ -14,7 +14,7 @@ from morph import keys
 from morph.robot.pipeline2 import RobotProject
 from morph.spec import Design
 from morph.studio import server
-from morph.studio.rooms import Hub, JobQueue, QueueFull
+from morph.studio.rooms import REQUESTER, Hub, JobQueue, QueueFull
 
 
 def make_project(home, name, design=None):
@@ -181,6 +181,117 @@ def test_a_change_to_the_same_setting_since_it_was_asked_is_a_conflict(studio, b
     assert dropped.status == "dropped"
     with pytest.raises(LookupError):
         studio.resolve(room, dropped.id, "apply")
+
+
+def asked_from(tab):
+    """Queue as if a request from `tab` (its X-Morph-Client value) were being handled."""
+    class Ctx:
+        def __enter__(self):
+            self.tok = REQUESTER.set(tab)
+
+        def __exit__(self, *a):
+            REQUESTER.reset(self.tok)
+    return Ctx()
+
+
+@pytest.mark.parametrize("by", [None, "m_ed"])
+def test_one_tabs_quick_edits_of_one_setting_build_on_each_other(studio, builds, by):
+    """The page sends the revision it shows as base_rev, which stays r001 while the tab's first edit builds: the second
+    edit builds on the first one, it is no one else's change. The newest choice is the one built."""
+    room = studio.room()
+    events = collect(room.hub)
+    builds.gate = threading.Event()
+    with asked_from("tab-a"):
+        first = studio.queue_params(room, {"build.config": "pilot"}, base_rev="r001", by=by)
+        assert builds.started.wait(10)
+        second = studio.queue_params(room, {"build.config": "production", "arm.reach_mm": 380}, base_rev="r001", by=by)
+        third = studio.queue_params(room, {"build.config": "pilot"}, base_rev="r001", by=by)
+    builds.gate.set()
+    finish(first, second, third)
+    assert (first.status, second.status, third.status) == ("done", "done", "done"), [e for e in events if e.get("conflict")]
+    assert room.p.load_design(second.result).build.config == "production"
+    assert room.p.load_design(third.result).build.config == "pilot" and room.p.load_design(third.result).arm.reach_mm == 380
+    assert not [e for e in events if e.get("conflict")]
+
+
+@pytest.mark.parametrize("a,b", [((None, "tab-a"), (None, "tab-b")),          # two tabs (or two people, without Teams)
+                                 (("m_ed", "tab-a"), ("m_eve", "tab-a")),      # two team members
+                                 ((None, "tab-a"), (None, None))])             # a tab and a script that sent no header
+def test_the_same_setting_from_someone_else_while_it_builds_is_asked_about_by_name(studio, builds, a, b):
+    room = studio.room()
+    events = collect(room.hub)
+    builds.gate = threading.Event()
+    with asked_from(a[1]):
+        first = studio.queue_params(room, {"build.config": "pilot", "arm.reach_mm": 380}, base_rev="r001", by=a[0])
+    assert builds.started.wait(10)
+    with asked_from(b[1]):
+        other = studio.queue_params(room, {"build.config": "production", "arm.reach_mm": 300}, base_rev="r001", by=b[0])
+    builds.gate.set()
+    finish(first, other)
+    assert first.status == "done" and other.status == "conflict"
+    assert other.conflict == {"keys": ["arm.reach_mm", "build.config"], "base_rev": "r001", "rev": "r002"}
+    ask = [e for e in events if e.get("conflict")][-1]["text"]
+    assert ask == "Not applied yet: Reach and Build changed after r001, which this request was based on. Apply it to r002 anyway, or drop it?"
+
+
+def test_a_tabs_own_edit_that_finished_before_it_asked_again_is_still_a_conflict(studio, builds):
+    """Only requests still waiting or building when a tab asks are its own context: a revision it hadn't loaded yet when
+    it asked (its own or not) can't be known to the person, so they are asked."""
+    room = studio.room()
+    with asked_from("tab-a"):
+        finish(studio.queue_params(room, {"build.config": "pilot"}, base_rev="r001"))
+        late = studio.queue_params(room, {"build.config": "production"}, base_rev="r001")
+    finish(late)
+    assert late.status == "conflict"
+
+
+def test_a_waiting_conflict_is_listed_until_someone_answers_it_once(studio, builds, monkeypatch):
+    """A tab that reloads (or opens later) finds the conflicts still waiting in its state, so it can answer them;
+    once one tab answers, the queue event says so and every tab's buttons go; a second answer finds nothing."""
+    room = studio.room()
+    events = collect(room.hub)
+    finish(studio.queue_params(room, {"arm.dof": 6}))
+    late = studio.queue_params(room, {"arm.dof": 4}, base_rev="r001")
+    finish(late)
+    waiting = studio.state(room)["conflicts"]
+    assert [(j["id"], j["status"], j["position"], j["conflict"]) for j in waiting] == [
+        (late.id, "conflict", None, {"keys": ["arm.dof"], "base_rev": "r001", "rev": "r002"})]
+    assert [e for e in events if e["type"] == "queue"][-1]["conflicts"] == waiting
+    monkeypatch.setattr(JobQueue, "KEEP", 2)               # many jobs later it still waits (and can still be answered)
+    for n in range(8):
+        finish(studio.queue_params(room, {"arm.reach_mm": 300 + n}))
+    assert [j["id"] for j in studio.state(room)["conflicts"]] == [late.id] and room.jobs.get(late.id) is late
+    answers = []
+    threads = [threading.Thread(target=lambda: answers.append(_answer(studio, room, late.id))) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(a == "ok" for a in answers) == [False, False, False, True]   # four tabs answer at once: one wins
+    assert studio.state(room)["conflicts"] == [] and late.status == "resolved"
+    assert [e for e in events if e["type"] == "queue"][-1]["conflicts"] == []
+    with pytest.raises(LookupError):
+        studio.resolve(room, late.id, "drop")
+
+
+def _answer(studio, room, job_id):
+    try:
+        job = studio.resolve(room, job_id, "apply")
+    except LookupError:
+        return "gone"
+    finish(job)
+    return "ok"
+
+
+def test_a_conflict_whose_apply_meets_a_full_queue_keeps_waiting(studio, builds, monkeypatch):
+    room = studio.room()
+    finish(studio.queue_params(room, {"arm.dof": 6}))
+    late = studio.queue_params(room, {"arm.dof": 4}, base_rev="r001")
+    finish(late)
+    monkeypatch.setattr(JobQueue, "MAX_QUEUED", 0)
+    with pytest.raises(QueueFull):
+        studio.resolve(room, late.id, "apply")
+    assert late.status == "conflict" and [j["id"] for j in studio.state(room)["conflicts"]] == [late.id]
 
 
 def test_noop_and_errors_keep_their_messages(studio, builds, monkeypatch):
@@ -456,6 +567,35 @@ def test_files_are_served_per_project(http_studio):
     for bad in ("/files/so101/r001/../../egg/meta.json", "/files/so101/..%2f..%2fegg/meta.json", "/files/nope/r001/x",
                 "/files/so101/meta.json", "/files/so101/r002/note.txt", "/files/so101", "/files/so101/"):
         assert get(bad)[0] == 404, bad
+
+
+def test_a_tabs_quick_edits_over_http_build_on_each_other_and_another_tabs_are_asked_about(http_studio, builds):
+    studio, request, port = http_studio
+    room = studio.room()
+    builds.gate = threading.Event()
+
+    def params(changes, tab):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        try:
+            conn.request("POST", "/api/params", body=json.dumps({"changes": changes, "base_rev": "r001"}),
+                         headers={"Content-Type": "application/json", "X-Morph-Client": tab})
+            res = conn.getresponse()
+            return res.status, json.loads(res.read())
+        finally:
+            conn.close()
+
+    s1, first = params({"build.config": "pilot"}, "0123456789abcdef")
+    assert s1 == 202 and builds.started.wait(10)
+    s2, second = params({"build.config": "production"}, "0123456789abcdef")   # the same tab, while the first builds
+    s3, third = params({"build.config": "prototype"}, "fedcba9876543210")      # another tab, which showed r001 too
+    assert s2 == s3 == 202
+    builds.gate.set()
+    jobs = [room.jobs.get(j["job"]["id"]) for j in (first, second, third)]
+    finish(*jobs)
+    assert [j.status for j in jobs] == ["done", "done", "conflict"]
+    assert room.p.load_design(jobs[1].result).build.config == "production"
+    code, out = request("/api/jobs")
+    assert code == 200 and out["jobs"] == [] and [j["id"] for j in out["conflicts"]] == [jobs[2].id]
 
 
 def test_queue_full_is_a_clear_refusal(http_studio, builds, monkeypatch):
