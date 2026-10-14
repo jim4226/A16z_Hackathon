@@ -494,7 +494,8 @@ def test_xacro_missing_gives_the_install_hint(tmp_path, monkeypatch):
     monkeypatch.setattr(xacro_sandbox, "_xacro_paths", lambda: None)
     p = tmp_path / "r.urdf.xacro"
     p.write_text('<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="r"/>', encoding="utf-8")
-    with pytest.raises(ImportFailed, match=r'pip install "morph\[xacro\]"'):
+    # the packages by name: "morph[xacro]" would fetch an unrelated project from PyPI
+    with pytest.raises(ImportFailed, match=r"-m pip install xacro PyYAML"):
         xacro_sandbox.expand(str(p), str(tmp_path))
 
 

@@ -2,7 +2,7 @@
 computer runs an ffmpeg program once over the clip and keeps a few evenly spaced JPEG frames.
 
     from morph.studio import ffmpeg
-    ffmpeg.find()                                  # MORPH_FFMPEG, then ffmpeg on PATH, then imageio-ffmpeg (morph[video])
+    ffmpeg.find()                                  # MORPH_FFMPEG, then ffmpeg on PATH, then imageio-ffmpeg (the video extra)
     ffmpeg.extract("clip.mov", count=8)            # {"frames": [{"t_s", "jpeg", "w", "h"}], "duration_s", "ms", "decoder"}
 
 One pass from start to end (seeking per frame is ~5x slower on 4K HEVC), the first 180 s only, long edge <= 1280 px,
@@ -47,7 +47,7 @@ def _exe_ok(path) -> bool:
 
 def find() -> str | None:
     """The ffmpeg program to use, or None: MORPH_FFMPEG (a path or a name on PATH), ffmpeg on PATH, then the copy
-    imageio-ffmpeg installed (pip install morph[video])."""
+    imageio-ffmpeg installed (the video extra)."""
     env = (os.environ.get("MORPH_FFMPEG") or "").strip().strip('"')
     if env:
         exe = env if os.path.dirname(env) else shutil.which(env)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Morph Studio launcher for macOS and Linux. The first run makes .venv with Python 3.10 to 3.14 and installs the
-# tested packages (requirements.txt with constraints.txt: a few minutes, with progress). Later runs start in seconds
-# and use neither git nor the network.
+# tested packages (requirements.txt with constraints.txt: a few minutes, with progress) and Morph itself, so .venv
+# has the morph command. Later runs start in seconds and use neither git nor the network.
 #   ./run_studio.sh              start the Studio (other options go to `morph studio`, e.g. --remote)
 #   ./run_studio.sh --update     first switch this git clone to the latest release (newest v* tag), then start
 # An option starting with # ends the options: the rest of the line was a comment pasted along with the command (zsh
@@ -51,6 +51,11 @@ update() {  # 0: switched to the latest release; 1: keep the version that is her
     echo "Already on $latest, the latest release."
     return 1
   fi
+  if git merge-base --is-ancestor "$latest" HEAD; then
+    echo "This clone has $latest, the latest release, and newer commits, so --update leaves it as it is. Starting the"
+    echo "version you have (\"git pull\" gets the newest code of its branch)."
+    return 1
+  fi
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "Files in this folder were changed (git status lists them), so --update won't switch to $latest."
     echo "Commit or undo the changes, then run it again. Starting the version you have."
@@ -86,15 +91,15 @@ make_venv() {
   fi
 }
 
-install_packages() {  # once, and again only when requirements.txt or constraints.txt change (after --update)
+install_packages() {  # once, and again only when requirements.txt, constraints.txt or pyproject.toml change
   local want
-  want=$(cat requirements.txt constraints.txt | cksum)
+  want=$(cat requirements.txt constraints.txt pyproject.toml | cksum)
   if [ -f .venv/.morph-installed ] && [ "$(cat .venv/.morph-installed)" = "$want" ]; then
     return 0
   fi
   echo "Installing Morph's packages into .venv (numpy, SciPy, MuJoCo and others; the first time takes a few minutes)."
   .venv/bin/python -m pip install --quiet --upgrade pip || true
-  if ! .venv/bin/python -m pip install -r requirements.txt -c constraints.txt; then
+  if ! .venv/bin/python -m pip install -r requirements.txt -c constraints.txt -e .; then
     echo
     echo "Installing the packages failed (details above). Check the internet connection, then run this again."
     return 1

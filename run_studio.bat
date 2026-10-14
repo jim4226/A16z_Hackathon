@@ -12,7 +12,8 @@ REM assumes nothing else, so it runs the same started fresh, entered from an old
 REM --update. tests/test_launchers.py checks the offsets. These lines contain no percent signs on purpose.
 REM
 REM The first run makes .venv with Python 3.10 to 3.14 and installs the tested packages (requirements.txt with
-REM constraints.txt: a few minutes, with progress). Later runs start in seconds and use neither git nor the network.
+REM constraints.txt: a few minutes, with progress) and Morph itself, so .venv has the morph command. Later runs start
+REM in seconds and use neither git nor the network.
 REM   run_studio.bat             start the Studio (other options go to "morph studio", e.g. --remote)
 REM   run_studio.bat --update    first switch this git clone to the latest release (newest v* tag), then start
 REM An option starting with # ends the options: the rest of the line was a comment pasted along with the command
@@ -27,16 +28,19 @@ set "PYCHECK=import sys; sys.exit(not ((3, 10) <= sys.version_info[:2] <= (3, 14
 set "UPDATE="
 set "ARGS="
 set "ARG="
+REM this file's full path, kept before the option loop: --update starts the file again from it
+set "SELF=%~f0"
 
 REM The options never go inside parentheses: cmd.exe reads a parenthesized block in full with every variable
-REM already replaced by its text, so an option such as "x)" would end the block early.
+REM already replaced by its text, so an option such as "x)" would end the block early. "shift /1" leaves the
+REM file's own name alone; a plain shift would move each option into it.
 :args
 if "%~1"=="" goto args_done
 set "ARG=%~1"
 if "%ARG:~0,1%"=="#" goto args_comment
 if /i "%ARG%"=="--update" set "UPDATE=1"
 if /i not "%ARG%"=="--update" set ARGS=%ARGS% %1
-shift
+shift /1
 goto args
 
 :args_comment
@@ -46,7 +50,9 @@ echo Ignoring the rest of the line from # on: it is a comment, not options for M
 if not defined UPDATE goto start
 REM git may replace this file while :update runs, so what comes after it is on this one line, which cmd.exe read in
 REM full beforehand: when :update ran git checkout, start the launcher now on disk from its first line, then stop.
-call :update & if not errorlevel 1 call "%~f0" %ARGS% & exit /b
+REM CALL reads its command a second time, doubling every caret and replacing percent signs again: the doubled
+REM percent signs hand it the name SELF, so it reads this file's path (which may hold a caret) once, as it is.
+call :update & if not errorlevel 1 call "%%SELF%%" %ARGS% & exit /b
 
 :start
 
@@ -65,20 +71,20 @@ if errorlevel 1 goto venv_failed
 if not exist .venv\Scripts\activate.bat goto venv_failed
 
 :venv_ready
-REM install once, and again only when requirements.txt or constraints.txt change (after --update)
-copy /b /y requirements.txt+constraints.txt .venv\morph-packages.new >nul
+REM install once, and again only when requirements.txt, constraints.txt or pyproject.toml change (after --update)
+copy /b /y requirements.txt+constraints.txt+pyproject.toml .venv\morph-packages.new >nul
 fc /b .venv\morph-packages.new .venv\morph-installed.txt >nul 2>&1 && goto installed
 echo Installing Morph's packages into .venv (numpy, SciPy, MuJoCo and others; the first time takes a few minutes).
 .venv\Scripts\python.exe -m pip install --quiet --upgrade pip
-.venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints.txt
+.venv\Scripts\python.exe -m pip install -r requirements.txt -c constraints.txt -e .
 if errorlevel 1 goto install_failed
 move /y .venv\morph-packages.new .venv\morph-installed.txt >nul
 
 :installed
 call .venv\Scripts\activate.bat
-python -m morph.cli studio egg-picker --open %ARGS%
-if errorlevel 1 pause
-exit /b
+REM One line, the last one read from this file: a git pull or --update in another window may replace the file while
+REM the Studio runs, so nothing after it is read from the file. On an error, pause keeps the window open to read it.
+python -m morph.cli studio egg-picker --open %ARGS% || pause & exit /b
 
 :find_python
 set "PY="
@@ -127,6 +133,7 @@ set "TAG_SHA="
 for /f %%s in ('git rev-parse HEAD') do set "HEAD_SHA=%%s"
 for /f %%s in ('git rev-parse "%LATEST%~0"') do set "TAG_SHA=%%s"
 if "%HEAD_SHA%"=="%TAG_SHA%" goto update_current
+git merge-base --is-ancestor "%LATEST%" HEAD && goto update_newer
 set "DIRTY="
 for /f %%s in ('git status --porcelain --untracked-files^=no') do set "DIRTY=1"
 if defined DIRTY goto update_dirty
@@ -154,6 +161,11 @@ exit /b 1
 
 :update_current
 echo Already on %LATEST%, the latest release.
+exit /b 1
+
+:update_newer
+echo This clone has %LATEST%, the latest release, and newer commits, so --update leaves it as it is. Starting the
+echo version you have ("git pull" gets the newest code of its branch).
 exit /b 1
 
 :update_dirty

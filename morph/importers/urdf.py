@@ -234,8 +234,9 @@ def load_step(path: str):
     try:
         import cascadio
     except ImportError:
-        raise ImportFailed(f"{os.path.basename(path)} is a STEP file, which needs the optional CAD extra: "
-                           'pip install "morph[cad]". Or export an STL.') from None
+        from ..resources import pip_install_command
+        raise ImportFailed(f"{os.path.basename(path)} is a STEP file, which needs the cascadio package: "
+                           f"{pip_install_command('cascadio')} in the Morph folder. Or export an STL.") from None
     with tempfile.TemporaryDirectory() as td:
         out = os.path.join(td, "part.glb")
         try:

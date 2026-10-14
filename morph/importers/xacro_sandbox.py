@@ -1,4 +1,4 @@
-"""Expand a .xacro robot in a sandboxed subprocess (optional extra: pip install "morph[xacro]").
+"""Expand a .xacro robot in a sandboxed subprocess (optional: the xacro and PyYAML packages, the xacro extra).
 
   xml_text = expand("open_manipulator_x.urdf.xacro", bundle="work/files/open_manipulator")
 
@@ -24,9 +24,11 @@ import subprocess
 import sys
 import threading
 
+from ..resources import pip_install_command
 from .common import LIMITS, MB, ImportFailed, check_xml_text, contained
 
-MISSING = 'Expanding .xacro files needs the optional xacro extra: pip install "morph[xacro]" (or export a .urdf).'
+MISSING = (f"Expanding .xacro files needs the xacro and PyYAML packages: {pip_install_command('xacro PyYAML')} in the "
+           "Morph folder (or export a .urdf).")
 
 _DRIVER = r'''
 import builtins, glob, io, json, os, re, sys

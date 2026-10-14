@@ -30,6 +30,7 @@ import selectors
 import shutil
 import socket
 import stat
+import sys
 import threading
 import time
 import traceback
@@ -1619,6 +1620,13 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
             print(f"    http://{h}:{port}/?token={token}")
         print(f"    http://127.0.0.1:{port}/?token={token}   (on this computer)")
         print(f"Access code: {token}   Project {project.root}; Ctrl+C to stop.")
+        if sys.platform == "win32":  # the first listen on the network asks Windows Defender Firewall, per network type
+            print("If the link doesn't open on another computer, allow Python through Windows Defender Firewall for "
+                  "the network you are on (Windows Security, Firewall & network protection), or make it a Private "
+                  "network.")
+        elif sys.platform == "darwin":
+            print("If the link doesn't open on another computer, allow incoming connections for Python when macOS "
+                  "asks (System Settings, Network, Firewall).")
     else:
         print(f"Morph Studio: http://{host}:{port}  (project {project.root}; Ctrl+C to stop)")
     try:

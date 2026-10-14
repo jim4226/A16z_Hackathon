@@ -23,6 +23,7 @@ import shutil
 import threading
 import time
 
+from ..resources import pip_install_command
 from . import ffmpeg, vision
 
 try:  # Wave 0's router; until it is merged the handlers are plain functions (the tests call them directly)
@@ -41,8 +42,8 @@ CHUNK = 1 << 20
 MAX_ANALYSES = 2             # at once on one Studio: each holds a thread for up to two minutes
 MAX_DECODES = 1
 NO_FFMPEG = ("This browser can't play this video, and the computer running Morph has no ffmpeg to extract frames. "
-             "Export it as H.264 MP4 (iPhone: Settings > Camera > Formats > Most Compatible), or install ffmpeg "
-             "(or pip install morph[video]) on the Studio computer.")
+             "Export it as H.264 MP4 (iPhone: Settings > Camera > Formats > Most Compatible), or install ffmpeg on the "
+             f"Studio computer (or run {pip_install_command('imageio-ffmpeg')} there, in the Morph folder).")
 NOT_VIDEO = "That file doesn't look like a video (MP4, MOV, WebM, MKV or AVI)."
 ID = re.compile(r"[a-z0-9]{8,32}")
 ROUTES: list = []

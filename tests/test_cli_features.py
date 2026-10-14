@@ -171,4 +171,5 @@ def test_doctor_lists_every_feature(home, capsys, monkeypatch):
     make_team(str(home))
     cli.cmd_doctor(argparse.Namespace(offline=True))
     out = capsys.readouterr().out
-    assert "no ffmpeg" in out and "morph[video]" in out and "Teams (preview): team" in out and "morph studio --team" in out
+    assert "no ffmpeg" in out and "-m pip install imageio-ffmpeg" in out and "Teams (preview): team" in out
+    assert "run_studio.sh --team" in out or "run_studio.bat --team" in out  # the launcher of this checkout

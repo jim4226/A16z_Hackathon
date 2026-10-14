@@ -205,20 +205,42 @@ def _set_aside_cut_off(proj):
             break
 
 
+COMMENT_NOTE = "Ignoring the rest of the line from # on: it is a comment, not options for Morph."
+
+
+def _studio_argv(argv: list) -> list:
+    """`morph studio` options as a launcher passes them on. Launchers from before v0.2 pass everything they were given,
+    a comment pasted along with the command included (Command Prompt and zsh have no # comments for them): a word
+    starting with # ends the options, as in today's launchers."""
+    if argv[:1] != ["studio"]:
+        return argv
+    for i, word in enumerate(argv):
+        if word.startswith("#"):
+            print(COMMENT_NOTE)
+            return argv[:i]
+    return argv
+
+
 def cmd_studio(a):
     from .robot.pipeline2 import RobotProject
     from .studio.server import access_token, is_loopback, serve
 
     import re
     import socket
+    if getattr(a, "update", False):  # the launchers' own option, which a launcher from before v0.2 passes on
+        launcher = r".\run_studio.bat" if sys.platform == "win32" else "./run_studio.sh"
+        print(f"--update is an option of the launcher: {launcher} --update switches this clone to the latest release, "
+              "then starts it. Morph ignores it here (a launcher from before v0.2 passes it on once, after its last "
+              "git pull) and starts the version that is here.")
     if getattr(a, "remote", False) and is_loopback(a.host):
         a.host = "0.0.0.0"  # bring your own compute: other computers may use this Studio, with its access link
     team = bool(getattr(a, "team", False))
     if team:  # Morph Teams: members sign in with invite and sign-in links; MORPH_TOKEN plays no part
         from .studio.teams.store import exists
         if not exists(HOME):
-            sys.exit("There is no team here yet: run `morph team init --owner <your name>` first, then "
-                     "`morph studio --team`.")
+            from .resources import morph_command
+            sys.exit(f"There is no team here yet. Make it first, in a terminal in the Morph folder: {morph_command()} "
+                     'team init --owner "your name" (docs/TEAMS.md), then start the Studio with --team again.')
     fixed = "" if team else os.environ.get("MORPH_TOKEN", "").strip()
     if fixed and not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", fixed):
         sys.exit("MORPH_TOKEN must be 8 to 128 letters, digits, - or _ (it goes in the access link).")
@@ -963,32 +985,38 @@ def _doctor_features(line):
         line(False, f"Import: {bad}", fix)
     else:
         from .importers import xacro_sandbox
+        from .resources import pip_install_command
         xacro = xacro_sandbox.available()
         cad = importlib.util.find_spec("cascadio") is not None
         line(True, "Import: ready (URDF, MuJoCo XML, STL/OBJ/GLB meshes, parts lists, KiCad boards, Morph exports); "
-                   f"xacro {'installed' if xacro else 'not installed (pip install morph[xacro])'}; STEP files "
-                   f"{'readable (cascadio)' if cad else 'need cascadio (pip install morph[cad])'}")
+                   f"xacro {'installed' if xacro else 'not installed (' + pip_install_command('xacro PyYAML') + ')'}; "
+                   f"STEP files {'readable (cascadio)' if cad else 'need cascadio (' + pip_install_command('cascadio') + ')'}")
     bad = loads("morph.studio.vision", "morph.studio.api_video", "morph.studio.ffmpeg")
     if bad:
         line(False, f"Show Morph the job: {bad}", fix)
     else:
+        from .resources import pip_install_command
         from .studio import ffmpeg
         f = ffmpeg.status()
         line(True, "Show Morph the job: ready; " + (f"ffmpeg {f.get('version') or ''} at {f['path']}".replace("  ", " ")
              if f["available"] else "no ffmpeg (clips the browser plays still work; for others, e.g. iPhone HEVC, "
-             "install ffmpeg or pip install morph[video])") + (f"; {f['warning']}" if f.get("warning") else ""))
+             f"install ffmpeg, or run {pip_install_command('imageio-ffmpeg')})") +
+             (f"; {f['warning']}" if f.get("warning") else ""))
     bad = loads("morph.studio.teams.store", "morph.studio.api_team")
     if bad:
         line(False, f"Teams (preview): {bad}", fix)
     else:
+        from .resources import checkout, morph_command
         from .studio.teams import store as team_store
+        start = ((r".\run_studio.bat" if os.name == "nt" else "./run_studio.sh") if checkout() else "morph studio") + " --team"
         if team_store.exists(HOME):
             t = team_store.TeamStore(HOME).read()
             n = sum(1 for m in (t.get("members") or {}).values() if not m.get("revoked"))
             line(True, f"Teams (preview): team \"{t.get('name') or 'unnamed'}\" with {n} member{'s' if n != 1 else ''}; "
-                       "start it with `morph studio --team`")
+                       f"start it with `{start}`")
         else:
-            line(None, "Teams (preview): no team here (`morph team init --owner <your name>`, then `morph studio --team`)")
+            line(None, f"Teams (preview): no team here (`{morph_command()} team init --owner \"your name\"`, then "
+                       f"`{start}`)")
     bad = loads("morph.studio.worlds", "morph.studio.api_world")
     if bad:
         line(False, f"World mode (beta): {bad}", fix)
@@ -1187,6 +1215,7 @@ def main(argv=None) -> int:
                    help="Morph Teams (preview): members sign in with invite links; run `morph team init` first")
     s.add_argument("--allow-url-import", action="store_true",
                    help="let people import from GitHub or Hugging Face links even when other computers use this Studio")
+    s.add_argument("--update", action="store_true", help=argparse.SUPPRESS)  # the launchers' option (cmd_studio)
     s.set_defaults(fn=cmd_studio)
 
     from .studio.teams import cli as teams_cli
@@ -1278,7 +1307,7 @@ def main(argv=None) -> int:
     s.add_argument("--trials", type=int, default=8)
     s.set_defaults(fn=cmd_demo)
 
-    a = ap.parse_args(argv)
+    a = ap.parse_args(_studio_argv(sys.argv[1:] if argv is None else list(argv)))
     t0 = time.time()
     rc = a.fn(a)
     # every pipeline command's wall-clock goes into the time study

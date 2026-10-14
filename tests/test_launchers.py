@@ -116,19 +116,61 @@ def test_the_option_loop_ends_at_a_pasted_comment_and_finds_update_anywhere():
     assert 'set "ARG=%~1"' in loop and 'if "%ARG:~0,1%"=="#" goto args_comment' in loop
     assert 'if /i "%ARG%"=="--update" set "UPDATE=1"' in loop
     assert 'if /i not "%ARG%"=="--update" set ARGS=%ARGS% %1' in loop
-    assert "shift" in loop and loop[loop.index(":args_comment") + 1] == "echo " + COMMENT_NOTE
+    assert "shift /1" in loop and loop[loop.index(":args_comment") + 1] == "echo " + COMMENT_NOTE
+
+
+def test_the_option_loop_never_moves_an_option_into_the_launchers_own_name():
+    """A plain SHIFT copies %1 into %0, so after the loop %~f0 named the last option ("<folder>\\--update") and the
+    --update relaunch ran that instead of the launcher. The loop uses SHIFT /1, and the relaunch uses the path kept
+    in SELF before the loop."""
+    lines = _bat_lines()
+    code = [line.strip().lower() for line in lines if line.strip() and not line.upper().startswith("REM")]
+    assert not [line for line in code if line == "shift" or line.startswith("shift ") and line != "shift /1"]
+    loop = lines.index(":args")
+    assert 'set "SELF=%~f0"' in lines[:loop]
+    for line in lines[loop:]:  # %0 itself is never read after the loop starts (cd /d "%~dp0" comes before it)
+        if not line.upper().startswith("REM"):
+            assert not re.search(r"%~?[a-z]*0", re.sub(r"%\w+%", "", line), re.I), line
 
 
 def test_update_relaunches_from_a_line_read_before_git_runs():
     lines = _bat_lines()
     calls = [line for line in lines if "call :update" in line]
-    assert calls == ['call :update & if not errorlevel 1 call "%~f0" %ARGS% & exit /b']
+    # CALL reads its command again, doubling carets and expanding percent signs: %%SELF%% hands it the name, so the
+    # path, which may hold ^ or %, is read once, as it is. %ARGS% is expanded when the line is read (an undefined
+    # ARGS, as with --update alone, is then simply empty)
+    assert calls == ['call :update & if not errorlevel 1 call "%%SELF%%" %ARGS% & exit /b']
     i = lines.index(calls[0])
-    assert lines[i - 3] == "if not defined UPDATE goto start" and lines[i + 2] == ":start"
+    assert lines[i - 5] == "if not defined UPDATE goto start" and lines[i + 2] == ":start"
     checkout = [line for line in lines if "checkout" in line and not line.startswith("REM")]
     assert len(checkout) == 1 and checkout[0].endswith("& exit /b 0")  # git may replace the file: nothing after it
     j = lines.index(checkout[0])
     assert lines[j + 1] == "" and lines[j + 2].startswith(":update_")
+
+
+def test_update_leaves_a_clone_that_is_ahead_of_the_newest_tag_alone():
+    lines = _bat_lines()
+    same = lines.index('if "%HEAD_SHA%"=="%TAG_SHA%" goto update_current')
+    assert lines[same + 1] == 'git merge-base --is-ancestor "%LATEST%" HEAD && goto update_newer'
+    newer = lines.index(":update_newer")
+    assert lines[newer + 1].startswith("echo This clone has %LATEST%, the latest release, and newer commits")
+    assert lines[newer + 3] == "exit /b 1"
+
+
+def test_nothing_is_read_from_the_launcher_after_the_studio_starts():
+    """A git pull or --update in another window may replace run_studio.bat while the Studio runs; cmd.exe would then
+    read on mid-line in the new file when the Studio stops (the bug of launchers before v0.2)."""
+    lines = _bat_lines()
+    studio = [line for line in lines if "morph.cli studio" in line and not line.upper().startswith("REM")]
+    assert studio == ["python -m morph.cli studio egg-picker --open %ARGS% || pause & exit /b"]
+
+
+def test_the_launchers_install_the_morph_command_and_reinstall_when_pyproject_changes():
+    bat, sh = _bat().decode(), (REPO / "run_studio.sh").read_text(encoding="utf-8")
+    assert "copy /b /y requirements.txt+constraints.txt+pyproject.toml .venv\\morph-packages.new >nul" in bat
+    assert ".venv\\Scripts\\python.exe -m pip install -r requirements.txt -c constraints.txt -e .\r\n" in bat
+    assert "want=$(cat requirements.txt constraints.txt pyproject.toml | cksum)" in sh
+    assert ".venv/bin/python -m pip install -r requirements.txt -c constraints.txt -e .; then" in sh
 
 
 # ------------------------------------------------------------------ macOS and Linux
@@ -153,14 +195,14 @@ def test_parse_args_drops_a_pasted_comment(tmp_path):
 @needs_bash
 def test_the_shell_launcher_starts_the_studio_without_the_comment(tmp_path):
     """The whole launcher, with a stand-in .venv whose python prints what it was asked to run."""
-    for name in ("run_studio.sh", "requirements.txt", "constraints.txt"):
+    for name in ("run_studio.sh", "requirements.txt", "constraints.txt", "pyproject.toml"):
         shutil.copy(REPO / name, tmp_path / name)
     bin_dir = tmp_path / ".venv" / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "activate").write_text(f'PATH="{bin_dir}:$PATH"\nexport PATH\n', encoding="utf-8")
     (bin_dir / "python").write_text('#!/bin/sh\n[ "$1" = "-c" ] && exit 0\necho "python $*"\n', encoding="utf-8")
     (bin_dir / "python").chmod(0o755)
-    want = _bash("cat requirements.txt constraints.txt | cksum", tmp_path).stdout
+    want = _bash("cat requirements.txt constraints.txt pyproject.toml | cksum", tmp_path).stdout
     (tmp_path / ".venv" / ".morph-installed").write_text(want, encoding="utf-8")
     run = ["bash", str(tmp_path / "run_studio.sh")]
     out = subprocess.run(run + ["--help", "#", "macOS", "/", "Linux", "(later,", "./run_studio.sh)"],
@@ -203,6 +245,97 @@ def test_shell_launcher_option_handling():
     sh = (REPO / "run_studio.sh").read_text(encoding="utf-8")
     assert "'#'*)" in sh and COMMENT_NOTE in sh and "--update) want_update=1 ;;" in sh
     assert sh.rstrip().endswith('if ! (return 0 2>/dev/null); then\n  main "$@"; exit $?\nfi')
+
+
+@needs_bash
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_update_switches_only_a_clone_that_is_behind_the_newest_tag(tmp_path):
+    """run_studio.sh's update() against a real upstream: no tag yet, behind the tag (switches), on it, and ahead of it
+    (a branch with commits after the release stays as it is). run_studio.bat's :update makes the same checks."""
+    env = {**os.environ, "HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"}
+    for k in [k for k in env if k.startswith("GIT_") and k not in ("GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT")]:
+        del env[k]
+    cfg = ["-c", "user.name=Morph", "-c", "user.email=morph@example.com", "-c", "commit.gpgsign=false",
+           "-c", "tag.gpgsign=false", "-c", "init.defaultBranch=main"]
+
+    def git(cwd, *args):
+        return subprocess.run(["git", *cfg, *args], cwd=cwd, check=True, capture_output=True, text=True,
+                              env=env).stdout.strip()
+
+    up, clone = tmp_path / "up.git", tmp_path / "clone"
+    git(tmp_path, "init", "-q", "--bare", str(up))
+    git(tmp_path, "clone", "-q", str(up), str(clone))
+    shutil.copy(REPO / "run_studio.sh", clone / "run_studio.sh")
+    git(clone, "add", "run_studio.sh")
+    git(clone, "commit", "-q", "-m", "before the release")
+    git(clone, "push", "-q", "origin", "main")
+
+    def update():
+        return subprocess.run(["bash", "-c", 'source ./run_studio.sh; update; echo "rc=$?"'], cwd=clone,
+                              capture_output=True, text=True, env=env, timeout=60)
+
+    out = update()
+    assert "There is no release (v* tag) yet" in out.stdout and out.stdout.endswith("rc=1\n"), out
+    before = git(clone, "rev-parse", "HEAD")
+    (clone / "release.txt").write_text("the release\n", encoding="utf-8")
+    git(clone, "add", "release.txt")
+    git(clone, "commit", "-q", "-m", "the release")
+    git(clone, "tag", "v0.2.0b1")
+    git(clone, "push", "-q", "origin", "main", "v0.2.0b1")
+    release = git(clone, "rev-parse", "HEAD")
+    git(clone, "reset", "-q", "--hard", before)  # behind the tag: --update switches
+    out = update()
+    assert "Switched to Morph v0.2.0b1." in out.stdout and out.stdout.endswith("rc=0\n"), out
+    assert git(clone, "rev-parse", "HEAD") == release
+    out = update()
+    assert "Already on v0.2.0b1, the latest release." in out.stdout and out.stdout.endswith("rc=1\n"), out
+    git(clone, "checkout", "-q", "-B", "main", "v0.2.0b1")
+    (clone / "fix.txt").write_text("a fix after the release\n", encoding="utf-8")
+    git(clone, "add", "fix.txt")
+    git(clone, "commit", "-q", "-m", "a fix after the release")
+    ahead = git(clone, "rev-parse", "HEAD")
+    out = update()
+    assert "This clone has v0.2.0b1, the latest release, and newer commits" in out.stdout, out
+    assert out.stdout.endswith("rc=1\n") and git(clone, "rev-parse", "HEAD") == ahead
+    assert git(clone, "branch", "--show-current") == "main"  # not detached
+
+
+# ------------------------------------------------------------------ morph studio, as any launcher starts it
+
+def test_morph_studio_ignores_update_and_a_pasted_comment(tmp_path, capsys, monkeypatch):
+    """A launcher from before v0.2 runs git pull, then passes everything it was given to the new `morph studio`:
+    --update (the README's command now) and a comment pasted with the command. Neither stops the Studio."""
+    from morph import cli
+    monkeypatch.setattr(cli, "HOME", str(tmp_path))
+    monkeypatch.delenv("MORPH_TOKEN", raising=False)
+    with pytest.raises(SystemExit) as stop:  # the name is refused only after the options were accepted
+        cli.main(["studio", "../not-a-project", "--open", "--update", "#", "macOS", "/", "Linux"])
+    out = capsys.readouterr().out
+    assert COMMENT_NOTE in out and "--update is an option of the launcher" in out
+    assert "../not-a-project" in str(stop.value.code)
+    assert cli._studio_argv(["robot", "new", "#1 robot"]) == ["robot", "new", "#1 robot"]  # only `morph studio`
+
+
+def test_commands_in_messages_name_the_launchers_venv(monkeypatch, tmp_path):
+    """Messages that tell people what to run give a command that works in a terminal in the Morph folder: the
+    launchers' .venv by its path (no activating needed), and never `pip install morph[...]`, an unrelated PyPI project."""
+    from morph import resources
+    venv = tmp_path / ".venv"
+    sub = venv / ("Scripts" if os.name == "nt" else "bin")
+    sub.mkdir(parents=True)
+    monkeypatch.setattr(resources, "checkout", lambda: str(tmp_path))
+    monkeypatch.setattr(resources.sys, "prefix", str(venv))
+    py = os.path.join(".venv", "Scripts" if os.name == "nt" else "bin", "python")
+    assert resources.morph_command() == f"{py} -m morph.cli"
+    (sub / ("morph.exe" if os.name == "nt" else "morph")).write_text("", encoding="utf-8")
+    assert resources.morph_command() == os.path.join(".venv", sub.name, "morph")
+    assert resources.pip_install_command("imageio-ffmpeg") == f"{py} -m pip install imageio-ffmpeg -c constraints.txt"
+    monkeypatch.setattr(resources.sys, "prefix", str(tmp_path / "elsewhere"))
+    assert resources.morph_command() == "morph"
+    assert resources.pip_install_command("cascadio") == "python -m pip install cascadio"
+    for path in ("morph/cli.py", "morph/importers/xacro_sandbox.py", "morph/importers/urdf.py",
+                 "morph/studio/api_video.py", "morph/studio/static/video.js"):
+        assert "morph[" not in (REPO / path).read_text(encoding="utf-8"), path
 
 
 # ------------------------------------------------------------------ the docs

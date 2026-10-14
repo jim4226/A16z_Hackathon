@@ -14,7 +14,7 @@ export const COPY = {
   remote: 'This Studio runs on another computer over an unencrypted (http) connection. Others on your network could see what you upload.',
   subq: 'Second opinion (beta): also sends 4 frames to SubQ. SubQ keeps these requests, images included, until they are deleted, unless your SubQ organization has a retention limit or zero data retention.',
   local: "Kept on this computer: no frame leaves this browser. Fill in the cards (the measuring tool sizes the object from a frame); Apply sends only the values.",
-  noFfmpeg: "The computer running Morph has no ffmpeg, so it can't extract the frames either: install ffmpeg (or pip install morph[video]) there, or export the clip as H.264 MP4.",
+  noFfmpeg: "The computer running Morph has no ffmpeg, so it can't extract the frames either: install ffmpeg there (or the imageio-ffmpeg package: Morph's doctor on that computer gives the command), or export the clip as H.264 MP4.",
 };
 const DEFAULTS = { count: 8, max: 12, longEdge: 1280, photoEdge: 2048, maxSeconds: 180, quality: 0.8, openMs: 10000, seekMs: 15000 };
 const VIDEO_EXT = /\.(mp4|m4v|mov|qt|webm|mkv|avi|3gp|3g2|ogv)$/i, IMAGE_EXT = /\.(jpe?g|png|webp|gif|bmp|heic|heif|avif)$/i;
