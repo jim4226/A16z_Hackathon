@@ -1,0 +1,47 @@
+/* ---- tools: Morph writes a tool (preview), tooldraft.js; the chat cards reuse the tools section's .tl-* styles ---- */
+.td-need { font-size: 12px; color: var(--ink2); overflow-wrap: anywhere; }
+.td-probs { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 12px; color: #ffc4c4; line-height: 1.45; }
+.td-run .tl-ask svg { vertical-align: -2px; color: var(--warn); }
+.td-run .tl-note > svg { color: var(--good); flex: none; }
+.td-sg { display: grid; gap: 5px; font-size: 12px; color: var(--ink2); }
+.td-sg.dim { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.td-sg .spin { width: 10px; height: 10px; border-width: 1.5px; flex: none; }
+.td-sg ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.td-sg li { line-height: 1.45; overflow-wrap: anywhere; }
+.td-sg li b { font-weight: 600; color: var(--ink); }
+.td-sg .dim { font-size: 11.5px; line-height: 1.45; }
+.td-sg .tag { font-size: 10px; padding: 0 6px; }
+.tl-card .td-sg { border-top: 1px dashed var(--line2); padding-top: 6px; }
+
+/* the draft dialog */
+.modal .dlg.td-dlg { width: min(640px, calc(100vw - 32px)); }
+.td-f { display: grid; gap: 5px; margin-top: 12px; font-size: 12px; color: var(--ink2); }
+.td-f textarea, .td-f input { width: 100%; min-width: 0; border-radius: 8px; border: 1px solid var(--line3); background: var(--bg1); color: var(--ink);
+  padding: 7px 10px; font: 12.5px/1.45 var(--sans); outline: none; resize: vertical; }
+.td-f input { height: 32px; padding: 0 10px; font-family: var(--mono); }
+.td-f textarea:focus, .td-f input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-bg); }
+.td-rules { margin-top: 12px; padding: 9px 11px; border-radius: 9px; background: var(--bg3); color: var(--ink2); font-size: 12px; line-height: 1.5; }
+.td-dlg .td-sg { margin-top: 12px; }
+.td-dlg .kchk { margin-top: 10px; }
+
+/* the review dialog */
+.td-review .kchk { margin: 8px 0 4px; }
+.td-dl { margin-top: 10px; gap: 7px 12px; font-size: 12.3px; }
+.td-dl dt { padding-top: 1px; }
+.td-host + .td-host { margin-top: 6px; }
+.td-host .tag { font-size: 10px; }
+.td-snip { font-size: 11px; color: var(--muted); line-height: 1.4; margin-top: 2px; overflow-wrap: anywhere; }
+.td-tool { display: grid; gap: 3px; padding: 7px 0; border-top: 1px dashed var(--line2); }
+.td-tool:first-child { border-top: 0; padding-top: 0; }
+.td-tool b { font-weight: 620; color: var(--ink); }
+.td-url { font-size: 11.3px; color: var(--accent2); overflow-wrap: anywhere; }
+.td-sha { font-size: 11px; overflow-wrap: anywhere; }
+.td-k { margin-top: 12px; font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.td-warn { list-style: none; margin: 5px 0 0; padding: 0; display: grid; gap: 5px; font-size: 12px; color: var(--ink2); line-height: 1.45; }
+.td-warn li { display: flex; gap: 7px; align-items: flex-start; overflow-wrap: anywhere; }
+.td-warn li svg { color: var(--warn); margin-top: 2px; flex: none; }
+.td-review .tl-sum { margin-top: 12px; }
+.td-spec { margin-top: 12px; }
+.td-spec summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.td-spec pre { margin-top: 6px; max-height: 300px; white-space: pre; }
+.kt small.kwarn { color: var(--warn); }

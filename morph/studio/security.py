@@ -64,7 +64,12 @@ def contained_path(root: str, relative: str, decode: bool = True) -> str | None:
 
 
 def looks_like_secret(text: str) -> bool:
-    return bool(SECRET.search(text or ""))
+    """A Claude, SubQ or Keewano key, or a tool's key (toolbox: the value of a saved MORPH_TOOL_* key, a token with a
+    manifest's key prefix that fits its pattern, a bearer token)."""
+    if SECRET.search(text or ""):
+        return True
+    from .toolbox import catalog
+    return catalog.looks_like_tool_key(text or "")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

@@ -40,6 +40,30 @@ Morph Studio is a local app: a small web server on your computer, used from your
   direct downloads. The audit log is hash-chained (`morph team audit --verify`) and records sign-ins, invites, member,
   role and policy changes, script tokens, releases, key and settings changes, exports and draft order downloads,
   imports, resets and deleted projects.
+- Agent tools (beta, [docs/TOOLS.md](docs/TOOLS.md)): a tool is a spec, not code. A JSON manifest says which address to
+  call, what to send and what to keep, and one hardened runner executes it; Morph never runs code that a service or
+  Claude wrote.
+  - **Keys are bound to hosts.** A tool key (`MORPH_TOOL_*`) goes only to its tool's own hosts, in the header or query
+    parameter its manifest names. It never goes to Claude and never appears in a card, event, log, run file, API
+    answer or export: every known key is removed from what a service answers before anything is kept or shown, even
+    when the service echoes it back, and a request that would carry a known key anywhere else is refused.
+  - **Network rules for every call:** HTTPS only, to the manifest's hosts, which must be public DNS names. Every address
+    a name resolves to must be public (no private, loopback, link-local, cloud metadata, shared, reserved or multicast
+    address, nor an IPv6 form that wraps one), and the connection goes to the address that was checked, so a second
+    lookup can't move it. No redirects. One deadline per call, the name lookup included; JSON answers only, capped in
+    size and cut to the fields the manifest names.
+  - **Approvals:** Morph's own read-only tools run once you save their key in Keys; other read-only tools ask once,
+    bound to the exact tool (a changed tool asks again); tools that write or upload ask before every call; tools that
+    spend money or have a fee are refused. A run makes at most 20 calls of one tool and 40 requests to Claude. Turning
+    off *Let agents use tools* or network lookups stops a working run before its next step, and Stop ends it once the
+    call under way returns. In a team only the owner adds keys, allows tools, turns them on and approves drafted tools.
+  - **What a service answers is data, never instructions:** Claude is told so, and Morph decides what is kept (a price
+    only from a tool that answered in that run, marked "check it" when Morph can't find it in that answer).
+  - **Drafted tools (preview):** Claude fills in a form from the documentation you name; Morph checks the result (GET
+    lookups only, hosts that the documentation names and that resolve to public addresses, no wording aimed at an AI)
+    and installs only the spec the owner approved, bound to its sha256. A later change to the file turns its tools off.
+  - **Audit log:** every tool decision and call goes into `projects/.tools/audit.jsonl`, hash-chained like the Teams
+    log. It records names, hosts, outcomes and timings, never a key, a tool's arguments or an answer.
 
 ## What it doesn't protect
 
@@ -54,6 +78,13 @@ Morph Studio is a local app: a small web server on your computer, used from your
 - **Team mode is plain HTTP too.** Invite and sign-in links and session cookies can be copied by anyone who can watch
   the network: use it on a network you trust, or behind HTTPS (a tunnel or VPN). An approval records who reviewed a
   revision; it doesn't certify that a robot is safe.
+- **A provider misusing data you approved.** Once you add a tool's key or allow a call, that service receives what the
+  card says it sends. What it does with it afterwards is up to its own terms; Morph can't see or stop it.
+- **Documentation that is malicious from end to end.** When Claude drafts a tool, Morph's checks can't tell such
+  documentation from honest documentation; the owner's review is the last control. An owner's own manifest is trusted
+  as written too (the runner's host, address, key and size rules still apply).
+- **Answers that mislead.** A tool's answer can be wrong or written to mislead Claude about a price or stock level.
+  Morph marks a price it can't find in the tool's answer "check it", and nothing is ever ordered.
 - xacro files run in a separate process as your user; their memory limit applies on macOS and Linux only.
 - Programs running as your user can read your projects and `.env`.
 - Generated designs, wiring and firmware are not bench-validated. Check them before you power real hardware.
@@ -61,6 +92,7 @@ Morph Studio is a local app: a small web server on your computer, used from your
 ## In scope
 
 The Studio server and its API, file and path handling, the access link and cookie, `.env` handling, the launchers
-and `--update`, robot and file imports, and any case where Morph sends data that [docs/PRIVACY.md](docs/PRIVACY.md)
+and `--update`, robot and file imports, the agent tool runner, manifests and drafted tools (a key reaching anything
+but its own hosts is always in scope), and any case where Morph sends data that [docs/PRIVACY.md](docs/PRIVACY.md)
 doesn't mention. Out of scope: attacks that already need code running as your user, denial of service by someone who
 has the remote link, and the third-party services themselves.

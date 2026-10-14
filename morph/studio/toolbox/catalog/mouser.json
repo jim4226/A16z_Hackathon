@@ -1,0 +1,215 @@
+{
+  "schema": "morph.tool_manifest/1",
+  "id": "mouser",
+  "service": "Mouser Electronics",
+  "summary": "Distributor price breaks and stock from Mouser's Search API (read-only).",
+  "homepage": "https://www.mouser.com",
+  "privacy": "The keyword or part numbers the price check searches for (taken from your parts list) go to Mouser Electronics with your Search API key. Nothing else from your project is sent.",
+  "hosts": [
+    "api.mouser.com"
+  ],
+  "verified": {
+    "docs": "https://api.mouser.com/api/docs/ui/index",
+    "checked": "2026-10-13",
+    "live": null,
+    "notes": "Request bodies, the apiKey query parameter and the answer's fields come from Mouser's Swagger document (api.mouser.com/api/docs/V1), read on 2026-10-13. The tests' answer follows that schema with made-up values."
+  },
+  "credentials": [
+    {
+      "id": "search",
+      "env": "MORPH_TOOL_MOUSER_KEY",
+      "label": "Mouser Search API key",
+      "what": "Lets the price check look up Mouser price breaks and stock for the parts in your parts list.",
+      "where": "Mouser's Search API page: sign in to My Mouser, then sign up for the Search API",
+      "url": "https://www.mouser.com/apihome/",
+      "hosts": [
+        "api.mouser.com"
+      ],
+      "pattern": "^[A-Za-z0-9-]{16,64}$",
+      "cost": "Morph adds no fee; check Mouser's Search API page for its terms and limits."
+    }
+  ],
+  "tools": [
+    {
+      "name": "mouser_search_keyword",
+      "title": "Mouser keyword search",
+      "description": "Search Mouser Electronics' catalog with a keyword: a manufacturer part number (for example STS3215 or 30-81794) or a short product description. Returns up to 10 matching parts with Mouser's part number, the manufacturer and its part number, availability and stock, lead time, minimum and multiple order quantities, price breaks (quantity, price and currency as Mouser writes them) and the product page link. Use it for the current price and stock of a purchased part.",
+      "side_effect": "read",
+      "sends": "the keyword (a part number or a short description from your parts list)",
+      "request": {
+        "method": "POST",
+        "url": "https://api.mouser.com/api/v1/search/keyword",
+        "body": {
+          "json": {
+            "SearchByKeywordRequest": {
+              "keyword": "{keyword}",
+              "records": 10,
+              "startingRecord": 0,
+              "searchOptions": "{options}"
+            }
+          }
+        }
+      },
+      "auth": {
+        "credential": "search",
+        "in": "query",
+        "name": "apiKey"
+      },
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "keyword"
+        ],
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100,
+            "pattern": "^[A-Za-z0-9]",
+            "description": "A manufacturer part number or a short product description"
+          },
+          "options": {
+            "type": "string",
+            "enum": [
+              "None",
+              "InStock",
+              "Rohs",
+              "RohsAndInStock"
+            ],
+            "description": "Optional filter: only parts in stock, RoHS compliant, or both"
+          }
+        }
+      },
+      "response": {
+        "type": "json",
+        "extract": {
+          "errors": "/Errors",
+          "total": "/SearchResults/NumberOfResult",
+          "parts": "/SearchResults/Parts"
+        },
+        "keep": {
+          "errors": [
+            "Code",
+            "Message",
+            "PropertyName"
+          ],
+          "parts": [
+            "MouserPartNumber",
+            "ManufacturerPartNumber",
+            "Manufacturer",
+            "Description",
+            "Availability",
+            "AvailabilityInStock",
+            "FactoryStock",
+            "LeadTime",
+            "LifecycleStatus",
+            "IsDiscontinued",
+            "Min",
+            "Mult",
+            "PriceBreaks",
+            "ProductDetailUrl",
+            "SuggestedReplacement",
+            "RestrictionMessage"
+          ]
+        },
+        "max_items": 10
+      },
+      "limits": {
+        "timeout_s": 20,
+        "max_response_bytes": 1048576
+      },
+      "cost": {
+        "usd_per_call": 0
+      }
+    },
+    {
+      "name": "mouser_search_part_number",
+      "title": "Mouser part number lookup",
+      "description": "Look up Mouser part numbers as Mouser lists them (for example from a keyword search result): up to 10 at once, separated by |. Returns the same fields as the keyword search: availability, stock, lead time, order quantities, price breaks and the product page link.",
+      "side_effect": "read",
+      "sends": "the Mouser part numbers",
+      "request": {
+        "method": "POST",
+        "url": "https://api.mouser.com/api/v1/search/partnumber",
+        "body": {
+          "json": {
+            "SearchByPartRequest": {
+              "mouserPartNumber": "{part_numbers}",
+              "partSearchOptions": "{match}"
+            }
+          }
+        }
+      },
+      "auth": {
+        "credential": "search",
+        "in": "query",
+        "name": "apiKey"
+      },
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "part_numbers"
+        ],
+        "properties": {
+          "part_numbers": {
+            "type": "string",
+            "maxLength": 420,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._/#+-]{2,39}(\\|[A-Za-z0-9][A-Za-z0-9._/#+-]{2,39}){0,9}$",
+            "description": "One to 10 Mouser part numbers, separated by |"
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "None",
+              "Exact"
+            ],
+            "description": "Exact: only exact part number matches"
+          }
+        }
+      },
+      "response": {
+        "type": "json",
+        "extract": {
+          "errors": "/Errors",
+          "total": "/SearchResults/NumberOfResult",
+          "parts": "/SearchResults/Parts"
+        },
+        "keep": {
+          "errors": [
+            "Code",
+            "Message",
+            "PropertyName"
+          ],
+          "parts": [
+            "MouserPartNumber",
+            "ManufacturerPartNumber",
+            "Manufacturer",
+            "Description",
+            "Availability",
+            "AvailabilityInStock",
+            "FactoryStock",
+            "LeadTime",
+            "LifecycleStatus",
+            "IsDiscontinued",
+            "Min",
+            "Mult",
+            "PriceBreaks",
+            "ProductDetailUrl",
+            "SuggestedReplacement",
+            "RestrictionMessage"
+          ]
+        },
+        "max_items": 10
+      },
+      "limits": {
+        "timeout_s": 20,
+        "max_response_bytes": 1048576
+      },
+      "cost": {
+        "usd_per_call": 0
+      }
+    }
+  ]
+}

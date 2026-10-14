@@ -2,12 +2,16 @@
 // Keys go to the local Studio server, which writes them to the repo's git-ignored .env and applies
 // them at once. The server only ever reports whether a key is set, never its value. The privacy
 // switches (network, Keewano events, Keewano calibration) are non-secret settings (/api/settings).
+// Tool keys (beta, entries with `tool: true`) come from the manifests of the tools that are on and are grouped under
+// their service. window.dispatchEvent(new CustomEvent('morph:keys', {detail: {key: 'MORPH_TOOL_...'}})) opens the
+// dialog scrolled to that key (a "Key needed" card's Add key button), or to that setting ({key: 'agent_tools_enabled'}:
+// an interrupted run's Open Keys).
 import { I, esc, sleep } from './panels.js';
 
 const JSON_POST = { 'Content-Type': 'application/json', 'X-Morph-Client': '1' };  // the server refuses changes without X-Morph-Client
 const KEY_ICON = '<svg class="i sm" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M16 7l3 3M13.5 9.5l2 2"/></svg>';
 const SERVICE_NOTE = {
-  Claude: 'Free-form chat. Without a key, the suggestion chips and common phrasings still work.',
+  Claude: 'Free-form chat, and Live prices (beta) in the BOM tab. Without a key, the suggestion chips and common phrasings still work.',
   Keewano: 'Build memory: logs revisions and measurements in your Keewano project once Send build events is on (below). Grip-force calibration from that history is optional; the R Cubed demo history is seeded, not measured.',
   SubQ: 'SubQ Snap answers quick yes/no and multiple-choice questions about a request in about a second, labelled "SubQ Snap (AI)". Requests go to SubQ (Subquadratic Inc.) under your own account. SubQ keeps requests per your organisation\'s retention setting (zero retention on request) and does not train on API content.',
 };
@@ -15,11 +19,15 @@ const SETTINGS = [
   ['network_enabled', 'Allow network lookups (Darwin, SubQ, Claude)', 'Off: nothing leaves this computer. Chat uses the built-in rules and the BOM shows saved Darwin answers.'],
   ['telemetry_enabled', 'Send build events to Keewano', 'Off by default. On: revisions, edits and bench measurements go to your Keewano project (needs the project key).'],
   ['calibration_enabled', 'Use Keewano calibration (demo data unless you have real builds)', 'Off by default. On: newly generated robots scale the grip-force target by 3 or more logged builds with the same pad and material (synthetic-* projects ignored).'],
+  ['agent_tools_enabled', 'Let agents use tools (beta)', 'On: Live prices in the BOM tab runs Claude with the tools under Tool keys, and asks you in the chat before it needs a key or an approval. Off: no agent run starts, and a run under way stops before its next step and waits.'],
+  ['auto_price_check', 'Check live prices after a build changes the purchased parts', 'Off by default. On: Morph starts Live prices by itself after such a build, which uses Claude (billed to your Anthropic key) and your tool keys.'],
 ];
 const SAVED = {
   network_enabled: ['Network lookups off: Morph now uses only what is on this computer.', 'Network lookups on.'],
   telemetry_enabled: ['No more build events go to Keewano.', 'Build events go to Keewano from the next change (with the project key set).'],
   calibration_enabled: ['Keewano calibration off: new robots use the simulated holding force.', 'Keewano calibration on for newly generated robots; existing revisions keep their grip target.'],
+  agent_tools_enabled: ['Agent tools off: no agent run starts, and runs wait until they are on again.', 'Agent tools on: Live prices can run from the BOM tab, and waiting runs can continue.'],
+  auto_price_check: ['Live prices run only when someone starts them from the BOM tab.', 'Live prices start by themselves after a build changes the purchased parts.'],
 };
 
 export class KeysDialog {
@@ -30,32 +38,79 @@ export class KeysDialog {
     this.el.className = 'modal';
     this.el.addEventListener('click', (e) => { if (e.target === this.el) this.close(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && this.el.classList.contains('on')) this.close(); });
+    window.addEventListener('morph:keys', (e) => { const d = e.detail; this.open(typeof d === 'string' ? d : d?.key || d?.name || ''); });
     document.body.appendChild(this.el);
   }
   async refresh() {
     const r = await fetch('/api/keys', { cache: 'no-store' });
     if (!r.ok) throw new Error(`${r.status}`);
     this.data = await r.json();
+    this.tools = await fetch('/api/tools', { cache: 'no-store' }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
     return this.data;
   }
-  async open() {
+  // the catalog's tools (beta): on or off for new runs, the service, where it goes, its key; manifests that didn't load;
+  // New tool (preview): Claude drafts one from an API's documentation (tooldraft.js), the owner reviews and approves it
+  toolsSection() {
+    const t = this.tools;
+    if (!t) return '';
+    const side = { read: 'read-only', write: 'changes data', upload: 'sends files', spend: 'spends money' };
+    const row = (x) => `<label class="kt"><span class="switch"><input type="checkbox" data-tool="${esc(x.name)}"${x.enabled ? ' checked' : ''}${x.drafted?.changed ? ' disabled' : ''}><i></i></span>
+        <span><b>${esc(x.title)}</b>${x.drafted ? ' <span class="tag acc" title="Drafted by Claude from the service\'s documentation and approved by the owner (Morph writes a tool, preview)">drafted</span>' : ''}${x.verified && x.verified.live == null ? ' <span class="tag neutral" title="Written from the service\'s documentation; not yet tried with a real key">Not yet tried with a real key</span>' : ''}
+        <small>${esc([x.service, side[x.side_effect] || x.side_effect, x.host, x.key ? `${x.key.label}: ${x.key.set ? 'set' : 'not set'}` : 'no key needed', x.curated || x.drafted ? '' : 'your own manifest'].filter(Boolean).join(' · '))}</small>
+        ${x.drafted?.changed ? '<small class="kwarn">Changed after it was approved, so Morph keeps it off. Draft it again (New tool) to review and approve the new version.</small>' : ''}</span></label>`;
+    const waiting = t.drafts || [], ready = waiting.filter((d) => d.status === 'ready'), busy = waiting.length - ready.length;
+    const where = [...new Set(ready.map((d) => d.project).filter(Boolean))];
+    return `<section class="ksec ktoolist"><div class="ks-h"><b>Tools agents can use</b><span class="tag neutral">beta</span><span class="grow"></span>
+        <button class="btn" type="button" data-a="newtool" title="Claude drafts a read-only lookup tool from an API's documentation; you review and approve it">${I('spark', 'sm')}New tool (preview)</button></div>
+      <div class="ks-n">Claude finds these by search when a run needs one; each key is asked for in the chat when it's needed. A tool you turn off stays out of new runs.</div>
+      ${ready.length || busy ? `<div class="ks-n">${[ready.length ? `${ready.length} drafted tool${ready.length === 1 ? '' : 's'} wait${ready.length === 1 ? 's' : ''} for your review in the chat${where.length ? ` of ${where.map(esc).join(', ')}` : ''}.` : '', busy ? `Claude is drafting ${busy} tool${busy === 1 ? '' : 's'}.` : ''].filter(Boolean).join(' ')}</div>` : ''}
+      ${(t.tools || []).map(row).join('')}
+      ${(t.errors || []).map((e) => `<div class="kchk bad">${I('alert', 'sm')}<span><b>${esc(e.source)}</b> didn't load: ${esc(e.error)}</span></div>`).join('')}</section>`;
+  }
+  async toggleTool(name, on, inp) {
+    inp.disabled = true;
+    const r = await fetch(`/api/tools/${on ? 'enable' : 'disable'}`, { method: 'POST', headers: JSON_POST, body: JSON.stringify({ tool: name }) })
+      .catch((e) => ({ ok: false, json: async () => ({ error: `Couldn't reach the Studio server (${e.message})` }) }));
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok || !out.ok) {
+      inp.checked = !on;
+      inp.disabled = false;
+      this.note(this.row('bad', esc(out.error || 'Could not change that tool')));
+      return;
+    }
+    await this.refresh().catch(() => {});
+    this.render();
+    this.el.querySelector(`[data-tool="${CSS.escape(name)}"]`)?.focus();
+    this.note(this.row('good', on ? 'Turned on: new runs can use it.' : 'Turned off: new runs leave it out; its key stays saved.'));
+  }
+  async open(focus = '') {
+    this.focus = focus;
     this.el.classList.add('on');
     this.el.innerHTML = '<div class="glass dlg"><div class="skel" style="height:220px"></div></div>';
     try { await this.refresh(); } catch (e) {
-      this.el.innerHTML = `<div class="glass dlg"><p>Couldn't reach the Studio server (${esc(e.message)}).</p></div>`;
+      this.el.innerHTML = `<div class="glass dlg"><p>${e.message === '403' ? 'Only the owner of this Studio can see and add keys: ask them to add this one.'
+        : `Couldn't reach the Studio server (${esc(e.message)}).`}</p></div>`;
       return;
     }
     this.render();
   }
   close() { this.el.classList.remove('on'); }
   render() {
-    const d = this.data, keys = d.keys || [];
-    const services = [...new Set(keys.map((k) => k.service))];
+    const d = this.data, all = d.keys || [], keys = all.filter((k) => !k.tool), tools = all.filter((k) => k.tool);
+    const services = [...new Set(keys.map((k) => k.service))], toolServices = [...new Set(tools.map((k) => k.service))];
+    // a tool key no tool that is on uses (`unused`: its tools are off, or its manifest is gone) is listed while it is
+    // saved, so it can be removed; one whose manifest is gone can only be removed
     const field = (k) => `<div class="kf" data-k="${esc(k.name)}">
-        <label><span>${esc(k.label)}</span>${k.set ? `<span class="tag good">${I('check', 'sm')}set</span>` : '<span class="tag neutral">not set</span>'}</label>
-        <div class="kin"><input type="password" autocomplete="off" spellcheck="false" placeholder="${k.set ? 'Set. Paste a new key to replace it' : 'Paste key'}" aria-label="${esc(k.label)}">
+        <label><span>${esc(k.label)}</span>${k.set ? `<span class="tag good">${I('check', 'sm')}set</span>` : '<span class="tag neutral">not set</span>'}${k.unused ? '<span class="tag neutral">not used now</span>' : ''}</label>
+        <div class="kin">${k.unused && !k.provider ? '' : `<input type="password" autocomplete="off" spellcheck="false" placeholder="${k.set ? 'Set. Paste a new key to replace it' : 'Paste key'}" aria-label="${esc(k.label)}">`}
           ${k.set ? `<button class="btn ghost" type="button" data-clear="${esc(k.name)}" title="Remove this key">Remove</button>` : ''}</div>
-        <div class="kh">${esc(k.what)} <a href="${esc(k.url)}" target="_blank" rel="noopener">Where: ${esc(k.where)}</a></div></div>`;
+        <div class="kh">${esc(k.what)}${k.url ? ` <a href="${esc(k.url)}" target="_blank" rel="noopener">${k.tool ? 'Get a key' : 'Where'}: ${esc(k.where)}</a>` : ''}</div>
+        ${k.tool ? `<div class="khosts">${k.unused ? 'Sent nowhere while no tool that is on uses it.' : `Sent only to <span class="mono">${(k.hosts || []).map(esc).join(', ')}</span>${(k.used_by || []).length ? `; used by ${k.used_by.map(esc).join(', ')}` : ''}`}</div>` : ''}</div>`;
+    const sentence = (t) => (t && !/[.!?]$/.test(t) ? `${t}.` : t || '');
+    const toolSecs = toolServices.length ? `<section class="ksec ktools"><div class="ks-h"><b>Tool keys</b><span class="tag neutral">beta</span></div>
+        <div class="ks-n">Morph's agents ask for these when one of their tools needs your key. Each key is sent only to its own service, never to Claude.</div></section>
+      ${toolServices.map((sv) => { const ks = tools.filter((k) => k.service === sv); return `<section class="ksec ktool"><div class="ks-h"><b>${esc(sv)}</b>${ks.every((k) => k.unused) ? '<span class="tag neutral">not used now</span>' : ks.every((k) => k.set) ? '<span class="tag good">set up</span>' : '<span class="tag neutral">not set up</span>'}</div>
+        <div class="ks-n">${esc([sentence(ks[0].privacy), sentence(ks[0].cost)].filter(Boolean).join(' '))}</div>${ks.map(field).join('')}</section>`; }).join('')}` : '';
     const kw = d.integrations?.keewano || {}, st = d.settings || {};
     const toggle = ([k, title, note]) => `<label class="kt"><span class="switch"><input type="checkbox" data-s="${k}"${st[k] ? ' checked' : ''}><i></i></span>
         <span><b>${esc(title)}</b><small>${esc(note)}</small></span></label>`;
@@ -67,6 +122,8 @@ export class KeysDialog {
         <div class="ks-n">${esc(SERVICE_NOTE[sv] || '')}</div>${keys.filter((k) => k.service === sv).map(field).join('')}</section>`).join('')}
       <section class="ksec"><div class="ks-h"><b>Darwin</b><span class="tag good">no key needed</span></div>
         <div class="ks-n">Darwin Search is public, so the BOM tab finds agents for every part without a key. Ordering through Darwin uses your own Darwin sign-in, outside Morph.</div></section>
+      ${toolSecs}
+      ${this.toolsSection()}
       <section class="ksec"><div class="ks-h"><b>Privacy and network</b></div>${SETTINGS.map(toggle).join('')}
         ${st.network_enabled === false ? '<div class="ks-n">Network lookups are off, so nothing is sent to Keewano, Darwin, SubQ or Claude.</div>' : ''}</section>
       <div class="knote"></div>
@@ -83,6 +140,20 @@ export class KeysDialog {
     if (rb) rb.onclick = () => this.rebuild(rb);
     this.el.querySelectorAll('.kf input').forEach((inp) => inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.save(); }));
     this.el.querySelectorAll('[data-s]').forEach((inp) => (inp.onchange = () => this.setting(inp.dataset.s, inp.checked, inp)));
+    this.el.querySelectorAll('[data-tool]').forEach((inp) => (inp.onchange = () => this.toggleTool(inp.dataset.tool, inp.checked, inp)));
+    const nt = this.el.querySelector('[data-a="newtool"]');
+    if (nt) nt.onclick = () => { this.close(); window.dispatchEvent(new CustomEvent('morph:tool-draft', { detail: {} })); };
+    const focus = this.focus;
+    this.focus = '';
+    const target = focus && ([...this.el.querySelectorAll('.kf')].find((f) => f.dataset.k === focus)
+      || [...this.el.querySelectorAll('[data-s]')].find((x) => x.dataset.s === focus)?.closest('.kt'));  // a key, or a setting
+    if (target) {
+      target.classList.add('kfocus');
+      target.scrollIntoView({ block: 'center' });
+      target.querySelector('input')?.focus({ preventScroll: true });
+      return;
+    }
+    if (focus) this.note(this.row('bad', `${esc(focus)} isn't in this list: the tool that needs it may be turned off.`));
     this.el.querySelector('.kf input')?.focus();
   }
   async setting(name, on, inp) {
@@ -115,8 +186,14 @@ export class KeysDialog {
   }
   async save(extra) {
     const values = { ...(extra || {}) };
-    this.el.querySelectorAll('.kf').forEach((f) => { const v = f.querySelector('input').value.trim(); if (v) values[f.dataset.k] = v; });
+    this.el.querySelectorAll('.kf').forEach((f) => { const v = (f.querySelector('input')?.value || '').trim(); if (v) values[f.dataset.k] = v; });
     if (!Object.keys(values).length) { this.a.toast('Paste a key first'); return; }
+    for (const [name, v] of Object.entries(values)) {  // the server checks again; this only saves a round trip
+      const k = (this.data.keys || []).find((x) => x.name === name);
+      let fits = true;
+      try { fits = !(k?.tool && v && k.pattern) || new RegExp(k.pattern).test(v); } catch { fits = true; }
+      if (!fits) { this.note(this.row('bad', `That doesn't look like a ${esc(k.service)} key. Copy the ${esc(k.label)} again (${esc(k.where)}).`)); return; }
+    }
     const btn = this.el.querySelector('[data-a="save"]');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
     const r = await fetch('/api/keys', { method: 'POST', headers: JSON_POST, body: JSON.stringify({ values }) })
@@ -129,6 +206,7 @@ export class KeysDialog {
     }
     this.data = { ...this.data, keys: out.keys, integrations: out.integrations };
     this.a.onChanged?.(out.integrations);
+    this.tools = await fetch('/api/tools', { cache: 'no-store' }).then((x) => (x.ok ? x.json() : this.tools)).catch(() => this.tools);
     this.render();
     const added = (out.changed || []).filter((k) => values[k]), removed = (out.changed || []).filter((k) => !values[k]);
     const label = (k) => esc((out.keys || []).find((x) => x.name === k)?.label || k);
@@ -138,11 +216,12 @@ export class KeysDialog {
       removed.length ? `Removed: ${removed.map(label).join(', ')}.` : '',
       kwAdded && !out.integrations.keewano?.send ? 'Nothing goes to Keewano until <b>Send build events to Keewano</b> is on (Privacy and network, below).' : '',
       kwAdded && out.integrations.keewano?.calibration ? 'The Keewano grip calibration applies to newly generated robots: <b>Reset demo and rebuild</b> regenerates both (about a minute).' : '',
+      (out.resumed || []).length ? `${out.resumed.length === 1 ? 'A paused run that waited for it continues' : `${out.resumed.length} paused runs that waited for it continue`} now.` : '',
     ].filter(Boolean).join(' '));
     this.note(saved);
     this.a.toast(added.length ? 'Keys saved on this computer' : 'Key removed');
-    const services = [...new Set(added.map((k) => (out.keys || []).find((x) => x.name === k)?.service).filter(Boolean))];
-    if (services.length) await this.test(services, saved);
+    const services = [...new Set(added.map((k) => (out.keys || []).find((x) => x.name === k)).filter((k) => k && !k.tool).map((k) => k.service))];
+    if (services.length) await this.test(services, saved);  // tool keys are tried by their tools, not here
   }
   async test(services, before = '') {
     this.note(before + this.row('busy', `Checking ${services ? esc(services.join(' and ')) : 'your keys'}…`));

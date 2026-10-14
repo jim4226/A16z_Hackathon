@@ -11,6 +11,9 @@
 Models propose slot values; brief.py validates, clamps and decides. Each step emits
 {"type": "agent", "role", "provider", "status": start|done|error|skipped, "ms", "text", "brief"} and nothing here raises:
 a missing key, a timeout or an error falls back to the rules and says so in the timeline.
+
+Live prices (beta), at the end of this file, is a different kind of agent: a toolbox run (morph/studio/toolbox) that
+checks distributor prices for a built revision (`price_check`, RELEASE_CONTRACTS section 15.1).
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from pydantic import BaseModel, Field
 from . import brief as B
 from . import capability as cap
 from .intent import MODEL
+from .toolbox import Builtin
 
 SUBQ_TIMEOUT_S = 8.0
 CLAUDE_TIMEOUT_S = 30.0
@@ -577,3 +581,236 @@ def after_build(b: B.Brief, project: str, rev: str | None = None, summary: dict 
         out["memory"] = "skipped"
         tl("memory", "keewano", "skipped", "Keewano not configured", ms=0)
     return out
+
+
+# ------------------------------------------------------------------ Live prices (beta): the price-check agent
+# A toolbox run (morph/studio/toolbox) started from the BOM tab (api_tools: POST /api/runs/start {agent: "price_check"}),
+# or after a build that changed the purchased parts when auto_price_check is on. Claude finds the distributor tools in the
+# catalog by tool search; these four core tools are loaded up front and run without asking. What it found is recorded
+# through morph_prices_record, which keeps only lines it can match to a tool's answer in this run (the view's `result`).
+PRICE_AGENT = "price_check"
+_PRICE_START = threading.Lock()  # one check-then-start at a time: two clicks at once make one run, not two
+PRICE_SKIP = ("pcb", "material", "fabricated")  # a custom board's quote, bulk stock and made parts aren't catalogue items
+PRICE_SYSTEM = (
+    "You are the price-check agent in Morph Studio, which designs robots. The person wants current distributor prices "
+    "and stock for the purchased parts of one revision of their robot.\n\n"
+    "Start with morph_bom_read for the parts list. Price the lines a distributor sells: servos and motors, boards and "
+    "modules, sensors, connectors, cables and power supplies. Fasteners can wait unless little else is left.\n\n"
+    "Search the tool catalog for distributor price and stock tools and call them with the manufacturer part number when "
+    "the item names one, else a short description. Pick the store or region of a buyer in the United States unless the "
+    "parts list says otherwise. A close match is worth reporting if you say how it differs.\n\n"
+    "Record each line you priced with morph_prices_record: the distributor, its part number, the unit price at the "
+    "robot's quantity (the matching price break), the currency as the tool wrote it, that price break's quantity, the "
+    "stock and the tool that answered. Copy numbers exactly as the tool returned them; never estimate or convert a price, "
+    "and leave a field null when the tool didn't give it.\n\n"
+    "For a part no distributor tool covers, darwin_search finds agents (shops and services) on Darwin; it only "
+    "shortlists and never orders. If Darwin asks a question, such as an email address, pass it on to the person and never "
+    "answer it for them. When you need a kind of tool the catalog doesn't have, say so with morph_tools_request.\n\n"
+    "Finish with a short summary for the person: what you priced and where, and what you couldn't price and why. Nothing "
+    "has been ordered or reserved, so never say otherwise.")
+_PRICE_FIELDS = ("item", "distributor", "part_number", "unit_price", "currency", "quantity", "stock", "tool")
+
+
+def bom_lines(p, rev: str) -> list:
+    """The purchased lines of a revision that a distributor might sell: item, category, quantity and Morph's estimate."""
+    try:
+        rows = ((p.load_results(rev) or {}).get("bom") or {}).get("rows") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    out, seen = [], set()
+    for r in rows:
+        item = r.get("item") if isinstance(r, dict) else None
+        if not isinstance(item, str) or r.get("make_or_buy") != "buy" or r.get("category") in PRICE_SKIP or item in seen:
+            continue
+        seen.add(item)
+        qty = r.get("qty") if isinstance(r.get("qty"), (int, float)) and not isinstance(r.get("qty"), bool) else 1
+        sel = r.get("selected") if isinstance(r.get("selected"), dict) else {}
+        est = sel.get("unit_price") if isinstance(sel.get("unit_price"), (int, float)) else None
+        out.append({"item": item[:120], "category": str(r.get("category") or "")[:30], "qty": qty,
+                    "estimate_unit_usd": est, "estimate_vendor": str(sel.get("vendor") or "")[:40] or None})
+    return out[:40]
+
+
+def _project(ctx):
+    from ..robot.pipeline2 import RobotProject
+    from .projects import project_root
+    root = project_root(ctx["home"], ctx.get("project"))
+    return RobotProject(root) if root else None
+
+
+def _bom_read(inp, ctx):
+    p, rev = _project(ctx), (ctx.get("context") or {}).get("rev")
+    if p is None or not isinstance(rev, str):
+        return {"error": "no_project", "message": "This run has no project revision to read."}
+    lines = bom_lines(p, rev)
+    return {"project": ctx.get("project"), "rev": rev, "lines": lines,
+            "note": "estimate_unit_usd is Morph's own catalogue estimate in US dollars, not a live price."}
+
+
+def _darwin_search(inp, ctx):
+    from .. import darwin
+    q = re.sub(r"[\x00-\x1f\x7f]+", " ", str(inp.get("query") or "")).strip()
+    if not 2 <= len(q) <= 200:
+        return {"error": "invalid_arguments", "message": "query: 2 to 200 characters describing the part or the job."}
+    res = darwin.search(q, max_results=5, retries=0, timeout=15)
+    agents = [{k: a.get(k) for k in ("name", "description", "readiness", "can_start", "url")} for a in res.get("agents") or []]
+    return {"query": q, "status": res.get("status"), "question": res.get("question"), "cached": bool(res.get("cached")),
+            "agents": agents, **({"error_note": str(res["error"])[:200]} if res.get("error") else {}),
+            "note": "Darwin shortlists agents; Morph never orders through it. Pass any question Darwin asks on to the person."}
+
+
+def _tools_request(inp, ctx):
+    from .toolbox import audit, store
+    need, why = (re.sub(r"\s+", " ", str(inp.get(k) or "")).strip() for k in ("need", "why"))
+    if not 3 <= len(need) <= 300 or len(why) > 300:
+        return {"error": "invalid_arguments", "message": "need: 3 to 300 characters; why: at most 300."}
+    entry = ctx["need_tool"](need, why)
+    line = {"ts": entry["at"], "run": ctx.get("run"), "project": ctx.get("project"), "agent": ctx.get("agent"),
+            "need": entry["need"], "why": entry["why"]}
+    folder = store.tools_dir(ctx["home"])
+    try:
+        with store.locked(folder):
+            path = os.path.join(folder, "requests.jsonl")
+            with open(path, "a", encoding="utf-8", newline="\n") as fh:
+                fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+            os.chmod(path, 0o600)
+    except (OSError, TimeoutError):
+        pass
+    audit.append("tool_requested", home=ctx["home"], by=ctx.get("by"), run=ctx.get("run"), agent=ctx.get("agent"))
+    return {"noted": True, "message": "Morph showed this request to the person and noted it in its tool requests. No tool "
+                                      "covers it in this run: carry on without it and say what is missing."}
+
+
+def _tool_answers(home: str, run_id: str) -> dict:
+    """{tool name: [text of each successful answer]} of one run so far, from its file (finished turns and this turn's
+    calls that already answered)."""
+    from .toolbox import store
+    run = store.read_json(os.path.join(store.runs_dir(home), f"{run_id}.json"), {}) or {}
+    names, blocks = {}, []
+    for m in run.get("messages") or []:
+        content = m.get("content") if isinstance(m, dict) and isinstance(m.get("content"), list) else []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                names[b.get("id")] = b.get("name")
+            elif isinstance(b, dict) and b.get("type") == "tool_result":
+                blocks.append(b)
+    blocks += [b for b in ((run.get("pending") or {}).get("results") or {}).values() if isinstance(b, dict)]
+    out = {}
+    for b in blocks:
+        if b.get("is_error") or b.get("tool_use_id") not in names:
+            continue
+        text = " ".join(c.get("text", "") for c in b.get("content") or [] if isinstance(c, dict) and isinstance(c.get("text"), str))
+        out.setdefault(names[b["tool_use_id"]], []).append(text)
+    return out
+
+
+def _price_in(price, text: str) -> bool:
+    """`price` written in `text` the way a price list writes it (13.9 as 13.90, 13.9, 13,90 ...), not inside a longer number."""
+    forms = {f"{price:.2f}", f"{price:.3f}", f"{price:.4f}", f"{price:g}", str(price)}
+    forms |= {f.replace(".", ",") for f in forms}
+    return any(re.search(r"(?<![\d.,])" + re.escape(f) + r"(?![\d])", text) for f in forms)
+
+
+def _prices_record(inp, ctx):
+    from .toolbox import catalog
+    p, rev = _project(ctx), (ctx.get("context") or {}).get("rev")
+    items = {ln["item"].lower(): ln["item"] for ln in (bom_lines(p, rev) if p is not None and isinstance(rev, str) else [])}
+    lines = inp.get("lines") if isinstance(inp.get("lines"), list) else []
+    cat, answers = catalog.load(ctx["home"]), _tool_answers(ctx["home"], ctx["run"])
+    kept, dropped = [], []
+    for ln in lines[:60]:
+        if not isinstance(ln, dict):
+            continue
+        item = items.get(str(ln.get("item") or "").strip().lower())
+        tool = cat.tool(ln.get("tool")) if isinstance(ln.get("tool"), str) else None
+        pn, dist = (re.sub(r"\s+", " ", str(ln.get(k) or "")).strip() for k in ("part_number", "distributor"))
+        price, cur = ln.get("unit_price"), ln.get("currency")
+        why = ("not a line of this parts list" if item is None else "not a tool of the catalog" if tool is None
+               else "no answer from that tool in this run" if tool.name not in answers
+               else "distributor and part number are needed" if not (1 <= len(dist) <= 60 and 1 <= len(pn) <= 60)
+               else "the price must be a number of 0 or more" if price is not None and (isinstance(price, bool) or not
+                                                                                         isinstance(price, (int, float)) or not 0 <= price < 1e6)
+               else "")
+        if why:
+            dropped.append({"item": str(ln.get("item") or "")[:120], "why": why})
+            continue
+        text = " ".join(answers[tool.name])
+        n = lambda k: ln.get(k) if isinstance(ln.get(k), int) and not isinstance(ln.get(k), bool) and 0 <= ln.get(k) < 10**9 else None  # noqa: E731
+        kept.append({"item": item, "distributor": dist, "part_number": pn, "unit_price": price,
+                     "currency": cur.strip()[:8] if isinstance(cur, str) and cur.strip() else None,
+                     "quantity": n("quantity"), "stock": n("stock"), "tool": tool.name, "service": tool.service,
+                     "matched": pn in text and (price is None or _price_in(price, text))})
+    from .toolbox import store
+    old = (store.read_json(os.path.join(store.runs_dir(ctx["home"]), f"{ctx['run']}.json"), {}) or {}).get("result") or {}
+    merged = {(x["item"], x["distributor"], x["part_number"]): x for x in old.get("lines") or [] if isinstance(x, dict)}
+    merged.update({(x["item"], x["distributor"], x["part_number"]): x for x in kept})
+    ctx["record"]({"rev": rev, "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                   "lines": list(merged.values())[:80], "dropped": (old.get("dropped") or [])[-20:] + dropped})
+    return {"recorded": len(kept), "lines": [{"item": x["item"], "distributor": x["distributor"], "matched": x["matched"]}
+                                             for x in kept], "dropped": dropped,
+            "message": "Recorded. A line marked matched: false has a price or part number Morph couldn't find in that "
+                       "tool's answer: check and record it again, or leave it out."}
+
+
+def _strict(props: dict, required=None) -> dict:
+    return {"type": "object", "properties": props, "required": list(required or props), "additionalProperties": False}
+
+
+_NULLABLE = lambda t: {"type": [t, "null"]}  # noqa: E731
+PRICE_CORE = [
+    Builtin("morph_bom_read", "Read the purchased parts of the robot revision this price check is for: each line's item, "
+            "category, quantity and Morph's own estimate (not a live price).", _strict({}), _bom_read, "Parts list"),
+    Builtin("darwin_search", "Search Darwin for agents (shops and services) that can supply a part or do a job no "
+            "distributor tool covers. Darwin only shortlists: nothing is ordered.",
+            _strict({"query": {"type": "string", "description": "The part or the job, in a few words"}}), _darwin_search,
+            "Darwin search"),
+    Builtin("morph_tools_request", "Tell the person that this price check needs a kind of tool the catalog doesn't "
+            "have (for example quotes from a distributor Morph has no tool for). Morph notes it and answers at once.",
+            _strict({"need": {"type": "string", "description": "The capability, in a few words"},
+                     "why": {"type": "string", "description": "What it would have answered"}}), _tools_request,
+            "Tool request"),
+    Builtin("morph_prices_record", "Record the prices and stock you found, for the person's parts list view: one entry per "
+            "line you priced, copied exactly from a tool's answer in this run.",
+            _strict({"lines": {"type": "array", "items": _strict({
+                "item": {"type": "string", "description": "The item exactly as morph_bom_read named it"},
+                "distributor": {"type": "string"}, "part_number": {"type": "string", "description": "The distributor's or maker's part number"},
+                "unit_price": _NULLABLE("number"), "currency": _NULLABLE("string"),
+                "quantity": {**_NULLABLE("integer"), "description": "The price break's quantity"},
+                "stock": _NULLABLE("integer"), "tool": {"type": "string", "description": "The tool that answered"}})}}),
+            _prices_record, "Price record"),
+]
+
+
+def _register_price_tools():
+    from .toolbox import register
+    for b in PRICE_CORE:  # by name, so a price check resumed after a restart finds them
+        register(b)
+
+
+def start_price_check(studio, room, body: dict, by=None, *, auto: bool = False):
+    """POST /api/runs/start {agent: "price_check", rev?}: a Live prices run for the revision (default: the newest).
+    Returns (view, already): a run of this revision that is still working or waiting is returned instead of a second."""
+    from .api_tools import toolbox
+    revs = room.completed()
+    rev = (body or {}).get("rev") or (revs[-1] if revs else None)
+    if not isinstance(rev, str) or rev not in revs:
+        raise ValueError("That revision isn't built yet." if revs else "This project has no finished revision to price yet.")
+    lines = bom_lines(room.p, rev)
+    if not lines:
+        raise ValueError(f"{rev} has no purchased parts a distributor sells.")
+    tb = toolbox(studio)
+    with _PRICE_START:
+        for v in tb.runs(project=room.name, agent=PRICE_AGENT, limit=20):
+            if v["status"] in ("running", "paused") and (v.get("context") or {}).get("rev") == rev:
+                return v, True
+        view = tb.start(agent=PRICE_AGENT, system=PRICE_SYSTEM, project=room.name, core=[b.name for b in PRICE_CORE],
+                        by=by, prompt=f"Check live prices for {room.name} {rev}: {len(lines)} purchased lines. Morph's "
+                                      "estimates are in US dollars.",
+                        context={"rev": rev, "auto": bool(auto), "lines": len(lines)}, title=f"Live prices for {rev}",
+                        effort="medium")
+    return view, False
+
+
+price_check = start_price_check  # agents.price_check(studio, room, {"rev"?}, by=None, *, auto=False) -> (view, already)
+
+_register_price_tools()

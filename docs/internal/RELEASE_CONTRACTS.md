@@ -55,6 +55,8 @@ decisions lives outside the repo; the essentials are summarized here.
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
 | `.team/` | F4 | `team.json`, `secret` (0600), `audit.jsonl` |
+| `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
+| `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
 
 Folders starting with `.` are never projects: `projects()` and `reset()` must skip them.
 
@@ -199,6 +201,8 @@ A job applies its changes to the newest revision when its turn comes. If one of 
     final status: done, noop, error, conflict, cancelled, dropped or resolved
   - `presence {members}`
   - `comment`, `proposal`, `review`, `activity`, `inbox` (addressed to one member only)
+  - agent runs and tools (section 15): `run_started`, `credential_needed`, `tool_request`, `tool_used`, `run_paused`,
+    `run_resumed`, `run_done`, `run_failed` and `tool_draft` (15.2); never a key, a tool's answer or message text
   - `signed_out {reason: "removed" | "signed_out"}` (E2): the last event of a member's stream once the owner removed them
     or they signed out everywhere (the stream checks its member every 2 s, `api_team.StreamCheck`); the page then opens
     the sign-in page, which tells that browser why
@@ -474,6 +478,11 @@ members; a member can hold several.
   Chat messages that look like a key (`looks_like_secret`) are refused before they are shown, saved or sent.
 - **Served files.** `/files` and `/static` serve regular files only (never a pipe or device); generated files
   under `/files` get the sandbox policy, so they can't run script with the Studio's origin.
+- **Agent tool calls** (section 15) go only through `toolbox.http_tool.run`, which executes a declarative manifest
+  (never code from a service or a model): HTTPS to the manifest's public DNS hosts, every resolved address public and
+  connected to as checked, no redirects, one deadline that includes the address lookup, capped JSON answers cut to the
+  declared fields, and every known key removed from every text before it is shortened. A tool key goes only to its own
+  hosts, in its own slot. A run checks *agent tools* and *network lookups* before every request and call.
 
 ## 10. Keewano event id ranges
 
@@ -510,6 +519,7 @@ activity stays on the Studio computer.
 | F3 | `morph/studio/vision.py`, `morph/studio/api_video.py`, `morph/studio/ffmpeg.py`, `static/video.js`, `tests/test_video*.py` |
 | F4 | `morph/studio/teams/` (package), `morph/studio/api_team.py`, `static/team.js`, `tests/test_team*.py` |
 | F5 | `morph/studio/worlds.py`, `morph/studio/api_world.py`, `static/world.js`, the vendored three r160 examples (PointerLockControls, Octree, Capsule, TransformControls) in `static/vendor/`, `simulate.py` world support, `tests/test_world*.py` |
+| B2-T (tool broker, section 15) | `morph/studio/toolbox/` (package, with its `catalog/*.json`), `morph/studio/api_tools.py`, `static/tools.js`, `static/tooldraft.js`, `static/tooldraft.css`, `tests/test_toolbox*.py`, `tests/test_tools_*.py`, `tests/toolbox_helpers.py`, `tests/fake_claude.py`, `tests/fixtures/tools/`, `tests/e2e/test_e2e_tool*.py`, `docs/TOOLS.md`. Edits to `keys.py`, `settings.py`, `security.py`, `agents.py` (Live prices), `darwin.py`, `server.py`, `teams/roles.py`, `keys.js`, `cli.py` (doctor) and the tools section of style.css |
 
 ## 12. Correctness fixes from the external review (owner: W0c, after Wave 0)
 
@@ -663,6 +673,385 @@ in sections 3, 4 and 8. The rest that other code relies on:
   New robot, Import and video browsers and the Teams owner's (World mode always has it, through SwiftShader); and
   `PLAYWRIGHT_CHROMIUM` names the browser. A page fails on script or console errors, requests to
   other sites or sideways scrolling; a Studio fails on any traceback.
+
+## 15. Tool broker (B2-T1 toolbox core, B2-T2 tool keys)
+
+Agents pull in tools as they need them and ask the person for a key, an approval or a restart's go-ahead, then carry on
+by themselves. Darwin stays a provider (sourcing), not the tool layer. Package `morph/studio/toolbox/` (standard library
+plus the anthropic SDK, imported only when a run calls Claude; not pipeline code, so nothing here rebuilds a robot).
+Section 1's storage table and section 3's event list point here (added with the docs, B2-T4); this section is the
+reference.
+
+**Storage** (MORPH_HOME; every file 0600 and written atomically, folders 0700):
+
+| Path | Contents |
+|---|---|
+| `.tools/catalog/*.json` | the owner's own manifests (off until the owner turns each tool on); Morph's ship in `morph/studio/toolbox/catalog/` (on by default; package data: the first one adds `catalog/*.json` to pyproject's package-data and MANIFEST.in) |
+| `.tools/state.json` | `{enabled: {tool: bool}}`, the owner's overrides |
+| `.tools/approvals.json` | `{tools: {tool: {fingerprint, mode: always \| key_saved, by, at}}}` |
+| `.tools/audit.jsonl` + `audit.head` | hash-chained log (`audit.verify(home)`): tool_enabled/disabled, keys_saved (names only), tool_approved (once \| always \| key_saved), tool_skipped/denied/refused, tool_call {run, tool, kind, host, ok, status, ms, cost_usd, outcome}, run_started/paused/resumed/interrupted/done/failed/refused/cancelled/expired, run_cancel_requested. Never a key, an argument or an answer |
+| `.runs/<id>.json` + `<id>.lock` | one agent run (`run_[0-9a-f]{16}`); deleted at Studio start 7 days after its last change |
+
+**Manifests** (`morph.tool_manifest/1`, `catalog.parse_manifest`): one provider each: `id` (2-24 of a-z0-9, never a name
+Morph uses: morph, darwin, mcp, tool, web, claude, anthropic, subq, keewano, code, computer, bash), `service`,
+`privacy` (required), `hosts` (public DNS names: no IP literal, localhost or local-network name), optional `summary`,
+`homepage`, `verified {docs, checked, live, notes}`, `credentials[]` {id, env `MORPH_TOOL_[A-Z0-9_]{2,40}`, label, what,
+where, url, hosts (a subset), pattern (`^...$`, no groups or alternation, never matches ""), prefix?, cost?, privacy?} and
+`tools[]` {name `<id>_...`, title, description (Morph-written for Morph's own), side_effect read | write | upload | spend,
+sends, request {method, url, query, headers, body}, auth? {credential, in: header | query, name, prefix}, input_schema
+(object of scalars or lists of scalars, additionalProperties false), response {type json, extract, max_items}, limits
+{timeout_s <= 30, max_response_bytes <= 2 MiB}, cost {usd_per_call, note?}}. Unknown fields are refused at every level;
+a key goes only to its own hosts; a paid tool must say `spend`; the query string carries a key only with a warning.
+Morph's manifests win: an owner manifest that reuses a provider id, a tool name or a key name is not loaded; a manifest
+that fails is listed in `Toolbox.tools()["errors"]`, never raised. A tool's fingerprint (sha256 of its entry, its
+provider's service, privacy and hosts, and its credential) is what approvals bind to. Claude sees each tool as Morph's
+description (the manifest's text plus Morph's line on provider and host, side effect, cost and key), only ever as a tool
+definition: no manifest text goes into a system prompt.
+
+**Python API for the routes, cards and agents (T3, T4, T5):**
+
+```python
+from morph.studio.toolbox import Toolbox, ToolboxError, Builtin, register
+tb = Toolbox(studio.home, emit=fn)       # one per Studio; emit(event) is called from run threads
+tb.recover()                             # at Studio start: running runs -> interrupted pauses; 7-day expiry
+tb.tools() -> {tools: [{name, tool, title, service, provider, description, side_effect, sends, privacy, host,
+               cost_usd, cost_note, curated, enabled, paid, warnings, verified, key: {env, label, set, url, where,
+               hosts} | None, approval: {mode, by, at} | None}], errors, spend_cap_usd}      # GET /api/tools
+tb.set_enabled(name, on, by=)            # POST /api/tools/enable|disable (owner)
+tb.start(agent=, system=, prompt=, project=, core=[Builtin | name], context=, title=, by=, effort="medium",
+         max_tokens=16000, binding=None) -> view    # POST /api/runs/start (editor); drives in the background
+tb.runs(project=, status=) -> [view]; tb.get(run_id) -> view                                 # GET /api/runs (viewer)
+tb.decide(run_id, {tool_use_id: allow_once|allow_always|skip|deny}, by=, role=) -> view     # owner; others only skip
+tb.resume(run_id, by=); tb.cancel(run_id, by=)                                                # editor
+tb.on_credentials_saved(changed_names, by=) -> [run ids resumed]   # POST /api/keys, after keys.save()
+tb.answer(run_id) -> final text of a done run (message content: for the agent that started it, never in a view)
+ToolboxError(message, status)            # 400, 403 (role), 404 (no such run or tool), 409 (run busy), 503 (no Claude)
+register(Builtin(name="morph_...", description=, input_schema=<strict>, run=fn(input, ctx), title=))
+```
+
+A view is `{id, agent, project, title, status: running|paused|done|failed|refused|cancelled, waiting_on: [credential,
+approval, interrupted], cards, created, updated, turns, calls, note, by, spend_usd}`; no message text. `cards` rebuild
+the page's cards after a reload: the `credential_needed` and `tool_request` events below with `run`, `project`,
+`tool_use_id`, or `{type: "run_interrupted", reason: restart | claude_unavailable | claude_key, note}`.
+Core tools (`Builtin`) are the agent's own Morph code: names `morph_*` or `darwin_*`, strict schemas (every object closed
+with every property required), run without asking, registered by name so a run resumes after a restart; `ctx` is
+`{home, project, run, agent, by, context}`.
+
+**Events** (`emit`; every one carries `run`, `project` and `agent`, never a key, a tool's answer or message text):
+`run_started {title}`; `credential_needed {tool_use_id, tool, title, service, label, what, where, url, cost, privacy,
+env, hosts, reason: missing | rejected}`; `tool_request {tool_use_id, tool, title, service, provider, side_effect, sends,
+privacy, host, cost_usd, cost_note, curated, input (a 600-character preview of the call's arguments), reason:
+first_use | changed | per_call}`; `tool_used {tool, ok, ms, host, cost_usd}`; `run_paused {waiting_on, reason?, note?}`;
+`run_resumed {trigger: key_saved | decision | resume}`; `run_done {status: done | cancelled, note}`; `run_failed {status:
+failed | refused, note}`.
+
+**Policy** (`policy.check`, before every catalog call): a tool the run doesn't have, one turned off or changed while the
+run waited (fingerprint), a paid tool (no spending in this beta: $0 cap), a 21st call of one tool in one run and
+arguments that don't fit the schema get Morph's own error result at once, no card. A read-only tool runs once approved:
+Always on its card, or, for one of Morph's curated tools, saving its key (`key_saved`); write, upload and spend tools
+ask before every call ("Always" counts once). A missing key asks for the key. 40 Claude turns per run.
+
+**Runs** (`runs.py`, Morph's own loop, not the SDK's tool runner): the request prefix is stored as first sent (model
+`intent.MODEL`, max_tokens, system with `TOOL_RULES`, tools, thinking `{type: adaptive}`, output_config effort, betas,
+`fallbacks: "default"`, top-level cache_control) and replayed unchanged on every later request, after a restart too;
+catalog changes reach the next run. Tools: the BM25 tool search tool first, the agent's core tools loaded with `strict`,
+every enabled catalog tool deferred (no cache_control), never a forced tool_choice. Every assistant `content` is kept as
+the raw JSON the API returned (unknown blocks and empty thinking blocks included) and sent back as is; each turn's
+tool_results go back in one user message in call order, none for `srvtoolu_` ids; pause_turn is sent back unchanged.
+A turn whose calls need the person runs none of them; a call's start is written to the run file before it runs, so
+after a restart a started write, upload or spend call answers "interrupted" instead of running again (reads run again).
+One thread of one process drives a run (`store.Claim`, an OS file lock freed if its process dies), so a key saved
+twice resumes once. Refusal, max_tokens and the turn limit end a run; Claude unreachable or its key refused pause it as
+interrupted; a first turn whose account refuses server-side fallbacks continues without them (nothing was replayed yet).
+
+**Keys** (`morph/keys.py`): `status(home=None)` lists the built-in keys, then one entry per key a tool that is on needs
+(`tool: true, service, label, what, where, url, cost, privacy, hosts, pattern, prefix, provider, curated, tools,
+used_by, set`), never a value; `save()` accepts a `MORPH_TOOL_*` name only when a loaded manifest declares it, checks the
+value against its pattern and prefix (4 KiB at most, no spaces or quotes) and keeps the lock, the 0600 file and the
+error that never repeats a value. `security.looks_like_secret` also refuses the value of any set `MORPH_TOOL_*` key, a
+token that starts with a manifest's key prefix and fits its pattern, and bearer tokens (JWTs). The Keys dialog
+(`static/keys.js`) groups tool keys under "Tool keys (beta)" by service, with "Get a key", the hosts each key is sent to
+and the tools that use it; `window.dispatchEvent(new CustomEvent("morph:keys", {detail: {key: "MORPH_TOOL_..."}}))` opens
+it on that key; a member who isn't the owner is told to ask the owner. `POST /api/keys` may answer `resumed: [run ids]`
+(T3), which the dialog reports.
+
+**HTTP runner** (`http_tool.run`): HTTPS to the manifest's host only; every resolved address must be public (no private,
+loopback, link-local or metadata, shared, documentation, reserved, multicast, IPv6 ULA or site-local, IPv4-mapped, 6to4,
+Teredo or NAT64 address) and the connection goes to the checked address (TLS still checks the name); no redirects; one
+deadline (a watchdog shuts a dripping socket); JSON answers only, capped, reduced to the declared fields and shortened;
+every known key (the tool's and every other `MORPH_TOOL_*`, Claude, SubQ, Keewano key) removed from answers and errors;
+a request that would carry a known key outside its own slot is refused; 401/403 with a key pause the run as `rejected`.
+Direct connections only: a Studio that must go through an HTTP proxy can't reach tool APIs yet.
+
+**What T3 wires** (nothing in T1 touches server.py): `studio.toolbox = Toolbox(studio.home, emit=...)` and `recover()` at
+start; emit to the run's room hub (`project`), or to every tab when a run has no project; `POST /api/keys` calls
+`on_credentials_saved(changed, by=member id)` and returns `resumed`; `keys.status` and `keys.save` get `home=studio.home`
+(today both fall back to MORPH_HOME, the Studio's home when the CLI starts it); the routes and roles noted in the API
+block above (`GET /api/tools` and `GET /api/runs` viewer; start, resume and cancel editor; enable, disable and decide
+owner, with editors allowed to skip); the settings `agent_tools_enabled` and `auto_price_check`.
+
+**Live checks** (`tests/test_toolbox_live.py`, `@pytest.mark.live`, `MORPH_LIVE=1` with an Anthropic key, never run in
+CI): a real run that pauses for a key, survives a restart and resumes with `prefix_mismatch_behavior: "error"`, and reads
+the prompt cache on resume. Offline, the contract tests check the same requests on the real SDK over a mock transport;
+`MORPH_PREFIX_DIFF=<the Claude API skill>/shared/preserved-thinking-migration/prefix_diff.py` runs that checker over them.
+
+### 15.1 Tools in the Studio, Live prices and the distributor catalog (B2-T2: T3 to T6)
+
+**Routes** (`morph/studio/api_tools.py`; rows in `teams/roles.py` ROUTES; a Studio without Teams is one person who may
+do everything):
+
+| Route | Role | Body or query → answer |
+|---|---|---|
+| `GET /api/tools` | viewer | `Toolbox.tools()` plus `can` and `ready` |
+| `POST /api/tools/enable`, `/disable` | owner | `{tool}` → `{ok, changed, ...}`; team audit `tool_enabled` / `tool_disabled` |
+| `GET /api/runs` | viewer | `?project=` (the tab's room), `status?`, `agent?`, `limit` 1-100 → `{runs: [view], can, ready, agents: [{name, title}]}` |
+| `GET /api/runs/answer` | viewer | `?run=` → `{run, status, text}`: Claude's closing text of a done run of this project, else `text: null` (404 for another project's run) |
+| `POST /api/runs/start` | editor | `{agent, rev?}` → 202 `{ok, run, already: false}`, or 200 with the run of that revision still working or waiting (`already: true`); 400 unknown agent or unbuilt revision, 409 agent tools off, 503 no Claude |
+| `POST /api/runs/decide` | editor | `{run, decisions: {tool_use_id: allow_once \| allow_always \| skip \| deny}}`; the handler passes the member's role, so only the owner allows or denies (403 "Only the owner can allow or deny a tool; you can skip it."); team audit `tool_decision {run, decisions}` |
+| `POST /api/runs/resume`, `/cancel` | editor | `{run}`; resume of an interrupted run without Claude is 503; cancel answers `ended` |
+
+`can` = `{start, skip, allow, keys, tools}` for this member (owner: all; editor: start and skip; viewer: none), `ready` =
+`{claude, network, agent_tools, auto_price_check}`. A route that would start or continue a run answers 409 while
+`agent_tools_enabled` is off; keys still save and paused runs wait. Agents a person may start register with
+`api_tools.agent(name, title=, start=fn(studio, room, body, by) -> (view, already))`; Live prices is `price_check`.
+
+**Studio wiring** (server.py): `studio.toolbox` (api_tools.attach) is made at start and `recover()`s; events go to the
+run's room hub (every tab when a run has no project; nowhere once the project is deleted). `POST /api/keys` saves with
+`home=studio.home` and passes the saved `MORPH_TOOL_*` names to `on_credentials_saved(names, by=member, resume=agent
+tools on)`; its answer adds `resumed: [run ids]`. After a finished build (`Studio.apply` and `Studio.build`, after the
+`done` event) `api_tools.after_build(studio, room, rev)` starts Live prices in a background thread only when
+`auto_price_check`, `agent_tools_enabled` and Claude (a key and network lookups) are all on and the revision's
+purchased lines (item, quantity) differ from its parent's.
+
+**Settings** (`morph/settings.py`, switches in Keys, Privacy and network): `agent_tools_enabled` (default on: "Let
+agents use tools (beta)"; `settings.agent_tools_enabled()` is false offline) and `auto_price_check` (default off:
+"Check live prices after a build changes the purchased parts"; it spends Claude tokens on the person's key).
+
+**Toolbox additions** (`runs.py`): `start()` refuses a core tool name that isn't registered (or isn't in the toolbox's
+own `builtins`); `runs(..., agent=)`; `on_credentials_saved(names, *, by=None, resume=True)`. A core tool's `ctx` adds
+`record(value)` (what the agent found, at most 64 KiB, keys removed: the view's `result`) and `need_tool(need, why="")`
+(a capability no tool covers: kept in the view's `requests`, at most 20, and sent as a card). A view adds `result`,
+`requests`, `steps` and `context` (`rev`, `auto`, `lines` only). `steps` (the last 40) are the card's lines kept with
+the run so a reloaded page shows what the live events showed: `{type: "tool_used", tool, title, ok, ms, host,
+cost_usd, error?, status?, at}`, `{type: "key_saved", keys: [labels], at}`, `{type: "skipped", tool, title, decision:
+skip | deny, at}`.
+
+**Event additions**: `tool_used {title}` and, when the call failed, `error` (the result's code, at most 40 characters:
+network, timeout, http_error, rate_limited, not_json, invalid_json, response_too_large, blocked_destination,
+redirect_not_followed, invalid_arguments, tool_failed, or a core tool's own) and `status` (HTTP status or null), never
+what the service said; `run_resumed {trigger, keys?: [labels of the saved keys it waited for], skipped?: [{tool, title,
+decision}]}`; `tool_request {reason: "capability", tool, title, tool_use_id, need, why, at}` from `ctx.need_tool`.
+
+**Live prices** (`agents.py`, agent `price_check`): `agents.price_check(studio, room, body, by=None, *, auto=False)
+-> (view, already)` (also `start_price_check`, the name it registers under) prices one built revision (`body.rev`,
+default the newest): one run per revision while it works or waits; its title is "Live prices for <rev>" and its
+prompt names the project, revision and line count, never the lines. Its core tools:
+`morph_bom_read` (the revision's bought lines a distributor might sell: not pcb, material or fabricated; item,
+category, quantity, Morph's estimate and vendor; at most 40), `darwin_search` (`darwin.search`, 5 results, cached, no
+retry; returns Darwin's `status` and `question`, which the agent passes on and never answers), `morph_tools_request`
+(`need_tool` plus a line in `MORPH_HOME/.tools/requests.jsonl`, 0600, and audit `tool_requested`; answered at once)
+and `morph_prices_record`, which keeps a line only for an item of this parts list, a catalog tool that answered in this
+run, a distributor and part number, and a price of 0 or more; `matched` says whether the part number and the price
+appear in that tool's answers. The record is `{rev, checked_at, lines: [{item, distributor, part_number, unit_price,
+currency, quantity, stock, tool, service, matched}], dropped: [{item, why}]}`, merged by (item, distributor, part
+number). `darwin.search` results now carry `status` (completed | needs_input | no_match) and `question`; the BOM tab's
+Darwin shortlist is unchanged.
+
+**Catalog** (`morph/studio/toolbox/catalog/`, package data in pyproject and MANIFEST.in): `mouser.json`
+(`mouser_search_keyword`, `mouser_search_part_number`; POST to api.mouser.com with the key in the `apiKey` query
+parameter; `MORPH_TOOL_MOUSER_KEY`) and `element14.json` (`element14_search_keyword`, GET api.element14.com
+`/catalog/products` with `callInfo.apiKey`; 46 stores; `MORPH_TOOL_ELEMENT14_KEY`), read-only, no fee, written from
+the providers' API documentation (`verified.docs`, `checked` 2026-10-13, `live: null`: the Keys dialog and the cards
+say "Not yet tried with a real key"). `response.keep` (`{extracted field: [names]}`) keeps only the named fields of an
+object or of each object of a list. A curated tool may be read-only with POST (Mouser's search) without a warning.
+Contract tests run each manifest against a recorded or documented answer (`tests/fixtures/tools/answers/`).
+
+**Front end** (`static/tools.js`, FEATURES entry `tools`; styles in the `tools:` section of style.css): one card per
+run of the tab's project in the chat, rebuilt from `GET /api/runs` when the page loads, when the chat is redrawn and
+when the event stream opens:
+status, a line per step, Key needed (service, what, cost, privacy, hosts; Add key or, after a refusal, Replace key
+dispatches `morph:keys` with that key; Get a key; Skip), Tool request (what is sent and where, cost, the call's
+arguments; Allow once, Always for read-only tools, Skip), interrupted runs (Continue), capability requests, "Key added,
+continuing…" while a run resumed by a saved key works, the prices found (Show prices: a table with "from <service>" or
+"check it"), Claude's closing text and Stop. Parallel calls share a card: one per key, and one per read tool asking for
+its first (or changed) use, whose answer is sent for every call it covers; a tool that asks before every call keeps one
+card per call. Members who can't act see "Ask the owner to add the <key> in Keys." or
+"Ask the owner to allow it." (editors: "Or skip it"). The BOM tab's filters bar gets "Live prices (beta)" for editors
+(and for everyone once prices exist): it starts a run, says what a working run waits for, or opens the prices; without
+Claude (503) it says so and opens Keys on `ANTHROPIC_API_KEY`. The Keys dialog lists "Tools agents can use" with an
+on/off switch per tool. New on the feature bus (section 4): app.js sends `{type: "connection", live: true, again}`
+whenever the page's event stream opens, so a feature can reload what a stream that opened late (after the 3 s wait
+before the first state load) or reopened after a drop may have missed; tools.js refreshes its cards then.
+
+**Tests**: `tests/test_tools_api.py` (every route, the role matrix over HTTP, events, settings, restart),
+`tests/test_tools_ui.py` (the cards in a real browser against a real Studio server), `tests/test_toolbox_sourcing.py`,
+`tests/test_toolbox_vendors.py`; `tests/fake_claude.py` is a local stand-in for the Messages API that a Studio reaches
+through `ANTHROPIC_BASE_URL` (no test hook in Morph), used by `tests/e2e/test_e2e_tools.py` (`MORPH_E2E=1`).
+`tests/test_toolbox_vendors_live.py` (`MORPH_LIVE=1` with real keys) checks the two manifests against the real services
+and Live prices with real Claude; it has not been run, so both manifests keep `verified.live: null`.
+
+### 15.2 Morph writes a tool (preview) (B2-T3)
+
+Writing a tool never generates code. Claude fills in a typed form (structured output) from an API's official
+documentation, Morph builds a `morph.tool_manifest/1` spec from the form and checks it, the Studio's owner reviews it,
+and only the approved spec is installed, bound to its sha256; section 15's HTTP runner executes it like any manifest.
+Engine `morph/studio/toolbox/draft.py` (`Toolbox.drafts`, one `Drafts` per toolbox), routes in `api_tools.py`, front end
+`static/tooldraft.js` and `tooldraft.css` (imported and linked by tools.js: no FEATURES entry, no app.js or style.css
+change). Darwin's suggestions for a need are `darwin.suggest` and `darwin.capability`.
+
+**Storage** (MORPH_HOME; 0600, atomic, like section 15's files):
+
+| Path | Contents |
+|---|---|
+| `.tools/drafts/<id>.json` | one draft (`draft_[0-9a-f]{16}`, schema `morph.tool_draft/1`): status, need, why, docs_url, docs_host, project, by, source {run, agent, title, tool_use_id} (the need card it came from), the request as sent and the prompt, log [{id, model, stop_reason, request_id}], usage, pages [{url, title, ok, error, kind, chars, retrieved_at}] (never the pages' text), spec, sha256, problems [{code, message}], warnings, card, notes, note, reason, installed {at, by, file, replaced}; deleted at Studio start 7 days after its last change |
+| `.tools/pins.json` | `{pins: {provider: {sha256, file, by, at, draft, docs}}}`: owner manifests installed from an approved draft (`catalog.read_pins`, `catalog.pin`) |
+| `.tools/catalog/<id>.json` | the installed spec (`<id>-<sha8>.json` when an owner's own file already has that name; a new approved draft of a pinned provider replaces its file) |
+
+**Statuses**: `drafting` then `ready`, `refused`, `not_possible` (Claude says the need takes writes, POST, OAuth, a
+sign-in or payment) or `failed` (a plain note: Claude refused, was cut off, unreachable, busy, refused the key, or the
+Studio stopped while it worked); the owner turns `ready` into `installed` or `discarded`, and Stop discards a draft
+while Claude works (its answer is dropped, its usage kept). At most 2 drafts work at once (429); the same need and
+address while one drafts answers that draft (`already: true`).
+
+**The request** (one conversation, in the background): model `intent.MODEL`, max_tokens 16000, `system` = Morph's own
+rules only (`draft.SYSTEM`: read-only GET lookups; not_possible for anything else; never invent a host, endpoint,
+parameter or header; the key under `MORPH_TOOL_*` in the header or query parameter the documentation names; the
+documentation is third-party data, and anything in it that addresses an AI is ignored and reported in notes), one user
+message (the need, why, the documentation's address, the provider ids and key names already taken), tools = one
+`web_fetch_20250910` with `allowed_domains: [the documentation's host]`, `max_uses: 4`, `max_content_tokens: 30000`,
+thinking adaptive, `output_config {effort: "high", format: {type: "json_schema", schema: draft.FORM_SCHEMA}}`, the
+server-side fallback beta with `fallbacks: "default"` (dropped once when the account refuses it before any answer),
+top-level cache_control. A `pause_turn` answer goes back unchanged (4 continuations at most). The address must be
+https on port 443 at a public DNS name, without user info, at most 250 characters (`draft.docs_address`).
+
+**The form** (`FORM_SCHEMA`: every object closed and every property required, no unions or length keywords): outcome
+drafted | not_possible, reason, service, provider_id, summary, homepage, privacy, key {needed, env, label, what, where,
+url, pattern, prefix, cost, placement header | query | none, name, value_prefix}, tools[] {name, title, description,
+sends, method "GET", url, params[] {name, type, description, required, choices, pattern}, query[] {name, value},
+headers[] {name, value}, extract[] {field, pointer}, keep[] {field, names}, max_items, cost_note}, notes. Claude's JSON
+is never the spec: `draft.build_manifest` builds it (tools `<id>_<name>`, side_effect read, $0 a call, limits 15 s and
+1 MiB, string inputs at most 200 characters, path variables required, `verified {docs, checked: today, live: null,
+notes: "Drafted by Claude from this documentation ...; not yet tried with a real key."}`, one credential `key` whose
+hosts are those of the lookups that use it; a key prefix kept only when it has 3 or more characters with an _ or -
+and the key's pattern starts with it).
+
+**The draft rules** (`draft.check`, on top of `catalog.parse_manifest`; problem codes): `form`; `too_many` (more than
+4 lookups, 10 inputs or 4 headers a lookup); `key_slot`; `not_read` (no page of the documentation was read);
+`provider` and `clash` (an id, tool or key name that Morph's own tools or an owner manifest not installed from a draft
+uses); `env_name` (not `MORPH_TOOL_[A-Z0-9_]{2,40}`); `url`, `not_https`, `ip_address`, `local_host` (every lookup,
+key page and homepage: https to a public DNS name); `host_not_named` (the pages Claude read on the documentation's site
+or its subdomains must name the host outside text aimed at AI agents; the documentation's own host counts);
+`method` (GET only, no body); `pattern` (`^...$`, at most 120 characters, no groups, alternation or back-references,
+at most 2 variable quantifiers); `ai_text` (spec wording that addresses an AI); `private_address` (an API host that
+resolves to a non-public address); `manifest` (any other catalog rule, reported only when nothing above is). "Named in
+the documentation" is Morph's finding from the web_fetch results themselves, never Claude's words. Warnings, shown
+under "Check before approving": the documentation has text aimed at AI agents (quoted), Morph's default key pattern
+(the documentation gives none), a homepage left out, an endpoint path not found in the pages read, a DNS check that
+couldn't run (the runner checks every address before each call), and the catalog's own warnings. Owner review is the
+last control: documentation that is malicious from end to end can't be told apart by these rules.
+
+**Approve** (`Drafts.approve(draft, sha256, by=)`): a ready draft, with the sha256 it holds now (409 otherwise, and a
+clash that appeared since makes it refused); writes the spec, pins it, checks that the reloaded catalog has that
+sha256, turns its tools on and grants each an approval in mode `draft` (bound to the tool's fingerprint as in section
+15), so the next run asks only for the key. A run already working keeps the tools it was sent. `catalog.enabled_names`
+keeps a pinned provider's tools off while its file's sha256 differs from the pin, `Toolbox.set_enabled` answers 409 for
+them, and `Toolbox.tools()` adds `drafted {sha256, changed, by, at, draft, docs}` to each such tool and `drafts` (the
+drafts drafting or ready). Each catalog provider now carries `sha256` (`catalog.fingerprint` of its whole manifest).
+
+**Routes** (rows appended to `teams/roles.py` ROUTES):
+
+| Route | Role | Body or query → answer |
+|---|---|---|
+| `POST /api/tools/draft` | owner | `{need (3-300), docs_url, why? (300), run?, tool_use_id?}` → 202 `{ok, draft, already: false}`, or 200 with the same draft still drafting; 400 bad input or a value that looks like a key, 409 agent tools off, 429 two drafting, 503 no Claude; team audit `tool_draft_started {draft, docs_host}` |
+| `GET /api/tools/drafts` | viewer | `?id=` one draft, else the project's drafts, newest first (`?status=`, `?limit=` 1-50), plus `can` and `ready` |
+| `POST /api/tools/drafts/approve` | owner | `{draft, sha256}` → `{ok, draft}`; team audit `tool_draft_approved {draft, provider, sha256, tools, hosts}` |
+| `POST /api/tools/drafts/discard` | owner | `{draft}` → `{ok, draft}` (409 once installed); team audit `tool_draft_discarded` |
+| `GET /api/tools/suggest` | editor | `?need=` (3-300, refused when it looks like a key) → `darwin.suggest(need)` |
+
+`can` gains `draft` (owner; true without Teams). A draft's view is the stored draft without request, prompt and log.
+
+**Darwin's suggestions** (`darwin.suggest(need, limit=4)`): Darwin's public search (6 results, no retry, 15 s) and each
+agent's public capability record (`capability(id)`: owner, website as a plain https link, sign-in, payment; cached 7
+days in Darwin's cache folder) → `{need, status, question, suggestions: [{name, owner, website, darwin_url, ready,
+sign_in, paid, summary}], cached, error?}`. With Darwin lookups off: saved answers only. Suggestions only: Morph never
+connects to a suggested service, signs in or pays; Darwin's question is shown, never answered for the person.
+
+**Events and audit**: `tool_draft {draft, status, project, title}` on the project's room hub (known keys removed).
+Audit (`.tools/audit.jsonl`): `tool_draft_started {draft, docs_host, project, run}`, `tool_draft_ready {draft, pages,
+provider, tools, hosts, sha256}`, `tool_draft_refused {draft, pages, problems: [codes]}`, `tool_draft_not_possible`,
+`tool_draft_failed {reason}`, `tool_draft_approved {draft, provider, tools, hosts, sha256, replaced}`,
+`tool_draft_discarded`.
+
+**Front end** (tooldraft.js): the need card (tools.js, from `morph_tools_request`) shows Darwin's suggestions to
+editors and the owner (at most 3, a short note), "Draft a tool (preview)" to the owner (others: ask the owner) and,
+once a draft exists, where it stands. `window.dispatchEvent(new CustomEvent("morph:tool-draft", {detail: {need, why,
+run, tool_use_id}}))` opens the dialog (need, documentation address, the rules, Darwin's suggestions and question;
+without Claude it says so and opens Keys on `ANTHROPIC_API_KEY`; with agent tools off it says so and opens Keys).
+Keys' "Tools agents can use" gets "New tool (preview)", a "drafted" tag, and a changed drafted tool's switch disabled
+with its reason. A
+draft's card in the chat: Drafting (Stop), Ready for review (Review and approve, Discard), Won't install (the reasons;
+Show the draft, Draft again, Discard), No tool for it, Couldn't draft, Installed (Add the key, Run Live prices again).
+The review dialog shows hosts with the documentation's line and address check, each lookup's URL, inputs and the line
+that documents it, where the key goes, cost, privacy, pages read, sha256, warnings, Claude's notes and the spec;
+only the owner sees Approve and install.
+
+**Tests**: `tests/test_toolbox_draft.py` (the request, every refusal from scripted answers, approval, change after
+approval, restart, expiry), `tests/test_tools_draft_api.py` (routes, roles, events, Darwin from recorded answers in
+`tests/fixtures/darwin/`), `tests/test_tools_draft_ui.py` (browser), `tests/e2e/test_e2e_tool_draft.py` (`MORPH_E2E=1`:
+the real Studio with the stand-in's `tools` script), `tests/test_toolbox_draft_live.py` (`MORPH_LIVE=1`, real Claude
+and a real documentation page; not run yet). `tests/fake_claude.py` adds the fictional Gearbase API's documentation
+(clean and with a planted paragraph for AI agents), `gearbase_form()`, `drafting()` and `--script tools`.
+
+### 15.3 Adversarial review of the tool broker (B2-T4)
+
+A review of sections 15 to 15.2 before the merge. What changed in those contracts (each with a test that failed before):
+
+- **Redaction before shortening** (`http_tool`): every text and object key in an answer, and an `http_error` detail, has
+  the known keys removed before it is cut to `max_string` (2,000), 100 or 300 characters; cutting first could leave
+  the start of a key that a service echoed back in Claude's request, the run file and the closing summary.
+- **One deadline, the lookup included**: `http_tool.vet_within(host, port, timeout, policy=, resolver=) -> [ips]` runs
+  `vet_addresses` within the time left (`TimeoutError` past it; an address found too late is never used), and `run()`
+  passes the transport only what remains of the call's deadline. The draft's address check uses it with 10 s.
+- **The switches stop a working run**: `Toolbox(..., tools_on=callable)` (default `settings.agent_tools_enabled`) and
+  `network` are checked before every Claude request and every tool call; either one off pauses the run as
+  `interrupted` with reason `offline` (network lookups) or `tools_off` (agent tools). Continue while it is still off
+  answers 409 (agent tools) or 503 (no Claude without network lookups), and `Toolbox.resume` itself pauses the run
+  again without sending anything. A drafting conversation fails before its next request instead. The interrupted
+  card reasons are now `restart | claude_unavailable | claude_key | offline | tools_off`. Before, a run with network
+  lookups off kept sending requests to Claude (the policy answered each call "offline");
+  `tests/test_toolbox_runs.py` now expects the pause.
+- **Stop during a call or Claude's answer**: `cancel()` on a run another thread drives records the request (answer
+  `{..., cancelling: true}`, audit `run_cancel_requested`); the driving thread ends the run `cancelled` when the call or
+  answer returns, also when that answer would have paused it (`_pause` and `_interrupt` honour it), and hands the
+  claim back under the toolbox's lock, so a key saved at that moment can't resume a stopped run.
+- **7 days means gone**: `_load` returns nothing for a run or draft untouched for `TTL_S` (`get`, `decide`, `resume`,
+  `cancel`, approve and discard answer 404), not only at the next start; `recover()` still deletes the files.
+- **Drafts**: a refused draft's review links a key page only when it is https to a public host name (`draft._link`, and
+  `linkable()` in tooldraft.js); a provider id that is a Windows device name (`security.WINDOWS_RESERVED`: con, aux,
+  nul, com1-9, lpt1-9) is installed as `<id>-<sha8>.json`.
+- **Keys** (`keys.tool_keys`, `keys.save`): a saved `MORPH_TOOL_*` key that no tool that is on declares is listed with
+  `unused: true` (`used_by: []`, and `service: "Keys no tool uses"`, `provider: null` when no loaded manifest declares
+  it), so the owner can remove it; `save()` always accepts removing such a key and still refuses a value for a name no
+  manifest declares. `morph doctor` marks it. Before, the key vanished from Keys but stayed in `.env`.
+- **Front end**: Stop shows "Stopping" until the run ends (`cancelling`); an interrupted card offers the owner **Open
+  Keys** for `offline`, `tools_off` (`morph:keys` with `network_enabled` or `agent_tools_enabled`: keys.js focuses that
+  switch) and `claude_key` (`ANTHROPIC_API_KEY`), and tells others to ask the owner; a refused key's card says why it
+  may have been refused; Allow and key cards tag a tool that isn't curated "drafted" or "your own manifest"; a refusal's
+  note reads "Claude declined this request (safety category: <category>)." A view that says a run is working or
+  paused never replaces one that says it ended (an ended run never runs again): a decide or start answer, or a list,
+  that left the server before the run ended used to take a finished card back to Working, with Stop, until the next
+  list arrived.
+
+Guards added that pass before and after (`tests/test_toolbox_hardening.py`): marker keys searched for in every Claude
+request and header, event, API answer, run, draft, pin and audit file, the server's output and an export; two tabs
+answering the same card at once (one wins, the other gets 409 "This run is already continuing."); every tools route
+for owner, editors and viewers of other disciplines and a removed member (401); remote mode with and without the
+access code; a service answer written as instructions; odd run and draft ids; symlinked and hidden manifests. The UX
+pass (1280x720, 1600x900, 910 px; every card state) found no console errors beyond the expected 409, no CSP
+violations and no sideways scrolling.
+
+Not changed here (other features' files): the New robot request and Teams comments don't refuse a pasted tool or
+SubQ key the way chat does (`security.looks_like_secret`; Teams uses its own `collab.SECRET_RX`).
 
 ## 16. Simulation track: robustness studies (B2-S1 the engine, B2-S2 the Studio routes and the card)
 

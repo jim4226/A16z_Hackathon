@@ -81,7 +81,10 @@ def _normalize(query: str, raw: dict) -> dict:
             "capability_id": a.get("capabilityId"),
             "url": AGENT_PAGE.format(agent=a.get("agentId"), cap=a.get("capabilityId")),
         })
+    question = resp.get("question")
     return {"query": query, "ok": True, "search_id": raw.get("searchId"), "agents": agents,
+            "status": raw.get("status") if isinstance(raw.get("status"), str) else None,  # completed | needs_input | no_match
+            "question": question[:500] if isinstance(question, str) else None,  # what Darwin asks the person (an email ...)
             "no_match_reason": resp.get("noMatchReason")}
 
 
@@ -129,6 +132,75 @@ def _remember(query: str, out: dict):
             json.dump({**out, "fetched": time.strftime("%Y-%m-%dT%H:%M:%S")}, fh)
     except OSError:
         pass
+
+
+CAPABILITY = "https://api.darwin.so/api/v2/search/capabilities/{cap}"
+CAPABILITY_TTL_S = 7 * 86400
+# Darwin's structured price is often missing (pricing UNSPECIFIED, payment NOT_REQUIRED) while the provider's own
+# description says it charges per call: either counts as paid
+PAID = re.compile(r"x402|USDC|\$\s?\d|per call|paid", re.I)
+
+
+def _website(url) -> str | None:
+    """An owner's website as Darwin lists it, only when it is a plain https:// link to a named host."""
+    m = re.fullmatch(r"https://([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::443)?(/[^\s\"'<>\\]*)?", url.strip().lower() if isinstance(url, str) else "")
+    return url.strip() if m and len(url) <= 200 and not re.fullmatch(r"[\d.]+", m.group(1)) else None
+
+
+def capability(cap_id: str, timeout: float = 10) -> dict | None:
+    """Darwin's public record of one capability (no account needed): its owner, the owner's website and what it needs
+    (a sign-in, a payment). Cached on disk for 7 days; None when Darwin lookups are off or it can't be reached."""
+    if not isinstance(cap_id, str) or not re.fullmatch(r"[a-z0-9]{10,40}", cap_id):
+        return None
+    path = os.path.join(CACHE, f"cap-{cap_id}.json")
+    try:
+        if time.time() - os.path.getmtime(path) < CAPABILITY_TTL_S:
+            with open(path, encoding="utf-8") as fh:
+                return json.load(fh)
+    except (OSError, ValueError):
+        pass
+    if not settings.sourcing_enabled():
+        return None
+    try:
+        with urlopen(Request(CAPABILITY.format(cap=cap_id), headers={"Accept": "application/json"}), timeout=timeout) as resp:
+            c = (json.load(resp) or {}).get("capability") or {}
+    except Exception:  # HTTP/URL errors, timeouts, bad JSON: no details, the suggestion stays without them
+        return None
+    owner = c.get("owningAi") if isinstance(c.get("owningAi"), dict) else {}
+    needs = c.get("executionRequirements") if isinstance(c.get("executionRequirements"), dict) else {}
+    price = (c.get("pricing") or {}).get("mode") if isinstance(c.get("pricing"), dict) else None
+    out = {"title": str(c.get("title") or "")[:120], "owner": str(owner.get("name") or "")[:80] or None,
+           "website": _website(owner.get("websiteUrl")), "verified": owner.get("verified") is True,
+           "summary": str(owner.get("summary") or "")[:240], "can_start": c.get("canStartThread") is True,
+           "sign_in": (needs.get("providerAuthentication") or {}).get("state") == "REQUIRED" or bool(c.get("accountRequirement")),
+           "paid": (needs.get("payment") or {}).get("state") == "REQUIRED" or bool(c.get("paymentRequirement"))
+           or price not in (None, "UNSPECIFIED", "FREE") or bool(PAID.search(str(c.get("description") or "")))}
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(out, fh)
+    except OSError:
+        pass
+    return out
+
+
+def suggest(need: str, limit: int = 4) -> dict:
+    """Services Darwin's public search knows that might cover a need no tool in Morph covers: suggestions with their
+    websites, never a connection, a sign-in or a payment. {need, status, question, suggestions: [{name, owner, website,
+    darwin_url, ready, sign_in, paid, summary}], cached, error?}."""
+    res = search(need, max_results=6, retries=0, timeout=15)
+    agents = [a for a in res.get("agents") or [] if a.get("name")][:limit]
+    with ThreadPoolExecutor(max(1, len(agents))) as pool:
+        caps = list(pool.map(lambda a: capability(a.get("capability_id")), agents))
+    out = []
+    for a, c in zip(agents, caps):
+        c, desc = c or {}, str(a.get("description") or "")
+        out.append({"name": str(a["name"])[:80], "owner": c.get("owner"), "website": c.get("website"), "darwin_url": a.get("url"),
+                    "ready": bool(a.get("can_start")), "sign_in": bool(c.get("sign_in")),
+                    "paid": bool(c.get("paid")) or bool(PAID.search(desc)),
+                    "summary": desc[:200]})
+    return {"need": need, "status": res.get("status"), "question": res.get("question"), "suggestions": out,
+            "cached": bool(res.get("cached")), **({"error": str(res["error"])[:200]} if res.get("error") else {})}
 
 
 def part_query(item: str) -> str:

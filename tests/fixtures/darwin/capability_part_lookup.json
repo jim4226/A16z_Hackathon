@@ -1,0 +1,138 @@
+{
+ "capability": {
+  "aiId": "cmud0999x004b09gml2r8q5zf",
+  "profileHandle": "cmud0999x004b09gml2r8q5zf",
+  "capabilityId": "cmud0ag7s002n09gmbhttfdpo",
+  "capabilityRevision": 7,
+  "type": "CAPABILITY",
+  "executionDomain": "DIGITAL",
+  "capabilityKind": "MCP",
+  "executionRequirements": {
+   "contractVersion": "1.0.0",
+   "providerAuthentication": {
+    "state": "NOT_REQUIRED",
+    "mechanisms": [],
+    "placements": [],
+    "scopes": [],
+    "evidence": "DERIVED_FROM_VERIFIED_RECEIPT"
+   },
+   "operationCredentials": {
+    "state": "NOT_REQUIRED",
+    "sensitiveInputNames": []
+   },
+   "runtime": {
+    "kind": "REMOTE_MCP",
+    "package": null,
+    "requiredEnvironmentNames": []
+   },
+   "payment": {
+    "state": "NOT_REQUIRED",
+    "termsDigest": null
+   },
+   "browser": {
+    "state": "NOT_REQUIRED",
+    "sessionKind": null
+   },
+   "providerContract": {
+    "route": "RESOLVED",
+    "inputSchema": "CONCRETE",
+    "outputSchema": "UNKNOWN"
+   },
+   "providerBlockers": [],
+   "derivation": {
+    "normalizerVersion": "execution-requirements-v1",
+    "sourceRevision": "1.0.0:2026-07-16T14:35:41.687402+00:00:d54c8e390ed147ec",
+    "sourceReceiptDigest": "sha256:ecfa1f4c1d81c35a56f08b5fce9aecf6dedf4f3104ce4a1bf02929f224e5f59d",
+    "completeness": "COMPLETE",
+    "derivationKey": "sha256:549d46bb40f79897ed95be4f41e1b58d5501bb208720f303efe14d1ca1a1f6b4"
+   }
+  },
+  "executionGuidance": {
+   "credentialSummaryCode": "NO_CREDENTIAL_REQUIRED",
+   "credentialSummary": "No provider credential is required.",
+   "setupSummaryCode": "REMOTE_RUNTIME_REQUIRED",
+   "setupSummary": "Uses a protocol-specific remote execution runtime.",
+   "recordBlockers": [],
+   "rendererVersion": "execution-guidance-v1",
+   "primaryBlockerCode": null
+  },
+  "darwinSupport": {
+   "supported": true,
+   "blockers": [],
+   "policyVersion": "darwin-execution-support-v1",
+   "evaluatedAt": "2026-10-12T10:02:07.363000Z"
+  },
+  "title": "part-lookup",
+  "description": "Everything about an electronic component from its manufacturer part number: live distributor stock and price breaks across DigiKey, Mouser, Farnell, RS, Arrow and more, lifecycle status, MOQ, packaging, lead times, datasheet link, key specs and drop-in alternates. Optional country= for regional pricing. One call instead of checking each distributor. JSON response. [Paid: $0.04 USDC per call via x402 on Base; the calling client pays automatically.]",
+  "requiredSetup": null,
+  "category": "MCP tool",
+  "tags": [
+   "mcp",
+   "mcp-official-registry",
+   "mcp-tool"
+  ],
+  "mediaPreviewUrl": null,
+  "pricing": {
+   "mode": "UNSPECIFIED",
+   "currency": null,
+   "minimumMinor": null,
+   "maximumMinor": null,
+   "unit": null
+  },
+  "availability": null,
+  "protocols": [
+   "MCP"
+  ],
+  "inputContract": {
+   "available": true,
+   "additionalFieldsAllowed": false,
+   "fields": [
+    {
+     "name": "mpn",
+     "valueType": "string",
+     "description": "Manufacturer part number, e.g. LM358MX/NOPB",
+     "required": true,
+     "allowedValues": [],
+     "format": null,
+     "minLength": null,
+     "maxLength": null,
+     "minimum": null,
+     "maximum": null,
+     "minItems": null,
+     "maxItems": null
+    },
+    {
+     "name": "country",
+     "valueType": "string",
+     "description": "ISO country for regional pricing, default US",
+     "required": false,
+     "allowedValues": [],
+     "format": null,
+     "minLength": null,
+     "maxLength": null,
+     "minimum": null,
+     "maximum": null,
+     "minItems": null,
+     "maxItems": null
+    }
+   ]
+  },
+  "canStartThread": true,
+  "threadUnavailableReason": null,
+  "accountRequirement": null,
+  "paymentRequirement": null,
+  "owningAi": {
+   "aiId": "cmud0999x004b09gml2r8q5zf",
+   "name": "Toolcall",
+   "profileHandle": "cmud0999x004b09gml2r8q5zf",
+   "handle": null,
+   "avatarUrl": null,
+   "verified": true,
+   "classification": "BUSINESS",
+   "reliabilityScore": null,
+   "summary": "30 pay-per-call APIs for AI agents: compliance, trade, safety, web, data. USDC on Base via x402.",
+   "websiteUrl": "https://toolcall.click/"
+  },
+  "whyMatched": []
+ }
+}

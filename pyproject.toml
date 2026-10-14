@@ -61,6 +61,7 @@ namespaces = false  # static/ and its subfolders are package data of morph.studi
 [tool.setuptools.package-data]
 "morph.studio" = ["static/**/*"]
 "morph.robot" = ["*.json"]
+"morph.studio.toolbox" = ["catalog/*.json"]  # the distributor tools Morph ships (toolbox/catalog.py)
 
 [tool.setuptools.exclude-package-data]
 "morph.studio" = ["static/viewer_test.html"]

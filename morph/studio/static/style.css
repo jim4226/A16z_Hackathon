@@ -857,3 +857,62 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
   .toolbar .slider .v { display: none; }
   .toolbar #viewerTools .btn { font-size: 12px; gap: 6px; }
 }
+
+/* ---- keys: tool keys (toolbox, beta) ---- */
+.ksec.ktools { margin-top: 18px; }
+.ksec.ktool { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line2); }
+.khosts { color: var(--dim); font-size: 11px; margin-top: 3px; }
+.khosts .mono { color: var(--ink2); }
+.kf.kfocus, .kt.kfocus { border-radius: 10px; box-shadow: 0 0 0 2px var(--accent-line); padding: 6px 8px; margin: 9px -8px 0; animation: kfocus 1.6s ease-out 1; }
+@keyframes kfocus { from { background: var(--accent-bg); } to { background: transparent; } }
+
+/* ---- tools: agent run cards in the chat, Live prices in the BOM tab (tools.js, beta) ---- */
+.msg.tl-run { max-width: 100%; width: 100%; }
+.msg.tl-run .b { white-space: normal; display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; padding: 10px 11px; }
+.msg.tl-run .b > * { min-width: 0; }
+.tl-h { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tl-t { font-weight: 650; font-size: 13px; color: var(--ink); margin-right: 2px; }
+.tl-st { margin-left: auto; }
+.tl-st .spin { width: 9px; height: 9px; border-width: 1.5px; }
+.tl-sub { color: var(--muted); font-size: 11.5px; margin-top: -3px; }
+.tl-sub .tag { margin-right: 2px; font-size: 10px; padding: 1px 6px; }
+.tl-lines { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
+.tl-lines li { display: flex; gap: 6px; align-items: flex-start; font-size: 11.8px; color: var(--ink2); line-height: 1.4; }
+.tl-lines li svg { margin-top: 2px; flex: none; }
+.tl-lines li.ok svg { color: var(--good); } .tl-lines li.bad svg { color: var(--warn); }
+.tl-lines li.skip svg, .tl-lines li.calls svg { color: var(--muted); }
+.tl-lines li b { font-weight: 600; color: var(--ink); }
+.tl-lines .mono { font-size: 10.8px; color: var(--muted); white-space: nowrap; }
+.tl-card { border: 1px solid var(--line2); border-radius: 9px; background: var(--bg2); padding: 9px 10px; display: grid;
+  grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.tl-card.key { border-color: rgba(245, 185, 66, .35); }
+.tl-card.ask { border-color: var(--accent-line); }
+.tl-card.cap { border-style: dashed; }
+.tl-card p { margin: 0; font-size: 12px; color: var(--ink2); line-height: 1.45; }
+.tl-card p.dim { color: var(--muted); }
+.tl-ch { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 620; font-size: 12.5px; color: var(--ink); }
+.tl-card.key .tl-ch > svg { color: var(--warn); } .tl-card.ask .tl-ch > svg, .tl-card.cap .tl-ch > svg { color: var(--accent2); }
+.tl-ch .tag { font-weight: 550; }
+.tl-cht { flex: 1 1 120px; min-width: 0; }
+.tl-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin: 0; font-size: 11.5px; }
+.tl-dl dt { color: var(--dim); } .tl-dl dd { margin: 0; color: var(--ink2); min-width: 0; overflow-wrap: anywhere; }
+.tl-card .qacts { margin-top: 2px; }
+.tl-card a.btn { text-decoration: none; }
+.tl-ask { color: var(--muted); font-size: 11.5px; }
+.tl-args { margin: 0; max-height: 96px; overflow: auto; padding: 6px 8px; border-radius: 7px; background: var(--bg1); border: 1px solid var(--line);
+  font-size: 10.8px; color: var(--ink2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tl-note { display: flex; gap: 7px; align-items: center; font-size: 12px; color: var(--ink2); }
+.tl-note.good { color: #b7efd3; } .tl-note.bad { color: #ffc4c4; }
+.tl-note .spin { width: 10px; height: 10px; border-width: 1.5px; flex: none; }
+.tl-res, .tl-sum { border-top: 1px solid var(--line2); padding-top: 7px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+.tl-k { font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.tl-prices { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
+.tl-prices li { display: flex; gap: 8px; justify-content: space-between; font-size: 12px; }
+.tl-prices .it { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
+.tl-prices .pr { flex: none; color: var(--ink); font-weight: 600; }
+.tl-sum p { margin: 0; font-size: 12px; color: var(--ink2); white-space: pre-wrap; line-height: 1.5; }
+.tl-table { overflow-x: auto; margin-top: 10px; border: 1px solid var(--line2); border-radius: 9px; }
+.tl-table .table th { position: static; } .tl-table td.mono { white-space: nowrap; }
+.tl-table + .tl-sum { margin-top: 12px; }
+.btn.tl-bom { margin-left: 6px; }
+.btn.tl-bom .spin { width: 10px; height: 10px; border-width: 1.5px; }

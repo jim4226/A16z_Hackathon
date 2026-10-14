@@ -893,7 +893,8 @@ def cmd_doctor(a):
     if keys.ensure_env_file():
         line(None, f"created {keys.ENV_PATH} from env.example (add your keys there, or with the Keys button in the Studio)")
     for k in keys.status():
-        line(None, f"{k['service']}: {k['label']} {'is set' if k['set'] else 'not set (optional)'}")
+        line(None, f"{k['service']}: {k['label']} {'is set' if k['set'] else 'not set (optional)'}"
+                   + (" (no tool that is on uses it: remove it in Keys)" if k.get("unused") else ""))
     line(None, "Darwin: no key needed")
     from . import settings
     line(None, f"settings ({settings.path()}): {settings.describe()}"
