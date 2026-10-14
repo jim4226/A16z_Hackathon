@@ -97,16 +97,18 @@ export class KeysDialog {
   render() {
     const d = this.data, all = d.keys || [], keys = all.filter((k) => !k.tool), tools = all.filter((k) => k.tool);
     const services = [...new Set(keys.map((k) => k.service))], toolServices = [...new Set(tools.map((k) => k.service))];
+    // a tool key no tool that is on uses (`unused`: its tools are off, or its manifest is gone) is listed while it is
+    // saved, so it can be removed; one whose manifest is gone can only be removed
     const field = (k) => `<div class="kf" data-k="${esc(k.name)}">
-        <label><span>${esc(k.label)}</span>${k.set ? `<span class="tag good">${I('check', 'sm')}set</span>` : '<span class="tag neutral">not set</span>'}</label>
-        <div class="kin"><input type="password" autocomplete="off" spellcheck="false" placeholder="${k.set ? 'Set. Paste a new key to replace it' : 'Paste key'}" aria-label="${esc(k.label)}">
+        <label><span>${esc(k.label)}</span>${k.set ? `<span class="tag good">${I('check', 'sm')}set</span>` : '<span class="tag neutral">not set</span>'}${k.unused ? '<span class="tag neutral">not used now</span>' : ''}</label>
+        <div class="kin">${k.unused && !k.provider ? '' : `<input type="password" autocomplete="off" spellcheck="false" placeholder="${k.set ? 'Set. Paste a new key to replace it' : 'Paste key'}" aria-label="${esc(k.label)}">`}
           ${k.set ? `<button class="btn ghost" type="button" data-clear="${esc(k.name)}" title="Remove this key">Remove</button>` : ''}</div>
-        <div class="kh">${esc(k.what)} <a href="${esc(k.url)}" target="_blank" rel="noopener">${k.tool ? 'Get a key' : 'Where'}: ${esc(k.where)}</a></div>
-        ${k.tool ? `<div class="khosts">Sent only to <span class="mono">${(k.hosts || []).map(esc).join(', ')}</span>${(k.used_by || []).length ? `; used by ${k.used_by.map(esc).join(', ')}` : ''}</div>` : ''}</div>`;
+        <div class="kh">${esc(k.what)}${k.url ? ` <a href="${esc(k.url)}" target="_blank" rel="noopener">${k.tool ? 'Get a key' : 'Where'}: ${esc(k.where)}</a>` : ''}</div>
+        ${k.tool ? `<div class="khosts">${k.unused ? 'Sent nowhere while no tool that is on uses it.' : `Sent only to <span class="mono">${(k.hosts || []).map(esc).join(', ')}</span>${(k.used_by || []).length ? `; used by ${k.used_by.map(esc).join(', ')}` : ''}`}</div>` : ''}</div>`;
     const sentence = (t) => (t && !/[.!?]$/.test(t) ? `${t}.` : t || '');
     const toolSecs = toolServices.length ? `<section class="ksec ktools"><div class="ks-h"><b>Tool keys</b><span class="tag neutral">beta</span></div>
         <div class="ks-n">Morph's agents ask for these when one of their tools needs your key. Each key is sent only to its own service, never to Claude.</div></section>
-      ${toolServices.map((sv) => { const ks = tools.filter((k) => k.service === sv); return `<section class="ksec ktool"><div class="ks-h"><b>${esc(sv)}</b>${ks.every((k) => k.set) ? '<span class="tag good">set up</span>' : '<span class="tag neutral">not set up</span>'}</div>
+      ${toolServices.map((sv) => { const ks = tools.filter((k) => k.service === sv); return `<section class="ksec ktool"><div class="ks-h"><b>${esc(sv)}</b>${ks.every((k) => k.unused) ? '<span class="tag neutral">not used now</span>' : ks.every((k) => k.set) ? '<span class="tag good">set up</span>' : '<span class="tag neutral">not set up</span>'}</div>
         <div class="ks-n">${esc([sentence(ks[0].privacy), sentence(ks[0].cost)].filter(Boolean).join(' '))}</div>${ks.map(field).join('')}</section>`; }).join('')}` : '';
     const kw = d.integrations?.keewano || {}, st = d.settings || {};
     const toggle = ([k, title, note]) => `<label class="kt"><span class="switch"><input type="checkbox" data-s="${k}"${st[k] ? ' checked' : ''}><i></i></span>
@@ -182,7 +184,7 @@ export class KeysDialog {
   }
   async save(extra) {
     const values = { ...(extra || {}) };
-    this.el.querySelectorAll('.kf').forEach((f) => { const v = f.querySelector('input').value.trim(); if (v) values[f.dataset.k] = v; });
+    this.el.querySelectorAll('.kf').forEach((f) => { const v = (f.querySelector('input')?.value || '').trim(); if (v) values[f.dataset.k] = v; });
     if (!Object.keys(values).length) { this.a.toast('Paste a key first'); return; }
     for (const [name, v] of Object.entries(values)) {  // the server checks again; this only saves a round trip
       const k = (this.data.keys || []).find((x) => x.name === name);

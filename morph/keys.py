@@ -133,9 +133,22 @@ def ensure_env_file(path: str | None = None) -> bool:
 
 def tool_keys(home: str | None = None) -> list:
     """The keys of the tools that are on, from their manifests: service, label, what it unlocks, where to get it, cost,
-    privacy, the hosts it is sent to and the pattern it must fit (`tool: true`). Never a value."""
-    from .studio.toolbox import catalog
-    return catalog.key_entries(home)
+    privacy, the hosts it is sent to and the pattern it must fit (`tool: true`). Never a value. A tool key still saved
+    while no tool that is on uses it (its tools turned off, or its manifest gone) is listed too, `unused: true`, so it
+    can be removed."""
+    from .studio.toolbox import catalog, store
+    out = catalog.key_entries(home)
+    listed, specs = {e["name"] for e in out}, catalog.key_specs(home)
+    for name in sorted(n for n, v in store.env_items(os.environ) if v and TOOL_KEY.fullmatch(n) and n not in listed):
+        c = specs.get(name)
+        e = c.entry() if c else {"name": name, "service": "Keys no tool uses", "label": name, "where": "", "url": "", "cost": "",
+                                 "privacy": "", "hosts": [], "pattern": "", "prefix": "", "provider": None, "curated": False,
+                                 "tool": True}
+        e.update(unused=True, tools=[], used_by=[], what="Its tools are turned off, so Morph sends it nowhere. Remove it, or "
+                 "turn one of its tools back on." if c else "No tool in Morph's catalog uses this key any more, so Morph sends "
+                 "it nowhere. Remove it.")
+        out.append(e)
+    return out
 
 
 def status(home: str | None = None) -> list:
@@ -163,7 +176,7 @@ def save(updates: dict, path: str | None = None, home: str | None = None) -> lis
                 from .studio.toolbox import catalog
                 specs = catalog.key_specs(home)
             spec = specs.get(k)
-            if spec is None:
+            if spec is None and v:  # removing one is always allowed: its manifest may be gone
                 raise ValueError(f"unknown key {k}: no tool in the catalog uses it")
             if v and not spec.valid(v):
                 raise ValueError(f"{spec.label}: that does not look like a {spec.service} key")

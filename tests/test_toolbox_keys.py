@@ -62,7 +62,10 @@ def test_keys_lists_the_keys_of_the_tools_that_are_on(env):
     catalog.set_enabled("fixparts_offers", False)
     assert keys.status()[-1]["used_by"] == ["FixParts quote request"]
     catalog.set_enabled("fixparts_quote_request", False)
-    assert ENV not in [k["name"] for k in keys.status()]  # no tool that is on needs it
+    off = next(k for k in keys.status() if k["name"] == ENV)  # no tool that is on needs it: listed only while it is saved,
+    assert off["unused"] is True and off["used_by"] == [] and off["set"] is True  # so it can be removed
+    assert keys.save({ENV: ""}) == [ENV]
+    assert ENV not in [k["name"] for k in keys.status()]
     _user_manifest()
     assert "MORPH_TOOL_OWNPARTS_TOKEN" not in [k["name"] for k in keys.status()]  # the owner's manifests start off
     catalog.set_enabled("ownparts_offers", True)

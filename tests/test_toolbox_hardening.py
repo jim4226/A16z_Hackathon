@@ -128,6 +128,26 @@ def test_an_answer_that_reads_like_instructions_changes_nothing_morph_decides(ho
     assert out["status"] == "done" and len(vendor.calls) == 1
 
 
+# ------------------------------------------------------------------ a key outlives its tools
+def test_a_key_whose_tools_are_off_or_gone_stays_listed_until_it_is_removed(home, monkeypatch):
+    monkeypatch.setenv("MORPH_HOME", str(home))
+    assert keys.save({ENV: KEY}) == [ENV]
+    for t in ("fixparts_offers", "fixparts_quote_request"):
+        catalog.set_enabled(t, False, str(home))
+    e = next(k for k in keys.status() if k["name"] == ENV)  # turned off, the key stays saved: it must stay visible
+    assert e["set"] is True and e["unused"] is True and e["service"] == "FixParts (test fixture)" and e["used_by"] == []
+    assert "Its tools are turned off" in e["what"] and KEY not in json.dumps(keys.status())
+    monkeypatch.setattr(catalog, "CURATED_DIRS", [])  # the manifest is gone (an owner deleted a drafted tool's file)
+    e = next(k for k in keys.status() if k["name"] == ENV)
+    assert e["unused"] is True and e["provider"] is None and e["service"] == "Keys no tool uses" and e["url"] == ""
+    with pytest.raises(ValueError, match="no tool in the catalog uses it"):
+        keys.save({ENV: KEY})  # a new value needs a tool that declares it
+    assert keys.save({ENV: ""}) == [ENV] and not os.environ.get(ENV)  # but removing it always works
+    with open(keys.ENV_PATH, encoding="utf-8") as fh:
+        assert KEY not in fh.read()
+    assert ENV not in [k["name"] for k in keys.status()]
+
+
 # ------------------------------------------------------------------ odd ids and files
 @pytest.mark.parametrize("rid", ["../../etc/passwd", "run_" + "0" * 15, "run_" + "G" * 16, "run_0000000000000000/../x",
                                  "run_000000000000000٠", "RUN_" + "0" * 16, "", None, 7, ["run_" + "0" * 16]])
