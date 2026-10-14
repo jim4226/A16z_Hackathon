@@ -49,6 +49,24 @@ and rebuild** in the Keys dialog (shown when calibration is on and the Keewano k
 chat edits and regenerates both robots in about a minute). Deleting the `projects` folder and starting
 again does the same.
 
+## Darwin's roles
+
+Darwin is a provider Morph asks, not the layer Morph's agent tools run on ([TOOLS.md](TOOLS.md)). It has three jobs:
+
+1. **The sourcing shortlist** (BOM tab, **Find agents on Darwin**; `morph source`): an agent per purchased BOM line and
+   per fabrication handoff, as above.
+2. **Inside Live prices** (beta): for a part no distributor tool covers, Claude can search Darwin (`darwin_search`: up
+   to 5 agents from its public search, cached, no retry). Darwin's status and any question it asks, such as an email
+   address, are passed on to you and never answered for you.
+3. **Suggestions for a need no tool covers:** the chat card "The agent needs a tool Morph doesn't have" lists up to 3
+   services Darwin's public search knows for that need, with each one's public website and whether it needs a sign-in
+   or payment (cached for 7 days). They are suggestions only: Morph never connects to a suggested service, signs in or
+   pays. The owner can draft a tool from that service's own documentation instead (*Morph writes a tool*, preview).
+
+None of them needs a key, and all three follow **Allow network lookups**: off, Live prices doesn't run and the other two
+show saved answers only.
+Darwin's own agents (Act) need your Darwin account and your approval of any payment; Morph doesn't use them yet.
+
 ## Darwin when its API is down
 
 Darwin's API returns intermittent 500s. Every good answer is cached in `~/.cache/morph/darwin/`, and

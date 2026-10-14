@@ -54,6 +54,8 @@ decisions lives outside the repo; the essentials are summarized here.
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
 | `.team/` | F4 | `team.json`, `secret` (0600), `audit.jsonl` |
+| `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
+| `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
 
 Folders starting with `.` are never projects: `projects()` and `reset()` must skip them.
 
@@ -198,6 +200,8 @@ A job applies its changes to the newest revision when its turn comes. If one of 
     final status: done, noop, error, conflict, cancelled, dropped or resolved
   - `presence {members}`
   - `comment`, `proposal`, `review`, `activity`, `inbox` (addressed to one member only)
+  - agent runs and tools (section 15): `run_started`, `credential_needed`, `tool_request`, `tool_used`, `run_paused`,
+    `run_resumed`, `run_done`, `run_failed` and `tool_draft` (15.2); never a key, a tool's answer or message text
   - `signed_out {reason: "removed" | "signed_out"}` (E2): the last event of a member's stream once the owner removed them
     or they signed out everywhere (the stream checks its member every 2 s, `api_team.StreamCheck`); the page then opens
     the sign-in page, which tells that browser why
@@ -468,6 +472,11 @@ members; a member can hold several.
   Chat messages that look like a key (`looks_like_secret`) are refused before they are shown, saved or sent.
 - **Served files.** `/files` and `/static` serve regular files only (never a pipe or device); generated files
   under `/files` get the sandbox policy, so they can't run script with the Studio's origin.
+- **Agent tool calls** (section 15) go only through `toolbox.http_tool.run`, which executes a declarative manifest
+  (never code from a service or a model): HTTPS to the manifest's public DNS hosts, every resolved address public and
+  connected to as checked, no redirects, one deadline that includes the address lookup, capped JSON answers cut to the
+  declared fields, and every known key removed from every text before it is shortened. A tool key goes only to its own
+  hosts, in its own slot. A run checks *agent tools* and *network lookups* before every request and call.
 
 ## 10. Keewano event id ranges
 
@@ -504,6 +513,7 @@ activity stays on the Studio computer.
 | F3 | `morph/studio/vision.py`, `morph/studio/api_video.py`, `morph/studio/ffmpeg.py`, `static/video.js`, `tests/test_video*.py` |
 | F4 | `morph/studio/teams/` (package), `morph/studio/api_team.py`, `static/team.js`, `tests/test_team*.py` |
 | F5 | `morph/studio/worlds.py`, `morph/studio/api_world.py`, `static/world.js`, the vendored three r160 examples (PointerLockControls, Octree, Capsule, TransformControls) in `static/vendor/`, `simulate.py` world support, `tests/test_world*.py` |
+| B2-T (tool broker, section 15) | `morph/studio/toolbox/` (package, with its `catalog/*.json`), `morph/studio/api_tools.py`, `static/tools.js`, `static/tooldraft.js`, `static/tooldraft.css`, `tests/test_toolbox*.py`, `tests/test_tools_*.py`, `tests/toolbox_helpers.py`, `tests/fake_claude.py`, `tests/fixtures/tools/`, `tests/e2e/test_e2e_tool*.py`, `docs/TOOLS.md`. Edits to `keys.py`, `settings.py`, `security.py`, `agents.py` (Live prices), `darwin.py`, `server.py`, `teams/roles.py`, `keys.js`, `cli.py` (doctor) and the tools section of style.css |
 
 ## 12. Correctness fixes from the external review (owner: W0c, after Wave 0)
 
@@ -663,8 +673,8 @@ in sections 3, 4 and 8. The rest that other code relies on:
 Agents pull in tools as they need them and ask the person for a key, an approval or a restart's go-ahead, then carry on
 by themselves. Darwin stays a provider (sourcing), not the tool layer. Package `morph/studio/toolbox/` (standard library
 plus the anthropic SDK, imported only when a run calls Claude; not pipeline code, so nothing here rebuilds a robot).
-Section 1's storage table and section 3's event list get these rows with the docs package (T7); until then this section
-is the reference.
+Section 1's storage table and section 3's event list point here (added with the docs, B2-T4); this section is the
+reference.
 
 **Storage** (MORPH_HOME; every file 0600 and written atomically, folders 0700):
 
@@ -985,3 +995,54 @@ approval, restart, expiry), `tests/test_tools_draft_api.py` (routes, roles, even
 the real Studio with the stand-in's `tools` script), `tests/test_toolbox_draft_live.py` (`MORPH_LIVE=1`, real Claude
 and a real documentation page; not run yet). `tests/fake_claude.py` adds the fictional Gearbase API's documentation
 (clean and with a planted paragraph for AI agents), `gearbase_form()`, `drafting()` and `--script tools`.
+
+### 15.3 Adversarial review of the tool broker (B2-T4)
+
+A review of sections 15 to 15.2 before the merge. What changed in those contracts (each with a test that failed before):
+
+- **Redaction before shortening** (`http_tool`): every text and object key in an answer, and an `http_error` detail, has
+  the known keys removed before it is cut to `max_string` (2,000), 100 or 300 characters; cutting first could leave
+  the start of a key that a service echoed back in Claude's request, the run file and the closing summary.
+- **One deadline, the lookup included**: `http_tool.vet_within(host, port, timeout, policy=, resolver=) -> [ips]` runs
+  `vet_addresses` within the time left (`TimeoutError` past it; an address found too late is never used), and `run()`
+  passes the transport only what remains of the call's deadline. The draft's address check uses it with 10 s.
+- **The switches stop a working run**: `Toolbox(..., tools_on=callable)` (default `settings.agent_tools_enabled`) and
+  `network` are checked before every Claude request and every tool call; either one off pauses the run as
+  `interrupted` with reason `offline` (network lookups) or `tools_off` (agent tools). Continue while it is still off
+  answers 409 (agent tools) or 503 (no Claude without network lookups), and `Toolbox.resume` itself pauses the run
+  again without sending anything. A drafting conversation fails before its next request instead. The interrupted
+  card reasons are now `restart | claude_unavailable | claude_key | offline | tools_off`. Before, a run with network
+  lookups off kept sending requests to Claude (the policy answered each call "offline");
+  `tests/test_toolbox_runs.py` now expects the pause.
+- **Stop during a call or Claude's answer**: `cancel()` on a run another thread drives records the request (answer
+  `{..., cancelling: true}`, audit `run_cancel_requested`); the driving thread ends the run `cancelled` when the call or
+  answer returns, also when that answer would have paused it (`_pause` and `_interrupt` honour it), and hands the
+  claim back under the toolbox's lock, so a key saved at that moment can't resume a stopped run.
+- **7 days means gone**: `_load` returns nothing for a run or draft untouched for `TTL_S` (`get`, `decide`, `resume`,
+  `cancel`, approve and discard answer 404), not only at the next start; `recover()` still deletes the files.
+- **Drafts**: a refused draft's review links a key page only when it is https to a public host name (`draft._link`, and
+  `linkable()` in tooldraft.js); a provider id that is a Windows device name (`security.WINDOWS_RESERVED`: con, aux,
+  nul, com1-9, lpt1-9) is installed as `<id>-<sha8>.json`.
+- **Keys** (`keys.tool_keys`, `keys.save`): a saved `MORPH_TOOL_*` key that no tool that is on declares is listed with
+  `unused: true` (`used_by: []`, and `service: "Keys no tool uses"`, `provider: null` when no loaded manifest declares
+  it), so the owner can remove it; `save()` always accepts removing such a key and still refuses a value for a name no
+  manifest declares. `morph doctor` marks it. Before, the key vanished from Keys but stayed in `.env`.
+- **Front end**: Stop shows "Stopping" until the run ends (`cancelling`); an interrupted card offers the owner **Open
+  Keys** for `offline`, `tools_off` (`morph:keys` with `network_enabled` or `agent_tools_enabled`: keys.js focuses that
+  switch) and `claude_key` (`ANTHROPIC_API_KEY`), and tells others to ask the owner; a refused key's card says why it
+  may have been refused; Allow and key cards tag a tool that isn't curated "drafted" or "your own manifest"; a refusal's
+  note reads "Claude declined this request (safety category: <category>)." A view that says a run is working or
+  paused never replaces one that says it ended (an ended run never runs again): a decide or start answer, or a list,
+  that left the server before the run ended used to take a finished card back to Working, with Stop, until the next
+  list arrived.
+
+Guards added that pass before and after (`tests/test_toolbox_hardening.py`): marker keys searched for in every Claude
+request and header, event, API answer, run, draft, pin and audit file, the server's output and an export; two tabs
+answering the same card at once (one wins, the other gets 409 "This run is already continuing."); every tools route
+for owner, editors and viewers of other disciplines and a removed member (401); remote mode with and without the
+access code; a service answer written as instructions; odd run and draft ids; symlinked and hidden manifests. The UX
+pass (1280x720, 1600x900, 910 px; every card state) found no console errors beyond the expected 409, no CSP
+violations and no sideways scrolling.
+
+Not changed here (other features' files): the New robot request and Teams comments don't refuse a pasted tool or
+SubQ key the way chat does (`security.looks_like_secret`; Teams uses its own `collab.SECRET_RX`).

@@ -105,6 +105,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Dropping a video or photos on the page opens Show Morph the job; other files go to Import.
 - On a team Studio, a viewer's page has no editing tools: the chat box, Apply and the New robot, Import, video and
   World buttons are off or gone, and the chat box says how viewers propose changes instead.
+- Agent run cards (beta): Stop shows "Stopping" until the call under way returns; a run stopped because agent tools or
+  network lookups were turned off, or Claude refused the Anthropic key, offers the owner **Open Keys** on that switch
+  or key (others are told to ask the owner); a refused key's card says it may be mistyped, expired or not enabled for
+  that service; tools that aren't Morph's own are tagged "drafted" or "your own manifest"; a finished card no longer
+  shows Working again when an answer from before the end arrives late. A tool key whose tools are off, or whose
+  manifest is gone, stays in Keys as "not used now" until you remove it, and `morph doctor` says so.
+  [docs/TOOLS.md](docs/TOOLS.md) describes agent tools, the cards, the manifest format and what has been verified.
 
 ### Install and updates
 
@@ -147,6 +154,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   names Morph already uses; Claude's web fetch reads pages of that documentation site only. Morph keeps the pages'
   addresses and the lines that name each host, not the pages. Darwin's suggestions send the need to Darwin's public
   search (no account); its answers and each suggested service's public details are cached on this computer.
+- With network lookups off, an agent run sends nothing more to Claude: it stops before its next step and waits, instead
+  of asking Claude to carry on without its tools.
 
 ### Security
 
@@ -189,6 +198,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   with Morph's own tools. Documentation text reaches Claude only as fetched pages, never as instructions, and pages
   that talk to AI agents are quoted in the review. Approval is bound to the spec's sha256 (`projects/.tools/pins.json`),
   and every step goes into the audit log.
+- Agent tools after an adversarial review: a key that a service echoes back is removed before any text is shortened, so
+  no part of it reaches Claude, a run file or a summary; a call's one deadline includes looking up its address;
+  turning off agent tools stops a working run before its next request or call; Stop pressed during a call or Claude's
+  answer ends the run when it returns; a run or draft past its 7 days can't be continued or approved; a refused
+  draft's review never links an address Morph refused; a drafted service named like a Windows device (aux, com1) is
+  saved under another name. Tests now search every request, event, file, log and export for marker keys, and cover
+  the Teams roles, remote mode and two tabs answering the same card.
 
 ### Fixes
 
