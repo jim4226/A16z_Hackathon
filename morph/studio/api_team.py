@@ -28,6 +28,7 @@ from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 from ..services import durable
+from .rooms import STARTED
 from .teams import activity, audit, auth, collab, roles
 from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing, watching
 from .teams.store import TeamStore, exists
@@ -759,6 +760,30 @@ def proposals_close(req):
     return 200, {"ok": True, "proposal": out}
 
 
+STOPPED = "the Studio stopped before it finished. Apply it again"
+
+
+def reopen_stopped(studio) -> list:
+    """When a team Studio starts: a change request that was applied but has no revision was being built (or waited to
+    be) when the Studio stopped, so nothing will finish it; it is opened again with why, and the person who applied it
+    and its author are told. No build of this Studio is running yet, so none is cut short. Returns [(project, id)]."""
+    if not getattr(studio, "team", False):
+        return []
+    from . import projects
+    out = []
+    for info in projects.list_projects(studio.home):
+        root = os.path.join(studio.home, info["name"])
+        for p in collab.proposals(root, status="applied"):
+            if p.get("applied_rev"):
+                continue
+            collab.proposal_done(root, p["id"], error=STOPPED)
+            out.append((info["name"], p["id"]))
+            text = f"Change request #{p.get('n')} wasn't built: the Studio stopped. It is open again, to apply again."
+            for mid in {p.get("applied_by"), p.get("by")} - {None}:
+                activity.notify(studio.home, mid, "job", text, project=info["name"], ref={"proposal": p["id"]})
+    return out
+
+
 def job_finished(project_root: str, job: dict, rev: str | None = None, error: str | None = None, home: str | None = None, send=None):
     """The room's queue calls this when a team job ends: records the change request's revision (or reopens it on an
     error), moves its branch, and tells the applier and the author."""
@@ -1047,3 +1072,6 @@ def dispatch(req):
 
 
 register()  # the Studio loads every api_*.py at start (contracts section 2); the routes answer only in team mode
+
+
+STARTED.append(reopen_stopped)

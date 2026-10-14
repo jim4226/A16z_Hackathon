@@ -375,4 +375,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   folder, so the space comes back; a full disk reads "The disk is full" in the chat and in dialogs, and a full disk no
   longer leaves Teams and tool files "busy" for 30 seconds afterwards. A build another Studio or the CLI is still
   running is never set aside.
+- A Studio stopped during a build (Ctrl+C, a closed window, a crash) no longer strands what it was doing. When it
+  starts again, a new, imported or forked project whose first build was cut off is built again (labelled "rebuilt
+  after a stop"; it stayed empty for good, and New robot's Build kept answering with the dead project); edits that were
+  waiting or building are named in the chat so they can be sent again (they disappeared without a word); a change
+  waiting for Apply or Drop waits again; a Teams change request that was applied but not built is open again, with
+  why, for whoever applied it and its author (it read "applied" with no revision and could not be applied again or
+  closed); and a robustness study waiting for its turn is listed as stopped, to carry on (it vanished).
 

@@ -661,30 +661,8 @@ def _active_path(root) -> str:
 
 def _alive(pid) -> bool:
     """Whether process `pid` of this computer still runs; True when that can't be told (the heartbeat decides then)."""
-    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
-        return True
-    try:
-        if sys.platform == "win32":                # os.kill(pid, 0) would end the process there
-            import ctypes
-            from ctypes import wintypes
-            k = ctypes.WinDLL("kernel32", use_last_error=True)
-            k.OpenProcess.restype, k.OpenProcess.argtypes = wintypes.HANDLE, (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-            k.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
-            k.CloseHandle.argtypes = (wintypes.HANDLE,)
-            h = k.OpenProcess(0x1000, False, pid)     # PROCESS_QUERY_LIMITED_INFORMATION
-            if not h:
-                return ctypes.get_last_error() != 87   # ERROR_INVALID_PARAMETER: no such process
-            try:
-                code = wintypes.DWORD()
-                return not k.GetExitCodeProcess(h, ctypes.byref(code)) or code.value == 259   # STILL_ACTIVE
-            finally:
-                k.CloseHandle(h)
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except (OSError, AttributeError, ValueError):
-        return True
-    return True
+    from .durable import process_alive
+    return process_alive(pid)
 
 
 def active(root: str) -> dict | None:
@@ -788,7 +766,8 @@ def load(root: str, sid: str, rows: bool = False, _revs: dict | None = None) -> 
     doc = _read_json(os.path.join(d, "study.json"))
     if not isinstance(doc, dict):
         return None
-    if doc.get("status") in LIVE and (active(root) or {}).get("id") != sid:
+    if doc.get("status") in LIVE and (active(root) or {}).get("id") != sid and not (
+            doc["status"] == "queued" and doc.get("queued_by") == _PROCESS):  # waiting for its turn in this process
         doc["status"] = "interrupted"
     if doc.get("status") in ("interrupted", "error"):
         _partial(doc, d)
@@ -1426,6 +1405,32 @@ def new_study(root: str, rev: str | None = None, *, runs: int = 200, seed: int =
             "spec": spec, "base_spec_sha": base["sha"], "design_sha": dsha, "pipeline_version": pv,
             "world": design.world.id or None, "object": noun(design.object.name), "created_utc": _utc(),
             "by": by, "status": "queued", "done": 0}
+
+
+_PROCESS = f"{os.getpid()}-{os.urandom(4).hex()}"   # this process, also once a later one reuses its pid
+
+
+def save_queued(root: str, doc: dict) -> bool:
+    """Write a new study's record as "queued" while it waits for its turn (HeavyJobs), so a Studio that stops before it
+    starts lists it as interrupted, to carry on, instead of losing it. A study that already has a record keeps it.
+    True when written."""
+    path = os.path.join(study_dir(root, doc["id"]), "study.json")
+    if os.path.exists(path):
+        return False
+    _write_json(path, {**doc, "status": "queued", "done": 0, "queued_by": _PROCESS, "updated_utc": _utc()})
+    return True
+
+
+def drop_queued(root: str, sid: str) -> bool:
+    """Remove the record save_queued() wrote for a study that never ran (cancelled while it waited, or replaced by one
+    with the newest tolerances when its turn came). A study with saved runs, or that started, is kept."""
+    d = study_dir(root, sid)
+    doc = _read_json(os.path.join(d, "study.json"))
+    if not isinstance(doc, dict) or doc.get("status") != "queued" or os.path.exists(os.path.join(d, "runs.jsonl")):
+        return False
+    import shutil
+    shutil.rmtree(d, ignore_errors=True)
+    return True
 
 
 def _job(doc: dict, i: int, boxes: int, variant: str | None = None) -> dict:

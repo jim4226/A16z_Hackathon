@@ -45,7 +45,8 @@ from ..services import durable
 from ..spec import diff
 from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
-from .rooms import REQUESTER, Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
+from .rooms import (REQUESTER, RESUMED, STARTED, Hub, QueueFull, Room, UnknownProject,  # noqa: F401  (Hub: older code
+                    journal_live, open_jobs)  # imports it from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
                        looks_like_secret, param_changes, project_name, secret_refused)
@@ -277,10 +278,104 @@ class Studio:
         self.rooms = {self.start: Room(self.start, project)}
         self._rooms = threading.Lock()
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
-        projects.tidy(self.home, say=print)  # revisions a stop cut off or a power cut damaged: set aside, never read
+        tidied = projects.tidy(self.home, say=print)  # revisions a stop cut off or a power cut damaged: set aside
         _start_features(self.home)
         self.toolbox = None
         _start_tools(self)
+        self._recover(tidied)
+
+    # -- a Studio that stopped with work open (Ctrl+C, a closed window, a crash)
+    REBUILT = " (rebuilt after a stop)"
+
+    def _recover(self, tidied: dict | None = None):
+        """What the queue journals (rooms.JobQueue) say was open when the Studio stopped, project by project: a first
+        build is queued again (a new project, an import or a fork stays empty for good otherwise), every other change
+        is named in the chat so it can be sent again (it is never re-run: it may no longer be wanted), and a conflict
+        waits for its answer again. A project with no finished revision and no journal, whose first build was set aside
+        just now (cut off under an older Morph, or in the CLI), is built again from that design. Then the features'
+        STARTED hooks run (Teams reopens change requests a stop left applied but unbuilt). Never raises."""
+        aside = (tidied or {}).get("set_aside") or {}
+        for info in projects.list_projects(self.home):
+            name = info["name"]
+            try:
+                self._recover_project(name, aside.get(name) or [])
+            except Exception:  # noqa: BLE001  (one odd project never stops the Studio)
+                traceback.print_exc()
+        for hook in list(STARTED):
+            try:
+                hook(self)
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+
+    def _recover_project(self, name: str, set_aside: list):
+        root = os.path.join(self.home, name)
+        journal = os.path.join(root, ".morph", "queue.jsonl")
+        entries = open_jobs(journal)
+        if entries and journal_live(entries):
+            print(f"{name}: another Morph Studio on this projects folder is still working on it; leaving its queue alone")
+            return
+        finished = RobotProject(root).finished()
+        if not entries and (finished or not set_aside):
+            return
+        room = self.room(name)
+        try:
+            os.remove(journal)  # its open jobs are handled here; what still waits is journaled again
+        except OSError:
+            pass
+        first = None
+        for e in entries:
+            if e["op"] == "held":
+                room.jobs.restore(e)
+            elif e.get("kind") == "build":
+                if not finished and first is None and isinstance(e.get("design"), dict):
+                    first = e
+            else:
+                label = str(e.get("label") or e.get("kind"))
+                label = label[6:] if label.startswith("edit: ") else label  # a parameter edit: "Object mass → 70 g"
+                what = f"change request {label}" if e.get("kind") == "proposal" else f"\u201c{label[:120]}\u201d"
+                again = ("It is open again: apply it again if you still want it." if self.team else
+                         "A team Studio (morph studio --team) opens it again.")
+                room.hub.send({"type": "assistant", "noop": True, "job": e["id"], **({"by": e["by"]} if e.get("by") else {}),
+                               "text": f"The Studio stopped before this was built: {what}. Send it again if you still "
+                                       "want it." if e.get("kind") != "proposal" else
+                                       f"The Studio stopped before {what} was built. {again}"})
+        if finished:
+            return
+        design, label, by = None, "first design", None
+        if first is not None:
+            design, label, by = first["design"], first.get("label") or label, first.get("by")
+        else:  # no journal (an older Morph, or the CLI): the design of the first revision set aside just now
+            for rev in sorted(set_aside, key=lambda r: int(r[1:])):
+                path = next((os.path.join(root, n, "design.json") for n in sorted(os.listdir(root), reverse=True)
+                             if n.startswith(f"{rev}.incomplete-")), None)
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        design = json.load(fh)
+                    break
+                except (OSError, TypeError, ValueError):
+                    continue
+        if not isinstance(design, dict):
+            if first is not None or set_aside:
+                room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
+                               "finished, and Morph has no design to build it from. Delete this project from the project "
+                               "menu, or make it again."})
+            return
+        try:
+            design = projects.as_design(design)
+        except ValueError as exc:
+            room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
+                           f"finished, and its design can't be read ({exc}). Delete this project, or make it again."})
+            return
+        label = label[:48 - len(self.REBUILT)] + self.REBUILT if not label.endswith(self.REBUILT) else label
+        room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
+                       "finished: building it again now."})
+        job = self.queue_build(room, design, label=label, by=by)
+        meta = projects.read_meta(root)
+        for hook in list(RESUMED):
+            try:
+                hook(self, room, job, meta)
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
 
     @property
     def p(self) -> RobotProject:
@@ -618,16 +713,18 @@ class Studio:
 
     def queue_changes(self, room: Room, changes: dict, *, label: str, reply: str | None = None, source: str = "",
                       user_text: str | None = None, base_rev: str | None = None, by: str | None = None, kind="change",
-                      proposed_by: str | None = None):
+                      proposed_by: str | None = None, record: dict | None = None):
         """Queue design changes (parameter edits, applied video findings, an imported object, a world, a Teams change
-        request built by `by` for its author `proposed_by`, a resolved conflict). Raises QueueFull."""
+        request built by `by` for its author `proposed_by`, a resolved conflict). `record`: more for the queue's
+        journal (a change request's id). Raises QueueFull."""
         def say(job):
             if proposed_by:
                 job.data["proposed_by"] = proposed_by
             if user_text:
                 room.hub.send({"type": "user", "text": user_text, "job": job.id, **({"by": by} if by else {})})
         return room.jobs.submit(kind, lambda job: self.apply(changes, label, reply=reply, source=source, room=room, job=job),
-                                by=by, label=label, base_rev=base_rev or room.latest(), announce=say)
+                                by=by, label=label, base_rev=base_rev or room.latest(), announce=say,
+                                record={"changes": changes, **(record or {})})
 
     def queue_params(self, room: Room, changes: dict, *, base_rev: str | None = None, by: str | None = None):
         desc = labels.describe(changes)  # "Build → Pilot", as the Parameters panel names them
@@ -635,9 +732,11 @@ class Studio:
                                   base_rev=base_rev, by=by, kind="params")
 
     def queue_build(self, room: Room, design, *, label: str = "first design", by: str | None = None):
-        """Queue a parentless build of `design` (a new project's first revision). Raises QueueFull."""
+        """Queue a parentless build of `design` (a new project's first revision). The journal keeps the design, so a
+        Studio that stops before it finishes builds it again when it starts. Raises QueueFull."""
+        record = {"design": design.to_dict() if hasattr(design, "to_dict") else design}
         return room.jobs.submit("build", lambda job: self.build(design, room=room, label=label, job=job), by=by,
-                                label=label)
+                                label=label, record=record)
 
     def resolve(self, room: Room, job_id, action: str, by: str | None = None):
         """Answer a conflict: "apply" queues the same changes on the newest revision (checked again when they run),

@@ -10,6 +10,7 @@ what every writer uses so that a cut never costs more than the record being writ
     readable_json(path)          the file holds a JSON object (cached by size and mtime): a finished record
     BuildLock(path)              an OS lock held while a revision builds: the system frees it when the process ends
     disk_full(exc), explain(exc) "The disk is full" instead of "[Errno 28] No space left on device"
+    process_alive(pid)           whether a process of this computer still runs (a lock's or a journal's writer)
 
 Standard library only. Outside pipeline_version (morph/services/), so editing this file never rebuilds a robot.
 """
@@ -133,6 +134,35 @@ def disk_full(exc) -> bool:
 def explain(exc) -> str:
     """What to tell a person about `exc`: DISK_FULL for a full disk (or quota), else the error's own text."""
     return DISK_FULL if disk_full(exc) else str(exc) or exc.__class__.__name__
+
+
+def process_alive(pid) -> bool:
+    """Whether process `pid` of this computer still runs; True when that can't be told."""
+    import sys
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return True
+    try:
+        if sys.platform == "win32":                # os.kill(pid, 0) would end the process there
+            import ctypes
+            from ctypes import wintypes
+            k = ctypes.WinDLL("kernel32", use_last_error=True)
+            k.OpenProcess.restype, k.OpenProcess.argtypes = wintypes.HANDLE, (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            k.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+            k.CloseHandle.argtypes = (wintypes.HANDLE,)
+            h = k.OpenProcess(0x1000, False, pid)     # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return ctypes.get_last_error() != 87   # ERROR_INVALID_PARAMETER: no such process
+            try:
+                code = wintypes.DWORD()
+                return not k.GetExitCodeProcess(h, ctypes.byref(code)) or code.value == 259   # STILL_ACTIVE
+            finally:
+                k.CloseHandle(h)
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, AttributeError, ValueError):
+        return True
+    return True
 
 
 class BuildLock:

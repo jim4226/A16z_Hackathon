@@ -44,7 +44,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}`. `projects.create(meta=)` adds keys but never sets kind, created_utc, created_by, origin, demo or source (those come from its own arguments) |
 | `<p>/rNNN/` | pipeline | unchanged; names sort numerically (W0b) |
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
-| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs (W3) |
+| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs; `.morph/queue.jsonl`: the room's queue journal while jobs are open (W3, section 2) |
 | `<p>/brief.json` | F1 | the final brief that created the project |
 | `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
 | `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
@@ -184,8 +184,10 @@ studio.room(name=None) -> Room           # ValueError (bad name), rooms.UnknownP
 Room: name, p (RobotProject), hub (Hub: send(event), history), jobs (JobQueue), lock, completed(), latest(),
       emit(event)                         # emit: pipeline events, remembered for tabs that open mid-build
 studio.queue_chat(room, text, *, base_rev=None, by=None) -> Job                  # rooms.QueueFull when 10 wait
-studio.queue_changes(room, changes, *, label, reply=None, source="", user_text=None, base_rev=None, by=None)
-studio.queue_build(room, design, *, label="first design", by=None)              # a parentless build
+studio.queue_changes(room, changes, *, label, reply=None, source="", user_text=None, base_rev=None, by=None,
+                     record=None)         # record: more for the queue journal (W3)
+studio.queue_build(room, design, *, label="first design", by=None)              # a parentless build; journaled with
+                                                                                # its design
 studio.create_project(name=None, *, source="", design=None, need=None, origin="default", by=None, meta=None,
                       label="first design", on_room=None)
     -> (room, job)                        # projects.create + queue_build + project_created to every tab; on_room(room)
@@ -212,6 +214,28 @@ r001, ..."); `conflict.keys` stays the raw keys. Every changed value
 (chat, Claude's tool output, parameters, a resolved conflict) must pass `security.design_values()` first, and
 `projects.create()` checks every value of a design it is given; a value no robot can have ends the job as `error`
 ("Couldn't apply that: ...") or raises ValueError. `projects.as_design()` refuses keys a Design doesn't have.
+
+**A Studio that stops with work open (W3).** Each room's queue is journaled in `<p>/.morph/queue.jsonl` (`JobQueue`,
+`durable.append_line`): `{op: "queued", id, kind, label, by, base_rev, pid, host, ...record}` when a job is queued (a
+first build's `design`, a change's `changes`), `{op: "held", ..., conflict, data}` when it ends as a conflict waiting
+for an answer, `{op: "ended", id, status}` otherwise (an answered conflict: `answered`). The file is removed whenever
+nothing waits, runs or waits for an answer. When a Studio starts (`Studio._recover`, after `projects.tidy`), for every
+project whose journal has open jobs (`rooms.open_jobs`) and was not written by another Studio that still runs
+(`rooms.journal_live`: another live process of this computer, or another computer):
+- a first build (`kind: "build"`) of a project with no finished revision is queued again from its design, labelled
+  `"<label> (rebuilt after a stop)"`, and the chat says "The Studio stopped before <project>'s first build finished:
+  building it again now."; features learn of it through `rooms.RESUMED` hooks `fn(studio, room, job, meta)` (New robot
+  marks its brief built when it ends). Without a journal (an older Morph, `morph robot new` stopped in a terminal), the
+  design of the first revision `tidy()` just set aside is used;
+- every other open job gets one assistant line, "The Studio stopped before this was built: “<label>”. Send it again if
+  you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own;
+- a conflict waiting for an answer waits again (`JobQueue.restore`, same id: the page draws its Apply / Drop again);
+- then `rooms.STARTED` hooks `fn(studio)` run: a team Studio reopens every change request that is applied but has no
+  revision (`api_team.reopen_stopped`, `last_error` "the Studio stopped before it finished. Apply it again") and tells
+  whoever applied it and its author in their inbox.
+New robot's Build on a brief that reads "building" answers `already: true` only while its project builds or has a
+finished revision (`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's
+own empty project goes to `.trash` first, so the name is kept).
 
 ## 3. Live events (SSE)
 
@@ -1194,10 +1218,13 @@ field failure rate (section 0, honesty).
 - **Heavy jobs** (`morph/studio/jobs.py`): `jobs.manager(studio)` (one per Studio; `HeavyJobs(home, emit=...)`
   elsewhere): `start_study(project, rev=None, *, runs=200, seed=1, stress=False, workers=None, timestep=0.001,
   checks=True, by=None)` -> job (`StudyError`; `StudyBusy` when one runs for that project, in any process), `status`,
-  `cancel` (within 2 s; finished runs kept), `wait`, `resume(project, id)`, `interrupted()`, `result(project, id,
+  `cancel` (within 2 s; finished runs kept; a study still waiting for its turn goes as if never asked for, but
+  `shutdown()` keeps it: W3), `wait`, `resume(project, id)`, `interrupted()`, `result(project, id,
   rows=False)`, `studies`, `tolerances`, `save_tolerances`, `replay(project, id, run)` (a run's
   `sim_pick_place.json` document with a `robustness` block, for the viewer). A job never takes the room's lock, its job
-  queue or `Studio.builds`; jobs on different projects take turns (`MORPH_HEAVY_JOBS`, default 1 at once).
+  queue or `Studio.builds`; jobs on different projects take turns (`MORPH_HEAVY_JOBS`, default 1 at once). A new
+  study waiting for its turn is on disk at once (`robust.save_queued`: status `queued`, `queued_by` this process), so
+  a Studio that stops before it starts lists it as `interrupted`, to carry on (W3).
 - **Event** `study {id, rev, status, phase: prepare|runs|checks|done, done, n, successes, failures, unstable, groups, p,
   ci, eta_s, elapsed_s, first_result_s, stress, summary?}` to the project's room (`groups`: the counted failures so far
   by group, B2-S2), at most four a second plus every phase change and the end (`summary`: n, successes, p, wilson95,

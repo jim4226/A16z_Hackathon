@@ -366,7 +366,7 @@ async function loadState(st, { fresh = false, first = false } = {}) {
   for (const m of st.history || []) addMsg(m.type, m.text, m);
   S.chatEmpty = !(st.history || []).length;
   if (S.chatEmpty) {
-    addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : ''}.`
+    addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : (st.queue || []).length ? ': its first build is waiting for its turn' : ''}.`
       : fresh && !first ? `Opened ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`
         : `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`);
   }

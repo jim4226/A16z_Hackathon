@@ -25,6 +25,7 @@ import traceback
 from . import agents
 from . import brief as B
 from . import capability, routes
+from .rooms import RESUMED
 from .security import holds_secret, looks_like_secret, secret_refused
 
 ACTIONS = ("defaults", "build", "cancel", "nearest")
@@ -125,9 +126,10 @@ def _valid_answers(answers) -> tuple[dict | None, str]:
 
 
 def post(req, send=None, *, home: str | None = None, open_project: dict | None = None, create_project=None,
-         sync: bool = False):
+         sync: bool = False, revive=None):
     """POST /api/brief. `send(ev)` gets the agent and brief events; `create_project(payload)` (optional) is the W0b
-    project service hook for action "build" and returns {"project": name, ...}."""
+    project service hook for action "build" and returns {"project": name, ...}; `revive(project, brief_id)` (optional)
+    says whether a brief's project still builds or has its first revision (else Build makes it again)."""
     home = _home(req, home)
     send = send or _send_for(req)
     body = getattr(req, "body", None)
@@ -174,7 +176,7 @@ def post(req, send=None, *, home: str | None = None, open_project: dict | None =
         return _err(409, "still working on the last answer")
     if action == "build":
         try:
-            return _build(b, home, name, send, create_project)
+            return _build(b, home, name, send, create_project, revive)
         finally:
             STORE.release(b.id)
 
@@ -201,10 +203,12 @@ def post(req, send=None, *, home: str | None = None, open_project: dict | None =
     return 202, {"ok": True, "brief_id": b.id, "busy": True, "brief": b.to_dict()}
 
 
-def _build(b: B.Brief, home, name, send, create_project):
+def _build(b: B.Brief, home, name, send, create_project, revive=None):
     if b.status == "building" and b.project and create_project is not None:  # asked again (a second click, a retry):
-        return 200, {"ok": True, "brief_id": b.id, "build": B.build_payload(b, None, home), "project": b.project,
-                     "already": True}                                       # the project it is building, never a second one
+        if revive is None or revive(b.project, b.id):                       # the project it is building, never a second
+            return 200, {"ok": True, "brief_id": b.id, "build": B.build_payload(b, None, home), "project": b.project,
+                         "already": True}
+        b.status, b.project = "ready", None  # its project is gone, or never got its first build (a stop): build anew
     if b.status in ("asking", "out_of_scope"):
         agents.run_turn(b, action="build", on_event=send, home=home)   # code only: defaults (or the nearest robot), preflight
     if b.status not in ("ready", "building"):
@@ -260,14 +264,16 @@ def on_built(home: str, brief_id: str, project: str, rev: str | None = None, pro
     return b
 
 
-def register(route, *, home_for=None, send_for=None, create_project=None, create_project_for=None, open_project_for=None):
+def register(route, *, home_for=None, send_for=None, create_project=None, create_project_for=None, open_project_for=None,
+             revive_for=None):
     """Register both routes with the W0b router decorator: route(method, path, role=...). The project service hook
     for action "build" is `create_project(payload)`, or `create_project_for(req)` returning one for this request."""
     @route("POST", "/api/brief", role="editor")
     def _post(req):
         return post(req, (send_for or _send_for)(req), home=home_for(req) if home_for else None,
                     open_project=open_project_for(req) if open_project_for else None,
-                    create_project=create_project_for(req) if create_project_for else create_project)
+                    create_project=create_project_for(req) if create_project_for else create_project,
+                    revive=revive_for(req) if revive_for else None)
 
     @route("GET", "/api/brief", role="viewer")
     def _get(req):
@@ -307,6 +313,40 @@ def _studio_create(req):
         studio.when_done(job, lambda j: _first_build(studio, room, j, meta.get("brief_id")))
         return {"project": room.name, "job": job.id, "clamped": notes}
     return create
+
+
+def _studio_revive(req):
+    """The Studio's answer to "is this brief's project still on its way?" for a brief that reads "building": True while
+    the project builds or has a finished revision. False when it is gone, or when it is empty and idle (a stop cut its
+    first build off and nothing will build it): this brief's own empty project then goes to .trash first, so Build makes
+    it again under the same name."""
+    studio = getattr(req, "studio", None)
+    if studio is None or not callable(getattr(studio, "room", None)):
+        return None
+
+    def revive(project: str, brief_id: str) -> bool:
+        try:
+            room = studio.room(project)
+        except (ValueError, LookupError):
+            return False
+        if room.jobs.busy() or room.completed():
+            return True
+        from . import projects
+        if projects.read_meta(room.p.root).get("brief_id") == brief_id and room.name != studio.start:
+            try:
+                studio.delete_project(project)
+            except Exception:  # noqa: BLE001  (it stays; the new project gets the next free name)
+                traceback.print_exc()
+        return False
+    return revive
+
+
+def _resumed(studio, room, job, meta):
+    """A brief's first build that the Studio queued again when it started (a stop had cut it off): the brief is marked
+    built (or ready to build again) when it ends, as after the first try (_first_build)."""
+    bid = (meta or {}).get("brief_id")
+    if isinstance(bid, str) and B.ID_RE.match(bid):
+        studio.when_done(job, lambda j: _first_build(studio, room, j, bid))
 
 
 def _claim(brief_id: str) -> bool:
@@ -351,4 +391,6 @@ def _first_build(studio, room, job, brief_id):
                        no_source="Darwin lookups are off in Keys, Privacy and network; the BOM tab shows saved answers")
 
 
-register(routes.route, home_for=_studio_home, create_project_for=_studio_create, open_project_for=_open_project)
+register(routes.route, home_for=_studio_home, create_project_for=_studio_create, open_project_for=_open_project,
+         revive_for=_studio_revive)
+RESUMED.append(_resumed)
