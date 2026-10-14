@@ -125,3 +125,211 @@ jobs:
               assert status == {stage: "computed" for stage in ORDER}, (name, status)
               print(f"{name}: all {len(ORDER)} stages computed")
           PY
+
+  # Nothing else runs the launchers. They make .venv, install the tested packages and start `morph studio --help`
+  # (which prints its usage and exits without starting a server), from cmd.exe on Windows and bash (and zsh on macOS).
+  # On Windows also: the upgrade from a launcher that ran "git pull" as its fifth line (tests/fixtures/launchers), whose
+  # pull replaces run_studio.bat mid-run, with LF and with CRLF line endings; and --update switching to a tag.
+  launchers:
+    name: launchers (${{ matrix.os }}, ${{ matrix.case }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, case: fresh}
+          - {os: windows-latest, case: upgrade-lf}
+          - {os: windows-latest, case: upgrade-crlf}
+          - {os: windows-latest, case: update}
+          - {os: ubuntu-latest, case: fresh}
+          - {os: macos-latest, case: fresh}
+    env:
+      GIT_AUTHOR_NAME: Morph CI
+      GIT_AUTHOR_EMAIL: ci@example.com
+      GIT_COMMITTER_NAME: Morph CI
+      GIT_COMMITTER_EMAIL: ci@example.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ matrix.case == 'fresh' && 1 || 0 }}  # the other cases fetch this commit into a local repo
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            constraints.txt
+
+      - name: "Windows: run_studio.bat from scratch, with a pasted comment, with options containing )"
+        if: runner.os == 'Windows' && matrix.case == 'fresh'
+        shell: cmd
+        run: |
+          set "LOG=%RUNNER_TEMP%\launcher.log"
+
+          cmd /d /s /c ".\run_studio.bat --help < NUL" > "%LOG%" 2>&1
+          set "RC=%ERRORLEVEL%"
+          type "%LOG%"
+          if not "%RC%"=="0" (echo ::error::run_studio.bat --help exited with %RC% & exit /b 1)
+          findstr /l /c:"usage: morph studio" "%LOG%" >nul || (echo ::error::run_studio.bat --help printed no usage & exit /b 1)
+          findstr /l /c:"is not recognized" /c:"was unexpected at this time" /c:"The syntax of the command is incorrect" "%LOG%" >nul && (echo ::error::cmd.exe misread run_studio.bat & exit /b 1)
+
+          cmd /d /s /c ".\run_studio.bat --help # Windows (later, double-click run_studio.bat in Explorer) < NUL" > "%LOG%" 2>&1
+          set "RC=%ERRORLEVEL%"
+          type "%LOG%"
+          if not "%RC%"=="0" (echo ::error::run_studio.bat with a pasted comment exited with %RC% & exit /b 1)
+          findstr /l /c:"usage: morph studio" "%LOG%" >nul || (echo ::error::run_studio.bat with a pasted comment printed no usage & exit /b 1)
+          findstr /l /c:"Ignoring the rest of the line from # on" "%LOG%" >nul || (echo ::error::the pasted comment was not dropped & exit /b 1)
+          findstr /l /c:"Installing Morph's packages" "%LOG%" >nul && (echo ::error::the second start installed the packages again & exit /b 1)
+          findstr /l /c:"is not recognized" /c:"was unexpected at this time" /c:"The syntax of the command is incorrect" "%LOG%" >nul && (echo ::error::cmd.exe misread run_studio.bat & exit /b 1)
+
+          rem morph studio rejects these ports, quoting each value exactly as it arrived
+          cmd /d /s /c ".\run_studio.bat --port 87) < NUL" > "%LOG%" 2>&1
+          type "%LOG%"
+          findstr /l /c:"invalid int value: '87)'" "%LOG%" >nul || (echo ::error::an option ending in ^) did not reach morph studio intact & exit /b 1)
+          findstr /l /c:"is not recognized" /c:"was unexpected at this time" /c:"The syntax of the command is incorrect" "%LOG%" >nul && (echo ::error::cmd.exe misread run_studio.bat & exit /b 1)
+          cmd /d /s /c ".\run_studio.bat --port "(8 7)" < NUL" > "%LOG%" 2>&1
+          type "%LOG%"
+          findstr /l /c:"invalid int value: '(8 7)'" "%LOG%" >nul || (echo ::error::a quoted option with parentheses did not reach morph studio intact & exit /b 1)
+          findstr /l /c:"is not recognized" /c:"was unexpected at this time" /c:"The syntax of the command is incorrect" "%LOG%" >nul && (echo ::error::cmd.exe misread run_studio.bat & exit /b 1)
+          exit /b 0
+
+      - name: "Windows: a clone whose launcher pulls on every start (${{ matrix.case }})"
+        if: startsWith(matrix.case, 'upgrade-')
+        shell: bash
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          # upstream: branch main with two commits, the launcher before v0.2 alone, then the tree of this commit
+          up="$RUNNER_TEMP/upstream.git"
+          clone="$RUNNER_TEMP/old-clone"
+          git init -q --bare "$up"
+          git -C "$up" fetch -q --no-tags "$GITHUB_WORKSPACE" HEAD
+          old=$(git -C "$up" hash-object -w --no-filters "$GITHUB_WORKSPACE/tests/fixtures/launchers/run_studio_v01.bat")
+          if [ "$CASE" = upgrade-crlf ]; then
+            rule=$(printf '*.bat text eol=crlf\n' | git -C "$up" hash-object -w --stdin)
+            tree=$(printf '100644 blob %s\t.gitattributes\n100644 blob %s\trun_studio.bat\n' "$rule" "$old" | git -C "$up" mktree)
+            autocrlf=true
+          else
+            tree=$(printf '100644 blob %s\trun_studio.bat\n' "$old" | git -C "$up" mktree)
+            autocrlf=false
+          fi
+          first=$(git -C "$up" commit-tree "$tree" -m "The launcher before v0.2")
+          second=$(git -C "$up" commit-tree "FETCH_HEAD^{tree}" -p "$first" -m "This commit's tree")
+          git -C "$up" update-ref refs/heads/main "$second"
+          git -C "$up" symbolic-ref HEAD refs/heads/main
+          git clone -q -c core.autocrlf="$autocrlf" "$up" "$clone"
+          git -C "$clone" reset -q --hard "$first"
+          echo "UPGRADE_FIRST=$first" >> "$GITHUB_ENV"
+          echo "UPGRADE_SECOND=$second" >> "$GITHUB_ENV"
+          python - "$clone/run_studio.bat" "$CASE" <<'PY'
+          import sys
+          data = open(sys.argv[1], "rb").read()
+          crlf = sys.argv[2] == "upgrade-crlf"
+          assert (data.count(b"\r\n") == data.count(b"\n")) if crlf else (b"\r" not in data), "unexpected line endings"
+          lines = data.split(b"\n")
+          assert lines[4].rstrip(b"\r") == b"git pull --ff-only", lines[:5]
+          print("The old launcher pulls as its fifth line; cmd.exe resumes at byte", sum(len(x) + 1 for x in lines[:5]))
+          PY
+
+      - name: "Windows: start the old launcher, whose pull brings in this run_studio.bat"
+        if: startsWith(matrix.case, 'upgrade-')
+        shell: cmd
+        working-directory: ${{ runner.temp }}/old-clone
+        run: |
+          set "LOG=%RUNNER_TEMP%\launcher.log"
+
+          cmd /d /s /c ".\run_studio.bat --help < NUL" > "%LOG%" 2>&1
+          set "RC=%ERRORLEVEL%"
+          type "%LOG%"
+          for /f %%h in ('git rev-parse HEAD') do set "NOW=%%h"
+          if not "%NOW%"=="%UPGRADE_SECOND%" (echo ::error::the old launcher did not pull this commit & exit /b 1)
+          if not "%RC%"=="0" (echo ::error::the upgrade exited with %RC% & exit /b 1)
+          findstr /l /c:"usage: morph studio" "%LOG%" >nul || (echo ::error::the upgrade printed no usage & exit /b 1)
+          findstr /l /c:"Installing Morph's packages" "%LOG%" >nul || (echo ::error::the new launcher did not take over & exit /b 1)
+          findstr /l /c:"is not recognized" /c:"was unexpected at this time" /c:"The syntax of the command is incorrect" "%LOG%" >nul && (echo ::error::cmd.exe misread the new run_studio.bat & exit /b 1)
+
+          rem the bug report: the old launcher again, with the comment of the old README pasted after it
+          git reset -q --hard %UPGRADE_FIRST%
+          cmd /d /s /c "run_studio.bat --help          # Windows: or double-click run_studio.bat in Explorer < NUL" > "%LOG%" 2>&1
+          set "RC=%ERRORLEVEL%"
+          type "%LOG%"
+          if not "%RC%"=="0" (echo ::error::the upgrade with a pasted comment exited with %RC% & exit /b 1)
+          findstr /l /c:"usage: morph studio" "%LOG%" >nul || (echo ::error::the upgrade with a pasted comment printed no usage & exit /b 1)
+          findstr /l /c:"Ignoring the rest of the line from # on" "%LOG%" >nul || (echo ::error::the pasted comment was not dropped & exit /b 1)
+          findstr /l /c:"is not recognized" /c:"was unexpected at this time" /c:"The syntax of the command is incorrect" "%LOG%" >nul && (echo ::error::cmd.exe misread the new run_studio.bat & exit /b 1)
+          exit /b 0
+
+      - name: "Windows: a clone with a newer release tag, in a folder with spaces and parentheses"
+        if: matrix.case == 'update'
+        shell: bash
+        run: |
+          # upstream: main is this commit's tree; tag v99.0.0 has a launcher with one more line at byte 203, which
+          # moves every later byte, so reading on in the replaced file at the old offset would land mid-line
+          up="$RUNNER_TEMP/upstream.git"
+          git init -q --bare "$up"
+          git -C "$up" fetch -q --no-tags "$GITHUB_WORKSPACE" HEAD
+          base=$(git -C "$up" commit-tree "FETCH_HEAD^{tree}" -m "This commit's tree")
+          git -C "$up" cat-file blob "$base:run_studio.bat" > "$RUNNER_TEMP/release.bat"
+          python - "$RUNNER_TEMP/release.bat" <<'PY'
+          import sys
+          data = open(sys.argv[1], "rb").read()
+          assert b"\r" not in data  # git keeps text normalized to LF; it writes CRLF on checkout
+          lines = data.split(b"\n")
+          assert lines[3] == b"REM", lines[:4]
+          lines.insert(4, b"echo This is the launcher of the release.")
+          open(sys.argv[1], "wb").write(b"\n".join(lines))
+          PY
+          blob=$(git -C "$up" hash-object -w --no-filters "$RUNNER_TEMP/release.bat")
+          export GIT_INDEX_FILE="$RUNNER_TEMP/release.index"
+          git -C "$up" read-tree "$base"
+          git -C "$up" update-index --cacheinfo "100644,$blob,run_studio.bat"
+          tree=$(git -C "$up" write-tree)
+          unset GIT_INDEX_FILE
+          release=$(git -C "$up" commit-tree "$tree" -p "$base" -m "A release")
+          git -C "$up" update-ref refs/heads/main "$base"
+          git -C "$up" symbolic-ref HEAD refs/heads/main
+          git -C "$up" tag v99.0.0 "$release"
+          git clone -q "$up" "$RUNNER_TEMP/Morph (update test)"
+
+      - name: "Windows: --update after other options switches to the tag and starts its launcher"
+        if: matrix.case == 'update'
+        shell: cmd
+        working-directory: ${{ runner.temp }}/Morph (update test)
+        run: |
+          set "LOG=%RUNNER_TEMP%\launcher.log"
+          cmd /d /s /c ".\run_studio.bat --help "(a quoted option)" unquoted) --update < NUL" > "%LOG%" 2>&1
+          set "RC=%ERRORLEVEL%"
+          type "%LOG%"
+          if not "%RC%"=="0" (echo ::error::run_studio.bat --update exited with %RC% & exit /b 1)
+          findstr /l /c:"Switched to Morph v99.0.0." "%LOG%" >nul || (echo ::error::--update did not switch to the tag & exit /b 1)
+          findstr /l /c:"This is the launcher of the release." "%LOG%" >nul || (echo ::error::the tag's launcher did not start & exit /b 1)
+          findstr /l /c:"usage: morph studio" "%LOG%" >nul || (echo ::error::run_studio.bat --update printed no usage & exit /b 1)
+          findstr /l /c:"is not recognized" /c:"was unexpected at this time" /c:"The syntax of the command is incorrect" "%LOG%" >nul && (echo ::error::cmd.exe read on in the replaced run_studio.bat & exit /b 1)
+          for /f %%t in ('git describe --tags --exact-match') do set "AT=%%t"
+          if not "%AT%"=="v99.0.0" (echo ::error::the clone is not on v99.0.0 & exit /b 1)
+          exit /b 0
+
+      - name: "macOS and Linux: run_studio.sh from scratch, then with a pasted comment"
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/launcher.log"
+          check() {  # check RC WHAT: fail unless the launcher exited 0 and printed Morph's usage
+            if [ "$1" != 0 ]; then echo "::error::$2 exited with $1"; exit 1; fi
+            grep -q "usage: morph studio" "$log" || { echo "::error::$2 printed no usage"; exit 1; }
+          }
+          rc=0; ./run_studio.sh --help < /dev/null > "$log" 2>&1 || rc=$?
+          cat "$log"; check "$rc" "./run_studio.sh --help"
+
+          rc=0; ./run_studio.sh --help '#' macOS / Linux '(later,' './run_studio.sh)' < /dev/null > "$log" 2>&1 || rc=$?
+          cat "$log"; check "$rc" "./run_studio.sh with a pasted comment"
+          grep -q "Ignoring the rest of the line from # on" "$log" || { echo "::error::the pasted comment was not dropped"; exit 1; }
+          if grep -q "Installing Morph's packages" "$log"; then echo "::error::the second start installed the packages again"; exit 1; fi
+
+          if [ "$RUNNER_OS" = macOS ]; then
+            # zsh, the Mac's own shell, hands a pasted comment to the command unless interactivecomments is set
+            rc=0; echo './run_studio.sh --help # macOS / Linux' | zsh -f -i +o interactivecomments > "$log" 2>&1 || rc=$?
+            cat "$log"; check "$rc" "./run_studio.sh with a comment pasted into zsh"
+            grep -q "Ignoring the rest of the line from # on" "$log" || { echo "::error::zsh's pasted comment was not dropped"; exit 1; }
+          fi
