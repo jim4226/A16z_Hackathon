@@ -142,7 +142,8 @@ def test_launchers_install_tested_pins_and_never_pull():
     for name in ("run_studio.bat", "run_studio.sh"):
         text = _launcher(name)
         assert "-r requirements.txt -c constraints.txt" in text, name
-        assert "git pull" not in text and "--update" in text, name
+        commands = [line for line in text.splitlines() if not re.match(r"\s*(REM\b|#|echo\b)", line, re.I)]
+        assert not [line for line in commands if "git pull" in line] and "--update" in text, name
         assert "studio egg-picker --open" in text and "python.org/downloads" in text, name
     bat = _launcher("run_studio.bat")
     assert "for %%v in (3.13 3.12 3.11 3.10 3.14) do" in bat and "py -%%v" in bat

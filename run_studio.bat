@@ -1,10 +1,23 @@
 @echo off
-setlocal EnableExtensions DisableDelayedExpansion
-REM Morph Studio launcher for Windows. The first run makes .venv with Python 3.10 to 3.14 and installs the
-REM tested packages (requirements.txt with constraints.txt: a few minutes, with progress). Later runs start in
-REM seconds and use neither git nor the network.
+REM Morph Studio launcher for Windows. Keep these lines byte for byte: the bare REM line after
+REM them must start at byte 198, and the script at byte 203 (the notes after it say why).
+REM
+REM Why those offsets: launchers before v0.2 ran "git pull --ff-only" as their fifth line. When that pull replaces
+REM this file, cmd.exe goes on reading the NEW file at the byte where the old file's sixth line began: 198 if the
+REM old file had LF line endings, 203 with CRLF (Git for Windows' default). So bytes 0 to 197 hold only "@echo off"
+REM and REM lines, bytes 198 to 202 the line "REM", and the script starts at byte 203. Whichever of the two offsets
+REM cmd.exe resumes at, all of the script runs, in the old launcher's batch context: echo off, in this folder (the
+REM old one changed to it), no setlocal yet, and the old launcher's arguments, which it never shifted. The script
+REM assumes nothing else, so it runs the same started fresh, entered from an old launcher, or relaunched by
+REM --update. tests/test_launchers.py checks the offsets. These lines contain no percent signs on purpose.
+REM
+REM The first run makes .venv with Python 3.10 to 3.14 and installs the tested packages (requirements.txt with
+REM constraints.txt: a few minutes, with progress). Later runs start in seconds and use neither git nor the network.
 REM   run_studio.bat             start the Studio (other options go to "morph studio", e.g. --remote)
 REM   run_studio.bat --update    first switch this git clone to the latest release (newest v* tag), then start
+REM An option starting with # ends the options: the rest of the line was a comment pasted along with the command
+REM (cmd.exe has no # comments), so it is dropped instead of reaching "morph studio".
+setlocal EnableExtensions DisableDelayedExpansion
 cd /d "%~dp0"
 set "PYTHONUTF8=1"
 set "PIP_DISABLE_PIP_VERSION_CHECK=1"
@@ -13,22 +26,29 @@ set "PYTHON_MANAGER_AUTOMATIC_INSTALL=false"
 set "PYCHECK=import sys; sys.exit(not ((3, 10) <= sys.version_info[:2] <= (3, 14)))"
 set "UPDATE="
 set "ARGS="
+set "ARG="
 
+REM The options never go inside parentheses: cmd.exe reads a parenthesized block in full with every variable
+REM already replaced by its text, so an option such as "x)" would end the block early.
 :args
 if "%~1"=="" goto args_done
-if /i "%~1"=="--update" (set "UPDATE=1") else (set ARGS=%ARGS% %1)
+set "ARG=%~1"
+if "%ARG:~0,1%"=="#" goto args_comment
+if /i "%ARG%"=="--update" set "UPDATE=1"
+if /i not "%ARG%"=="--update" set ARGS=%ARGS% %1
 shift
 goto args
-:args_done
 
-REM git replaces this file during --update, so what runs after it comes from this block, read in full beforehand
-if defined UPDATE (
-  call :update
-  if not errorlevel 1 (
-    call "%~f0" %ARGS%
-    exit /b
-  )
-)
+:args_comment
+echo Ignoring the rest of the line from # on: it is a comment, not options for Morph.
+
+:args_done
+if not defined UPDATE goto start
+REM git may replace this file while :update runs, so what comes after it is on this one line, which cmd.exe read in
+REM full beforehand: when :update ran git checkout, start the launcher now on disk from its first line, then stop.
+call :update & if not errorlevel 1 call "%~f0" %ARGS% & exit /b
+
+:start
 
 if exist .venv\Scripts\activate.bat .venv\Scripts\python.exe -c "%PYCHECK%" >nul 2>&1 && goto venv_ready
 if not exist .venv goto make_venv
@@ -93,6 +113,7 @@ goto fail
 pause
 exit /b 1
 
+REM exit code 0: git checkout ran, so the caller starts the launcher now on disk; 1: nothing changed here
 :update
 if not exist .git goto update_no_git
 where git >nul 2>&1 || goto update_no_git_exe
@@ -104,13 +125,14 @@ if not defined LATEST goto update_none
 set "HEAD_SHA="
 set "TAG_SHA="
 for /f %%s in ('git rev-parse HEAD') do set "HEAD_SHA=%%s"
-for /f %%s in ('git rev-parse %LATEST%~0') do set "TAG_SHA=%%s"
+for /f %%s in ('git rev-parse "%LATEST%~0"') do set "TAG_SHA=%%s"
 if "%HEAD_SHA%"=="%TAG_SHA%" goto update_current
 set "DIRTY="
 for /f %%s in ('git status --porcelain --untracked-files^=no') do set "DIRTY=1"
 if defined DIRTY goto update_dirty
-REM one line: once git has replaced this file, nothing more is read from it
-git -c advice.detachedHead=false checkout --quiet %LATEST% && (echo Switched to Morph %LATEST%.& exit /b 0) || (echo Couldn't switch to %LATEST%. Starting the version you have.& exit /b 1)
+REM One line, the last one read from this file: git may replace the file, so nothing after it is read from it, and
+REM even when the checkout fails part way the caller starts whichever launcher is on disk, from its first line.
+git -c advice.detachedHead=false checkout --quiet "%LATEST%" && echo Switched to Morph %LATEST%.|| echo Couldn't switch to %LATEST% (details above). Starting the version that is here.& exit /b 0
 
 :update_no_git
 echo --update: this folder isn't a git clone, so it can't switch versions itself. Download the latest release
@@ -127,7 +149,7 @@ echo Couldn't reach GitHub (details above). Starting the version you have.
 exit /b 1
 
 :update_none
-echo There is no release (v* tag) yet. Starting the version you have.
+echo There is no release (v* tag) yet: "git pull" gets the newest code of this branch. Starting the version you have.
 exit /b 1
 
 :update_current

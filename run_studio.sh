@@ -4,7 +4,10 @@
 # and use neither git nor the network.
 #   ./run_studio.sh              start the Studio (other options go to `morph studio`, e.g. --remote)
 #   ./run_studio.sh --update     first switch this git clone to the latest release (newest v* tag), then start
-# Everything runs from functions that bash has read in full, so --update can safely replace this file.
+# An option starting with # ends the options: the rest of the line was a comment pasted along with the command (zsh
+# passes it on unless interactivecomments is set), so it is dropped instead of reaching `morph studio`.
+# Everything runs from functions that bash has read in full, so --update can safely replace this file. (bash keeps
+# reading the file it opened when git replaces it: launchers before v0.2, which ran git pull, finished as themselves.)
 
 supported() {  # is "$1" a Python 3.10 to 3.14?
   "$1" -c 'import sys; sys.exit(not ((3, 10) <= sys.version_info[:2] <= (3, 14)))' >/dev/null 2>&1
@@ -41,7 +44,7 @@ update() {  # 0: switched to the latest release; 1: keep the version that is her
   latest=$(git -c versionsort.suffix=a -c versionsort.suffix=b -c versionsort.suffix=rc \
     tag --list 'v*' --sort=-v:refname | head -n 1)
   if [ -z "$latest" ]; then
-    echo "There is no release (v* tag) yet. Starting the version you have."
+    echo "There is no release (v* tag) yet: \"git pull\" gets the newest code of this branch. Starting the version you have."
     return 1
   fi
   if [ "$(git rev-parse HEAD)" = "$(git rev-parse "$latest~0")" ]; then
@@ -99,14 +102,25 @@ install_packages() {  # once, and again only when requirements.txt or constraint
   echo "$want" > .venv/.morph-installed
 }
 
+parse_args() {  # sets want_update (0 or 1) and args (the options for `morph studio`)
+  local arg
+  want_update=0
+  args=()
+  for arg in "$@"; do
+    case $arg in
+      '#'*)
+        echo "Ignoring the rest of the line from # on: it is a comment, not options for Morph."
+        break ;;
+      --update) want_update=1 ;;
+      *) args+=("$arg") ;;
+    esac
+  done
+}
+
 main() {
-  local arg want_update=0
-  local args=()
   cd "$(dirname "$0")" || return 1
   export PYTHONUTF8=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-  for arg in "$@"; do
-    if [ "$arg" = "--update" ]; then want_update=1; else args+=("$arg"); fi
-  done
+  parse_args "$@"
   if [ "$want_update" = 1 ] && update; then
     exec bash ./run_studio.sh ${args[@]+"${args[@]}"}  # the launcher of the release just checked out
   fi
@@ -117,4 +131,7 @@ main() {
   python -m morph.cli studio egg-picker --open ${args[@]+"${args[@]}"}
 }
 
-main "$@"; exit $?
+# run main unless this file is sourced (tests/test_launchers.py sources it to call parse_args)
+if ! (return 0 2>/dev/null); then
+  main "$@"; exit $?
+fi
