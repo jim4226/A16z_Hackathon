@@ -19,8 +19,16 @@ MAX_MESSAGE = 8000          # characters in one chat message
 PROJECT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 ROBOT_SOURCE = re.compile(r"[a-z0-9][a-z0-9_-]{0,47}")
 WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
-# Claude (sk-ant-), SubQ (sk- with a digit somewhere, so "sk-thin-and-light" is no key) and Keewano (kwpat-) keys
-SECRET = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{8,}|sk-(?=[A-Za-z_-]*[0-9])[A-Za-z0-9_-]{20,}|kwpat-[A-Za-z0-9_-]{8,})")
+# Claude (sk-ant-), SubQ (sk- with a digit somewhere, so "sk-thin-and-light" is no key) and Keewano (kwpat-) keys, and
+# Morph Teams' own codes: script tokens (mt_), invite codes (mi_) and sign-in link codes (ml_), which act as a member
+SECRET = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{8,}|sk-(?=[A-Za-z_-]*[0-9])[A-Za-z0-9_-]{20,}|kwpat-[A-Za-z0-9_-]{8,}"
+                    r"|m[til]_[A-Za-z0-9_-]{20,})")
+
+
+def secret_refused(where: str) -> str:
+    """The refusal every free-text field gives when looks_like_secret() is true, e.g. where="in chat"."""
+    return (f"That looks like an API key or a Morph access code. Keys go in the Keys dialog; never paste either {where}. "
+            "This was not sent or saved.")
 
 
 def project_name(value) -> str:
@@ -64,12 +72,31 @@ def contained_path(root: str, relative: str, decode: bool = True) -> str | None:
 
 
 def looks_like_secret(text: str) -> bool:
-    """A Claude, SubQ or Keewano key, or a tool's key (toolbox: the value of a saved MORPH_TOOL_* key, a token with a
-    manifest's key prefix that fits its pattern, a bearer token)."""
-    if SECRET.search(text or ""):
+    """The one filter for free text people type (chat, New robot, Show Morph the job's cards, every Teams text field):
+    a Claude, SubQ or Keewano key, a Morph Teams script token, invite or sign-in code, or a tool's key (toolbox: the
+    value of a saved MORPH_TOOL_* key, a token with a manifest's key prefix that fits its pattern, a bearer token)."""
+    if not isinstance(text, str) or not text:
+        return False
+    if SECRET.search(text):
         return True
     from .toolbox import catalog
-    return catalog.looks_like_tool_key(text or "")
+    return catalog.looks_like_tool_key(text)
+
+
+def holds_secret(value) -> bool:
+    """looks_like_secret() over every string in a request value (dict keys and values, lists, nested), so a key in a
+    structured answer is caught too. The strings are checked as one text, a line each: no key pattern spans a line."""
+    todo, texts = [value], []
+    while todo:
+        v = todo.pop()
+        if isinstance(v, str):
+            texts.append(v)
+        elif isinstance(v, dict):
+            todo.extend(v.keys())
+            todo.extend(v.values())
+        elif isinstance(v, (list, tuple)):
+            todo.extend(v)
+    return looks_like_secret("\n".join(texts))
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

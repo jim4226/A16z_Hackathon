@@ -379,6 +379,9 @@ def cmd_robot_brief(a) -> int:
         sys.exit(f"--name {name}: use lower-case letters, digits and dashes (up to 40).")
     if len(text) > 2000:
         sys.exit("Keep the request under 2,000 characters.")
+    from .studio.security import looks_like_secret, secret_refused
+    if looks_like_secret(text):  # before it goes to SubQ or Claude
+        sys.exit(secret_refused("in a robot description"))
     asking = not a.defaults and sys.stdin.isatty() and sys.stdout.isatty()
 
     def timeline(ev):  # the agents timeline, as the Studio's dialog shows it

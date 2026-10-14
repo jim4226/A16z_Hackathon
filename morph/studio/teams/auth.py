@@ -21,6 +21,7 @@ import threading
 import time
 import unicodedata
 
+from ..security import looks_like_secret, secret_refused
 from . import audit, disciplines
 from .store import COLORS, POLICY, TeamStore, merged_policy, new_id, parse_ts, utc
 
@@ -59,12 +60,19 @@ def clean_name(name, fallback: str = "") -> str:
     if not isinstance(name, str):
         name = ""
     name = "".join(c for c in name if unicodedata.category(c)[0] != "C" and c not in "<>@\\")
+    _no_secret(name)
     name = " ".join(name.split())[:40].strip()
     if not name:
         name = " ".join((fallback or "").split())[:40].strip()
     if not name:
         raise ValueError("Type your name (up to 40 characters) so the team knows who made each change.")
     return name
+
+
+def _no_secret(text: str):
+    """Names and labels everyone on the team sees use the Studio's one key filter (security.looks_like_secret)."""
+    if looks_like_secret(text):
+        raise ValueError(secret_refused("into a name or a label"))
 
 
 def _unique(name: str, members: dict, skip=None) -> str:
@@ -159,6 +167,7 @@ def init_team(owner_name: str, team_name: str = "", home: str | None = None, now
     """Create the team with its first member (owner + generalist) and return a one-time owner link."""
     st = TeamStore(home)
     name = clean_name(owner_name)
+    _no_secret(str(team_name or ""))
     tname = " ".join(str(team_name or "").split())[:60] or f"{name}'s team"
 
     def fn(data):
@@ -436,6 +445,7 @@ def clear_cookie(port, secure: bool = False) -> str:
 
 def create_token(member_id: str, label: str = "", home: str | None = None, now=None) -> dict:
     """A script token for X-Morph-Token: shown once, stored as its SHA-256, acts with the member's role."""
+    _no_secret(str(label or ""))
     label = " ".join(str(label or "").split())[:40] or "script"
     token = "mt_" + secrets.token_urlsafe(32)
     t = _now(now)

@@ -27,7 +27,8 @@ Morph Studio is a local app: a small web server on your computer, used from your
   connections at once, 48 of them live event streams. More get a "busy" answer (503) straight away, so slow or idle
   connections can't tie the server up.
 - API keys live in `.env`, readable by your user only on macOS and Linux. The Studio never sends a key back to the
-  browser or prints it.
+  browser or prints it. Text you type anywhere else (chat, New robot, Show Morph the job, Teams comments and names)
+  that looks like an API key or a Morph access code is refused before it is saved, shown or sent.
 - Every optional service (Claude, Keewano, Darwin, SubQ) can be switched off; [docs/PRIVACY.md](docs/PRIVACY.md)
   lists what each one receives.
 - Imports treat every file and link as hostile: archive limits (entries, sizes, compression ratio, no links or nested

@@ -45,7 +45,7 @@ from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
-                       looks_like_secret, param_changes, project_name)
+                       looks_like_secret, param_changes, project_name, secret_refused)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
@@ -1226,8 +1226,7 @@ def _api_chat(req):
     if len(msg) > MAX_MESSAGE:
         raise HTTPError(400, f"That message is too long: {MAX_MESSAGE:,} characters at most.")
     if looks_like_secret(msg):
-        raise HTTPError(400, "That looks like an API key. Paste keys in the Keys dialog, never in chat; this message "
-                             "was not sent or saved.")
+        raise HTTPError(400, secret_refused("in chat"))
     room = req.room
     try:  # {edit: true}: the person chose "Change <project> instead" for a message that read like a new robot
         job = req.studio.queue_chat(room, msg.strip(), base_rev=_base_rev(req, room), by=_by(req),
@@ -1318,6 +1317,8 @@ def _api_projects_create(req):
     name, need, brief = _text(body, "name", 80), _text(body, "need", 2000), _text(body, "brief_id", 64)
     if brief is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", brief):
         raise HTTPError(400, "brief_id is not a brief id.")
+    if looks_like_secret(need):  # meta.json keeps it, the project menu shows it to everyone, exports carry it
+        raise HTTPError(400, secret_refused("in a project's description"))
     design = None
     try:
         if kind == "design":

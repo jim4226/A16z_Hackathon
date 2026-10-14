@@ -477,7 +477,15 @@ members; a member can hold several.
   pipeline work grows with sizes, and one absurd value (a 1 km object) would hold the shared build slot for
   hours. The capability envelope (section 6) clamps much tighter.
 - **Keys.** Requests carrying an API key use `security.open_keyed()` (never follow a redirect with the key).
-  Chat messages that look like a key (`looks_like_secret`) are refused before they are shown, saved or sent.
+  One filter, `security.looks_like_secret(text)` (`holds_secret(value)` for every string of a structured value), covers
+  Claude, SubQ and Keewano keys, the value of any saved `MORPH_TOOL_*` key, a token with a manifest's key prefix that
+  fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in codes (`mt_`, `mi_`, `ml_`
+  followed by 20 or more token characters). Every free-text field people type uses it and refuses with 400
+  (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
+  robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
+  label), a project's `need`, a world's labels, and every Teams text field (comments, change request titles and
+  notes, close reasons, review and decision notes, release names and notes, branch names, display names, script
+  token labels, the team's name). A refused New robot request leaves no draft, no event and no call to SubQ or Claude.
 - **Served files.** `/files` and `/static` serve regular files only (never a pipe or device); generated files
   under `/files` get the sandbox policy, so they can't run script with the Studio's origin.
 - **Agent tool calls** (section 15) go only through `toolbox.http_tool.run`, which executes a declarative manifest
@@ -1055,7 +1063,8 @@ pass (1280x720, 1600x900, 910 px; every card state) found no console errors beyo
 violations and no sideways scrolling.
 
 Not changed here (other features' files): the New robot request and Teams comments don't refuse a pasted tool or
-SubQ key the way chat does (`security.looks_like_secret`; Teams uses its own `collab.SECRET_RX`).
+SubQ key the way chat does (`security.looks_like_secret`; Teams uses its own `collab.SECRET_RX`). Since the release
+review (W3) they do: every free-text field uses the one filter of section 9, and `collab.SECRET_RX` is gone.
 
 ## 16. Simulation track: robustness studies (B2-S1 the engine, B2-S2 the Studio routes and the card)
 

@@ -25,6 +25,7 @@ import traceback
 from . import agents
 from . import brief as B
 from . import capability, routes
+from .security import holds_secret, looks_like_secret, secret_refused
 
 ACTIONS = ("defaults", "build", "cancel", "nearest")
 MAX_TEXT = 2000
@@ -145,6 +146,8 @@ def post(req, send=None, *, home: str | None = None, open_project: dict | None =
     answers, why = _valid_answers(body.get("answers"))
     if answers is None:
         return _err(400, why)
+    if looks_like_secret(text) or holds_secret(answers) or looks_like_secret(name):  # before anything is kept or sent
+        return _err(400, secret_refused("in a robot description"))
     if bid is None:
         if action or answers:
             return _err(400, "start with a description of the robot")

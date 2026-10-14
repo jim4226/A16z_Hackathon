@@ -248,6 +248,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   draft's review never links an address Morph refused; a drafted service named like a Windows device (aux, com1) is
   saved under another name. Tests now search every request, event, file, log and export for marker keys, and cover
   the Teams roles, remote mode and two tabs answering the same card.
+- One key filter for everything people type: chat, New robot (the request and every answer), Show Morph the job's
+  cards, a project's description, a world's labels and every Teams text field (comments, change requests, reviews,
+  releases, branch and display names, script token labels) refuse a Claude, SubQ, Keewano or tool key, a bearer token,
+  or a Teams script token, invite or sign-in code before anything is saved, shown or sent. New robot used to keep such
+  a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ
+  and tool keys through; drafts saved before this stay until their 7-day cleanup.
 
 ### Fixes
 

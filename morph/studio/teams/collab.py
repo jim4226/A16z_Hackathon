@@ -23,6 +23,7 @@ import unicodedata
 from ...robot.pipeline2 import ORDER, PARAMS, RobotProject
 from ...spec import Design, diff
 from ..labels import VALUES, show_key, show_value  # noqa: F401  (people's names for keys and values)
+from ..security import looks_like_secret, secret_refused
 from . import audit
 from .disciplines import (DISCIPLINES, LABELS, LEVELS, STAGE_TITLES, STAGES, affected_stages, disciplines_for_stages, eligible,
                           route_discipline)
@@ -35,7 +36,6 @@ BRANCH_RX = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 TAG_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,39}$")
 REUSED_RX = re.compile(r"^reused from (r[0-9]+)$")
 ROBOT_SOURCE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
-SECRET_RX = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{8,}|kwpat-[A-Za-z0-9_-]{8,}|mt_[A-Za-z0-9_-]{20,}|mi_[A-Za-z0-9_-]{20,}|ml_[A-Za-z0-9_-]{20,})")
 MENTION_RX = re.compile(r"(?<![\w@])@([\w.-]{1,40})", re.UNICODE)
 ORDER_FILES = ("mfg/*.zip", "mfg/*/gerbers.zip", "mfg/*/jlc_*.csv", "electronics/board/gerbers/*", "electronics/board/jlc_*.csv")
 MAX_BODY, MAX_TITLE, MAX_CHANGES = 4000, 120, 40
@@ -65,10 +65,14 @@ def _text(value, what: str, limit: int, multiline: bool = True) -> str:
         raise CollabError(400, f"The {what} is empty.")
     if len(value) > limit:
         raise CollabError(400, f"The {what} is too long: {limit:,} characters at most.")
-    if SECRET_RX.search(value):
-        raise CollabError(400, "That looks like an API key or a Morph access code. Never paste those in comments; "
-                               "this was not saved.")
+    _no_secret(value)
     return value
+
+
+def _no_secret(value: str):
+    """Every Teams text field uses the Studio's one key filter (security.looks_like_secret, as chat does)."""
+    if looks_like_secret(value):
+        raise CollabError(400, secret_refused("into the team's comments, notes or names"))
 
 
 def _canon(obj) -> bytes:
@@ -593,11 +597,12 @@ def create_proposal(root: str, by: str, title=None, changes=None, base_rev: str 
     disciplines, and a review request routed to the owners of those disciplines (never the author)."""
     if branch != "main" and branch not in _branch_doc(root)["branches"]:
         raise CollabError(404, f"There is no branch {str(branch)[:40]!r}.")
+    title = _text(title, "title", MAX_TITLE, multiline=False) if title else None  # what people typed: checked first
+    note = _text(note, "note", MAX_BODY) if note else ""
     pv = preview(root, changes, base_rev, stages, branch)
     if pv["noop"]:
         raise CollabError(400, "That changes nothing in the design. Name a parameter to change, or the stage the change is about.")
-    title = _text(title, "title", MAX_TITLE, multiline=False) if title else _title({k: v[1] for k, v in pv["changes"].items()}, pv["stages"])
-    note = _text(note, "note", MAX_BODY) if note else ""
+    title = title or _title({k: v[1] for k, v in pv["changes"].items()}, pv["stages"])
     with locked(project_dir(root)):
         state = _proposal_state(root)
         n = max([int(p.get("n") or 0) for p in state.values()] + [0]) + 1
@@ -1078,6 +1083,7 @@ def branches(root: str) -> list:
 def create_branch(root: str, name: str, by: str, base_rev: str | None = None) -> dict:
     if not isinstance(name, str) or not BRANCH_RX.match(name) or name == "main":
         raise CollabError(400, "Branch names are 1 to 40 lowercase letters, digits or hyphens (not main).")
+    _no_secret(name)
     base_rev = base_rev or head(root, "main")
     if rev_info(root, base_rev) is None:
         raise CollabError(404, "Pick a completed revision to branch from.")
@@ -1178,6 +1184,7 @@ def create_release(root: str, tag, rev: str, by: str, members=None, policy=None,
     if not isinstance(tag, str) or not TAG_RX.match(" ".join(tag.split())):
         raise CollabError(400, "Release names are 1 to 40 letters, digits, spaces, dots, + or -, like \"Pilot v1\".")
     tag = " ".join(tag.split())
+    _no_secret(tag)
     note = _text(note, "note", 500) if note else ""
     members = _members_dict(members)
     with locked(project_dir(root)):
