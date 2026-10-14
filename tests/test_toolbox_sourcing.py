@@ -16,7 +16,7 @@ from morph.studio import agents, api_tools, server
 from morph.studio.toolbox import audit, store
 from test_team_util import build
 from test_toolbox_vendors import MOUSER_KEY, Vendor
-from toolbox_helpers import ScriptedClaude, final, search_and_call, secrets_absent
+from toolbox_helpers import ScriptedClaude, final, private, search_and_call, secrets_absent
 
 ITEMS = ("Feetech STS3215 serial bus servo 12 V", "ESP32-S3-DevKitC-1")
 NEEDS_INPUT = {"searchId": "s_ni", "status": "needs_input", "response": {  # Darwin's answer shape, recorded 2026-10-13
@@ -177,7 +177,7 @@ def test_a_need_no_tool_covers_becomes_a_card_and_a_local_log_line(env):
     log = os.path.join(store.tools_dir(env["home"]), "requests.jsonl")
     line = json.loads(open(log, encoding="utf-8").read().splitlines()[0])
     assert line["need"] == "PCB assembly quotes from Gerbers" and line["run"] == view["id"] and line["project"] == "egg-picker"
-    assert oct(os.stat(log).st_mode & 0o777) == "0o600"
+    assert private(log)
     events = [e["event"] for e in audit.entries(env["home"])]
     assert "tool_requested" in events and audit.verify(env["home"])["ok"]
     assert "PCB assembly" not in open(audit.path(env["home"]), encoding="utf-8").read()  # names only in the audit log

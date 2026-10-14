@@ -11,8 +11,8 @@ import pytest
 
 from morph import keys
 from morph.studio.toolbox import ToolboxError, audit, catalog, runs, store
-from toolbox_helpers import (BOM, ENV, FIXTURES, KEY, KEY2, NOTE, SYSTEM, ScriptedClaude, Vendor, final, search_and_call,
-                             secrets_absent, toolbox)
+from toolbox_helpers import (BOM, ENV, FIXTURES, KEY, KEY2, NOTE, SYSTEM, ScriptedClaude, Vendor, final, private,
+                             search_and_call, secrets_absent, toolbox)
 
 OFFERS = ("fixparts_offers", "toolu_nx", {"mpn": "STS3215"})
 BOMCALL = ("morph_bom_read", "toolu_bom", {})
@@ -77,7 +77,7 @@ def test_a_missing_key_pauses_and_saving_it_resumes_the_run_once(home):
     assert {e["tool"] for e in ev2 if e["type"] == "tool_used"} == {"fixparts_offers", "morph_bom_read"}
     appr = tb2.approvals.get("fixparts_offers")
     assert appr["mode"] == "key_saved"  # saving a curated read-only tool's key approved its first use
-    assert oct(os.stat(keys.ENV_PATH).st_mode & 0o777) == "0o600"
+    assert private(keys.ENV_PATH)
 
 
 def test_two_saves_at_once_resume_the_run_exactly_once(home, monkeypatch):
@@ -375,7 +375,7 @@ def test_run_files_are_private_ids_are_checked_and_runs_expire(home):
     tb = toolbox(home, claude)
     run = start(tb)
     p = os.path.join(store.runs_dir(str(home)), run["id"] + ".json")
-    assert oct(os.stat(p).st_mode & 0o777) == "0o600" and oct(os.stat(store.runs_dir(str(home))).st_mode & 0o777) == "0o700"
+    assert private(p) and private(store.runs_dir(str(home)), 0o700)
     for bad in ("../x", "run_../../etc", "run_123", run["id"] + "/..", "RUN_0123456789abcdef"):
         with pytest.raises(ToolboxError) as e:
             tb.get(bad)
@@ -460,7 +460,7 @@ def test_keys_never_reach_claude_events_the_audit_log_run_files_or_answers(home)
     for fn in os.listdir(store.runs_dir(str(home))):
         assert secrets_absent(open(os.path.join(store.runs_dir(str(home)), fn), encoding="utf-8", errors="replace").read(), KEY)
     assert secrets_absent([tb.runs(), tb.tools(), tb.get(run["id"]), keys.status()], KEY)
-    assert oct(os.stat(keys.ENV_PATH).st_mode & 0o777) == "0o600"
+    assert private(keys.ENV_PATH)
 
 
 def test_views_carry_no_message_text(home):

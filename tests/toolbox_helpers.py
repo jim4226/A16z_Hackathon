@@ -120,6 +120,11 @@ def toolbox(home, claude=None, vendor=None, events=None, **kw):
     return Toolbox(str(home), **opts)
 
 
+def private(path, mode: int = 0o600) -> bool:
+    """POSIX file modes; Windows has none (os.chmod only sets read-only), so a file there is as private as its folder."""
+    return os.name == "nt" or (os.stat(path).st_mode & 0o777) == mode
+
+
 def secrets_absent(blob, *values) -> bool:
     text = blob if isinstance(blob, str) else json.dumps(blob, default=str)
     return all(v not in text for v in values)

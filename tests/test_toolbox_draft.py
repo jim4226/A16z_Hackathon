@@ -19,7 +19,7 @@ import fake_claude as F
 from morph import keys
 from morph.studio.intent import MODEL
 from morph.studio.toolbox import ToolboxError, audit, catalog, draft, store
-from toolbox_helpers import BOM, ENV, FIXTURES, KEY, SYSTEM, ScriptedClaude, final, search_and_call, secrets_absent, toolbox
+from toolbox_helpers import BOM, ENV, FIXTURES, KEY, SYSTEM, ScriptedClaude, final, private, search_and_call, secrets_absent, toolbox
 
 DOCS = F.GEARBASE_DOCS_URL
 GB_ENV = "MORPH_TOOL_GEARBASE_KEY"
@@ -92,7 +92,7 @@ def test_the_draft_request_reads_only_the_documentation_site_and_asks_for_the_fo
                            "chars": len(F.GEARBASE_DOCS), "retrieved_at": "2026-10-14T09:00:00Z"}]
     assert d["usage"]["input_tokens"] == 1200 and d["source"] is None and d["by"] == "jim" and d["project"] == "egg-picker"
     path = os.path.join(store.tools_dir(str(home)), "drafts", d["id"] + ".json")
-    assert oct(os.stat(path).st_mode & 0o777) == "0o600" and "Gearbase is a made-up" not in open(path, encoding="utf-8").read()
+    assert private(path) and "Gearbase is a made-up" not in open(path, encoding="utf-8").read()
     assert [(e["type"], e["status"]) for e in events] == [("tool_draft", "drafting"), ("tool_draft", "ready")]
     assert events[-1] == {"type": "tool_draft", "draft": d["id"], "status": "ready", "project": "egg-picker",
                           "title": "Gearbase (test fixture)"}
@@ -307,7 +307,7 @@ def test_approve_installs_the_reviewed_spec_and_the_next_run_asks_only_for_its_k
     assert view["status"] == "installed" and view["installed"]["file"] == "gearbase.json" and view["installed"]["replaced"] is False
     assert tb.drafts.approve(d["id"], d["sha256"], by="jim")["status"] == "installed"  # a second click changes nothing
     path = os.path.join(catalog.user_dir(str(home)), "gearbase.json")
-    assert oct(os.stat(path).st_mode & 0o777) == "0o600"
+    assert private(path)
     assert catalog.fingerprint(json.load(open(path, encoding="utf-8"))) == d["sha256"]
     assert catalog.read_pins(str(home))["gearbase"]["sha256"] == d["sha256"]
     tools = {t["name"]: t for t in tb.tools()["tools"]}

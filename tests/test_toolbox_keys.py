@@ -14,7 +14,7 @@ import pytest
 from morph import keys
 from morph.studio import security
 from morph.studio.toolbox import ManifestError, catalog
-from toolbox_helpers import ENV, FIXTURES, KEY
+from toolbox_helpers import ENV, FIXTURES, KEY, private
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC = os.path.join(REPO, "morph", "studio", "static")
@@ -86,7 +86,7 @@ def test_saving_a_tool_key_checks_it_against_its_manifest(env):
     assert env.read_text(encoding="utf-8") == "# my notes\nANTHROPIC_API_KEY=\nOTHER_TOOL=1\n" and ENV not in os.environ
     assert keys.save({ENV: f"  {KEY} ", "ANTHROPIC_API_KEY": "sk-ant-test"}) == ["ANTHROPIC_API_KEY", ENV]
     assert env.read_text(encoding="utf-8").splitlines() == ["# my notes", "ANTHROPIC_API_KEY=sk-ant-test", "OTHER_TOOL=1", f"{ENV}={KEY}"]
-    assert os.environ[ENV] == KEY and oct(os.stat(env).st_mode & 0o777) == "0o600"
+    assert os.environ[ENV] == KEY and private(env)
     assert dict(keys.parse(env.read_text(encoding="utf-8")))[ENV] == KEY
     assert keys.save({ENV: ""}) == [ENV] and ENV not in os.environ  # Remove
 
