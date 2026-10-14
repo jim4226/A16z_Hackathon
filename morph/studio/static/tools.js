@@ -26,9 +26,17 @@ const FAIL = {  // a failed call's line, from its error code and HTTP status (ne
   other: (e) => `failed${e.status ? ` (${e.status})` : ''}`,
 };
 const ENDED = ['done', 'failed', 'refused', 'cancelled'];
+// an ended run never runs again, so a view that says otherwise left the server before it ended (a slow Allow, a list
+// in flight when its last event came): it must not take the card back to Working
+const stale = (cur, next) => ENDED.includes(cur?.status) && !ENDED.includes(next?.status);
 const STOPPED = {  // why an interrupted run waits (its card's heading); the note under it says what to do
   restart: 'The Studio restarted while this ran', claude_key: 'Claude refused the Anthropic key', claude_unavailable: 'Claude was unavailable',
   offline: 'Network lookups were turned off', tools_off: 'Agent tools were turned off',
+};
+const FIX = {  // what only the owner can fix before a run continues: Keys opens on that setting or key; others ask the owner
+  offline: ['network_enabled', 'Ask the owner to turn network lookups back on (Keys), then continue it.'],
+  tools_off: ['agent_tools_enabled', 'Ask the owner to turn agent tools back on (Keys), then continue it.'],
+  claude_key: ['ANTHROPIC_API_KEY', 'Ask the owner to fix the Anthropic key in Keys, then continue it.'],
 };
 const RECENT_MS = 30 * 60 * 1000;  // finished runs shown again after a reload: the last half hour's
 
@@ -87,7 +95,7 @@ async function refresh() {  // one at a time; a call during one runs once more a
         const now = Date.now();
         for (const v of [...(out.runs || [])].reverse()) {  // oldest first, so the newest card ends up lowest
           const r = runs.get(v.id);
-          if (r) { r.view = v; continue; }
+          if (r) { if (!stale(r.view, v)) r.view = v; continue; }
           if (ENDED.includes(v.status) && now - Date.parse(v.updated || 0) > RECENT_MS) continue;
           runs.set(v.id, { view: v, el: null, keyAdded: false, answer: null });
         }
@@ -135,10 +143,10 @@ async function act(r, what, arg) {
   const id = r.view.id;
   try {
     let out;
-    if (what === 'stop') out = await studio.api.post('/api/runs/cancel', { run: id });
+    if (what === 'stop') { out = await studio.api.post('/api/runs/cancel', { run: id }); r.stopping = !!out?.run?.cancelling; }
     else if (what === 'continue') out = await studio.api.post('/api/runs/resume', { run: id });
     else out = await studio.api.post('/api/runs/decide', { run: id, decisions: Object.fromEntries(String(arg || '').split(',').filter(Boolean).map((tu) => [tu, what])) });
-    if (out?.run) { r.view = out.run; paint(r); }
+    if (out?.run && !stale(r.view, out.run)) { r.view = out.run; paint(r); }
     refresh();
   } catch (e) {
     studio.toast(e.body?.error || e.message || "Couldn't reach the Studio");
@@ -152,7 +160,7 @@ export async function startPrices() {
   try {
     const out = await studio.api.post('/api/runs/start', { agent: 'price_check', rev });
     const r = runs.get(out.run.id) || { view: out.run, el: null, keyAdded: false, answer: null };
-    r.view = out.run;
+    if (!stale(r.view, out.run)) r.view = out.run;
     runs.set(out.run.id, r);
     paint(r);  // a new card keeps the chat at its end
     studio.toast(out.already ? `Live prices for ${rev} are already running: see the chat` : `Live prices started for ${rev}`);
@@ -210,21 +218,22 @@ function paint(r) {
   if (follow) requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
 }
 
-function status(v) {
+function status(v, r) {
   const w = v.waiting_on || [];
-  if (v.status === 'running') return ['neutral', '<span class="spin"></span>', 'Working'];
+  if (v.status === 'running') return ['neutral', '<span class="spin"></span>', r?.stopping ? 'Stopping' : 'Working'];  // Stop waits for the call under way
   if (v.status === 'paused') return ['warn', '', w.includes('credential') ? 'Needs a key' : w.includes('approval') ? (can.allow ? 'Needs your OK' : "Needs the owner's OK") : 'Paused'];
   return { done: ['good', '', 'Done'], failed: ['bad', '', 'Stopped'], refused: ['bad', '', 'Declined'], cancelled: ['neutral', '', 'Cancelled'] }[v.status] || ['neutral', '', v.status || ''];
 }
 
 function cardHTML(r) {
-  const v = r.view, [cls, spin, text] = status(v), rev = v.context?.rev;
+  const v = r.view, [cls, spin, text] = status(v, r), rev = v.context?.rev;
+  if (ENDED.includes(v.status)) r.stopping = false;
   const who = v.context?.auto ? 'started after the build' : '';
   const steps = v.steps?.length ? v.steps : Object.entries(v.calls || {}).map(([tool, n]) => ({ type: 'calls', tool, n }));
   const lines = steps.map(lineHTML);
   const needs = v.status === 'paused' ? group(v.cards || []).map((c) => needHTML(r, c)).join('') : '';
   const acts = [];
-  if (!ENDED.includes(v.status) && can.start) acts.push(`<button class="btn ghost" type="button" data-act="stop">${I('x')}Stop</button>`);
+  if (!ENDED.includes(v.status) && can.start && !r.stopping) acts.push(`<button class="btn ghost" type="button" data-act="stop">${I('x')}Stop</button>`);
   if (v.result?.lines?.length) acts.unshift(`<button class="btn" type="button" data-act="prices">${I('tags')}Show prices</button>`);
   return `<div class="tl-h"><span class="tl-t">${esc(v.title || 'Agent run')}</span><span class="tag ${cls} tl-st">${spin}${esc(text)}</span></div>
     <div class="tl-sub"><span class="tag acc">beta</span> ${esc([v.agent === 'price_check' ? 'Claude with distributor tools' : 'Claude with tools', who].filter(Boolean).join(' · '))}${rev ? ` · <span class="mono">${esc(rev)}</span>` : ''}</div>
@@ -266,26 +275,37 @@ function lineHTML(e) {
 
 function untried(tool) { return catalog[tool]?.verified && catalog[tool].verified.live == null ? '<span class="tag neutral" title="Written from the service\'s documentation; Morph has not yet tried it with a real key">Not yet tried with a real key</span>' : ''; }
 
+function origin(tool) {  // a tool that isn't one of Morph's own: drafted by Claude and approved by the owner, or the owner's manifest
+  const t = catalog[tool];
+  if (!t || t.curated !== false) return '';
+  return t.drafted ? '<span class="tag acc" title="Drafted by Claude from the service\'s documentation and approved by the owner (Morph writes a tool, preview)">drafted</span>'
+    : '<span class="tag neutral" title="From a manifest the owner added to this Studio, not one of Morph\'s own tools">your own manifest</span>';
+}
+
 function needHTML(r, c) {
   if (c.type === 'run_interrupted') {
+    const fix = FIX[c.reason], ask = fix && !can.keys ? fix[1] : can.start ? '' : 'Ask an editor or the owner to continue it.';
     return `<div class="tl-card"><div class="tl-ch">${I('alert')}<span class="tl-cht">${esc(STOPPED[c.reason] || STOPPED.claude_unavailable)}</span></div>
-      <p>${esc(c.note || '')}</p>${can.start ? `<div class="qacts"><button class="btn primary" type="button" data-act="continue">${I('replay')}Continue</button></div>` : '<div class="tl-ask">Ask an editor or the owner to continue it.</div>'}</div>`;
+      <p>${esc(c.note || '')}</p>${can.start ? `<div class="qacts"><button class="btn primary" type="button" data-act="continue">${I('replay')}Continue</button>
+        ${fix && can.keys ? `<button class="btn ghost" type="button" data-act="key" data-env="${esc(fix[0])}">${I('key')}Open Keys</button>` : ''}</div>` : ''}
+      ${ask ? `<div class="tl-ask">${esc(ask)}</div>` : ''}</div>`;
   }
   if (c.type === 'credential_needed') {
     const rejected = c.reason === 'rejected';
     const ids = esc(c.ids.join(','));
-    return `<div class="tl-card key" data-tu="${ids}"><div class="tl-ch">${I('key')}<span class="tl-cht">${rejected ? `${esc(c.service)} refused the key` : `Key needed: ${esc(c.service)}`}</span>${untried(c.tool)}</div>
+    return `<div class="tl-card key" data-tu="${ids}"><div class="tl-ch">${I('key')}<span class="tl-cht">${rejected ? `${esc(c.service)} refused the key` : `Key needed: ${esc(c.service)}`}</span>${untried(c.tool)}${origin(c.tool)}</div>
+      ${rejected ? `<p>It may be mistyped, expired or not enabled for this service${can.keys ? ': copy it again or make a new one, then replace it' : ''}.</p>` : ''}
       <p>${esc(c.what || '')}${c.ids.length > 1 ? ` ${c.ids.length} lookups wait for it.` : ''}</p>
       <dl class="tl-dl">${c.cost ? `<dt>Cost</dt><dd>${esc(c.cost)}</dd>` : ''}${c.privacy ? `<dt>Privacy</dt><dd>${esc(c.privacy)}</dd>` : ''}<dt>Sent to</dt><dd class="mono">${esc((c.hosts || []).join(', '))} only</dd></dl>
       <div class="qacts">${can.keys ? `<button class="btn primary" type="button" data-act="key" data-env="${esc(c.env)}">${I('key')}${rejected ? 'Replace key' : 'Add key'}</button>` : ''}
         ${c.url && can.keys ? `<a class="btn ghost" href="${esc(c.url)}" target="_blank" rel="noopener">${I('ext')}Get a key</a>` : ''}
         ${can.skip ? `<button class="btn ghost" type="button" data-act="skip" data-tu="${ids}">Skip</button>` : ''}</div>
-      ${can.keys ? '' : `<div class="tl-ask">Ask the owner to add the ${esc(c.label || 'key')} in Keys.${can.skip ? ' Or skip it: the run carries on without it.' : ''}</div>`}</div>`;
+      ${can.keys ? '' : `<div class="tl-ask">Ask the owner to ${rejected ? 'replace' : 'add'} the ${esc(c.label || 'key')} in Keys.${can.skip ? ' Or skip it: the run carries on without it.' : ''}</div>`}</div>`;
   }
   const per = c.reason === 'per_call';
   const head = per ? `Allow this call to ${esc(c.title)}?` : c.reason === 'changed' ? `${esc(c.title)} changed since you allowed it: allow it again?` : `Allow ${esc(c.title)}?`;
   const ids = esc(c.ids.join(','));
-  return `<div class="tl-card ask" data-tu="${ids}"><div class="tl-ch">${I('alert')}<span class="tl-cht">${head}</span>${untried(c.tool)}</div>
+  return `<div class="tl-card ask" data-tu="${ids}"><div class="tl-ch">${I('alert')}<span class="tl-cht">${head}</span>${untried(c.tool)}${origin(c.tool)}</div>
     <p>${esc(SIDE[c.side_effect] || '')} Sends ${esc(c.sends || 'its arguments')} to <span class="mono">${esc(c.host || '')}</span>.</p>
     <dl class="tl-dl"><dt>Cost</dt><dd>${c.cost_usd ? `About $${esc(c.cost_usd)} a call` : 'No fee per call'}${c.cost_note ? `. ${esc(c.cost_note)}` : ''}</dd>${c.privacy ? `<dt>Privacy</dt><dd>${esc(c.privacy)}</dd>` : ''}</dl>
     ${c.input ? `<pre class="tl-args mono">${esc(c.input)}</pre>` : ''}${c.ids.length > 1 ? `<div class="tl-ask">and ${c.ids.length - 1} more call${c.ids.length > 2 ? 's' : ''} of it in this step: your answer covers them all.</div>` : ''}
@@ -310,7 +330,7 @@ function requestHTML(r, q) {  // a need no tool covers: Darwin's suggestions (ed
 function resultHTML(v) {
   const res = v.result, rows = res.lines || [], items = new Set(rows.map((x) => x.item)).size, total = v.context?.lines;
   const svcs = [...new Set(rows.map((x) => x.service).filter(Boolean))];
-  return `<div class="tl-res"><div class="tl-k">${items}${total ? ` of ${total}` : ''} purchased line${items === 1 ? '' : 's'} priced${svcs.length ? ` · ${esc(svcs.join(', '))}` : ''}${res.checked_at ? ` · ${esc(hhmm(res.checked_at))}` : ''}</div>
+  return `<div class="tl-res"><div class="tl-k">${items}${total ? ` of ${total}` : ''} purchased line${(total || items) === 1 ? '' : 's'} priced${svcs.length ? ` · ${esc(svcs.join(', '))}` : ''}${res.checked_at ? ` · ${esc(hhmm(res.checked_at))}` : ''}</div>
     <ul class="tl-prices">${rows.slice(0, 4).map((x) => `<li><span class="it" title="${esc(x.item)}">${esc(x.item)}</span><span class="pr num">${esc(price(x.unit_price, x.currency))}${x.matched ? '' : ' <span class="tag warn" title="Morph couldn\'t find this price or part number in the tool\'s answer">check</span>'}</span></li>`).join('')}</ul>
     ${rows.length > 4 ? `<div class="dim">and ${rows.length - 4} more: Show prices</div>` : ''}</div>`;
 }

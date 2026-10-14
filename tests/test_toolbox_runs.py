@@ -245,7 +245,7 @@ def test_per_tool_call_limit_turn_cap_refusal_and_max_tokens(home, monkeypatch):
     assert run["status"] == "failed" and "3 turns" in run["note"] and len(loop.requests) == 3
     refusal = ScriptedClaude({"content": [], "stop_reason": "refusal", "stop_details": {"type": "refusal", "category": "cyber"}})
     run = start(toolbox(home, refusal))
-    assert run["status"] == "refused" and "cyber" in run["note"]
+    assert run["status"] == "refused" and run["note"] == "Claude declined this request (safety category: cyber)."
     cut = ScriptedClaude({"content": [{"type": "tool_use", "id": "toolu_x", "name": "morph_bom_read", "input": {}}],
                           "stop_reason": "max_tokens"})
     run = start(toolbox(home, cut))

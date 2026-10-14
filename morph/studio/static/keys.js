@@ -4,7 +4,8 @@
 // switches (network, Keewano events, Keewano calibration) are non-secret settings (/api/settings).
 // Tool keys (beta, entries with `tool: true`) come from the manifests of the tools that are on and are grouped under
 // their service. window.dispatchEvent(new CustomEvent('morph:keys', {detail: {key: 'MORPH_TOOL_...'}})) opens the
-// dialog scrolled to that key (a "Key needed" card's Add key button).
+// dialog scrolled to that key (a "Key needed" card's Add key button), or to that setting ({key: 'agent_tools_enabled'}:
+// an interrupted run's Open Keys).
 import { I, esc, sleep } from './panels.js';
 
 const JSON_POST = { 'Content-Type': 'application/json', 'X-Morph-Client': '1' };  // the server refuses changes without X-Morph-Client
@@ -18,14 +19,14 @@ const SETTINGS = [
   ['network_enabled', 'Allow network lookups (Darwin, SubQ, Claude)', 'Off: nothing leaves this computer. Chat uses the built-in rules and the BOM shows saved Darwin answers.'],
   ['telemetry_enabled', 'Send build events to Keewano', 'Off by default. On: revisions, edits and bench measurements go to your Keewano project (needs the project key).'],
   ['calibration_enabled', 'Use Keewano calibration (demo data unless you have real builds)', 'Off by default. On: newly generated robots scale the grip-force target by 3 or more logged builds with the same pad and material (synthetic-* projects ignored).'],
-  ['agent_tools_enabled', 'Let agents use tools (beta)', 'On: Live prices in the BOM tab runs Claude with the tools under Tool keys, and asks you in the chat before it needs a key or an approval. Off: no agent run starts, and paused runs wait.'],
+  ['agent_tools_enabled', 'Let agents use tools (beta)', 'On: Live prices in the BOM tab runs Claude with the tools under Tool keys, and asks you in the chat before it needs a key or an approval. Off: no agent run starts, and a run under way stops before its next step and waits.'],
   ['auto_price_check', 'Check live prices after a build changes the purchased parts', 'Off by default. On: Morph starts Live prices by itself after such a build, which uses Claude (billed to your Anthropic key) and your tool keys.'],
 ];
 const SAVED = {
   network_enabled: ['Network lookups off: Morph now uses only what is on this computer.', 'Network lookups on.'],
   telemetry_enabled: ['No more build events go to Keewano.', 'Build events go to Keewano from the next change (with the project key set).'],
   calibration_enabled: ['Keewano calibration off: new robots use the simulated holding force.', 'Keewano calibration on for newly generated robots; existing revisions keep their grip target.'],
-  agent_tools_enabled: ['Agent tools off: no agent run starts, and paused runs wait until they are on again.', 'Agent tools on: Live prices can run from the BOM tab.'],
+  agent_tools_enabled: ['Agent tools off: no agent run starts, and runs wait until they are on again.', 'Agent tools on: Live prices can run from the BOM tab, and waiting runs can continue.'],
   auto_price_check: ['Live prices run only when someone starts them from the BOM tab.', 'Live prices start by themselves after a build changes the purchased parts.'],
 };
 
@@ -144,7 +145,8 @@ export class KeysDialog {
     if (nt) nt.onclick = () => { this.close(); window.dispatchEvent(new CustomEvent('morph:tool-draft', { detail: {} })); };
     const focus = this.focus;
     this.focus = '';
-    const target = focus && [...this.el.querySelectorAll('.kf')].find((f) => f.dataset.k === focus);
+    const target = focus && ([...this.el.querySelectorAll('.kf')].find((f) => f.dataset.k === focus)
+      || [...this.el.querySelectorAll('[data-s]')].find((x) => x.dataset.s === focus)?.closest('.kt'));  // a key, or a setting
     if (target) {
       target.classList.add('kfocus');
       target.scrollIntoView({ block: 'center' });

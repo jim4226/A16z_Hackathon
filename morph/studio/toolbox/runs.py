@@ -618,11 +618,11 @@ class Toolbox:
         """Network lookups or agent tools were turned off while the run worked: it waits as interrupted instead of sending
         its next request to Claude or making its next call; Continue picks it up once they are on again."""
         if not self.network():
-            self._interrupt(run, "offline", "Network lookups were turned off, so this run stopped before its next step. "
-                                            "Turn them on (Keys, Privacy and network), then continue it.")
+            self._interrupt(run, "offline", "This run stopped before its next step. Nothing more goes to Claude or any "
+                                            "service until network lookups are back on and it continues.")
         elif not self.tools_on():
-            self._interrupt(run, "tools_off", 'Agent tools were turned off, so this run stopped before its next step. Turn '
-                                              'on "Let agents use tools" (Keys, Privacy and network), then continue it.')
+            self._interrupt(run, "tools_off", "This run stopped before its next step. Nothing more goes to Claude or any "
+                                              "service until agent tools are back on and it continues.")
         else:
             return False
         return True
@@ -666,9 +666,9 @@ class Toolbox:
             if stop == "pause_turn":
                 continue  # a server tool hit its iteration limit: the paused turn goes back unchanged
             if stop == "refusal":
-                details = data.get("stop_details") if isinstance(data.get("stop_details"), dict) else {}
-                return self._finish(run, "refused", "Claude declined this request" + (f" ({details['category']})." if
-                                    isinstance(details.get("category"), str) else "."))
+                cat = (data.get("stop_details") if isinstance(data.get("stop_details"), dict) else {}).get("category")
+                return self._finish(run, "refused", "Claude declined this request"
+                                    + (f" (safety category: {cat[:40]})." if isinstance(cat, str) else "."))
             if stop == "max_tokens":
                 return self._finish(run, "failed", "Claude's answer was cut off at its length limit; its tool calls were not run.")
             if stop == "tool_use":

@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from morph import settings
 from morph.studio import api_tools
 from morph.studio.toolbox import runs as runs_mod
 from test_tools_api import CATS, OFFERS, World, _start
@@ -156,6 +157,8 @@ def test_a_key_the_service_refuses_can_be_replaced_from_the_card(browser, make_w
     w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"})
     until(lambda: "FixParts (test fixture) refused the key" in page.card(), what="the refused-key card")
     assert page.acts() == ["key", "skip", "stop"] and page.pg.inner_text('.tl-run [data-act="key"]').strip() == "Replace key"
+    assert ("It may be mistyped, expired or not enabled for this service: copy it again or make a new one, then replace it."
+            in page.card())
     page.shot("key_refused")
     page.pg.click('.tl-run [data-act="key"]')
     until(lambda: page.pg.evaluate(f"document.querySelector('#keysDlg.on .kf.kfocus')?.dataset.k === '{ENV}'"), what="Keys on the key")
@@ -235,6 +238,43 @@ def test_a_tool_request_card_allow_once_and_skip(browser, make_world):
     until(lambda: "Done" in page.card(), what="the run after Skip")
     assert "FixParts categories · skipped: the run went on without it" in page.card()
     assert [m["content"][0]["is_error"] for m in w.claude.requests[-1]["messages"][-1:]] == [True]
+    assert not page.errors, page.errors
+
+
+def test_a_late_answer_never_takes_a_finished_card_back_to_working(browser, make_world):
+    """Allow once answers with the run as it was when the call went ahead. When the run ends before that answer arrives
+    (a slow network, a busy Studio), neither it nor a list that was on its way may show the finished card as Working."""
+    gate, slow = threading.Event(), threading.Event()
+    w = make_world(search_and_call(CATS), held(final("Servo categories listed."), gate))
+    tb = w.studio.toolbox
+    decide, listing = tb.decide, tb.runs
+
+    def late_decide(run_id, decisions, **kw):
+        out = decide(run_id, decisions, **kw)  # the run works on: Claude's answer waits for the gate
+        assert out["status"] == "running"
+        gate.set()
+        until(lambda: tb.get(run_id)["status"] == "done", what="the run's end")
+        time.sleep(0.6)  # its run_done event reaches the page before this answer does
+        slow.set()
+        return out
+
+    def slow_listing(*a, **kw):
+        if slow.is_set():
+            time.sleep(1.0)
+        return listing(*a, **kw)
+    tb.decide, tb.runs = late_decide, slow_listing
+    page = Page(browser, w).open()
+    w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"})
+    until(lambda: "Allow FixParts categories?" in page.card(), 60, what="the Tool request card")
+    page.pg.click('.tl-run [data-act="allow_once"]')
+    until(lambda: "Done" in page.card(), 60, what="the finished card")
+    until(slow.is_set, 60, what="the late answer")
+    seen, t0 = [], time.time()
+    while time.time() - t0 < 2.0:  # the late answer reaches the page, then the slow list after it
+        seen.append(page.card())
+        time.sleep(0.05)
+    assert not [t for t in seen if "Working" in t or "Done" not in t], seen[:3]
+    assert "FixParts categories · api.fixparts-morph.com" in page.card() and "Servo categories listed." in page.card()
     assert not page.errors, page.errors
 
 
@@ -362,3 +402,36 @@ def test_in_a_team_the_editor_may_skip_and_the_viewer_is_told_to_ask_the_owner(b
     for p in (vic, ana):
         until(lambda: "Done" in p.card() and "skipped" in p.card(), what="everyone's card after the editor skipped")
     assert not vic.errors and not ana.errors, vic.errors + ana.errors
+
+
+def test_a_run_stopped_by_turning_agent_tools_off_opens_keys_on_the_switch_and_the_others_ask_the_owner(browser, make_world,
+                                                                                                       monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-ui-test-not-a-key")  # an interrupted run continues only with Claude ready
+
+    def off_meanwhile(body):  # the owner turns agent tools off while Claude answers: the run stops before its call
+        settings.save({"agent_tools_enabled": False})
+        return search_and_call(OFFERS)
+    w = make_world(off_meanwhile, final("STS3215: 412 in stock at FixParts."), team=True)
+    assert w.call("POST", "/api/keys", {"values": {ENV: KEY}}, who="Jim")[0] == 200
+    jim, ana, vic = (Page(browser, w, who).open() for who in ("Jim", "Ana", "Vic"))
+    assert w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"}, who="Jim")[0] == 202
+    for p in (jim, ana, vic):  # three pages on one Studio: slow on a busy machine
+        until(lambda: "Agent tools were turned off" in p.card(), 60, what="the interrupted card")
+    assert w.vendor.calls == [] and len(w.claude.requests) == 1
+    ask = "Ask the owner to turn agent tools back on (Keys), then continue it."
+    assert jim.acts() == ["continue", "key", "stop"] and "Ask the owner" not in jim.card()
+    assert ana.acts() == ["continue", "stop"] and ask in ana.card()
+    assert vic.acts() == [] and ask in vic.card() and "Ask an editor" not in vic.card()
+    jim.shot("interrupted_owner")
+    ana.shot("interrupted_editor")
+    jim.pg.click('.tl-run [data-act="key"]')  # Open Keys: the dialog, on the switch
+    until(lambda: jim.pg.evaluate("document.querySelector('#keysDlg.on .kt.kfocus [data-s]')?.dataset.s") == "agent_tools_enabled",
+          60, what="Keys on the agent tools switch")
+    jim.pg.click("#keysDlg .kt.kfocus b")
+    until(settings.agent_tools_enabled, 60, what="agent tools on again")
+    jim.pg.keyboard.press("Escape")
+    jim.pg.click('.tl-run [data-act="continue"]')
+    for p in (jim, ana, vic):
+        until(lambda: "Done" in p.card() and "412 in stock" in p.card(), 60, what="the run after Continue")
+    assert len(w.vendor.calls) == 1
+    assert not jim.errors and not ana.errors and not vic.errors, jim.errors + ana.errors + vic.errors
