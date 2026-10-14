@@ -11,6 +11,9 @@
 Models propose slot values; brief.py validates, clamps and decides. Each step emits
 {"type": "agent", "role", "provider", "status": start|done|error|skipped, "ms", "text", "brief"} and nothing here raises:
 a missing key, a timeout or an error falls back to the rules and says so in the timeline.
+
+Live prices (beta), at the end of this file, is a different kind of agent: a toolbox run (morph/studio/toolbox) that
+checks distributor prices for a built revision (`price_check`, RELEASE_CONTRACTS section 15.1).
 """
 
 from __future__ import annotations
@@ -805,5 +808,7 @@ def start_price_check(studio, room, body: dict, by=None, *, auto: bool = False):
                     effort="medium")
     return view, False
 
+
+price_check = start_price_check  # agents.price_check(studio, room, {"rev"?}, by=None, *, auto=False) -> (view, already)
 
 _register_price_tools()

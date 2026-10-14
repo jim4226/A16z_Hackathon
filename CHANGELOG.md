@@ -64,6 +64,17 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
   a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
   (whether ffmpeg was found), Teams and World mode.
+- **Live prices** (beta): in the BOM tab, Claude checks current distributor prices and stock for the purchased parts
+  with Morph's read-only distributor tools (Mouser, and Farnell, element14 and Newark; written from their API
+  documentation and marked "Not yet tried with a real key"). Each run gets a card in the chat that says what it used
+  and what it waits for: **Key needed** names the service, what the key is for, its cost and what is sent, with Add
+  key (opens Keys on that key), Get a key and Skip; once the key is saved the run continues by itself ("Key added,
+  continuing…"), and a key the service refuses can be replaced. A tool that asks first shows a **Tool request** card
+  (Allow once, Always for read-only tools, Skip). Morph keeps a price only with the tool's answer it came from, marks
+  the rest "check it", and never orders anything. Runs use Claude on your Anthropic key and start only from the BOM tab,
+  unless you turn on "Check live prices after a build changes the purchased parts" (off by default); "Let agents use
+  tools (beta)" under Keys turns them off. On a team only the owner adds keys and allows tools; editors start runs and
+  may skip; viewers see the cards and are told to ask the owner.
 
 ### Studio
 
@@ -118,6 +129,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   import and its format, the kind of room and its verdict, which SubQ decision and how long it took), never file
   names, links, robot names, frames or what you typed. Team activity is never sent.
 - Board exports no longer carry Morph's licence; `morph kicad --license` adds one when you choose.
+- Live prices sends the distributor only the keywords or part numbers it searches for (from your parts list), with
+  your key for that distributor, and sends the parts list to Claude; cards, events and logs never carry a key, a
+  tool's answer or Claude's messages. Farnell's terms don't allow storing its data, so its answers stay only in the
+  run, which is deleted after 7 days.
 
 ### Security
 
@@ -147,11 +162,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   import, xacro expanded in a separate process, and links only from github.com and Hugging Face over HTTPS.
 - World mode names its room by id and hash, never a path: chat can't change it, Teams change requests can't name
   anything else, and an imported export (which doesn't carry the room) is simulated on the plain table.
-- Groundwork for agent tools (beta; no tool ships switched on in this build): a tool is a vetted manifest run by one
-  hardened runner (HTTPS to the manifest's own hosts only, every address checked to be public and connected to as
-  checked, no redirects, size and time limits, keys removed from every answer). A tool's key (`MORPH_TOOL_*`) shows in
-  the Keys dialog under its service, with where to get it, its cost and what is sent; it is checked against the tool's
-  pattern when saved, sent only to that tool's hosts and never to Claude, and chat refuses it like any other key.
+- Agent tools (beta): a tool is a vetted manifest run by one hardened runner (HTTPS to the manifest's own hosts only,
+  every address checked to be public and connected to as checked, no redirects, size and time limits, keys removed
+  from every answer). A tool's key (`MORPH_TOOL_*`) shows in the Keys dialog under its service, with where to get it,
+  its cost and what is sent; it is checked against the tool's pattern when saved, sent only to that tool's hosts and
+  never to Claude, and chat refuses it like any other key.
   Agent runs that wait for a key, an approval or a restart are kept in `projects/.runs/` (private, deleted after 7
   days); every tool decision and call goes into a hash-chained log, `projects/.tools/audit.jsonl`.
 

@@ -131,7 +131,7 @@ class FakeClaude:
 
             def do_GET(self):
                 if self.path.startswith("/v1/models"):
-                    return self._send(200, {"data": [{"id": "claude-opus-5-5", "type": "model"}], "has_more": False})
+                    return self._send(200, {"data": [{"id": "stand-in", "type": "model"}], "has_more": False})
                 return self._send(404, {"type": "error", "error": {"type": "not_found_error", "message": "not here"}})
 
             def do_POST(self):

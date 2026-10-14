@@ -778,3 +778,96 @@ owner, with editors allowed to skip); the settings `agent_tools_enabled` and `au
 CI): a real run that pauses for a key, survives a restart and resumes with `prefix_mismatch_behavior: "error"`, and reads
 the prompt cache on resume. Offline, the contract tests check the same requests on the real SDK over a mock transport;
 `MORPH_PREFIX_DIFF=<the Claude API skill>/shared/preserved-thinking-migration/prefix_diff.py` runs that checker over them.
+
+### 15.1 Tools in the Studio, Live prices and the distributor catalog (B2-T2: T3 to T6)
+
+**Routes** (`morph/studio/api_tools.py`; rows in `teams/roles.py` ROUTES; a Studio without Teams is one person who may
+do everything):
+
+| Route | Role | Body or query → answer |
+|---|---|---|
+| `GET /api/tools` | viewer | `Toolbox.tools()` plus `can` and `ready` |
+| `POST /api/tools/enable`, `/disable` | owner | `{tool}` → `{ok, changed, ...}`; team audit `tool_enabled` / `tool_disabled` |
+| `GET /api/runs` | viewer | `?project=` (the tab's room), `status?`, `agent?`, `limit` 1-100 → `{runs: [view], can, ready, agents: [{name, title}]}` |
+| `GET /api/runs/answer` | viewer | `?run=` → `{run, status, text}`: Claude's closing text of a done run of this project, else `text: null` (404 for another project's run) |
+| `POST /api/runs/start` | editor | `{agent, rev?}` → 202 `{ok, run, already: false}`, or 200 with the run of that revision still working or waiting (`already: true`); 400 unknown agent or unbuilt revision, 409 agent tools off, 503 no Claude |
+| `POST /api/runs/decide` | editor | `{run, decisions: {tool_use_id: allow_once \| allow_always \| skip \| deny}}`; the handler passes the member's role, so only the owner allows or denies (403 "Only the owner can allow or deny a tool; you can skip it."); team audit `tool_decision {run, decisions}` |
+| `POST /api/runs/resume`, `/cancel` | editor | `{run}`; resume of an interrupted run without Claude is 503; cancel answers `ended` |
+
+`can` = `{start, skip, allow, keys, tools}` for this member (owner: all; editor: start and skip; viewer: none), `ready` =
+`{claude, network, agent_tools, auto_price_check}`. A route that would start or continue a run answers 409 while
+`agent_tools_enabled` is off; keys still save and paused runs wait. Agents a person may start register with
+`api_tools.agent(name, title=, start=fn(studio, room, body, by) -> (view, already))`; Live prices is `price_check`.
+
+**Studio wiring** (server.py): `studio.toolbox` (api_tools.attach) is made at start and `recover()`s; events go to the
+run's room hub (every tab when a run has no project; nowhere once the project is deleted). `POST /api/keys` saves with
+`home=studio.home` and passes the saved `MORPH_TOOL_*` names to `on_credentials_saved(names, by=member, resume=agent
+tools on)`; its answer adds `resumed: [run ids]`. After a finished build (`Studio.apply` and `Studio.build`, after the
+`done` event) `api_tools.after_build(studio, room, rev)` starts Live prices in a background thread only when
+`auto_price_check`, `agent_tools_enabled` and Claude (a key and network lookups) are all on and the revision's
+purchased lines (item, quantity) differ from its parent's.
+
+**Settings** (`morph/settings.py`, switches in Keys, Privacy and network): `agent_tools_enabled` (default on: "Let
+agents use tools (beta)"; `settings.agent_tools_enabled()` is false offline) and `auto_price_check` (default off:
+"Check live prices after a build changes the purchased parts"; it spends Claude tokens on the person's key).
+
+**Toolbox additions** (`runs.py`): `start()` refuses a core tool name that isn't registered (or isn't in the toolbox's
+own `builtins`); `runs(..., agent=)`; `on_credentials_saved(names, *, by=None, resume=True)`. A core tool's `ctx` adds
+`record(value)` (what the agent found, at most 64 KiB, keys removed: the view's `result`) and `need_tool(need, why="")`
+(a capability no tool covers: kept in the view's `requests`, at most 20, and sent as a card). A view adds `result`,
+`requests`, `steps` and `context` (`rev`, `auto`, `lines` only). `steps` (the last 40) are the card's lines kept with
+the run so a reloaded page shows what the live events showed: `{type: "tool_used", tool, title, ok, ms, host,
+cost_usd, error?, status?, at}`, `{type: "key_saved", keys: [labels], at}`, `{type: "skipped", tool, title, decision:
+skip | deny, at}`.
+
+**Event additions**: `tool_used {title}` and, when the call failed, `error` (the result's code, at most 40 characters:
+network, timeout, http_error, rate_limited, not_json, invalid_json, response_too_large, blocked_destination,
+redirect_not_followed, invalid_arguments, tool_failed, or a core tool's own) and `status` (HTTP status or null), never
+what the service said; `run_resumed {trigger, keys?: [labels of the saved keys it waited for], skipped?: [{tool, title,
+decision}]}`; `tool_request {reason: "capability", tool, title, tool_use_id, need, why, at}` from `ctx.need_tool`.
+
+**Live prices** (`agents.py`, agent `price_check`): `agents.price_check(studio, room, body, by=None, *, auto=False)
+-> (view, already)` (also `start_price_check`, the name it registers under) prices one built revision (`body.rev`,
+default the newest): one run per revision while it works or waits; its title is "Live prices for <rev>" and its
+prompt names the project, revision and line count, never the lines. Its core tools:
+`morph_bom_read` (the revision's bought lines a distributor might sell: not pcb, material or fabricated; item,
+category, quantity, Morph's estimate and vendor; at most 40), `darwin_search` (`darwin.search`, 5 results, cached, no
+retry; returns Darwin's `status` and `question`, which the agent passes on and never answers), `morph_tools_request`
+(`need_tool` plus a line in `MORPH_HOME/.tools/requests.jsonl`, 0600, and audit `tool_requested`; answered at once)
+and `morph_prices_record`, which keeps a line only for an item of this parts list, a catalog tool that answered in this
+run, a distributor and part number, and a price of 0 or more; `matched` says whether the part number and the price
+appear in that tool's answers. The record is `{rev, checked_at, lines: [{item, distributor, part_number, unit_price,
+currency, quantity, stock, tool, service, matched}], dropped: [{item, why}]}`, merged by (item, distributor, part
+number). `darwin.search` results now carry `status` (completed | needs_input | no_match) and `question`; the BOM tab's
+Darwin shortlist is unchanged.
+
+**Catalog** (`morph/studio/toolbox/catalog/`, package data in pyproject and MANIFEST.in): `mouser.json`
+(`mouser_search_keyword`, `mouser_search_part_number`; POST to api.mouser.com with the key in the `apiKey` query
+parameter; `MORPH_TOOL_MOUSER_KEY`) and `element14.json` (`element14_search_keyword`, GET api.element14.com
+`/catalog/products` with `callInfo.apiKey`; 46 stores; `MORPH_TOOL_ELEMENT14_KEY`), read-only, no fee, written from
+the providers' API documentation (`verified.docs`, `checked` 2026-10-13, `live: null`: the Keys dialog and the cards
+say "Not yet tried with a real key"). `response.keep` (`{extracted field: [names]}`) keeps only the named fields of an
+object or of each object of a list. A curated tool may be read-only with POST (Mouser's search) without a warning.
+Contract tests run each manifest against a recorded or documented answer (`tests/fixtures/tools/answers/`).
+
+**Front end** (`static/tools.js`, FEATURES entry `tools`; styles in the `tools:` section of style.css): one card per
+run of the tab's project in the chat, rebuilt from `GET /api/runs` when the page loads, when the chat is redrawn and
+when the event stream opens:
+status, a line per step, Key needed (service, what, cost, privacy, hosts; Add key or, after a refusal, Replace key
+dispatches `morph:keys` with that key; Get a key; Skip), Tool request (what is sent and where, cost, the call's
+arguments; Allow once, Always for read-only tools, Skip), interrupted runs (Continue), capability requests, "Key added,
+continuing…" while a run resumed by a saved key works, the prices found (Show prices: a table with "from <service>" or
+"check it"), Claude's closing text and Stop. Members who can't act see "Ask the owner to add the <key> in Keys." or
+"Ask the owner to allow it." (editors: "Or skip it"). The BOM tab's filters bar gets "Live prices (beta)" for editors
+(and for everyone once prices exist): it starts a run, says what a working run waits for, or opens the prices; without
+Claude (503) it says so and opens Keys on `ANTHROPIC_API_KEY`. The Keys dialog lists "Tools agents can use" with an
+on/off switch per tool. New on the feature bus (section 4): app.js sends `{type: "connection", live: true, again}`
+whenever the page's event stream opens, so a feature can reload what a stream that opened late (after the 3 s wait
+before the first state load) or reopened after a drop may have missed; tools.js refreshes its cards then.
+
+**Tests**: `tests/test_tools_api.py` (every route, the role matrix over HTTP, events, settings, restart),
+`tests/test_tools_ui.py` (the cards in a real browser against a real Studio server), `tests/test_toolbox_sourcing.py`,
+`tests/test_toolbox_vendors.py`; `tests/fake_claude.py` is a local stand-in for the Messages API that a Studio reaches
+through `ANTHROPIC_BASE_URL` (no test hook in Morph), used by `tests/e2e/test_e2e_tools.py` (`MORPH_E2E=1`).
+`tests/test_toolbox_vendors_live.py` (`MORPH_LIVE=1` with real keys) checks the two manifests against the real services
+and Live prices with real Claude; it has not been run, so both manifests keep `verified.live: null`.
