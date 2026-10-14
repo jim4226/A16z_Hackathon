@@ -401,6 +401,23 @@ def test_the_world_check_measures_the_path_against_the_scan(tmp_path):
     st, body2 = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
     assert {x["id"]: x for x in body2["checks"]}["scan"] == c["scan"]
     assert not [e for e in room.events if e["type"] == "world" and e["stage"] == "scan"]
+    # Reset demo reuses revision names: another simulation under the same name is measured again, never served from
+    # memory (here the arm stays where it starts, well away from the post)
+    sim = os.path.join(root, "r001", "sim", "sim_pick_place.json")
+    with open(sim, encoding="utf-8") as fh:
+        original = fh.read()
+    moved = json.loads(original)
+    f0 = moved["frames"][0]
+    moved["frames"] = [{**f, "q": f0["q"], "obj": f0["obj"]} for f in moved["frames"]]
+    with open(sim, "w", encoding="utf-8") as fh:
+        json.dump(moved, fh)
+    room.events.clear()
+    st, body_r = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+    assert [e["status"] for e in room.events if e["type"] == "world" and e["stage"] == "scan"] == ["start", "done"]
+    s_r = {x["id"]: x for x in body_r["checks"]}["scan"]
+    assert s_r["status"] == "pass" and "more than 50 mm" in s_r["text"] and not s_r["regions"]
+    with open(sim, "w", encoding="utf-8") as fh:
+        fh.write(original)
     # the robot moved in the room since the simulation: the old path isn't measured against the room
     worlds.save(root, {**w, "mount": {"position": [20.0, 0.0, 0.0], "yaw_deg": 0.0}})
     st, body3 = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))

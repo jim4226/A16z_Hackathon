@@ -17,6 +17,7 @@ progress goes out as `world` events and the agents timeline as `agent` events (c
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -307,9 +308,12 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
         st = os.stat(path)
         with open(os.path.join(room.p.rev_dir(rev), "sim", "robot.xml"), encoding="utf-8") as fh:
             xml = fh.read()
+        ss = os.stat(os.path.join(room.p.rev_dir(rev), "sim", "sim_pick_place.json"))
     except OSError:
         return skip("This revision's collision model (sim/robot.xml) is missing.")
-    key = (room.p.root, rev, w_sha, st.st_size, st.st_mtime_ns)
+    # Reset demo reuses revision names: the revision's own simulation and model are part of the key, not just its name
+    key = (room.p.root, rev, w_sha, st.st_size, st.st_mtime_ns, ss.st_size, ss.st_mtime_ns,
+           hashlib.sha256(xml.encode("utf-8")).hexdigest())
     with _SCANS_LOCK:
         if key in _SCANS:
             _SCANS.move_to_end(key)

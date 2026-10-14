@@ -90,8 +90,9 @@ class HeavyJobs:
         """Queue a robustness study of `rev` (default: the newest finished revision); it starts at once unless
         another project's heavy job holds the last slot. The same settings again resume or deepen the saved study."""
         root = self._root(project)
-        if workers is not None and (isinstance(workers, bool) or not isinstance(workers, int) or not 1 <= workers <= 256):
-            raise StudyError("Use 1 to 256 workers.")
+        if workers is not None and (isinstance(workers, bool) or not isinstance(workers, int)
+                                    or not 1 <= workers <= robust.MAX_WORKERS):
+            raise StudyError(f"Use 1 to {robust.MAX_WORKERS} workers.")
         study = robust.new_study(root, rev, runs=runs, seed=seed, stress=stress, timestep=timestep, by=by,
                                  study_id=study_id)
         params = {"runs": study["n"], "workers": workers, "checks": bool(checks), "study_id": study_id}
@@ -161,11 +162,14 @@ class HeavyJobs:
         return out
 
     def interrupted(self) -> list:
-        """Studies that stopped with the process running them (a restart): {project, id, rev, done, n}."""
+        """Studies that stopped with the process running them (a restart) and can carry on (their revision and Morph's
+        code are still theirs): {project, id, rev, done, n}."""
         out = []
         for info in projects.list_projects(self.home):
             job = self.jobs.get(info["name"])
             for s in robust.studies(os.path.join(self.home, info["name"])):
+                if s.get("rev_missing") or s.get("rev_changed") or s.get("code_changed"):
+                    continue
                 if s["status"] == "interrupted" and not (job and job.id == s["id"] and not job.finished.is_set()):
                     out.append({"project": info["name"], **{k: s[k] for k in ("id", "rev", "done", "n")}})
         return out
@@ -219,6 +223,7 @@ class HeavyJobs:
     def _progress(self, job: Job, ev: dict):
         prev = job.event or {}
         job.status = ev.get("status", job.status)
+        job.id = ev.get("id", job.id)            # the study that runs (tolerances edited while it waited: a new one)
         force = ev.get("phase") != prev.get("phase") or ev.get("status") != prev.get("status") or "summary" in ev
         self._send(job, ev, force=force)
 

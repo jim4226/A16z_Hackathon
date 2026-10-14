@@ -629,6 +629,11 @@ def cmd_study(a) -> int:
     from .services import robust
 
     p = _robot_project(a.name)
+    cores = robust.cores()
+    if a.workers is not None and not 1 <= a.workers <= cores:
+        print(f"{a.name}: use 1 to {cores} worker processes (this computer has {cores} CPU core{'s' if cores != 1 else ''}).",
+              file=sys.stderr)
+        return 1
     cancel, out, last = threading.Event(), {}, {"t": 0.0, "phase": None}
 
     def progress(ev):

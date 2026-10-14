@@ -76,6 +76,17 @@ class StudyBusy(StudyError):
     """This project already has a study running."""
 
 
+class StudyConflict(StudyError):
+    """The revision or the study can't be used as asked (nothing to study in it, replaced since, other Morph code)."""
+
+
+REPLACED = ("This study's revision was replaced (Reset demo or a deleted revision): the name now holds another design, so "
+            "its runs can't be carried on or replayed. Run a new study.")
+CODE_CHANGED = ("Morph's simulation code changed since this study started: carrying it on would mix two versions in one "
+                "study. Run a new study.")
+MAX_WORKERS = 256
+
+
 # ====================================================================== tolerances
 
 # name, label, unit. The order is the sampling order: never reorder or insert (a study's runs depend on it).
@@ -184,7 +195,9 @@ def _checked(e: dict, lo, hi, on) -> dict:
     if out["lo"] > out["hi"]:
         raise StudyError(f"{e['label']}: the low end is above the high end.")
     if on is not None:
-        out["on"] = bool(on)
+        if not isinstance(on, bool):
+            raise StudyError(f"{e['label']}: on is true or false.")
+        out["on"] = on
     out["edited"] = (out["lo"], out["hi"], out["on"]) != (e["lo"], e["hi"], e["on"])
     return out
 
@@ -242,6 +255,10 @@ def _revision(root, rev=None):
 
     if not os.path.isdir(root):
         raise StudyError("There is no such project.")
+    meta = _read_json(os.path.join(root, "meta.json"))
+    if isinstance(meta, dict) and meta.get("kind") != "robot":     # as `morph studio` tells them apart
+        raise StudyConflict(f"{os.path.basename(os.path.normpath(root))} is a gripper-only project from the earlier CLI "
+                            "prototype; robustness studies need a whole robot (a Morph Studio project).")
     p = RobotProject(root)
     done = [r for r in p.revs() if os.path.isfile(os.path.join(p.rev_dir(r), "results.json"))]
     rev = rev or (done[-1] if done else None)
@@ -276,6 +293,8 @@ def save_tolerances(root: str, changes: dict, rev: str | None = None, by: str | 
     spec for `rev`. An edit marks studies made with the old spec outdated (their spec_sha no longer matches)."""
     if not isinstance(changes, dict):
         raise StudyError("Send the tolerance changes as an object.")
+    if "reset" in changes and changes["reset"] is not True:
+        raise StudyError("Send {reset: true} to go back to the default tolerances.")
     p, rev, design = _revision(root, rev)
     world = _sim_world(p, rev) if design.world.id else None
     ed = {} if changes.get("reset") else _edits(root)
@@ -288,8 +307,10 @@ def save_tolerances(root: str, changes: dict, rev: str | None = None, by: str | 
     for name, ch in changes.items():
         if name in ("reset", "world_preset"):
             continue
-        if name not in NAMES or not isinstance(ch, dict):
+        if name not in NAMES:
             raise StudyError(f"There is no tolerance called {name}.")
+        if not isinstance(ch, dict):
+            raise StudyError(f"Send the change to {name} as {{lo, hi, on}}.")
         if name not in by_name:
             raise StudyError(f"{name} only applies in World mode.")
         e = _checked(merge(spec, {name: edits.get(name, {})})["params"][[x["name"] for x in spec["params"]].index(name)],
@@ -643,15 +664,48 @@ def _active_path(root) -> str:
     return os.path.join(root, STUDIES, "active.json")
 
 
+def _alive(pid) -> bool:
+    """Whether process `pid` of this computer still runs; True when that can't be told (the heartbeat decides then)."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return True
+    try:
+        if sys.platform == "win32":                # os.kill(pid, 0) would end the process there
+            import ctypes
+            from ctypes import wintypes
+            k = ctypes.WinDLL("kernel32", use_last_error=True)
+            k.OpenProcess.restype, k.OpenProcess.argtypes = wintypes.HANDLE, (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            k.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+            k.CloseHandle.argtypes = (wintypes.HANDLE,)
+            h = k.OpenProcess(0x1000, False, pid)     # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return ctypes.get_last_error() != 87   # ERROR_INVALID_PARAMETER: no such process
+            try:
+                code = wintypes.DWORD()
+                return not k.GetExitCodeProcess(h, ctypes.byref(code)) or code.value == 259   # STILL_ACTIVE
+            finally:
+                k.CloseHandle(h)
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, AttributeError, ValueError):
+        return True
+    return True
+
+
 def active(root: str) -> dict | None:
-    """The study running in this project (any process), from its lock and heartbeat; None when none is."""
+    """The study running in this project (any process), from its lock and heartbeat; None when none is. A lock whose
+    process is gone from this computer (the Studio or the terminal was killed) is stale at once."""
     path = _active_path(root)
     try:
         age = time.time() - os.path.getmtime(path)
     except OSError:
         return None
     doc = _read_json(path)
-    return doc if isinstance(doc, dict) and age < STALE_S else None
+    if not isinstance(doc, dict) or age >= STALE_S:
+        return None
+    if doc.get("host") == socket.gethostname() and not _alive(doc.get("pid")):
+        return None
+    return doc
 
 
 def _lock(root: str, sid: str):
@@ -693,29 +747,69 @@ def _beat(root: str):
 LIVE = ("queued", "preparing", "running", "checking")
 
 
+def _rev_state(root: str, rev: str) -> tuple:
+    """(tolerance spec sha, design.json sha, pipeline version) of a revision as it is now."""
+    from ..robot.pipeline2 import pipeline_version
+
+    p, rev, design = _revision(root, rev)
+    return (tolerances(root, rev)["sha"], _sha_file(os.path.join(p.rev_dir(rev), "design.json")),
+            pipeline_version(design.arm.source))
+
+
+_PARTIAL: dict = {}                 # runs.jsonl (path, size, mtime) -> (runs on disk, their summary): stopped studies
+
+
+def _partial(doc: dict, d: str):
+    """A study that stopped part way (its process was killed, or it failed): `done` and `summary` from the runs it
+    saved, which its record may not have caught up with."""
+    path = os.path.join(d, "runs.jsonl")
+    try:
+        st = os.stat(path)
+    except OSError:
+        return
+    key = (path, st.st_size, st.st_mtime_ns)
+    got = _PARTIAL.get(key)
+    if got is None:
+        rows = read_rows(path)
+        s = doc.get("summary") or {}
+        if (s.get("n") or 0) + len(s.get("unstable") or []) + len(s.get("errors") or []) != len(rows):
+            try:
+                s = analyze(rows, doc["spec"]["params"], None, doc.get("seed", DEFAULT_SEED), doc.get("object") or "object")
+            except (KeyError, TypeError, ValueError):
+                s = doc.get("summary")
+        got = (len(rows), s)
+        for old in list(_PARTIAL)[:max(0, len(_PARTIAL) - 31)]:     # the Studio's threads share it: never read back
+            _PARTIAL.pop(old, None)
+        _PARTIAL[key] = got
+    doc["done"], doc["summary"] = got
+
+
 def load(root: str, sid: str, rows: bool = False, _revs: dict | None = None) -> dict | None:
-    """A study's record (study.json), its status corrected to "interrupted" when its process stopped, with
-    `outdated` (the project's tolerances changed since), `rev_missing` and `rev_changed` (a revision of that name now
-    holds another design: Reset demo deleted it and a later edit was numbered the same); `rows=True` adds runs and
-    checks."""
+    """A study's record (study.json), its status corrected to "interrupted" when its process stopped (with `done` and
+    `summary` from the runs it saved), with `outdated` (the project's tolerances changed since), `rev_missing`,
+    `rev_changed` (a revision of that name now holds another design: Reset demo deleted it and a later edit was numbered
+    the same) and `code_changed` (Morph's pipeline code is not the study's any more); `rows=True` adds runs and checks."""
     d = study_dir(root, sid)
     doc = _read_json(os.path.join(d, "study.json"))
     if not isinstance(doc, dict):
         return None
     if doc.get("status") in LIVE and (active(root) or {}).get("id") != sid:
         doc["status"] = "interrupted"
+    if doc.get("status") in ("interrupted", "error"):
+        _partial(doc, d)
     try:
         rev = doc["rev"]
         if _revs is None or rev not in _revs:     # studies() reads each revision's spec and design once
-            got = (tolerances(root, rev)["sha"], _sha_file(os.path.join(root, rev, "design.json")))
+            got = _rev_state(root, rev)
             if _revs is not None:
                 _revs[rev] = got
-        spec_sha_, design_sha = (_revs or {}).get(rev) or got
+        spec_sha_, design_sha, pv = (_revs or {}).get(rev) or got
         doc["outdated"] = spec_sha_ != doc.get("base_spec_sha")
         doc["rev_missing"] = False
         doc["rev_changed"] = design_sha != doc.get("design_sha")
+        doc["code_changed"] = pv != doc.get("pipeline_version")
     except (StudyError, OSError, ValueError, KeyError):
-        doc["outdated"], doc["rev_missing"], doc["rev_changed"] = None, True, None
+        doc["outdated"], doc["rev_missing"], doc["rev_changed"], doc["code_changed"] = None, True, None, None
     if rows:
         doc["runs"] = sorted(read_rows(os.path.join(d, "runs.jsonl")), key=lambda r: r["i"])
         doc["checks"] = read_rows(os.path.join(d, "checks.jsonl"))
@@ -724,7 +818,7 @@ def load(root: str, sid: str, rows: bool = False, _revs: dict | None = None) -> 
 
 def studies(root: str) -> list:
     """The project's studies, newest first: {id, rev, status, n, done, p, wilson95, stress, seed, created_utc, outdated,
-    rev_missing, rev_changed}."""
+    rev_missing, rev_changed, code_changed}."""
     out, revs = [], {}
     base = os.path.join(root, STUDIES)
     for sid in os.listdir(base) if os.path.isdir(base) else []:
@@ -734,7 +828,7 @@ def studies(root: str) -> list:
         if doc:
             s = doc.get("summary") or {}
             out.append({k: doc.get(k) for k in ("id", "rev", "status", "n", "done", "stress", "seed", "created_utc",
-                                                "updated_utc", "outdated", "rev_missing", "rev_changed")}
+                                                "updated_utc", "outdated", "rev_missing", "rev_changed", "code_changed")}
                        | {"p": s.get("p"), "wilson95": s.get("wilson95")})
     return sorted(out, key=lambda s: s.get("updated_utc") or "", reverse=True)
 
@@ -752,6 +846,23 @@ def _assembly(design, res: dict):
     return (imported.build if design.arm.source else arm.build)(design, sz, ep)
 
 
+def studyable(p, rev: str) -> dict:
+    """The revision's results when its pick and place can be studied; StudyConflict saying why not (the simulation
+    stage failed or never ran, a preview-only build). Checked before a study is queued, not in its worker processes."""
+    from ..robot.pipeline2 import stage_problem
+
+    try:
+        res = p.load_results(rev) or {}
+    except (OSError, ValueError) as exc:
+        raise StudyConflict(f"{rev}'s results can't be read ({exc.__class__.__name__}).") from None
+    if res.get("preview_only"):
+        raise StudyConflict(f"{rev} is a preview built from the basic model; studies need the detailed robot.")
+    problem = stage_problem(res, "sim")
+    if problem or not (((res.get("sims") or {}).get("scenarios") or {}).get(SCENARIO) or {}).get("file"):
+        raise StudyConflict(f"{rev} has no pick-and-place simulation to study" + (f" ({problem})." if problem else "."))
+    return res
+
+
 def _norm_xml(xml: str) -> str:
     return re.sub(r'timestep="[^"]*"', 'timestep=""', xml)
 
@@ -761,16 +872,10 @@ def prepare(root: str, rev: str, timestep: float = 0.001) -> dict:
     between this study's own processes, never through a file). Checks the rebuilt model against the revision's
     sim/robot.xml: `matches_revision` False means the revision was simulated with other Morph code."""
     from ..robot import simulate as S
-    from ..robot.pipeline2 import stage_problem
 
     t0 = time.time()
     p, rev, design = _revision(root, rev)
-    res = p.load_results(rev)
-    problem = stage_problem(res, "sim")
-    if res.get("preview_only"):
-        raise StudyError(f"{rev} is a preview built from the basic model; studies need the detailed robot.")
-    if problem or not (((res.get("sims") or {}).get("scenarios") or {}).get(SCENARIO) or {}).get("file"):
-        raise StudyError(f"{rev} has no pick-and-place simulation to study" + (f" ({problem})." if problem else "."))
+    res = studyable(p, rev)
     try:
         asm = _assembly(design, res)
         world = None
@@ -1015,12 +1120,16 @@ def _preparer(conn, nice, root, rev, timestep):
     _quiet(nice)
     _mute_mujoco()
     try:
-        conn.send(("prepared", prepare(root, rev, timestep)))
+        msg = ("prepared", prepare(root, rev, timestep))
     except StudyError as exc:
-        conn.send(("failed", str(exc)))
+        msg = ("failed", str(exc))
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
-        conn.send(("failed", f"{exc.__class__.__name__}: {exc}"))
+        msg = ("failed", f"{exc.__class__.__name__}: {exc}")
+    try:
+        conn.send(msg)
+    except (OSError, EOFError):      # the study was cancelled, or the process that started it ended, meanwhile
+        pass
 
 
 def _single_threaded():
@@ -1028,11 +1137,22 @@ def _single_threaded():
         os.environ.setdefault(k, "1")             # workers start numpy single-threaded (inherited at spawn)
 
 
-def default_workers() -> int:
+def cores() -> int:
+    """The CPU cores this process may use (a container's or taskset's share, not the whole machine's)."""
     try:
-        return max(1, int(os.environ.get("MORPH_STUDY_WORKERS") or (os.cpu_count() or 2) - 1))
+        n = os.process_cpu_count() if hasattr(os, "process_cpu_count") else len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        n = None
+    return max(1, int(n or os.cpu_count() or 1))
+
+
+def default_workers() -> int:
+    """MORPH_STUDY_WORKERS, else the cores minus one; never more than the cores (runs are CPU-bound)."""
+    try:
+        n = int(os.environ.get("MORPH_STUDY_WORKERS") or cores() - 1)
     except ValueError:
-        return max(1, (os.cpu_count() or 2) - 1)
+        n = cores() - 1
+    return max(1, min(n, cores()))
 
 
 def default_nice() -> int:
@@ -1282,7 +1402,12 @@ def new_study(root: str, rev: str | None = None, *, runs: int = 200, seed: int =
         old = _read_json(os.path.join(study_dir(root, study_id), "study.json"))
         if not isinstance(old, dict) or old.get("version") != VERSION:
             raise StudyError("There is no such study.")
-        _revision(root, old.get("rev"))
+        p, rev, design = _revision(root, old.get("rev"))
+        if _sha_file(os.path.join(p.rev_dir(rev), "design.json")) != old.get("design_sha"):
+            raise StudyConflict(REPLACED)       # its rows would be of another design
+        if pipeline_version(design.arm.source) != old.get("pipeline_version"):
+            raise StudyConflict(CODE_CHANGED)   # its rows would be of two versions of the simulation
+        studyable(p, rev)
         old["n"] = max(int(old.get("n") or 0), runs)
         return old
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2 ** 63:
@@ -1290,6 +1415,7 @@ def new_study(root: str, rev: str | None = None, *, runs: int = 200, seed: int =
     if not isinstance(timestep, (int, float)) or not 0.0001 <= float(timestep) <= 0.005:
         raise StudyError("The timestep must be 0.1 to 5 ms.")
     p, rev, design = _revision(root, rev)
+    studyable(p, rev)
     base = tolerances(root, rev)
     spec = stressed(base) if stress else base
     spec["sha"] = spec_sha(spec)
@@ -1347,6 +1473,8 @@ def run_study(root: str, rev: str | None = None, *, runs: int = 200, seed: int =
     within a couple of seconds, keeping every finished run (status "cancelled"; running it again resumes). `cache`: a
     dict that keeps the packed robot between studies in one process. `study_id`: resume that study as it was defined.
     StudyError / StudyBusy before anything runs."""
+    if workers is not None and (isinstance(workers, bool) or not isinstance(workers, int) or not 1 <= workers <= MAX_WORKERS):
+        raise StudyError(f"Use 1 to {MAX_WORKERS} worker processes.")
     doc = new_study(root, rev, runs=runs, seed=seed, stress=stress, timestep=timestep, by=by, study_id=study_id)
     sid, rev = doc["id"], doc["rev"]
     d = study_dir(root, sid)
@@ -1360,10 +1488,16 @@ def run_study(root: str, rev: str | None = None, *, runs: int = 200, seed: int =
         doc["updated_utc"] = _utc()
         _write_json(os.path.join(d, "study.json"), doc)
 
-    def tick():
+    def tick():                       # the heartbeat, and the record's run count (a killed process leaves it right)
         if time.time() - clock["beat"] > 5:
             clock["beat"] = time.time()
             _beat(root)
+            if doc.get("done") != len(rows):
+                doc["done"] = len(rows)
+                try:
+                    save()
+                except OSError:
+                    pass
 
     def stop(status):
         pool.close(kill=True)
@@ -1488,6 +1622,8 @@ def replay(root: str, sid: str, run: int, variant: str | None = None, cache: dic
         raise StudyError("There is no such run in this study.")
     if variant is not None and variant not in VARIANTS:
         raise StudyError(f"There is no such check; use {' or '.join(VARIANTS)}.")
+    if doc.get("rev_changed"):                   # the revision's name holds another design: not this study's run
+        raise StudyConflict(REPLACED)
     key = (os.path.realpath(root), doc["rev"], doc["design_sha"], doc["pipeline_version"], float(doc["timestep"]))
     hit = (cache or {}).get(key)
     if not process:

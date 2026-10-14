@@ -214,8 +214,8 @@ def test_a_study_runs_with_live_progress_and_reads_back_with_its_card(site):
     s, info = call("GET", "/api/study")
     assert s == 200 and info["project"] == "egg-picker" and info["rev"] == "r001" and info["latest"] is None
     assert info["job"] is None and info["studies"] == [] and info["may"] == {"start": True}
-    assert info["limits"]["max_runs"] == 10_000 and info["limits"]["max_workers"] == (os.cpu_count() or 1)
-    assert info["host"]["cores"] == (os.cpu_count() or 1) and info["host"]["remote"] is False
+    assert info["limits"]["max_runs"] == 10_000 and info["limits"]["max_workers"] == robust.cores()
+    assert info["host"]["cores"] == robust.cores() and info["host"]["remote"] is False
     assert info["notes"]["none"] == api_study.NOTES["none"] and info["rate"]["measured"] is False
     tab = Events(port, "egg-picker")
     try:
@@ -271,6 +271,9 @@ def test_a_replay_that_cannot_run_now_says_to_try_again(monkeypatch):
         def replay(self, *a):
             raise self.exc
 
+        def result(self, *a):                 # the study and its run exist: the replay itself fails
+            return {"n": 10, "done": 10, "rev_changed": False}
+
     room = types.SimpleNamespace(name="egg-picker", p=types.SimpleNamespace(root="/nowhere"))
     req = types.SimpleNamespace(room=room, studio=None, arg={"id": "s1", "run": "3"}.get)
     for exc, status, words in (
@@ -286,7 +289,7 @@ def test_a_replay_that_cannot_run_now_says_to_try_again(monkeypatch):
 
 def test_sizes_and_bad_requests_are_refused_in_plain_english(site):
     call = site["call"]
-    cores = os.cpu_count() or 1
+    cores = robust.cores()                  # the cores this process may use
     for body, status, words in (
             ({"runs": 0}, 400, "Ask for 1 to 10,000 runs at 1 ms steps"),
             ({"runs": 10_001}, 400, "For more, run `morph study` in a terminal"),

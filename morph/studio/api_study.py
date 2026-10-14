@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import itertools
 import math
-import os
 import socket
 import threading
 from collections import OrderedDict
@@ -39,6 +38,7 @@ TIMESTEPS_MS = (0.5, 1.0, 2.0)
 DEFAULT_RUNS = 200
 RATE_PER_WORKER = 0.7              # runs per second per worker process at 1 ms, under load (B2-S1: 0.5-1.0 measured)
 REPLAY_WAIT_S = 120.0              # a replay waits this long for the one before it
+REPLAY_QUEUE = 3                   # replays that may wait at once (each holds one of the Studio's connections)
 REPLAYS_KEPT = 8
 NOTES = {
     "beta": "Robustness (beta): many randomized runs of this revision's pick and place, each in a slightly different "
@@ -80,10 +80,10 @@ def _may_edit(req) -> bool:
 
 
 def _study_error(exc: robust.StudyError):
-    """A StudyError as an HTTP answer: busy 409, something that isn't there 404, a replay to try again 503, a bad
-    request 400."""
+    """A StudyError as an HTTP answer: busy, or not possible with this revision or study (StudyConflict) 409, something
+    that isn't there 404, a replay to try again 503, a bad request 400."""
     text = str(exc)
-    if isinstance(exc, robust.StudyBusy):
+    if isinstance(exc, (robust.StudyBusy, robust.StudyConflict)):
         return _err(409, text)
     if text.startswith(("There is no", "This project has no finished revision r")):
         return _err(404, text)
@@ -95,7 +95,7 @@ def _study_error(exc: robust.StudyError):
 
 
 def _cores() -> int:
-    return max(1, os.cpu_count() or 1)
+    return robust.cores()
 
 
 # ---------------------------------------------------------------------- the card's sentences
@@ -261,7 +261,7 @@ def get_study(req):
     live = job["id"] if job and job["status"] in robust.LIVE else None
     stopped = [{k: s[k] for k in ("id", "rev", "done", "n", "status", "stress")} for s in listing
                if s["status"] in ("interrupted", "cancelled") and s["id"] != live and (s.get("done") or 0) < (s.get("n") or 0)
-               and not s.get("rev_missing") and not s.get("rev_changed")]
+               and not s.get("rev_missing") and not s.get("rev_changed") and not s.get("code_changed")]
     return 200, {"ok": True, "project": project, "rev": rev, "job": job, "studies": listing, **full, "stopped": stopped,
                  "limits": {"max_runs": MAX_RUNS, "max_workers": _cores(), "workers": min(robust.default_workers(), _cores()),
                             "timesteps_ms": list(TIMESTEPS_MS), "default_runs": DEFAULT_RUNS},
@@ -370,6 +370,25 @@ def save_tolerances(req):
 _REPLAY = threading.BoundedSemaphore(1)  # one replay at a time on the Studio's computer
 _REPLAYS: OrderedDict = OrderedDict()   # (root, study, run, variant) -> its document, the newest last
 _KEPT = threading.Lock()
+_WAITING = [0]                          # replays waiting for the one before them
+
+
+def _replayable(hj, project: str, sid, run: int, variant):
+    """What a replay request can be refused for without simulating anything (checked before it waits its turn): an
+    error answer, or None."""
+    try:
+        study = hj.result(project, sid)
+    except robust.StudyError as exc:
+        return _study_error(exc)
+    if not study:
+        return _err(404, "There is no such study.")
+    if variant is not None and variant not in robust.VARIANTS:
+        return _err(404, f"There is no such check; use {' or '.join(robust.VARIANTS)}.")
+    if run >= max(study.get("n") or 0, study.get("done") or 0):
+        return _err(404, "There is no such run in this study.")
+    if study.get("rev_changed"):
+        return _err(409, robust.REPLACED)
+    return None
 
 
 def replay(req):
@@ -384,7 +403,19 @@ def replay(req):
         if doc is not None:
             _REPLAYS.move_to_end(key)
     if doc is None:
-        if not _REPLAY.acquire(timeout=REPLAY_WAIT_S):
+        refused = _replayable(hj, room.name, sid, run, variant)
+        if refused:
+            return refused
+        with _KEPT:
+            if _WAITING[0] >= REPLAY_QUEUE:
+                return _err(503, "Other replays are waiting on the Studio's computer; try again in a moment.")
+            _WAITING[0] += 1
+        try:
+            got = _REPLAY.acquire(timeout=REPLAY_WAIT_S)
+        finally:
+            with _KEPT:
+                _WAITING[0] -= 1
+        if not got:
             return _err(503, "Another replay is being prepared on the Studio's computer; try again in a moment.")
         try:
             doc = hj.replay(room.name, sid, run, variant)
