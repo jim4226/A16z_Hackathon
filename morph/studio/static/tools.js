@@ -5,7 +5,9 @@
 // doesn't have. Cards are rebuilt from GET /api/runs (each run's `steps`) when the page loads and whenever the chat is
 // redrawn, because run events aren't kept in the chat history. "Live prices (beta)" in the BOM tab starts the price
 // check; its result shows on the card and from that button. Teams: only the owner adds keys and allows tools; everyone
-// else is told to ask the owner.
+// else is told to ask the owner. A need no tool covers shows Darwin's suggestions and, for the owner, "Draft a tool"
+// (Morph writes a tool, preview: tooldraft.js, started from here).
+import * as drafts from './tooldraft.js';
 
 const KEY = '<circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M16 7l3 3M13.5 9.5l2 2"/>';
 const TAGS = '<path d="M3 12.5V3h9.5L21 11.5 11.5 21z"/><circle cx="7.5" cy="7.5" r="1.4"/>';
@@ -48,8 +50,21 @@ export function init(s) {
   on('connection', () => refresh());  // the event stream (re)opened: a run's events may have come before it did
   watchChat();
   watchBom();
+  const d = drafts.init(studio, {
+    changed: () => { for (const r of runs.values()) if ((r.view.requests || []).length) paint(r); },  // need cards: suggestions, drafts
+    installed: () => { catalog = {}; refresh(); },  // a new tool's title and "Not yet tried" come from the catalog
+    startAgent: (agent) => (agent === 'price_check' ? startPrices() : startAgent(agent)),
+  });
   refresh();
-  return { refresh, startPrices, state: () => ({ runs: [...runs.values()].map((r) => r.view), can, ready }) };
+  return { refresh, startPrices, drafts: d, state: () => ({ runs: [...runs.values()].map((r) => r.view), can, ready }) };
+}
+
+async function startAgent(agent) {
+  try {
+    const out = await studio.api.post('/api/runs/start', { agent, rev: studio.S?.current?.rev });
+    studio.toast(out.already ? 'That agent is already running: see the chat' : 'Started: its card is in the chat');
+    refresh();
+  } catch (e) { studio.toast(e.body?.error || e.message || "Couldn't start it"); }
 }
 
 // ------------------------------------------------------------------ data
@@ -175,6 +190,10 @@ function paint(r) {
       const a = b.dataset.act;
       if (a === 'key') window.dispatchEvent(new CustomEvent('morph:keys', { detail: { key: b.dataset.env } }));
       else if (a === 'prices') showPrices(r);
+      else if (a === 'draft') {
+        const q = (r.view.requests || []).find((x) => x.tool_use_id === b.dataset.tu) || {};
+        window.dispatchEvent(new CustomEvent('morph:tool-draft', { detail: { need: q.need, why: q.why, run: r.view.id, tool_use_id: q.tool_use_id } }));
+      }
       else { r.el.querySelectorAll('[data-act]').forEach((x) => { if (x.dataset.act !== 'key') x.disabled = true; }); act(r, a, b.dataset.tu); }
     });
   }
@@ -208,7 +227,7 @@ function cardHTML(r) {
     ${lines.length ? `<ul class="tl-lines">${lines.join('')}</ul>` : ''}
     ${needs}
     ${r.keyAdded && v.status === 'running' ? '<div class="tl-note good"><span class="spin"></span>Key added, continuing…</div>' : ''}
-    ${(v.requests || []).map(requestHTML).join('')}
+    ${(v.requests || []).map((q) => requestHTML(r, q)).join('')}
     ${v.result?.lines?.length ? resultHTML(v) : v.status === 'done' && v.agent === 'price_check' ? '<div class="tl-note">No prices were recorded in this run.</div>' : ''}
     ${r.answer ? `<div class="tl-sum"><div class="tl-k">Claude's summary (beta)</div><p>${esc(r.answer)}</p></div>` : ''}
     ${['failed', 'refused', 'cancelled'].includes(v.status) && v.note ? `<div class="tl-note bad">${esc(v.note)}</div>` : ''}
@@ -271,9 +290,17 @@ function needHTML(r, c) {
     ${can.allow ? '' : `<div class="tl-ask">Ask the owner to allow it.${can.skip ? ' Or skip it: the run carries on without it.' : ''}</div>`}</div>`;
 }
 
-function requestHTML(q) {
+const DRAFTED = { drafting: 'Claude is drafting a tool for it: its card is below.', ready: 'A drafted tool for it waits for review: its card is below.',
+  installed: 'A tool for it is installed: the next run can use it.', refused: "Morph refused the tool drafted for it: see its card below." };
+
+function requestHTML(r, q) {  // a need no tool covers: Darwin's suggestions (editors and the owner), and the owner may draft a tool
+  const d = drafts.forRequest(r.view.id, q.tool_use_id), owner = can.draft;
+  const sugg = can.start && !d ? drafts.suggestionsHTML(drafts.suggestions(q.need), 3, true) : '';
   return `<div class="tl-card cap"><div class="tl-ch">${I('spark')}<span class="tl-cht">The agent needs a tool Morph doesn't have</span></div><p>${esc(q.need || '')}</p>
-    ${q.why ? `<p class="dim">${esc(q.why)}</p>` : ''}<div class="tl-ask">Noted in Morph's tool requests. Nothing to do now: the run carries on without it.</div></div>`;
+    ${q.why ? `<p class="dim">${esc(q.why)}</p>` : ''}${sugg}
+    ${d && DRAFTED[d.status] ? `<div class="tl-ask">${esc(DRAFTED[d.status])}</div>` : ''}
+    ${owner && (!d || ['failed', 'not_possible', 'refused', 'discarded'].includes(d.status)) ? `<div class="qacts"><button class="btn" type="button" data-act="draft" data-tu="${esc(q.tool_use_id || '')}">${I('spark')}Draft a tool (preview)</button></div>` : ''}
+    <div class="tl-ask">Noted in Morph's tool requests. The run carries on without it.${owner || d ? '' : ' Ask the owner to draft a tool for it (Keys, New tool).'}</div></div>`;
 }
 
 function resultHTML(v) {

@@ -47,16 +47,22 @@ export class KeysDialog {
     this.tools = await fetch('/api/tools', { cache: 'no-store' }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
     return this.data;
   }
-  // the catalog's tools (beta): on or off for new runs, the service, where it goes, its key; manifests that didn't load
+  // the catalog's tools (beta): on or off for new runs, the service, where it goes, its key; manifests that didn't load;
+  // New tool (preview): Claude drafts one from an API's documentation (tooldraft.js), the owner reviews and approves it
   toolsSection() {
     const t = this.tools;
-    if (!t || !(t.tools || []).length && !(t.errors || []).length) return '';
+    if (!t) return '';
     const side = { read: 'read-only', write: 'changes data', upload: 'sends files', spend: 'spends money' };
-    const row = (x) => `<label class="kt"><span class="switch"><input type="checkbox" data-tool="${esc(x.name)}"${x.enabled ? ' checked' : ''}><i></i></span>
-        <span><b>${esc(x.title)}</b>${x.verified && x.verified.live == null ? ' <span class="tag neutral" title="Written from the service\'s documentation; not yet tried with a real key">Not yet tried with a real key</span>' : ''}
-        <small>${esc([x.service, side[x.side_effect] || x.side_effect, x.host, x.key ? `${x.key.label}: ${x.key.set ? 'set' : 'not set'}` : 'no key needed', x.curated ? '' : 'your own manifest'].filter(Boolean).join(' · '))}</small></span></label>`;
-    return `<section class="ksec ktoolist"><div class="ks-h"><b>Tools agents can use</b><span class="tag neutral">beta</span></div>
+    const row = (x) => `<label class="kt"><span class="switch"><input type="checkbox" data-tool="${esc(x.name)}"${x.enabled ? ' checked' : ''}${x.drafted?.changed ? ' disabled' : ''}><i></i></span>
+        <span><b>${esc(x.title)}</b>${x.drafted ? ' <span class="tag acc" title="Drafted by Claude from the service\'s documentation and approved by the owner (Morph writes a tool, preview)">drafted</span>' : ''}${x.verified && x.verified.live == null ? ' <span class="tag neutral" title="Written from the service\'s documentation; not yet tried with a real key">Not yet tried with a real key</span>' : ''}
+        <small>${esc([x.service, side[x.side_effect] || x.side_effect, x.host, x.key ? `${x.key.label}: ${x.key.set ? 'set' : 'not set'}` : 'no key needed', x.curated || x.drafted ? '' : 'your own manifest'].filter(Boolean).join(' · '))}</small>
+        ${x.drafted?.changed ? '<small class="kwarn">Changed after it was approved, so Morph keeps it off. Draft it again (New tool) to review and approve the new version.</small>' : ''}</span></label>`;
+    const waiting = t.drafts || [], ready = waiting.filter((d) => d.status === 'ready'), busy = waiting.length - ready.length;
+    const where = [...new Set(ready.map((d) => d.project).filter(Boolean))];
+    return `<section class="ksec ktoolist"><div class="ks-h"><b>Tools agents can use</b><span class="tag neutral">beta</span><span class="grow"></span>
+        <button class="btn" type="button" data-a="newtool" title="Claude drafts a read-only lookup tool from an API's documentation; you review and approve it">${I('spark', 'sm')}New tool (preview)</button></div>
       <div class="ks-n">Claude finds these by search when a run needs one; each key is asked for in the chat when it's needed. A tool you turn off stays out of new runs.</div>
+      ${ready.length || busy ? `<div class="ks-n">${[ready.length ? `${ready.length} drafted tool${ready.length === 1 ? '' : 's'} wait${ready.length === 1 ? 's' : ''} for your review in the chat${where.length ? ` of ${where.map(esc).join(', ')}` : ''}.` : '', busy ? `Claude is drafting ${busy} tool${busy === 1 ? '' : 's'}.` : ''].filter(Boolean).join(' ')}</div>` : ''}
       ${(t.tools || []).map(row).join('')}
       ${(t.errors || []).map((e) => `<div class="kchk bad">${I('alert', 'sm')}<span><b>${esc(e.source)}</b> didn't load: ${esc(e.error)}</span></div>`).join('')}</section>`;
   }
@@ -132,6 +138,8 @@ export class KeysDialog {
     this.el.querySelectorAll('.kf input').forEach((inp) => inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.save(); }));
     this.el.querySelectorAll('[data-s]').forEach((inp) => (inp.onchange = () => this.setting(inp.dataset.s, inp.checked, inp)));
     this.el.querySelectorAll('[data-tool]').forEach((inp) => (inp.onchange = () => this.toggleTool(inp.dataset.tool, inp.checked, inp)));
+    const nt = this.el.querySelector('[data-a="newtool"]');
+    if (nt) nt.onclick = () => { this.close(); window.dispatchEvent(new CustomEvent('morph:tool-draft', { detail: {} })); };
     const focus = this.focus;
     this.focus = '';
     const target = focus && [...this.el.querySelectorAll('.kf')].find((f) => f.dataset.k === focus);
