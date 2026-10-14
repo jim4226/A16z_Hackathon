@@ -32,7 +32,7 @@ def held(step, gate):
     return answer
 
 
-def until(fn, timeout=20.0, what="the page"):
+def until(fn, timeout=60.0, what="the page"):  # a minute: a busy machine (a full parallel run) can take that long
     t0, last = time.time(), None
     while time.time() - t0 < timeout:
         try:
@@ -94,7 +94,7 @@ class Page:
 
     def open(self, tab="robot"):
         self.pg.goto(f"{self.base}/?tour=0&project=egg-picker&tab={tab}")
-        until(lambda: self.pg.evaluate("window.morph?.state?.loaded === true && !!window.morph.state.current"), 30)
+        until(lambda: self.pg.evaluate("window.morph?.state?.loaded === true && !!window.morph.state.current"))
         return self
 
     def card(self) -> str:
@@ -265,10 +265,10 @@ def test_a_late_answer_never_takes_a_finished_card_back_to_working(browser, make
     tb.decide, tb.runs = late_decide, slow_listing
     page = Page(browser, w).open()
     w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"})
-    until(lambda: "Allow FixParts categories?" in page.card(), 60, what="the Tool request card")
+    until(lambda: "Allow FixParts categories?" in page.card(), what="the Tool request card")
     page.pg.click('.tl-run [data-act="allow_once"]')
-    until(lambda: "Done" in page.card(), 60, what="the finished card")
-    until(slow.is_set, 60, what="the late answer")
+    until(lambda: "Done" in page.card(), what="the finished card")
+    until(slow.is_set, what="the late answer")
     seen, t0 = [], time.time()
     while time.time() - t0 < 2.0:  # the late answer reaches the page, then the slow list after it
         seen.append(page.card())
@@ -415,8 +415,8 @@ def test_a_run_stopped_by_turning_agent_tools_off_opens_keys_on_the_switch_and_t
     assert w.call("POST", "/api/keys", {"values": {ENV: KEY}}, who="Jim")[0] == 200
     jim, ana, vic = (Page(browser, w, who).open() for who in ("Jim", "Ana", "Vic"))
     assert w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"}, who="Jim")[0] == 202
-    for p in (jim, ana, vic):  # three pages on one Studio: slow on a busy machine
-        until(lambda: "Agent tools were turned off" in p.card(), 60, what="the interrupted card")
+    for p in (jim, ana, vic):
+        until(lambda: "Agent tools were turned off" in p.card(), what="the interrupted card")
     assert w.vendor.calls == [] and len(w.claude.requests) == 1
     ask = "Ask the owner to turn agent tools back on (Keys), then continue it."
     assert jim.acts() == ["continue", "key", "stop"] and "Ask the owner" not in jim.card()
@@ -426,12 +426,12 @@ def test_a_run_stopped_by_turning_agent_tools_off_opens_keys_on_the_switch_and_t
     ana.shot("interrupted_editor")
     jim.pg.click('.tl-run [data-act="key"]')  # Open Keys: the dialog, on the switch
     until(lambda: jim.pg.evaluate("document.querySelector('#keysDlg.on .kt.kfocus [data-s]')?.dataset.s") == "agent_tools_enabled",
-          60, what="Keys on the agent tools switch")
+          what="Keys on the agent tools switch")
     jim.pg.click("#keysDlg .kt.kfocus b")
-    until(settings.agent_tools_enabled, 60, what="agent tools on again")
+    until(settings.agent_tools_enabled, what="agent tools on again")
     jim.pg.keyboard.press("Escape")
     jim.pg.click('.tl-run [data-act="continue"]')
     for p in (jim, ana, vic):
-        until(lambda: "Done" in p.card() and "412 in stock" in p.card(), 60, what="the run after Continue")
+        until(lambda: "Done" in p.card() and "412 in stock" in p.card(), what="the run after Continue")
     assert len(w.vendor.calls) == 1
     assert not jim.errors and not ana.errors and not vic.errors, jim.errors + ana.errors + vic.errors
