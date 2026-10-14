@@ -1456,4 +1456,10 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   summary has none) without counting it as an issue; the Parameters rows for Reach and Shoulder height say "built at
   N mm" when the sized value differs from the asked one by 1 mm or more; New robot's done card and `morph robot`'s
   summary ("adjusted: ...") list them.
+- **Software checks, not validation (ENG-12).** New robot's done view is titled "Your robot is designed"; a robot
+  whose summary is feasible gets the tag "Software checks pass" (never "Feasible") and "Its software checks pass:
+  simulation, torque margins, DRC and DFM. Not bench-validated: build and test it before you rely on it."; the pipeline
+  agent line says "every software check passed". The Firmware pane opens with "Generated firmware, not bench-tested: it
+  hasn't been compiled for this board or run on the arm ..." (`electronics.firmware_validation` is unverified); the
+  Export button's title and toast say "not bench-validated", as the export manifest's `note` does.
 

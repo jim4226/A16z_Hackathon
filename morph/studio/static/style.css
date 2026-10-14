@@ -430,6 +430,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px;
 .modcard .d { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
 .modnote { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r2); border: 1px dashed var(--line3); color: var(--muted); font-size: 12px; }
 .code { position: absolute; inset: 0; overflow: auto; background: #0a0c10; font: 11.8px/1.62 var(--mono); padding: 8px 0 24px; counter-reset: ln; }
+.code .fw-note { position: sticky; top: -8px; z-index: 1; display: flex; gap: 8px; margin: -8px 0 6px; padding: 7px 14px; background: linear-gradient(var(--warn-bg), var(--warn-bg)) #0a0c10; color: #f3d79b; font: 11.8px/1.45 var(--sans); }
+.code .fw-note svg { flex: none; margin-top: 1px; color: var(--warn); }
 .code .ln { display: grid; grid-template-columns: 44px 18px 1fr; white-space: pre; padding-right: 20px; }
 .code .ln .no { color: #3d4553; text-align: right; padding-right: 8px; user-select: none; }
 .code .ln .g { color: var(--dim); user-select: none; text-align: center; }

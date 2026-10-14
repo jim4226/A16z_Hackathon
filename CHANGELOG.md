@@ -415,3 +415,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   robot was bigger. The inspector now lists "Morph adjusted reach raised from 320 to 475 mm: ..." with the reason, the
   Reach and Shoulder height parameters say "built at N mm", and New robot's done card and the terminal summary list the
   same notes.
+- New robot no longer calls a design "Feasible" or "Built and checked": it says its software checks pass (simulation,
+  torque margins, DRC, DFM) and that it is not bench-validated. The Firmware pane and the Export button say the files
+  are generated and not bench-tested.

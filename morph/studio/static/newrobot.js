@@ -251,7 +251,7 @@ function onDone(ev) {
   const s = st.done.summary || {};
   const errs = STAGES.filter(([k]) => st.stages[k] === 'error').length;
   st.agents.pipeline = { role: 'pipeline', provider: 'morph', status: errs ? 'error' : 'done', ms: ev.seconds ? Math.round(ev.seconds * 1000) : null,
-    text: s.feasible ? 'All nine stages built; every check passed' : `${(s.issues || []).length} issue(s) to look at` };
+    text: s.feasible ? 'All nine stages built; every software check passed' : `${(s.issues || []).length} issue(s) to look at` };
   st.view = 'done';
   if (alive()) render();
 }
@@ -266,7 +266,8 @@ function render() {
     clarify: ['A few questions', 'Pick an answer, or use sensible defaults and change anything later.'],
     confirm: ['Check the brief', 'This is what Morph will build. Every assumption can be changed now or after the build.'],
     building: [`Building ${st.project || st.name || 'your robot'}`, 'The whole pipeline runs from scratch: about 20 to 50 seconds.'],
-    done: ['Your robot is ready', st.done?.summary?.feasible === false ? 'Built, with issues to look at below.' : 'Built and checked. Open it to explore every stage.'],
+    done: ['Your robot is designed', st.done?.summary?.feasible === false ? 'Built, with issues to look at below.'
+      : 'Its software checks pass: simulation, torque margins, DRC and DFM. Not bench-validated: build and test it before you rely on it.'],
     oos: ["Morph can't build that as described", 'Here is why, and the nearest robot it can build.'],
     refused: ["Morph doesn't design that", ''],
   }[v] || ['New robot', ''];
@@ -548,7 +549,7 @@ function doneView() {
   const m = (k, v, sub = '') => `<div class="nr-metric"><span>${esc(k)}</span><b class="num">${v}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
   const money = (v) => (v == null ? '–' : `$${Math.round(v).toLocaleString('en-US')}`);
   return `<div class="nr-done-h">${s.feasible === false ? `<span class="tag warn">${I('alert', 'sm')}${(s.issues || []).length} issue(s)</span>`
-      : `<span class="tag good">${I('check', 'sm')}Feasible</span>`}<span class="muted">${esc(st.project || st.name)} · ${esc(st.done?.rev || 'r001')}</span></div>
+      : `<span class="tag good">${I('check', 'sm')}Software checks pass</span>`}<span class="muted">${esc(st.project || st.name)} · ${esc(st.done?.rev || 'r001')}</span></div>
     <div class="nr-metrics">${m('Parts cost (est.)', money(s.unit_cost))}${m('Pick and place', s.pick_place_success == null ? '–' : s.pick_place_success ? 'succeeds' : 'fails')}
       ${m('Cycle time', s.cycle_time_s ? `${(+s.cycle_time_s).toFixed(1)} s` : '–')}${m('Max payload', s.max_payload_g ? `${Math.round(s.max_payload_g)} g` : '–',
         s.payload_test_reach_mm ? `top-down at ${Math.round(s.payload_test_reach_mm)} mm, servos at stall` : '')}</div>

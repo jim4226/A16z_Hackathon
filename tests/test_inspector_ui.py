@@ -96,3 +96,24 @@ def test_the_inspector_says_what_sizing_changed_from_the_request(inspect):
     # an older revision without summary notes still shows sizing's
     pg2 = inspect({"summary": SUMMARY, "sizing": {"reach_mm": 475.2, "notes": [note]}})
     assert "Morph adjusted reach raised from 320 to 475 mm" in " ".join(pg2.inner_text("#insp").split())
+
+
+def test_the_studio_says_generated_files_are_not_bench_validated(inspect, tmp_path):
+    # the firmware pane, the export button and its toast: generated and software-checked, never "validated"
+    elec = {"firmware": "firmware/egg_picker.ino", "schematic_svg": "schematic.svg", "nets": [], "harness": [],
+            "plan": {"modules": []}}
+    pg = inspect({"summary": SUMMARY, "electronics": elec})
+    fw = tmp_path / "projects0" / "egg-picker" / "r001" / "electronics" / "firmware"
+    assert fw.parent.parent.is_dir()
+    fw.mkdir(parents=True)
+    (fw / "egg_picker.ino").write_text("void setup() {}\nvoid loop() {}\n", encoding="utf-8")
+    (fw.parent / "schematic.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>', encoding="utf-8")
+    pg.reload(wait_until="domcontentloaded")          # the page fetched the firmware before the file was there
+    pg.wait_for_selector("#insp .mt-table", timeout=60000)
+    assert "not bench-validated" in pg.get_attribute("#tabsInfo .xport", "title")
+    pg.click('#tabs .tab[data-tab="elec"]')
+    pg.click('.subtabs button[data-p="fw"]')
+    pg.wait_for_selector(".code .fw-note", timeout=20000)
+    note = pg.inner_text(".code .fw-note")
+    assert "not bench-tested" in note and "compiled" in note, note
+    assert "void loop" in pg.inner_text(".code")

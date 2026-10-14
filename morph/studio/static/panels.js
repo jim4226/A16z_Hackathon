@@ -1059,7 +1059,8 @@ export class ElecPanel {
       if (this.fwUrl !== url) return;
       const rows = b != null ? diffLines(b.split('\n'), a.split('\n')) : a.split('\n').map((t) => ({ t, k: '' }));
       let n = 0, no = 0;
-      code.innerHTML = rows.map((r) => {
+      // generated, never compiled for the board or run on the arm (electronics.firmware_validation): say so above the code
+      code.innerHTML = `<div class="fw-note">${I('alert', 'sm')}<span>Generated firmware, not bench-tested: it hasn't been compiled for this board or run on the arm. Review it, and power the servos the first time with the arm clear of anything it could hit.</span></div>` + rows.map((r) => {
         if (r.k === 'add') n++;
         if (r.k !== 'del') no++;
         return `<div class="ln ${r.k}"><span class="no">${r.k === 'del' ? '' : no}</span><span class="g">${r.k === 'add' ? '+' : r.k === 'del' ? '−' : ''}</span><span>${hl(r.t)}</span></div>`;

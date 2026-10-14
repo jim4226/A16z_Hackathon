@@ -97,7 +97,9 @@ def test_describe_clarify_confirm_build_done(page):
     shot(pg, "building")
     pg.wait_for_selector(".nr-metrics", timeout=30000)
     shot(pg, "done")
-    assert "Feasible" in pg.inner_text(".nr-done-h") and pg.inner_text("#project") == "berry-bot"
+    # software checks, never "feasible" or "checked" alone: nothing here was built or run on a bench
+    assert "Software checks pass" in pg.inner_text(".nr-done-h") and pg.inner_text("#project") == "berry-bot"
+    assert "Not bench-validated" in pg.inner_text(".nr-h") and "Feasible" not in pg.inner_text(".nr")
     # what sizing changed from the request is on the card, not only in the inspector
     assert "Morph adjusted reach raised from 320 to 475 mm" in pg.inner_text(".nr-adjusted")
     assert pg.locator('.nr-ag[data-role="pipeline"].done').count() == 1

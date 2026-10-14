@@ -66,7 +66,7 @@ def card(pg: Page) -> dict:
 
 def built(pg: Page, timeout=240):
     """Wait for the build to finish in the dialog; the done view's header."""
-    until(lambda: title(pg) == "Your robot is ready", timeout, "the robot to be built")
+    until(lambda: title(pg) == "Your robot is designed", timeout, "the robot to be built")
     return pg.text(".modal.on .nr-done-h")
 
 
@@ -113,7 +113,8 @@ def test_strawberries_in_your_own_words(browser, studio):
     pg.fits("New robot, building")
     pg.shot("e2e_nr_04_building_1280")
     head = built(pg)
-    assert "Feasible" in head and "strawberry-picker · r001" in head, head
+    assert "Software checks pass" in head and "strawberry-picker · r001" in head, head
+    assert "Not bench-validated" in pg.text(".modal.on .nr-h"), pg.text(".modal.on .nr-h")
     metrics = pg.text(".modal.on .nr-metrics").lower()  # the labels are small capitals
     assert "pick and place succeeds" in metrics, metrics
     # with network lookups off the sourcing step says so instead of hanging
@@ -159,7 +160,7 @@ def test_a_link_starts_the_plant_waterer_once(browser, studio):
     pg.fits("New robot, plant waterer")
     pg.pg.click('.modal.on .nr [data-a="build"]')
     head = built(pg)
-    assert "Feasible" in head and "plant-helper" in head, head
+    assert "Software checks pass" in head and "plant-helper" in head, head
     pg.pg.keyboard.press("Escape")
     pg.pg.reload()
     until(lambda: pg.ev("window.morph?.state?.loaded === true"), 120, "the page to load again")

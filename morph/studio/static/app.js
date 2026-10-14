@@ -657,7 +657,7 @@ function markTabs(cur) {
   const tot = nodesOf(cur).length;
   const secs = Object.values(cur?.timings || {}).reduce((a, b) => a + (+b || 0), 0);
   $('#tabsInfo').innerHTML = cur ? `<span class="chip mono">${esc(cur.rev)}</span><span title="${fmtSec(secs)} of compute">${n}/${tot} rebuilt</span>` +
-    (FIXTURE ? '' : `<button class="btn ghost xport" type="button" data-export="${esc(cur.rev)}" title="Download ${esc(cur.rev)} as a ZIP: CAD, simulations, electronics and firmware, manufacturing files and the manual, with a manifest of which stages completed">${I('download', 'sm')}Export</button>`) : '';
+    (FIXTURE ? '' : `<button class="btn ghost xport" type="button" data-export="${esc(cur.rev)}" title="Download ${esc(cur.rev)} as a ZIP: CAD, simulations, electronics and firmware, manufacturing files and the manual, with a manifest of which stages completed. Generated files, not bench-validated: review them before building or powering anything.">${I('download', 'sm')}Export</button>`) : '';
   return regen;
 }
 async function exportRev(rev) {  // ask first, so a refusal is a message rather than a broken download
@@ -669,7 +669,7 @@ async function exportRev(rev) {  // ask first, so a refusal is a message rather 
   document.body.appendChild(a);
   a.click();
   a.remove();
-  toast(`Downloading ${rev} as a ZIP`);
+  toast(`Downloading ${rev} as a ZIP: generated files, not bench-validated`);
 }
 
 // ------------------------------------------------------------------ inspector
