@@ -365,3 +365,15 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   XL430's minimum, while the caption said the electronics followed. A family swap now keeps one voltage class per arm
   (six XL430s on 12 V for the SO-101), a servo whose range leaves out its rail is an issue and gets no wiring or
   firmware, and the caption says what happens: the six printed holders are flagged until they are redesigned.
+- Robots that keep their stock jaws (the SO-101 and other imports) no longer buy, wire, program and calibrate two FSR
+  402 force sensors their jaws have no place for (finger.sensor is ignored for them, with a warning). Their grip is set
+  by the gripper servo's torque limit, which the firmware now writes (Feetech STS: the torque limit register; DYNAMIXEL:
+  Goal PWM) for the grip target at the jaw: 2 % of the SO-101 gripper's stall torque for a strawberry. A generated
+  gripper without force sensors grips the same way, and one with them gets the limit as a hard cap at its force stop.
+  A hobby PWM gripper servo has no torque limit; that is an issue when its stall force could crush the object.
+- Firmware with force sensors that get no reading through a whole close (a sensor missing, unplugged or dead) used to
+  squeeze on to the gripper's maximum-squeeze stop. It now closes only a little past the closed position (about 1 mm
+  on the egg-picker), goes back to it, and prints "!GRIP no force reading" on the serial port; a reading lost while
+  holding keeps the jaw where it is.
+- The manual's first pick-and-place test names the robot's own object (it asked for a hard-boiled egg and a raw one
+  whatever the robot picks), and a robot without force sensors is told what to watch instead of a grip-force readout.

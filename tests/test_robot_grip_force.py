@@ -145,3 +145,108 @@ def test_the_manual_uses_the_firmwares_commands_and_numbers(tmp_path):
     text = " ".join(s for st in m["steps"] for s in st["substeps"])
     assert cal["title"] == "Calibrate joints and gripper" and "no force sensors" in " ".join(cal["substeps"])
     assert "Z 200" not in text and "force-sensor" not in text and "force sensor tare" not in text
+
+
+# ------------------------------------------------------------------ stock jaws: no force sensors, a torque-limited grip
+
+def _plan_so101(**changes):
+    d = _so101(**changes)
+    sz = imported.size(d)
+    return d, sz, electronics2.plan(d, sz, grip=imported.gripper_summary(d, sz)["force"])
+
+
+def test_stock_jaws_get_no_force_sensors_bought_wired_or_programmed(tmp_path):
+    """The SO-101 bought, wired, programmed and calibrated two FSR 402s that its CAD and manual have no place for."""
+    from morph.robot import manual
+
+    assert template("so101", "so101").finger.sensor == "none"
+    for sensor in ("none", "fsr402"):                     # a design that still asks for them gets none, and is told so
+        d, sz, ep = _plan_so101(**{"finger.sensor": sensor})
+        assert ep["grip"]["sensor"] == "none" and not [s for s in ep["sensors"] if s["key"] == "fsr402"]
+        warned = imported.gripper_summary(d, sz)["force"]["warnings"]
+        assert bool(warned) == (sensor == "fsr402") and all("stock jaws" in w for w in warned)
+    asm = imported.build(d, sz, ep)
+    fin = electronics2.finalize(d, sz, ep, asm, str(tmp_path / "r001" / "electronics"))
+    assert not [r for r in fin["sourcing"] if "FSR" in r["item"]] and not [h for h in fin["harness"] if h["kind"] == "sensor"]
+    code = open(tmp_path / "r001" / "electronics" / fin["firmware"], encoding="utf-8").read()
+    assert "#define PIN_FSR_L        -1" in code and "#define PIN_FSR_R        -1" in code
+    m = manual.build(d, asm, None, fin, str(tmp_path / "r001" / "manual"), images=False)
+    text = " ".join(s for st in m["steps"] for s in st["substeps"])
+    assert "FSR" not in text and "Z 200" not in text and "calibrate the force sensors" not in text.lower()
+    cal = next(s for s in m["steps"] if s["kind"] == "calibration")
+    assert "torque limit" in " ".join(cal["substeps"]) and cal["title"] == "Calibrate joints and gripper"
+    first = next(s for s in m["steps"] if s["kind"] == "test")["instructions"]    # a strawberry, not a hard-boiled egg
+    assert "egg" not in first and "strawberry" in first and "slips" in first
+
+
+def test_new_robot_with_your_so101_and_imports_keep_the_stock_jaws_sensorless():
+    from morph.studio import agents
+
+    b = agents.run_turn(agents.run_turn(text="I have an SO-101 for picking strawberries"), action="defaults")
+    assert b.changes["arm.source"] == "so101" and b.changes["finger.sensor"] == "none"
+    from morph.studio import intent
+    r = intent.interpret("add a force sensor", template("so101", "so101"))
+    assert r["changes"] == {} and "stock jaws" in r["reply"]
+
+
+def test_the_gripper_torque_limit_comes_from_the_grip():
+    d, sz, ep = _plan_so101()
+    tl = ep["grip"]["torque_limit"]
+    stall = 1.62                                   # sts3215_7v4 on the SO-101's 6 V rail
+    assert tl["register"] == "feetech_torque_limit" and tl["force_n"] == ep["grip"]["target_n"] == 0.5
+    assert tl["nm"] == pytest.approx(0.5 * 0.070, abs=1e-4) and tl["fraction"] == pytest.approx(0.035 / stall, abs=1e-4)
+    egg = template("egg-picker")                  # force sensors: a hard cap at the firmware's limit, no gear losses
+    sz = arm.size(egg)
+    g = electronics2.plan(egg, sz, grip=pipeline2.gripper_stage(egg, sz, simulate=False)["force"])["grip"]
+    assert g["torque_limit"]["force_n"] == g["limit_n"] == 19.0
+    assert g["torque_limit"]["nm"] == pytest.approx(19.0 * 2 * egg.electronics.pinion_radius_mm / 1000, abs=1e-4)
+    assert [w for w in ep["warnings"] if "torque limit sets the grip (2 % of its stall torque for 0.5 N" in w]
+    pwm = _plan_so101(**{"arm.actuator_family": "hobby_pwm"})
+    assert pwm[2]["grip"]["torque_limit"] is None and [w for w in pwm[2]["warnings"] if "closes with all its torque" in w]
+    assert any("no torque limit" in i for i in imported.gripper_summary(pwm[0], pwm[1])["force"]["issues"])
+
+
+def test_the_simulation_squeezes_a_stock_jaw_with_the_firmwares_torque_limit():
+    d, sz, ep = _plan_so101()
+    asm = imported.build(d, sz, ep)
+    assert asm.meta["grip_torque_nm"] == ep["grip"]["torque_limit"]["nm"]
+    info, _ = simulate._describe(asm, d, simulate._opts(None))
+    assert info.grip_effort == pytest.approx(ep["grip"]["torque_limit"]["nm"])
+    assert info.grip_force_n == pytest.approx(ep["grip"]["target_n"])
+
+
+def _run_firmware(tmp_path, d, newtons_per_unit):
+    import shutil
+    import subprocess
+
+    if shutil.which("g++") is None:
+        pytest.skip("g++ not installed")
+    sz = imported.size(d) if d.arm.source else arm.size(d)
+    ep = electronics2.plan(d, sz, grip=pipeline2.gripper_stage(d, sz, simulate=False)["force"])
+    asm = (imported.build if d.arm.source else arm.build)(d, sz, ep)
+    src = tmp_path / electronics2.firmware(d, ep, asm, str(tmp_path), "r001")
+    stubs = os.path.join(os.path.dirname(__file__), "fw_stubs")
+    with open(os.path.join(stubs, "grip_harness.cpp"), encoding="utf-8") as fh:
+        (tmp_path / "run.cpp").write_text(src.read_text(encoding="utf-8") + "\n" + fh.read(), encoding="utf-8")
+    exe = tmp_path / "run.exe"
+    res = subprocess.run(["g++", "-std=gnu++17", "-I" + stubs, str(tmp_path / "run.cpp"), "-o", str(exe)],
+                         capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    out = subprocess.run([str(exe), str(newtons_per_unit)], capture_output=True, text=True, timeout=120).stdout
+    fields = dict(kv.split("=") for kv in next(ln for ln in out.splitlines() if ln.startswith("RESULT")).split()[1:])
+    return {k: (float(v) if k not in ("state",) else v) for k, v in fields.items()}, out, ep
+
+
+def test_the_firmware_never_squeezes_blind_to_its_max_squeeze_stop(tmp_path):
+    """The generated firmware itself, compiled and run: with no force reading through the whole close it stops at
+    GRIP_CLOSED and says so, never GRIP_MIN; a working sensor still closes to the target; a stock jaw closes to
+    GRIP_CLOSED with its torque limit written once."""
+    r, out, _ = _run_firmware(tmp_path / "egg0", template("egg-picker"), 0.0)
+    assert r["lowest"] > r["min"] and r["final"] == r["closed"] and r["state"] == "POS"
+    assert "!GRIP no force reading" in out and r["torque_writes"] == 1
+    r, out, ep = _run_firmware(tmp_path / "egg20", template("egg-picker"), 20.0)   # 20 N per mm past contact
+    assert r["state"] == "HOLD" and r["closed"] > r["final"] > r["min"] and "!GRIP" not in out
+    assert abs(r["force"] - ep["grip"]["target_n"]) <= 0.15 * ep["grip"]["target_n"]
+    r, out, ep = _run_firmware(tmp_path / "so101", _so101(), 0.0)
+    assert r["lowest"] == r["closed"] == 0.0 and r["state"] == "POS" and r["torque_writes"] == 1
+    assert r["torque"] == round(max(ep["grip"]["torque_limit"]["fraction"] * 1000, 10))

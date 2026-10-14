@@ -251,6 +251,9 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
     if re.search(r"(no|remove|without|drop)( the)? (force )?sensor", t):
         ch["finger.sensor"] = "none"
         said.append("removed the force sensor")
+    elif re.search(r"(add|with|use)( a)? force sensor|force feedback|fsr", t) and d.arm.source:
+        said.append(f"{NOTE}this robot keeps its stock jaws, which have no place for force sensors; its gripper servo's torque "
+                    "limit sets the grip instead")
     elif re.search(r"(add|with|use)( a)? force sensor|force feedback|fsr", t):
         ch.update({"finger.sensor": "fsr402", "finger.width_mm": 20.0, "fab.process": "fdm_print",
                    "finger.material": ch.get("finger.material", d.finger.material) if d.finger.material in ("PLA", "PETG", "Nylon-CF") else "PETG"})

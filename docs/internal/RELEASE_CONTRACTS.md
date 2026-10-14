@@ -1363,3 +1363,18 @@ Fixes of the release review's engineering findings. What other code relies on si
   servos); those are plan issues, and `firmware()` and `finalize()` raise before writing anything, as for a mixed
   protocol, so the wiring stage fails with the reason. Present step 12's caption and `docs/DEMO_SCRIPT.md` row 12 say
   what the swap does (new supply, controller, wiring and firmware; six orange holders; not feasible until redesigned).
+- **Stock jaws and the gripper torque limit (ENG-2).** A robot that keeps its own jaws (`arm.source` set) has no
+  force sensors: `imported.gripper_summary` returns `sensor` "none" whatever `finger.sensor` says (a warning when it
+  asks for FSRs), so no FSR is bought, wired, programmed (`PIN_FSR_L/R` -1) or calibrated, and the templates, New
+  robot's SO-101 brief, the import session and the chat keep `finger.sensor` "none" for them. Force plans carry
+  `jaw` ("rack" or "revolute") and `lever_mm` (pinion radius, or `JAW_LEVER_MM` / a profile's `jaw_lever_mm`).
+  `electronics2.grip_torque_limit(grip, gkey, servo_v, family)` gives `eplan.grip.torque_limit` (`force_n`, `nm`,
+  `fraction` of the stall torque at the rail, `per_n`, `register`, `short`), None for hobby PWM: without force sensors
+  it is the grip (the target at the jaw's lever; a rack jaw per finger F = torque x 0.6 / 2r), with them a cap at the
+  firmware's hard stop. A sensorless grip the servo can't reach is an issue, and so is a hobby PWM gripper whose stall
+  force exceeds the object's limit. The firmware writes it at start-up and when the e-stop clears (`gripTorque()`:
+  Feetech register 48 in 0.1 %, DYNAMIXEL Goal PWM in percent) and F re-sets it on a sensorless gripper. A sensorless
+  revolute jaw is simulated with that torque (`asm.meta["grip_torque_nm"]`). Firmware with force sensors that read
+  under `GRIP_SENSE_N` through a whole close stops at `GRIP_CLOSED` after probing `GRIP_PROBE` past it and prints
+  `!GRIP no force reading`; it never closes to `GRIP_MIN` on no reading. `tests/fw_stubs/grip_harness.cpp` runs the
+  generated sketch's control loop on the host for the tests.

@@ -136,9 +136,32 @@ def grip_window(design, sizing: dict | None = None, grip: dict | None = None) ->
     lo, hi = grip["window_n"]
     target = float(grip["target_force_n"])
     top = hi if hi is not None else float("inf")
+    jaw = grip.get("jaw") or ("revolute" if design.arm.source else "rack")
     return {"hold_n": grip.get("hold_force_n"), "window_n": [lo, hi], "target_n": round(target, 2),
             "limit_n": round(float(grip["limit_n"]), 2), "sensor": grip.get("sensor") or "none", "ok": lo <= top,
-            "object_limit_n": design.object.max_force_n or None}
+            "object_limit_n": design.object.max_force_n or None, "jaw": jaw,
+            "lever_mm": float(grip.get("lever_mm") or (70.0 if jaw == "revolute" else design.electronics.pinion_radius_mm))}
+
+
+def grip_torque_limit(grip: dict, gkey: str, servo_v: float, family: str) -> dict | None:
+    """The gripper servo's torque limit, where its protocol has one (Feetech STS: the torque limit register; DYNAMIXEL:
+    Goal PWM, which bounds the stall torque in position control). Without force sensors it is the grip: set for the
+    target at the jaw's lever (a rack-and-pinion jaw: one pinion drives both racks, per finger F = torque x 0.6 / 2r).
+    With them it is a hard cap at the firmware's force limit, in case the force loop fails, counted without gear
+    losses so it never allows more. Hobby PWM servos have none: None. {force_n, nm, fraction (of the stall torque at
+    the rail, at most 1), per_n (fraction per newton, for the F command), register, short (the servo can't reach it)}."""
+    proto = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])[1]
+    if proto == "pca9685_pwm" or gkey not in ACTUATORS or catalog.protocol(gkey) != SPEAKS[proto]:
+        return None
+    sensor = grip["sensor"] == "fsr402"
+    force = float(grip["limit_n"] if sensor else grip["target_n"])
+    lever = grip["lever_mm"] / 1000.0
+    nm_per_n = 2.0 * lever / (1.0 if sensor else GEAR_EFF) if grip["jaw"] == "rack" else lever
+    stall = catalog.torque_at(gkey, servo_v)
+    return {"force_n": round(force, 2), "nm": round(min(force * nm_per_n, stall), 4),
+            "fraction": round(min(force * nm_per_n / stall, 1.0), 4), "per_n": round(nm_per_n / stall, 6),
+            "register": "feetech_torque_limit" if proto == "feetech_scs" else "dynamixel_goal_pwm",
+            "short": bool(force * nm_per_n > stall), "stall_force_n": round(stall / nm_per_n, 2)}
 
 
 def grip_problems(design, grip: dict) -> list:
@@ -495,6 +518,12 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
     if config == "modules" and supply["v"] < 7.0 and ctrl != "openrb_150":
         warnings.append("buck_5v from a 6 V input runs near its dropout; verify the regulator's minimum input at 1 A")
     issues += grip_problems(design, grip)
+    gkey = next((a["key"] for a in acts if a["joint"] == "gripper"), None)
+    grip["torque_limit"] = grip_torque_limit(grip, gkey, servo_v, family)
+    tl = grip["torque_limit"]
+    if tl and tl["short"] and grip["sensor"] != "fsr402":
+        issues.append(f"gripper: the {gkey} squeezes only {tl['stall_force_n']:g} N per finger on the {servo_v:g} V rail, "
+                      f"below the {grip['target_n']:g} N grip target")
 
     # modules: what physically goes in the base bay (arm.build places the non-external ones)
     mods = []
@@ -524,8 +553,13 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
     if grip["sensor"] == "fsr402":
         sensors += [{"ref": "S1", "key": "fsr402", "where": "jaw_left", "signal": "FSR_L"},
                     {"ref": "S2", "key": "fsr402", "where": "jaw_right", "signal": "FSR_R"}]
+    elif grip.get("torque_limit"):
+        warnings.append(f"no force sensors on the fingers: the gripper servo's torque limit sets the grip "
+                        f"({grip['torque_limit']['fraction'] * 100:.0f} % of its stall torque for {grip['target_n']:g} N per "
+                        "finger), open loop: check it once with a kitchen scale")
     else:
-        warnings.append("no force sensor on the fingers: grip force is estimated from servo load (open loop for PWM servos)")
+        warnings.append("no force sensors on the fingers and no torque limit on the hobby gripper servo: it closes with all "
+                        "its torque (open loop)")
     if "wrist_camera" in extras:
         sensors.append({"ref": "CAM1", "key": "wrist_camera", "where": "gripper_base", "signal": "USB to host"})
     if "imu" in extras:
@@ -1198,14 +1232,19 @@ FW_PROTOCOL = """//   J q1 .. qN       joint targets in radians (order below), c
 //   Z grams          {grip_z}"""
 
 
-def _grip_commands(fsr: bool) -> dict:
+def _grip_commands(fsr: bool, torque: bool) -> dict:
     """What G, F and Z do in this firmware, for its header."""
     if fsr:
-        return {"grip_g": "grip: close until the fingertip force reaches the target, then hold it",
+        return {"grip_g": "grip: close until the fingertip force reaches the target, then hold it (with no force reading "
+                          "by GRIP_CLOSED + GRIP_PROBE, stop at GRIP_CLOSED)",
                 "grip_f": "grip force target in newtons (capped at GRIP_LIMIT_N)",
                 "grip_z": "calibrate the force sensors with a known mass resting on the left pad"}
-    return {"grip_g": "grip: close to GRIP_CLOSED and hold there (no force sensors are fitted)",
-            "grip_f": "grip force target in newtons (kept for status; without force sensors nothing regulates it)",
+    if torque:
+        return {"grip_g": "grip: close to GRIP_CLOSED; the gripper servo's torque limit sets the squeeze (no force sensors)",
+                "grip_f": "grip force in newtons: sets the gripper servo's torque limit (capped at GRIP_LIMIT_N)",
+                "grip_z": "calibrate force sensors (none are fitted: replies with the unchanged factor)"}
+    return {"grip_g": "grip: close to GRIP_CLOSED and hold there (no force sensors, and hobby servos have no torque limit)",
+            "grip_f": "grip force in newtons (kept for status: nothing here can regulate it)",
             "grip_z": "calibrate force sensors (none are fitted: replies with the unchanged factor)"}
 
 
@@ -1246,7 +1285,8 @@ def grip_motion(design, ep: dict, asm) -> dict:
         raise ValueError("the gripper joint needs a positive velocity limit")
     return {"kind": kind, "unit": "rad" if kind == "revolute" else "mm", "lo": lo, "hi": hi, "zero": zero,
             "per_unit": per_unit, "closed": max(lo, min(0.0, hi)), "close_speed": min(8.0 * scale, vmax),
-            "open_speed": min(25.0 * scale, vmax), "backoff": scale, "force_gain": 10.0 * scale}
+            "open_speed": min(25.0 * scale, vmax), "backoff": scale, "force_gain": 10.0 * scale,
+            "probe": max(min(scale, (max(lo, min(0.0, hi)) - lo) / 2.0), 0.0)}
 
 
 def rail_problems(acts: list, supply: dict, config: str) -> list:
@@ -1313,6 +1353,7 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
     motion = grip_motion(design, ep, asm)
     gu = motion["unit"]
     fsr = grip["sensor"] == "fsr402"
+    tl = grip.get("torque_limit")
     adc_bits = ADC_BITS[ctrl]
     vref = LOGIC_V[ctrl]
     wifi = "wifi" in ep["extras"] and ctrl in WIFI_MCUS
@@ -1333,7 +1374,7 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
            "// Do not edit by hand: change the design in Morph Studio and regenerate.",
            "//", "// Serial protocol (USB, 115200 baud, one command per line):",
            FW_PROTOCOL.format(grip_unit=gu, grip_origin="0 = the jaw's calibrated zero" if motion["kind"] == "revolute"
-                              else "0 = jaws touching the object", **_grip_commands(fsr)), ""]
+                              else "0 = jaws touching the object", **_grip_commands(fsr, bool(tl))), ""]
     L = hdr
     L.append("#include <Arduino.h>")
     if proto == "pca9685_pwm":
@@ -1405,6 +1446,15 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
           f"const float GRIP_FORCE_GAIN = {_c(motion['force_gain'], 6)};   // force loop gain, {gu} per N*s",
           f"float GRIP_TARGET_N         = {_c(grip['target_n'], 2)};   // {_window_text(grip)} for the {design.object.name}",
           f"const float GRIP_LIMIT_N    = {_c(grip['limit_n'], 2)};   // hard stop (object damage / sensor range)",
+          "const float GRIP_SENSE_N    = 0.05f;   // N: any force reading at all (an FSR 402 reads nothing below about 0.2 N)",
+          f"const float GRIP_PROBE      = {_c(motion['probe'], 6)};   // {gu}: how far past GRIP_CLOSED the jaw may close before "
+          "a force sensor reads anything",
+          f"const float GRIP_TORQUE_PER_N = {_c(tl['per_n'] if tl else 0.0, 6)};   // gripper servo torque limit per N at the jaw, "
+          + (f"as a fraction of its stall torque on the {ep['supply']['servo_v']:g} V rail ({grip['lever_mm']:g} mm "
+             f"{'pinion' if grip['jaw'] == 'rack' else 'lever'})" if tl else "0: hobby PWM servos have no torque limit"),
+          f"float GRIP_TORQUE_N         = {_c(tl['force_n'] if tl else 0.0, 2)};   // N: the squeeze the torque limit allows "
+          + ("(none: no torque limit)" if not tl else "(the grip itself: no force sensors)" if not fsr
+             else "(a hard cap if the force loop fails)"),
           f"const float FSR_R_DIV       = {rd:.1f}f;   // divider resistor to GND, ohms",
           f"float FSR_K                 = {FSR_K_OHM_N:.1f}f;   // ohm*N: F = K / R_fsr (Z command calibrates)",
           ""]
@@ -1427,7 +1477,8 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
               "  for (uint8_t k = 0; k < n; k++) pca.writeMicroseconds(SERVO[k].ch, (uint16_t)constrain(pos[k], 500.0f, 2500.0f));",
               "  pca.writeMicroseconds(GRIP_CH, (uint16_t)constrain(grip, 500.0f, 2500.0f));",
               "}", "",
-              "bool busRead(uint8_t k, float *pos) { return false; }   // hobby servos have no position feedback", ""]
+              "bool busRead(uint8_t k, float *pos) { return false; }   // hobby servos have no position feedback", "",
+              "void gripTorque() {}   // hobby PWM servos have no torque limit", ""]
     elif proto == "feetech_scs":
         L += ["SMS_STS bus;", "", "void busBegin() {",
               "#if defined(ARDUINO_ARCH_ESP32)",
@@ -1450,7 +1501,12 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
               "}", "",
               "bool busRead(uint8_t k, float *pos) {",
               "  int p = bus.ReadPos(k < N_SERVOS ? SERVO[k].id : GRIP_ID);",
-              "  if (p < 0) return false;", "  *pos = (float)p;", "  return true;", "}", ""]
+              "  if (p < 0) return false;", "  *pos = (float)p;", "  return true;", "}", "",
+              "#define STS_TORQUE_LIMIT 48   // RAM torque limit, 0-1000 = 0-100 % of stall (back to the EEPROM maximum at power-up)",
+              "void gripTorque() {   // the gripper squeezes no harder than GRIP_TORQUE_N at the jaw",
+              "  if (GRIP_TORQUE_PER_N <= 0.0f) return;",
+              "  bus.writeWord(GRIP_ID, STS_TORQUE_LIMIT, (u16)(constrain(GRIP_TORQUE_N * GRIP_TORQUE_PER_N * 1000.0f, 10.0f, 1000.0f) + 0.5f));",
+              "}", ""]
     else:
         L += ["Dynamixel2Arduino dxl(BUS_SERIAL, PIN_BUS_DIR);", "using namespace ControlTableItem;", "",
               "void busBegin() {", "  dxl.begin(BUS_BAUD);",
@@ -1470,7 +1526,11 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
               "  dxl.setGoalPosition(GRIP_ID, constrain(grip, 0.0f, 4095.0f));", "}", "",
               "bool busRead(uint8_t k, float *pos) {",
               "  float p = dxl.getPresentPosition(k < N_SERVOS ? SERVO[k].id : GRIP_ID);",
-              "  if (p <= 0.0f) return false;", "  *pos = p;", "  return true;", "}", ""]
+              "  if (p <= 0.0f) return false;", "  *pos = p;", "  return true;", "}", "",
+              "void gripTorque() {   // Goal PWM caps the gripper's stall torque in position control (reset at power-up)",
+              "  if (GRIP_TORQUE_PER_N <= 0.0f) return;",
+              "  dxl.setGoalPWM(GRIP_ID, constrain(GRIP_TORQUE_N * GRIP_TORQUE_PER_N * 100.0f, 1.0f, 100.0f), UNIT_PERCENT);",
+              "}", ""]
     tmpl = r'''// ---------------------------------------------------------------- state
 enum State : uint8_t { ST_RUN, ST_ESTOP };
 enum Grip : uint8_t { G_POS, G_CLOSING, G_HOLD };
@@ -1480,7 +1540,7 @@ State state = ST_RUN;
 Grip gstate = G_POS;
 float qT[N_JOINTS], qC[N_JOINTS];      // target / commanded joint angle, rad
 float gT = GRIP_MAX, gC = GRIP_MAX;    // gripper target / commanded, $GRIP_UNIT
-float speedScale = 0.5f, force = 0.0f, gripI = 0.0f;
+float speedScale = 0.5f, force = 0.0f, gripI = 0.0f, gripSeen = 0.0f;   // gripSeen: the highest force of this close
 bool telemetry = false;
 uint32_t lastTick = 0, lastTele = 0, lowSince = 0;
 const uint16_t TICK_MS = 10;
@@ -1571,6 +1631,7 @@ void clearEstop() {
   lowSince = 0;
   resyncFromServos();
   busTorque(true);
+  gripTorque();                              // a servo that lost power restarts at its maximum torque limit
   state = ST_RUN;
   if (PIN_LED >= 0) digitalWrite(PIN_LED, LOW);
   out->println("OK estop cleared");
@@ -1606,9 +1667,12 @@ void command(char *s) {
       break;
     case 'V': if (n) speedScale = constrain(v[0], 0.05f, 1.0f); break;
     case 'W': if (n) { gstate = G_POS; gT = constrain(v[0], GRIP_MIN, GRIP_MAX); } break;
-    case 'G': gstate = (PIN_FSR_L >= 0 || PIN_FSR_R >= 0) ? G_CLOSING : G_POS; if (gstate == G_POS) gT = GRIP_CLOSED; gripI = 0; break;
+    case 'G': gstate = (PIN_FSR_L >= 0 || PIN_FSR_R >= 0) ? G_CLOSING : G_POS; if (gstate == G_POS) gT = GRIP_CLOSED; gripI = 0; gripSeen = 0.0f; break;
     case 'O': gstate = G_POS; gT = GRIP_MAX; break;
-    case 'F': if (n) GRIP_TARGET_N = constrain(v[0], 0.1f, GRIP_LIMIT_N); break;
+    case 'F':
+      if (n) GRIP_TARGET_N = constrain(v[0], 0.1f, GRIP_LIMIT_N);
+      if (n && PIN_FSR_L < 0 && PIN_FSR_R < 0) { GRIP_TORQUE_N = GRIP_TARGET_N; gripTorque(); }   // no sensors: the limit is the grip
+      break;
     case 'H': setPose(false); break;
     case 'R': setPose(true); break;
     case 'E': enterEstop("software"); return;
@@ -1644,13 +1708,21 @@ void gripControl(float dt) {
   force = readForce();
   if (force > GRIP_LIMIT_N) { gT = constrain(gC + GRIP_BACKOFF, GRIP_MIN, GRIP_MAX); gstate = G_HOLD; gripI = 0; }   // over the limit: back off
   else if (gstate == G_CLOSING) {
+    if (force > gripSeen) gripSeen = force;
     if (force >= GRIP_TARGET_N) { gstate = G_HOLD; gT = gC; }
     else gT = gC - GRIP_CLOSE_SPEED * dt;
+    if (gripSeen < GRIP_SENSE_N && gT <= GRIP_CLOSED - GRIP_PROBE) {   // nothing read: never squeeze on, to GRIP_MIN
+      gT = GRIP_CLOSED; gstate = G_POS;
+      out->println("!GRIP no force reading: stopped at GRIP_CLOSED instead of squeezing on (check the force sensors and their leads)");
+    }
     if (gT <= GRIP_MIN) { gT = GRIP_MIN; gstate = G_HOLD; }
   } else if (gstate == G_HOLD) {                                         // PI on the force error
-    float e = GRIP_TARGET_N - force;
-    gripI = constrain(gripI + e * dt, -2.0f, 2.0f);
-    gT = constrain(gT - (0.08f * e + 0.25f * gripI) * dt * GRIP_FORCE_GAIN, GRIP_MIN, GRIP_MAX);
+    if (force < GRIP_SENSE_N) { gripI = 0.0f; }                         // reading lost (sensor or object): hold still
+    else {
+      float e = GRIP_TARGET_N - force;
+      gripI = constrain(gripI + e * dt, -2.0f, 2.0f);
+      gT = constrain(gT - (0.08f * e + 0.25f * gripI) * dt * GRIP_FORCE_GAIN, GRIP_MIN, GRIP_MAX);
+    }
   }
   float step = (gT >= gC ? GRIP_OPEN_SPEED : GRIP_CLOSE_SPEED) * dt;    // slew limit in the gripper's own units
   gC = constrain(gC + constrain(gT - gC, -step, step), GRIP_MIN, GRIP_MAX);
@@ -1681,6 +1753,7 @@ void setup() {
   resyncFromServos();
   servoPower(true);
   delay(100);
+  gripTorque();
 #if MORPH_WIFI
   WiFi.softAP("morph-arm", "morph-arm-$PASS");   // or WiFi.begin(ssid, pass) for your network
   server.begin();

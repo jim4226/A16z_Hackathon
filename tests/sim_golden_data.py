@@ -38,16 +38,16 @@ GOLDEN = {
    "state after workspace": "6c504be186c13a534a20bc8f37c05aa6bf49b2a70330a0b447f510e85a35c36d"
   },
   "so101": {
-   "robot.xml": "33c4629093e5bbf75524ef938007e2e4595eb424ba9ab32e336d768f1cda241e",
-   "run_all": "96d10f2b995499eed10618d5d61f186f857310bda65d0040c86d9d622da9fad2",
-   "sim_payload_sweep.json": "ef0eb5a48a5ca636e8ade09b961e95d6a64399f692c68da8624f9ef9d5fac8b5",
-   "sim_pick_place.json": "d9c4c4f622e37a5cc44840c171f6883bcbbc59370d77222f35fc3816fb916cf5",
-   "sim_shake.json": "9fd8f772cbf6964800ad6f2d33e74717e577f0f138cdb16b2bf1d764671bf62b",
+   "robot.xml": "127c87d9a8bdc9b7053f7826dc14c1652b18c90d9446587c504bfc334f26d948",
+   "run_all": "4875e53062bcbd8db42991376a73e59c0ceb69ab71cb84f4a415ef92c8bfffde",
+   "sim_payload_sweep.json": "190bf2abb5eb827f6c54bd9a79b4fb5c9729de190e6a44fc4cb6614cab6d96da",
+   "sim_pick_place.json": "9f56de8c999eb5f34bbb9388bc91df13e2877416e60fc35b2d6a3d1f57a71700",
+   "sim_shake.json": "cadc1de2db796094e816cece26762a9e2aa3196451554959a25067d45cedd274",
    "sim_workspace.json": "896fd63d0c2f6f8601b794c916869a7a99ed59315b8f145a5ccf1d8016fbe037",
-   "state after payload_sweep": "9f0fab81b292065de019bb976eee0f5dc3bc114911faa887096c1fa431023826",
-   "state after pick_place": "8961692daf7759653b091d2d64db4d172842e2f91a8ffa5d8002a9284c8ada8e",
-   "state after shake": "662fb8a19769227c34ee792ba96d88dcb3a1eb98ce04c50a2f19747531a1b6a3",
-   "state after workspace": "9f0fab81b292065de019bb976eee0f5dc3bc114911faa887096c1fa431023826"
+   "state after payload_sweep": "68fd9d9fef87fc1fae8939aaccc6a08e553c388db36a68f49bfca0e50a31ade3",
+   "state after pick_place": "823e4c738740dccead764b2bfc8bc9cf1f7d8d6bbeef572b70a986033df7f140",
+   "state after shake": "8a8f2436a2a03781a0481ec39293eef09e481eeff35588d6d0ec6ed401cbeaab",
+   "state after workspace": "68fd9d9fef87fc1fae8939aaccc6a08e553c388db36a68f49bfca0e50a31ade3"
   }
  },
  "linux-x86_64 | Intel(R) Xeon(R) Processor @ 2.80GHz | mujoco 3.15.0 | numpy 2.5.4": {
@@ -88,16 +88,16 @@ GOLDEN = {
    "state after workspace": "6c504be186c13a534a20bc8f37c05aa6bf49b2a70330a0b447f510e85a35c36d"
   },
   "so101": {
-   "robot.xml": "33c4629093e5bbf75524ef938007e2e4595eb424ba9ab32e336d768f1cda241e",
-   "run_all": "96d10f2b995499eed10618d5d61f186f857310bda65d0040c86d9d622da9fad2",
-   "sim_payload_sweep.json": "ef0eb5a48a5ca636e8ade09b961e95d6a64399f692c68da8624f9ef9d5fac8b5",
-   "sim_pick_place.json": "d9c4c4f622e37a5cc44840c171f6883bcbbc59370d77222f35fc3816fb916cf5",
-   "sim_shake.json": "9fd8f772cbf6964800ad6f2d33e74717e577f0f138cdb16b2bf1d764671bf62b",
+   "robot.xml": "127c87d9a8bdc9b7053f7826dc14c1652b18c90d9446587c504bfc334f26d948",
+   "run_all": "4875e53062bcbd8db42991376a73e59c0ceb69ab71cb84f4a415ef92c8bfffde",
+   "sim_payload_sweep.json": "190bf2abb5eb827f6c54bd9a79b4fb5c9729de190e6a44fc4cb6614cab6d96da",
+   "sim_pick_place.json": "9f56de8c999eb5f34bbb9388bc91df13e2877416e60fc35b2d6a3d1f57a71700",
+   "sim_shake.json": "cadc1de2db796094e816cece26762a9e2aa3196451554959a25067d45cedd274",
    "sim_workspace.json": "896fd63d0c2f6f8601b794c916869a7a99ed59315b8f145a5ccf1d8016fbe037",
-   "state after payload_sweep": "9f0fab81b292065de019bb976eee0f5dc3bc114911faa887096c1fa431023826",
-   "state after pick_place": "8961692daf7759653b091d2d64db4d172842e2f91a8ffa5d8002a9284c8ada8e",
-   "state after shake": "662fb8a19769227c34ee792ba96d88dcb3a1eb98ce04c50a2f19747531a1b6a3",
-   "state after workspace": "9f0fab81b292065de019bb976eee0f5dc3bc114911faa887096c1fa431023826"
+   "state after payload_sweep": "68fd9d9fef87fc1fae8939aaccc6a08e553c388db36a68f49bfca0e50a31ade3",
+   "state after pick_place": "823e4c738740dccead764b2bfc8bc9cf1f7d8d6bbeef572b70a986033df7f140",
+   "state after shake": "8a8f2436a2a03781a0481ec39293eef09e481eeff35588d6d0ec6ed401cbeaab",
+   "state after workspace": "68fd9d9fef87fc1fae8939aaccc6a08e553c388db36a68f49bfca0e50a31ade3"
   }
  }
 }

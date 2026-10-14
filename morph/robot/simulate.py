@@ -841,6 +841,8 @@ def _describe(asm, design, opts: SimOptions):
         cap = (gj.effort or 1.0) / (lever * MM)
         gf = min(gf, cap)
         effort = gf * lever * MM
+        if (asm.meta or {}).get("grip_torque_nm") and opts.grip_force_n is None:
+            effort = min(float(asm.meta["grip_torque_nm"]), gj.effort or 1.0)   # the firmware's torque limit, as set
         fmax = cap
     else:
         g_open = g_close = 0.0

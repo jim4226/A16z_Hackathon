@@ -690,10 +690,14 @@ def _elec_steps(F: _Facts, start: int):
     idx += 1
     # ---------------------------------------------------------------- first pick
     t = d.task
-    sent = [f"Place a hard-boiled egg (or a {obj.diameter_mm:g} mm ball) at the pick point x = {t.pick_x_mm:g} mm, "
+    egg = "egg" in (obj.name or "").lower()
+    stand_in = "a hard-boiled egg" if egg else f"a stand-in for the {obj.name or 'object'}"
+    sent = [f"Place {stand_in} (or a {obj.diameter_mm:g} mm ball) at the pick point x = {t.pick_x_mm:g} mm, "
             f"y = {t.pick_y_mm:g} mm from the base axis; mark the place point x = {t.place_x_mm:g}, y = {t.place_y_mm:g} mm.",
-            "Run the pick-and-place demo at 25 % speed; watch the grip-force readout stay below the limit.",
-            f"Raise the speed step by step to 100 % (target cycle {t.cycle_time_s:g} s), then repeat with a raw egg."]
+            "Run the pick-and-place demo at 25 % speed; " + ("watch the grip-force readout stay below the limit." if F.sensor else
+                                                            "watch that the object neither slips in the jaws nor dents."),
+            f"Raise the speed step by step to 100 % (target cycle {t.cycle_time_s:g} s), then repeat with "
+            + ("a raw egg." if egg else f"a real {obj.name or 'object'}.")]
     steps.append({"index": idx, "title": "First pick-and-place test", "kind": "test", "parts": [], "parts_table": [],
                   "fasteners": [], "tools": [], "instructions": " ".join(sent), "substeps": sent,
                   "warnings": ["Stand clear of the arm's reach while it runs; the e-stop / supply switch stays within reach."],
@@ -706,12 +710,22 @@ def _grip_sentence(grip: dict, name: str) -> str:
     lo, hi = grip.get("window_n") or [None, None]
     t, lim = grip["target_n"], grip.get("limit_n")
     window = f"{lo:g}–{hi:g} N" if lo is not None and hi is not None else f"at least {lo:g} N" if lo is not None else None
+    within = (f", within {window} for the {name}." if hi is not None else f" ({window} for the {name})." if window else ".")
     if grip.get("sensor") == "fsr402":
         out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
-        return out + "; to change the target send F followed by newtons" + (f", within {window} for the {name}." if window else ".")
-    zero = "jaw faces touching" if (grip.get("motion") or {}).get("kind") == "revolute" else "the calibrated contact position"
-    return (f"This gripper has no force sensors: G closes it towards gripper = 0 ({zero}) and holds it there; Morph's "
-            f"grip target for the {name} is {t:g} N per finger" + (f" (window {window})." if window else "."))
+        return out + "; to change the target send F followed by newtons" + within
+    revolute = (grip.get("motion") or {}).get("kind") == "revolute"
+    zero = "jaw faces touching" if revolute else "the calibrated contact position"
+    tl = grip.get("torque_limit")
+    if not tl:
+        return (f"This gripper has no force sensors and its hobby servo no torque limit: G closes it towards gripper = 0 "
+                f"({zero}) with all the servo's torque. Morph's grip target for the {name} is {t:g} N per finger"
+                + (f" (window: {window})." if window else "."))
+    where = (f"with the object {grip.get('lever_mm', 0):g} mm from the jaw's pivot (more nearer the pivot, less towards the tip)"
+             if revolute else f"through its {grip.get('lever_mm', 0):g} mm pinion")
+    return (f"This gripper has no force sensors: G closes it towards gripper = 0 ({zero}) and the gripper servo's torque limit, "
+            f"{tl['fraction'] * 100:.0f} % of its stall torque, sets the squeeze: {t:g} N per finger {where}. Check it once with "
+            f"a kitchen scale between the jaws; to change it send F followed by newtons" + within)
 
 
 # ================================================================== illustrations

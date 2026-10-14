@@ -178,7 +178,7 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
         warnings.append(f"mechanism was sized for {mech['servo']}, electronics chose {servo}")
     return {
         "open_deg": mech["servo_open_deg"] if mech else 20, "closed_deg": mech["servo_closed_deg"] if mech else 160,
-        "mcu": mcu_key, "servo": servo, "sensor": sensor or "none",
+        "mcu": mcu_key, "servo": servo, "sensor": sensor or "none", "jaw": "rack", "lever_mm": e.pinion_radius_mm,
         "hold_force_n": round(hold, 3), "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
         "target_force_n": round(target, 2), "hold_calibration": calibration, "servo_stall_force_n": round(f_stall, 1),
         "limit_n": round(min(o.max_force_n / 1.2 if o.max_force_n > 0 else 1e9,

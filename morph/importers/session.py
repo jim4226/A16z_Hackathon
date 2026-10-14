@@ -631,7 +631,7 @@ class Session:
         emit("commit", "done", f"Saved the robot as {source}")
         reach = float((c.get("ready") or {}).get("reach_mm") or 400.0)
         clamp = lambda v, lo, hi: float(min(max(round(v / 5.0) * 5.0, lo), hi))  # noqa: E731
-        changes = {"arm.source": source, "arm.actuator_family": c.get("family") or "smart_bus",
+        changes = {"arm.source": source, "arm.actuator_family": c.get("family") or "smart_bus", "finger.sensor": "none",
                    "task.pick_x_mm": clamp(0.46 * reach, 80, 400), "task.pick_y_mm": clamp(-0.17 * reach, -300, 300),
                    "task.place_x_mm": clamp(0.33 * reach, 80, 400), "task.place_y_mm": clamp(0.36 * reach, -300, 300)}
         return {"kind": "robot", "source": source, "title": title, "folder": os.path.relpath(folder, self.home),

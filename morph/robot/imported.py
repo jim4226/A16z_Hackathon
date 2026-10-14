@@ -228,23 +228,36 @@ def gripper_summary(design, sizing) -> dict:
     plan, the firmware, the simulation and the manual all use these numbers). The window comes from the object, with the
     same closed form the simulation uses for flat stock jaws: it slips below 1.5 x m g / (2 mu) and is damaged above its
     damage force / 1.5. The target is the Grip force target when one is set, else the window's own (at least 0.5 N), and
-    never more than 80 % of what the gripper servo squeezes at the jaw; the firmware's F command stops at limit_n."""
+    never more than 80 % of what the gripper servo squeezes at the jaw on its servo rail; the firmware's F command stops
+    at limit_n.
+    Stock jaws carry no force sensors (Morph makes no pads or mounts for them): the firmware squeezes with the gripper
+    servo's torque limit, set for the target at lever_mm from the jaw's pivot, and a hobby servo, which has none, is an
+    issue for an object it can damage."""
     from .. import electronics as grip_electronics
-    from ..design import FSR
 
     key = sizing["gripper"]["actuator"]
+    prof = load_profile(design.arm.source)[0]
+    lever = float(prof.get("jaw_lever_mm") or JAW_LEVER_MM)
     o = design.object
-    stall = catalog.ACTUATORS[key]["torque_nm"] / (JAW_LEVER_MM / 1000.0)
-    sensor = design.finger.sensor if design.finger.sensor in FSR else None
+    rail_v = (sizing.get("servo_rail") or {}).get("v")
+    stall = (catalog.torque_at(key, rail_v) if rail_v else catalog.ACTUATORS[key]["torque_nm"]) / (lever / 1000.0)
     hold = o.mass_g / 1000.0 * float(-G[2]) / (2.0 * max(o.friction, 0.05))
-    lo, hi, target = grip_electronics.force_window(o, hold, sensor, design.electronics.target_force_n, floor=0.5)
+    lo, hi, target = grip_electronics.force_window(o, hold, None, design.electronics.target_force_n, floor=0.5)
     target = min(target, 0.8 * stall, max(design.gripper.force_n, 0.5))
-    limit = min(o.max_force_n / 1.2 if o.max_force_n > 0 else stall, FSR[sensor]["max_n"] * 0.95 if sensor else stall, stall)
-    return {"actuator": key, "type": "revolute_jaw", "jaw_length_mm": JAW_LEVER_MM,
+    limit = min(o.max_force_n / 1.2 if o.max_force_n > 0 else stall, stall)
+    issues, warnings = [], []
+    if design.finger.sensor != "none":
+        warnings.append("This robot keeps its stock jaws, which have no place for force sensors, so none are fitted "
+                        "(finger.sensor is ignored): the gripper squeezes with its servo's torque limit")
+    if catalog.protocol(key) == "pwm" and 0 < o.max_force_n < stall:
+        issues.append(f"gripper: the {key} can squeeze the {o.name or 'object'} with up to {stall:.0f} N, above the "
+                      f"{o.max_force_n:g} N that damages it, and a hobby PWM servo has no torque limit to stop it (the stock "
+                      "jaws carry no force sensor): use a smart-bus or Dynamixel gripper servo")
+    return {"actuator": key, "type": "revolute_jaw", "jaw_length_mm": lever,
             "force": {"servo_stall_force_n": round(stall, 1), "hold_force_n": round(hold, 3),
                       "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
                       "target_force_n": round(target, 2), "limit_n": round(limit, 2), "object_limit_n": o.max_force_n or None,
-                      "sensor": sensor or "none", "issues": [], "warnings": []}}
+                      "sensor": "none", "jaw": "revolute", "lever_mm": lever, "issues": issues, "warnings": warnings}}
 
 
 def _place(asm, comp, prefix, link, T, step, kind=None, explode=(0, 0, 25)):

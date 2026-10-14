@@ -160,10 +160,11 @@ def check_design(design: Design):
 
 
 def template(name: str, source: str = "") -> Design:
-    """The default egg-picking arm, on an imported robot's body when `source` names one (so101)."""
+    """The default egg-picking arm, on an imported robot's body when `source` names one (so101): that robot keeps its
+    stock jaws, which carry no force sensors."""
     if source:
         _check_source(source)
-    return Design().with_changes({**EGG_ROBOT, "name": name, "arm.source": source})
+    return Design().with_changes({**EGG_ROBOT, "name": name, "arm.source": source, **({"finger.sensor": "none"} if source else {})})
 
 
 def create(home: str, name=None, *, source: str = "", design=None, need: str | None = None, origin: str = "default",

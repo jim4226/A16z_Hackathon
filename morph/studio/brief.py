@@ -1131,8 +1131,8 @@ def brief_to_changes(b: Brief) -> dict:
     ch["build.config"] = "production" if q >= 500 else "pilot" if q >= 50 else "prototype"
     if q >= 500:
         ch["electronics.config"] = "custom_pcb"
-    if value(b, "existing_hardware") == "so101":
-        ch.update({"arm.source": "so101", "electronics.servo": "sts3215"})
+    if value(b, "existing_hardware") == "so101":   # its stock jaws carry no force sensors (the servo's torque limit grips)
+        ch.update({"arm.source": "so101", "electronics.servo": "sts3215", "finger.sensor": "none"})
     for k, v in b.hints.items():
         if k == "electronics.extras+":
             extras |= {e for e in v.split(",") if e}
@@ -1284,7 +1284,7 @@ def repair(changes: dict, b: Brief, *, max_steps: int = 8, deep: bool = True) ->
         if not pre["issues"]:
             break
         kinds, changed = classify(pre["issues"]), False
-        if "too_small" in kinds and ch.get("finger.sensor") != "fsr402":
+        if "too_small" in kinds and ch.get("finger.sensor") != "fsr402" and not ch.get("arm.source"):
             ch.update({"finger.sensor": "fsr402", "finger.width_mm": 20.0, "fab.process": "fdm_print", "finger.material": "PETG"})
             notes.append({"kind": "repair", "slot": "object", "text": "The object is narrower than plain fingers close on, so I used the "
                           "FSR 402 force-sensing finger: its thicker pad stack lets the gripper close on it."})
@@ -1324,7 +1324,7 @@ def repair(changes: dict, b: Brief, *, max_steps: int = 8, deep: bool = True) ->
             ch["finger.thickness_mm"] = round(min(14.0, ch.get("finger.thickness_mm", 6.0) + 1.5), 1)
             changed = True
         if "grip" in kinds:
-            if ch.get("finger.sensor") != "fsr402" and ch.get("object.max_force_n", 0) > 0:
+            if ch.get("finger.sensor") != "fsr402" and ch.get("object.max_force_n", 0) > 0 and not ch.get("arm.source"):
                 ch.update({"finger.sensor": "fsr402", "finger.width_mm": 20.0, "fab.process": "fdm_print", "finger.material": "PETG"})
                 notes.append({"kind": "repair", "slot": "fragility", "text": "No grip force was both firm enough and gentle enough "
                               "without feedback, so I added the FSR 402 force sensor: the firmware stops squeezing at the target."})

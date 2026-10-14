@@ -3366,9 +3366,15 @@ def build(design, sizing: dict | None = None, electronics_plan: dict | None = No
 
 
 def grip_meta(eplan: dict | None) -> dict:
-    """The grip the firmware ships, for the simulation to grip with (simulate reads asm.meta["grip_target_n"])."""
+    """The grip the firmware ships, for the simulation to grip with: its target (asm.meta["grip_target_n"]) and, for a
+    hinged jaw without force sensors, the torque limit that squeezes it (asm.meta["grip_torque_nm"]): the squeeze then
+    depends on where the object sits on the jaw, in the simulation as on the bench."""
     g = (eplan or {}).get("grip") or {}
-    return {"grip_target_n": g["target_n"]} if g.get("target_n") else {}
+    out = {"grip_target_n": g["target_n"]} if g.get("target_n") else {}
+    tl = g.get("torque_limit")
+    if tl and g.get("sensor") != "fsr402" and g.get("jaw") == "revolute":
+        out["grip_torque_nm"] = tl["nm"]
+    return out
 
 
 # ================================================================== preview helpers

@@ -15,6 +15,7 @@ class Dynamixel2Arduino {   // ROBOTIS Dynamixel2Arduino public API subset
   bool torqueOff(uint8_t id);
   bool setOperatingMode(uint8_t id, uint8_t mode);
   bool setGoalPosition(uint8_t id, float value, uint8_t unit = UNIT_RAW);
+  bool setGoalPWM(uint8_t id, float value, uint8_t unit = UNIT_RAW);
   float getPresentPosition(uint8_t id, uint8_t unit = UNIT_RAW);
   bool writeControlTableItem(uint8_t item_idx, uint8_t id, int32_t data, uint32_t timeout = 100);
 };
