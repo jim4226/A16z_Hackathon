@@ -11,11 +11,18 @@ may start, and what a Studio start and a key save do for the runs that wait (REL
     POST /api/runs/decide             editor  {run, decisions: {tool_use_id: allow_once | allow_always | skip | deny}}:
                                               editors may skip; only the owner allows or denies
     POST /api/runs/resume|cancel      editor  {run}
+    POST /api/tools/draft             owner   {need, docs_url, why?, run?, tool_use_id?}: Claude drafts a read-only tool
+                                              (Morph writes a tool, preview: toolbox/draft.py), in the background
+    GET  /api/tools/drafts            viewer  ?id= one draft, else the project's (?status=, ?limit=), plus `can`
+    POST /api/tools/drafts/approve    owner   {draft, sha256}: install exactly the reviewed spec
+    POST /api/tools/drafts/discard    owner   {draft}
+    GET  /api/tools/suggest           editor  ?need=: services Darwin's public search knows (suggestions only)
 
 Events go to the run's room (every tab when a run has no project): run_started, credential_needed, tool_request,
-tool_used, run_paused, run_resumed, run_done, run_failed; they never carry a key, a tool's answer or message text. A
-Studio start turns runs it left working into interrupted pauses; POST /api/keys (server.py) resumes the runs that waited
-for a key it saved. While "agent tools" are off (Keys, Privacy and network) no run starts or continues.
+tool_used, run_paused, run_resumed, run_done, run_failed, and tool_draft for a draft's status; they never carry a key, a
+tool's answer or message text. A Studio start turns runs it left working into interrupted pauses; POST /api/keys
+(server.py) resumes the runs that waited for a key it saved. While "agent tools" are off (Keys, Privacy and network) no
+run starts or continues and no tool is drafted.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ import traceback
 
 from .routes import HTTPError, route
 from .toolbox import Toolbox, ToolboxError
+from .toolbox.draft import DRAFT_ID, STATUSES as DRAFT_STATUSES
 from .toolbox.runs import ENDED, RUN_ID
 
 STATUSES = ("running", "paused", "done", "failed", "refused", "cancelled")
@@ -93,12 +101,13 @@ def ready() -> dict:
 
 
 def can(req) -> dict:
-    """What this member may do with runs, keys and tools (a Studio without Teams has one person: everything)."""
+    """What this member may do with runs, keys and tools (a Studio without Teams has one person: everything). `draft`:
+    draft, approve or discard a new tool (Morph writes a tool, preview)."""
     if not req.studio.team:
-        return {"start": True, "skip": True, "allow": True, "keys": True, "tools": True}
+        return {"start": True, "skip": True, "allow": True, "keys": True, "tools": True, "draft": True}
     role = (req.member or {}).get("role")
     owner, editor = role == "owner", role in ("owner", "editor")
-    return {"start": editor, "skip": editor, "allow": owner, "keys": owner, "tools": owner}
+    return {"start": editor, "skip": editor, "allow": owner, "keys": owner, "tools": owner, "draft": owner}
 
 
 def keys_saved(req, changed) -> list:
@@ -165,9 +174,8 @@ def _refused(exc: ToolboxError):
     return HTTPError(exc.status, str(exc))
 
 
-def _off():
-    return HTTPError(409, 'Agent tools are off (Keys, Privacy and network: "Let agents use tools"). Turn them on to run '
-                          "Live prices or continue a run.")
+def _off(what: str = "run Live prices or continue a run"):
+    return HTTPError(409, f'Agent tools are off (Keys, Privacy and network: "Let agents use tools"). Turn them on to {what}.')
 
 
 # ------------------------------------------------------------------ tools
@@ -284,6 +292,92 @@ def _runs_cancel(req):
     except ToolboxError as exc:
         raise _refused(exc) from None
     return 200, {"ok": True, "run": view, "ended": view["status"] in ENDED}
+
+
+# ------------------------------------------------------------------ Morph writes a tool (preview)
+def _draft_id(req) -> str:
+    draft_id = (req.body or {}).get("draft") if req.method == "POST" else req.arg("id")
+    if not isinstance(draft_id, str) or not DRAFT_ID.fullmatch(draft_id):
+        raise HTTPError(400, 'Send {"draft": "draft_<16 hex digits>"}.')
+    return draft_id
+
+
+@route("POST", "/api/tools/draft", role="owner")
+def _tools_draft(req):
+    """{need, docs_url, why?, run?, tool_use_id?}: Claude drafts a read-only tool from the documentation, in the
+    background (202; 200 with the same draft still drafting). 400 bad input, 409 agent tools off, 429 two drafting
+    already, 503 no Claude."""
+    body = req.body or {}
+    if not tools_on():
+        raise _off("draft a tool")
+    try:
+        view, already = toolbox(req.studio).drafts.start(
+            need=body.get("need"), docs_url=body.get("docs_url"), why=body.get("why") or "", project=req.room.name,
+            by=_by(req), run=body.get("run"), tool_use_id=body.get("tool_use_id"))
+    except ToolboxError as exc:
+        raise _refused(exc) from None
+    if not already:
+        _team_audit(req, "tool_draft_started", draft=view["id"], docs_host=view["docs_host"])
+    return (200 if already else 202), {"ok": True, "draft": view, "already": already}
+
+
+@route("GET", "/api/tools/drafts", role="viewer")
+def _tools_drafts(req):
+    """?id= one draft; else this project's drafts, newest first (?status=, ?limit= 1-50)."""
+    drafts = toolbox(req.studio).drafts
+    extra = {"can": can(req), "ready": ready()}
+    if req.arg("id") is not None:
+        try:
+            return 200, {"draft": drafts.get(_draft_id(req)), **extra}
+        except ToolboxError as exc:
+            raise _refused(exc) from None
+    status = req.arg("status")
+    if status is not None and status not in DRAFT_STATUSES:
+        raise HTTPError(400, f"status is one of {', '.join(DRAFT_STATUSES)}.")
+    try:
+        limit = max(1, min(50, int(req.arg("limit") or 20)))
+    except ValueError:
+        raise HTTPError(400, "limit is a number from 1 to 50.") from None
+    return 200, {"drafts": drafts.list(project=req.room.name, status=status, limit=limit), **extra}
+
+
+@route("POST", "/api/tools/drafts/approve", role="owner")
+def _tools_drafts_approve(req):
+    """{draft, sha256}: install the reviewed spec, bound to that hash; its tools are on for the next run."""
+    draft_id, sha = _draft_id(req), (req.body or {}).get("sha256")
+    try:
+        view = toolbox(req.studio).drafts.approve(draft_id, sha, by=_by(req))
+    except ToolboxError as exc:
+        raise _refused(exc) from None
+    spec = view.get("spec") or {}
+    _team_audit(req, "tool_draft_approved", draft=draft_id, provider=spec.get("id"), sha256=view.get("sha256"),
+                tools=[t["name"] for t in spec.get("tools") or []], hosts=spec.get("hosts"))
+    return 200, {"ok": True, "draft": view}
+
+
+@route("POST", "/api/tools/drafts/discard", role="owner")
+def _tools_drafts_discard(req):
+    draft_id = _draft_id(req)
+    try:
+        view = toolbox(req.studio).drafts.discard(draft_id, by=_by(req))
+    except ToolboxError as exc:
+        raise _refused(exc) from None
+    _team_audit(req, "tool_draft_discarded", draft=draft_id)
+    return 200, {"ok": True, "draft": view}
+
+
+@route("GET", "/api/tools/suggest", role="editor")
+def _tools_suggest(req):
+    """?need=: services Darwin's public search knows that might cover a need no tool covers, with their websites;
+    suggestions only (Morph never connects to them, signs in or pays). Saved answers only while Darwin lookups are off."""
+    from .. import darwin
+    from .security import looks_like_secret
+    need = re.sub(r"\s+", " ", req.arg("need") or "").strip()
+    if not 3 <= len(need) <= 300:
+        raise HTTPError(400, "need: 3 to 300 characters.")
+    if looks_like_secret(need):
+        raise HTTPError(400, "That looks like it holds a key: keys go in Keys only.")
+    return 200, darwin.suggest(need)
 
 
 # ------------------------------------------------------------------ the agents a person may start

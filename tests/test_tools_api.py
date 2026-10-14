@@ -258,9 +258,9 @@ def test_every_tools_route_has_its_minimum_role_in_the_team_table():
 
 def test_the_role_matrix_over_http_on_a_team_studio(world):
     w = world(search_and_call(OFFERS), final("ok"), search_and_call(CATS), final("ok"), team=True)
-    for who, can in (("Jim", {"start": True, "skip": True, "allow": True, "keys": True, "tools": True}),
-                     ("Ana", {"start": True, "skip": True, "allow": False, "keys": False, "tools": False}),
-                     ("Vic", {"start": False, "skip": False, "allow": False, "keys": False, "tools": False})):
+    for who, can in (("Jim", {"start": True, "skip": True, "allow": True, "keys": True, "tools": True, "draft": True}),
+                     ("Ana", {"start": True, "skip": True, "allow": False, "keys": False, "tools": False, "draft": False}),
+                     ("Vic", {"start": False, "skip": False, "allow": False, "keys": False, "tools": False, "draft": False})):
         s, out = w.call("GET", "/api/runs", who=who)
         assert s == 200 and out["can"] == can, who
         assert w.call("GET", "/api/tools", who=who)[0] == 200

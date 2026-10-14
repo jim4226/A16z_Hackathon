@@ -66,6 +66,9 @@ ROUTES = {
     ("GET", "/api/tools"): "viewer", ("POST", "/api/tools/enable"): "owner", ("POST", "/api/tools/disable"): "owner",
     ("GET", "/api/runs"): "viewer", ("GET", "/api/runs/answer"): "viewer", ("POST", "/api/runs/start"): "editor",
     ("POST", "/api/runs/decide"): "editor", ("POST", "/api/runs/resume"): "editor", ("POST", "/api/runs/cancel"): "editor",
+    # Morph writes a tool (preview, api_tools): only the owner drafts, approves or discards; Darwin's suggestions for editors
+    ("POST", "/api/tools/draft"): "owner", ("GET", "/api/tools/drafts"): "viewer", ("POST", "/api/tools/drafts/approve"): "owner",
+    ("POST", "/api/tools/drafts/discard"): "owner", ("GET", "/api/tools/suggest"): "editor",
 }
 
 
