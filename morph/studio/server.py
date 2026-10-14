@@ -1417,7 +1417,7 @@ def _api_export(req):
 def _keys_state(studio: Studio) -> dict:
     from .. import keys, settings
     return {"keys": keys.status(home=studio.home), "integrations": integrations(), "settings": settings.load(),
-            "file": os.path.basename(keys.ENV_PATH), "compute": compute_info(studio.remote)}
+            "file": os.path.basename(keys.ENV_PATH), "env": keys.env_file(), "compute": compute_info(studio.remote)}
 
 
 @route("GET", "/api/keys", role="owner")

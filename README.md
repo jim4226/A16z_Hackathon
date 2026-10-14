@@ -59,7 +59,7 @@ each one, so a mistyped key shows up at once.
 
 | Key | What it adds | Where to get it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Free-form chat requests, Claude reading a **New robot** request, the frame analysis in **Show Morph the job** and World mode's AI review (without it, the suggestion chips, common phrasings and built-in rules work, and you fill in the video cards yourself) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| `ANTHROPIC_API_KEY` | Free-form chat requests, Claude reading a **New robot** request, the frame analysis in **Show Morph the job**, World mode's AI review, **Live prices** (beta) and drafting a tool (preview) (without it, the suggestion chips, common phrasings and built-in rules work, and you fill in the video cards yourself) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 | `SUBQ_API_KEY` | SubQ Snap: quick yes/no and multiple-choice decisions, shown as "SubQ Snap (AI)" ([SubQ Snap](#subq-snap-optional)) | [console.subq.ai](https://console.subq.ai) |
 | `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: revisions and measurements logged once event sending is on, and an optional grip-force calibration from that history (seeded demo data unless your project holds real bench results) | Keewano settings ([docs/SPONSORS.md](docs/SPONSORS.md)) |
 | Darwin | Nothing to add: Darwin Search is public | |

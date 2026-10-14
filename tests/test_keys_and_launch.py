@@ -169,6 +169,49 @@ def test_keys_from_the_studio_dialog(studio_server, env, monkeypatch):
     assert code == 200 and json.loads(body)["checks"]["Claude"]["detail"] == "checked ['Claude']"
 
 
+def test_the_keys_dialog_names_every_claude_feature_and_where_keys_are_saved(tmp_path, env, monkeypatch):
+    """The Claude section lists everything the Anthropic key powers, and the header names the folder .env is in on
+    every system: the Morph folder in a checkout (not "next to run_studio.bat", which macOS and Linux don't use), the
+    settings folder's path for an installed wheel."""
+    pw = pytest.importorskip("playwright.sync_api")
+    from morph import resources
+    chrome = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    claude = next(k for k in keys.KEYS if k["name"] == "ANTHROPIC_API_KEY")["what"]
+    features = ("free-form chat", "New robot", "Show Morph the job", "AI review", "Live prices", "New tool")
+    assert all(f in claude for f in features), claude
+    assert keys.env_file() == {"file": ".env", "folder": str(tmp_path), "git_ignored": False}     # a wheel's settings folder
+    with monkeypatch.context() as m:
+        m.setattr(resources, "checkout", lambda: str(tmp_path))                                  # a clone or release zip
+        in_checkout = keys.env_file()
+    assert in_checkout == {"file": ".env", "folder": "the Morph folder", "git_ignored": True}
+    call, port, httpd = _start(tmp_path)
+    with pw.sync_playwright() as p:
+        try:  # no WebGL: a software-rendered 3D view would keep a busy machine's page from answering clicks
+            browser = p.chromium.launch(executable_path=chrome if os.path.exists(chrome) else None,
+                                        args=["--no-sandbox", "--disable-webgl", "--disable-3d-apis"])
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"no Chromium for Playwright ({exc.__class__.__name__})")
+        try:
+            for env, folder in ((None, str(tmp_path)), (in_checkout, "the Morph folder (git-ignored)")):
+                if env:
+                    monkeypatch.setattr(keys, "env_file", lambda: env)
+                pg = browser.new_page(viewport={"width": 1280, "height": 720})
+                pg.goto(f"http://127.0.0.1:{port}/?tour=0", wait_until="domcontentloaded")
+                pg.wait_for_function("() => window.morph && window.morph.state.loaded === true", timeout=60000)
+                pg.click("#keysBtn")
+                pg.wait_for_selector("#keysDlg.on .ksec", timeout=60000)
+                head = pg.inner_text("#keysDlg .dlg-h .s")
+                assert f"in the .env file in {folder}" in head and "run_studio" not in head, head
+                note = pg.evaluate("[...document.querySelectorAll('#keysDlg .ksec')].find((s) => s.querySelector('.ks-h b')"
+                                   "?.textContent === 'Claude').innerText")
+                assert all(f in note for f in features), note
+                pg.close()
+        finally:
+            browser.close()
+            httpd.shutdown()
+            httpd.server_close()
+
+
 def _free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

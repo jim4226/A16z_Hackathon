@@ -123,6 +123,11 @@ class Request:
   `POST /api/project` (it only checks a name); **editor**: `POST /api/chat`, `/api/params`, `/api/jobs/cancel`,
   `/api/jobs/resolve`, `/api/source`, `/api/projects`, `/api/projects/fork`; **owner**: `DELETE /api/projects`,
   `POST /api/reset`, `GET`/`POST /api/keys`, `POST /api/keys/check`, `POST /api/settings`.
+- `GET /api/keys` → `{keys, integrations, settings, file, env, compute}`; `env` = `keys.env_file()`: `{file, folder,
+  git_ignored}`, where `folder` is "the Morph folder" in a clone or release zip (both launchers' folder, on every
+  system) and the settings folder's path for an installed wheel. The Keys dialog names it, never a launcher; its
+  Claude section lists everything the Anthropic key powers (free-form chat, New robot, Show Morph the job, World's AI
+  review, Live prices, New tool).
 
 | Area | Routes |
 |---|---|
