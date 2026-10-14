@@ -407,8 +407,10 @@ def _object_surface(design, spacing=1.0, offset=0.0) -> np.ndarray:
 
 
 def _grip_force_target(asm, design, override=None, generated_fingers=True) -> float:
-    """Per-finger clamp force the firmware regulates to (N). ``generated_fingers`` = Morph's own pads (contour
-    / V wedge gain and the FSR range apply); False for a stock gripper (flat jaws)."""
+    """Per-finger clamp force the firmware regulates to (N): the one it ships (asm.meta["grip_target_n"], which the robot
+    builders copy from the electronics plan, itself the gripper stage's force plan), else the Grip force target, else
+    that force plan's closed form (morph.electronics.force_window). ``generated_fingers`` = Morph's own pads (contour /
+    V wedge gain and the FSR range apply); False for a stock gripper (flat jaws)."""
     o, f = design.object, design.finger
     cap = max(design.gripper.force_n, 0.5)
     for key in ("grip_target_n", "grip_force_n"):
@@ -418,7 +420,6 @@ def _grip_force_target(asm, design, override=None, generated_fingers=True) -> fl
         return float(min(override, cap))
     if design.electronics.target_force_n > 0:
         return float(min(design.electronics.target_force_n, cap))
-    # same closed form as morph.analysis / morph.electronics: hold x 1.5, below the crush limit
     gain = 1.0
     if generated_fingers:
         try:
@@ -428,13 +429,11 @@ def _grip_force_target(asm, design, override=None, generated_fingers=True) -> fl
             gain = wedge_gain(f.pad, build_profile(design).contact_half_angle_deg)
         except Exception:  # noqa: BLE001
             gain = 1.0
+    from ..electronics import force_window
+
     hold = o.mass_g / 1000.0 * G / (2.0 * max(o.friction, 0.05) * gain)
-    lo = 1.5 * hold
-    hi = o.max_force_n / 1.5 if o.max_force_n > 0 else float("inf")
-    if f.sensor == "fsr402" and generated_fingers:
-        hi = min(hi, 16.0)
-    target = min(math.sqrt(lo * hi), 2.0 * lo) if hi != float("inf") else 1.3 * lo
-    return float(min(max(target, 0.5), cap))
+    target = force_window(o, hold, "fsr402" if f.sensor == "fsr402" and generated_fingers else None, floor=0.5)[2]
+    return float(min(target, cap))
 
 
 def _effort(asm, j) -> float:
@@ -1622,6 +1621,8 @@ def _perturbed(rob, p):
     try:
         g, (shape, R, L) = rob.obj_geom, _object_dims(rob.design)
         s = p.get("size_scale")
+        if s == 1.0:   # nominal: the formulas below don't give the compiled bounds bit for bit, so leave them alone
+            s = None
         if s is not None:
             Ra, La = R * s, L * s
             if shape == "cylinder":

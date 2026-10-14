@@ -112,6 +112,28 @@ def gripper_actuator(design: Design) -> str:
     return sized(design)
 
 
+def gripper_stage(design: Design, sizing: dict | None = None, n_trials: int = 4, simulate: bool = True) -> dict:
+    """The gripper stage's result (results.json "gripper"). Its "force" plan is the grip's one source of truth: the
+    electronics plan, the firmware, the simulation and the manual take its window, target and limit. An imported robot
+    keeps its stock jaw (imported.gripper_summary, from `sizing` when given); a generated arm's gripper is analysed, its
+    grasp simulated (simulate=False: the closed-form holding force instead, as the force plan's own fallback) and its force
+    planned with the gripper actuator at that actuator's rated voltage."""
+    if design.arm.source:
+        from . import imported
+        return imported.gripper_summary(design, sizing if (sizing or {}).get("gripper") else imported.size(design))
+    from .catalog import ACTUATORS
+
+    ga = gripper_actuator(design)
+    gd = design.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"]})
+    geom = build_profile(gd)
+    a = grip_analysis.analyze(gd, geom)
+    s = grip_sim.simulate(gd, geom, n_trials) if simulate else None
+    out = {"actuator": ga, "analysis": a, "force": grip_electronics.plan(gd, a, s)}
+    if s is not None:
+        out["sim"] = {k: v for k, v in s.items() if k != "trials"}
+    return out
+
+
 # The morph/*.py modules the robot pipeline computes with (its import graph, without keewano.py and settings.py:
 # Keewano's calibration is opt-in data, and features append event ids there). Every morph/robot/*.py is hashed too.
 PIPELINE_MODULES = ("spec", "design", "analysis", "electronics", "sim", "mechanism", "fab", "materials", "pipeline")
@@ -399,24 +421,11 @@ class RobotProject(Project):
                     res["sizing"] = arm_stub.size(design)
                     res.setdefault("errors", {})["sizing"] = f"detailed sizing failed ({exc.__class__.__name__}: {exc}); " \
                                                              "the basic estimate is a preview only"
-        elif node == "gripper" and design.arm.source:
-            from . import imported
-            res["gripper"] = imported.gripper_summary(design, imported.size(design))
         elif node == "gripper":
-            from .catalog import ACTUATORS
-
-            ga = gripper_actuator(design)
-            gd = design.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"]})
-            geom = build_profile(gd)
-            a = grip_analysis.analyze(gd, geom)
-            s = grip_sim.simulate(gd, geom, n_trials)
-            res["gripper"] = {"actuator": ga, "analysis": a, "sim": {k: v for k, v in s.items() if k != "trials"},
-                              "force": grip_electronics.plan(gd, a, s)}
+            res["gripper"] = gripper_stage(design, res.get("sizing"), n_trials)
         elif node == "electronics":
             e2 = _mod("electronics2")
-            grip_t = ((res.get("gripper") or {}).get("force") or {}).get("target_force_n")
-            sz = {**res["sizing"], **({"grip_target_n": grip_t} if grip_t else {})}
-            res["eplan"] = e2.plan(design, sz) if e2 else None
+            res["eplan"] = e2.plan(design, res["sizing"], grip=(res.get("gripper") or {}).get("force")) if e2 else None
             return e2 is not None
         elif node == "cad":
             a = asm()

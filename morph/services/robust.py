@@ -853,8 +853,7 @@ def _assembly(design, res: dict):
     from ..robot import arm, electronics2, imported
 
     sz = imported.size(design) if design.arm.source else arm.size(design)
-    grip = ((res.get("gripper") or {}).get("force") or {}).get("target_force_n")
-    ep = electronics2.plan(design, {**sz, **({"grip_target_n": grip} if grip else {})})
+    ep = electronics2.plan(design, sz, grip=(res.get("gripper") or {}).get("force"))
     return (imported.build if design.arm.source else arm.build)(design, sz, ep)
 
 

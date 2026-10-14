@@ -81,6 +81,21 @@ def nearest_e12(ohms: float) -> float:
     return min((m * decade for m in E12 + [10.0]), key=lambda r: abs(math.log(r / ohms)))
 
 
+def force_window(o, hold: float, sensor: str | None = None, target: float = 0.0, floor: float = 0.0) -> tuple:
+    """(lo, hi, target) per finger, N: the force that holds the object (hold x HOLD_MARGIN), the force that damages it
+    (/ CRUSH_MARGIN; inf for a robust object) capped at 80 % of the force sensor's range, and the target: `target` when
+    one is asked for, else the window's geometric mean but at most twice the lower bound (1.3 x the lower bound for a
+    robust object), raised to `floor` while that stays inside the window. Every grip target Morph ships comes from here."""
+    lo = hold * HOLD_MARGIN
+    hi = (o.max_force_n / CRUSH_MARGIN) if o.max_force_n > 0 else float("inf")
+    if sensor:
+        hi = min(hi, FSR[sensor]["max_n"] * 0.8)
+    if target:
+        return lo, hi, float(target)
+    t = min(math.sqrt(lo * hi), lo * 2.0) if hi != float("inf") else lo * 1.3
+    return lo, hi, max(t, min(floor, hi))
+
+
 def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) -> dict:
     e, o, f = design.electronics, design.object, design.finger
     issues, warnings = [], []
@@ -97,11 +112,7 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
             hold *= calibration["ratio"]
             warnings.append(f"holding force scaled x{calibration['ratio']:.2f} by Keewano calibration from {calibration['n']} "
                             f"logged {f.pad}/{f.material} builds (seeded demo data unless your project has real bench results)")
-    lo = hold * HOLD_MARGIN
-    hi = (o.max_force_n / CRUSH_MARGIN) if o.max_force_n > 0 else float("inf")
-    if sensor:
-        hi = min(hi, FSR[sensor]["max_n"] * 0.8)
-    target = e.target_force_n or (min(math.sqrt(lo * hi), lo * 2.0) if hi != float("inf") else lo * 1.3)
+    lo, hi, target = force_window(o, hold, sensor, e.target_force_n)
     if lo > hi:
         issues.append(f"no safe grip force: holding needs {lo:.2f} N but the limit is {hi:.2f} N; "
                       f"try a contour pad, higher-friction pad, or a different object orientation")

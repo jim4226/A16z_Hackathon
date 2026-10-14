@@ -3186,8 +3186,9 @@ def _steps(b):
          ["Move every joint through its full range by hand (power off) and check no cable is pinched or tight."]),
         ("final", "Covers, calibration and checks", "base",
          "Fit the remaining covers. Power up, " + ("assign servo IDs 1… in chain order, " if not pwm else "") +
-         "drive every joint to zero (arm straight up) and store the offsets, then run the gripper close/open test and the "
-         "force-sensor tare. Finally run the pick-and-place self test with the supplied egg-shaped gauge.",
+         "drive every joint to zero (arm straight up) and store the offsets, then run the gripper close/open test" +
+         (" and calibrate the force sensors" if sens else "") + ". Finally run the pick-and-place self test with the supplied "
+         "egg-shaped gauge.",
          ["Keep the e-stop within reach during the first power-up." if "estop" in b.extras else
           "Keep a hand on the power switch during the first power-up."]),
     ]
@@ -3345,8 +3346,15 @@ def build(design, sizing: dict | None = None, electronics_plan: dict | None = No
         "notes": list(dict.fromkeys(list(sizing.get("notes", [])) + list(L.notes))),
         "warnings": list(b.issues),
         "issues": [],
+        **grip_meta(electronics_plan),
     })
     return a
+
+
+def grip_meta(eplan: dict | None) -> dict:
+    """The grip the firmware ships, for the simulation to grip with (simulate reads asm.meta["grip_target_n"])."""
+    g = (eplan or {}).get("grip") or {}
+    return {"grip_target_n": g["target_n"]} if g.get("target_n") else {}
 
 
 # ================================================================== preview helpers

@@ -340,3 +340,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   the servo stall force it shows used the family's default servo while the CAD hand and the electronics used the
   override. A hobby arm asked for an MG90S gripper servo (not in the robot catalog) gets the MG996R its hand is
   built around in that stage too, instead of a gripper stage that stopped with KeyError 'mg90s'.
+- One grip force per robot, from the gripper stage to the firmware, the simulation and the manual. An imported SO-101
+  shipped firmware that squeezed at a quarter of its servo's force whatever it held (6.82 N for a strawberry that
+  bruises at 3 N, while its own comment gave a 0.49-2.0 N window), ignored the Grip force parameter, and was simulated
+  at another force; its grip now comes from the object (0.5 N for a strawberry, inside 0.25-2.0 N) and the parameter.
+  On generated arms the firmware's window disagreed with the gripper stage's (2.52-16 N against 1.17-16 N for the egg)
+  and the simulation used a third number (2.17 N against the 2.34 N shipped). The manual named a 12.5 N "grip force
+  limit" the firmware has no command for, and asked for a force-sensor curve and tare the firmware doesn't do; it now
+  gives the firmware's target, hard stop and window and its F and Z commands, and leaves the force-sensor steps out of
+  robots without force sensors. A grip target outside its window, or above the hard stop, is an issue.

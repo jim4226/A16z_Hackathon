@@ -1319,3 +1319,18 @@ Fixes of the release review's engineering findings. What other code relies on si
   gripper stage (force plan, grasp simulation, the stall force shown) used the family's default servo while the CAD
   hand and the electronics used the override. `morph.electronics.servo_spec(key)` gives any robot catalog actuator in
   the shape of the gripper-only `SERVOS` table, so the gripper stage runs with an XL330 or a 7.4 V STS3215 too.
+- **One grip force (ENG-1, ENG-7).** The gripper stage's force plan (`results.json` `gripper.force`:
+  `window_n`, `target_force_n`, `limit_n`, `hold_force_n`, `sensor`) is the only place a grip force is decided.
+  `pipeline2.gripper_stage(design, sizing=None, n_trials=4, simulate=True)` computes it: for a generated arm the
+  gripper analysis, grasp simulation and `morph.electronics.plan`; for an imported robot `imported.gripper_summary`,
+  whose stock-jaw window uses the simulation's closed form for flat jaws (it slips below 1.5 x m g / 2 mu, is damaged
+  above `max_force_n` / 1.5; the target is the Grip force target when set, else the window's own with a 0.5 N floor,
+  at most 80 % of the servo's squeeze at `JAW_LEVER_MM`). `morph.electronics.force_window(o, hold, sensor, target,
+  floor)` is that formula; nothing else computes a target. `electronics2.plan(design, sizing, grip=force)` copies the
+  plan into `eplan.grip` (a plan's own grip passes through; without one it runs `gripper_stage(simulate=False)`,
+  keeping a partial plan's or `sizing["grip_target_n"]`'s target) and adds an issue when the target is outside its
+  window or above its hard stop. The robot builders put `eplan.grip.target_n` in `asm.meta["grip_target_n"]`, so the
+  simulation grips with the firmware's target. The firmware comment, the summary and the manual (`manual.json`
+  calibration step: `grip_target_n`, `grip_window_n`, `grip_limit_n`; the text names the firmware's F and Z commands)
+  show the same numbers. The pipeline, `robust._assembly`, Teams' change-request preview and New robot's preflight all
+  pass the force plan; `brief.preflight` returns it as `grip`.

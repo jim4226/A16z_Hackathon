@@ -119,22 +119,43 @@ def awg_ohm_m(g: int) -> float:
     return next(r for gg, _, r in AWG if gg == g)
 
 
-def grip_window(design, sizing: dict | None = None) -> dict:
-    """Grip-force window per finger: hold (slip) bound, damage bound, target and hard limit."""
-    o, e = design.object, design.electronics
-    sensor = design.finger.sensor if design.finger.sensor == "fsr402" else None
-    hold = o.mass_g / 1000.0 * G * design.safety_factor / (2.0 * max(o.friction, 0.05))
-    lo = hold * 1.5
-    hi = o.max_force_n / 1.5 if o.max_force_n > 0 else float("inf")
-    if sensor:
-        hi = min(hi, FSR_MAX_N * 0.8)
-    target = (sizing or {}).get("grip_target_n") or e.target_force_n or (
-        min(math.sqrt(lo * hi), 2.0 * lo) if hi != float("inf") else 1.3 * lo)
-    limit = min(o.max_force_n / 1.2 if o.max_force_n > 0 else 1e9, FSR_MAX_N * 0.95 if sensor else 1e9,
-                max(design.gripper.force_n, target * 1.2))
-    return {"hold_n": round(hold, 2), "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
-            "target_n": round(float(target), 2), "limit_n": round(float(limit), 2), "sensor": sensor or "none",
-            "ok": lo <= hi}
+def grip_window(design, sizing: dict | None = None, grip: dict | None = None) -> dict:
+    """The grip per finger the electronics, firmware and manual use: the slip and damage bounds (window_n), the target and
+    the firmware's hard limit, all from the gripper stage's force plan (`grip`, results.json gripper.force), which the
+    simulation uses too. A plan's own grip (this function's output) passes through. Without either, for callers that
+    plan electronics without a gripper stage, the same force plan without its grasp simulation
+    (pipeline2.gripper_stage(simulate=False)), keeping the target a partial plan or sizing["grip_target_n"] gives."""
+    if grip and "target_n" in grip:
+        return dict(grip)
+    if not grip or not grip.get("window_n") or grip["window_n"][0] is None or grip.get("limit_n") is None:
+        from .pipeline2 import gripper_stage   # a result saved before the stock jaws had a window comes here too
+
+        t = (grip or {}).get("target_force_n") or (sizing or {}).get("grip_target_n")
+        d = design.with_changes({"electronics.target_force_n": float(t)}) if t else design
+        grip = gripper_stage(d, sizing, simulate=False)["force"]
+    lo, hi = grip["window_n"]
+    target = float(grip["target_force_n"])
+    top = hi if hi is not None else float("inf")
+    return {"hold_n": grip.get("hold_force_n"), "window_n": [lo, hi], "target_n": round(target, 2),
+            "limit_n": round(float(grip["limit_n"]), 2), "sensor": grip.get("sensor") or "none", "ok": lo <= top,
+            "object_limit_n": design.object.max_force_n or None}
+
+
+def grip_problems(design, grip: dict) -> list:
+    """Plan issues for a grip the firmware would ship outside its own window or above its hard stop."""
+    lo, hi = grip["window_n"]
+    t, name = grip["target_n"], design.object.name or "object"
+    if not grip["ok"]:
+        return [f"no safe grip force: holding needs {lo} N but the object limit is {hi} N"]
+    if t < lo:
+        return [f"grip target {t:g} N is below the {lo:g} N the {name} needs not to slip (window {lo:g}-"
+                f"{'' if hi is None else f'{hi:g} '}N): set the Grip force target inside the window, or 0 for Morph's"]
+    if hi is not None and t > hi:
+        return [f"grip target {t:g} N is above the {hi:g} N the {name} takes (window {lo:g}-{hi:g} N): set the Grip "
+                "force target inside the window, or 0 for Morph's"]
+    if t > grip["limit_n"]:
+        return [f"grip target {t:g} N is above the firmware's {grip['limit_n']:g} N hard stop"]
+    return []
 
 
 def _family_of(key: str) -> str:
@@ -255,8 +276,8 @@ def _pick_supply(vrange, nom, need_a) -> dict:
     return {"key": "psu_12v", "v": 12.0, "a": 10.0, "servo_buck": True}
 
 
-def power_budget(design, acts: list, config: str, supply: dict, extras: list, ctrl: str) -> dict:
-    grip = grip_window(design)
+def power_budget(design, acts: list, config: str, supply: dict, extras: list, ctrl: str, grip: dict | None = None) -> dict:
+    grip = grip_window(design, None, grip)
     peaks = [_actuator_currents(a, design, grip) for a in acts]
     servo_v = supply.get("servo_v", supply["v"])
     s_peak = sum(p[0] for p in peaks)
@@ -349,7 +370,9 @@ def board_size(design, family: str, n_act: int, extras: list) -> list:
     return [w, h]
 
 
-def plan(design, sizing: dict) -> dict:
+def plan(design, sizing: dict, grip: dict | None = None) -> dict:
+    """The electronics plan for a sized robot. `grip` is the gripper stage's force plan (results.json gripper.force); see
+    grip_window for callers without one."""
     config = design.electronics.config if design.electronics.config in ("modules", "custom_pcb") else "modules"
     family = design.arm.actuator_family if design.arm.actuator_family in FAMILY_BUS else "smart_bus"
     bus, proto, baud = FAMILY_BUS[family]
@@ -371,7 +394,7 @@ def plan(design, sizing: dict) -> dict:
 
     vrange, nom, w = _servo_voltage(acts)
     issues += w
-    grip = grip_window(design, sizing)
+    grip = grip_window(design, sizing, grip)
     rough_peak = sum(_actuator_currents(a, design, grip)[0] for a in acts)
     supply = _pick_supply(vrange, nom, rough_peak)
     servo_v = supply["v"] if not supply["servo_buck"] else min(max(nom, vrange[0]), vrange[1])
@@ -380,7 +403,7 @@ def plan(design, sizing: dict) -> dict:
     if config == "custom_pcb" and supply["servo_buck"]:
         issues.append(f"no catalogued supply sits inside the servos' {vrange[0]:g}-{vrange[1]:g} V range; the custom PCB "
                       "passes its input straight to the servo rail, so use the modules config (12 V + servo buck)")
-    pb = power_budget(design, acts, config, supply, extras, ctrl)
+    pb = power_budget(design, acts, config, supply, extras, ctrl, grip)
     if not pb["supply_ok"]:
         issues.append(f"supply {supply['key']} ({supply['a']:g} A) has {pb['margin']:.2f}x margin over the "
                       f"{pb['input_peak_a']:.1f} A peak: pick a bigger supply or slower motion profiles")
@@ -391,8 +414,7 @@ def plan(design, sizing: dict) -> dict:
         warnings.append(f"{pb['input_peak_a']:.1f} A peak through the PCB power path: order 2 oz copper (JLCPCB option)")
     if config == "modules" and supply["v"] < 7.0 and ctrl != "openrb_150":
         warnings.append("buck_5v from a 6 V input runs near its dropout; verify the regulator's minimum input at 1 A")
-    if not grip["ok"]:
-        issues.append(f"no safe grip force: holding needs {grip['window_n'][0]} N but the object limit is {grip['window_n'][1]} N")
+    issues += grip_problems(design, grip)
 
     # modules: what physically goes in the base bay (arm.build places the non-external ones)
     mods = []
@@ -929,7 +951,7 @@ def build_harness(design, ep: dict, asm, pb: dict) -> tuple[list, list]:
     warns = []
     rows = []
     joints = [j.name for j in asm.joints] if asm is not None else []
-    grip = grip_window(design)
+    grip = ep["grip"]
     cur = {a["id"] if bus != "pwm" else a["channel"]: _actuator_currents(a, design, grip) for a in acts}
     servo_v = ep["supply"]["servo_v"]
     conn = BUS_CONNECTOR[proto]
@@ -1086,18 +1108,34 @@ FW_PROTOCOL = """//   J q1 .. qN       joint targets in radians (order below), c
 //   M i q            move joint i (0..N-1) to q radians
 //   V s              speed scale 0.05 .. 1.0
 //   W {grip_unit:<13}gripper target in {grip_unit} ({grip_origin})
-//   G                grip: close until the fingertip force reaches the target, then hold it
+//   G                {grip_g}
 //   O                open the gripper
-//   F n              grip force target in newtons (capped at GRIP_LIMIT_N)
+//   F n              {grip_f}
 //   H | R            move to the home | ready pose
 //   E | C            software e-stop (torque off) | clear the e-stop
 //   S1 | S0          start | stop 20 Hz telemetry: T,ms,state,q1..qN,grip_{grip_unit},force_n
 //   Q                print one status line
-//   Z grams          calibrate the force sensors with a known mass resting on one pad"""
+//   Z grams          {grip_z}"""
+
+
+def _grip_commands(fsr: bool) -> dict:
+    """What G, F and Z do in this firmware, for its header."""
+    if fsr:
+        return {"grip_g": "grip: close until the fingertip force reaches the target, then hold it",
+                "grip_f": "grip force target in newtons (capped at GRIP_LIMIT_N)",
+                "grip_z": "calibrate the force sensors with a known mass resting on the left pad"}
+    return {"grip_g": "grip: close to GRIP_CLOSED and hold there (no force sensors are fitted)",
+            "grip_f": "grip force target in newtons (kept for status; without force sensors nothing regulates it)",
+            "grip_z": "calibrate force sensors (none are fitted: replies with the unchanged factor)"}
 
 
 def _c(v, nd=4):
     return f"{v:.{nd}f}f"
+
+
+def _window_text(grip: dict) -> str:
+    lo, hi = grip["window_n"]
+    return f"window {lo:g} - {hi:g} N" if hi is not None else f"at least {lo:g} N (no damage force)"
 
 
 def grip_motion(design, ep: dict, asm) -> dict:
@@ -1193,7 +1231,7 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
            "// Do not edit by hand: change the design in Morph Studio and regenerate.",
            "//", "// Serial protocol (USB, 115200 baud, one command per line):",
            FW_PROTOCOL.format(grip_unit=gu, grip_origin="0 = the jaw's calibrated zero" if motion["kind"] == "revolute"
-                              else "0 = jaws touching the object"), ""]
+                              else "0 = jaws touching the object", **_grip_commands(fsr)), ""]
     L = hdr
     L.append("#include <Arduino.h>")
     if proto == "pca9685_pwm":
@@ -1263,7 +1301,7 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
           f"const float GRIP_OPEN_SPEED = {_c(motion['open_speed'], 6)};   // {gu}/s",
           f"const float GRIP_BACKOFF    = {_c(motion['backoff'], 6)};   // {gu}: step back when the force limit trips",
           f"const float GRIP_FORCE_GAIN = {_c(motion['force_gain'], 6)};   // force loop gain, {gu} per N*s",
-          f"float GRIP_TARGET_N         = {_c(grip['target_n'], 2)};   // window {grip['window_n'][0]} - {grip['window_n'][1]} N for the {design.object.name}",
+          f"float GRIP_TARGET_N         = {_c(grip['target_n'], 2)};   // {_window_text(grip)} for the {design.object.name}",
           f"const float GRIP_LIMIT_N    = {_c(grip['limit_n'], 2)};   // hard stop (object damage / sensor range)",
           f"const float FSR_R_DIV       = {rd:.1f}f;   // divider resistor to GND, ohms",
           f"float FSR_K                 = {FSR_K_OHM_N:.1f}f;   // ohm*N: F = K / R_fsr (Z command calibrates)",
@@ -1683,11 +1721,11 @@ def sourcing_rows(design, ep: dict, circuit, harness: list, include_actuators=Tr
     return rows
 
 
-def configs_compare(design, sizing, asm) -> dict:
+def configs_compare(design, sizing, asm, grip: dict | None = None) -> dict:
     out = {}
     for cfg in ("modules", "custom_pcb"):
         d2 = design.with_changes({"electronics.config": cfg})
-        ep = plan(d2, sizing)
+        ep = plan(d2, sizing, grip)
         circ = custom_circuit(d2, ep) if cfg == "custom_pcb" else modules_circuit(d2, ep)
         har, _ = build_harness(d2, ep, asm, ep["power_budget"])
         rows = sourcing_rows(d2, ep, circ, har, include_actuators=False)
@@ -1778,7 +1816,7 @@ def finalize(design, sizing: dict, eplan: dict, asm, outdir: str) -> dict:
         wr.writerows(harness)
     fw = firmware(design, ep, asm, outdir, rev)
     sourcing = sourcing_rows(design, ep, circuit, harness)
-    configs = configs_compare(design, sizing, asm)
+    configs = configs_compare(design, sizing, asm, ep["grip"])
     result = {
         "config": ep["config"], "bus": ep["bus"], "protocol": ep["protocol"], "controller": ep["controller"],
         "schematic_svg": "schematic.svg", "schematic_json": "schematic.json", "sheet": sch["sheet"], "nets": sch["nets"],

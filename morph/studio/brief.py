@@ -15,7 +15,6 @@ loop. Every default, inference and repair becomes a plain-sentence assumption on
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import secrets
@@ -1160,11 +1159,7 @@ def _grip_force(gd, a: dict) -> dict:
     if not configured or pad_key in getattr(keewano, "_ratio_cache", {}) or gd.electronics.target_force_n:
         return electronics.plan(gd, a, None)
     hold = a["required_grip_n"] / gd.safety_factor
-    lo = hold * electronics.HOLD_MARGIN
-    hi = gd.object.max_force_n / electronics.CRUSH_MARGIN if gd.object.max_force_n > 0 else float("inf")
-    if gd.finger.sensor in FSR:
-        hi = min(hi, FSR[gd.finger.sensor]["max_n"] * 0.8)
-    target = min(math.sqrt(lo * hi), lo * 2.0) if hi != float("inf") else lo * 1.3
+    target = electronics.force_window(gd.object, hold, gd.finger.sensor if gd.finger.sensor in FSR else None)[2]
     return electronics.plan(gd.with_changes({"electronics.target_force_n": round(max(target, 0.01), 3)}), a, None)
 
 
@@ -1201,7 +1196,7 @@ def preflight(changes: dict) -> dict:
         if d.arm.source:
             from ..robot import imported
             sz = _imported_size(d)
-            grip_t = imported.gripper_summary(d, sz)["force"]["target_force_n"]
+            f = imported.gripper_summary(d, sz)["force"]
         else:
             from ..robot import arm
             sz = arm.size(d)
@@ -1209,11 +1204,13 @@ def preflight(changes: dict) -> dict:
             gd = d.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"]})
             a = analysis.analyze(gd, build_profile(gd))
             f = _grip_force(gd, a)
-            issues += a["issues"] + f["issues"]
-            grip_t = f["target_force_n"]
+            issues += a["issues"]
             out["deflection_mm"] = a["tip_deflection_mm"]
+        issues += f["issues"]
+        grip_t = f["target_force_n"]
         issues = list(sz["issues"]) + issues
-        ep = electronics2.plan(d, {**sz, "grip_target_n": grip_t})
+        ep = electronics2.plan(d, sz, grip=f)
+        out["grip"] = f
         issues += ep["issues"]
         out.update(dof=len(sz["joints"]), family=d.arm.actuator_family, reach_mm=sz.get("reach_mm"),
                    min_margin=min((j["margin"] for j in sz["joints"]), default=None), grip_target_n=grip_t,

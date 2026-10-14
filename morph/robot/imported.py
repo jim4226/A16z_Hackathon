@@ -181,13 +181,31 @@ def size(design) -> dict:
             "stock_actuators": prof["actuators"]}
 
 
+JAW_LEVER_MM = 70.0   # a stock jaw's squeeze is quoted this far from its pivot (mid-jaw on the SO-101)
+
+
 def gripper_summary(design, sizing) -> dict:
-    g = sizing["gripper"]
-    jaw_mm = 70.0
-    force = catalog.ACTUATORS[g["actuator"]]["torque_nm"] / (jaw_mm / 1000.0)
-    return {"actuator": g["actuator"], "type": "revolute_jaw", "jaw_length_mm": jaw_mm,
-            "force": {"servo_stall_force_n": round(force, 1), "target_force_n": round(min(force * 0.25, 8.0), 2),
-                      "window_n": [None, None], "issues": [], "warnings": []}}
+    """The gripper stage of an imported robot: its stock jaw's force plan, the grip's one source of truth (the electronics
+    plan, the firmware, the simulation and the manual all use these numbers). The window comes from the object, with the
+    same closed form the simulation uses for flat stock jaws: it slips below 1.5 x m g / (2 mu) and is damaged above its
+    damage force / 1.5. The target is the Grip force target when one is set, else the window's own (at least 0.5 N), and
+    never more than 80 % of what the gripper servo squeezes at the jaw; the firmware's F command stops at limit_n."""
+    from .. import electronics as grip_electronics
+    from ..design import FSR
+
+    key = sizing["gripper"]["actuator"]
+    o = design.object
+    stall = catalog.ACTUATORS[key]["torque_nm"] / (JAW_LEVER_MM / 1000.0)
+    sensor = design.finger.sensor if design.finger.sensor in FSR else None
+    hold = o.mass_g / 1000.0 * float(-G[2]) / (2.0 * max(o.friction, 0.05))
+    lo, hi, target = grip_electronics.force_window(o, hold, sensor, design.electronics.target_force_n, floor=0.5)
+    target = min(target, 0.8 * stall, max(design.gripper.force_n, 0.5))
+    limit = min(o.max_force_n / 1.2 if o.max_force_n > 0 else stall, FSR[sensor]["max_n"] * 0.95 if sensor else stall, stall)
+    return {"actuator": key, "type": "revolute_jaw", "jaw_length_mm": JAW_LEVER_MM,
+            "force": {"servo_stall_force_n": round(stall, 1), "hold_force_n": round(hold, 3),
+                      "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
+                      "target_force_n": round(target, 2), "limit_n": round(limit, 2), "object_limit_n": o.max_force_n or None,
+                      "sensor": sensor or "none", "issues": [], "warnings": []}}
 
 
 def _place(asm, comp, prefix, link, T, step, kind=None, explode=(0, 0, 25)):
@@ -293,7 +311,10 @@ def build(design, sizing, eplan=None):
             asm.cables.append(Cable("camera_usb", [(cam.link, tuple(cam.mesh.bounds.mean(axis=0))), (link, tuple(origin))],
                                     diameter=3.5, color="#3a3f47", src="camera", dst="host USB", conductors=4))
 
+    from .arm import grip_meta
+
     asm.meta.update({"source": design.arm.source, "title": prof.get("title"), "license": prof.get("license"),
                      "source_url": prof.get("source_url"), "gripper_type": prof.get("gripper_type"),
-                     "sizing": sizing, "issues": issues, "stock_electronics": prof.get("electronics_stock")})
+                     "sizing": sizing, "issues": issues, "stock_electronics": prof.get("electronics_stock"),
+                     **grip_meta(eplan)})
     return asm

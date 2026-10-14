@@ -378,6 +378,15 @@ class _Facts:
         return None
 
     @property
+    def grip(self) -> dict:
+        """The grip the firmware ships (the wiring stage's copy of the electronics plan's grip)."""
+        return self.efinal.get("grip") or (self.efinal.get("plan") or {}).get("grip") or {}
+
+    @property
+    def sensor(self) -> bool:
+        return self.grip.get("sensor", "fsr402" if self.design.finger.sensor == "fsr402" else "none") == "fsr402"
+
+    @property
     def supply(self):
         for r in (self.efinal.get("power_budget") or {}).get("rails", []):
             src = str(r.get("source") or "")
@@ -577,7 +586,8 @@ def _elec_steps(F: _Facts, start: int):
     if not F.folded["wiring"]:
         sent += ["Route each run along the link's cable channel and leave a 30 mm service loop at every joint so the cable "
                  "never pulls tight at the end of travel.",
-                 "Connect the force-sensor leads (if fitted) to their inputs, then fix the harness with cable ties every 60–80 mm."]
+                 ("Connect the two force-sensor leads to their inputs, then fix" if F.sensor else "Fix") +
+                 " the harness with cable ties every 60–80 mm."]
     sent.append("Plug the power lead into the inlet last; keep the supply unplugged.")
     n_ties = max(6, 2 * len(rows))
     w_parts = (W["parts"] if W else []) + [c.name for c in F.asm.cables]
@@ -635,8 +645,10 @@ def _elec_steps(F: _Facts, start: int):
                     "table, power-cycle, repeat. Two servos with the same ID corrupt the bus.")
     else:
         sent.append("Check each servo is on the PWM channel listed in the table.")
-    sent.append("Open the serial monitor at 115200 baud and power the servo supply: the boot log must list every servo "
-                "and both force-sensor channels.")
+    sent.append("Open the serial monitor at 115200 baud and power the servo supply: the firmware prints “# Morph arm ready”"
+                + (" and names any servo id that doesn't answer" if F.family == "dynamixel" else "") +
+                ". Send Q for a status line: state, gripper mode, every joint angle, the gripper, the "
+                + ("fingertip force" if F.sensor else "force reading (0 without force sensors)") + " and the servo rail voltage.")
     ids = [{"joint": jn, "label": _joint_label(jn) + (f" ({k + 1})" if sum(1 for a, _ in F.id_rows if a == jn) > 1 else ""),
             "id": sid, "actuator": next((j.actuator for j in F.asm.joints if j.name == jn), "")}
            for jn, sid, k in ((jn, sid, [x for x, _ in F.id_rows[:i]].count(jn)) for i, (jn, sid) in enumerate(F.id_rows))]
@@ -648,27 +660,33 @@ def _elec_steps(F: _Facts, start: int):
     idx += 1
     # ---------------------------------------------------------------- calibration
     obj = d.object
-    target = d.electronics.target_force_n or (obj.max_force_n / max(d.safety_factor, 1.0) if obj.max_force_n else 0.0)
+    grip = F.grip
+    target = grip.get("target_n")
+    revolute = (grip.get("motion") or {}).get("kind") == "revolute"
     sent = ["Joint zero: drive each joint to its alignment marks (arm straight up, wrist level), then store the encoder "
             "offsets as the zero pose.",
+            "Gripper zero: close the jaw until its faces just touch and store that as gripper = 0 rad." if revolute else
             f"Gripper zero: close the jaws on a {obj.diameter_mm:g} mm gauge (the {obj.name}'s diameter); store this as "
-            "gripper = 0 mm (contact).",
-            "Force sensors: rest 50 g, 100 g, 200 g and 500 g on each pad (pad facing up) and record the raw reading; the "
-            "firmware fits the curve from the table.",
-            (f"Set the grip force limit to {target:.1f} N per finger ({obj.name}: damage above {obj.max_force_n:g} N)."
-             if target else "Set the grip force limit for the object.")]
+            "gripper = 0 mm (contact)."]
+    if F.sensor:
+        sent.append("Force sensors: rest 200 g on the left pad (pad facing up) and send Z 200; the firmware scales its "
+                    "force reading from it. Check with 50 g and 500 g: Q should read about 0.5 N and 4.9 N.")
+    if target:
+        sent.append(_grip_sentence(grip, obj.name))
     for fo in F.folded["calibration"]:
         if any("zero" in x.lower() for x in fo["sentences"]):
             sent = [x for x in sent if not x.startswith("Joint zero")]
         sent = fo["sentences"] + sent
-    steps.append({"index": idx, "title": "Calibrate joints, gripper and force sensors", "kind": "calibration", "parts": [],
-                  "parts_table": [], "fasteners": [],
-                  "tools": _add_tools(["kitchen scale or calibration weights (50–500 g)", f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"],
+    gauge = [] if revolute else [f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"]
+    steps.append({"index": idx, "title": "Calibrate joints, gripper and force sensors" if F.sensor else "Calibrate joints and gripper",
+                  "kind": "calibration", "parts": [], "parts_table": [], "fasteners": [],
+                  "tools": _add_tools((["calibration weights or a kitchen scale (50–500 g)"] if F.sensor else []) + gauge,
                                       [t for fo in F.folded["calibration"] for t in fo["tools"]]),
-                  "instructions": " ".join(sent), "substeps": sent, "cal_weights_g": [50, 100, 200, 500],
-                  "grip_target_n": round(target, 2),
-                  "warnings": ["Re-run the force-sensor calibration after a 10 minute warm-up: FSR readings drift with temperature."],
-                  "time_min": 25})
+                  "instructions": " ".join(sent), "substeps": sent, "cal_weights_g": [50, 200, 500] if F.sensor else [],
+                  "grip_target_n": target, "grip_window_n": grip.get("window_n"), "grip_limit_n": grip.get("limit_n"),
+                  "warnings": ["Re-run the force-sensor calibration after a 10 minute warm-up: FSR readings drift with temperature."]
+                  if F.sensor else [],
+                  "time_min": 25 if F.sensor else 15})
     idx += 1
     # ---------------------------------------------------------------- first pick
     t = d.task
@@ -681,6 +699,19 @@ def _elec_steps(F: _Facts, start: int):
                   "warnings": ["Stand clear of the arm's reach while it runs; the e-stop / supply switch stays within reach."],
                   "time_min": 10})
     return steps
+
+
+def _grip_sentence(grip: dict, name: str) -> str:
+    """What the firmware does with the grip force, in its own commands and numbers (the electronics plan's grip)."""
+    lo, hi = grip.get("window_n") or [None, None]
+    t, lim = grip["target_n"], grip.get("limit_n")
+    window = f"{lo:g}–{hi:g} N" if lo is not None and hi is not None else f"at least {lo:g} N" if lo is not None else None
+    if grip.get("sensor") == "fsr402":
+        out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
+        return out + "; to change the target send F followed by newtons" + (f", within {window} for the {name}." if window else ".")
+    zero = "jaw faces touching" if (grip.get("motion") or {}).get("kind") == "revolute" else "the calibrated contact position"
+    return (f"This gripper has no force sensors: G closes it towards gripper = 0 ({zero}) and holds it there; Morph's "
+            f"grip target for the {name} is {t:g} N per finger" + (f" (window {window})." if window else "."))
 
 
 # ================================================================== illustrations
@@ -1017,7 +1048,9 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
     reach = sz.get("reach_mm") or d.arm.reach_mm
     mass = sum(asm.link_mass(l)[0] for l in asm.links)
     obj = d.object
-    grip = "Rack-and-pinion parallel jaws" + (", FSR 402 force sensing" if d.finger.sensor == "fsr402" else "")
+    revolute = (F.grip.get("motion") or {}).get("kind") == "revolute" or asm.meta.get("gripper_type") == "revolute_jaw"
+    grip = ("The robot's own servo-driven jaw" if revolute else "Rack-and-pinion parallel jaws") + \
+        (", FSR 402 force sensing" if F.sensor else "")
     cfg = mfg.get("config") or d.build.config
     cfgd = (mfg.get("configs") or {}).get(cfg, {})
     unit = (mfg.get("totals") or {}).get("unit_cost") or cfgd.get("unit_cost")

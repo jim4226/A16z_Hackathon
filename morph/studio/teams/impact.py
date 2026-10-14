@@ -51,6 +51,7 @@ def _base(root: str, rev: str) -> dict | None:
         return None
     el, bom = res.get("electronics") or {}, res.get("bom") or {}
     out = {"design": design, "sizing": res.get("sizing") or {}, "eplan": res.get("eplan") or {},
+           "grip": (res.get("gripper") or {}).get("force"),
            "grip_n": ((res.get("gripper") or {}).get("force") or {}).get("target_force_n"),
            "summary": res.get("summary") or {}, "bom_totals": bom.get("totals") or {} if isinstance(bom, dict) else {},
            "configs": {k: (v or {}).get("cost") for k, v in (el.get("configs") or {}).items()}}
@@ -200,7 +201,7 @@ def _impact(root: str, base_rev: str | None, changes: dict, stages) -> dict:
     grip1 = chk1.get("grip_target_n") if "gripper" in st else b["grip_n"]
     if "electronics" in st:
         from ...robot import electronics2
-        ep1 = electronics2.plan(new, {**sz1, **({"grip_target_n": grip1} if grip1 else {})})
+        ep1 = electronics2.plan(new, sz1, grip=chk1.get("grip") if "gripper" in st else b.get("grip"))
     else:
         ep1 = ep0
 
