@@ -124,6 +124,12 @@ def test_a_run_pauses_for_a_key_and_saving_it_in_keys_resumes_it(world):
     assert all(e["project"] == "egg-picker" and e["run"] == run["id"] and e["agent"] == "test_prices" for e in events)
     used = next(e for e in events if e["type"] == "tool_used")
     assert used["title"] == "FixParts price and stock" and used["host"] == "api.fixparts-morph.com" and used["ok"] is True
+    assert next(e for e in events if e["type"] == "run_resumed")["keys"] == ["FixParts API key"]
+    # the card's lines are kept with the run, so a page loaded later shows what the live events showed
+    steps = done["runs"][0]["steps"]
+    assert [s["type"] for s in steps] == ["key_saved", "tool_used"] and steps[0]["keys"] == ["FixParts API key"]
+    assert {k: steps[1][k] for k in ("tool", "title", "ok", "host")} == {
+        "tool": "fixparts_offers", "title": "FixParts price and stock", "ok": True, "host": "api.fixparts-morph.com"}
     assert secrets_absent(events, KEY) and secrets_absent(listed, KEY) and secrets_absent(done, KEY)
     assert "412 in stock" not in json.dumps(events + [done])  # message text only through /api/runs/answer
 
@@ -131,10 +137,16 @@ def test_a_run_pauses_for_a_key_and_saving_it_in_keys_resumes_it(world):
 def test_skip_from_the_card_and_a_failed_call_says_why(world, monkeypatch):
     w = world(search_and_call(OFFERS), final("Carried on without FixParts."))
     run = w.call("POST", "/api/runs/start", {"agent": "test_prices"})[1]["run"]
+    q = w.studio.room().hub.subscribe()
     s, out = w.call("POST", "/api/runs/decide", {"run": run["id"], "decisions": {"toolu_nx": "skip"}})
     assert s == 200 and out["run"]["status"] == "done"
     res = w.claude.requests[-1]["messages"][-1]["content"][0]
     assert res["is_error"] and json.loads(res["content"][0]["text"])["status"] == "skipped_by_user"
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    assert [(e["trigger"], e["skipped"]) for e in events if e["type"] == "run_resumed"] == [  # every tab's card says it
+        ("decision", [{"tool": "fixparts_offers", "title": "FixParts price and stock", "decision": "skip"}])]
     # a call that fails at the service: the tool_used event names the error and the HTTP status, never the answer
     w2 = world(search_and_call(CATS), final("ok"))
     q = w2.studio.room().hub.subscribe()

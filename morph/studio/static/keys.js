@@ -44,7 +44,37 @@ export class KeysDialog {
     const r = await fetch('/api/keys', { cache: 'no-store' });
     if (!r.ok) throw new Error(`${r.status}`);
     this.data = await r.json();
+    this.tools = await fetch('/api/tools', { cache: 'no-store' }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
     return this.data;
+  }
+  // the catalog's tools (beta): on or off for new runs, the service, where it goes, its key; manifests that didn't load
+  toolsSection() {
+    const t = this.tools;
+    if (!t || !(t.tools || []).length && !(t.errors || []).length) return '';
+    const side = { read: 'read-only', write: 'changes data', upload: 'sends files', spend: 'spends money' };
+    const row = (x) => `<label class="kt"><span class="switch"><input type="checkbox" data-tool="${esc(x.name)}"${x.enabled ? ' checked' : ''}><i></i></span>
+        <span><b>${esc(x.title)}</b>${x.verified && x.verified.live == null ? ' <span class="tag neutral" title="Written from the service\'s documentation; not yet tried with a real key">Not yet tried with a real key</span>' : ''}
+        <small>${esc([x.service, side[x.side_effect] || x.side_effect, x.host, x.key ? `${x.key.label}: ${x.key.set ? 'set' : 'not set'}` : 'no key needed', x.curated ? '' : 'your own manifest'].filter(Boolean).join(' · '))}</small></span></label>`;
+    return `<section class="ksec ktoolist"><div class="ks-h"><b>Tools agents can use</b><span class="tag neutral">beta</span></div>
+      <div class="ks-n">Claude finds these by search when a run needs one; each key is asked for in the chat when it's needed. A tool you turn off stays out of new runs.</div>
+      ${(t.tools || []).map(row).join('')}
+      ${(t.errors || []).map((e) => `<div class="kchk bad">${I('alert', 'sm')}<span><b>${esc(e.source)}</b> didn't load: ${esc(e.error)}</span></div>`).join('')}</section>`;
+  }
+  async toggleTool(name, on, inp) {
+    inp.disabled = true;
+    const r = await fetch(`/api/tools/${on ? 'enable' : 'disable'}`, { method: 'POST', headers: JSON_POST, body: JSON.stringify({ tool: name }) })
+      .catch((e) => ({ ok: false, json: async () => ({ error: `Couldn't reach the Studio server (${e.message})` }) }));
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok || !out.ok) {
+      inp.checked = !on;
+      inp.disabled = false;
+      this.note(this.row('bad', esc(out.error || 'Could not change that tool')));
+      return;
+    }
+    await this.refresh().catch(() => {});
+    this.render();
+    this.el.querySelector(`[data-tool="${CSS.escape(name)}"]`)?.focus();
+    this.note(this.row('good', on ? 'Turned on: new runs can use it.' : 'Turned off: new runs leave it out; its key stays saved.'));
   }
   async open(focus = '') {
     this.focus = focus;
@@ -84,6 +114,7 @@ export class KeysDialog {
       <section class="ksec"><div class="ks-h"><b>Darwin</b><span class="tag good">no key needed</span></div>
         <div class="ks-n">Darwin Search is public, so the BOM tab finds agents for every part without a key. Ordering through Darwin uses your own Darwin sign-in, outside Morph.</div></section>
       ${toolSecs}
+      ${this.toolsSection()}
       <section class="ksec"><div class="ks-h"><b>Privacy and network</b></div>${SETTINGS.map(toggle).join('')}
         ${st.network_enabled === false ? '<div class="ks-n">Network lookups are off, so nothing is sent to Keewano, Darwin, SubQ or Claude.</div>' : ''}</section>
       <div class="knote"></div>
@@ -100,6 +131,7 @@ export class KeysDialog {
     if (rb) rb.onclick = () => this.rebuild(rb);
     this.el.querySelectorAll('.kf input').forEach((inp) => inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.save(); }));
     this.el.querySelectorAll('[data-s]').forEach((inp) => (inp.onchange = () => this.setting(inp.dataset.s, inp.checked, inp)));
+    this.el.querySelectorAll('[data-tool]').forEach((inp) => (inp.onchange = () => this.toggleTool(inp.dataset.tool, inp.checked, inp)));
     const focus = this.focus;
     this.focus = '';
     const target = focus && [...this.el.querySelectorAll('.kf')].find((f) => f.dataset.k === focus);
@@ -162,6 +194,7 @@ export class KeysDialog {
     }
     this.data = { ...this.data, keys: out.keys, integrations: out.integrations };
     this.a.onChanged?.(out.integrations);
+    this.tools = await fetch('/api/tools', { cache: 'no-store' }).then((x) => (x.ok ? x.json() : this.tools)).catch(() => this.tools);
     this.render();
     const added = (out.changed || []).filter((k) => values[k]), removed = (out.changed || []).filter((k) => !values[k]);
     const label = (k) => esc((out.keys || []).find((x) => x.name === k)?.label || k);

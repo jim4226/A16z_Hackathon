@@ -11,9 +11,10 @@ import * as importer from './importer.js';
 import * as video from './video.js';
 import * as team from './team.js';
 import * as world from './world.js';
+import * as tools from './tools.js';
 
 // Feature modules (static/<feature>.js) export init(studio); each adds one import line above and one entry here.
-const FEATURES = [newrobot, importer, video, team, world];
+const FEATURES = [newrobot, importer, video, team, world, tools];
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1192,6 +1193,7 @@ function onConn(kind, again) {
   if (kind !== 'live') return setConn(kind);
   if (wake) { wake(); wake = null; }
   if (again && S.loaded) reloadProject().catch((e) => console.warn(e));  // back after a drop: events may be missing
+  emitBus({ type: 'connection', live: true, again: !!again });  // features reload what a late or dropped stream missed
   if (S.busy) setConn('busy', 'Regenerating'); else if (S.loaded) setConn('live'); else setConn('busy', 'Connecting');
 }
 function unreachable(e, wait = 0) {
