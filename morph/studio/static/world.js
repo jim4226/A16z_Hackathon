@@ -1334,7 +1334,7 @@ export class WorldView {
     const cv = document.createElement('canvas');
     cv.width = width; cv.height = height;
     const ctx = cv.getContext('2d');
-    const ringOn = this.ring?.visible;
+    const ringOn = this.ring?.visible, tcOn = this.tc?.visible;   // put back as they were (a detached gizmo stays hidden)
     if (this.ring) this.ring.visible = false;
     if (this.tc) this.tc.visible = false;
     try {
@@ -1362,7 +1362,7 @@ export class WorldView {
       r.setSize(size.x, size.y, false);
       v.resize?.();
       if (this.ring) this.ring.visible = ringOn;
-      if (this.tc) this.tc.visible = true;
+      if (this.tc) this.tc.visible = !!tcOn;
       if (this.reach) this.reach.visible = true;
       this._dirty();
     }
