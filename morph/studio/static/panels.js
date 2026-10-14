@@ -586,18 +586,18 @@ export class SimPanel {
   constructor(root, ctx) {
     this.ctx = ctx;
     root.innerHTML = `<div class="sim">
-      <div class="bar"><div class="pills" data-scen></div><span class="grow"></span>
-        <span class="phase"><i></i><span>–</span></span>
+      <div class="bar"><div class="pills" data-scen></div>
+        <div class="player"><span class="phase"><i></i><span>–</span></span>
         <span class="tread num">0.0 <span class="dim">/ 0.0 s</span></span>
         <div class="pills" data-speed><button data-s="0.5">0.5×</button><button data-s="1" class="on">1×</button><button data-s="2">2×</button></div>
-        <button class="playbtn" title="Play / pause (space)">${I('play')}</button></div>
+        <button class="playbtn" title="Play / pause (Space)" aria-label="Play or pause">${I('pause')}</button></div></div>
       <div class="vp"></div>
       <div class="tl"><div class="tlh"><span class="sec-t" style="margin:0;white-space:nowrap">Torque · N·m</span><div class="legend"></div></div><canvas></canvas></div>
       <div class="side"></div></div>`;
     this.root = root;
     this.slot = root.querySelector('.vp');
     this.cv = root.querySelector('canvas');
-    this.t = 0; this.playing = true; this.speed = 1;
+    this.t = 0; this.playing = true; this.speed = 1;   // it plays from the start: the button shows Pause
     root.querySelector('.playbtn').onclick = () => this.toggle();
     root.querySelectorAll('[data-speed] button').forEach((b) => (b.onclick = () => {
       this.speed = +b.dataset.s;
@@ -614,7 +614,17 @@ export class SimPanel {
     this.cv.addEventListener('pointerdown', (e) => { this.cv.setPointerCapture(e.pointerId); this.wasPlaying = this.playing; this.setPlaying(false); scrub(e); this.drag = true; });
     this.cv.addEventListener('pointermove', (e) => this.drag && scrub(e));
     this.cv.addEventListener('pointerup', () => { this.drag = false; if (this.wasPlaying) this.setPlaying(true); });
-    document.addEventListener('keydown', (e) => { if (e.code === 'Space' && ctx.isActive('sim') && !e.target.closest('input,textarea,select,button')) { e.preventDefault(); this.toggle(); } });
+    // Space plays and pauses while this tab is on: also with the focus on the tab strip (the tab just clicked) or on
+    // this panel's own buttons; never while typing, in a dialog, or on another button (Space presses that one)
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space' || e.repeat || !ctx.isActive('sim') || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target instanceof Element ? e.target : document.body;
+      if (t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') || document.querySelector('.modal.on')) return;
+      const b = t.closest('button, a[href], [role="button"]');
+      if (b && !b.closest('#tabs') && !root.contains(b)) return;
+      e.preventDefault();
+      this.toggle();
+    });
     new ResizeObserver(() => { this.static = null; this.draw(); }).observe(this.cv);
     this.pad = { l: 34, r: 10, t: 16, b: 16 };
   }
