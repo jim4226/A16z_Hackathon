@@ -61,7 +61,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   move from the rest pose would sweep through a box, the approach and the return to rest follow the carry path too.
   It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
   `morph world <project> --starter desk` (or `--off`) does the same from a terminal; [docs/WORLD.md](docs/WORLD.md).
-- **Robustness studies** (beta; the engine and `morph study`, the Studio card follows): one nominal simulation says a
+- **Robustness studies** (beta): one nominal simulation says a
   design works once, exactly as drawn. A study runs a revision's own pick-and-place plan hundreds of times in worlds
   drawn from the project's tolerances (the object off its mark, turned, its size and mass, pad friction, grip-force
   calibration, servo torque, deadband, encoder noise, the host's set-point rate and, in World mode, the mount and every
@@ -72,7 +72,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   the 60 failures are the jaws staying shut at release (half the runs with the egg turned 3-9 degrees end that way), and
   that failure changes with the solver's settings. Runs are reproducible from the seed on any number of worker
   processes, saved as they finish and resumable (Ctrl+C keeps them): `morph study egg-picker [--runs N] [--stress]`.
-  Simulation, for the tolerances shown; not a field failure rate.
+  In the Studio, the **Robustness** card under the Simulation tab's pick-and-place result runs a study of the revision
+  on screen (50, 200 or 1,000 runs, or a stress test with every range doubled), shows its progress live, stops it on
+  request within seconds (the finished runs stay, and it carries on later), says what the result means and what it
+  doesn't, replays a failing run in the 3D view, and lists every tolerance with where its range comes from. Editors
+  start studies and change tolerances (a change marks older studies outdated); every member of a team reads them.
+  Studies run on the Studio's computer, so `morph studio --remote` on a bigger machine is how a team brings its own
+  compute; one study at a time per project, at most 10,000 runs from the Studio. Where no study exists the card says
+  so: one nominal run tests nothing around it. Simulation, for the tolerances shown; not a field failure rate.
 - `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
   a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
   (whether ffmpeg was found), Teams and World mode.
@@ -162,6 +169,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 
 ### Fixes
 
+- World mode: the AI review no longer brings back the move arrows of a box you had deselected (they floated where the
+  box had been); a box still selected keeps them.
 - A failed stage stays failed instead of being reused as feasible by a later edit; required output files are
   checked; fallback CAD is labelled preview-only.
 - SO-101 gripper firmware uses radians.

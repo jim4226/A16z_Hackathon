@@ -214,6 +214,12 @@ morph study egg-picker --stress        # every tolerance range doubled
 Results are saved in the project (`.studies/`) as each run finishes, so Ctrl+C keeps them and the same command
 carries on. It is simulation, for the tolerances shown; not a field failure rate.
 
+In the Studio the same study is the **Robustness** card under the Simulation tab's pick-and-place result: run one for
+the revision on screen, follow it live, cancel it (the finished runs stay), see each failure group with the condition
+that best separates it and whether it holds under other solver settings, replay a failing run in the 3D view, and edit
+the tolerances (each shows where its range comes from). Studies run on the Studio's computer: start the Studio with
+`--remote` on a machine with more cores and everyone's browser uses them.
+
 ### SubQ Snap (optional)
 
 With a SubQ key (Keys, `SUBQ_API_KEY`), SubQ Snap makes quick yes/no and multiple-choice decisions, labelled

@@ -203,8 +203,8 @@ A job applies its changes to the newest revision when its turn comes. If one of 
     or they signed out everywhere (the stream checks its member every 2 s, `api_team.StreamCheck`); the page then opens
     the sign-in page, which tells that browser why
   - `world {stage, status, text, result?}`
-  - `study {id, rev, status, phase, done, n, successes, failures, unstable, p, ci, eta_s, elapsed_s, first_result_s,
-    summary?}`: a robustness study's progress (section 16)
+  - `study {id, rev, status, phase, done, n, successes, failures, unstable, groups, p, ci, eta_s, elapsed_s,
+    first_result_s, summary?}`: a robustness study's progress (section 16; `groups`: the failures so far by group)
 - Agent roles for `agent` events: `triage` (SubQ), `designer` (Claude), `feasibility` (code),
   `pipeline`, `sourcing` (Darwin), `memory` (Keewano), `vision` (Claude/SubQ on frames), `reviewer`.
 
@@ -251,7 +251,10 @@ studio = {
   `FEATURES` array at the top of app.js, and an appended CSS section headed `/* ---- <feature> ---- */`.
 - `FEATURES` (I2a): `newrobot` (header and project menu), `importer` (header, project menu, page-wide drop), `video`
   (chat tools), `team` (header and inspector tabs; adds nothing when `/api/me` says Teams is off), `world` (viewer
-  tools; needs the WebGL viewer). Each injects or links its own CSS.
+  tools; needs the WebGL viewer). Each injects or links its own CSS. B2-S2: `study` (the Robustness card in the
+  Simulation tab's result column, section 16): it places itself after `#views .view[data-view="sim"] .side > .success`
+  while the tab's `[data-scen] button.on` is `pick_place` (the tab redraws that column, so it is put back each time) and
+  plays a replayed run through `window.morph.viewer`, as world.js does; those selectors are part of this contract.
 - I2b: `app.js` keeps each started feature's `init()` result (`started`, a Map), so the chat's import offer can call
   the importer's `open()`. Once the features started, an empty chat gets one assistant line naming the entry points
   that were mounted (`featureTips`). A media-only drop (video or photo files) goes to Show Morph the job through
@@ -661,7 +664,7 @@ in sections 3, 4 and 8. The rest that other code relies on:
   `PLAYWRIGHT_CHROMIUM` names the browser. A page fails on script or console errors, requests to
   other sites or sideways scrolling; a Studio fails on any traceback.
 
-## 16. Simulation track: robustness studies (B2-S1; the Studio routes and the card come next)
+## 16. Simulation track: robustness studies (B2-S1 the engine, B2-S2 the Studio routes and the card)
 
 One nominal simulation says a design works once, exactly as drawn. A **study** runs a revision's own nominal
 pick-and-place plan (planned once, as the Studio's simulation plans it) many times in worlds drawn from the project's
@@ -736,13 +739,52 @@ field failure rate (section 0, honesty).
   rows=False)`, `studies`, `tolerances`, `save_tolerances`, `replay(project, id, run)` (a run's
   `sim_pick_place.json` document with a `robustness` block, for the viewer). A job never takes the room's lock, its job
   queue or `Studio.builds`; jobs on different projects take turns (`MORPH_HEAVY_JOBS`, default 1 at once).
-- **Event** `study {id, rev, status, phase: prepare|runs|checks|done, done, n, successes, failures, unstable, p, ci,
-  eta_s, elapsed_s, first_result_s, stress, summary?}` to the project's room, at most four a second plus every phase
-  change and the end (`summary`: n, successes, p, wilson95, clopper_pearson95, groups with id, label, count, rate,
-  model_sensitive).
+- **Event** `study {id, rev, status, phase: prepare|runs|checks|done, done, n, successes, failures, unstable, groups, p,
+  ci, eta_s, elapsed_s, first_result_s, stress, summary?}` to the project's room (`groups`: the counted failures so far
+  by group, B2-S2), at most four a second plus every phase change and the end (`summary`: n, successes, p, wilson95,
+  clopper_pearson95, groups with id, label, count, rate, model_sensitive).
 - **CLI:** `morph study <project> [--rev rNNN] [--runs N] [--workers N] [--stress] [--seed S] [--timestep ms]
   [--no-checks]` prints the study as ASCII text; Ctrl+C keeps the finished runs and the same command carries on.
-- **For the next package (routes and the card):** register the routes in `api_study.py` with `jobs.manager(req.studio)`
-  (starting, cancelling and editing tolerances are editor routes; reading is viewer); `delete_project` and Reset demo
-  should cancel the project's study first (`jobs.manager(studio).cancel(name)`) and the Studio's stop should call
-  `shutdown()`; the card shows `model.matches_revision`, `outdated`, unstable and error runs, and the honesty notes.
+- **Studio routes (B2-S2, `morph/studio/api_study.py`)**, all with `?project=`; starting, cancelling, resuming and
+  editing tolerances need an editor, reading and replays a viewer (Teams' role table lists all seven):
+  - `GET /api/study[?rev=]`: `{job, studies, latest, latest_stress, stopped, limits, host, rate, may, notes,
+    group_labels}`. `latest`/`latest_stress` are the newest plain and stress study of `rev` (default: the newest
+    revision; never one whose revision now holds another design, `rev_changed`) as records with `card`; `stopped`: the
+    cancelled or interrupted studies that can carry on; `limits {max_runs, max_workers, workers, timesteps_ms,
+    default_runs}`; `host {name, cores, remote}` (studies run on the Studio's computer: with `--remote` that is how a
+    team brings its compute); `rate.per_worker` (runs/s per worker process at 1 ms, as the shown studies or else the
+    project's newest timed study measured it, or 0.7); `may.start` (false for a Teams viewer). `GET /api/study?id=`
+    gives one record with its `card`.
+  - `POST /api/study {runs?, stress?, rev?, seed?, timestep_ms?, workers?, checks?}` -> 202 `{job}`. Refused with a
+    plain reason: `timestep_ms` 0.5, 1 or 2; at most `MAX_RUNS` (10,000) one-millisecond runs' worth (5,000 at 0.5 ms,
+    20,000 at 2 ms; `morph study` takes more); at most one worker process per core; 409 while one runs for the
+    project (any process), 404 for a revision that isn't there. The same settings again carry on with, or deepen, the
+    saved study.
+  - `POST /api/study/cancel` (409 when none runs), `POST /api/study/resume {id}` -> 202.
+  - `GET|POST /api/study/tolerances {changes, rev?}`: the spec with each entry's `limit` (what an edit may use) and the
+    world `presets`; `changes` as `save_tolerances`.
+  - `GET /api/study/replay?id=&run=[&variant=]`: the run's `sim_pick_place.json` document, simulated again in a spawned
+    study process (`robust.replay(process=True)`: MuJoCo's log and the CPU stay out of the Studio's process), one at a
+    time per Studio, the last eight kept in memory; 503 (try again) after 120 s waiting for another replay, or when its
+    process can't start, stops or takes over 5 minutes; `robustness` adds `recorded` (the row the study saved),
+    `matches_record` (false: Morph's simulation changed since) and `label`.
+  - `api_study.card(doc)` and `headline(doc)` give the card's words (heavy_plan section 6): "Succeeds in 140 of 200
+    randomized runs (95% CI 63-76%); the nominal run succeeds." (interval bounds rounded away from the estimate, so the
+    shown interval always holds the computed one; all or none succeeding uses the exact bound, "at least 98.1% with 95%
+    confidence"), `NOTES["simulation"]`, the flags (outdated, revision gone or changed, stopped part way, unstable and
+    error runs, rebuilt with other Morph code) and each group's share, rule (with "could be chance"), sensitivity
+    (`robust.SENSITIVE`) and example run. `NOTES["none"]`: "One nominal run. Small differences in placement or hardware
+    aren't tested."
+  - The Studio stops a project's study before Delete project and Reset demo (`jobs.stop(studio, name)`, up to 5 s; its
+    runs are kept, in the trash with a deleted project) and every study when it stops (`jobs.shutdown(studio)`).
+  - `robust.load()` adds `rev_changed`; `studies()` reads each revision's spec once.
+- **The card (`static/study.js`, feature `study`):** under the pick-and-place result in the Simulation tab (section 4):
+  the note where no study exists; live progress (`study` events: phase, run k of n, the success rate so far with its
+  interval, failures so far by group, time left estimated); the result with its flags, at most two failure groups
+  (label, share, "Most likely when: <rule>", the model-sensitive or "Same under other solver settings" badge, Replay)
+  and Details (a dialog: every group with its check counts, what matters most (Youden's J against chance), every
+  tolerance with its source, editable for editors, and the project's studies); for editors a start row (50, 200 or
+  1,000 runs, Stress test, "Run N more" to deepen, an estimate of the time on the Studio's computer), Cancel and Carry
+  on. A replay plays in the 3D view (the viewer's title names the run) until the tab plays something else; without a
+  3D view the card gives the run's numbers. A Teams viewer's page (`body.tm-readonly`, `may.start` false) keeps the
+  results and replays and loses the controls (`.sd-edit`).
