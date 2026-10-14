@@ -73,12 +73,13 @@ def test_prototype_box_on_the_carry_arc(egg, monkeypatch):
     10 mm or more to spare (research: 0.44 mm, 12.4 mm)."""
     d, asm = egg
     w = _table_world([_bin_on_the_arc(d)])
-    aware = simulate._clear_arc
-    monkeypatch.setattr(simulate, "_clear_arc", simulate._default_arc)      # the plan the plain table gets
-    old = simulate.run(asm, d, "pick_place", fast=True, world=w)["metrics"]
+    with monkeypatch.context() as mp:                     # the plan the plain table gets: its arc, at its hover
+        mp.setattr(simulate, "_clear_arc", lambda rob, p0, p1, q0, ax0=None, verify=None: simulate._default_arc(rob, p0, p1, q0, ax0))
+        mp.setattr(simulate, "LIFTS_MM", ())
+        old = simulate.run(asm, d, "pick_place", fast=True, world=w)["metrics"]
     assert not old["success"] and old["world_contacts"] and old["place_error_mm"] > 50
     assert "hits Bin" in old["failure"] and not old["clearance_ok"] and old["min_clearance_mm"] < 0
-    monkeypatch.setattr(simulate, "_clear_arc", aware)
+    assert old["blocked"]["move"] == "carry" and "during the carry" in old["failure"]
     doc = simulate.run(asm, d, "pick_place", fast=True, world=w)
     m = doc["metrics"]
     assert m["success"] and not m["world_contacts"] and m["clearance_ok"]

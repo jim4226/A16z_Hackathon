@@ -15,9 +15,9 @@ GOLDEN = {
   },
   "egg-picker-bin-world": {
    "robot.xml": "ffeb1ceefd432caed2b5036bd4c9dffe39e21746104e2d348e331d484b1e231e",
-   "run_all": "226db2e87e6fe066148193f8abc633b21b3e9b84c6b78c0be4a152d645229bd5",
+   "run_all": "e1854b440883e3838ff2c708134492b090b47b1d9d2af415a269c7355aa35ac5",
    "sim_payload_sweep.json": "5acf319a1795d3f7b42d51f8b0fc72f4f3ccab5a04694b71481202c9e642d1ca",
-   "sim_pick_place.json": "313011fc4ae835e7f4db67b6ff78c82ad387dff6ee7a944c0881f6af1dbb58a3",
+   "sim_pick_place.json": "53757a7d76a73b3a3995b8bb53bdd44cef24a5bb070401bc7026800ad8e02a17",
    "sim_shake.json": "041239cfd9a767d9d7257593e4b0b0ba4e0c46969617f7c15bab7297d62d4d49",
    "sim_workspace.json": "9cf49a3f9178909e15ac4166cac34ad5c030dfd6f505ff533ad6104c6e254ca9",
    "state after payload_sweep": "75027cba0f9e92e4accee6a61f224eaa615674df786ccf58d76240ae1996911d",
@@ -65,9 +65,9 @@ GOLDEN = {
   },
   "egg-picker-bin-world": {
    "robot.xml": "ffeb1ceefd432caed2b5036bd4c9dffe39e21746104e2d348e331d484b1e231e",
-   "run_all": "226db2e87e6fe066148193f8abc633b21b3e9b84c6b78c0be4a152d645229bd5",
+   "run_all": "e1854b440883e3838ff2c708134492b090b47b1d9d2af415a269c7355aa35ac5",
    "sim_payload_sweep.json": "5acf319a1795d3f7b42d51f8b0fc72f4f3ccab5a04694b71481202c9e642d1ca",
-   "sim_pick_place.json": "313011fc4ae835e7f4db67b6ff78c82ad387dff6ee7a944c0881f6af1dbb58a3",
+   "sim_pick_place.json": "53757a7d76a73b3a3995b8bb53bdd44cef24a5bb070401bc7026800ad8e02a17",
    "sim_shake.json": "041239cfd9a767d9d7257593e4b0b0ba4e0c46969617f7c15bab7297d62d4d49",
    "sim_workspace.json": "9cf49a3f9178909e15ac4166cac34ad5c030dfd6f505ff533ad6104c6e254ca9",
    "state after payload_sweep": "75027cba0f9e92e4accee6a61f224eaa615674df786ccf58d76240ae1996911d",

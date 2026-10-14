@@ -1750,11 +1750,15 @@ export class WorldPanel {
     if (!sim.success && sim.failure) t += ` (${sim.failure})`;
     if (sim.min_clearance_mm != null) t += `; closest ${Math.round(sim.min_clearance_mm)} mm, to ${sim.min_clearance_at?.obstacle || 'a grey box'}`;
     else t += '; no grey boxes to keep clear of';
-    const arc = sim.arc, back = sim.detours?.retreat, there = sim.detours?.approach;
+    const arc = sim.arc, back = sim.detours?.retreat, there = sim.detours?.approach, rel = sim.detours?.release;
     const ways = [];
     if (arc && arc.clear && arc.usual === false) ways.push(`the carry path pulled in ${pct(arc.inward)}${arc.bump_mm ? `, raised ${Math.round(arc.bump_mm)} mm` : ''} to keep clear`);
-    if (there?.via && there.via !== 'direct') ways.push('the approach goes along the carry path');
-    if (back?.via && back.via !== 'direct') ways.push(back.via === 'direct, hand closed' ? 'the hand closes before going back to rest' : 'it goes back to rest along the carry path');
+    if (there?.via === 'from above') ways.push(`the approach comes in from ${Math.round(there.rise_mm)} mm higher`);
+    else if (there?.via && there.via !== 'direct') ways.push('the approach goes along the carry path');
+    if (rel?.via === 'opened less') ways.push(`the hand opens only ${Math.round(rel.open_mm)} mm past the object to let go`);
+    if (back?.via === 'direct, hand closed') ways.push('the hand closes before going back to rest');
+    else if (back?.via === 'straight up first') ways.push(`it rises ${Math.round(back.rise_mm)} mm before going back to rest`);
+    else if (back?.via && back.via !== 'direct') ways.push('it goes back to rest along the carry path');
     const said = ways.join('; ');
     t += said ? `. ${said[0].toUpperCase()}${said.slice(1)}.` : '.';
     const tight = sim.success && sim.clearance_ok === false && !(sim.world_contacts || []).length;

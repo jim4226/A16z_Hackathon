@@ -123,7 +123,7 @@ def get_world(req):
                "min_clearance_mm": pp.get("min_clearance_mm"), "min_clearance_at": pp.get("min_clearance_at"),
                "clearance_ok": pp.get("clearance_ok"), "world_contacts": pp.get("world_contacts") or [],
                "success": pp.get("success"), "failure": pp.get("failure"), "arc": pp.get("arc"),
-               "detours": pp.get("detours")}
+               "detours": pp.get("detours"), "path": pp.get("path"), "blocked": pp.get("blocked")}
     return 200, {"ok": True, "world": w, "sha": worlds.sha(w) if w else None, "problem": problem,
                  "active": {"id": d.world.id, "sha": d.world.sha} if d else {"id": "", "sha": ""}, "sim": sim,
                  "asset_url": _asset_url(room, w) if w else None, "ai": _ai_ready(),

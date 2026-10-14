@@ -55,6 +55,9 @@ VIEWS = ("overview", "top_down", "along_path", "wrist", "walkway", "base")
 VIEW_TITLES = {"overview": "Overview at eye height", "top_down": "Top-down", "along_path": "Along pick to place",
                "wrist": "Wrist camera at the grasp", "walkway": "From the nearest walkway", "base": "Base close-up"}
 CATEGORIES = ("safety", "reach", "clearance", "mounting", "perception")
+MOVES = {"approach": "the approach", "descent": "the descent to the object", "grasp": "the grasp", "lift": "the lift",
+         "carry": "the carry", "set-down": "the set-down", "release": "the release",
+         "rise": "the rise from the place spot", "return": "the way back to rest"}   # simulate.MOVES (not imported here)
 SEVERITIES = ("info", "warning", "critical")
 VERDICTS = ("ready", "needs_changes", "blocked")
 MAX_VIEW_BYTES = 3 << 20
@@ -1041,13 +1044,22 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
         hits = pp.get("world_contacts") or []
         at = pp.get("min_clearance_at") or {}
         where = f" ({at.get('link', '').replace('_', ' ')} near {at.get('obstacle', '')} at {at.get('t', 0):.1f} s)" if at else ""
+        blocked = pp.get("blocked") if isinstance(pp.get("blocked"), dict) else None
         if hits:
             h = hits[0]
             part = str(h.get("link", "arm")).replace("_", " ")
+            during = f" during {MOVES[h['move']]}" if h.get("move") in MOVES else ""
             text = (f"The {part} touches {h.get('obstacle')} in the arm's starting pose: move that box or the robot."
-                    if (h.get("t") or 0.0) < 0.05 else f"The {part} hits {h.get('obstacle')} at {h.get('t', 0):.1f} s.")
+                    if (h.get("t") or 0.0) < 0.05 else f"The {part} hits {h.get('obstacle')}{during} at {h.get('t', 0):.1f} s.")
             out.append(_check("clearance", "Clearance along the path", "fail", text, mc, "mm", "along_path", where=at,
                               contacts=hits[:5]))
+        elif blocked and isinstance(blocked.get("at"), dict):
+            b = blocked["at"]
+            text = (f"The planned path takes the {str(b.get('link', 'arm')).replace('_', ' ')} "
+                    f"{-float(blocked.get('min_clearance_mm') or 0.0):.1f} mm into {b.get('obstacle')} during "
+                    f"{MOVES.get(blocked.get('move'), 'the run')} ({b.get('t', 0):.1f} s), and no clear way around it was found.")
+            out.append(_check("clearance", "Clearance along the path", "fail", text, blocked.get("min_clearance_mm"), "mm",
+                              "along_path", where=b))
         elif mc is None or mc < 0:
             out.append(_check("clearance", "Clearance along the path", "fail", f"The arm passes through a box{where}.",
                               mc, "mm", "along_path", where=at))
