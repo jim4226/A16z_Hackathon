@@ -58,17 +58,78 @@ def write_meta(root: str, meta: dict):
     durable.write_json(os.path.join(root, "meta.json"), meta)
 
 
+def damaged_meta(root: str) -> bool:
+    """meta.json is there but doesn't hold an object (a power cut while it was saved, a hand edit)."""
+    path = os.path.join(root, "meta.json")
+    return os.path.isfile(path) and not durable.readable_json(path)
+
+
+def _robot_folder(root: str) -> bool:
+    """Whether a folder whose meta.json can't be read is a Studio robot project: one of its revisions says so in its
+    results (`kind: "robot"`), or the Studio keeps its chat or queue there (.morph). The earlier CLI prototype's gripper
+    projects have neither."""
+    if os.path.isdir(os.path.join(root, ".morph")):
+        return True
+    try:
+        names = sorted((n for n in os.listdir(root) if REV.fullmatch(n)), key=lambda n: int(n[1:]), reverse=True)
+    except OSError:
+        return False
+    for n in names[:20]:
+        try:
+            with open(os.path.join(root, n, "results.json"), encoding="utf-8") as fh:
+                if (json.load(fh) or {}).get("kind") == "robot":
+                    return True
+        except (OSError, ValueError, AttributeError):
+            continue
+    return False
+
+
 def project_root(home: str, name) -> str | None:
     """The folder of an existing robot project, or None: a bad name, missing, not a robot project, or (through a
-    link) outside MORPH_HOME."""
+    link) outside MORPH_HOME. A robot project whose meta.json can't be read still is one (repair_meta mends it when a
+    Studio starts): it never disappears from the menu while its name stays taken."""
     try:
         project_name(name)
     except ValueError:
         return None
     root = contained_path(home, name, decode=False)
-    if not root or not os.path.isdir(root) or read_meta(root).get("kind") != "robot":
+    if not root or not os.path.isdir(root):
+        return None
+    if read_meta(root).get("kind") != "robot" and not (damaged_meta(root) and _robot_folder(root)):
         return None
     return root
+
+
+def repair_meta(root: str, say=None) -> bool:
+    """A robot project's meta.json that can't be read is kept as meta.json.damaged-<time> and replaced by one made from
+    what the project shows: kind robot, the robot source of its newest design, and demo for the launcher's egg-picker
+    and so101 (so Reset demo still finds them). Its need, origin and brief or fork links are lost; the damaged copy
+    keeps whatever can still be read. True when it repaired one."""
+    if not damaged_meta(root) or not _robot_folder(root):
+        return False
+    name = os.path.basename(os.path.normpath(root))
+    p = RobotProject(root)
+    source = ""
+    for rev in reversed(p.finished() or p.revs()):
+        try:
+            source = p.load_design(rev).arm.source or ""
+            break
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    kept = f"meta.json.damaged-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+    try:
+        os.replace(os.path.join(root, "meta.json"), os.path.join(root, kept))
+    except OSError:
+        return False
+    revs = p.revs()
+    first = os.path.getmtime(p.rev_dir(revs[0])) if revs else os.path.getmtime(root)
+    write_meta(root, {"kind": "robot", "source": source, "need": "", "origin": "default", "demo": name in DEMOS,
+                      "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(first)),
+                      "repaired_utc": utc_now(), "repaired_from": kept})
+    if say:
+        say(f"{name}: meta.json couldn't be read (damaged, or edited by hand); Morph wrote a new one from the project's "
+            f"revisions and kept the old one as {kept}")
+    return True
 
 
 def finished(p: RobotProject) -> list:
@@ -121,15 +182,17 @@ def _folder_size(path: str) -> int:
 
 
 def tidy(home: str, say=None, *, now: float | None = None) -> dict:
-    """What a Studio does for every robot project when it starts: set_aside_unfinished(); revision folders set aside more
-    than a day ago go to .trash/<project>-<rev>-<UTC time>/ (they hold only files a build can make again: empty .trash
-    to get the space back); the leftovers of a deleted revision a locked file kept are deleted. Never raises: one odd
-    project never stops the Studio. Returns {"set_aside": {project: [revs]}, "trashed": n, "bytes": size moved}."""
+    """What a Studio does for every robot project when it starts: repair_meta(), set_aside_unfinished(); revision folders
+    set aside more than a day ago go to .trash/<project>-<rev>-<UTC time>/ (they hold only files a build can make again:
+    empty .trash to get the space back); the leftovers of a deleted revision a locked file kept are deleted. Never
+    raises: one odd project never stops the Studio. Returns {"set_aside": {project: [revs]}, "trashed": n, "bytes":
+    size moved}."""
     now = time.time() if now is None else now
     out = {"set_aside": {}, "trashed": 0, "bytes": 0}
     for info in list_projects(home):
         name, root = info["name"], os.path.join(home, info["name"])
         try:
+            repair_meta(root, say)
             p = RobotProject(root)
             gone = set_aside_unfinished(p, say)
             if gone:
@@ -419,6 +482,7 @@ def backfill_demo(home: str, names=DEMOS) -> list:
         root = project_root(home, name)
         if not root:
             continue
+        repair_meta(root, print)  # never written over unread: the damaged one is kept, and the new one has demo set
         m = read_meta(root)
         if "demo" in m:
             continue

@@ -86,6 +86,11 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   `.morph/build-rNNN.lock` (`durable.BuildLock`, freed by the system when the process ends) before the folder exists and
   skips a number another process holds, and releases it at the end. A build that raises before its results.json is in
   place removes its folder (`Project.discard`): a full disk gets its space back.
+- A robot project whose meta.json doesn't parse stays one (`projects.project_root` accepts it when a revision's results
+  say `kind: "robot"` or it has `.morph/`): listed, opened, deleted. `projects.repair_meta` (in `tidy` and
+  `backfill_demo`, before anything writes it) keeps it as `meta.json.damaged-<UTC>` and writes `{kind: "robot", source
+  (from the newest design), need: "", origin: "default", demo (egg-picker and so101), created_utc, repaired_utc,
+  repaired_from}`.
 - When a Studio starts (`projects.tidy`, for every robot project) and when the launcher starts (its two demos, before it
   builds a missing one): the newest revisions that aren't finished and whose lock nobody holds are renamed
   `rNNN.incomplete-<time>` and named in the terminal; ones set aside more than a day ago move to `.trash/`; the

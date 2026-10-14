@@ -382,4 +382,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   waiting for Apply or Drop waits again; a Teams change request that was applied but not built is open again, with
   why, for whoever applied it and its author (it read "applied" with no revision and could not be applied again or
   closed); and a robustness study waiting for its turn is listed as stopped, to carry on (it vanished).
+- A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
+  taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
+  `meta.json` made from its revisions, with the damaged one kept beside it.
 
