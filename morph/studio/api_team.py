@@ -279,16 +279,16 @@ def landing(handler, home: str | None = None) -> bool:
     if "invite" not in q and "link" not in q:
         return False
     ip = _ip(handler)
-    if auth.THROTTLE.wait(ip) > 0:  # the page tells a valid code from a wrong one, so wrong ones count
-        _write(handler, 429, _page("Morph Studio", "<h1>Morph Studio</h1><p class=\"bad\">Too many wrong links from this address. "
-                                                   "Wait a few minutes, then open the link again.</p>"), "text/html; charset=utf-8", csp=JOIN_CSP)
-        return True
     if "invite" in q:
         status, page = join_page(q["invite"][0].strip(), home=home)
     else:
         status, page = link_page(q["link"][0].strip(), home=home)
-    if status == 400 or (status == 410 and "link" in q):
+    if status == 400 or (status == 410 and "link" in q):  # the page tells a valid code from a wrong one: wrong ones count
+        past = auth.THROTTLE.wait(ip) > 0
         auth.THROTTLE.fail(ip)
+        if past:  # a right link still opens (its codes are random: guessing one is hopeless)
+            status, page = 429, _page("Morph Studio", "<h1>Morph Studio</h1><p class=\"bad\">Too many wrong links from this "
+                                                      "address. Wait a few minutes before trying another one.</p>")
     _write(handler, status, page, "text/html; charset=utf-8", csp=JOIN_CSP)
     return True
 

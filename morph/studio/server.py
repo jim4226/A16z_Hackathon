@@ -795,9 +795,11 @@ def artifact_path(p: RobotProject, rel: str) -> str | None:
 
 
 class Guesses:
-    """Wrong access codes per address. After LIMIT different wrong codes within WINDOW seconds, that address's codes
-    are not even compared until the window has passed, so a short MORPH_TOKEN can't be found by trying many. The same
-    wrong code sent again (a tab left open while the Studio restarted with a new code) counts once."""
+    """Wrong access codes per address. After LIMIT different wrong codes within WINDOW seconds, a code the person chose
+    (MORPH_TOKEN) is not even compared for that address until the window has passed, so a short one can't be found by
+    trying many. The code Morph makes (96 random bits) can't be guessed, so it is always compared: wrong guesses from an
+    address never lock out the person at that address who has the link. The same wrong code sent again (a tab left open
+    while the Studio restarted with a new code) counts once."""
 
     LIMIT, WINDOW, ADDRESSES = 10, 900, 4096
 
@@ -818,10 +820,15 @@ class Guesses:
             self.wrong.setdefault(ip, {})[hashlib.sha256(code.encode()).hexdigest()] = time.monotonic()
 
 
-def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None):
+def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None, *, chosen: bool = True):
     """The request handler. A team Studio (studio.team) signs people in as members (session cookie or script token,
-    api_team) instead of the access token, and the Teams role table checks every route."""
+    api_team) instead of the access token, and the Teams role table checks every route. `chosen`: the access code is
+    one a person picked (MORPH_TOKEN), so it may be guessable and wrong guesses lock its address out (Guesses);
+    False for the code access_token() made."""
     guesses = Guesses()
+    wait_note = ("Too many wrong access codes from this computer. Wait 15 minutes, then try again." if chosen else
+                 "Too many wrong access codes from this computer. Open the access link printed where Morph Studio was "
+                 "started: it still works.")
     if studio.team:
         from . import api_team as team
     else:
@@ -879,15 +886,16 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return f"morph_access_{self.server.server_address[1]}"  # cookies ignore the port
 
         def _code(self, code: str) -> bool | None:
-            """True for the access code, False for a wrong one, None (not compared) when this address has tried too
-            many different wrong codes lately."""
+            """True for the access code, False for a wrong one, None when this address has tried too many different
+            wrong codes lately (a code the person chose is then not even compared; Morph's own still signs in)."""
             ip = self.client_address[0]
-            if guesses.blocked(ip):
+            if chosen and guesses.blocked(ip):
                 return None
             if hmac.compare_digest(code.encode(), token.encode()):
                 return True
+            past = guesses.blocked(ip)
             guesses.failed(ip, code)
-            return False
+            return None if past else False
 
         def _signed_in(self) -> bool:
             """Remote Studios: the browser opened the access link (its cookie), or a script sends the token. Team
@@ -925,8 +933,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             if team is not None:  # invites and sign-in links are the way in (a removed member's browser is told why)
                 status, page, ctype, csp = team.signed_out_page(home=studio.home, handler=self)
                 return self._send(status, page, ctype, csp=csp)
-            note = ('<p class="bad">Too many wrong access codes from this computer. Wait 15 minutes, then try again.</p>'
-                    if bad == "throttled" else
+            note = (f'<p class="bad">{html.escape(wait_note)}</p>' if bad == "throttled" else
                     '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
             page = SIGN_IN.replace("HOST", html.escape(socket.gethostname())).replace("BAD", note)
             return self._send(429 if bad == "throttled" else 401, page.encode(), "text/html; charset=utf-8", csp=SIGN_IN_CSP)
@@ -935,7 +942,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             if team is not None:
                 return self._error(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
             if self._throttled:
-                return self._error(429, "Too many wrong access codes from this computer. Wait 15 minutes, then try again.")
+                return self._error(429, wait_note)
             return self._error(401, "open the access link printed where Morph Studio was started")
 
         def _access_link(self, u) -> bool:
@@ -1629,12 +1636,15 @@ class _Server(ThreadingHTTPServer):
 
 
 def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None, token: str | None = None, *,
-          team: bool = False, allow_url_import: bool = False, link: str | None = None):
+          team: bool = False, allow_url_import: bool = False, link: str | None = None, token_chosen: bool | None = None):
     """Run the Studio. `team`: Morph Teams (members sign in with invite or sign-in links; MORPH_TOKEN plays no part),
-    `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers."""
+    `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers.
+    `token_chosen`: False when `token` is one access_token() made (the CLI makes it to print the link first), so wrong
+    guesses never lock out its address (Guesses); default: a given token is the person's own."""
     if not project.revs():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
+    chosen = bool(token) if token_chosen is None else token_chosen
     token = None if team else access_token(host, token)
     studio.remote = bool(token) or (team and not is_loopback(host))
     if team:
@@ -1646,7 +1656,7 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     # Studio: the member's session decides, so a tunnel's or the LAN's address works too
     allowed = None if token or team else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}
     try:
-        httpd = _Server((host, port), make_handler(studio, allowed, token))
+        httpd = _Server((host, port), make_handler(studio, allowed, token, chosen=chosen))
     except OSError as exc:
         if exc.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", errno.EADDRINUSE)):
             raise SystemExit(f"Port {port} is busy ({exc}): Morph Studio is probably already running. Stop it "

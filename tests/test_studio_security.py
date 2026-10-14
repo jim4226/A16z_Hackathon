@@ -472,6 +472,35 @@ def test_wrong_access_codes_are_throttled_per_address(tmp_path, monkeypatch):
         httpd.server_close()
 
 
+def test_wrong_guesses_never_lock_out_the_code_morph_made(tmp_path, monkeypatch):
+    """The code Morph makes (96 random bits) can't be guessed, so it is always compared: after 10 different wrong codes
+    from one address the wrong ones are told to stop (429), and the person at that address with the link still gets in."""
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    st = server.Studio(make_project(tmp_path / "projects"), str(tmp_path / "projects"))
+    code = server.access_token("0.0.0.0")
+    httpd = server._Server(("127.0.0.1", 0), server.make_handler(st, None, code, chosen=False))
+    threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+
+    def get(path, headers=None):
+        conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=5)
+        try:
+            conn.request("GET", path, headers=headers or {})
+            res = conn.getresponse()
+            return res.status, res.read()
+        finally:
+            conn.close()
+
+    try:
+        assert [get(f"/?token=guess-{i}")[0] for i in range(10)] == [401] * 10
+        status, body = get("/?token=guess-10")
+        assert status == 429 and b"it still works" in body and b"Wait 15 minutes" not in body
+        assert get(f"/?token={code}")[0] == 302 and get("/api/state", {"X-Morph-Token": code})[0] == 200
+        assert get("/api/state", {"X-Morph-Token": "guess-11"})[0] == 429
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 # ------------------------------------------------------------------ keys
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")

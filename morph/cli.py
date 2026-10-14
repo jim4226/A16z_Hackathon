@@ -284,7 +284,8 @@ def cmd_studio(a):
         import threading
         threading.Timer(1.5, open_app_window, args=(link,)).start()
     extra = {**({"team": True, "link": link} if team else {}),
-             **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {})}
+             **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {}),
+             **({"token_chosen": False} if token and not fixed else {})}  # Morph's own random code: never locked out
     serve(p, a.host, a.port, home=HOME, token=token, **extra)
 
 

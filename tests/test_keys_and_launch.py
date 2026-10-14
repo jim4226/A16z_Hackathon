@@ -250,7 +250,7 @@ def test_remote_flag_opens_the_studio_to_other_computers(tmp_path, env, monkeypa
     _robots(tmp_path / "projects")
     monkeypatch.setattr(cli, "HOME", str(tmp_path / "projects"))
     got = {}
-    monkeypatch.setattr(server, "serve", lambda p, host, port, home=None, token=None: got.update(host=host, token=token))
+    monkeypatch.setattr(server, "serve", lambda p, host, port, home=None, token=None, **kw: got.update(host=host, token=token, **kw))
     monkeypatch.delenv("MORPH_TOKEN", raising=False)
     a = lambda **k: argparse.Namespace(**{"name": "egg-picker", "host": "127.0.0.1", "port": _free_port(), "open": False,
                                           "remote": False, **k})
@@ -258,9 +258,11 @@ def test_remote_flag_opens_the_studio_to_other_computers(tmp_path, env, monkeypa
     assert got == {"host": "127.0.0.1", "token": None}               # the default stays local-only
     cli.cmd_studio(a(remote=True))
     assert got["host"] == "0.0.0.0" and len(got["token"]) >= 16
+    assert got["token_chosen"] is False                              # Morph's own code: wrong guesses never lock it out
+    got.clear()
     monkeypatch.setenv("MORPH_TOKEN", "team-code-2026")
     cli.cmd_studio(a(remote=True))
-    assert got["token"] == "team-code-2026"                         # same link after a restart
+    assert got["token"] == "team-code-2026" and "token_chosen" not in got   # same link after a restart; throttled as chosen
     monkeypatch.setenv("MORPH_TOKEN", "a b;c")
     with pytest.raises(SystemExit):
         cli.cmd_studio(a(remote=True))

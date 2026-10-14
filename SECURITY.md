@@ -77,8 +77,10 @@ Morph Studio is a local app: a small web server on your computer, used from your
   anyone who can watch that network can copy them. Use remote mode only on a network you trust or over a VPN such as
   Tailscale. From anywhere else, use an SSH tunnel instead (`ssh -L 8765:127.0.0.1:8765 you@server`, no `--remote`).
   Never open port 8765 to the internet. Restarting Morph changes the code, unless `MORPH_TOKEN` in `.env` fixes it.
-  After 10 different wrong codes from one address, Morph stops checking that address's codes for 15 minutes. Still
-  keep the generated code, or make `MORPH_TOKEN` long (20 or more characters).
+  The code Morph makes (96 random bits) can't be guessed, so it is always checked: wrong guesses from an address never
+  lock out the person there who has the link. A code you choose with `MORPH_TOKEN` might be guessable, so after 10
+  different wrong codes from one address Morph stops checking that address's codes for 15 minutes, the right one
+  included. Keep the generated code, or make `MORPH_TOKEN` long and random (20 or more characters).
 - **Team mode is plain HTTP too.** Invite and sign-in links and session cookies can be copied by anyone who can watch
   the network: use it on a network you trust, or behind HTTPS (a tunnel or VPN). An approval records who reviewed a
   revision; it doesn't certify that a robot is safe.

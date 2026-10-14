@@ -7,7 +7,9 @@
   `id.issued.HMAC(secret, id|issued|epoch)`, valid 30 days. Nothing else is stored, so sessions survive restarts;
   revoking a member (or "sign out everywhere") bumps their epoch, which ends every session at once.
 - Script tokens (`X-Morph-Token`) are stored hashed and shown once.
-- Wrong codes are throttled per IP address. Every comparison of a secret is constant-time.
+- Wrong codes are throttled per IP address: past the limit a wrong one is answered 429. Every code here is random (128
+  bits or more, never guessable), so a right one is always checked and works: another person's wrong tries at the same
+  address never lock out the person who has the link. Every comparison of a secret is constant-time.
 """
 
 from __future__ import annotations
@@ -154,10 +156,13 @@ class Throttle:
 THROTTLE = Throttle()
 
 
-def _check_throttle(ip, now=None):
+def _failed(ip, now=None):
+    """A wrong code from `ip`: counted, and once the address is past the limit the refusal is a 429 instead."""
     wait = THROTTLE.wait(ip, now)
+    THROTTLE.fail(ip, now)
     if wait > 0:
-        raise AuthError(429, f"Too many wrong codes from this address. Wait {max(1, round(wait / 60))} minute(s), then try again.")
+        raise AuthError(429, f"Too many wrong codes from this address. Wait {max(1, round(wait / 60))} minute(s) before "
+                             "trying another, or open a link you were sent: those still work.")
 
 
 # ------------------------------------------------------------------ team
@@ -271,10 +276,9 @@ def revoke_invite(invite_id: str, by: str | None, home: str | None = None) -> di
 
 def redeem_invite(code: str, name: str = "", ip: str | None = None, home: str | None = None, now=None) -> tuple:
     """Join with an invite: creates the member and returns (public member, session cookie value)."""
-    _check_throttle(ip, now)
     t = _now(now)
     if not isinstance(code, str) or not CODE_RX.match(code) or not code.startswith("mi_"):
-        THROTTLE.fail(ip, now)
+        _failed(ip, now)
         raise AuthError(400, "That invite link is not valid. Ask the team owner for a new one.")
 
     def fn(data):
@@ -298,7 +302,7 @@ def redeem_invite(code: str, name: str = "", ip: str | None = None, home: str | 
     try:
         m, extra = st.update(fn)  # a refusal raises inside fn, so nothing is written
     except AuthError:
-        THROTTLE.fail(ip, now)
+        _failed(ip, now)
         raise
     audit.append("sign_in", by=m["id"], home=home, via="invite", invite=extra, role=m["role"], ip=ip or "")
     return public_member(m), sign_session(m["id"], m.get("epoch", 0), st.secret(), t)
@@ -344,10 +348,9 @@ def link_status(code: str, home: str | None = None, now=None) -> dict | None:
 
 
 def redeem_link(code: str, ip: str | None = None, home: str | None = None, now=None) -> tuple:
-    _check_throttle(ip, now)
     t = _now(now)
     if not isinstance(code, str) or not CODE_RX.match(code) or not code.startswith("ml_"):
-        THROTTLE.fail(ip, now)
+        _failed(ip, now)
         raise AuthError(400, "That sign-in link is not valid.")
 
     def fn(data):
@@ -363,7 +366,7 @@ def redeem_link(code: str, ip: str | None = None, home: str | None = None, now=N
     try:
         m = st.update(fn)
     except AuthError:
-        THROTTLE.fail(ip, now)
+        _failed(ip, now)
         raise
     audit.append("sign_in", by=m["id"], home=home, via="link", ip=ip or "")
     return public_member(m), sign_session(m["id"], m.get("epoch", 0), st.secret(), t)
@@ -488,8 +491,6 @@ def revoke_token(member_id: str, token_id: str, home: str | None = None) -> bool
 
 def verify_token(token, ip: str | None = None, home: str | None = None, now=None) -> dict | None:
     if not isinstance(token, str) or not token:
-        return None
-    if THROTTLE.wait(ip, now) > 0:
         return None
     if not CODE_RX.match(token) or not token.startswith("mt_"):
         THROTTLE.fail(ip, now)

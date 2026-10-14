@@ -128,9 +128,10 @@ open and what they're looking at.
 - **Links and sessions.** Invite codes (128-bit) and script tokens are stored hashed. Invites work once for 7 days;
   sign-in links once for 15 minutes. Sessions are signed cookies valid for 30 days; removing a member (Share, *Remove*,
   or `morph team revoke`) signs them out everywhere, and their open pages stop within seconds and say why. An address
-  that sends 10 wrong codes within 10 minutes is refused until the oldest of them is 10 minutes old (behind a tunnel
-  everyone shares one address, so a script with a wrong token can hold up new sign-ins for up to 10 minutes; existing
-  sessions are unaffected).
+  that sends 10 wrong codes within 10 minutes has its further wrong codes refused until the oldest of them is 10
+  minutes old. Every code is random (128 bits or more), so a right invite, sign-in link or script token still works
+  from that address: behind a tunnel everyone shares one address, and a script with a wrong token can't hold up
+  anyone else's sign-in.
 - **What is logged.** The audit log (`projects/.team/audit.jsonl`, hash-chained) records sign-ins with IP addresses,
   invites, role changes, API key and settings changes (names only, never values), exports, imports (with their links),
   Reset demo and deleted projects.

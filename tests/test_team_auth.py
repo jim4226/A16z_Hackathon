@@ -180,18 +180,29 @@ def test_script_tokens_are_hashed_listed_without_secrets_and_revocable(home):
     assert auth.verify_token(t["token"], home=home) is None
 
 
-def test_wrong_codes_are_throttled_per_address(home):
+def test_wrong_codes_are_throttled_per_address_and_never_lock_out_a_right_one(home):
+    """Past the limit an address's wrong codes are answered 429, but every Teams code is random (128 bits or more), so
+    a right one is still checked and works: someone mistyping (or guessing) at the same address, behind the same
+    router or tunnel, never locks out the person who has the link, nor a script's token."""
     owner = auth.init_team("Jim", home=home)["member"]["id"]
     good = auth.create_invite(owner, "editor", [], "", home=home)["code"]
+    tok = auth.create_token(owner, "nightly", home=home)["token"]
+    statuses = []
     for _ in range(auth.THROTTLE.limit):
-        with pytest.raises(auth.AuthError):
+        with pytest.raises(auth.AuthError) as e:
             auth.redeem_invite("mi_" + "Z" * 22, "x", ip="10.0.0.9", home=home)
+        statuses.append(e.value.status)
+    assert statuses == [400] * auth.THROTTLE.limit and auth.THROTTLE.wait("10.0.0.9") > 0
     with pytest.raises(auth.AuthError) as e:
-        auth.redeem_invite(good, "x", ip="10.0.0.9", home=home)  # even a good code waits
-    assert e.value.status == 429
+        auth.redeem_link("ml_" + "Y" * 22, ip="10.0.0.9", home=home)   # another wrong one: still 429
+    assert e.value.status == 429 and "still work" in str(e.value)
     assert auth.verify_token("mt_" + "Q" * 43, ip="10.0.0.9", home=home) is None
-    m, _ = auth.redeem_invite(good, "Ana", ip="10.0.0.10", home=home)  # other addresses are not affected
+    assert auth.verify_token(tok, ip="10.0.0.9", home=home)["id"] == owner      # a script's token keeps working
+    m, _ = auth.redeem_invite(good, "Ana", ip="10.0.0.9", home=home)            # and so does the invite sent to Ana
     assert m["name"] == "Ana"
+    link = auth.create_link(m["id"], by=owner, home=home)["code"]
+    assert auth.redeem_link(link, ip="10.0.0.9", home=home)[0]["name"] == "Ana"
+    assert auth.THROTTLE.wait("10.0.0.10") == 0                                  # other addresses are not affected
     assert auth.THROTTLE.wait("10.0.0.9", now=time.time() + auth.THROTTLE.window + 1) == 0
 
 

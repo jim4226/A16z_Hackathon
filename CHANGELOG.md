@@ -210,7 +210,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   message that looks like an API key (Claude, SubQ or Keewano) is refused.
 - API keys are never sent on to another server when a service answers with a redirect (SubQ, Keewano). A `.env` from
   an older Morph that others could read is made private when the Studio starts.
-- Remote mode: after 10 different wrong access codes from one address, that address waits 15 minutes.
+- Remote mode: after 10 different wrong access codes from one address, a `MORPH_TOKEN` you chose isn't checked from
+  that address for 15 minutes.
 - The server never opens a pipe or device file, and a request whose body stops arriving gets an answer.
 - Every value a chat edit, Claude or a request can set must fit limits far wider than any robot Morph builds: a
   kilometre-wide object used to hold the build slot for hours. Designs with unknown keys are refused. `morph robot
@@ -257,6 +258,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
   access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
   teammates behind one router are unaffected. Many addresses together can still fill the slots (SECURITY.md).
+- Wrong codes from one address no longer lock out the person there who has the link: Morph's own access code and
+  every Teams invite, sign-in link and script token are random, so a right one is always checked and works (only a
+  `MORPH_TOKEN` you chose still makes that address wait). A script's live updates no longer end when someone at the
+  same address mistypes links.
 
 ### Fixes
 

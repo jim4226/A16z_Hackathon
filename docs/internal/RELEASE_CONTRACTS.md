@@ -86,7 +86,11 @@ class Request:
 
 - Every request passes the existing checks first: Host/Origin, the access token or Teams session, the
   body cap and the role check. In remote mode, an address that sent 10 different wrong access codes is
-  answered 429 for 15 minutes without its codes being compared.
+  answered 429 for 15 minutes, and a code the person chose (`MORPH_TOKEN`, `make_handler(..., chosen=True)`, the
+  default) is not even compared; the code Morph made (`access_token()`, 96 random bits; `serve(token_chosen=False)`, which
+  the CLI passes) is always compared, so the person at that address with the link still signs in. Teams codes are all
+  random (`auth.Throttle`): past 10 wrong ones in 10 minutes an address's wrong codes are answered 429, and a right
+  invite, sign-in link or script token still works.
 - POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; the page sends `1`; 403
   without it); `studio.api` sends it.
 - A connection has `HEADER_TIMEOUT` (20 s) in all for its request line and headers. The server serves at most
