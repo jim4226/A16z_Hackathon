@@ -94,6 +94,10 @@ def test_pipeline_runs_and_reuses(tmp_path):
     pay, ws = sc["payload_sweep"]["metrics"], sc["workspace"]["metrics"]
     assert s["payload_test_reach_mm"] == pay["test_reach_mm"] and s["stretch_payload_g"] == pay["stretch_payload_g"]
     assert s["stretch_reach_mm"] == pay["stretch_reach_mm"] and s["top_down_reach_mm"] == ws["top_down_reach_mm"][1]
+    # what sizing changed from the request travels with the summary (the inspector and New robot show it)
+    assert s["notes"] == res["sizing"]["notes"]
+    if res["sizing"]["reach_mm"] > d.arm.reach_mm + 1:
+        assert any(n.startswith(f"reach raised from {d.arm.reach_mm:.0f} to ") for n in s["notes"]), s["notes"]
     r2 = p.run(d.with_changes({"task.cycle_time_s": 8.0}), parent=r1, n_trials=1, verbose=False, fast_sim=True)
     res2 = p.load_results(r2)
     prov = res2["provenance"]

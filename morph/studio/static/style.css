@@ -234,6 +234,7 @@ main#main { display: grid; grid-template-columns: var(--left-w) minmax(0, 1fr) v
 .prow.regen { animation: rowflash 2.2s ease-out; }
 .prow label { color: var(--ink2); font-size: 12.3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .prow label small { display: block; color: var(--accent2); font-size: 10.5px; font-family: var(--mono); }
+.prow label .phint { display: block; color: var(--muted); font-size: 10.5px; font-style: normal; }
 .pnum { display: grid; grid-template-columns: 1fr 70px; align-items: center; gap: 7px; }
 .pnum input[type=range] { width: 100%; accent-color: var(--accent); height: 3px; }
 input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; }
@@ -604,6 +605,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px;
 .issue.bad { background: var(--bad-bg); color: #ffb3b3; } .issue.bad svg { color: var(--bad); }
 .issue.warn { background: var(--warn-bg); color: #f3d79b; } .issue.warn svg { color: var(--warn); }
 .issue.ok { background: var(--good-bg); color: #9ee8c3; } .issue.ok svg { color: var(--good); }
+.issue.info { background: var(--accent-bg); color: var(--ink2); } .issue.info svg { color: var(--accent2); }
 .fw svg { display: block; width: 100%; }
 
 /* ------------------------------------------------------------------ toast */

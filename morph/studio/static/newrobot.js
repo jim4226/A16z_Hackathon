@@ -553,6 +553,7 @@ function doneView() {
       ${m('Cycle time', s.cycle_time_s ? `${(+s.cycle_time_s).toFixed(1)} s` : '–')}${m('Max payload', s.max_payload_g ? `${Math.round(s.max_payload_g)} g` : '–',
         s.payload_test_reach_mm ? `top-down at ${Math.round(s.payload_test_reach_mm)} mm, servos at stall` : '')}</div>
     ${(s.issues || []).length ? `<ul class="nr-issues">${s.issues.slice(0, 4).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${(s.notes || []).length ? `<ul class="nr-adjusted">${s.notes.map((x) => `<li><b>Morph adjusted</b> ${esc(x)}</li>`).join('')}</ul>` : ''}
     ${doneAssumptions()}
     ${timeline(['pipeline', 'sourcing', 'memory'])}`;
 }

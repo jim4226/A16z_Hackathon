@@ -79,3 +79,20 @@ def test_the_payload_and_reach_labels_say_what_was_measured(inspect):
     assert "Payload at full reach" not in text and "before a servo stalls" in text
     facts = pg.inner_text("#insp .facts")
     assert "OBJECT MASS" in facts.upper() and "\nPAYLOAD" not in facts.upper()
+
+
+def test_the_inspector_says_what_sizing_changed_from_the_request(inspect):
+    # the egg-picker asks for 320 mm and is built at 475 mm: the parameter, the inspector and its issues say so
+    note = "reach raised from 320 to 475 mm: top-down pick/place at 234 / 233 mm with a 175 mm wrist + hand"
+    pg = inspect({"summary": {**SUMMARY, "notes": [note]},
+                  "sizing": {"reach_mm": 475.2, "links_mm": {"base_h": 95.0}, "notes": [note]}})
+    issues = pg.inner_text("#insp")
+    assert f"Morph adjusted {note}" in " ".join(issues.split()) and "No issues" in issues
+    reach = pg.inner_text('#paramsBody .prow[data-key="arm.reach_mm"] label')
+    assert "built at 475 mm" in reach, reach
+    assert pg.input_value('#paramsBody .prow[data-key="arm.reach_mm"] input[type=number]') == "320"
+    # a value built as asked has no hint
+    assert "built at" not in pg.inner_text('#paramsBody .prow[data-key="arm.base_height_mm"] label')
+    # an older revision without summary notes still shows sizing's
+    pg2 = inspect({"summary": SUMMARY, "sizing": {"reach_mm": 475.2, "notes": [note]}})
+    assert "Morph adjusted reach raised from 320 to 475 mm" in " ".join(pg2.inner_text("#insp").split())

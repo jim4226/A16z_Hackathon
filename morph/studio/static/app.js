@@ -541,8 +541,14 @@ function renderParams(cur) {
     g.items.push(p);
   }
   const changed = cur?.changes || {};
+  // sizing may build a value other than the one asked for (reach raised to fit the pick and place): say so on its row
+  const built = { 'arm.reach_mm': cur?.sizing?.reach_mm ?? cur?.summary?.reach_mm, 'arm.base_height_mm': cur?.sizing?.links_mm?.base_h };
+  const hint = (p) => {
+    const b = built[p.key];
+    return b != null && typeof p.value === 'number' && Math.abs(b - p.value) >= 1 ? `built at ${Math.round(b)} ${p.unit || ''}`.trim() : '';
+  };
   $('#paramsBody').innerHTML = groups.map((g) => `<div class="pgroup"><div class="sec-t">${esc(g.name)}<span class="r">${g.items.length}</span></div>` +
-    g.items.map((p) => paramRow(p, p.key in changed)).join('') + '</div>').join('') ||
+    g.items.map((p) => paramRow(p, p.key in changed, hint(p))).join('') + '</div>').join('') ||
     `<div class="empty"><p>${cur ? 'No editable parameters in this revision.' : 'No finished revision yet.'}</p></div>`;
   $$('#paramsBody .prow').forEach((row) => {
     const p = params.find((x) => x.key === row.dataset.key);
@@ -563,8 +569,8 @@ function renderParams(cur) {
   });
   updateParamsBar();
 }
-function paramRow(p, regen) {
-  const lab = `<label title="${esc(p.key)}">${esc(p.label || p.key)}<small></small></label>`;
+function paramRow(p, regen, hint = '') {
+  const lab = `<label title="${esc(p.key)}">${esc(p.label || p.key)}<small></small>${hint ? `<em class="phint">${esc(hint)}</em>` : ''}</label>`;
   let ctl;
   if (p.type === 'select') {
     const opts = (p.options || []).map((o) => `<option value="${esc(o)}"${String(o) === String(p.value) ? ' selected' : ''}>${esc(pretty(o, true))}</option>`).join('');
@@ -679,6 +685,7 @@ function renderInspector(cur, prev) {
     }
   }
   const warns = [...(cur.sizing?.warnings || []), ...(cur.electronics?.warnings || []), ...(cur.manufacturing?.warnings || [])];
+  const adjusted = s.notes || cur.sizing?.notes || [];  // what sizing changed from the request ("reach raised from 320 to 475 mm")
   const errs = Object.entries(cur.errors || {});
   const prov = Object.values(cur.provenance || {});
   const nComp = prov.filter((p) => p === 'computed').length;
@@ -740,6 +747,7 @@ function renderInspector(cur, prev) {
       ${errs.map(([n, e]) => `<div class="issue bad">${I('x', 'sm')}<span><b>${esc(n)}</b>: ${esc(e)}</span></div>`).join('')}
       ${issues.map((t) => `<div class="issue bad">${I('x', 'sm')}<span>${esc(t)}</span></div>`).join('')}
       ${warns.map((t) => `<div class="issue warn">${I('alert', 'sm')}<span>${esc(t)}</span></div>`).join('')}
+      ${adjusted.map((t) => `<div class="issue info">${I('wrench', 'sm')}<span><b>Morph adjusted</b> ${esc(t)}</span></div>`).join('')}
       ${!issues.length && !warns.length && !errs.length ? `<div class="issue ok">${I('check', 'sm')}<span>No issues: torque margins, grasp force window, DRC and DFM checks pass.</span></div>` : ''}
     </div>`;
 }

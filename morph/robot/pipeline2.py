@@ -545,4 +545,6 @@ def summarize(r: dict) -> dict:
         "tooling_cost": (mfg.get("totals") or {}).get("tooling_cost"),
         "assembly_steps": len(man.get("steps", []) or []), "assembly_time_min": man.get("time_min_total"),
         "feasible": not issues, "issues": issues,
+        # what sizing changed from the request to make the arm buildable ("reach raised from 320 to 475 mm: ...")
+        "notes": list(sz.get("notes") or []),
     }

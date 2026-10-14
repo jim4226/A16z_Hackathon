@@ -302,6 +302,8 @@ def _robot_summary(p, rev) -> list:
     print(f"\n{rev}: " + "  ".join(f"{k}={s.get(k)}" for k in keys))
     for i in s.get("issues", []):
         print(f"  x {i}")
+    for n in s.get("notes") or []:
+        print(f"  adjusted: {n}")
     return [n for n in ORDER if stage_problem(res, n)]
 
 

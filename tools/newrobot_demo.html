@@ -63,7 +63,8 @@ async function fakeBuild(project) {  // what the Studio streams while it builds:
   emit({ type: 'agent', project, role: 'sourcing', provider: 'darwin', status: 'start', ms: null, text: 'Darwin is shortlisting suppliers for every bought part' });
   delete live[project];
   emit({ type: 'done', project, seconds: 17.4, current: { rev: 'r001', summary: { feasible: true, unit_cost: 289.4, pick_place_success: true,
-    cycle_time_s: 5.8, max_payload_g: 980, issues: [] } }, previous: null });
+    cycle_time_s: 5.8, max_payload_g: 980, payload_test_reach_mm: 216, issues: [],
+    notes: ['reach raised from 320 to 475 mm: top-down pick/place at 234 / 233 mm with a 175 mm wrist + hand'] } }, previous: null });
   await sleep(PACE * 3);
   emit({ type: 'agent', project, role: 'sourcing', provider: 'darwin', status: 'done', ms: 6200, text: 'Shortlist ready in the BOM tab (search only: nothing is ordered)' });
   emit({ type: 'agent', project, role: 'memory', provider: 'keewano', status: 'skipped', ms: 0, text: 'Keewano not configured' });

@@ -98,6 +98,8 @@ def test_describe_clarify_confirm_build_done(page):
     pg.wait_for_selector(".nr-metrics", timeout=30000)
     shot(pg, "done")
     assert "Feasible" in pg.inner_text(".nr-done-h") and pg.inner_text("#project") == "berry-bot"
+    # what sizing changed from the request is on the card, not only in the inspector
+    assert "Morph adjusted reach raised from 320 to 475 mm" in pg.inner_text(".nr-adjusted")
     assert pg.locator('.nr-ag[data-role="pipeline"].done').count() == 1
     pg.click('[data-a="openproj"]')
     assert pg.locator(".nr").count() == 0

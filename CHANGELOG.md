@@ -410,3 +410,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - A robustness study of a revision that only changed the controller or the electronics build no longer says it was
   "simulated with other Morph code". Such a revision reuses its parent's simulation, and the study compared the whole
   rebuilt model, including the boards' mass in the base welded to the table; it now compares what moves.
+- When sizing builds something other than what was asked, Morph says so. The egg-picker asks for a 320 mm reach and is
+  built at 475 mm (a top-down pick 234 mm out needs it); the Parameters panel showed 320 mm and nothing said why the
+  robot was bigger. The inspector now lists "Morph adjusted reach raised from 320 to 475 mm: ..." with the reason, the
+  Reach and Shoulder height parameters say "built at N mm", and New robot's done card and the terminal summary list the
+  same notes.

@@ -1450,4 +1450,10 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   no joint (the base welded to the table), with the mesh assets only they used, are left out. A controller or
   `electronics.config` revision reuses its parent's simulation (`GRAPH`); its rebuilt base differs in mass and shapes
   only, so `matches_revision` stays true. Any change to a moving body (a servo's torque, a link) still makes it false.
+- **What sizing changed is shown (ENG-11).** `summarize` adds `notes`: sizing's notes ("reach raised from 320 to 475
+  mm: top-down pick/place at 234 / 233 mm with a 175 mm wrist + hand", "shoulder height raised to 76 mm (...)"). The
+  inspector lists each under Issues & warnings as "Morph adjusted <note>" (an older revision's `sizing.notes` when its
+  summary has none) without counting it as an issue; the Parameters rows for Reach and Shoulder height say "built at
+  N mm" when the sized value differs from the asked one by 1 mm or more; New robot's done card and `morph robot`'s
+  summary ("adjusted: ...") list them.
 
