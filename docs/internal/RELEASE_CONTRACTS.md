@@ -1462,4 +1462,10 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   agent line says "every software check passed". The Firmware pane opens with "Generated firmware, not bench-tested: it
   hasn't been compiled for this board or run on the arm ..." (`electronics.firmware_validation` is unverified); the
   Export button's title and toast say "not bench-validated", as the export manifest's `note` does.
+- **Manual, make files and BOM list the same parts (ENG-13).** `manufacturing.fabricated(part)` (a fabrication
+  process, and not a fastener, cable or "visual" part) decides both what gets make files and what the manual's parts
+  tables list as made: the upper arm's logo inlay is decoration in the CAD only (no print file, BOM line or manual row).
+  Every bought fastener and standoff in the BOM is in a step (the M3x6 brass standoffs in the Electronics bay step's
+  parts table). The first pick-and-place test names the project's object ("a stand-in for the strawberry (or a 30 mm
+  ball) ... then repeat with a real strawberry"); only an egg project uses a hard-boiled egg first.
 

@@ -433,6 +433,16 @@ def test_manual_without_efinal_or_mfg(tmp_path):
     assert (tmp_path / "manual.html").is_file() and len(man["steps"]) >= 8
 
 
+def test_the_first_test_uses_the_projects_object(tmp_path):
+    # every project's first pick-and-place test used a hard-boiled egg, then a raw one
+    d = Design().with_changes({**EGG, "object.name": "strawberry", "object.diameter_mm": 30.0})
+    man = manual.build(d, make_asm(d), None, None, str(tmp_path))
+    first = next(s for s in man["steps"] if s["kind"] == "test")
+    assert "egg" not in first["instructions"].lower(), first["instructions"]
+    assert "a stand-in for the strawberry (or a 30 mm ball)" in first["instructions"]
+    assert first["instructions"].rstrip().endswith("then repeat with a real strawberry.")
+
+
 def test_real_generator_if_available(tmp_path):
     from morph.robot import arm
 
@@ -462,6 +472,22 @@ def test_real_generator_if_available(tmp_path):
         model = z.read("3D/3dmodel.model").decode()
     v = np.array([[float(a) for a in m] for m in re.findall(r'<vertex x="([-\d.]+)" y="([-\d.]+)" z="([-\d.]+)"', model)])
     assert np.ptp(v, axis=0)[2] <= bed[2]
+    # the manual, the make files and the BOM agree: every part a step says to make has its files (the upper arm's
+    # logo inlay, decoration with no print file, was in step 5's table), and every bought fastener or standoff is in
+    # some step
+    made = {e["group"]: e for e in mfg["parts"]}
+    bought = ("purchased", "hardware", "supplied with the servo")
+    for s in man["steps"]:
+        for t in s["parts_table"]:
+            if t["source"] not in bought:
+                assert t["group"] in made and made[t["group"]]["files"], (s["title"], t)
+    assert not any("logo" in t["item"].lower() for s in man["steps"] for t in s["parts_table"])
+    assert any(p.kind == "visual" and "logo" in p.name for p in asm.parts)      # still in the CAD
+    in_steps = {f["spec"] for s in man["steps"] for f in s["fasteners"]} | \
+        {t["item"] for s in man["steps"] for t in s["parts_table"]}
+    for r in b["rows"]:
+        if r["category"] == "fastener" and r.get("source") != "electronics":
+            assert r.get("spec") in in_steps or r["item"] in in_steps, r["item"]
 
 
 def test_a_part_too_big_for_the_bed_in_every_orientation_says_split_it():

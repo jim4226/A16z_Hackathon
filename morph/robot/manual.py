@@ -464,7 +464,7 @@ def _mech_steps(F: _Facts):
                 continue
         table, sent, warn = OrderedDict(), [], []
         inst = [(k, e) for k, e in F.inst.items() if any(n in names for n in e["parts"])]
-        fab = [p for p in parts if p.process in mf.FAB_PROCESSES and p.kind not in ("fastener", "cable")]
+        fab = [p for p in parts if mf.fabricated(p)]    # the parts manufacturing makes files for, nothing else
         # parts table
         for k, e in inst:
             nm, src = _sku_name(e["sku"])
@@ -1079,7 +1079,7 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
     n_fab = sum(e.get("qty", 0) for e in mfg.get("parts", []) if e.get("process") in mf.FAB_PROCESSES)
     n_fast = sum(f["qty"] for s in steps for f in s["fasteners"])
     tiles = [(len(steps), "steps"), (_fmt_min(total_min), "build time"),
-             (n_fab or len({p.group or p.name for p in asm.parts if p.process in mf.FAB_PROCESSES}), "made parts"),
+             (n_fab or len({p.group or p.name for p in asm.parts if mf.fabricated(p)}), "made parts"),
              (n_fast, "fasteners")]
     if unit:
         tiles[3] = (f"${unit:,.0f}", "unit cost (est.)")
@@ -1298,7 +1298,7 @@ def build(design, asm, mfg, efinal, outdir, images: bool = True) -> dict:
             jobs = _image_jobs(F, steps)
             tsz = dict(view=(35.0, 28.0), size=(180, 130), pad=0.1, shadow=False)
             groups = list(F.mfg_by_group) or list(OrderedDict.fromkeys(
-                p.group or p.name for p in asm.parts if p.process in mf.FAB_PROCESSES))
+                p.group or p.name for p in asm.parts if mf.fabricated(p)))
             for g in groups:
                 p = next((p for p in asm.parts if (p.group or p.name) == g), None)
                 if p is not None:            # render frames the bounds itself: no copy needed

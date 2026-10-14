@@ -261,8 +261,14 @@ _GENERIC = {   # purchased bits generators use that are not catalog entries
 }
 
 
+def fabricated(p) -> bool:
+    """A part Morph writes make files for (printed, cut, machined, molded). Decoration ("visual": the upper arm's logo
+    inlay), fasteners and cables are not, so they have no print file, BOM line or place in the manual's parts tables."""
+    return p.process in FAB_PROCESSES and p.kind not in ("fastener", "cable", "visual")
+
+
 def _fab_parts(asm):
-    return [p for p in asm.parts if p.process in FAB_PROCESSES and p.kind not in ("fastener", "cable", "visual")]
+    return [p for p in asm.parts if fabricated(p)]
 
 
 def step_fasteners(asm) -> dict:

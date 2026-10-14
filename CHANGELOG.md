@@ -418,3 +418,5 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - New robot no longer calls a design "Feasible" or "Built and checked": it says its software checks pass (simulation,
   torque margins, DRC, DFM) and that it is not bench-validated. The Firmware pane and the Export button say the files
   are generated and not bench-tested.
+- The assembly manual no longer asks you to fit an "Upper arm logo" that has no print file and isn't in the BOM: the
+  logo inlay is decoration in the 3D view only, and the manual's parts tables list exactly the parts with make files.
