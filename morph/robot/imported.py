@@ -26,12 +26,6 @@ G = np.array([0.0, 0.0, -9.81])
 # Feetech STS3215 STL frame -> Morph actuator frame (shaft axis at the horn face, body towards -z)
 STS_STL_TO_COMPONENT = trans((12.5, 0.0, 20.2))
 
-FAMILY_SWAPS = {  # stock smart-bus robot -> other families, by joint position (base -> gripper)
-    "dynamixel": ["xl430_w250", "xl430_w250", "xl430_w250", "xl330_m288", "xl330_m288", "xl330_m288"],
-    "hobby_pwm": ["mg996r", "ds3218", "ds3218", "mg996r", "mg996r", "mg996r"],
-}
-
-
 def roots() -> list:
     """Where an arm.source name is looked up, in order: the robots shipped with Morph, then robots the user
     imported (MORPH_HOME/.robots, the Studio's projects folder when it set one). Nowhere else: a design names a robot,
@@ -78,16 +72,20 @@ def _urdf(design, prof) -> str:
     return prof["urdf_camera"] if "wrist_camera" in _extras(design) and prof.get("urdf_camera") else prof["urdf"]
 
 
-def actuator_plan(design, prof) -> dict:
-    """joint -> catalog key after the requested family/voltage edits."""
+def actuator_plan(design, prof, need: dict | None = None) -> dict:
+    """joint -> catalog key after the requested family/voltage edits. Swapping to another family (not the robot's own:
+    an OMX keeps its XM430s) picks, for each joint, the weakest actuator that gives `need[joint]` (N·m, margin
+    included) from one voltage class of that family (catalog.pick_in_groups): six XL430s on 12 V for the SO-101, never
+    XL430s and XL330s on one rail."""
     stock = dict(prof["actuators"])
     joints = list(stock)
     fam = design.arm.actuator_family
     overrides = dict(kv.split("=") for kv in design.arm.actuator_overrides.split(",") if "=" in kv)
     stock_families = {catalog.ACTUATORS.get(k, {}).get("family") for k in stock.values()}
-    if fam in FAMILY_SWAPS and fam not in stock_families:   # a swap, not the robot's own family (OMX: XM430 stays)
-        keys = FAMILY_SWAPS[fam]
-        out = {j: keys[min(i, len(keys) - 1)] for i, j in enumerate(joints)}
+    if fam in catalog.FAMILY_GROUPS and fam not in stock_families:   # a swap, not the robot's own family
+        if need is None:
+            raise TypeError("actuator_plan needs each joint's torque (need) to swap the actuator family")
+        out = catalog.pick_in_groups({j: need[j] for j in joints}, fam)
     else:
         out = dict(stock)
     if "all" in overrides:
@@ -182,7 +180,6 @@ def size(design) -> dict:
 
     prof, d = load_profile(design.arm.source)
     asm = load_urdf(bundle_file(d, _urdf(design, prof)), prof, bundle=d)
-    acts = actuator_plan(design, prof)
     payload = design.object.mass_g / 1000.0
     margin_f = design.arm.payload_margin
     # hand-written profiles size at q = 0 (SO-101: the pose its makers quote), and say so; auto-imported arms have no
@@ -192,6 +189,7 @@ def size(design) -> dict:
     reqs, reach = _worst(rows if grid else rows[:1], grid)
     req = _required(reqs, prof)
     names = prof["arm_joints"] + [prof["gripper_joint"]]
+    acts = actuator_plan(design, prof, {n: req[n] * margin_f for n in names})
     rail = servo_rail([{"key": acts[n], "joint": n, "torque_with_margin_nm": req[n] * margin_f} for n in names],
                       float(design.electronics.servo_v or 0.0))
     rv = rail["v"]

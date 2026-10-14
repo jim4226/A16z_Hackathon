@@ -482,6 +482,7 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
     if config == "custom_pcb" and supply["servo_buck"]:
         issues.append(f"no catalogued supply gives the servos' {servo_v:g} V; the custom PCB passes its input straight to "
                       "the servo rail, so use the modules config (12 V + servo buck)")
+    issues += rail_problems(acts, {**supply, "servo_v": servo_v}, config)
     pb = power_budget(design, acts, config, supply, extras, ctrl, grip)
     if not pb["supply_ok"]:
         issues.append(f"supply {supply['key']} ({supply['a']:g} A) has {pb['margin']:.2f}x margin over the "
@@ -1248,6 +1249,27 @@ def grip_motion(design, ep: dict, asm) -> dict:
             "open_speed": min(25.0 * scale, vmax), "backoff": scale, "force_gain": 10.0 * scale}
 
 
+def rail_problems(acts: list, supply: dict, config: str) -> list:
+    """One line per servo whose voltage range leaves out what its rail really gets: the servo rail, or on the custom PCB
+    (which passes its input straight to the servos) the supply's own voltage."""
+    volts = supply["v"] if config == "custom_pcb" else supply.get("servo_v", supply["v"])
+    out = {}
+    for a in acts:
+        lo, hi = ACTUATORS[a["key"]]["voltage"]
+        if not lo - 1e-6 <= volts <= hi + 1e-6:
+            out.setdefault(a["key"], (lo, hi, []))[2].append(a["joint"])
+    return [f"{', '.join(dict.fromkeys(j))}: {k} takes {lo:g}-{hi:g} V but its servo rail is {volts:g} V; no wiring or "
+            "firmware is made for it" for k, (lo, hi, j) in out.items()]
+
+
+def _one_rail(ep: dict):
+    """ValueError when a servo's rail is outside its voltage range (XL430s and XL330s on one rail, a custom PCB passing
+    12 V to 7.4 V servos): its harness and firmware would run servos off their rating, or not at all."""
+    problems = rail_problems(ep["actuators"], ep["supply"], ep["config"])
+    if problems:
+        raise ValueError(f"no wiring or firmware for a servo rail outside a servo's voltage range ({'; '.join(p.split(';')[0] for p in problems)})")
+
+
 def _one_protocol(ep: dict):
     """ValueError when the plan puts actuators of another bus or protocol on this bus: its firmware would send
     them commands they don't understand (Feetech packets to a DYNAMIXEL, or the reverse)."""
@@ -1258,6 +1280,7 @@ def _one_protocol(ep: dict):
 
 def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
     _one_protocol(ep)
+    _one_rail(ep)
     fam, proto, cfg, ctrl = ep["family"], ep["protocol"], ep["config"], ep["controller"]
     pins = ARDUINO_PIN[ctrl]
     acts = ep["actuators"]
@@ -1853,6 +1876,7 @@ def _rev_of(outdir):
 def finalize(design, sizing: dict, eplan: dict, asm, outdir: str) -> dict:
     ep = eplan
     _one_protocol(ep)       # before anything is written: no harness, board or firmware for a mixed bus
+    _one_rail(ep)           # nor for servos on a rail outside their voltage range
     os.makedirs(outdir, exist_ok=True)
     issues, warnings = list(ep.get("issues", [])), list(ep.get("warnings", []))
     rev = _rev_of(outdir)

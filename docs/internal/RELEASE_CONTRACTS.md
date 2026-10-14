@@ -1352,3 +1352,14 @@ Fixes of the release review's engineering findings. What other code relies on si
   at q = 0, now labelled: `sizing.basis` = "q = 0" (the Studio's margin row reads "at q = 0"), and `sizing.warnings`
   names a joint whose margin over the whole joint range (the auto-import pose grid) falls below the payload margin;
   the inspector lists sizing warnings.
+- **One voltage class per arm (ENG-5).** `catalog.FAMILY_GROUPS` (moved from `importers/autoprofile.py`) lists each
+  family's voltage groups; `catalog.pick_in_groups(need, family)` gives each joint the weakest actuator that holds
+  `need[joint]` (N·m with margin) on its group's servo rail, from the first group where every joint has one.
+  `imported.actuator_plan(design, prof, need)` swaps an imported robot to another family this way (the hard-coded
+  `FAMILY_SWAPS` list, which put XL430s and XL330s on one 6 V rail, is gone; `imported.size` passes the need), and so
+  does `autoprofile.size_for_family`. The SO-101 swapped to Dynamixel gets six XL430-W250s on 12 V (2.27x shoulder
+  margin, the six holder issues by design). `electronics2.rail_problems(acts, supply, config)` names every servo whose
+  voltage range leaves out the rail it really gets (the supply itself on a custom PCB, which passes its input to the
+  servos); those are plan issues, and `firmware()` and `finalize()` raise before writing anything, as for a mixed
+  protocol, so the wiring stage fails with the reason. Present step 12's caption and `docs/DEMO_SCRIPT.md` row 12 say
+  what the swap does (new supply, controller, wiring and firmware; six orange holders; not feasible until redesigned).

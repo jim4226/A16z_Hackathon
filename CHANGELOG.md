@@ -360,3 +360,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Chat "use a 5 V supply" changes the robot's servo supply when every servo takes 5 V, and otherwise changes nothing
   and says which servo's range rules it out (it used to answer "Changing servo supply → 5 V" and keep 12 V). "Use the
   rated supply voltage" goes back to Morph's choice.
+- "Swap to Dynamixel servos" on the SO-101 (Present step 12) put XL430s (6.5-12 V) and XL330s (3.7-6 V) on one 6 V
+  rail: a build that wasn't feasible, a margin worked out at 12 V, and firmware and a parts list for a rail below the
+  XL430's minimum, while the caption said the electronics followed. A family swap now keeps one voltage class per arm
+  (six XL430s on 12 V for the SO-101), a servo whose range leaves out its rail is an issue and gets no wiring or
+  firmware, and the caption says what happens: the six printed holders are flagged until they are redesigned.

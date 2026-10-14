@@ -104,3 +104,51 @@ def test_asking_for_the_so101s_rated_voltage_gives_it_through_the_servo_buck():
     assert ep["supply"]["servo_v"] == 7.4 and ep["supply"]["servo_buck"] and ep["supply"]["v"] == 12.0
     assert next(j for j in sz["joints"] if j["name"] == "shoulder_lift")["margin"] == 2.89
     assert not [w for w in ep["warnings"] if "gives about" in w]
+
+
+# ------------------------------------------------------------------ one voltage class per arm (Present step 12)
+
+def test_swapping_the_so101_to_dynamixel_keeps_one_voltage_class():
+    """'Swap to Dynamixel servos' put XL430s (6.5-12 V) and XL330s (3.7-6 V) on one 6 V rail: infeasible, with a margin
+    worked out at 12 V and firmware for a rail below the XL430's minimum."""
+    d = template("so101", "so101").with_changes(intent.interpret("Swap to Dynamixel servos", template("so101", "so101"))["changes"])
+    sz = imported.size(d)
+    assert {j["actuator"] for j in sz["joints"]} | {sz["gripper_actuator"]} == {"xl430_w250"}
+    ep = electronics2.plan(d, sz)
+    assert ep["supply"]["servo_v"] == 12.0 and ep["issues"] == [] and not [w for w in ep["warnings"] if "rated" in w]
+    assert next(j for j in sz["joints"] if j["name"] == "shoulder_lift")["margin"] == 2.27
+    asm = imported.build(d, sz, ep)
+    assert len(asm.meta["issues"]) == 6 and all("printed holder must be resized" in i for i in asm.meta["issues"])
+
+
+def test_a_rail_outside_a_servos_range_gets_no_wiring_or_firmware(tmp_path):
+    d = template("so101", "so101").with_changes({"arm.actuator_family": "dynamixel", "arm.actuator_overrides": "wrist_flex=xl330_m288"})
+    sz = imported.size(d)
+    ep = electronics2.plan(d, sz)
+    assert any("incompatible supply voltages" in i for i in ep["issues"])
+    bad = [i for i in ep["issues"] if "no wiring or firmware is made for it" in i]
+    assert bad and all(("xl430_w250 takes 6.5-12 V" in i) or ("xl330_m288 takes 3.7-6 V" in i) for i in bad), ep["issues"]
+    asm = imported.build(d, sz, ep)
+    with pytest.raises(ValueError, match="voltage range"):
+        electronics2.firmware(d, ep, asm, str(tmp_path / "fw"), "r001")
+    with pytest.raises(ValueError, match="voltage range"):
+        electronics2.finalize(d, sz, ep, asm, str(tmp_path / "r001" / "electronics"))
+    assert not [f for _, _, fs in __import__("os").walk(tmp_path) for f in fs]
+
+
+def test_a_custom_pcb_never_passes_12_v_to_74_v_servos():
+    d = template("so101", "so101").with_changes({"electronics.servo_v": 7.4, "electronics.config": "custom_pcb"})
+    ep = electronics2.plan(d, imported.size(d))
+    assert any("custom PCB passes its input straight" in i for i in ep["issues"])
+    assert any(i.endswith("no wiring or firmware is made for it") and "takes 4.8-7.4 V but its servo rail is 12 V" in i
+               for i in ep["issues"]), ep["issues"]
+
+
+def test_the_present_caption_says_what_the_dynamixel_swap_does():
+    import os
+
+    path = os.path.join(os.path.dirname(arm.__file__), "..", "studio", "static", "present.js")
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    step = text.split("title: 'Edit someone else’s robot'", 1)[1].split("},", 1)[0]
+    assert "Six XL430s" in step and "one 12 V supply" in step and "not feasible" in step and "orange" in step

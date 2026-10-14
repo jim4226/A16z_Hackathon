@@ -422,29 +422,20 @@ def actuators(J: dict, names: dict, joints: list, hints: dict, answers: dict) ->
     return out
 
 
-# One servo rail per arm: a family's actuators in groups that share a supply voltage at their rated torque (a 12 V
-# STS3215 on the 7.4 V servos' rail gives far less than its 2.9 N·m; an XL330 can't share an XL430's 10-12 V).
-FAMILY_GROUPS = {"hobby_pwm": [["sg90", "mg996r", "ds3218"]], "smart_bus": [["sts3215_7v4"], ["sts3215"]],
-                 "dynamixel": [["xl330_m288"], ["xl430_w250", "xm430_w350"]]}
-
-
 def size_for_family(asm, arm: list, gripper: str, family: str, payload_kg: float = 0.06, margin: float = 2.0) -> dict:
-    """The weakest actuator per joint that holds its worst-case gravity torque x margin, all from the family's first
-    voltage group where every joint has one (else the strongest group). The torques are worked out as the build's
-    sizing does (imported.size): yaw and roll joints at least a fifth of the heaviest load, the jaw at least 0.15 N·m."""
+    """The weakest actuator per joint that holds its worst-case gravity torque x margin on its servo rail, all from one
+    voltage group of the family (catalog.pick_in_groups, as the build swaps a robot's family). The torques are worked
+    out as the build's sizing does (imported.size): yaw and roll joints at least a fifth of the heaviest load, the jaw at
+    least 0.15 N·m."""
     from ..robot import catalog, catalog_extra  # noqa: F401
     from ..robot.imported import worst_case_torques
 
-    groups = FAMILY_GROUPS.get(family)
-    if not groups:
+    if family not in catalog.FAMILY_GROUPS:
         raise ImportFailed(f"Unknown actuator family {family!r}; pick hobby_pwm, smart_bus or dynamixel.")
     need, _ = worst_case_torques(asm, arm, gripper, payload_kg)
     need[gripper] = max(need.get(gripper, 0.0), 0.15)
     top = max(need.values() or [0.0])
-    reqs = {n: max(need.get(n, 0.0), 0.2 * top) * margin for n in arm + [gripper]}
-    holds = lambda keys, req: next((k for k in keys if catalog.ACTUATORS[k]["torque_nm"] >= req), None)  # noqa: E731
-    keys = next((g for g in groups if all(holds(g, r) for r in reqs.values())), groups[-1])
-    return {n: holds(keys, r) or keys[-1] for n, r in reqs.items()}
+    return catalog.pick_in_groups({n: max(need.get(n, 0.0), 0.2 * top) * margin for n in arm + [gripper]}, family)
 
 
 def steps_for(asm) -> list:

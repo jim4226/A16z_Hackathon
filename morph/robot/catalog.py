@@ -85,6 +85,34 @@ FAMILY_ACTUATORS = {  # weakest -> strongest; sizing picks the first that meets 
     "dynamixel": ["xl430_w250", "xm430_w350"],
 }
 
+# One servo rail per arm: each family's actuators in the groups that share a supply voltage at their rated torque (a 12 V
+# STS3215 on the 7.4 V servos' rail gives far less than its 2.9 N·m; an XL330 can't share an XL430's 10-12 V). Imported
+# robots swapped to another family, and auto-imported ones given a family, pick within one group (pick_in_groups).
+FAMILY_GROUPS = {"hobby_pwm": [["sg90", "mg996r", "ds3218"]], "smart_bus": [["sts3215_7v4"], ["sts3215"]],
+                 "dynamixel": [["xl330_m288"], ["xl430_w250", "xm430_w350"]]}
+
+
+def pick_in_groups(need: dict, family: str) -> dict:
+    """{joint: actuator}: the weakest actuator that gives `need[joint]` (N·m, margin included) on its group's servo rail,
+    all from the family's first voltage group where every joint has one (else the strongest group, its strongest
+    actuator where none holds). KeyError for a family with no groups."""
+    from .electronics2 import servo_rail
+
+    groups = FAMILY_GROUPS[family]
+
+    def picks(group):
+        keys = [k for k in group if k in ACTUATORS]
+        v = servo_rail([{"key": k, "joint": k} for k in keys])["v"]
+        return {n: next((k for k in keys if torque_at(k, v) >= req), None) for n, req in need.items()}, keys
+
+    for group in groups:
+        got, _ = picks(group)
+        if all(got.values()):
+            return got
+    got, keys = picks(groups[-1])
+    return {n: k or keys[-1] for n, k in got.items()}
+
+
 # The command protocol an actuator speaks. Feetech and DYNAMIXEL servos share the half-duplex TTL wiring but not the
 # commands, so one bus (and its firmware) drives one protocol.
 PROTOCOLS = {"pwm": "hobby PWM", "feetech_scs": "Feetech SCS/STS", "dynamixel_2": "DYNAMIXEL Protocol 2.0"}
