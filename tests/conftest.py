@@ -46,6 +46,9 @@ def _offline(request, monkeypatch, tmp_path):
     if request.node.get_closest_marker("network"):
         yield
         return
+    for k in list(os.environ):  # a proxy on loopback would carry any request past the check below
+        if k.lower() in ("http_proxy", "https_proxy", "all_proxy"):
+            monkeypatch.delenv(k, raising=False)
     attempts = []
     connect, connect_ex, create_connection = socket.socket.connect, socket.socket.connect_ex, socket.create_connection
 

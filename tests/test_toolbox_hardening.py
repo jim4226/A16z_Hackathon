@@ -588,7 +588,9 @@ def test_every_tools_route_by_role_whatever_the_disciplines_and_nothing_for_a_re
 
 
 # ------------------------------------------------------------------ remote mode: the access link opens the tools routes
-def test_remote_mode_every_tools_route_needs_the_access_code(studio):
+def test_remote_mode_every_tools_route_needs_the_access_code(studio, monkeypatch):
+    from morph import darwin
+    monkeypatch.setattr(darwin, "suggest", lambda need: {"need": need, "status": None, "question": None, "suggestions": [], "cached": True})
     token = "t4-remote-" + "Zx8Qv3Lm6Tp1Wr9Ks4"
     s = studio(token=token)
     s.studio.toolbox.client_factory = lambda: None
