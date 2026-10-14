@@ -920,6 +920,15 @@ def size(design) -> dict:
     margin_f = max(float(a.payload_margin), 1.0)
     L12 = None
     lay = None
+
+    def rail_for(keys, counts, tau):
+        """The servo rail these picks share (electronics2.servo_rail): every torque below is worked out at it."""
+        from .electronics2 import servo_rail
+
+        acts = [{"key": keys[jn], "joint": jn, "torque_with_margin_nm": tau[jn] * margin_f / counts.get(jn, 1)}
+                for jn in names for _ in range(counts.get(jn, 1))]
+        return servo_rail(acts + [{"key": gkey, "joint": "gripper"}], float(design.electronics.servo_v or 0.0))
+
     for _ in range(6):
         lay = _layout(design, keys, counts, gkey, L12=None)
         L12_req = lay.L1 + lay.L2
@@ -927,15 +936,16 @@ def size(design) -> dict:
         L12 = max(L12_req, L12_task)
         lay = _layout(design, keys, counts, gkey, L12=L12)
         tau = _torques(design, lay, config)
+        rv = rail_for(keys, counts, tau)["v"]
         new_keys, new_counts = dict(keys), dict(counts)
         for jn in reversed(names):           # distal first: their masses load the proximal joints
             if _override_for(ov, jn):
                 continue
             need = tau[jn] * margin_f
-            pick = next((k for k in fam if catalog.ACTUATORS[k]["torque_nm"] >= need), None)
+            pick = next((k for k in fam if catalog.torque_at(k, rv) >= need), None)
             n_act = 1
             if pick is None and jn in ("j2_shoulder", "j3_elbow"):
-                pick = next((k for k in fam if 2 * 0.95 * catalog.ACTUATORS[k]["torque_nm"] >= need), None)
+                pick = next((k for k in fam if 2 * 0.95 * catalog.torque_at(k, rv) >= need), None)
                 n_act = 2 if pick else 1
             new_keys[jn] = pick or fam[-1]
             new_counts[jn] = n_act if pick else (2 if jn in ("j2_shoulder", "j3_elbow") else 1)
@@ -943,13 +953,15 @@ def size(design) -> dict:
             break
         keys, counts = new_keys, new_counts
     tau = _torques(design, lay, config)
+    rail = rail_for(keys, counts, tau)
+    rv = rail["v"]
     joints, issues = [], list(lay.issues) + _override_issues(design, names)
     for jn in names:
         key, n_act = keys[jn], counts.get(jn, 1)
-        avail = catalog.ACTUATORS[key]["torque_nm"] * (n_act * 0.95 if n_act > 1 else 1.0)
+        avail = catalog.torque_at(key, rv) * (n_act * 0.95 if n_act > 1 else 1.0)
         need = tau[jn] * margin_f
         if avail < need:
-            issues.append(f"{jn}: needs {need:.2f} N·m with margin, {n_act}× {key} gives {avail:.2f} N·m")
+            issues.append(f"{jn}: needs {need:.2f} N·m with margin, {n_act}× {key} gives {avail:.2f} N·m at {rv:g} V")
         joints.append({"name": jn, "actuator": key, "count": n_act, "torque_req_nm": round(tau[jn], 3),
                        "torque_with_margin_nm": round(need, 3), "torque_avail_nm": round(avail, 3),
                        "margin": round(avail / max(tau[jn], 1e-6), 2),
@@ -963,8 +975,7 @@ def size(design) -> dict:
                        f"{math.hypot(design.task.place_x_mm, design.task.place_y_mm):.0f} mm with a "
                        f"{lay.L3:.0f} mm wrist + hand")
         notes.append(f"reach raised from {req:.0f} to {lay.reach:.0f} mm: " + ("; ".join(why) or "minimum link lengths"))
-    gA = _act(gkey)
-    grip_force = gA.torque * 0.8 / (lay.grip["r"] / 1000.0)
+    grip_force = catalog.torque_at(gkey, rv) * 0.8 / (lay.grip["r"] / 1000.0)
     return {"links_mm": {"base_h": round(lay.base_h, 1), "L1": round(lay.L1, 1), "L2": round(lay.L2, 1),
                          "L3": round(lay.L3, 1), "wrist": round(lay.wl if dof != 6 else lay.d45 + lay.wl5, 1),
                          "hand": round(lay.tcp_z, 1)},
@@ -974,7 +985,7 @@ def size(design) -> dict:
                         "travel_mm": round(lay.grip["T"], 1), "overtravel_mm": lay.grip["overtravel"],
                         "stall_force_n": round(grip_force, 1)},
             "hand_mass_g": round(_hand_mass_g(lay, config, _hand_extras_g(design)), 1), "build_config": config,
-            "issues": issues, "notes": notes}
+            "servo_rail": rail, "issues": issues, "notes": notes}
 
 
 # ================================================================== build
@@ -1608,10 +1619,13 @@ class _Builder:
         # ---- joints (kinematic contract)
         lim = self.limits()
         a = self.asm
+        rail_v = (self.sz.get("servo_rail") or {}).get("v")
+
         def J(name, typ, par, ch, origin, axis, lo, hi, act=""):
             A = catalog.ACTUATORS.get(act, {})
             cnt = L.counts.get(name, 1)
-            eff = float(A.get("torque_nm", 0.0)) * (cnt * 0.95 if cnt > 1 else 1.0)
+            tq = catalog.torque_at(act, rail_v) if A and rail_v else float(A.get("torque_nm", 0.0))   # at the servo rail
+            eff = tq * (cnt * 0.95 if cnt > 1 else 1.0)
             return a.add_joint(Joint(name, typ, par, ch, origin, axis, lo, hi, actuator=act, effort=round(eff, 3),
                                      velocity=float(A.get("speed_rad_s", 3.0)) if act else 3.0,
                                      meta={"count": cnt, "servo_sign": -1 if typ == "revolute" and name not in (

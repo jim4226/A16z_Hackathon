@@ -247,33 +247,109 @@ def _servo_voltage(acts: list) -> tuple[tuple, float, list]:
     return (lo, hi), nom, issues
 
 
-def _underpowered(acts: list, servo_v: float) -> list:
-    """A servo on a rail far below its rated voltage (a 12 V STS3215 beside 7.4 V ones) gives roughly that fraction of
-    the torque it was sized with: below 70 % the joint's sizing no longer holds, so say which servos and why."""
+def _derated(acts: list, servo_v: float, requested: bool = False) -> list:
+    """Warnings for servos the rail runs below their rated voltage: each gives torque_at(rail) of its rated stall torque,
+    which sizing already counts in every margin (a joint that falls short is a sizing issue). Below 70 % on a rail
+    nobody asked for, the servo is in the wrong voltage class (a 12 V STS3215 beside 7.4 V ones): say so."""
     low = {}
     for a in acts:
-        rated = ACTUATORS[a["key"]]["nominal_v"]
-        if servo_v < 0.7 * rated:
-            low.setdefault(a["key"], (rated, []))[1].append(a["joint"])
-    return [f"{', '.join(dict.fromkeys(joints))}: {key} is rated at {rated:g} V but the shared servo rail runs at {servo_v:g} V, "
-            f"so it gives roughly {servo_v / rated:.0%} of the torque it was sized with; put every servo on one voltage class"
-            for key, (rated, joints) in low.items()]
+        k = catalog.torque_at(a["key"], servo_v) / ACTUATORS[a["key"]]["torque_nm"]
+        if k < 0.995:
+            low.setdefault(a["key"], (k, []))[1].append(a["joint"])
+    out = []
+    for key, (k, joints) in low.items():
+        rated = ACTUATORS[key]["nominal_v"]
+        out.append(f"{', '.join(dict.fromkeys(joints))}: {key} is rated at {rated:g} V but the shared servo rail runs at "
+                   f"{servo_v:g} V, so it gives about {k:.0%} of its rated torque (the torque margins are worked out at "
+                   f"{servo_v:g} V)" + ("; put every servo on one voltage class to use all of it" if k < 0.7 and not requested
+                                        else ""))
+    return out
 
 
-def _pick_supply(vrange, nom, need_a) -> dict:
-    """Supply whose voltage sits inside the actuators' range (closest to nominal, enough current), else 12 V + buck."""
-    cands = []
-    for k, m in MODULES.items():
-        if m.get("role") != "supply" or not m.get("external") or "battery" in k:
-            continue
-        v, a = m["out_v"], m["out_a"]
-        if vrange[0] - 1e-6 <= v <= vrange[1] + 1e-6:
-            cands.append((a < need_a * 1.25, abs(v - nom) / nom > 0.15, abs(v - nom), catalog.price(k), k))  # enough current first
-    if cands:
-        cands.sort()
-        k = cands[0][-1]
+RAIL_MIN_TORQUE = 0.8   # a supply below the servos' rated voltage is used only while every servo keeps 80 % of its torque
+
+
+def _supplies() -> list:
+    return [(k, m) for k, m in MODULES.items() if m.get("role") == "supply" and m.get("external") and "battery" not in k]
+
+
+def _peak_estimate(acts: list) -> float:
+    """Servo-rail peak current (A) from the sizing alone (the gripper at its 35 % floor): the rail choice needs it before
+    the grip force is known."""
+    out = 0.0
+    for a in acts:
+        s = ACTUATORS[a["key"]]
+        need = a.get("torque_with_margin_nm") or 0.3 * s["torque_nm"]
+        out += s["idle_a"] + s["stall_a"] * min(1.0, max(need / s["torque_nm"], 0.35))
+    return out
+
+
+def servo_rail(acts: list, requested: float = 0.0) -> dict:
+    """The one servo rail's voltage for these actuators ([{key, joint, torque_with_margin_nm}], one per servo), decided
+    with the sizing (its margins and the simulation's efforts are worked out at it) and the same for every controller
+    choice. `requested` (electronics.servo_v) wins when every servo takes it. Otherwise the servos' rated voltage when a
+    catalogued supply gives it with the current; else the catalogued supply voltage nearest to it inside every servo's
+    range that keeps each at RAIL_MIN_TORQUE of its torque or more; else the rated voltage from a 12 V supply through
+    the adjustable servo buck. {v, rated_v, range, requested, note}: note says why a request was not taken."""
+    keys = list(dict.fromkeys(a["key"] for a in acts if a["key"] in ACTUATORS))
+    lo = max(ACTUATORS[k]["voltage"][0] for k in keys)
+    hi = min(ACTUATORS[k]["voltage"][1] for k in keys)
+    rated = max(ACTUATORS[k]["nominal_v"] for k in keys)
+    out = {"v": None, "rated_v": rated, "range": [lo, hi], "requested": requested or None, "note": None}
+    if lo > hi:   # no voltage suits them all: the plan says so and makes no wiring
+        out["v"] = min(max(min(ACTUATORS[k]["nominal_v"] for k in keys), lo), hi)
+        return out
+    if requested:
+        bad = [k for k in keys if not ACTUATORS[k]["voltage"][0] <= requested <= ACTUATORS[k]["voltage"][1]]
+        if not bad:
+            out["v"] = float(requested)
+            return out
+        out["note"] = (f"a {requested:g} V servo supply was asked for, but " + ", ".join(
+            f"the {k} takes {ACTUATORS[k]['voltage'][0]:g}-{ACTUATORS[k]['voltage'][1]:g} V" for k in bad))
+    target = min(rated, hi)
+    need = _peak_estimate([a for a in acts if a["key"] in ACTUATORS]) * 1.25
+    k_min = lambda v: min(catalog.torque_at(k, v) / ACTUATORS[k]["torque_nm"] for k in keys)  # noqa: E731
+    volts = sorted({m["out_v"] for _, m in _supplies() if m["out_a"] >= need})   # voltages a supply gives with the current
+    if any(abs(v - target) <= 0.03 * target for v in volts):
+        v = target
+    else:
+        near = [v for v in volts if lo - 1e-6 <= v <= hi + 1e-6 and k_min(v) >= RAIL_MIN_TORQUE]
+        v = min(near, key=lambda x: (abs(x - target), -x)) if near else target
+    out["v"] = float(v)
+    if out["note"]:
+        out["note"] += f": the servo rail stays at {v:g} V"
+    return out
+
+
+def _pick_supply(servo_v: float, need_a: float) -> dict:
+    """The supply for a servo rail of `servo_v`: the cheapest that gives that voltage itself (within 3 %) with enough
+    current; else, below 12 V, the cheapest 12 V supply with enough current and the adjustable servo buck; else the
+    strongest at that voltage (the power budget then says it is short)."""
+    at = sorted(((m["out_a"] < need_a * 1.25, catalog.price(k), k) for k, m in _supplies()
+                 if abs(m["out_v"] - servo_v) <= 0.03 * servo_v))
+    if at and not at[0][0]:
+        k = at[0][-1]
         return {"key": k, "v": MODULES[k]["out_v"], "a": MODULES[k]["out_a"], "servo_buck": False}
-    return {"key": "psu_12v", "v": 12.0, "a": 10.0, "servo_buck": True}
+    need_in = need_a * servo_v / (12.0 * 0.9)
+    twelve = sorted(((m["out_a"] < need_in * 1.25, catalog.price(k), k) for k, m in _supplies() if m["out_v"] == 12.0))
+    if twelve and servo_v < 11.5 and (not twelve[0][0] or not at):
+        k = twelve[0][-1]
+        return {"key": k, "v": 12.0, "a": MODULES[k]["out_a"], "servo_buck": True}
+    k = max(at, key=lambda c: MODULES[c[-1]]["out_a"])[-1] if at else "psu_12v"
+    return {"key": k, "v": MODULES[k]["out_v"], "a": MODULES[k]["out_a"], "servo_buck": False}
+
+
+def rail_acts(sizing: dict) -> list:
+    """One entry per servo for servo_rail: sizing's joints (a dual joint counts twice) and its gripper."""
+    out = []
+    for j in sizing.get("joints", []):
+        n = max(int(j.get("count", 1) or 1), 1)
+        out += [{"key": j["actuator"], "joint": j["name"], "torque_with_margin_nm": (j.get("torque_with_margin_nm") or 0) / n}] * n
+    g = sizing.get("gripper") if isinstance(sizing.get("gripper"), dict) else {}
+    key = g.get("actuator") or sizing.get("gripper_actuator")
+    if key:
+        out.append({"key": key, "joint": "gripper", "torque_with_margin_nm": g.get("torque_with_margin_nm")})
+    return out
 
 
 def power_budget(design, acts: list, config: str, supply: dict, extras: list, ctrl: str, grip: dict | None = None) -> dict:
@@ -396,13 +472,16 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
     issues += w
     grip = grip_window(design, sizing, grip)
     rough_peak = sum(_actuator_currents(a, design, grip)[0] for a in acts)
-    supply = _pick_supply(vrange, nom, rough_peak)
-    servo_v = supply["v"] if not supply["servo_buck"] else min(max(nom, vrange[0]), vrange[1])
+    rail = sizing.get("servo_rail") if (sizing.get("servo_rail") or {}).get("v") else servo_rail(acts, design.electronics.servo_v)
+    servo_v = float(rail["v"])
+    supply = _pick_supply(servo_v, rough_peak)
     supply["servo_v"] = servo_v
-    issues += _underpowered(acts, servo_v)
+    if rail.get("note"):
+        warnings.append(rail["note"])
+    warnings += _derated(acts, servo_v, servo_v == rail.get("requested"))
     if config == "custom_pcb" and supply["servo_buck"]:
-        issues.append(f"no catalogued supply sits inside the servos' {vrange[0]:g}-{vrange[1]:g} V range; the custom PCB "
-                      "passes its input straight to the servo rail, so use the modules config (12 V + servo buck)")
+        issues.append(f"no catalogued supply gives the servos' {servo_v:g} V; the custom PCB passes its input straight to "
+                      "the servo rail, so use the modules config (12 V + servo buck)")
     pb = power_budget(design, acts, config, supply, extras, ctrl, grip)
     if not pb["supply_ok"]:
         issues.append(f"supply {supply['key']} ({supply['a']:g} A) has {pb['margin']:.2f}x margin over the "

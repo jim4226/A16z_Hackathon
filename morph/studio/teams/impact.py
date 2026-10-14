@@ -70,7 +70,7 @@ def _size(design: Design) -> dict:
     from ...robot import imported
     a = design.arm
     key = (a.source, a.actuator_family, a.actuator_overrides, float(a.payload_margin), float(design.object.mass_g),
-           design.electronics.extras, design.build.config)
+           design.electronics.extras, design.build.config, float(design.electronics.servo_v))
     with _LOCK:
         hit = _SIZES.get(key)
     if hit is None:

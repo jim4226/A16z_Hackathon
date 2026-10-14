@@ -318,11 +318,11 @@ clamping.
 - **Robot:** one stationary tabletop arm, 4/5/6 DOF.
 - **Grasp:** a two-finger parallel gripper, top-down pick and place on the table plane.
 - **Object width:** about 26 to 75 mm.
-- **Payload at 2× torque margin:**
+- **Payload at 2× torque margin** (at the servo rail each arm gets, section 18; the stock SO-101 about 100 g):
 
   | | 4-DOF | 5-DOF | 6-DOF |
   |---|---|---|---|
-  | hobby_pwm | 200 g | 100 g | none |
+  | hobby_pwm | 100 g | 100 g | none |
   | smart_bus | 300 g | 200 g | 100 g |
   | dynamixel | 500 g | 300 g | 200 g |
 
@@ -1334,3 +1334,21 @@ Fixes of the release review's engineering findings. What other code relies on si
   calibration step: `grip_target_n`, `grip_window_n`, `grip_limit_n`; the text names the firmware's F and Z commands)
   show the same numbers. The pipeline, `robust._assembly`, Teams' change-request preview and New robot's preflight all
   pass the force plan; `brief.preflight` returns it as `grip`.
+- **The servo rail (ENG-6, ENG-9).** One voltage per arm, decided with the sizing by
+  `electronics2.servo_rail(acts, requested)` (`acts`: one `{key, joint, torque_with_margin_nm}` per servo,
+  `electronics2.rail_acts(sizing)` builds them): `design.electronics.servo_v` (new, default 0 = automatic; the
+  standalone gripper's `supply_v` does nothing on a robot) when every servo's range takes it; else the servos' rated
+  voltage when a catalogued supply gives it with the current; else the catalogued supply voltage nearest to it inside
+  every servo's range that keeps each at `RAIL_MIN_TORQUE` (80 %) of its stall torque; else the rated voltage from a
+  12 V supply through the adjustable servo buck. It doesn't depend on the controller choice (a custom PCB can't take
+  the buck and says so), so `electronics.config` still reruns only the electronics. `sizing.servo_rail` holds it;
+  `catalog.torque_at(key, volts)` (datasheet points in `torque_v`, in proportion below them, capped at the rating)
+  gives every `torque_avail_nm`, margin, actuator pick and sizing issue, the robot builders' joint efforts (so the
+  simulation's servos), and `summary.servo_rail_v`. `electronics2.plan` takes the rail from the sizing, picks the
+  supply for it, warns which servos it derates (below 70 % with the advice to use one voltage class), and warns when a
+  requested rail was not taken. `GRAPH`: `electronics.servo_v` reruns sizing (and so everything). The chat's "use a 5 V
+  supply" sets `electronics.servo_v` when every servo takes it and otherwise changes nothing and says which servo's
+  range rules it out; "use the rated supply voltage" sets it back to 0. A hand-written imported profile is still sized
+  at q = 0, now labelled: `sizing.basis` = "q = 0" (the Studio's margin row reads "at q = 0"), and `sizing.warnings`
+  names a joint whose margin over the whole joint range (the auto-import pose grid) falls below the payload margin;
+  the inspector lists sizing warnings.

@@ -1167,11 +1167,13 @@ _IMPORTED: dict = {}
 
 
 def _imported_size(d):
-    """imported.size() reloads the robot's URDF (about 1 s); it depends only on the arm and the payload, so memoize."""
+    """imported.size() reloads the robot's URDF (about 1 s); it depends only on the arm, the payload, the wrist camera
+    and the servo rail, so memoize."""
     from ..robot import imported
 
     a = d.arm
-    key = (a.source, a.actuator_family, a.actuator_overrides, float(a.payload_margin), float(d.object.mass_g))
+    key = (a.source, a.actuator_family, a.actuator_overrides, float(a.payload_margin), float(d.object.mass_g),
+           float(d.electronics.servo_v), d.electronics.extras)
     if key not in _IMPORTED:
         if len(_IMPORTED) > 64:
             _IMPORTED.clear()

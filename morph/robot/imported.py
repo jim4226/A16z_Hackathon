@@ -127,16 +127,21 @@ def _pose_grid(asm, arm_joints) -> list:
 def worst_case_torques(asm, arm_joints, gripper_joint, payload_kg, grid=True) -> tuple[dict, float | None]:
     """|gravity torque| (N·m) per joint, worst case over q = 0 and (grid=True) a pose grid; and the reach: the
     farthest tool position (mm, horizontal) over the same poses, above the table."""
+    return _worst(_gravity(asm, arm_joints, gripper_joint, payload_kg, [{}] + (_pose_grid(asm, arm_joints) if grid else [])),
+                  grid)
+
+
+def _gravity(asm, arm_joints, gripper_joint, payload_kg, poses) -> list:
+    """[(|gravity torque| per joint, tool position or None)] for each pose."""
     tcp = asm.meta.get("tcp_link")
     names = [n for n in list(arm_joints) + [gripper_joint] if n]
     subs = {n: _subtree(asm, asm.joint(n).child) for n in names}
     mass = {link: asm.link_mass(link) for link in asm.links}
-    out, reach = {n: 0.0 for n in names}, None
-    for q in [{}] + (_pose_grid(asm, arm_joints) if grid else []):
+    out = []
+    for q in poses:
         T = asm.world_transforms(q)
         tp = T[tcp][:3, 3] if tcp else None
-        if tp is not None and (not grid or tp[2] >= 0.0):
-            reach = max(reach or 0.0, float(np.linalg.norm(tp[:2])))
+        taus = {}
         for name in names:
             j = asm.joint(name)
             Tc = T[j.child]
@@ -148,37 +153,73 @@ def worst_case_torques(asm, arm_joints, gripper_joint, payload_kg, grid=True) ->
                 tau += float(np.cross((c - p) / 1000.0, m * G) @ axis_w)
             if tp is not None and name != gripper_joint:
                 tau += float(np.cross((tp - p) / 1000.0, payload_kg * G) @ axis_w)
-            out[name] = max(out[name], abs(tau))
+            taus[name] = abs(tau)
+        out.append((taus, tp))
+    return out
+
+
+def _worst(rows, grid=True) -> tuple[dict, float | None]:
+    out, reach = {n: 0.0 for n in (rows[0][0] if rows else {})}, None
+    for taus, tp in rows:
+        if tp is not None and (not grid or tp[2] >= 0.0):
+            reach = max(reach or 0.0, float(np.linalg.norm(tp[:2])))
+        for n, t in taus.items():
+            out[n] = max(out[n], t)
     return out, reach
 
 
+def _required(reqs: dict, prof) -> dict:
+    """Torque each joint is sized for: its gravity torque, a squeezing floor of 0.15 N·m for the jaw, and a fifth of the
+    heaviest load for the yaw and roll axes (no gravity load: acceleration and friction instead)."""
+    reqs = dict(reqs)
+    reqs[prof["gripper_joint"]] = max(reqs[prof["gripper_joint"]], 0.15)
+    pitch_max = max(reqs.values())
+    return {n: max(reqs[n], 0.2 * pitch_max) for n in prof["arm_joints"] + [prof["gripper_joint"]]}
+
+
 def size(design) -> dict:
+    from .electronics2 import servo_rail
+
     prof, d = load_profile(design.arm.source)
     asm = load_urdf(bundle_file(d, _urdf(design, prof)), prof, bundle=d)
     acts = actuator_plan(design, prof)
     payload = design.object.mass_g / 1000.0
-    # hand-written profiles size at q = 0 (SO-101: the stretched-out pose); auto-imported arms have no such
-    # convention, so they size for the worst case over a pose grid of their tilting joints
+    margin_f = design.arm.payload_margin
+    # hand-written profiles size at q = 0 (SO-101: the pose its makers quote), and say so; auto-imported arms have no
+    # such convention, so they size for the worst case over a pose grid of their tilting joints
     grid = bool((prof.get("imported") or {}).get("auto")) or prof.get("sizing") == "grid"
-    reqs, reach = worst_case_torques(asm, prof["arm_joints"], prof["gripper_joint"], payload, grid=grid)
-    joints, issues = [], []
-    reqs[prof["gripper_joint"]] = max(reqs[prof["gripper_joint"]], 0.15)   # squeezing torque floor for the jaw
-    pitch_max = max(reqs.values())
-    for name in prof["arm_joints"] + [prof["gripper_joint"]]:
-        # yaw/roll axes carry no gravity load: size them for acceleration + friction instead
-        req = max(reqs[name], 0.2 * pitch_max)
+    rows = _gravity(asm, prof["arm_joints"], prof["gripper_joint"], payload, [{}] + _pose_grid(asm, prof["arm_joints"]))
+    reqs, reach = _worst(rows if grid else rows[:1], grid)
+    req = _required(reqs, prof)
+    names = prof["arm_joints"] + [prof["gripper_joint"]]
+    rail = servo_rail([{"key": acts[n], "joint": n, "torque_with_margin_nm": req[n] * margin_f} for n in names],
+                      float(design.electronics.servo_v or 0.0))
+    rv = rail["v"]
+    joints, issues, warnings = [], [], []
+    for name in names:
         key = acts[name]
-        avail = catalog.ACTUATORS[key]["torque_nm"]
-        if avail < req * design.arm.payload_margin:
-            issues.append(f"{name}: needs {req * design.arm.payload_margin:.2f} N·m with margin, {key} gives {avail:.2f} N·m")
-        joints.append({"name": name, "actuator": key, "torque_req_nm": round(req, 3),
-                       "torque_with_margin_nm": round(req * design.arm.payload_margin, 3), "torque_avail_nm": avail,
-                       "margin": round(avail / max(req, 1e-6), 2), "servo_id": prof.get("servo_ids", {}).get(name)})
-    arm_joints = [j for j in joints if j["name"] != prof["gripper_joint"]]
-    return {"source": design.arm.source, "title": prof.get("title"), "links_mm": {}, "reach_mm": round(reach or 0, 1),
-            "payload_g": design.object.mass_g, "joints": arm_joints, "gripper_actuator": acts[prof["gripper_joint"]],
-            "gripper": next(j for j in joints if j["name"] == prof["gripper_joint"]), "issues": issues,
-            "stock_actuators": prof["actuators"]}
+        avail = round(catalog.torque_at(key, rv), 3)
+        if avail < req[name] * margin_f:
+            issues.append(f"{name}: needs {req[name] * margin_f:.2f} N·m with margin, {key} gives {avail:.2f} N·m at {rv:g} V")
+        joints.append({"name": name, "actuator": key, "torque_req_nm": round(req[name], 3),
+                       "torque_with_margin_nm": round(req[name] * margin_f, 3), "torque_avail_nm": avail,
+                       "margin": round(avail / max(req[name], 1e-6), 2), "servo_id": prof.get("servo_ids", {}).get(name)})
+    out = {"source": design.arm.source, "title": prof.get("title"), "links_mm": {}, "reach_mm": round(reach or 0, 1),
+           "payload_g": design.object.mass_g, "joints": [j for j in joints if j["name"] != prof["gripper_joint"]],
+           "gripper_actuator": acts[prof["gripper_joint"]],
+           "gripper": next(j for j in joints if j["name"] == prof["gripper_joint"]), "servo_rail": rail,
+           "issues": issues, "warnings": warnings, "stock_actuators": prof["actuators"]}
+    if not grid:
+        out["basis"] = "q = 0"
+        worst = _required(_worst(rows)[0], prof)
+        low = [(j, worst[j["name"]]) for j in joints if worst[j["name"]] > req[j["name"]] * 1.05]
+        for j, w in low:
+            m = j["torque_avail_nm"] / max(w, 1e-6)
+            if m < margin_f:
+                warnings.append(f"{j['name']}: the torque margins are at q = 0, the pose this robot's profile is sized in; "
+                                f"over its whole joint range it needs up to {w:.2f} N·m, a {m:.2f}x margin at {rv:g} V "
+                                f"(below {margin_f:g}x)")
+    return out
 
 
 JAW_LEVER_MM = 70.0   # a stock jaw's squeeze is quoted this far from its pivot (mid-jaw on the SO-101)
@@ -224,10 +265,11 @@ def build(design, sizing, eplan=None):
     issues = []
     acts = {j["name"]: j["actuator"] for j in sizing["joints"]}
     acts[prof["gripper_joint"]] = sizing["gripper_actuator"]
+    rail_v = (sizing.get("servo_rail") or {}).get("v")
     for j in asm.joints:
         if j.name in acts:
             j.actuator = acts[j.name]
-            j.effort = catalog.ACTUATORS[acts[j.name]]["torque_nm"]
+            j.effort = catalog.torque_at(acts[j.name], rail_v) if rail_v else catalog.ACTUATORS[acts[j.name]]["torque_nm"]
 
     # actuator swaps: re-skin the servo body that drives each joint, flag holders that no longer fit
     stock_dims = None

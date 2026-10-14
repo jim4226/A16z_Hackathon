@@ -288,8 +288,16 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
         said.append("grip 40% firmer")
     m = re.search(r"(\d+(?:\.\d+)?)\s*v\b", t)
     if m:
-        ch["electronics.supply_v"] = float(m.group(1))
-        said.append(f"servo supply → {m.group(1)} V")
+        v = float(m.group(1))
+        why = rail_refusal(d.with_changes(ch), v)
+        if why:
+            said.append(NOTE + why)
+        else:
+            ch["electronics.servo_v"] = v
+            said.append(f"servo supply → {v:g} V")
+    elif re.search(r"\b(?:rated|default|auto(?:matic)?)\s+(?:servo\s+)?(?:supply|voltage|rail)\b", t):
+        ch["electronics.servo_v"] = 0.0
+        said.append("servo supply → the servos' rated voltage")
     m = re.search(r"(\d+(?:\.\d+)?)\s*(g|grams|kg)\b", t)
     if m and "object.mass_g" not in ch:
         ch["object.mass_g"] = float(m.group(1)) * (1000 if m.group(2) == "kg" else 1)
@@ -299,6 +307,26 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
         ch["finger.mount_hole_spacing_mm"] = float(m.group(1))
         said.append(f"mount hole spacing → {m.group(1)} mm")
     return ch, said
+
+
+def rail_refusal(d: Design, v: float) -> str | None:
+    """Why the robot's servos can't run from a `v` volt supply (one a servo's voltage range leaves out), or None: then
+    the build puts the servo rail at `v` (electronics.servo_v)."""
+    from ..robot import arm, electronics2, imported
+    from ..robot.catalog import ACTUATORS
+
+    try:
+        sz = imported.size(d) if d.arm.source else arm.size(d)
+    except Exception:  # noqa: BLE001  (the build will say what is wrong with the design)
+        return None
+    keys = list(dict.fromkeys(a["key"] for a in electronics2.rail_acts(sz) if a["key"] in ACTUATORS))
+    bad = [k for k in keys if not ACTUATORS[k]["voltage"][0] <= v <= ACTUATORS[k]["voltage"][1]]
+    if not bad:
+        return None
+    ranges = ", ".join(f"the {k.upper().replace('_', '-')} takes {ACTUATORS[k]['voltage'][0]:g}-{ACTUATORS[k]['voltage'][1]:g} V"
+                       for k in bad)
+    now = (sz.get("servo_rail") or {}).get("v")
+    return f"{ranges}, so a {v:g} V supply can't run it" + (f"; the servo supply stays at {now:g} V" if now else "")
 
 
 # The grip target (N) that "gentler" and "firmer" scale when the design sets none. It is the room's own: interpret()
@@ -324,7 +352,9 @@ TOOL = {
                    "electronics.servo auto|sg90|mg90s|mg996r|ds3218 (the GRIPPER servo); electronics.config modules|custom_pcb; "
                    "electronics.extras comma list of wrist_camera,estop,imu; arm.dof 4|5|6; arm.reach_mm 200-500; "
                    "arm.actuator_family hobby_pwm|smart_bus|dynamixel; arm.actuator_overrides 'j2=xm430_w350'; "
-                   "build.config prototype|pilot|production; build.quantity; task.pick_x_mm/pick_y_mm/place_x_mm/place_y_mm.",
+                   "build.config prototype|pilot|production; build.quantity; task.pick_x_mm/pick_y_mm/place_x_mm/place_y_mm; "
+                   "electronics.servo_v the servo supply in volts (0 = the servos' rated voltage; electronics.supply_v "
+                   "does nothing on a robot arm).",
     "input_schema": {
         "type": "object",
         "properties": {

@@ -677,7 +677,7 @@ function renderInspector(cur, prev) {
       issues.push(`Simulation · ${sm.title || name} failed${why ? ` (${why})` : ''}`);
     }
   }
-  const warns = [...(cur.electronics?.warnings || []), ...(cur.manufacturing?.warnings || [])];
+  const warns = [...(cur.sizing?.warnings || []), ...(cur.electronics?.warnings || []), ...(cur.manufacturing?.warnings || [])];
   const errs = Object.entries(cur.errors || {});
   const prov = Object.values(cur.provenance || {});
   const nComp = prov.filter((p) => p === 'computed').length;
@@ -713,7 +713,8 @@ function renderInspector(cur, prev) {
     }
     const val = typeof v === 'boolean' ? (v ? '<span class="tag good">pass</span>' : '<span class="tag bad">fail</span>')
       : unit === '$' ? money(v) : fmt(v, unit);
-    rows.push(`<tr class="${fl.trim()}"><td>${esc(label)}</td><td class="v">${val}${delta}</td></tr>`);
+    const lab = k === 'min_torque_margin' && s.torque_margin_basis ? `${label} (at ${s.torque_margin_basis})` : label;
+    rows.push(`<tr class="${fl.trim()}"><td>${esc(lab)}</td><td class="v">${val}${delta}</td></tr>`);
   }
   const force = cur.gripper?.force;
   $('#insp').innerHTML = `

@@ -29,9 +29,9 @@ from . import catalog_extra  # noqa: F401  (imported robots' parts, needed even 
 GRAPH = {
     # arm.size() reads the build config (link materials set the masses), the task (reach) and the hand
     # (gripper/finger set the payload, a wrist camera or IMU in electronics.extras rides on it), so a pilot build
-    # re-sizes the joints instead of reusing prototype torques
-    "sizing": (["arm.*", "object.*", "electronics.servo", "electronics.extras", "build.*", "task.pick_*", "task.place_*",
-                "finger.*", "gripper.*"], [], None),
+    # re-sizes the joints instead of reusing prototype torques; and the servo rail every torque is worked out at
+    "sizing": (["arm.*", "object.*", "electronics.servo", "electronics.servo_v", "electronics.extras", "build.*",
+                "task.pick_*", "task.place_*", "finger.*", "gripper.*"], [], None),
     "gripper": (["finger.*", "object.*", "gripper.*", "safety_factor", "electronics.target_force_n",
                  "electronics.servo", "electronics.supply_v", "electronics.pinion_radius_mm", "arm.actuator_family",
                  "arm.source", "arm.actuator_overrides"],
@@ -509,6 +509,7 @@ def summarize(r: dict) -> dict:
         "dof": len(joints), "reach_mm": sz.get("reach_mm"), "payload_g": sz.get("payload_g"),
         "actuators": ", ".join(sorted({j["actuator"] for j in joints})),
         "min_torque_margin": min((j["margin"] for j in joints), default=None),
+        "torque_margin_basis": sz.get("basis"), "servo_rail_v": (sz.get("servo_rail") or {}).get("v"),
         "parts": cad.get("parts"), "robot_mass_kg": cad.get("mass_kg"),
         "grasp_hold_force_n": (g.get("sim") or {}).get("min_hold_force_n"),
         "grip_target_n": (g.get("force") or {}).get("target_force_n"),

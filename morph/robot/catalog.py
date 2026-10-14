@@ -40,7 +40,8 @@ def V(vendor: str, q: str, price: float, url: str | None = None, lead_days: int 
 # ---------------------------------------------------------------- actuators
 # dims (mm): body l x w x h; shaft_off = shaft axis distance from body centre along l;
 # ear_l / ear_w = mounting-hole spacing; horn_d = round horn diameter.
-# torque_nm = stall torque at nominal voltage; rated_nm ~ continuous (about 1/3 of stall).
+# torque_nm = stall torque at nominal voltage; rated_nm ~ continuous (about 1/3 of stall). torque_v = the maker's stall
+# torque at other supply voltages, (V, N·m), where the datasheet gives them; torque_at() reads them.
 ACTUATORS = {
     "sg90": dict(name="TowerPro SG90 micro servo", family="hobby_pwm", interface="pwm", protocol="pwm", voltage=(4.8, 6.0), nominal_v=5.0,
                  torque_nm=0.18, rated_nm=0.06, speed_rad_s=10.5, stall_a=0.65, idle_a=0.01, mass_g=9.0, feedback="none",
@@ -48,7 +49,7 @@ ACTUATORS = {
                  range_deg=180, verify=True,
                  vendors=[V("amazon", "SG90 micro servo", 3.0), V("adafruit", "micro servo SG90", 5.95, "https://www.adafruit.com/product/169")]),
     "mg996r": dict(name="TowerPro MG996R metal-gear servo", family="hobby_pwm", interface="pwm", protocol="pwm", voltage=(4.8, 7.2), nominal_v=6.0,
-                   torque_nm=1.08, rated_nm=0.35, speed_rad_s=6.3, stall_a=2.5, idle_a=0.01, mass_g=55.0, feedback="none",
+                   torque_nm=1.08, torque_v=((4.8, 0.92), (6.0, 1.08)), rated_nm=0.35, speed_rad_s=6.3, stall_a=2.5, idle_a=0.01, mass_g=55.0, feedback="none",
                    dims=dict(l=40.7, w=19.7, h=42.9, shaft_off=10.2, ear_l=49.5, ear_w=10.0, ear_t=2.5, ear_z=28.0, horn_d=24.0, spline_h=4.0),
                    range_deg=180, verify=True,
                    vendors=[V("amazon", "MG996R servo", 9.0), V("aliexpress", "MG996R servo", 4.5, lead_days=14)]),
@@ -65,13 +66,13 @@ ACTUATORS = {
                     range_deg=360, verify=True, note="the SO-100/SO-101 arm actuator; 7.4 V variant gives ~19.5 kg·cm",
                     vendors=[V("seeed", "STS3215 servo", 17.0), V("aliexpress", "Feetech STS3215 12V", 14.0, lead_days=14)]),
     "xl430_w250": dict(name="ROBOTIS DYNAMIXEL XL430-W250-T", family="dynamixel", interface="ttl_half_duplex", protocol="dynamixel_2",
-                       voltage=(6.5, 12.0), nominal_v=12.0, torque_nm=1.5, rated_nm=0.5, speed_rad_s=6.1, stall_a=1.4, idle_a=0.05,
+                       voltage=(6.5, 12.0), nominal_v=12.0, torque_nm=1.5, torque_v=((9.0, 1.0), (11.1, 1.4), (12.0, 1.5)), rated_nm=0.5, speed_rad_s=6.1, stall_a=1.4, idle_a=0.05,
                        mass_g=57.2, feedback="12-bit absolute encoder, current, temperature, voltage",
                        dims=dict(l=46.5, w=28.5, h=34.0, shaft_off=11.25, ear_l=0.0, ear_w=0.0, ear_t=0.0, ear_z=0.0, horn_d=20.0, spline_h=2.0),
                        range_deg=360, verify=True,
                        vendors=[V("robotis", "XL430-W250-T", 49.9, "https://www.robotis.us/dynamixel-xl430-w250-t/")]),
     "xm430_w350": dict(name="ROBOTIS DYNAMIXEL XM430-W350-T", family="dynamixel", interface="ttl_half_duplex", protocol="dynamixel_2",
-                       voltage=(10.0, 14.8), nominal_v=12.0, torque_nm=4.1, rated_nm=1.4, speed_rad_s=4.8, stall_a=2.3, idle_a=0.05,
+                       voltage=(10.0, 14.8), nominal_v=12.0, torque_nm=4.1, torque_v=((11.1, 3.8), (12.0, 4.1)), rated_nm=1.4, speed_rad_s=4.8, stall_a=2.3, idle_a=0.05,
                        mass_g=82.0, feedback="12-bit absolute encoder, current, temperature, voltage",
                        dims=dict(l=46.5, w=28.5, h=34.0, shaft_off=11.25, ear_l=0.0, ear_w=0.0, ear_t=0.0, ear_z=0.0, horn_d=20.0, spline_h=2.0),
                        range_deg=360, verify=True,
@@ -96,6 +97,22 @@ def protocol(key: str) -> str | None:
     if a is None:
         return None
     return a.get("protocol") or FAMILY_PROTOCOL.get(a.get("family", "")) or ("pwm" if a.get("interface") == "pwm" else None)
+
+def torque_at(key: str, volts: float) -> float:
+    """Stall torque (N·m) of actuator `key` on a `volts` supply: between the datasheet's points (torque_v, or just the
+    nominal one) by straight lines, in proportion to the voltage below the lowest (a DC servo's stall current, and so its
+    torque, follows the voltage), and never more than the highest point above it (no credit past its rating)."""
+    a = ACTUATORS[key]
+    pts = sorted(a.get("torque_v") or ((a["nominal_v"], a["torque_nm"]),))
+    if volts >= pts[-1][0]:
+        return float(pts[-1][1])
+    if volts <= pts[0][0]:
+        return float(pts[0][1]) * max(float(volts), 0.0) / pts[0][0]
+    for (v0, t0), (v1, t1) in zip(pts, pts[1:]):
+        if v0 <= volts <= v1:
+            return float(t0 + (t1 - t0) * (volts - v0) / (v1 - v0))
+    return float(pts[-1][1])
+
 
 # ---------------------------------------------------------------- electronics modules
 # dims (mm): board l x w x component height h. pins: logical pin names used by schematic/harness.

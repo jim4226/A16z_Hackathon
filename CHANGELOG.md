@@ -349,3 +349,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   limit" the firmware has no command for, and asked for a force-sensor curve and tare the firmware doesn't do; it now
   gives the firmware's target, hard stop and window and its F and Z commands, and leaves the force-sensor steps out of
   robots without force sensors. A grip target outside its window, or above the hard stop, is an issue.
+- Torque margins, actuator picks and the simulation's servos are worked out at the servo supply the robot gets, not at
+  the servos' rated voltage. The SO-101's 7.4 V servos run from 6 V (no catalogued supply gives 7.4 V, and 6 V keeps
+  85 % of their torque), so its shoulder margin is 2.45x, not 2.89x; a hobby arm's DS3218s (rated 6.8 V) on the
+  SG90's 6 V rail give 88 %. The SO-101's margins say they are at q = 0, the pose its profile is sized in, and a
+  warning gives what its shoulder needs over the whole joint range. Servos without a catalogued supply near their
+  rating get a 12 V supply and the servo buck set to it (a 12 V STS3215 beside 7.4 V ones now runs at 7.4 V, not 6 V).
+  So New robot now says the stock SO-101 lifts about 100 g with a 2x margin (it said 150 g), and a 4-joint hobby arm
+  100 g (it said 200 g). "Use a 7.4 V supply" runs the SO-101's servos at their rating.
+- Chat "use a 5 V supply" changes the robot's servo supply when every servo takes 5 V, and otherwise changes nothing
+  and says which servo's range rules it out (it used to answer "Changing servo supply → 5 V" and keep 12 V). "Use the
+  rated supply voltage" goes back to Morph's choice.

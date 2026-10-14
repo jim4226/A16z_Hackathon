@@ -17,7 +17,7 @@ def test_constants_match_the_generator():
 
 
 def test_contract_table():
-    assert cap.PAYLOAD_G == {"hobby_pwm": {4: 200, 5: 100, 6: 0}, "smart_bus": {4: 300, 5: 200, 6: 100},
+    assert cap.PAYLOAD_G == {"hobby_pwm": {4: 100, 5: 100, 6: 0}, "smart_bus": {4: 300, 5: 200, 6: 100},
                              "dynamixel": {4: 500, 5: 300, 6: 200}}
     assert cap.min_width("cylinder") == 26.0 and cap.min_width("box") == 21.5 and cap.MAX_WIDTH_MM == 75.0
     assert cap.min_width("sphere", "none") == 38.0 and cap.MAX_MASS_G == 500
@@ -93,3 +93,8 @@ def test_warm_is_safe_in_the_background():
     cap.warm(block=False)
     cap.warm(block=True)
     assert cap.envelope()["source"] == "code" and cap.envelope()["payload_g"]["smart_bus"]["5"] == 200
+
+
+def test_the_so101_payload_is_the_builds():
+    """New robot's 'the stock SO-101 lifts about N g' is what imported.size() accepts at the SO-101's servo rail."""
+    assert cap.derive(so101=True)["so101_payload_g"] == cap.SO101_PAYLOAD_G
