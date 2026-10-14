@@ -22,6 +22,7 @@ from .. import electronics as grip_electronics
 from .. import sim as grip_sim
 from ..design import build_profile
 from ..pipeline import Project
+from ..services.durable import write_text
 from ..spec import Design, diff
 from . import catalog_extra  # noqa: F401  (imported robots' parts, needed even when their sizing is reused)
 
@@ -247,19 +248,37 @@ class RobotProject(Project):
         """Build a revision of `design` (reusing what `parent` already has) and return its name. `by` is the team
         member who asked for it (Teams), `proposed_by` the author of the change request it applies; both are recorded
         in results.json and the ledger."""
-        from . import arm
-
         emit = on_event or (lambda e: None)
-        rev = self.claim_rev()
-        out = self.rev_dir(rev)
-        with open(os.path.join(out, "design.json"), "w", encoding="utf-8") as fh:
-            fh.write(design.dumps())
-        if parent:
-            changes = diff(self.load_design(parent), design)
+        if parent:  # read before a revision is claimed: an unreadable parent never leaves a half-made revision
+            try:
+                base, prev = self.load_design(parent), self.load_results(parent)
+                if not isinstance(prev, dict):
+                    raise ValueError("it isn't a results file")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise ValueError(f"{parent}'s saved files can't be read ({exc.__class__.__name__}: {exc}); Morph won't "
+                                 "build on it.") from None
+            changes = diff(base, design)
             todo = dirty_nodes(changes.keys())
-            prev = self.load_results(parent)
         else:
             changes, todo, prev = {}, list(ORDER), {}
+        rev, lock = self.claim_build()
+        try:
+            return self._build(rev, design, parent, label, n_trials, verbose, emit, fast_sim, by, proposed_by, changes,
+                               todo, prev)
+        except BaseException:
+            # it never finished (an error, a full disk, Ctrl+C): its folder holds only files that can be made again, and
+            # left behind it would keep the disk full and be read as a cut-off build
+            if not os.path.isfile(os.path.join(self.rev_dir(rev), "results.json")):
+                self.discard(rev)
+            raise
+        finally:
+            lock.release()
+
+    def _build(self, rev, design, parent, label, n_trials, verbose, emit, fast_sim, by, proposed_by, changes, todo, prev):
+        from . import arm
+
+        out = self.rev_dir(rev)
+        write_text(os.path.join(out, "design.json"), design.dumps())
         res = {"rev": rev, "parent": parent, "label": label, "kind": "robot",
                "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "stage_status": {}, "timings_s": {}}
         if by:
@@ -345,10 +364,8 @@ class RobotProject(Project):
 
         res["summary"] = summarize(res)
         res["pipeline_version"] = pipeline_version(design.arm.source)
-        tmp = os.path.join(out, ".results.json.tmp")  # results.json marks a finished revision: it appears whole
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(res, fh, indent=1, default=_jsonable)
-        os.replace(tmp, os.path.join(out, "results.json"))
+        # results.json marks a finished revision: it appears whole, and is on the disk before the ledger says so
+        write_text(os.path.join(out, "results.json"), json.dumps(res, indent=1, default=_jsonable))
         self.log({"type": "revision", "rev": rev, "parent": parent, "label": label, "changes": res["changes"],
                   "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"], **({"by": by} if by else {}),
                   **({"proposed_by": proposed_by} if proposed_by else {})})

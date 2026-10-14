@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
 
 DEFAULTS = {
@@ -58,21 +57,10 @@ def save(changes) -> dict:
             raise ValueError(f"unknown setting {k}")
         if not isinstance(v, bool):
             raise ValueError(f"{k} must be true or false")
+    from .services.durable import write_json
     with _LOCK:
         values = {**load(), **changes}
-        os.makedirs(home(), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix=".settings.", suffix=".tmp", dir=home())
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-                json.dump(values, fh, indent=2)
-                fh.write("\n")
-            os.replace(tmp, path())
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        write_json(path(), values, indent=2)  # synced: a power cut leaves the old settings or the new, never an empty file
     return values
 
 

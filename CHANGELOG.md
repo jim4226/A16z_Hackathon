@@ -367,3 +367,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   message, ledger entry (the Time saved card disappeared), robustness run or Teams record joined the cut-off line and
   was lost with it. The team and tool audit logs report such a line as cut off by a crash or a full disk instead of
   "edited by hand", and a stop between writing an entry and its `audit.head` is no longer flagged as tampering.
+- A results.json left empty or cut off (a power cut, a crash while it was saved) no longer stops the launcher with a
+  traceback, or breaks its project with a 500 on every request and a new cut-off revision on every edit: when the
+  Studio starts, such a revision and any build a stop cut off are set aside (named in the terminal; after a day they
+  move to `projects/.trash/`), a revision Morph can't read is never shown or built on, and every record is synced to
+  the disk before it replaces the old one. A build that fails before it finishes (a full disk) removes its revision
+  folder, so the space comes back; a full disk reads "The disk is full" in the chat and in dialogs, and a full disk no
+  longer leaves Teams and tool files "busy" for 30 seconds afterwards. A build another Studio or the CLI is still
+  running is never set aside.
+

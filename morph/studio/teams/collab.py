@@ -21,6 +21,7 @@ import re
 import unicodedata
 
 from ...robot.pipeline2 import ORDER, PARAMS, RobotProject
+from ...services.durable import readable_json
 from ...spec import Design, diff
 from ..labels import VALUES, show_key, show_value  # noqa: F401  (people's names for keys and values)
 from ..security import looks_like_secret, secret_refused
@@ -95,13 +96,13 @@ def bom_key(category, item=None) -> str:
 
 
 def revs(root: str) -> list:
-    """Completed revisions (design.json and results.json both written), sorted by number (r1000 after r999)."""
+    """Completed revisions (design.json and results.json both readable), sorted by number (r1000 after r999)."""
     try:
         names = os.listdir(root)
     except OSError:
         return []
-    out = [n for n in names if REV_RX.match(n) and os.path.isfile(os.path.join(root, n, "results.json"))
-           and os.path.isfile(os.path.join(root, n, "design.json"))]
+    out = [n for n in names if REV_RX.match(n) and readable_json(os.path.join(root, n, "results.json"))
+           and readable_json(os.path.join(root, n, "design.json"))]  # a cut-off or damaged revision doesn't count
     return sorted(out, key=lambda r: int(r[1:]))
 
 

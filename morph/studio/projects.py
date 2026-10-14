@@ -19,13 +19,14 @@ import os
 import re
 import secrets
 import shutil
-import tempfile
 import threading
 import time
+import traceback
 import unicodedata
 
 from ..pipeline import REV, utc_now
 from ..robot.pipeline2 import ORDER, PARAMS, RobotProject, artifact_problem, pipeline_version, stage_problem
+from ..services import durable
 from ..spec import Design
 from .security import WINDOWS_RESERVED, contained_path, design_values, param_changes, project_name, robot_source
 
@@ -53,18 +54,8 @@ def read_meta(root: str) -> dict:
 
 
 def write_meta(root: str, meta: dict):
-    """meta.json, replaced atomically."""
-    fd, tmp = tempfile.mkstemp(prefix=".meta.", suffix=".tmp", dir=root)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump(meta, fh, indent=1)
-        os.replace(tmp, os.path.join(root, "meta.json"))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    """meta.json, replaced atomically and synced to the disk (durable.write_json)."""
+    durable.write_json(os.path.join(root, "meta.json"), meta)
 
 
 def project_root(home: str, name) -> str | None:
@@ -81,8 +72,124 @@ def project_root(home: str, name) -> str | None:
 
 
 def finished(p: RobotProject) -> list:
-    """Revisions with results (a revision being built, or cut off, has only design.json)."""
-    return [r for r in p.revs() if os.path.isfile(os.path.join(p.rev_dir(r), "results.json"))]
+    """Revisions with readable results (Project.finished: a revision being built, cut off or damaged doesn't count)."""
+    return p.finished()
+
+
+SET_ASIDE = re.compile(r"(r[0-9]{1,9})\.(incomplete|deleted)-([0-9]+)")
+TRASH_AFTER_S = 24 * 3600
+
+
+def set_aside_unfinished(p: RobotProject, say=None) -> list:
+    """The newest revisions that never finished (a stop mid-build left only some of their files) or whose results.json
+    or design.json can't be read (a power cut, a hand edit) are renamed rNNN.incomplete-<time>: nothing reads them as
+    finished and the next build takes their number. A revision another process is still building (its BuildLock is
+    held) is left alone. `say(text)` is told about each. Returns the revisions set aside."""
+    done, out = set(p.finished()), []
+    for rev in reversed(p.revs()):
+        if rev in done:
+            break
+        lock = p.build_lock(rev)
+        if durable.BuildLock.held(lock):
+            break  # still building, in another Studio or the CLI
+        d = p.rev_dir(rev)
+        why = ("was cut off mid-build" if not os.path.isfile(os.path.join(d, "results.json")) else
+               "has saved files that can't be read (a power cut or a crash while they were written, or a hand edit)")
+        try:
+            os.rename(d, f"{d}.incomplete-{int(time.time())}")
+        except OSError:
+            break  # Windows: a file in it is open; next start
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+        out.append(rev)
+        if say:
+            say(f"{os.path.basename(p.root)}: {rev} {why}; setting it aside")
+    return out
+
+
+def _folder_size(path: str) -> int:
+    total = 0
+    for folder, _, names in os.walk(path):
+        for n in names:
+            try:
+                total += os.lstat(os.path.join(folder, n)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def tidy(home: str, say=None, *, now: float | None = None) -> dict:
+    """What a Studio does for every robot project when it starts: set_aside_unfinished(); revision folders set aside more
+    than a day ago go to .trash/<project>-<rev>-<UTC time>/ (they hold only files a build can make again: empty .trash
+    to get the space back); the leftovers of a deleted revision a locked file kept are deleted. Never raises: one odd
+    project never stops the Studio. Returns {"set_aside": {project: [revs]}, "trashed": n, "bytes": size moved}."""
+    now = time.time() if now is None else now
+    out = {"set_aside": {}, "trashed": 0, "bytes": 0}
+    for info in list_projects(home):
+        name, root = info["name"], os.path.join(home, info["name"])
+        try:
+            p = RobotProject(root)
+            gone = set_aside_unfinished(p, say)
+            if gone:
+                out["set_aside"][name] = gone
+            for entry in sorted(os.listdir(root)):
+                m = SET_ASIDE.fullmatch(entry)
+                path = os.path.join(root, entry)
+                if not m or not os.path.isdir(path) or os.path.islink(path):
+                    continue
+                if m.group(2) == "deleted":  # meant to be erased already
+                    shutil.rmtree(path, ignore_errors=True)
+                    continue
+                stamp = int(m.group(3))
+                stamp = stamp / 1e9 if stamp > 1e12 else stamp
+                if now - stamp < TRASH_AFTER_S:
+                    continue
+                size = _folder_size(path)
+                trash = os.path.join(home, TRASH)
+                os.makedirs(trash, exist_ok=True)
+                when = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(stamp))
+                dst, n = os.path.join(trash, f"{name}-{m.group(1)}-{when}"), 1
+                while os.path.lexists(dst):
+                    n += 1
+                    dst = os.path.join(trash, f"{name}-{m.group(1)}-{when}-{n}")
+                os.rename(path, dst)
+                out["trashed"] += 1
+                out["bytes"] += size
+            for lock in _stale_locks(p):
+                try:
+                    os.remove(lock)
+                except OSError:
+                    pass
+        except Exception:  # noqa: BLE001  (one odd project never stops the Studio)
+            traceback.print_exc()
+    if out["trashed"] and say:
+        say(f"Moved {out['trashed']} build{'s' if out['trashed'] != 1 else ''} the Studio had stopped part way, "
+            f"{out['bytes'] / 1e6:.0f} MB, to {os.path.join(home, TRASH)}: empty it to free the space.")
+    return out
+
+
+def _stale_locks(p: RobotProject) -> list:
+    """Build locks left by builds that ended with their process (none holds them, and their revision is finished or
+    gone)."""
+    folder = os.path.join(p.root, ".morph")
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    revs = set(p.revs())
+    out = []
+    for n in names:
+        m = re.fullmatch(r"build-(r[0-9]{1,9})\.lock", n)
+        if not m:
+            continue
+        path = os.path.join(folder, n)
+        if m.group(1) in revs and not os.path.isfile(os.path.join(p.rev_dir(m.group(1)), "results.json")):
+            continue  # an unfinished revision: its lock says whether it still builds
+        if not durable.BuildLock.held(path):
+            out.append(path)
+    return out
 
 
 def list_projects(home: str) -> list:
@@ -247,8 +354,7 @@ def fork(home: str, project: str, rev: str | None = None, name=None, *, by: str 
     results.pop("by", None)
     if by:
         results["by"] = by
-    with open(os.path.join(new.rev_dir("r001"), "results.json"), "w", encoding="utf-8") as fh:
-        json.dump(results, fh, indent=1)
+    durable.write_json(os.path.join(new.rev_dir("r001"), "results.json"), results)
     new.log({"type": "revision", "rev": "r001", "parent": None, "label": label, "changes": {}, "recomputed": [],
              "design": design.to_dict(), "predicted": results.get("summary") or {},
              "forked_from": {"project": project, "rev": rev}, **({"by": by} if by else {})})

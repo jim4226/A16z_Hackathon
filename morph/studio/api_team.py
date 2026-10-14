@@ -27,6 +27,7 @@ import traceback
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
+from ..services import durable
 from .teams import activity, audit, auth, collab, roles
 from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing, watching
 from .teams.store import TeamStore, exists
@@ -387,6 +388,8 @@ def _safe(fn):
             return _err(503, str(exc))
         except Exception as exc:  # noqa: BLE001  (never leak a traceback to the browser)
             traceback.print_exc()
+            if durable.disk_full(exc):
+                return _err(507, durable.DISK_FULL)
             return _err(500, f"The team service failed ({exc.__class__.__name__}); see the Studio's terminal.")
     run.__name__ = fn.__name__
     run.__doc__ = fn.__doc__

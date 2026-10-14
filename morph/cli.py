@@ -192,17 +192,11 @@ def open_app_window(url: str):
 
 
 def _set_aside_cut_off(proj):
-    """A build cut off mid-way (window closed, Ctrl+C) leaves rNNN/design.json without results.json,
-    which would stop every later launch. Move it aside; the next build reuses the number."""
-    for rev in reversed(proj.revs()):
-        d = proj.rev_dir(rev)
-        if os.path.isfile(os.path.join(d, "results.json")):
-            break
-        print(f"{os.path.basename(proj.root)}: {rev} was cut off mid-build; setting it aside")
-        try:
-            os.rename(d, f"{d}.incomplete-{int(time.time())}")
-        except OSError:
-            break
+    """A build cut off mid-way (window closed, Ctrl+C) leaves rNNN/design.json without results.json, and a power cut can
+    leave a results.json that doesn't parse: either would stop every later launch. Move it aside; the next build reuses
+    the number (projects.set_aside_unfinished; the Studio does the same for every project when it starts)."""
+    from .studio import projects
+    projects.set_aside_unfinished(proj, say=print)
 
 
 def cmd_studio(a):
@@ -261,12 +255,12 @@ def cmd_studio(a):
     for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
         _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
-    if not p.revs():
+    if not p.finished():
         print(f"no project {a.name} yet: generating the first robot (about a minute)...")
         cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if a.name == "so101" else None, demo=a.name in projects.DEMOS))
     other = "so101" if a.name != "so101" else "egg-picker"
-    if not RobotProject(os.path.join(HOME, other)).revs():
+    if not RobotProject(os.path.join(HOME, other)).finished():
         print(f"also preparing the {other} project for the project switcher...")
         cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if other == "so101" else None, demo=True))

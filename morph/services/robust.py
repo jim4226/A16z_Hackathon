@@ -262,7 +262,7 @@ def _revision(root, rev=None):
         raise StudyConflict(f"{os.path.basename(os.path.normpath(root))} is a gripper-only project from the earlier CLI "
                             "prototype; robustness studies need a whole robot (a Morph Studio project).")
     p = RobotProject(root)
-    done = [r for r in p.revs() if os.path.isfile(os.path.join(p.rev_dir(r), "results.json"))]
+    done = p.finished()
     rev = rev or (done[-1] if done else None)
     if not isinstance(rev, str) or not REV.fullmatch(rev) or rev not in done:
         raise StudyError("This project has no finished revision to study yet." if not rev else
@@ -612,25 +612,8 @@ def _utc(t: float | None = None) -> str:
 
 
 def _write_json(path: str, doc: dict):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".tmp.", suffix=".json", dir=os.path.dirname(path))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump(doc, fh, indent=1)
-        for attempt in range(20):            # Windows: a reader holding the old file open for a moment
-            try:
-                os.replace(tmp, path)
-                return
-            except PermissionError:
-                if attempt == 19:
-                    raise
-                time.sleep(0.05)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    from .durable import write_json
+    write_json(path, doc)                    # synced, and retried while Windows holds the old file open for a moment
 
 
 def _read_json(path: str):

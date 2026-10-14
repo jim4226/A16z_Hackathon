@@ -15,7 +15,6 @@ import json
 import os
 import queue
 import secrets
-import tempfile
 import threading
 import time
 import traceback
@@ -80,10 +79,7 @@ class Hub:
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             if self._lines >= 2 * self.MAX_HISTORY:
-                fd, tmp = tempfile.mkstemp(prefix=".chat.", suffix=".tmp", dir=os.path.dirname(self.path))
-                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-                    fh.writelines(json.dumps(e) + "\n" for e in self.history)
-                os.replace(tmp, self.path)
+                durable.write_text(self.path, "".join(json.dumps(e) + "\n" for e in self.history))
                 self._lines = len(self.history)
             else:
                 durable.append_line(self.path, json.dumps(event))  # a cut-off last line never swallows this one
@@ -348,8 +344,9 @@ class Room:
         return {**live, "nodes": dict(live["nodes"])} if live else None
 
     def completed(self) -> list:
-        """Revisions with results: what tabs show. A revision still being built (or cut off) has only design.json."""
-        return [r for r in self.p.revs() if os.path.isfile(os.path.join(self.p.rev_dir(r), "results.json"))]
+        """Revisions with readable results: what tabs show. A revision still being built, cut off or damaged doesn't
+        count (Project.finished)."""
+        return self.p.finished()
 
     def latest(self) -> str | None:
         revs = self.completed()

@@ -44,7 +44,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}`. `projects.create(meta=)` adds keys but never sets kind, created_utc, created_by, origin, demo or source (those come from its own arguments) |
 | `<p>/rNNN/` | pipeline | unchanged; names sort numerically (W0b) |
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
-| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room |
+| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs (W3) |
 | `<p>/brief.json` | F1 | the final brief that created the project |
 | `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
 | `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
@@ -52,7 +52,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
 | `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h) |
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
-| `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph) |
+| `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
 | `.team/` | F4 | `team.json`, `secret` (0600), `audit.jsonl` |
 | `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
@@ -71,6 +71,28 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   `audit.head` update didn't happen (a stop between the two writes) is chained on, not flagged. `verify()` answers ok
   with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line
   as before; `morph team audit --verify` prints the note.
+- Every record replaced whole goes through `durable.write_text` / `write_json`: a temp file beside it, flushed and
+  fsynced, `os.replace` (retried for a second while Windows holds the old file open), then the folder synced on POSIX.
+  That covers design.json and results.json, meta.json (`projects.write_meta`, a fork's results), settings, study
+  records (`robust._write_json`), Teams files (`teams/store.write_json`), tool files (`toolbox/store.write_text`) and the
+  chat file's compaction.
+- A revision is finished when its results.json and design.json each parse as a JSON object (`Project.finished()`,
+  cached by mtime and size in `durable.readable_json`); `Project.latest()`, `Room.completed()`, `projects.finished()`,
+  Teams' `collab.revs()`, studies and the time card all count only those (an export lists every revision whose
+  results.json parses). `Studio.state` builds the newest one it can show (a revision that raises is skipped, never a
+  500).
+- A build (`RobotProject.run`) reads its parent before it claims a number (an unreadable parent: ValueError "rNNN's saved
+  files can't be read", no folder made), claims with `Project.claim_build()`, which takes the OS lock
+  `.morph/build-rNNN.lock` (`durable.BuildLock`, freed by the system when the process ends) before the folder exists and
+  skips a number another process holds, and releases it at the end. A build that raises before its results.json is in
+  place removes its folder (`Project.discard`): a full disk gets its space back.
+- When a Studio starts (`projects.tidy`, for every robot project) and when the launcher starts (its two demos, before it
+  builds a missing one): the newest revisions that aren't finished and whose lock nobody holds are renamed
+  `rNNN.incomplete-<time>` and named in the terminal; ones set aside more than a day ago move to `.trash/`; the
+  `rNNN.deleted-*` leftovers of a deletion a locked file stopped are deleted.
+- A full disk (ENOSPC, EDQUOT) reads `durable.DISK_FULL` ("The disk is full: free some space on this computer, then try
+  again."): routes answer 507 with it (the generic handler, Teams' `_safe`, settings and keys), a build's chat error says
+  it. The Teams and toolbox lock files close their descriptor and remove themselves when their first write fails.
 
 ## 2. Server routing contract (W0b implements; everyone else uses)
 
@@ -137,7 +159,8 @@ class Request:
   `Request.save(path)` (raw bodies in 1 MiB chunks; `save` removes the file again if the upload is cut
   off), `Request.upload_path(suffix)` (a new file in `.uploads/`), `set_role_hook(fn)` for Teams:
   `fn(req, role)` returns the member dict or raises `HTTPError(401|403)`. A body that stops arriving answers
-  400 ("cut off"). An unexpected exception in a handler answers 500 with the error text.
+  400 ("cut off"). An unexpected exception in a handler answers 500 with the error text; a full disk answers 507 "The
+  disk is full: ..." (W3).
 - Roles of the core routes (Teams' role table starts from these): **viewer**: `GET /api/state`, `/api/rev`,
   `/api/events`, `/api/jobs`, `/api/projects`, `/api/settings`, `/api/export`, `/files/*`, and the old
   `POST /api/project` (it only checks a name); **editor**: `POST /api/chat`, `/api/params`, `/api/jobs/cancel`,

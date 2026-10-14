@@ -18,7 +18,7 @@ import shutil
 import time
 
 from . import analysis, board, design as cad, electronics, fab, keewano, mechanism, sim
-from .services.durable import append_line
+from .services.durable import BuildLock, append_line, readable_json
 from .spec import Design, diff
 
 # node: (parameter patterns it reads, upstream nodes)
@@ -89,14 +89,47 @@ class Project:
         return sorted((d for d in names if REV.fullmatch(d) and os.path.isdir(os.path.join(self.root, d))),
                       key=lambda d: int(d[1:]))
 
+    def finished(self) -> list:
+        """Revisions with readable results: results.json and design.json each hold a JSON object. A revision being built,
+        cut off by a stop, or damaged (a power cut, a hand edit) doesn't count, so nothing reads it as finished."""
+        return [r for r in self.revs() if readable_json(os.path.join(self.rev_dir(r), "results.json"))
+                and readable_json(os.path.join(self.rev_dir(r), "design.json"))]
+
     def latest(self):
-        revs = self.revs()
-        return revs[-1] if revs else None
+        """The newest finished revision, or None."""
+        done = self.finished()
+        return done[-1] if done else None
+
+    def build_lock(self, rev: str) -> str:
+        """The lock file a build of `rev` holds while it runs (BuildLock): .morph/build-<rev>.lock."""
+        return os.path.join(self.root, ".morph", f"build-{rev}.lock")
+
+    def claim_build(self):
+        """claim_rev() for a build: (rev, its BuildLock, held until the build ends). The lock is taken before the folder
+        exists, so another process's start-up sweep never sees the new revision without it and sets it aside mid-build;
+        a number whose lock another process holds is skipped."""
+        for _ in range(100):
+            revs = self.revs()
+            first = int(revs[-1][1:]) + 1 if revs else 1
+            for n in range(first, first + 20):
+                rev, lock = f"r{n:03d}", BuildLock(self.build_lock(f"r{n:03d}"))
+                if not lock.acquire():
+                    continue
+                try:
+                    os.mkdir(self.rev_dir(rev))
+                    return rev, lock
+                except FileExistsError:
+                    lock.release(remove=False)
+                    break
+                except BaseException:
+                    lock.release()
+                    raise
+        raise RuntimeError(f"couldn't claim a new revision folder in {self.root}")
 
     def claim_rev(self) -> str:
         """Create the next revision folder and return its name. Numbers follow the highest one (never a count, so a
         deleted or set-aside revision is never reused by accident), and the folder is created exclusively: if another
-        process (the CLI beside the Studio) takes the number first, this one takes the next."""
+        process (the CLI beside the Studio) takes the number first, this one takes the next. A build uses claim_build()."""
         for _ in range(100):
             revs = self.revs()
             rev = f"r{int(revs[-1][1:]) + 1 if revs else 1:03d}"
@@ -109,6 +142,19 @@ class Project:
 
     def rev_dir(self, rev: str) -> str:
         return os.path.join(self.root, rev)
+
+    def discard(self, rev: str) -> bool:
+        """Delete a revision folder, all or nothing: renamed out of the project first (Windows refuses while a file in it
+        is open, and then nothing has been touched), then deleted. revs() only lists names like r012, so a leftover
+        "r012.deleted-..." is invisible (the Studio's start-up sweep removes it). False when the rename failed."""
+        d = self.rev_dir(rev)
+        gone = f"{d}.deleted-{time.time_ns()}"
+        try:
+            os.rename(d, gone)
+        except OSError:
+            return False
+        shutil.rmtree(gone, ignore_errors=True)
+        return True
 
     def load_design(self, rev: str) -> Design:
         with open(os.path.join(self.rev_dir(rev), "design.json"), encoding="utf-8") as fh:

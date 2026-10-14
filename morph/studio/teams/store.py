@@ -14,7 +14,6 @@ import copy
 import json
 import os
 import secrets
-import tempfile
 import threading
 import time
 
@@ -88,7 +87,16 @@ class FileLock:
         while True:
             try:
                 self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                os.write(self.fd, f"{os.getpid()} {time.time():.0f}".encode())
+                try:
+                    os.write(self.fd, f"{os.getpid()} {time.time():.0f}".encode())
+                except BaseException:  # a full disk: never keep the descriptor, nor a lock file nobody holds
+                    os.close(self.fd)
+                    self.fd = None
+                    try:
+                        os.remove(self.path)
+                    except OSError:
+                        pass
+                    raise
                 return self
             except FileExistsError:
                 try:
@@ -154,32 +162,10 @@ def ensure_dir(folder: str, private: bool = False):
 
 def write_json(path: str, data, private: bool = False):
     """Atomic JSON write: temp file in the same folder, fsync, os.replace (retried briefly: Windows refuses to
-    replace a file another process is reading)."""
-    folder = os.path.dirname(path)
-    ensure_dir(folder)
-    fd, tmp = tempfile.mkstemp(prefix=".tmp.", suffix=".json", dir=folder)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump(data, fh, indent=1, ensure_ascii=False)
-            fh.write("\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        if private and os.name != "nt":
-            os.chmod(tmp, 0o600)
-        for attempt in range(20):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:
-                if attempt == 19:
-                    raise
-                time.sleep(0.05)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    replace a file another process is reading), the folder synced (durable.write_text)."""
+    from ...services.durable import write_text
+    ensure_dir(os.path.dirname(path))
+    write_text(path, json.dumps(data, indent=1, ensure_ascii=False) + "\n", private=private)
 
 
 def read_json(path: str, default=None):

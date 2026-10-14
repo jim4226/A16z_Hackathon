@@ -41,6 +41,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from ..pipeline import REV
 from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline_version
+from ..services import durable
 from ..spec import diff
 from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
@@ -87,8 +88,9 @@ def _design(p: RobotProject, rev: str) -> dict | None:
 def baseline(p: RobotProject) -> str | None:
     """The newest clean build of the project's ORIGINAL design (its first revision's): a revision with no
     parent whose design equals r001's. Later parentless revisions can carry an earlier take's edits
-    (the start-up rebuild rebuilds the latest design), so they don't count."""
-    revs = p.revs()
+    (the start-up rebuild rebuilds the latest design), so they don't count. Only finished revisions count: a damaged
+    one is never kept as the clean build."""
+    revs = p.finished()
     if not revs:
         return None
     orig = _design(p, revs[0])
@@ -97,17 +99,8 @@ def baseline(p: RobotProject) -> str | None:
 
 
 def _remove_rev(p: RobotProject, rev: str) -> bool:
-    """Delete a revision folder, all or nothing: rename it out of the project first (Windows refuses
-    while any file inside is open, and then nothing has been touched), then delete the renamed copy.
-    revs() only lists names like r012, so a leftover "r012.deleted-..." folder is invisible."""
-    d = p.rev_dir(rev)
-    trash = f"{d}.deleted-{time.time_ns()}"
-    try:
-        os.rename(d, trash)
-    except OSError:
-        return False
-    shutil.rmtree(trash, ignore_errors=True)
-    return True
+    """Delete a revision folder, all or nothing (Project.discard)."""
+    return p.discard(rev)
 
 
 def integrations() -> dict:
@@ -284,6 +277,7 @@ class Studio:
         self.rooms = {self.start: Room(self.start, project)}
         self._rooms = threading.Lock()
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
+        projects.tidy(self.home, say=print)  # revisions a stop cut off or a power cut damaged: set aside, never read
         _start_features(self.home)
         self.toolbox = None
         _start_tools(self)
@@ -392,10 +386,19 @@ class Studio:
         out = {"project": room.name, "start": self.start, "projects": self.projects(), "revs": revs,
                "history": list(room.hub.history), "integrations": integrations(), "compute": compute_info(self.remote),
                "queue": room.jobs.snapshot(), "conflicts": room.jobs.conflicts(), "building": room.building()}
-        if revs:
-            out["current"] = rev_payload(room.p, revs[-1], room.name)
+        for rev in reversed(revs):  # one revision Morph can't show never takes the whole project down (500)
+            try:
+                out["current"] = rev_payload(room.p, rev, room.name)
+                break
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+        if "current" in out:
             parent = out["current"]["parent"]
-            out["previous"] = rev_payload(room.p, parent, room.name) if parent in revs else None
+            try:
+                out["previous"] = rev_payload(room.p, parent, room.name) if parent in revs else None
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+                out["previous"] = None
         return out
 
     def artifact(self, rel: str) -> str | None:
@@ -507,7 +510,7 @@ class Studio:
                 return rev
             except Exception as exc:  # noqa: BLE001  (shown in the chat; the room keeps working)
                 traceback.print_exc()
-                self._say(room, job, "error", f"Error: {exc}")
+                self._say(room, job, "error", f"Error: {durable.explain(exc)}")
                 return None
             finally:
                 room.live = None
@@ -588,7 +591,7 @@ class Studio:
                 return rev
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
-                self._say(room, job, "error", f"Error: {exc}")
+                self._say(room, job, "error", f"Error: {durable.explain(exc)}")
                 return None
             finally:
                 room.live = None
@@ -1080,6 +1083,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 traceback.print_exc()
                 if getattr(self, "_responded", False):
                     return None
+                if durable.disk_full(exc):
+                    return self._error(507, durable.DISK_FULL)
                 return self._error(500, f"The Studio hit an error: {exc.__class__.__name__}: {exc}")
             if out is None:
                 return None
@@ -1475,6 +1480,8 @@ def _api_keys_save(req):
     except ValueError as exc:
         raise HTTPError(400, str(exc)) from None
     except OSError as exc:
+        if durable.disk_full(exc):
+            raise HTTPError(507, durable.DISK_FULL) from None
         raise HTTPError(500, f"Couldn't save the keys: Morph can't write {os.path.basename(keys.ENV_PATH)} here "
                              f"({exc.strerror or exc.__class__.__name__}). Set them as environment variables instead, "
                              "or move Morph to a folder you can write to.") from None
@@ -1510,7 +1517,8 @@ def _api_settings_save(req):
     except ValueError as exc:
         raise HTTPError(400, str(exc)) from None
     except OSError as exc:
-        raise HTTPError(500, f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).") from None
+        raise HTTPError(507 if durable.disk_full(exc) else 500, durable.DISK_FULL if durable.disk_full(exc) else
+                        f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).") from None
     _audit(req, "settings_changed", values=values)
     keewano._ratio_cache.clear()
     return 200, {"ok": True, "settings": values, "integrations": integrations()}
@@ -1656,7 +1664,7 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers.
     `token_chosen`: False when `token` is one access_token() made (the CLI makes it to print the link first), so wrong
     guesses never lock out its address (Guesses); default: a given token is the person's own."""
-    if not project.revs():
+    if not project.finished():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
     chosen = bool(token) if token_chosen is None else token_chosen
