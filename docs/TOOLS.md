@@ -62,10 +62,10 @@ off), or under "Keys no tool uses" (its manifest is gone), where it can only be 
 
 ## Approvals and limits
 
-- Morph's own read-only tools: saving their key in Keys (from the card or the dialog) counts as allowing them. A key
-  put in `.env` by hand asks once.
-- Other read-only tools ask once: **Allow once**, or **Always**. Always is bound to the tool exactly as it was: a tool
-  whose manifest changes asks again.
+- Morph's own read-only tools: saving their key in Keys (from the card or the dialog) counts as allowing them. With a
+  key put in `.env` by hand, they ask on first use like other tools.
+- Other read-only tools ask on first use: **Allow once** (this time) or **Always**. Always is bound to the tool exactly
+  as it was: a tool whose manifest changes asks again.
 - Tools that write or upload ask before every call. A tool that spends money or has a fee is refused in this beta: the
   spending cap is $0.
 - One run makes at most 20 calls of one tool and 40 requests to Claude.
@@ -88,8 +88,8 @@ off), or under "Keys no tool uses" (its manifest is gone), where it can only be 
 | The log of every tool decision and call | `.tools/audit.jsonl` |
 
 The log records names, hosts, outcomes, timings and costs, never a key, a tool's arguments or an answer. Each line
-carries the hash of the one before it, so an edited, removed or reordered line shows up:
-`python -c "from morph.studio.toolbox import audit; print(audit.verify())"`.
+carries the hash of the one before it, so an edited, removed or reordered line shows up; in the Morph folder,
+`python -c "from morph.studio.toolbox import audit; print(audit.verify())"` checks the chain.
 
 ## The manifest format
 
@@ -202,8 +202,8 @@ last control. Read the hosts and lookups before you approve.
   key**; another status would show as a failed call.
 - Real Claude finding the distributor tools through tool search, the prompt cache on a resumed run, the server-side
   fallback after a refusal, and Claude's web fetch staying on the documentation's site when it drafts a tool.
-- Prices: Morph keeps a price only with the tool's answer it came from and marks the rest "check it", but nobody has
-  compared Live prices with a distributor's own page yet.
+- Prices: Morph keeps a price only from a tool that answered in the run and marks one it can't find in that answer
+  "check it", but nobody has compared Live prices with a distributor's own page yet.
 - A Studio behind an HTTP proxy: the runner connects directly, so tool calls fail there for now.
 
 [docs/RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) lists the checks to run with real keys before a release, and

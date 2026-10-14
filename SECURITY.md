@@ -58,7 +58,7 @@ Morph Studio is a local app: a small web server on your computer, used from your
     off *Let agents use tools* or network lookups stops a working run before its next step, and Stop ends it once the
     call under way returns. In a team only the owner adds keys, allows tools, turns them on and approves drafted tools.
   - **What a service answers is data, never instructions:** Claude is told so, and Morph decides what is kept (a price
-    only together with the answer it came from).
+    only from a tool that answered in that run, marked "check it" when Morph can't find it in that answer).
   - **Drafted tools (preview):** Claude fills in a form from the documentation you name; Morph checks the result (GET
     lookups only, hosts that the documentation names and that resolve to public addresses, no wording aimed at an AI)
     and installs only the spec the owner approved, bound to its sha256. A later change to the file turns its tools off.

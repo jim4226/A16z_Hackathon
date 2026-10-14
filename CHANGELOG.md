@@ -70,11 +70,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   and what it waits for: **Key needed** names the service, what the key is for, its cost and what is sent, with Add
   key (opens Keys on that key), Get a key and Skip; once the key is saved the run continues by itself ("Key added,
   continuing…"), and a key the service refuses can be replaced. A tool that asks first shows a **Tool request** card
-  (Allow once, Always for read-only tools, Skip). Morph keeps a price only with the tool's answer it came from, marks
-  the rest "check it", and never orders anything. Runs use Claude on your Anthropic key and start only from the BOM tab,
-  unless you turn on "Check live prices after a build changes the purchased parts" (off by default); "Let agents use
-  tools (beta)" under Keys turns them off. On a team only the owner adds keys and allows tools; editors start runs and
-  may skip; viewers see the cards and are told to ask the owner.
+  (Allow once, Always for read-only tools, Skip). Morph keeps a price only from a tool that answered in the run, marks
+  one it can't find in that answer "check it", and never orders anything. Runs use Claude on your Anthropic key and
+  start only from the BOM tab, unless you turn on "Check live prices after a build changes the purchased parts" (off by
+  default); "Let agents use tools (beta)" under Keys turns them off. On a team only the owner adds keys and allows
+  tools; editors start runs and may skip; viewers see the cards and are told to ask the owner.
 - **Morph writes a tool** (preview): when a run needs a tool Morph doesn't have, its card offers **Draft a tool** to
   the owner (also **New tool (preview)** in Keys). You name the need and the API's official documentation; Claude reads
   that documentation site only and fills in a form, never code, and Morph builds a declarative read-only tool from it
