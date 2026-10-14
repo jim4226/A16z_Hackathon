@@ -173,6 +173,7 @@ def serve(home, root, extra=None):
             pass
 
         def _json(self, status, obj):
+            self._drain()
             body = json.dumps(obj).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -180,7 +181,17 @@ def serve(home, root, extra=None):
             self.end_headers()
             self.wfile.write(body)
 
+        def _drain(self):
+            # like the Studio's own handler: read a body nobody read before answering, or closing resets the
+            # connection and Windows throws the answer away (ConnectionAbortedError on a refused POST)
+            if self.command in ("POST", "PUT", "DELETE") and not getattr(self, "_read", False):
+                self._read = True
+                n = int(self.headers.get("Content-Length") or 0)
+                if 0 < n <= 1 << 20:
+                    self.rfile.read(n)
+
         def _go(self):
+            self._read = False
             u = urlparse(self.path)
             if self.command in ("GET", "HEAD") and api_team.landing(self):
                 return
@@ -238,6 +249,7 @@ def serve(home, root, extra=None):
             body = None
             if not opts.get("raw_body"):
                 n = int(self.headers.get("Content-Length") or 0)
+                self._read = True
                 raw = self.rfile.read(n) if n else b""
                 try:
                     body = json.loads(raw or b"{}")
