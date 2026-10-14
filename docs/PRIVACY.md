@@ -14,6 +14,9 @@ it ([SECURITY.md](../SECURITY.md)).
   - *Let agents use tools (beta)* is on, but an agent run (Live prices) starts only when someone presses its button.
     Off: no run starts, and a run under way stops before its next step. *Check live prices after a build changes the
     purchased parts* (it starts Live prices by itself) is off until you turn it on.
+  - If `projects/.settings.json` can't be read (a power cut while it was saved, a bad hand edit), every switch is off,
+    network lookups included, and the Keys dialog says so until you set them again: a switch you turned off never comes
+    back on by itself. The same goes for the agent tools you turned off (`projects/.tools/state.json`).
 - `MORPH_OFFLINE=1` in the environment turns every network call off, whatever the switches say.
 - A service whose key isn't set is never called. Darwin needs no key, so the network switch covers it.
 

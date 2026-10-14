@@ -388,17 +388,47 @@ def _state_path(home: str | None = None) -> str:
     return os.path.join(store.tools_dir(home), "state.json")
 
 
+STATE_PROBLEM = ("can't be read (damaged, or edited by hand), so every tool is off until you turn the ones you want on "
+                 "again")
+
+
+def _unreadable(path: str) -> bool:
+    """The file is there but doesn't hold an object."""
+    return os.path.exists(path) and not isinstance(store.read_json(path, None), dict)
+
+
 def read_state(home: str | None = None) -> dict:
-    st = store.read_json(_state_path(home), {}) or {}
+    """{"enabled": {tool: bool}} the owner set, plus "damaged": True when state.json is there but can't be read: then
+    no tool counts as on (enabled_names), never Morph's defaults (they would turn tools the owner turned off on)."""
+    path = _state_path(home)
+    st = store.read_json(path, {}) or {}
     en = st.get("enabled") if isinstance(st, dict) else None
-    return {"enabled": {k: v for k, v in (en or {}).items() if isinstance(k, str) and isinstance(v, bool)}}
+    out = {"enabled": {k: v for k, v in (en or {}).items() if isinstance(k, str) and isinstance(v, bool)}}
+    if _unreadable(path) or (isinstance(st, dict) and "enabled" in st and not isinstance(en, dict)):
+        out["damaged"] = True
+    return out
+
+
+def problems(home: str | None = None) -> list:
+    """The tool files that can't be read, as catalog errors ({source, error}) for the Keys dialog."""
+    out = []
+    if read_state(home).get("damaged"):
+        out.append({"source": ".tools/state.json", "error": STATE_PROBLEM})
+    if _unreadable(_pins_path(home)):
+        out.append({"source": ".tools/pins.json", "error": "can't be read (damaged, or edited by hand), so tools "
+                                                           "installed from approved drafts are off until drafted again"})
+    return out
 
 
 def enabled_names(cat: Catalog, home: str | None = None) -> set:
     """Morph's own tools are on unless the owner turned them off; the owner's own manifests are off until turned on. A
-    manifest installed from an approved draft (pinned) is on only while its content still has the approved sha256."""
-    over, pins = read_state(home)["enabled"], read_pins(home)
-    return {n for n, t in cat.tools.items() if over.get(n, t.curated) and pin_ok(cat, t, pins) is not False}
+    manifest installed from an approved draft (pinned) is on only while its content still has the approved sha256.
+    Fail closed: while state.json can't be read nothing is on, and while pins.json can't be read none of the owner's own
+    manifests is."""
+    st, pins = read_state(home), read_pins(home)
+    over, damaged, pins_bad = st["enabled"], st.get("damaged"), _unreadable(_pins_path(home))
+    return {n for n, t in cat.tools.items() if over.get(n, t.curated and not damaged) and not (pins_bad and not t.curated)
+            and pin_ok(cat, t, pins) is not False}
 
 
 # ------------------------------------------------------------------------------------------------ pins (drafts)
@@ -428,12 +458,16 @@ def pin_ok(cat: Catalog, tool: Tool, pins: dict) -> bool | None:
     return None if p is None else (cat.providers.get(tool.provider) or {}).get("sha256") == p["sha256"]
 
 
-def set_enabled(name: str, on: bool, home: str | None = None) -> bool:
-    """Turn one tool on or off; True when that changed anything."""
+def set_enabled(name: str, on: bool, home: str | None = None, names=()) -> bool:
+    """Turn one tool on or off; True when that changed anything. While state.json can't be read, the tools in `names`
+    (the catalog's) are written as off, as the owner sees them, and the damaged file is replaced: no tool comes back on
+    by itself."""
     folder = store.tools_dir(home)
     with store.locked(folder):
         st = read_state(home)
-        if st["enabled"].get(name) is on:
+        if st.pop("damaged", False):
+            st["enabled"] = {**{n: False for n in names}, **st["enabled"]}
+        elif st["enabled"].get(name) is on:
             return False
         st["enabled"][name] = bool(on)
         store.write_json(_state_path(home), st)

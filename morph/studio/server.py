@@ -1574,7 +1574,8 @@ def _api_export(req):
 def _keys_state(studio: Studio) -> dict:
     from .. import keys, settings
     return {"keys": keys.status(home=studio.home), "integrations": integrations(), "settings": settings.load(),
-            "file": os.path.basename(keys.ENV_PATH), "compute": compute_info(studio.remote)}
+            "settings_problem": settings.problem(), "file": os.path.basename(keys.ENV_PATH),
+            "compute": compute_info(studio.remote)}
 
 
 @route("GET", "/api/keys", role="owner")
@@ -1619,7 +1620,7 @@ def _api_keys_check(req):  # POST: it calls the services with the person's keys
 @route("GET", "/api/settings", role="viewer")
 def _api_settings(req):
     from .. import settings
-    return 200, {"settings": settings.load(), "integrations": integrations()}
+    return 200, {"settings": settings.load(), "settings_problem": settings.problem(), "integrations": integrations()}
 
 
 @route("POST", "/api/settings", role="owner")
@@ -1634,7 +1635,7 @@ def _api_settings_save(req):
                         f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).") from None
     _audit(req, "settings_changed", values=values)
     keewano._ratio_cache.clear()
-    return 200, {"ok": True, "settings": values, "integrations": integrations()}
+    return 200, {"ok": True, "settings": values, "settings_problem": settings.problem(), "integrations": integrations()}
 
 
 class _Server(ThreadingHTTPServer):

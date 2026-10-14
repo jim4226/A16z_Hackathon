@@ -66,6 +66,9 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   tool requests): a last line left without its newline is ended first, so the new record never joins it. Every reader
   skips a line that doesn't parse (and decodes with `errors="replace"`): `Project.entries()`, `read_jsonl`,
   `read_rows`, `Hub._load`.
+- Switches fail closed: `settings.load()` turns every switch off when `.settings.json` is there but can't be read
+  (or a value isn't true or false), `settings.problem()` says why, `/api/settings` and `/api/keys` carry it as
+  `settings_problem` (the Keys dialog shows it), and `morph doctor` prints it. Saving any switch writes them all.
 - The hash-chained audit logs (`.team/audit.jsonl`, `.tools/audit.jsonl`) share `morph/studio/chainlog.py`. The entry
   after a cut-off line carries `cut: {bytes, sha256}` of it and chains on from the last whole entry, and an entry whose
   `audit.head` update didn't happen (a stop between the two writes) is chained on, not flagged. `verify()` answers ok
@@ -789,7 +792,7 @@ reference.
 | Path | Contents |
 |---|---|
 | `.tools/catalog/*.json` | the owner's own manifests (off until the owner turns each tool on); Morph's ship in `morph/studio/toolbox/catalog/` (on by default; package data: the first one adds `catalog/*.json` to pyproject's package-data and MANIFEST.in) |
-| `.tools/state.json` | `{enabled: {tool: bool}}`, the owner's overrides |
+| `.tools/state.json` | `{enabled: {tool: bool}}`, the owner's overrides. A file that can't be read turns every tool off (`read_state(...)["damaged"]`, listed in `GET /api/tools` errors); turning one on writes the others off, as shown. A `pins.json` that can't be read turns the owner's own manifests off (W3) |
 | `.tools/approvals.json` | `{tools: {tool: {fingerprint, mode: always \| key_saved, by, at}}}` |
 | `.tools/audit.jsonl` + `audit.head` | hash-chained log (`audit.verify(home)`): tool_enabled/disabled, keys_saved (names only), tool_approved (once \| always \| key_saved), tool_skipped/denied/refused, tool_call {run, tool, kind, host, ok, status, ms, cost_usd, outcome}, run_started/paused/resumed/interrupted/done/failed/refused/cancelled/expired, run_cancel_requested. Never a key, an argument or an answer |
 | `.runs/<id>.json` + `<id>.lock` | one agent run (`run_[0-9a-f]{16}`); deleted at Studio start 7 days after its last change |
@@ -1188,7 +1191,9 @@ field failure rate (section 0, honesty).
   classes, FSR 400 calibration, ST3215 torque, backlash and 4096-count encoder; the rest "assumed"); other objects and
   servo families get relative ranges marked "assumed". A project's edits live in `<p>/.studies/tolerances.json`
   (`save_tolerances(root, {name: {lo?, hi?, on?}} | {"world_preset": name} | {"reset": true}, rev, by)`: finite numbers
-  inside `robust.LIMITS`, `lo <= hi`; anything else is a `StudyError`). A study records the spec's sha
+  inside `robust.LIMITS`, `lo <= hi`; anything else is a `StudyError`; a tolerances.json that can't be read raises
+  `TolerancesUnreadable`, a 409, from `tolerances()` and every edit but `{"reset": true}`: never the defaults
+  silently, never written over; W3). A study records the spec's sha
   (`base_spec_sha`); once the project's spec changes, `load()` marks the older study `outdated`. **World presets:**
   `robust.register_world_preset(name, fn(sim_world, design) -> the four world entries)`; `standard` is mount +/-10 mm
   and +/-2 deg, each box 0-15 mm (H2 adds scan presets). Stress mode doubles every range about its nominal (floors in

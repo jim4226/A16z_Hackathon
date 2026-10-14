@@ -240,8 +240,8 @@ class Toolbox:
                         **({"drafted": {"sha256": p["sha256"], "changed": catalog.pin_ok(cat, t, pins) is False,
                                         "by": p.get("by"), "at": p.get("at"), "draft": p.get("draft"), "docs": p.get("docs")}}
                            if p else {})})
-        return {"tools": out, "errors": list(cat.errors), "spend_cap_usd": policy.SPEND_CAP_USD,
-                "drafts": self.drafts.waiting()}
+        return {"tools": out, "errors": list(cat.errors) + catalog.problems(self.home),
+                "spend_cap_usd": policy.SPEND_CAP_USD, "drafts": self.drafts.waiting()}
 
     @property
     def drafts(self):
@@ -261,7 +261,7 @@ class Toolbox:
         if on and catalog.pin_ok(cat, cat.tools[name], catalog.read_pins(self.home)) is False:
             raise ToolboxError(f"{cat.tools[name].title} changed after it was approved, so Morph keeps it off: draft it again "
                                "(Keys, New tool) to review and approve the new version.", 409)
-        changed = catalog.set_enabled(name, bool(on), self.home)
+        changed = catalog.set_enabled(name, bool(on), self.home, names=list(cat.tools))
         if changed:
             audit.append("tool_enabled" if on else "tool_disabled", home=self.home, by=by, tool=name)
         return {"tool": name, "enabled": bool(on), "changed": changed}

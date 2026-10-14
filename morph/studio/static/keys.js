@@ -124,7 +124,8 @@ export class KeysDialog {
         <div class="ks-n">Darwin Search is public, so the BOM tab finds agents for every part without a key. Ordering through Darwin uses your own Darwin sign-in, outside Morph.</div></section>
       ${toolSecs}
       ${this.toolsSection()}
-      <section class="ksec"><div class="ks-h"><b>Privacy and network</b></div>${SETTINGS.map(toggle).join('')}
+      <section class="ksec"><div class="ks-h"><b>Privacy and network</b></div>
+        ${d.settings_problem ? `<div class="kchk bad">${I('alert', 'sm')}<span>${esc(d.settings_problem)}</span></div>` : ''}${SETTINGS.map(toggle).join('')}
         ${st.network_enabled === false ? '<div class="ks-n">Network lookups are off, so nothing is sent to Keewano, Darwin, SubQ or Claude.</div>' : ''}</section>
       <div class="knote"></div>
       <div class="dlg-f">${keys.some((k) => k.set) ? `<button class="btn" type="button" data-a="test" title="Try each key once (read-only; nothing is sent to Keewano)">${I('check', 'sm')}Test keys</button>` : ''}
@@ -167,7 +168,7 @@ export class KeysDialog {
       this.note(this.row('bad', esc(out.error || 'Could not save that setting')));
       return;
     }
-    this.data = { ...this.data, settings: out.settings, integrations: out.integrations };
+    this.data = { ...this.data, settings: out.settings, settings_problem: out.settings_problem, integrations: out.integrations };
     this.a.onChanged?.(out.integrations);
     this.render();
     this.el.querySelector(`[data-s="${name}"]`)?.focus();

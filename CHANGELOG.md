@@ -390,4 +390,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   member, invite, token and the policy. Now every team command and the team Studio name the line and column that
   can't be read, nobody signs in, nothing writes over it, and Morph keeps the copy from before its last change as
   `team.json.bak` to put back.
+- Damaged settings fail closed: a `.settings.json` that can't be read used to turn network lookups, Darwin sourcing
+  and agent tools back on without a word (PRIVACY.md promises Off keeps everything on this computer). Now every
+  switch is off, and the Keys dialog and `morph doctor` say why, until you set them again. Agent tools you turned off
+  stay off when the tools' state file is damaged, and a damaged `tolerances.json` is reported instead of studies
+  running on the defaults and the next edit writing over it.
 

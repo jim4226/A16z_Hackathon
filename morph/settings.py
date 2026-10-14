@@ -34,17 +34,37 @@ def path() -> str:
     return os.path.join(home(), ".settings.json")
 
 
-def load() -> dict:
-    """The saved settings over the defaults; unknown keys and non-boolean values in the file are ignored."""
-    out = dict(DEFAULTS)
+PROBLEM = ("Morph couldn't read its settings file ({file}: damaged, or edited by hand), so every switch below is off, "
+           "network lookups included, until you set them again.")
+
+
+def _raw():
+    """The settings file's object; None when there is no file; False when it is there but can't be read."""
     try:
         with open(path(), encoding="utf-8") as fh:
             raw = json.load(fh)
+    except FileNotFoundError:
+        return None
     except (OSError, ValueError):
-        return out
-    if isinstance(raw, dict):
-        out.update({k: v for k, v in raw.items() if k in DEFAULTS and isinstance(v, bool)})
-    return out
+        return False
+    return raw if isinstance(raw, dict) else False
+
+
+def load() -> dict:
+    """The saved settings over the defaults; unknown keys in the file are ignored. A file that is there but can't be
+    read turns every switch off (fail closed: a switch someone turned off must never come back on by itself), and so
+    does a value that isn't true or false. problem() says why for the Keys dialog."""
+    raw = _raw()
+    if raw is None:
+        return dict(DEFAULTS)
+    if raw is False:
+        return {k: False for k in DEFAULTS}
+    return {k: (raw[k] if isinstance(raw[k], bool) else False) if k in raw else v for k, v in DEFAULTS.items()}
+
+
+def problem() -> str | None:
+    """Why the switches are all off although nobody turned them off (the settings file can't be read), or None."""
+    return PROBLEM.format(file=os.path.basename(path())) if _raw() is False else None
 
 
 def save(changes) -> dict:
@@ -65,9 +85,12 @@ def save(changes) -> dict:
 
 
 def describe(values: dict | None = None) -> str:
-    """One line for `morph doctor`: "network lookups on, Darwin sourcing on, Keewano events off, ..."."""
+    """One line for `morph doctor`: "network lookups on, Darwin sourcing on, Keewano events off, ..." (and why, when
+    the settings file can't be read)."""
     values = values or load()
-    return ", ".join(f"{LABELS[k]} {'on' if values[k] else 'off'}" for k in DEFAULTS)
+    line = ", ".join(f"{LABELS[k]} {'on' if values[k] else 'off'}" for k in DEFAULTS)
+    why = problem()
+    return f"{line} ({why})" if why else line
 
 
 def offline() -> bool:

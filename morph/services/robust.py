@@ -242,13 +242,26 @@ def _tolerance_path(root) -> str:
     return os.path.join(root, STUDIES, "tolerances.json")
 
 
+class TolerancesUnreadable(StudyConflict):
+    """The project's tolerances.json is there but can't be read: studies would run on the defaults without a word, and
+    the next edit would write over the edits it holds."""
+
+
 def _edits(root) -> dict:
+    """The project's tolerance edits; {} when there are none. TolerancesUnreadable when the file is there but can't be
+    read: never silently the defaults (a reset writes a new file)."""
     try:
         with open(_tolerance_path(root), encoding="utf-8") as fh:
             doc = json.load(fh)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
-    return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError):
+        doc = None
+    if not isinstance(doc, dict):
+        raise TolerancesUnreadable("This project's tolerances (.studies/tolerances.json) can't be read (damaged, or "
+                                   "edited by hand), so no study runs on them and no edit writes over them. Fix the file, "
+                                   "or reset the tolerances to the defaults.")
+    return doc
 
 
 def _revision(root, rev=None):
@@ -725,8 +738,11 @@ def _rev_state(root: str, rev: str) -> tuple:
     from ..robot.pipeline2 import pipeline_version
 
     p, rev, design = _revision(root, rev)
-    return (tolerances(root, rev)["sha"], _sha_file(os.path.join(p.rev_dir(rev), "design.json")),
-            pipeline_version(design.arm.source))
+    try:
+        spec_sha_ = tolerances(root, rev)["sha"]
+    except TolerancesUnreadable:  # whether a study is outdated can't be told; its revision is still there
+        spec_sha_ = None
+    return (spec_sha_, _sha_file(os.path.join(p.rev_dir(rev), "design.json")), pipeline_version(design.arm.source))
 
 
 _PARTIAL: dict = {}                 # runs.jsonl (path, size, mtime) -> (runs on disk, their summary): stopped studies
@@ -778,7 +794,7 @@ def load(root: str, sid: str, rows: bool = False, _revs: dict | None = None) -> 
             if _revs is not None:
                 _revs[rev] = got
         spec_sha_, design_sha, pv = (_revs or {}).get(rev) or got
-        doc["outdated"] = spec_sha_ != doc.get("base_spec_sha")
+        doc["outdated"] = None if spec_sha_ is None else spec_sha_ != doc.get("base_spec_sha")
         doc["rev_missing"] = False
         doc["rev_changed"] = design_sha != doc.get("design_sha")
         doc["code_changed"] = pv != doc.get("pipeline_version")
