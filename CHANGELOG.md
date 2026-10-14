@@ -384,3 +384,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   damage force one (3 N for "fragile", 10 N for "gently"), and the card says so with the other readings to pick from. A
   "no safe grip force" issue now says where both numbers come from, and Build now stops at the confirm card when the
   preflight has issues instead of building straight away.
+- New robot: requests to open jars, unscrew caps, twist lids or assemble parts read as "Adjusted" with a plain note
+  that the gripper only picks and places, and the robot built moves the jars, bottles or parts (it said "Inside what
+  Morph builds" and quietly built a bottle mover). A person the robot works for ("help my grandma", "pass my dad his
+  pills", "for me") puts people next to it, so it gets an emergency stop. Pills get a pill-bottle robot with a note
+  about pills, not one about screws; every width note gives the gripper's real minimum for the shape, and a water
+  bottle is "too heavy", not "outside 26 to 75 mm".

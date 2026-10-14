@@ -1399,4 +1399,18 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   of scope fills the defaults and, when the preflight then has issues, answers 200 `{ok, brief_id, busy: false, brief,
   stopped: "preflight"}` without building; on a brief that is already ready it builds as before. New robot's Build now
   sends it, so the confirm card shows the issues first ("Not built yet"), with Build anyway.
+- **Jobs inside a pick and place the gripper can't do (UX-3).** `brief.ADJUSTED` (`twisting`, `opening`, `assembly`)
+  and `brief.adjusted_kinds(text)` read unscrewing and twisting, opening jars, bottles, lids and packaging ("open" as a
+  verb only: "an open box" and "open-top bins" are not), and assembling, inserting and pressing; `parse()` returns them
+  in `adjusted`, `merge()` keeps them in `flags["adjusted"]`, and `assess_scope` puts their plain note first, so the
+  scope reads "Adjusted" and the robot is built for the moving part. Unscrewing says it all for an opening that
+  twists. An assembly request moves the parts (task `pick_place`, no sorting camera). `CATALOG` has a glass jar
+  (65 mm, 300 g) and a pill bottle (35 mm, 40 g), offered by the containers and small-parts archetypes only when the
+  request names them (`Archetype.more`).
+- **People the robot works for (UX-3).** `brief.PERSON_NEAR` (a grandparent, "my mum", "my dad", "my partner", "help
+  me", "for him" and the like) infers `people_nearby` "yes" for every archetype, so the robot gets an emergency stop
+  and the card says it was assumed; `HAND_TO_PERSON` ("pass my dad", "bring her") sets the task to hand-over. A
+  hand-over defaults to people next to it and a sorting archetype asked to hand things over gets no camera. Every
+  width in a note is `capability.min_width` for the shape (26 mm round, 21.5 mm flat-sided), and a preset outside the
+  band says which limit it breaks (`brief.unfit_note`: "too heavy", "too narrow", "too wide").
 

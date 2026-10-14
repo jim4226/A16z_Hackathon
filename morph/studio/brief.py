@@ -84,6 +84,8 @@ _CAT = (
     ("food_cup", "cup of pet food", "cylinder", 60, 70, 120, 0.5, 0, "food-cup", "A cup of food"),
     ("treat_ball", "treat ball", "sphere", 45, 45, 40, 0.6, 0, "treat", "Treat balls"),
     ("small_box", "small box", "box", 45, 45, 100, 0.5, 0, "box", "Small boxes"),
+    ("jar", "glass jar", "cylinder", 65, 90, 300, 0.4, 0, "jar", "Glass jars"),
+    ("pill_bottle", "pill bottle", "cylinder", 35, 75, 40, 0.5, 0, "pill-bottle", "Pill bottles"),
 )
 CATALOG = {r[0]: dict(zip(("name", "shape", "diameter_mm", "length_mm", "mass_g", "friction", "max_force_n", "slug", "label"), r[1:]))
            for r in _CAT}
@@ -111,6 +113,7 @@ class Archetype:
     name: str = "{obj}-picker"
     note: str = ""             # scope note when the archetype itself is an adjusted version of the request
     place: str = ""            # what the tray-to-bin layout sets things down by, when it isn't a bin ("plant")
+    more: tuple = ()           # objects it builds when the request names them (jars, pill bottles), not offered as chips
 
 
 _FOOD = (r"\b(strawberr(?:y|ies)|berr(?:y|ies)|eggs?|tomato(?:e?s)?|fruits?|grapes?|cherr(?:y|ies)|peach(?:es)?|plums?|apricots?|"
@@ -129,7 +132,7 @@ ARCHETYPES = {a.key: a for a in (
     Archetype("small_parts", "Sorting small parts", "sort",
               ((r"\bsort(?:s|ing|er)?\b", 1),
                (r"\b(screws?|bolts?|nuts|washers?|lego|beads?|coins?|resistors?|components|parts|fasteners?|marbles?|pills?|duplo|bricks?)\b", 2)),
-              ("parts_bin", "duplo", "large_fitting"), ("perception", "layout", "throughput"), environment="workshop",
+              ("parts_bin", "duplo", "large_fitting"), ("perception", "layout", "throughput"), environment="workshop", more=("pill_bottle",),
               perception="wrist_camera", throughput=5.0, object_q="What will it pick up and sort?", things="the parts",
               name="{obj}-sorter"),
     Archetype("soft_goods", "Soft goods", "sort",
@@ -140,7 +143,7 @@ ARCHETYPES = {a.key: a for a in (
     Archetype("containers", "Cans, bottles and jars", "pick_place",
               ((r"\b(cans|sodas?|beer|bottles?|jars?|tins?|beverages?|drinks?|recycl\w*|pour\w*)\b", 2),
                (r"\b(?:a|the|empty|soda|drink)\s+can\b", 2)),
-              ("bottle_330", "empty_can", "empty_bottle", "soda can"), ("layout", "quantity"),
+              ("bottle_330", "empty_can", "empty_bottle", "soda can"), ("layout", "quantity"), more=("jar",),
               object_q="Which containers will it move?", things="the containers", name="{obj}-mover"),
     Archetype("plant_watering", "Plant watering", "transfer",
               ((r"\bwater(?:s|ing)?\s+(?:my |the |our )?(?:house)?(?:plants?|garden|flowers?|herbs?|seedlings?)\b", 5),
@@ -179,21 +182,64 @@ ARCHETYPES = {a.key: a for a in (
               name="so101-{obj}-picker"),
 )}
 
-# Things people name that are outside the gripper's 26-75 mm / 500 g band, and what the archetype offers instead.
+# Things people name that are outside the gripper's band (cap.min_width for the shape, up to 75 mm wide; 500 g), and what
+# the archetype offers instead. Every width in a note is the gripper's real minimum for that shape (narrowest with the
+# force-sensing finger): 26 mm for round things, 21.5 mm for flat-sided ones.
+_ROUND, _FLAT = f"{cap.min_width('cylinder'):g} mm", f"{cap.min_width('box'):g} mm"
 IMPLICIT = (
     (r"\btest[- ]?tubes?\b(?!.*\b(?:50 ?ml|falcon|centrifuge)\b)", "tube_50ml",
-     "Standard test tubes (12 to 20 mm) are thinner than the 26 mm this gripper closes on; 50 ml tubes (30 mm) or a tube carrier fit."),
-    (r"\b(screws?|bolts?|nuts|washers?|beads?|coins?|resistors?|components|fasteners?|marbles?|pills?)\b", "parts_bin",
-     "Screws, nuts and similar parts are far smaller than the 26 mm the gripper closes on; the robot can move them in small parts bins instead."),
-    (r"\blego\b(?!.*duplo)", "duplo", "LEGO bricks (16 mm) are below the 22 mm the gripper closes on; Duplo-size bricks (32 mm) fit."),
+     f"Standard test tubes (12 to 20 mm) are thinner than the {_ROUND} this gripper closes on; 50 ml tubes (30 mm) or a tube "
+     "carrier fit."),
+    (r"\bpills?\b|\btablets?\b|\bcapsules?\b|\bmedications?\b|\bmedicines?\b", "pill_bottle",
+     f"Single pills (5 to 15 mm) are far smaller than the {_ROUND} this gripper closes on; the robot can move the pill bottle "
+     "(35 mm) instead."),
+    (r"\b(screws?|bolts?|nuts|washers?|beads?|coins?|resistors?|components|fasteners?|marbles?)\b", "parts_bin",
+     f"Screws, nuts and similar parts are far smaller than the {_FLAT} the gripper closes on; the robot can move them in small "
+     "parts bins instead."),
+    (r"\blego\b(?!.*duplo)", "duplo", f"LEGO bricks (16 mm) are narrower than the {_FLAT} this gripper closes on for a "
+     "flat-sided part; Duplo-size bricks (32 mm) fit."),
     (r"\b(pens?|pencils?|markers?|highlighters?)\b", "pen_cup",
-     "Single pens and pencils (8 to 18 mm) are too thin for this gripper; it can move the pen cup (70 mm) instead."),
-    (r"\bgrapes?\b", "strawberry", "Grapes (20 mm) are below the 26 mm the gripper closes on; strawberries, eggs and tomatoes fit."),
+     f"Single pens and pencils (8 to 18 mm) are thinner than the {_ROUND} this gripper closes on; it can move the pen cup "
+     "(70 mm) instead."),
+    (r"\bgrapes?\b", "strawberry", f"Grapes (20 mm) are below the {_ROUND} the gripper closes on; strawberries, eggs and "
+     "tomatoes fit."),
     (r"\b(plates?|dinner plates?|pans?|pots?|books?|laptops?|shoes?)\b", None,
-     "Plates, pans, books and shoes are wider than the 75 mm this gripper opens around."),
+     f"Plates, pans, books and shoes are wider than the {cap.MAX_WIDTH_MM:g} mm this gripper opens around."),
     (r"\bwater bottles?\b|\bbottles? of water\b|\bfull bottles?\b", "bottle_330",
-     "A full 0.5 l water bottle (520 g) is above the 500 g a desk arm here lifts; a 330 ml bottle (360 g) fits."),
+     f"A full 0.5 l water bottle (520 g) is too heavy: a desk arm here lifts {cap.MAX_MASS_G} g at most; a 330 ml bottle "
+     "(360 g) fits."),
 )
+# Jobs inside a pick and place that the gripper can't do: the robot is built for the moving part and the note says what
+# is left out, so the scope reads "Adjusted". Kept narrow ("open-top bins" and "an open box" are not opening anything).
+_DET = "".join(rf"(?<!\b{d} )" for d in ("a", "an", "the", "my", "her", "his", "its", "our", "their", "these", "those", "some",
+                                          "up", "move", "moves", "carry", "carries", "grab", "grabs", "sort", "sorts", "hold",
+                                          "holds", "lift", "lifts", "handle", "handles", "place", "of", "with", "in", "into", "on",
+                                          "onto", "from"))
+ADJUSTED = (
+    ("twisting", r"\b(?:unscrew\w*|twist\w*|screw(?:ing)? (?:on|off)\b|screw(?:ing)? (?:the |a |an )?(?:caps?|lids?|tops?|bulbs?)\b|"
+                 r"turn(?:s|ing)? (?:the |a |an )?(?:caps?|lids?|knobs?|valves?|taps?)\b|tighten\w*|loosen\w*)",
+     "Unscrewing, screwing on and twisting need a wrist that turns while it grips; this gripper only picks things up and sets "
+     "them down, so the robot moves them without turning them."),
+    # "open" as a verb only: "an open box" and "the open drawer" describe a thing, "open-top bins" never matches
+    ("opening", _DET + r"\b(?:open(?:s|ing)?|prys?|pries|prying)\s+(?:up\s+)?(?:[\w']+\s+){0,3}?(?:jars?|bottles?|lids?|caps?|"
+                r"tins?|cans?|containers?|tubs?|packages?|packets?|"
+                r"parcels?|box(?:es)?|cartons?|bags?|envelopes?|letters?|mail|doors?|drawers?|cupboards?|cabinets?)\b|"
+                r"\b(?:take|pull)s?\s+(?:the |a )?(?:lids?|caps?|tops?)\s+off\b|\bremov\w*\s+(?:the |a )?(?:lids?|caps?)\b",
+     "Opening jars, bottles, lids or packaging takes a twist or a pull this gripper can't make; it only picks things up and "
+     "sets them down, so the robot moves them and the opening is left to a person."),
+    ("assembly", r"\b(?:assembl\w*|put(?:s|ting)? (?:\w+ )?together|snap(?:s|ping)? (?:\w+ )?(?:together|into)\b|"
+                 r"plug(?:s|ging)?\s+(?:\w+\s+){0,2}into\b|insert\w*|press(?:es|ing)? (?:\w+ )?(?:together|into)\b|"
+                 r"press[- ]fit\w*|build(?:s|ing)? (?:\w+ )?(?:with|out of) (?:lego|duplo|bricks?|blocks?))",
+     "Assembling, inserting and pressing parts together need force control and alignment this gripper and its simulator "
+     "don't have; the robot moves the parts, it doesn't fit them together."),
+)
+# Words for a person the robot works for or hands things to: they are next to it, so it gets an emergency stop
+_PERSON = (r"(?:grand(?:ma|pa|mother|father|parents?|mum|mom|dad)|granny|gran|nan(?:a|na)?|elderly \w+|"
+           r"my (?:mum|mom|mother|dad|father|parents?|partner|wife|husband|boyfriend|girlfriend|roommate|flatmate|friend|"
+           r"aunt|uncle|brother|sister|patient|client)s?)")
+PERSON_NEAR = (r"\b" + _PERSON + r"\b|\b(?:help|assist|serve|hand|pass|give|bring)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|"
+               r"\b(?:for|to)\s+(?:me|him|her)\b|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b")
+HAND_TO_PERSON = r"\b(?:hand|pass|give|bring)(?:s|es)?\s+(?:it\s+to\s+)?(?:me|him|her|us|them|" + _PERSON + r")\b"
 OUT_OF_SCOPE = (  # (kind, regex, plain reason); the first kind found picks the nearest robot
     ("drone", r"\b(drones?|quadcopters?|multirotors?|uavs?|fly|flies|flying)\b", "Morph doesn't design drones or anything that flies."),
     ("humanoid", r"\b(humanoids?|androids?|bipeds?|robot butler|two arms|dual[- ]arm|bimanual|multi-?finger\w*|dexterous|robotic hand|"
@@ -311,6 +357,17 @@ def object_value(key: str, **over) -> dict:
     return o
 
 
+def unfit_note(o: dict) -> str:
+    """Why a named preset is outside the gripper's band, in the words of the limit it breaks."""
+    lab, w, m = PRESET_INFO.get(o.get("key"), (None, _plural(str(o.get("name") or "object")).capitalize()))[1], \
+        float(o.get("diameter_mm", 0)), float(o.get("mass_g", 0))
+    lo = cap.min_width(o.get("shape", "cylinder"), "fsr402")
+    why = [f"too heavy: a desk arm here lifts {cap.MAX_MASS_G} g at most" if m > cap.MAX_MASS_G else "",
+           f"too narrow: this gripper closes on {lo:g} mm and up" if w < lo else "",
+           f"too wide: this gripper opens around {cap.MAX_WIDTH_MM:g} mm at most" if w > cap.MAX_WIDTH_MM else ""]
+    return f"{lab} ({w:g} mm, {m:g} g) are " + " and ".join(x for x in why if x) + "."
+
+
 def fits(o: dict) -> bool:
     """Inside the gripper's band (26-75 mm wide; boxes from 21.5 mm) and the heaviest payload (500 g)."""
     return (cap.min_width(o.get("shape", "cylinder"), "fsr402") <= float(o.get("diameter_mm", 0)) <= cap.MAX_WIDTH_MM
@@ -337,7 +394,7 @@ _NOUN_STOP = {"each", "per", "and", "the", "for", "with", "from", "into", "onto"
               "load", "loads", "payload", "weight", "weights", "every", "one", "ones", "robot", "arm", "gripper", "budget", "total",
               "heavy", "light", "wide", "long", "tall", "high", "thick", "across", "diameter", "maybe", "about", "around"}
 _MATERIAL = r"(?:glass |plastic |metal |wooden |paper )?"
-_NOUN_PATTERNS = (  # the thing a custom object is called: "450 g jars", "jars of 450 g", "picks up glass jars"
+_NOUN_PATTERNS = (  # the thing a custom object is called: "450 g candles", "candles of 450 g", "picks up glass cups"
     r"\d(?:\.\d+)?\s*(?:g|mm)\s+(?:(?:heavy|light|wide|big|small|large|full|empty)\s+)?(" + _MATERIAL + r"[a-z][a-z-]{2,20})\b",
     r"\b([a-z][a-z-]{2,20})\s+(?:of|weighing|that weigh)\s+(?:about |around |up to )?\d+(?:\.\d+)?\s*(?:g|mm)\b",
     r"\b(?:pick(?:s|ing)?(?: up)?|move[sd]?|moving|handles?|carr(?:y|ies)|sorts?|stacks?|lifts?|grabs?)\s+(?:up\s+)?"
@@ -346,7 +403,7 @@ _NOUN_PATTERNS = (  # the thing a custom object is called: "450 g jars", "jars o
 
 
 def _noun(t: str) -> str | None:
-    """What an object the presets don't know is called, singular ("450 g jars" -> "jar"), or None."""
+    """What an object the presets don't know is called, singular ("450 g candles" -> "candle"), or None."""
     for pat in _NOUN_PATTERNS:
         for m in re.finditer(pat, t):
             words = m.group(1).split()
@@ -414,6 +471,15 @@ def harmful(text: str) -> str | None:
     return None
 
 
+def adjusted_kinds(text: str) -> list:
+    """[[kind, words]] for the jobs in ADJUSTED a request asks for (unscrewing says it all for an opening that twists)."""
+    t = (text or "").lower()
+    found = [[kind, m.group(0)] for kind, pat, _why in ADJUSTED for m in [re.search(pat, t)] if m]
+    if any(k == "twisting" for k, _ in found):
+        found = [f for f in found if f[0] != "opening"]
+    return found
+
+
 def out_of_scope_kinds(text: str) -> list:
     t = (text or "").lower()
     found = []
@@ -451,6 +517,7 @@ _SPECIFIC = ((r"\b(?:50 ?ml|falcon|centrifuge) tubes?\b", "tube_50ml"), (r"\bvia
              (r"\bespresso cups?\b", "espresso_cup"), (r"\bramekins?\b", "ramekin"), (r"\bglue sticks?\b", "glue_stick"),
              (r"\bstaplers?\b", "stapler"), (r"\bpen (?:cups?|holders?)\b", "pen_cup"), (r"\b330 ?ml\b", "bottle_330"),
              (r"\b(?:empty|plastic) bottles?\b", "empty_bottle"), (r"\bempty (?:drink |soda )?cans?\b", "empty_can"),
+             (r"\bjars?\b", "jar"), (r"\bpill (?:bottles?|boxe?s?|organi[sz]ers?)\b", "pill_bottle"),
              (r"\bwatering (?:can|bottle)s?\b", "watering_bottle"), (r"\bspray bottles?\b", "spray_bottle"),
              (r"\b(?:cups? of (?:cat |dog |pet )?food|kibble|food cups?)\b", "food_cup"), (r"\btreat balls?\b", "treat_ball"))
 
@@ -460,7 +527,8 @@ def parse(text: str) -> dict:
     except the layout, which is inferred from where things go."""
     raw = (text or "")[:2000]
     t = normalize_units(raw.lower())
-    out = {"slots": {}, "inferred": {}, "hints": {}, "implicit": [], "oos": out_of_scope_kinds(t), "harm": harmful(t), "said": {}}
+    out = {"slots": {}, "inferred": {}, "hints": {}, "implicit": [], "oos": out_of_scope_kinds(t), "harm": harmful(t), "said": {},
+           "adjusted": adjusted_kinds(t)}
     s, inf = out["slots"], out["inferred"]
     key, conf = detect_archetype(t)
     out["archetype"] = (key, conf)
@@ -489,8 +557,7 @@ def parse(text: str) -> dict:
                 obj, unfit = None, False
                 break
     if unfit:
-        out["implicit"].append({"note": f"{PRESET_INFO[obj['key']][1]} ({obj['diameter_mm']:g} mm, {obj['mass_g']:g} g) are outside what "
-                                        "this gripper handles: 26 to 75 mm wide, up to 500 g.", "alt": None})
+        out["implicit"].append({"note": unfit_note(obj), "alt": None})
         obj = None
     dia = None
     m = re.search(r"(?:ø|⌀|diameter(?: of)?|dia\.?)\s*(\d+(?:\.\d+)?)\s*mm|(\d+(?:\.\d+)?)\s*mm\s*(?:(?:glass|plastic|metal|wooden|paper)\s+)?"
@@ -579,6 +646,8 @@ def parse(text: str) -> dict:
         s["people_nearby"] = "yes"  # "people nearby", "people work next to it", "near people"
     elif re.search(r"\b(alone|unattended|on its own|by itself|enclosed|fenced)\b", t):
         s["people_nearby"] = "no"
+    elif re.search(PERSON_NEAR, t):
+        inf["people_nearby"] = "yes"  # "help my grandma", "pass my dad his pills", "for me": that person is next to it
     # precision
     if re.search(r"(?:±|\+/-|plus or minus)\s*(?:0?\.\d+|1)\s*mm|\bsub[- ]?mm|\bsub[- ]?millimet\w*|\bvery (?:precise|accurate)\b|"
                  r"\b1 mm (?:accuracy|precision)\b", t):
@@ -618,8 +687,10 @@ def parse(text: str) -> dict:
     # tasks
     if re.search(r"\bsort(?:s|ing|er)?\b", t):
         s["task"] = "sort"
-    elif re.search(r"\b(hands? me|pass(?:es)? me|hand[- ]?over|gives? me|brings? me)\b", t):
+    elif re.search(r"\bhand[- ]?over\b", t) or re.search(HAND_TO_PERSON, t):
         s["task"] = "hand_over"
+    elif any(k == "assembly" for k, _ in out["adjusted"]):
+        inf["task"] = "pick_place"    # the parts are moved to where they go, not sorted
     # design keys named outright
     h = out["hints"]
     m = re.search(r"\b([456])\s*-?\s*(?:dof|axis|axes|joints?|degrees? of freedom)\b", t) or \
@@ -710,7 +781,7 @@ def set_archetype(b: Brief, key: str, confidence: float, source: str):
 def _archetype_for_object(o: dict) -> str | None:
     k = (o or {}).get("key")
     for a in ARCHETYPES.values():
-        if a.key not in ("generic_arm", "so101") and k in a.objects:
+        if a.key not in ("generic_arm", "so101") and (k in a.objects or k in a.more):
             return a.key
     return None
 
@@ -740,6 +811,9 @@ def merge(b: Brief, parsed: dict, source: str = "user", evidence: str = ""):
     for imp in parsed.get("implicit") or []:
         if imp not in fl.setdefault("implicit", []):
             fl["implicit"].append(imp)
+    for kind in parsed.get("adjusted") or []:
+        if kind[0] not in [k for k, _ in fl.setdefault("adjusted", [])]:
+            fl["adjusted"].append(kind)
     if parsed.get("harm"):
         fl["harm"] = parsed["harm"]
 
@@ -751,7 +825,7 @@ def _arch(b: Brief) -> Archetype:
 def _default_object(b: Brief) -> dict:
     a = _arch(b)
     for imp in b.flags.get("implicit") or []:
-        if imp.get("alt") in a.objects:
+        if imp.get("alt") in a.objects + a.more:
             return object_value(imp["alt"])
     return object_value(a.objects[0])
 
@@ -763,11 +837,14 @@ def defaults(b: Brief) -> dict:
     task = a.task
     if b.get("task") == "sort" or a.task == "sort":
         task = "sort"
+    doing = b.get("task") or task   # what it does: a sorting archetype asked to hand things over gets no camera
     return {"task": task, "object": o, "fragility": "fragile" if o.get("max_force_n", 0) and o["max_force_n"] <= 5 else
             "care" if o.get("max_force_n", 0) else "robust",
-            "layout": a.layout, "throughput": a.throughput, "environment": a.environment, "people_nearby": a.people,
+            "layout": a.layout, "throughput": a.throughput, "environment": a.environment,
+            "people_nearby": "yes" if doing == "hand_over" and a.people == "no" else a.people,
             "precision": "loose", "budget": 500.0,
-            "perception": "wrist_camera" if task == "sort" else a.perception, "connectivity": "none", "quantity": 1,
+            "perception": "wrist_camera" if doing == "sort" else "none" if a.task == "sort" else a.perception,
+            "connectivity": "none", "quantity": 1,
             "existing_hardware": "so101" if a.key == "so101" else "none"}
 
 
@@ -802,7 +879,8 @@ def make_question(b: Brief, slot: str) -> dict:
         they = "it" if re.match(r"(?:a|an) ", lab.lower()) else "they"
     if slot == "object":
         dk = d["object"].get("key")
-        chips = [_chip(_object_label(object_value(k)), k, k == dk) for k in a.objects[:4]]
+        keys = list(a.objects[:4]) if dk not in a.more else [dk, *a.objects[:3]]
+        chips = [_chip(_object_label(object_value(k)), k, k == dk) for k in keys]
         return {"slot": "object", "text": a.object_q, "required": True, "chips": chips,
                 "why": "The gripper and the arm are sized around one object: 26 to 75 mm wide, up to 500 g."}
     spec = {
@@ -927,7 +1005,9 @@ def assess_scope(b: Brief) -> dict:
                           "stronger arm."],
                 "nearest": {"archetype": _archetype_for_object(ov) or "generic_arm", "slots": {"existing_hardware": "none"},
                             "summary": f"A new Morph-generated desk arm for the {ov.get('name', 'object')}."}}
-    notes = [imp["note"] for imp in b.flags.get("implicit") or []]
+    why = {k: w for k, _p, w in ADJUSTED}
+    notes = [why[k] for k, _ in b.flags.get("adjusted") or [] if k in why]
+    notes += [imp["note"] for imp in b.flags.get("implicit") or []]
     if a.note:
         notes.append(a.note)
     budget = b.slots.get("budget")
@@ -1048,7 +1128,8 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
         keep = {"slots": {k: v for k, v in p["slots"].items() if k in ("object", "throughput", "budget", "quantity", "precision",
                                                                          "fragility", "people_nearby", "perception", "connectivity",
                                                                          "environment", "task")},
-                "inferred": p["inferred"], "hints": p["hints"], "oos": p["oos"], "implicit": p["implicit"], "said": p["said"]}
+                "inferred": p["inferred"], "hints": p["hints"], "oos": p["oos"], "implicit": p["implicit"], "said": p["said"],
+                "adjusted": p["adjusted"]}
         merge(b, keep, "user", "answer")
         a2 = _archetype_for_object(b.get("object"))
         if _arch(b).key == "generic_arm" and a2:
@@ -1475,7 +1556,7 @@ def assumptions_for(b: Brief, ch: dict) -> list:
         out.append({"slot": slot, "text": text, "kind": kind, "options": opts[:3], "alternatives": alts[:3]})
 
     def object_gap(o):
-        """A custom object the user gave only some numbers for: the rest is an assumption too ("450 g jars" -> 45 mm)."""
+        """A custom object the user gave only some numbers for: the rest is an assumption too ("450 g candles" -> 45 mm)."""
         st = o.get("stated")
         if o.get("key") or not st:
             return
@@ -1544,8 +1625,9 @@ def summary_text(b: Brief, ch: dict, pre: dict) -> str:
         grip = "a force-sensing gripper" if ch.get("finger.sensor") == "fsr402" else "a two-finger gripper"
     x, frm, to = _object_label(o, short=True).lower(), lay["from"], lay["to"]
     task = value(b, "task")
+    who = "you" if re.search(r"\b(?:hand|pass|give|bring)(?:s|es)?\s+(?:it\s+to\s+)?me\b", b.request.lower()) else "over"
     verb = {"sort": f"picks up {x} {frm} and sorts them into bins {to.replace('into a bin ', '')}",
-            "hand_over": f"hands you {x}: it picks them up {frm} and sets them down {to}",
+            "hand_over": f"hands {who} {x}: it picks them up {frm} and sets them down {to}",
             "transfer": f"moves {x} {frm} {to}", "dispense": f"carries {x} {frm} {to}"}.get(task, f"picks up {x} {frm} and sets them down {to}")
     if task == "sort" and value(b, "layout") != "tray_to_bin":
         verb = f"picks up {x} {frm} and sorts them {to}"

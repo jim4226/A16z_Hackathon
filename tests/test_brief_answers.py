@@ -102,8 +102,10 @@ def test_a_named_preset_says_its_sizes_are_morphs():
     assert rows["object"]["text"].endswith("; sizes from Morph's preset") and rows["object"]["badge"] == "you said"
     rows = {r["slot"]: r for r in typed("help me sort socks", "they weigh 80 g").to_dict()["card"]}
     assert rows["object"]["text"].endswith("; width from Morph's preset")
+    rows = {r["slot"]: r for r in agents.run_turn(text="a robot that picks up 450 g candles").to_dict()["card"]}
+    assert rows["object"]["text"] == "Candles (Ø45 mm, 450 g); width assumed"
     rows = {r["slot"]: r for r in agents.run_turn(text="a robot that picks up 450 g jars").to_dict()["card"]}
-    assert rows["object"]["text"] == "Jars (Ø45 mm, 450 g); width assumed"
+    assert rows["object"]["text"] == "Glass jars (Ø65 mm, 450 g); width from Morph's preset"
 
 
 def test_the_timeline_never_says_zero_facts():
@@ -137,9 +139,59 @@ def test_a_stated_fragility_gives_an_object_without_one_its_damage_force_and_say
     a = next(a for a in b.assumptions if a.get("slot") == "fragility")
     assert a["text"] == "I read 'without breaking' as fragile: damaged above about 3 N per finger."
     assert [o["value"] for o in a["options"]] == ["robust", "care"]
-    # a 200 g jar slips below 2.08 N and is damaged above 3 / 1.5 N: the issue says where both numbers come from
+    # a 200 g jar slips below 2.6 N and is damaged above 3 / 1.5 N: the issue says where both numbers come from
     issue, = b.preflight["issues"]
-    assert issue.startswith("no safe grip force: holding needs 2.08 N but the limit is 2.00 N (the glass jar's 3 N damage "
+    assert issue.startswith("no safe grip force: holding needs 2.60 N but the limit is 2.00 N (the glass jar's 3 N damage "
                             "force / 1.5)") and issue.endswith("the 3 N damage force is Morph's reading of 'without breaking'")
     b = agents.run_turn(b, answers={"fragility": "robust"})          # the card's option: it takes a firm squeeze
     assert b.changes["object.max_force_n"] == 0.0 and b.preflight["issues"] == []
+
+
+@pytest.mark.parametrize("text, note, obj", [
+    ("help my grandma open jars", "Opening jars", "glass jar"), ("open jars", "Opening jars", "glass jar"),
+    ("twist the lids off jars", "Unscrewing", "glass jar"), ("unscrew bottle caps", "Unscrewing", "330 ml bottle"),
+    ("assemble lego", "Assembling", "Duplo-size brick"), ("insert 50 ml tubes into a rack", "Assembling", "50 ml centrifuge tube"),
+])
+def test_a_job_the_gripper_cant_do_reads_as_adjusted_with_a_plain_note(text, note, obj):
+    # these read "Inside what Morph builds" while the robot silently dropped the opening, twisting or assembling
+    b = agents.run_turn(text=text)
+    assert b.scope["status"] == "adjusted" and any(n.startswith(note) for n in b.scope["notes"]), b.scope
+    b = agents.run_turn(b, action="defaults")
+    assert b.status == "ready" and b.scope["status"] == "adjusted" and b.preflight["issues"] == []
+    assert b.changes["object.name"] == obj and any(a["kind"] == "scope" and a["text"].startswith(note) for a in b.assumptions)
+
+
+@pytest.mark.parametrize("text", ["move open-top bins to the left", "put the parts into an open box", "pick up open cans and move them",
+                                  "sort screws in bins", "pick strawberries into the open tray", "a robot that sorts socks"])
+def test_wording_that_opens_twists_or_assembles_nothing_stays_inside(text):
+    assert B.adjusted_kinds(text) == []
+
+
+@pytest.mark.parametrize("text, estop", [("help my grandma open jars", True), ("help my grandma move her mugs", True),
+                                         ("pass my dad his pills", True), ("sort socks for me", True), ("sort socks", False),
+                                         ("open jars", False)])
+def test_a_person_the_robot_works_for_is_next_to_it_so_it_gets_an_emergency_stop(text, estop):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert ("estop" in b.changes["electronics.extras"]) is estop
+    people = next(a["text"] for a in b.assumptions if a["slot"] == "people_nearby")
+    assert people == ("I assumed people work next to it, so it has an emergency stop." if estop else
+                      "I assumed it works on its own, so there is no emergency stop.")
+
+
+def test_pass_my_dad_his_pills_hands_over_a_pill_bottle():
+    b = agents.run_turn(agents.run_turn(text="pass my dad his pills"), action="defaults")
+    assert b.scope["notes"] == ["Single pills (5 to 15 mm) are far smaller than the 26 mm this gripper closes on; the robot can "
+                                "move the pill bottle (35 mm) instead."]          # it said screws and nuts
+    assert (B.value(b, "task"), b.changes["object.name"]) == ("hand_over", "pill bottle")
+    assert b.changes["electronics.extras"] == "estop" and "hands over pill bottles" in b.summary   # no sorting camera
+
+
+def test_every_width_and_weight_note_gives_the_grippers_real_limit():
+    from morph.studio import capability as cap
+
+    lego = B.parse("assemble lego")["implicit"][0]["note"]
+    assert f"narrower than the {cap.min_width('box'):g} mm" in lego                      # a brick is flat-sided: 21.5 mm
+    for text in ("sort grapes", "move test tubes", "sort pills"):
+        assert f"the {cap.min_width('cylinder'):g} mm" in B.parse(text)["implicit"][0]["note"], text
+    assert B.unfit_note(B.object_value("water bottle")) == ("Water bottles (65 mm, 520 g) are too heavy: a desk arm here lifts "
+                                                            "500 g at most.")             # it said "outside 26 to 75 mm wide"
