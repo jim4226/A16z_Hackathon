@@ -243,6 +243,15 @@ def _after_build(studio, room, rev):
         traceback.print_exc()
 
 
+def _tools_gone(studio, project, revs=None):
+    """A project deleted, or Reset demo removing `revs`: its agent runs that still wait or work end (api_tools)."""
+    try:
+        from . import api_tools
+        api_tools.project_gone(studio, project, revs)
+    except Exception:  # noqa: BLE001  (agent tools never stop a delete or a reset)
+        traceback.print_exc()
+
+
 def _start_tools(studio):
     """The agents' toolbox (api_tools.attach): runs a stopped Studio left working become interrupted pauses."""
     try:
@@ -365,6 +374,7 @@ class Studio:
         try:
             from . import jobs
             jobs.stop(self, name)  # its robustness study first (finished runs are kept, in the trash with the project)
+            _tools_gone(self, name)  # and its agent runs that wait or work: none continues in a project of that name
             trash = projects.delete(self.home, name)
             with self._rooms:
                 self.rooms.pop(name, None)
@@ -681,12 +691,15 @@ class Studio:
                 keep = baseline(p)
                 if not keep:
                     continue
-                revs = p.revs()
+                revs, gone = p.revs(), []
                 complete = True
                 for r in reversed(revs[revs.index(keep) + 1:]):  # newest first, so what is left stays contiguous
                     if not _remove_rev(p, r):
                         complete = False  # a file in it is open (Excel, a viewer): keep the rest intact
                         break
+                    gone.append(r)
+                if gone:
+                    _tools_gone(self, room.name, gone)  # agent runs waiting on a removed revision end too
                 if complete and (rebuild or (self._results(p, keep) or {}).get("pipeline_version")
                                  != pipeline_version(p.load_design(keep).arm.source)):
                     with self.builds:

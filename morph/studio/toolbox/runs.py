@@ -438,7 +438,7 @@ class Toolbox:
                 claim.release()
             raise
 
-    def cancel(self, run_id: str, *, by: str | None = None) -> dict:
+    def cancel(self, run_id: str, *, by: str | None = None, note: str = "Stopped by the person.") -> dict:
         run = self._must_load(run_id)
         if run["status"] in ENDED:
             return self.view(run)
@@ -452,7 +452,7 @@ class Toolbox:
         try:
             run = self._must_load(run_id)
             if run["status"] not in ENDED:
-                self._finish(run, "cancelled", "Stopped by the person.", by=by)
+                self._finish(run, "cancelled", note, by=by)
             return self.view(run)
         finally:
             claim.release()

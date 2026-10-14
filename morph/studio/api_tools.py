@@ -21,8 +21,9 @@ may start, and what a Studio start and a key save do for the runs that wait (REL
 Events go to the run's room (every tab when a run has no project): run_started, credential_needed, tool_request,
 tool_used, run_paused, run_resumed, run_done, run_failed, and tool_draft for a draft's status; they never carry a key, a
 tool's answer or message text. A Studio start turns runs it left working into interrupted pauses; POST /api/keys
-(server.py) resumes the runs that waited for a key it saved. While "agent tools" are off (Keys, Privacy and network) no
-run starts or continues and no tool is drafted.
+(server.py) resumes the runs that waited for a key it saved; deleting a project, or Reset demo removing a revision, ends
+the runs that still wait or work for it (project_gone). While "agent tools" are off (Keys, Privacy and network) no run
+starts or continues and no tool is drafted.
 """
 
 from __future__ import annotations
@@ -150,6 +151,27 @@ def after_build(studio, room, rev: str):
     t = threading.Thread(target=go, daemon=True, name="morph-auto-prices")
     t.start()
     return t
+
+
+def project_gone(studio, project: str, revs=None) -> list:
+    """Delete project (every revision) or Reset demo (`revs`: the revisions it removed), server.py, beside stopping the
+    project's robustness study: its runs that still wait or work end as cancelled, so none continues on a revision that
+    is gone, or in another project that takes the name later. Finished runs, and runs of a revision that stays, are left
+    as they are. Returns the ids it ended."""
+    tb = getattr(studio, "toolbox", None)
+    if tb is None:
+        return []
+    note = f"Stopped: {project} was deleted." if revs is None else "Stopped: Reset demo removed the revision it was for."
+    out = []
+    for v in tb.runs(project=project, limit=100):
+        if v["status"] in ENDED or (revs is not None and (v.get("context") or {}).get("rev") not in revs):
+            continue
+        try:
+            tb.cancel(v["id"], note=note)
+            out.append(v["id"])
+        except Exception:  # noqa: BLE001  (a damaged run file never stops a delete or a reset)
+            traceback.print_exc()
+    return out
 
 
 def _by(req):
