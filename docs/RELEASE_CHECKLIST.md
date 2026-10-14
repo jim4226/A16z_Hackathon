@@ -22,6 +22,13 @@ line. A release ships only when every line is ticked or has a written reason in 
 - [ ] No secrets in the history: `git log -p --all | grep -nE "sk-ant-api|kwpat-|AIza"` finds only test fixtures.
 - [ ] UI copy is honest: "estimated", "seeded demo data", "beta" and "not bench-validated" wherever they apply; no
       claim that an order was placed.
+- [ ] `MORPH_SLOW=1 python -m pytest -q tests/test_robust.py tests/test_robust_room.py tests/test_world_scan.py
+      tests/test_sim_perturb.py -k "acceptance or sweeps"` passes on the release commit: the published egg-picker study
+      (140 of 200), the same runs on 1, 2 and 4 worker processes, the carton wall's collision rate, the million-triangle
+      scan in under 20 s and the yaw sweeps. Put the numbers in the release notes.
+- [ ] `tests/test_sim_golden.py` ran on the tagging machine instead of skipping. Its hashes are kept per environment: on
+      a new one, record them with `MORPH_GOLDEN=record` on the previous release's commit, then run the test on the
+      release commit (recording on the candidate itself proves nothing).
 
 ## Manual QA
 
@@ -44,6 +51,8 @@ Run each on a clean machine or a fresh user account, from a fresh clone of the r
 | 13 | World mode (beta) | Open a starter world, place the robot, walk through, simulate. | Runs on the CPU and WebGL; labelled beta. |
 | 14 | `--update` | In a clone of the previous release run `--update`; repeat with an edited tracked file; run it in a zip download. | Switches to the new tag and starts it; refuses with local edits; explains the download route for a zip. |
 | 15 | Two tabs, two projects | Open egg-picker in one tab and so101 in another; send two chat edits quickly in one; switch the other tab's project. | Each tab shows only its own project's events; the second edit waits ("queued") and then builds on top of the first; switching one tab never moves the other. |
+| 16 | Robustness study (Windows, macOS and Linux) | Simulation tab, pick and place: run a 200-run study, cancel it part way, *Carry on*, replay a failing run, open Details. Start another and close the Studio's window (or end its process) mid-study; start the Studio again. | Live progress, then the result with its interval and "This is simulation, ..."; cancel stops within seconds and keeps the finished runs; the replay plays in the 3D view. After the restart the card says "Stopped when the Studio stopped after N of M runs" with those runs, and *Carry on* finishes it. No study process is left running (Task Manager, Activity Monitor or `ps`). |
+| 17 | World mode with a real room scan | Upload a phone scan (.glb) of a bench, place the robot, *Save and simulate*, *Check placement*; *Add box here* on a near miss; *Save and simulate* again. | The scan check warns and never sets the verdict, naming each near miss; the added box appears; the next simulation plans around it. |
 
 ## Tag and publish
 

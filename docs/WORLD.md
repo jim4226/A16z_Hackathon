@@ -56,9 +56,9 @@ time, and says *touches or passes through* below 0.5 mm.
 
 Each place where the arm comes within 10 mm of the scan is listed with **Add box here**: a grey box over that part of
 the scan (standing on the surface when the scan under it does), added to the room. *Save and simulate* then plans
-around it, and the next check measures the new path. The check takes up to 20 seconds on a large scan (7 to 11
-seconds for a generated room of a million triangles on a busy 4-core computer); its answer is kept until the room, the
-scan or the revision changes.
+around it, and the next check measures the new path. The check takes up to 20 seconds on a large scan (7.5 seconds for
+a generated room of a million triangles on an idle 4-core computer, 11.5 on a busy one); its answer is kept until the
+room, the scan or the revision's simulation changes.
 
 - Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
   goes counts as a near miss.
@@ -66,6 +66,15 @@ scan or the revision changes.
   surface itself).
 - A scan only shows the sides it saw: a near miss behind a hole is not found, and a box from *Add box here* is at least
   20 mm thick, grown away from the arm.
+
+## Robustness studies in a room
+
+A [robustness study](ROBUSTNESS.md) of a revision simulated in a room also varies where the robot is mounted (+/-10 mm
+and +/-2 degrees) and where each grey box is (0 to 15 mm, in a random direction), and a run that touches a box fails as
+*Hit a box in the room during* the move it was in. Under the study's tolerances, **Only the room varies** keeps the
+object and the hardware nominal, so every failure is the room's. A carton wall 12 mm from the open jaws at the place
+spot, which passes the 10 mm check in the nominal run: 15 of 200 runs hit it (95 % CI 4.6 to 12 %), all during the
+release, most often with the mount 4.5 to 10 mm off in y.
 
 ## Optional reviews (only when you ask)
 

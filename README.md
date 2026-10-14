@@ -221,6 +221,9 @@ that best separates it and whether it holds under other solver settings, replay 
 the tolerances (each shows where its range comes from). Studies run on the Studio's computer: start the Studio with
 `--remote` on a machine with more cores and everyone's browser uses them.
 
+How to read a study, what "model-sensitive" means, what happens when the Studio stops in the middle of one, and its
+limits: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
+
 ### SubQ Snap (optional)
 
 With a SubQ key (Keys, `SUBQ_API_KEY`), SubQ Snap makes quick yes/no and multiple-choice decisions, labelled

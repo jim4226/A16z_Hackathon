@@ -711,13 +711,13 @@ field failure rate (section 0, honesty).
   BADQPOS, BADQVEL, BADQACC or BADCTRL warnings, after which MuJoCo restarts the run from its first frame, a full
   contact or constraint buffer, or a non-finite state) and `error` runs are listed and never counted.
 - **Statistics.** Wilson 95 % for the success rate and every group; Clopper-Pearson (exact) when no run, or every run,
-  fails (200 runs, none failing: at least 98.2 %). Each group gets the one-parameter interval (on the value, or on the
-  distance from nominal for two-sided ranges; 26 quantile cuts) with the best Youden's J, `significant` when above the
-  95th percentile of what 60 shuffles of the outcomes reach. **Model sensitivity:** every group's runs (at most 20)
-  and 15 successes are re-run at half the timestep and with `impratio=1`; a group is `model_sensitive` when, under
-  either, fewer than 80 % of its runs still fail the same way or at least 20 % (and 2) of the successes now do. Copy:
-  section 0's honesty notes and heavy_plan's notes 1-3 ("This result changes with the simulator's friction or timestep
-  settings. Test it on the real robot." is `robust.SENSITIVE`).
+  fails (200 runs, none failing: at least 98.17 %, shown as 98.1). Each group gets the one-parameter interval (on the
+  value, or on the distance from nominal for two-sided ranges; 26 quantile cuts) with the best Youden's J, `significant`
+  when above the 95th percentile of what 60 shuffles of the outcomes reach. **Model sensitivity:** every group's runs
+  (at most 20) and 15 successes are re-run at half the timestep and with `impratio=1`; a group is `model_sensitive`
+  when, under either, fewer than 80 % of its runs still fail the same way or at least 20 % (and 2) of the successes now
+  do. Copy: section 0's honesty notes and heavy_plan's notes 1-3 ("This result changes with the simulator's friction or
+  timestep settings. Test it on the real robot." is `robust.SENSITIVE`).
 - **Workers.** `multiprocessing` with the spawn start method on every OS, `MORPH_STUDY_WORKERS` (default cores minus
   one) at `MORPH_STUDY_NICE` (default 5; below-normal priority on Windows). A short-lived process rebuilds the
   revision's robot the way the pipeline built it and plans once; the robot travels to the workers packed (pickle, only
@@ -845,3 +845,42 @@ field failure rate (section 0, honesty).
   the box size) and **Add box here**: the box joins the world's grey boxes as `{id: region id (made unique), label,
   center, half, yaw_deg, source: "auto"}`; *Save and simulate* then plans around it, and the next check measures the new
   path. Browser test: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan`.
+- **Under attack (B2-S4).** An adversarial review of the track; what other code relies on since:
+  - `robust.StudyConflict` (a `StudyError`; the routes answer 409) for what can't run as asked: a revision with nothing
+    to study (`robust.studyable(p, rev)`: the simulation stage failed or never ran, a preview-only build, no pick and
+    place; `new_study` checks it before a job is queued, so `POST /api/study` answers at once instead of 202 and a
+    failed job), a gripper-only project (`meta.json` whose kind isn't `robot`), carrying on a study whose revision now
+    holds another design (`robust.REPLACED`) or whose pipeline code changed since (`robust.CODE_CHANGED`), and replaying
+    a study whose revision was replaced.
+  - Locks and restarts: `active()` treats a lock whose `pid` is gone from this computer (its `host`) as stale at once
+    (`robust._alive`; elsewhere the 30 s heartbeat decides, as before). The heartbeat also saves the study's `done`.
+    `load()` reads an interrupted or failed study's `done` and `summary` from its saved runs (kept per `runs.jsonl` size
+    and mtime) and adds `code_changed`; `studies()` lists it. `GET /api/study`'s `stopped` and `HeavyJobs.interrupted()`
+    leave out studies that can't carry on (revision missing or replaced, code changed). A job's `id` follows its
+    events (a study whose tolerances were edited while it waited is another study).
+  - Sizes: `robust.cores()` (the cores this process may use: `os.process_cpu_count()`, else the affinity mask),
+    `default_workers()` never above it (also with `MORPH_STUDY_WORKERS`), `run_study(workers=)` 1 to
+    `robust.MAX_WORKERS` (256) or `StudyError` before anything is locked, `morph study --workers` 1 to `cores()`, and
+    `limits.max_workers`/`host.cores` report `cores()`. Tolerance edits take `on` only as true or false and `reset`
+    only as `true`; a change that isn't an object is refused by name.
+  - Replays: `GET /api/study/replay` checks the study, run, check and revision (`_replayable`) before it waits for the
+    one replay slot, and at most `api_study.REPLAY_QUEUE` (3) wait; the next is answered 503 at once.
+  - Numbers: a group that holds every counted run has `rule: null` (nothing left to separate); rule text reads "X% fail
+    this way vs Y% otherwise"; `summary.successes_sensitive` is true when, under either solver setting, at least 20 %
+    (and 2) of the counted re-runs of successful runs fail (null when nothing was re-run), shown as the card's flag
+    `api_study.NOTES["successes_sensitive"]` (`robust.SUCCESSES_SENSITIVE`) and a line of `report()`; a study whose runs
+    were all unstable or errors has the headline `robust.uncounted(k)` ("No run could be counted: ...") instead of none.
+  - The scan check's memory (`api_world._SCANS`) also keys on the revision's `sim/sim_pick_place.json` (size, mtime) and
+    the sha256 of its `sim/robot.xml`: Reset demo reuses revision names.
+  - Study processes are spawned on every OS, so each imports the main module again: scripts that call `robust` guard
+    their work with `if __name__ == "__main__":` (`morph`, `python -m morph.cli` and pytest already do).
+- **Ownership.** The simulation track owns the study hook in `simulate.py` (the `perturb` keys, `_perturbed`,
+  `_plan_pick_place`, `_run_pick_place`, `_scenario_doc`) and the world-path names (`MOVES`, `CARRIED`, `CLEAR_MM`,
+  `PLAN_DT`), `morph/services/robust.py`, `morph/studio/jobs.py`, `api_study.py`, `static/study.js`, and the scan check
+  in `worlds.py`/`api_world.py`. Other packages call `simulate.run(...)` without `perturb`. A change that moves a
+  nominal output re-records `tests/test_sim_golden.py` on purpose and says so in its report. Changing what a
+  perturbation key means, the tolerance order (`robust.BASE`, `robust.WORLD`) or the draw order changes every saved
+  study: bump `robust.VERSION`, so the same settings start a new study and older ones can't be carried on.
+- **Docs:** `docs/ROBUSTNESS.md` (what a study is, its tolerances and their sources, how to read the card,
+  model-sensitive results, restarts, `--remote`, limits); `docs/WORLD.md` covers the whole-path check, the scan warning
+  and Add box here.

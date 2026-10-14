@@ -91,11 +91,17 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   against the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can
   be noisy or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot
   becomes a grey box, and the next simulation plans around it. A generated room of a million triangles is checked in 7
-  to 11 seconds.
+  to 12 seconds.
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the
   mount 4.5 to 10 mm off.
+- Robustness studies keep their runs when the Studio stops: after a crash or a closed window the study reads "Stopped
+  when the Studio stopped after N of M runs" at once, with the runs it saved, and *Carry on* finishes it with the same
+  runs as if it had never stopped. A revision that can't be studied (its simulation failed, a preview-only build), and
+  a study whose revision was replaced or whose Morph code changed since, are refused before anything starts, with the
+  reason. A failure group that holds every run gets no rule, and successful runs that fail under other solver settings
+  are flagged as well: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
 - `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
   a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
   (whether ffmpeg was found), Teams and World mode.
