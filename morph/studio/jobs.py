@@ -17,6 +17,7 @@ at once (default 1). A study only reads its revision: it never changes a revisio
     jobs.result(project, study_id, rows=False) -> study       jobs.studies(project) -> [study summaries]
     jobs.tolerances(project, rev=None) / jobs.save_tolerances(project, changes, rev=None, by=None) -> spec
     jobs.replay(project, study_id, run) -> sim_pick_place.json document of one run (frames for the viewer)
+    stop(studio, project) / shutdown(studio)    the Studio's hooks: a project deleted or reset, the Studio stopping
 A job is {id, kind, project, rev, status: queued|preparing|running|checking|done|cancelled|error, n, done, error,
 event}; its events are `study` events to the project's room (see robust._event): {id, rev, status, phase, done, n,
 successes, failures, unstable, p, ci, eta_s, elapsed_s, first_result_s, summary (when it ends)}.
@@ -176,7 +177,9 @@ class HeavyJobs:
         return robust.save_tolerances(self._root(project), changes, rev, by)
 
     def replay(self, project: str, study_id: str, run: int, variant: str | None = None) -> dict:
-        return robust.replay(self._root(project), study_id, run, variant, cache=self.cache)
+        """One run again with its frames, in a study process (a few seconds; the first one of a revision also rebuilds
+        its robot): the Studio's own process never runs it."""
+        return robust.replay(self._root(project), study_id, run, variant, cache=self.cache, process=True)
 
     # -- running
     def _pump(self):
@@ -246,3 +249,19 @@ def manager(studio) -> HeavyJobs:
                     pass
             jobs = studio.heavy_jobs = HeavyJobs(studio.home, emit=emit)
     return jobs
+
+
+def stop(studio, project: str, timeout: float = 5.0) -> bool:
+    """Cancel a project's study and wait for it to end (its project is about to be deleted or reset); True when none
+    runs any more. Nothing to do on a Studio that never ran a heavy job."""
+    jobs = getattr(studio, "heavy_jobs", None)
+    if jobs is None or jobs.cancel(project) is None:
+        return True
+    return jobs.wait(project, timeout)
+
+
+def shutdown(studio, timeout: float = 5.0):
+    """The Studio is stopping: cancel its studies (their finished runs stay, and the same settings carry on)."""
+    jobs = getattr(studio, "heavy_jobs", None)
+    if jobs is not None:
+        jobs.shutdown(timeout)

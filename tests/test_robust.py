@@ -357,6 +357,44 @@ def test_replay_gives_a_runs_frames(project, prepared):
         assert str(err.value) == msg
 
 
+def test_a_replay_in_a_study_process_matches_one_in_this_process(project, prepared, tmp_path, monkeypatch):
+    """The Studio replays a run in a spawned study process (its CPU and MuJoCo's warning log stay out of the server):
+    the same frames as a replay here, and the packed robot it rebuilt is kept for the next one."""
+    doc = robust.run_study(project, runs=2, workers=1, timestep=0.002, checks=False, seed=13, nice=0, cache=CACHE)
+    here = robust.replay(project, doc["id"], 1, cache=CACHE)
+    monkeypatch.chdir(tmp_path)
+    cache = {}
+    t = time.time()
+    there = robust.replay(project, doc["id"], 1, cache=cache, process=True, nice=0)
+    assert there["frames"] == here["frames"] and there["metrics"] == here["metrics"]
+    assert {k: v for k, v in there["robustness"].items() if k not in TIMING} == \
+           {k: v for k, v in here["robustness"].items() if k not in TIMING}
+    assert list(cache) == [robust.cache_key(project, "r001", 0.002)] and time.time() - t < 120
+    again = robust.replay(project, doc["id"], 0, "impratio_1", cache=cache, process=True, nice=0)
+    assert again["robustness"]["variant"] == "impratio_1" and again["frames"]
+    assert not os.listdir(tmp_path)                                   # nothing written where the server runs
+    with pytest.raises(robust.StudyError, match="took too long"):
+        robust.replay(project, doc["id"], 1, cache={}, process=True, nice=0, timeout=0.05)
+
+
+def test_a_study_of_a_revision_that_now_holds_another_design_says_so(project, prepared):
+    doc = robust.run_study(project, runs=1, workers=1, timestep=0.002, checks=False, seed=17, nice=0, cache=CACHE)
+    assert robust.load(project, doc["id"])["rev_changed"] is False
+    path = os.path.join(project, "r001", "design.json")
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text.replace('"quantity": 1', '"quantity": 2') if '"quantity": 1' in text else text + "\n")
+        loaded = robust.load(project, doc["id"])
+        assert loaded["rev_changed"] is True and loaded["rev_missing"] is False
+        assert next(s for s in robust.studies(project) if s["id"] == doc["id"])["rev_changed"] is True
+    finally:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    assert robust.load(project, doc["id"])["rev_changed"] is False
+
+
 # ------------------------------------------------------------------ acceptance (MORPH_SLOW=1)
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 200 runs at 1 ms plus the solver checks (minutes)")

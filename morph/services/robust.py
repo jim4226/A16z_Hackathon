@@ -680,9 +680,11 @@ def _beat(root: str):
 LIVE = ("queued", "preparing", "running", "checking")
 
 
-def load(root: str, sid: str, rows: bool = False) -> dict | None:
+def load(root: str, sid: str, rows: bool = False, _revs: dict | None = None) -> dict | None:
     """A study's record (study.json), its status corrected to "interrupted" when its process stopped, with
-    `outdated` (the project's tolerances changed since) and `rev_missing`; `rows=True` adds runs and checks."""
+    `outdated` (the project's tolerances changed since), `rev_missing` and `rev_changed` (a revision of that name now
+    holds another design: Reset demo deleted it and a later edit was numbered the same); `rows=True` adds runs and
+    checks."""
     d = study_dir(root, sid)
     doc = _read_json(os.path.join(d, "study.json"))
     if not isinstance(doc, dict):
@@ -690,10 +692,17 @@ def load(root: str, sid: str, rows: bool = False) -> dict | None:
     if doc.get("status") in LIVE and (active(root) or {}).get("id") != sid:
         doc["status"] = "interrupted"
     try:
-        doc["outdated"] = tolerances(root, doc["rev"])["sha"] != doc.get("base_spec_sha")
+        rev = doc["rev"]
+        if _revs is None or rev not in _revs:     # studies() reads each revision's spec and design once
+            got = (tolerances(root, rev)["sha"], _sha_file(os.path.join(root, rev, "design.json")))
+            if _revs is not None:
+                _revs[rev] = got
+        spec_sha_, design_sha = (_revs or {}).get(rev) or got
+        doc["outdated"] = spec_sha_ != doc.get("base_spec_sha")
         doc["rev_missing"] = False
+        doc["rev_changed"] = design_sha != doc.get("design_sha")
     except (StudyError, OSError, ValueError, KeyError):
-        doc["outdated"], doc["rev_missing"] = None, True
+        doc["outdated"], doc["rev_missing"], doc["rev_changed"] = None, True, None
     if rows:
         doc["runs"] = sorted(read_rows(os.path.join(d, "runs.jsonl")), key=lambda r: r["i"])
         doc["checks"] = read_rows(os.path.join(d, "checks.jsonl"))
@@ -701,17 +710,18 @@ def load(root: str, sid: str, rows: bool = False) -> dict | None:
 
 
 def studies(root: str) -> list:
-    """The project's studies, newest first: {id, rev, status, n, done, p, wilson95, stress, seed, created_utc, outdated}."""
-    out = []
+    """The project's studies, newest first: {id, rev, status, n, done, p, wilson95, stress, seed, created_utc, outdated,
+    rev_missing, rev_changed}."""
+    out, revs = [], {}
     base = os.path.join(root, STUDIES)
     for sid in os.listdir(base) if os.path.isdir(base) else []:
         if not ID.fullmatch(sid):
             continue
-        doc = load(root, sid)
+        doc = load(root, sid, _revs=revs)
         if doc:
             s = doc.get("summary") or {}
             out.append({k: doc.get(k) for k in ("id", "rev", "status", "n", "done", "stress", "seed", "created_utc",
-                                                "updated_utc", "outdated", "rev_missing")}
+                                                "updated_utc", "outdated", "rev_missing", "rev_changed")}
                        | {"p": s.get("p"), "wilson95": s.get("wilson95")})
     return sorted(out, key=lambda s: s.get("updated_utc") or "", reverse=True)
 
@@ -979,6 +989,8 @@ def _worker(conn, nice: int = 0):
             elif msg[0] == "runs":
                 for job in msg[1]:
                     conn.send(("row", runner.run(job)))
+            elif msg[0] == "doc":            # one run with its frames (a replay)
+                conn.send(("doc", runner.run(msg[1], doc=True)))
             else:
                 return
     except (EOFError, OSError, KeyboardInterrupt):
@@ -1138,6 +1150,36 @@ class Pool:
                     w["ready"], w["load_s"], w["rss"] = time.time(), msg[1], msg[2]
         return self.prepared
 
+    def one(self, job: dict, timeout: float = 300.0) -> dict:
+        """One run with its frames (the scenario document), on the first worker once it has loaded the robot."""
+        end = time.time() + timeout
+        sent = None
+        while time.time() < end:
+            live = [w for w in self.workers if not w["dead"]]
+            if not live:
+                raise StudyError("The replay's simulation process stopped.")
+            if sent is None:
+                sent = next((w for w in live if w["ready"]), None)
+                if sent is not None:
+                    sent["c"].send(("doc", job))
+            for c in _wait([w["c"] for w in live], timeout=0.2):
+                w = next(x for x in live if x["c"] is c)
+                try:
+                    msg = c.recv()
+                except (EOFError, OSError):
+                    w["dead"] = True
+                    if w is sent:
+                        raise StudyError("The replay's simulation process stopped.") from None
+                    continue
+                if msg[0] == "up":
+                    w["up"] = time.time()
+                    self._send_blob(w)
+                elif msg[0] == "loaded":
+                    w["ready"], w["load_s"], w["rss"] = time.time(), msg[1], msg[2]
+                elif msg[0] == "doc" and w is sent:
+                    return msg[1]
+        raise StudyError("The replay took too long; try again when the computer is less busy.")
+
     def _died(self, w, todo, tries, on_row):
         w["dead"] = True
         w["p"].join(timeout=1)
@@ -1201,6 +1243,14 @@ def cache_key(root: str, rev: str, timestep: float) -> tuple:
             pipeline_version(design.arm.source), float(timestep))
 
 
+def _keep(cache: dict, key, prep: dict):
+    """Keep a packed robot, dropping the oldest past CACHED (studies and replays share one cache across threads:
+    list() of a dict is one step under the GIL, so another thread's insert can't break the loop)."""
+    for old in list(cache)[:max(0, len(cache) - CACHED + 1)]:
+        cache.pop(old, None)
+    cache[key] = prep
+
+
 def study_key(rev, design_sha, pipeline, seed, timestep, stress, spec_sha_) -> str:
     raw = json.dumps([VERSION, SCENARIO, rev, design_sha, pipeline, int(seed), float(timestep), bool(stress), spec_sha_])
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
@@ -1253,14 +1303,23 @@ def _job(doc: dict, i: int, boxes: int, variant: str | None = None) -> dict:
 
 
 def _event(doc: dict, phase: str, rows: list, done: int, total: int, clock: dict) -> dict:
-    """A `study` event: where the study is, its success rate so far with the Wilson interval, and an estimate of the
-    time left (from this phase's pace)."""
-    counted = _counted(rows)
-    k, n = sum(r["success"] for r in counted), len(counted)
+    """A `study` event: where the study is, its success rate so far with the Wilson interval, the failures so far by
+    group, and an estimate of the time left (from this phase's pace)."""
+    k = n = unstable = 0
+    groups = {}
+    for r in rows:                     # one pass: this runs after every run of a study
+        if r["outcome"] in ("unstable", "error"):
+            unstable += r["outcome"] == "unstable"
+            continue
+        n += 1
+        if r["success"]:
+            k += 1
+        else:
+            groups[r["group"]] = groups.get(r["group"], 0) + 1
     now = time.time()
     rate = (done - clock["phase_done"]) / max(now - clock["phase_t"], 1e-6) if done > clock["phase_done"] else None
     return {"type": "study", "id": doc["id"], "rev": doc["rev"], "status": doc["status"], "phase": phase, "done": done,
-            "n": total, "successes": k, "failures": n - k, "unstable": sum(r["outcome"] == "unstable" for r in rows),
+            "n": total, "successes": k, "failures": n - k, "unstable": unstable, "groups": groups,
             "p": round(k / n, 4) if n else None, "ci": [round(v, 4) for v in wilson(k, n)] if n else None,
             "elapsed_s": round(now - clock["t0"], 1), "eta_s": round((total - done) / rate) if rate else None,
             "first_result_s": clock["first"], "stress": doc["stress"]}
@@ -1322,9 +1381,7 @@ def run_study(root: str, rev: str | None = None, *, runs: int = 200, seed: int =
             if prep is None:
                 return stop("cancelled")
             if cache is not None and not hit:
-                while len(cache) >= CACHED:
-                    cache.pop(next(iter(cache)))
-                cache[key] = prep
+                _keep(cache, key, prep)
             doc["model"] = {k: prep[k] for k in ("matches_revision", "revision_timestep", "nominal", "hover_mm", "world",
                                                  "boxes")}
             timing.update({"workers": n_workers, "prepare_s": None if hit else prep["prepare_s"], "prepare_cached": bool(hit)})
@@ -1406,9 +1463,11 @@ def _headline(doc: dict) -> dict:
 
 # ====================================================================== replay and the text report
 
-def replay(root: str, sid: str, run: int, variant: str | None = None, cache: dict | None = None) -> dict:
-    """One run of a study again, in this process, as a sim_pick_place.json document (frames for the viewer) with a
-    `robustness` block: its parameters, outcome and measurements. `cache`: as run_study's."""
+def replay(root: str, sid: str, run: int, variant: str | None = None, cache: dict | None = None, *,
+           process: bool = False, nice: int | None = None, timeout: float = 300.0) -> dict:
+    """One run of a study again as a sim_pick_place.json document (frames for the viewer) with a `robustness` block:
+    its parameters, outcome and measurements. `cache`: as run_study's. In this process, or with `process` in a spawned
+    study process at the study's priority (the Studio: MuJoCo's warning log and the CPU stay out of the server)."""
     doc = load(root, sid)
     if not doc:
         raise StudyError("There is no such study.")
@@ -1417,9 +1476,28 @@ def replay(root: str, sid: str, run: int, variant: str | None = None, cache: dic
     if variant is not None and variant not in VARIANTS:
         raise StudyError(f"There is no such check; use {' or '.join(VARIANTS)}.")
     key = (os.path.realpath(root), doc["rev"], doc["design_sha"], doc["pipeline_version"], float(doc["timestep"]))
-    prep = (cache or {}).get(key) or prepare(root, doc["rev"], doc["timestep"])
-    r = Runner(prep["blob"])
-    out = r.run(_job(doc, run, prep["boxes"], variant), doc=True)
+    hit = (cache or {}).get(key)
+    if not process:
+        prep = hit or prepare(root, doc["rev"], doc["timestep"])
+        out = Runner(prep["blob"]).run(_job(doc, run, prep["boxes"], variant), doc=True)
+    else:
+        end, late = time.time() + timeout, threading.Event()
+        timer = threading.Timer(timeout, late.set)
+        timer.daemon = True
+        timer.start()
+        pool = Pool(1, nice, blob=hit["blob"] if hit else None, prepare_args=(root, doc["rev"], doc["timestep"]))
+        try:
+            prep = hit or pool.wait_prepared(late)
+            if prep is None:
+                raise StudyError("The replay took too long; try again when the computer is less busy.")
+            if cache is not None and not hit:
+                _keep(cache, key, prep)
+            out = pool.one(_job(doc, run, prep["boxes"], variant), max(1.0, end - time.time()))
+        finally:
+            timer.cancel()
+            pool.close(kill=True)
+    if "robustness" not in out:        # the run stopped with an error: its row, no frames
+        raise StudyError(f"Run {run} stopped with an error in the simulation: {out.get('error') or 'unknown'}")
     out["robustness"].update({"study": sid, "run": run, "seed": doc["seed"], "stress": doc["stress"]})
     return out
 

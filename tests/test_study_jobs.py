@@ -77,6 +77,8 @@ def test_a_study_reports_progress_to_its_room_and_finishes(home):
     assert last["status"] == "done" and last["summary"]["n"] + len(robust.load(os.path.join(home, "egg-picker"),
                                                                                  job["id"])["summary"]["unstable"]) == 4
     assert last["ci"] and 0 <= last["p"] <= 1 and last["first_result_s"] > 0
+    runs = [e for e in events if e.get("phase") == "runs" and "groups" in e]   # partial results: failures so far, by group
+    assert runs and all(sum(e["groups"].values()) == e["failures"] for e in runs)
     doc = jobs.result("egg-picker", job["id"], rows=True)
     assert len(doc["runs"]) == 4 and doc["checks"] and doc["summary"]["checks"]
     assert [s["id"] for s in jobs.studies("egg-picker")] == [job["id"]]
@@ -177,3 +179,24 @@ def test_morph_study_prints_a_report_and_carries_on(home, monkeypatch, capsys):
     assert cli.main(["study", "egg-picker-2", "--rev", "r009", "--runs", "1", "--workers", "1"]) == 1
     out = capsys.readouterr()
     assert "no finished revision" in out.err and "1 randomized run on 1 worker process." in out.out
+
+
+def test_the_studios_hooks_stop_a_projects_study(home):
+    """A Studio stops a project's study before deleting or resetting it (jobs.stop) and every study when it stops
+    (jobs.shutdown); a Studio that never ran a heavy job has nothing to stop."""
+    from types import SimpleNamespace
+
+    assert heavy.stop(SimpleNamespace(), "egg-picker") is True
+    heavy.shutdown(SimpleNamespace())
+    studio = SimpleNamespace(heavy_jobs=heavy.HeavyJobs(home, emit=Events(), cache=CACHE))
+    assert heavy.stop(studio, "egg-picker") is True                     # nothing running
+    studio.heavy_jobs.start_study("egg-picker", runs=12, seed=23, checks=False, **FAST)
+    until(lambda: (studio.heavy_jobs.status("egg-picker")["done"] or 0) >= 1)
+    t = time.time()
+    assert heavy.stop(studio, "egg-picker") is True and time.time() - t < 5.0
+    assert studio.heavy_jobs.status("egg-picker")["status"] == "cancelled"
+    studio.heavy_jobs.start_study("egg-picker-2", runs=12, seed=23, checks=False, **FAST)
+    until(lambda: (studio.heavy_jobs.status("egg-picker-2")["done"] or 0) >= 1)
+    heavy.shutdown(studio)
+    assert studio.heavy_jobs.status("egg-picker-2")["status"] == "cancelled"
+    assert robust.active(os.path.join(home, "egg-picker-2")) is None
