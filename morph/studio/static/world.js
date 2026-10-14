@@ -1648,7 +1648,7 @@ export class WorldPanel {
     if (s.pending) return this.toast('The simulation in this world is still running');
     const doc = this.doc() || wv.doc;
     const render = (ai && s.ai.claude) || (s.subq && s.ai.subq);    // pictures only go to a reviewer that is on
-    this._busy(SEC.check, render ? 'Rendering six views…' : 'Checking…');
+    this._busy(SEC.check, render ? 'Rendering six views…' : (wv.world?.asset ? 'Checking, and measuring the path against the room scan…' : 'Checking…'));
     try {
       let views = [];
       if (render) {
@@ -1676,6 +1676,23 @@ export class WorldPanel {
       catch (e) { this.toast(`${e.message || e}`); return; }
     } else return;
     ch.applied = true;
+    this.render();
+  }
+
+  /** "Add box here": a place where the simulated path comes close to the room scan becomes a grey box, which the
+   * simulation keeps the arm clear of once the world is saved and simulated again. */
+  addScanBox(i) {
+    const g = (this.state.result?.checks || []).find((c) => c.id === 'scan')?.regions?.[i], wv = this.wv;
+    if (!g || g.added || this.state.busy || !wv.world) return;
+    const obs = wv.world.obstacles || (wv.world.obstacles = []);
+    if (obs.length >= 200) return this.toast('This world already has 200 grey boxes, the most it can hold');
+    const ids = new Set(obs.map((o) => o.id));
+    let id = g.id, k = 2;
+    while (ids.has(id)) id = `${g.id}-${k++}`;
+    obs.push({ id, label: g.label, center: [...g.box.center], half: [...g.box.half], yaw_deg: g.box.yaw_deg, source: 'auto' });
+    wv._buildBoxes(); wv.changed('boxes');
+    g.added = true;
+    this.toast(`${g.label} is a grey box now: Save and simulate to test the path against it`);
     this.render();
   }
 
@@ -1712,6 +1729,7 @@ export class WorldPanel {
       reuse: () => this.useSaved(),
       tour: () => { const r = this.state.result?.review; if (r) wv.tour(r.tour, this.doc() || wv.doc, { source: r.source === 'claude' ? 'Claude (AI)' : 'measured' }); },
       apply: () => this.apply(+arg), subq: () => { this.state.subq = !this.state.subq; this.render(); },
+      scanbox: () => this.addScanBox(+arg),
     };
     act[a]?.();
   }
@@ -1850,7 +1868,8 @@ export class WorldPanel {
         ${r.stale ? '<div class="wv-note warn">A newer revision is in: check again.</div>' : ''}
         ${rv.skipped ? `<div class="wv-note warn">${esc(rv.skipped)}</div>` : ''}${rv.note ? `<div class="wv-note warn">${esc(rv.note)}</div>` : ''}${rv.error ? `<div class="wv-note warn">${esc(rv.error)}</div>` : ''}
         ${r.asked?.subq && !r.subq ? '<div class="wv-note warn">SubQ didn\'t answer (no SubQ key, it is paused, or it declined the pictures): only the checks above.</div>' : ''}
-        <div style="margin-top:6px">${(r.checks || []).map((c) => `<div class="wv-check"><span class="st ${esc(c.status)}">${esc(c.status)}</span><span>${esc(c.text)}</span></div>`).join('')}</div>
+        <div style="margin-top:6px">${(r.checks || []).map((c) => `<div class="wv-check"><span class="st ${esc(c.status)}">${esc(c.status)}</span><span>${esc(c.text)}</span></div>`
+          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${(+g.min_clearance_mm).toFixed(1)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm</span>${B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: 'A grey box over this part of the scan: the simulation keeps the arm clear of it' })}</div>`).join('') : '')).join('')}</div>
         ${rv.summary && rv.source === 'claude' ? `<div class="wv-note">${esc(SRC.claude)}: ${esc(rv.summary)}</div>` : ''}
         ${(rv.findings || []).length ? `<div style="margin-top:7px">${rv.findings.map((f) => `<div class="wv-find ${esc(f.severity)}"><span class="src">${esc(SRC[f.source] || f.source)} · ${esc(f.category)} · ${esc(VIEW_TITLE[f.viewpoint] || f.viewpoint)}</span>
           <div>${esc(f.evidence)}</div><div class="wv-note" style="margin-top:2px">${esc(f.recommendation)}</div></div>`).join('')}</div>` : ''}

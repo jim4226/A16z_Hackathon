@@ -8,7 +8,8 @@ when they streamed the answer themselves:
     PUT  /api/world/upload?name=             a room scan (.glb, raw body, at most 300 MB): checked, kept as room.glb
     POST /api/world/obstacles/auto {world?}  proposed obstacle boxes (and mount surface) from the room scan
     POST /api/world/inspect {views, ai?, subq?, rev?}
-                                             exact checks + the optional AI review (Claude, SubQ) of 6 rendered views
+                                             exact checks (with a room scan, the simulated path against the scan
+                                             itself: a warning only) + the optional AI review (Claude, SubQ) of 6 views
 
 register() adds them to morph.studio.routes; the module calls it when the Studio loads its feature modules. Live
 progress goes out as `world` events and the agents timeline as `agent` events (contracts section 3).
@@ -20,7 +21,9 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
+from collections import OrderedDict
 
 from . import worlds
 from .worlds import WorldError
@@ -283,6 +286,55 @@ def _inputs(room, rev):
     return results, {k: v for k, v in sims.items() if v}, robot
 
 
+_SCANS: OrderedDict = OrderedDict()      # (project, revision, world, room file) -> scan_clearance(): the last eight
+_SCANS_LOCK = threading.Lock()
+
+
+def _scan(room, rev, w: dict, sims: dict) -> dict | None:
+    """The revision's simulated path against the room scan (worlds.scan_clearance), or None when the world has no
+    scan. A revision's simulation never changes, so the answer is kept (in memory) for the same room file."""
+    path = worlds.asset_path(room.p.root)
+    if not w.get("asset") or not os.path.isfile(path):
+        return None
+    skip = lambda why: {"skipped": why, "note": worlds.SCAN_NOTE}  # noqa: E731
+    doc = sims.get("pick_place")
+    if not doc or not doc.get("frames"):
+        return skip("There's no simulation to measure against the scan yet.")
+    w_sha = worlds.sha(w)
+    if (doc.get("world") or {}).get("sha") != w_sha:
+        return skip("The simulation didn't run in this room as it is now: Save and simulate, then check again.")
+    try:
+        st = os.stat(path)
+        with open(os.path.join(room.p.rev_dir(rev), "sim", "robot.xml"), encoding="utf-8") as fh:
+            xml = fh.read()
+    except OSError:
+        return skip("This revision's collision model (sim/robot.xml) is missing.")
+    key = (room.p.root, rev, w_sha, st.st_size, st.st_mtime_ns)
+    with _SCANS_LOCK:
+        if key in _SCANS:
+            _SCANS.move_to_end(key)
+            return _SCANS[key]
+    _send(room, {"type": "world", "stage": "scan", "status": "start", "text": "Measuring the path against the room scan"})
+    t0 = time.time()
+    try:
+        res = worlds.scan_clearance(path, w, doc, xml)
+    except Exception as exc:  # noqa: BLE001  (the scan is a warning: it never takes the rest of the check down)
+        res = skip(f"The path couldn't be measured against the scan ({exc.__class__.__name__}).")
+    ms = int((time.time() - t0) * 1000)
+    mc, n = res.get("min_clearance_mm"), len(res.get("regions") or [])
+    text = (res["skipped"] if res.get("skipped") else
+            (f"Closest to the scan: {mc:.1f} mm" if mc is not None else f"Nothing within {worlds.SCAN_CUT_MM:.0f} mm of the scan")
+            + (f", {n} near miss{'es' if n != 1 else ''}" if n else ""))
+    _send(room, {"type": "agent", "role": "feasibility", "provider": "code", "status": "skipped" if res.get("skipped") else "done",
+                 "ms": ms, "text": text})
+    _send(room, {"type": "world", "stage": "scan", "status": "done", "text": text})
+    with _SCANS_LOCK:
+        _SCANS[key] = res
+        while len(_SCANS) > 8:
+            _SCANS.popitem(last=False)
+    return res
+
+
 def inspect_world(req):
     """The world check: exact pass / fail from geometry and the simulation, then (when asked, and only then) Claude's
     review of the rendered views and SubQ's yes/no answers. The verdict is always the measured one."""
@@ -306,7 +358,8 @@ def inspect_world(req):
     d = _design(room, rev)
     _send(room, {"type": "world", "stage": "inspect", "status": "start", "text": "Checking the placement"})
     t0 = time.time()
-    res = worlds.inspect(w, results, views, sims=sims, robot=robot, design=d, ai=False)
+    scan = _scan(room, rev, w, sims)
+    res = worlds.inspect(w, results, views, sims=sims, robot=robot, design=d, ai=False, scan=scan)
     ms = int((time.time() - t0) * 1000)
     _send(room, {"type": "agent", "role": "feasibility", "provider": "code", "status": "done", "ms": ms,
                  "text": f"Measured verdict: {res['verdict'].replace('_', ' ')}"})
