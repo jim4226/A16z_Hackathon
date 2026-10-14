@@ -119,13 +119,23 @@ def _standard_world(world, design) -> list:
             _p("box_error_mm", 0, 15, 0, "assumed: how well each box's place was measured")]
 
 
-# World-tolerance presets: name -> fn(sim world, design) -> the four world entries. A later package registers presets
-# for scanned rooms (register_world_preset); "standard" is the default.
+# World-tolerance presets: name -> fn(sim world, design) -> the four world entries; "standard" is the default. A preset
+# in ROOM_ONLY holds every other tolerance at its nominal value (switched off: it still draws, so runs stay comparable),
+# so a study's failures are the room's: "room" is the standard ranges that way.
 WORLD_PRESETS = {"standard": _standard_world}
+ROOM_ONLY = set()
+PRESET_LABELS = {"standard": "Everything varies: the object, the hardware, the mount and every box"}
 
 
-def register_world_preset(name: str, fn):
+def register_world_preset(name: str, fn, label: str | None = None, room_only: bool = False):
     WORLD_PRESETS[name] = fn
+    if label:
+        PRESET_LABELS[name] = label
+    (ROOM_ONLY.add if room_only else ROOM_ONLY.discard)(name)
+
+
+register_world_preset("room", _standard_world, "Only the room varies: the mount and every box; the object and the "
+                      "hardware stay nominal", room_only=True)
 
 
 def default_spec(design, world=None, preset: str = "standard") -> dict:
@@ -152,6 +162,9 @@ def default_spec(design, world=None, preset: str = "standard") -> dict:
     ]
     if world is not None:
         params += WORLD_PRESETS.get(preset, _standard_world)(world, design)
+        if preset in ROOM_ONLY:
+            for e in params[:len(BASE)]:
+                e["on"] = False
     return {"version": VERSION, "params": params, "world_preset": preset if world is not None else None,
             "encoder_cpr": ENCODER.get(fam, 4096), "object": (o.name or "object")}
 

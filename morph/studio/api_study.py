@@ -55,6 +55,8 @@ NOTES = {
     "rev_changed": "Its revision was deleted (Reset demo) and the name now holds another design: this study is not of it.",
     "other_code": "{rev} was simulated with other Morph code; this study uses today's model of it.",
     "estimate": "Estimated from about one second of computing per run at 1 ms steps.",
+    "room_only": "Only the room varied (the robot's mount and every box); the object and the hardware stayed nominal, "
+                 "so every failure here is the room's.",
 }
 STATUS_TEXT = {"interrupted": "Stopped when the Studio stopped", "cancelled": "Cancelled", "error": "Stopped with an error"}
 
@@ -171,6 +173,8 @@ def card(doc: dict) -> dict:
                          f"{'is' if len(ids) == 1 else 'are'} not counted.")
     if (doc.get("model") or {}).get("matches_revision") is False:
         flags.append(NOTES["other_code"].format(rev=doc.get("rev")))
+    if (doc.get("spec") or {}).get("world_preset") in robust.ROOM_ONLY:
+        flags.append(NOTES["room_only"])
     groups = []
     for g in s.get("groups") or []:
         rule = g.get("rule") or None
@@ -335,6 +339,7 @@ def _limits(spec: dict) -> dict:
             a, b = a * e["nominal"], b * e["nominal"]
         e["limit"] = [round(a, 4), round(b, 4)]
     spec["presets"] = sorted(robust.WORLD_PRESETS)
+    spec["preset_labels"] = {k: robust.PRESET_LABELS.get(k, k) for k in spec["presets"]}
     return spec
 
 

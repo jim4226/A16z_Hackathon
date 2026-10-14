@@ -342,7 +342,8 @@ def test_tolerance_edits_make_the_study_outdated_until_they_are_reset(site):
     assert s == 200
     spec = {e["name"]: e for e in out["spec"]["params"]}
     assert spec["object_mass_g"]["source"].startswith("USDA") and spec["object_mass_g"]["limit"] == [6.0, 600.0]
-    assert spec["object_yaw_deg"]["limit"] == [-180, 180] and out["spec"]["presets"] == ["standard"]
+    assert spec["object_yaw_deg"]["limit"] == [-180, 180] and out["spec"]["presets"] == ["room", "standard"]
+    assert out["spec"]["preset_labels"]["room"].startswith("Only the room varies")
     before = call("GET", "/api/study")[1]["latest"]
     assert before and before["outdated"] is False
     s, out = call("POST", "/api/study/tolerances", {"changes": {"object_yaw_deg": {"lo": -5, "hi": 5}}})

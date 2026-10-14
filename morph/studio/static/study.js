@@ -364,6 +364,7 @@ class StudyCard {
     dlg.className = 'glass dlg sd-dlg';
     dlg.addEventListener('click', (e) => this.dialogClick(e));
     dlg.addEventListener('input', () => { this.dlgEdited = true; });
+    dlg.addEventListener('change', (e) => this.dialogChange(e));
     this.dlg = dlg;
     this.spec = null;
     this.s.modal.open(dlg, { wide: true, onClose: () => { this.dlg = null; } });
@@ -413,8 +414,27 @@ class StudyCard {
       return `<tr class="${e.on ? '' : 'off'}${e.edited ? ' edited' : ''}"><td>${esc(e.label)}</td><td>${range}</td><td class="mono">${show(e, e.nominal)}${e.unit === 'x' ? '%' : ''}</td><td class="src">${esc(e.source)}</td>
         <td><input type="checkbox" data-t="${esc(e.name)}" data-k="on"${e.on ? ' checked' : ''}${may ? '' : ' disabled'} aria-label="Vary ${esc(e.label)}"></td></tr>`;
     }).join('');
-    return `<table class="sd-tbl"><thead><tr><th>Tolerance</th><th>Range</th><th>Nominal</th><th class="src">Where the range comes from</th><th>Vary</th></tr></thead><tbody>${rows}</tbody></table>
+    const presets = spec.world_preset ? (spec.presets || []) : [];
+    const pl = (p) => spec.preset_labels?.[p] || p;
+    const pre = presets.length > 1 && may
+      ? `<div class="sd-row sd-edit"><label class="sd-note" style="margin:0">World tolerances <select data-f="preset" aria-label="World tolerances">${presets.map((p) => `<option value="${esc(p)}"${p === spec.world_preset ? ' selected' : ''}>${esc(pl(p))}</option>`).join('')}</select></label></div>`
+      : (spec.world_preset ? `<p class="sd-note">World tolerances: ${esc(pl(spec.world_preset))}.</p>` : '');
+    return `${pre}<table class="sd-tbl"><thead><tr><th>Tolerance</th><th>Range</th><th>Nominal</th><th class="src">Where the range comes from</th><th>Vary</th></tr></thead><tbody>${rows}</tbody></table>
       ${may ? '<div class="sd-row sd-edit"><button type="button" class="btn primary" data-a="savetol">Save tolerances</button><button type="button" class="btn" data-a="resettol">Back to the defaults</button><span class="sd-note" data-out="tol" style="margin:0"></span></div>' : ''}`;
+  }
+
+  async dialogChange(e) {
+    const t = e.target;
+    if (t.dataset?.f !== 'preset' || !t.value || t.value === this.spec?.world_preset) return;
+    t.disabled = true;
+    try {
+      this.spec = (await this.s.api.post('/api/study/tolerances', { changes: { world_preset: t.value }, rev: this.rev })).spec;
+      await this.refresh();
+      this.renderDialog();
+    } catch (err) {
+      t.disabled = false;
+      this.s.toast(err.message || String(err));
+    }
   }
 
   async dialogClick(e) {
