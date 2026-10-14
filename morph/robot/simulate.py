@@ -65,15 +65,21 @@ Public API:
 step, fewer workspace samples and shorter tails.
 
 World mode (``world=``, morph.studio.worlds.sim_world: boxes in the robot base frame, mm): the mount surface replaces
-the fixed table, obstacle boxes touch the robot and the object (never the table), the carry arc is chosen to keep
-10 mm from them, and so are the moves from the rest pose to above the object and back to the rest pose (each rises
-first when the direct move passes closer); pick_place reports world_contacts, min_clearance_mm (and where),
-clearance_ok, the arc and those detours; any contact fails it. The workspace drops samples that hit the room
-(usable_workspace_fraction); the payload sweep, a capacity test, ignores the room. Without a world nothing changes.
+the fixed table, obstacle boxes touch the robot and the object (never the table), and every move of pick_place is
+checked against them every 10 ms (each plan sample, the object with the hand while it is carried). A move that comes
+within 10 mm tries the alternatives in turn and takes the first that keeps 10 mm, else the one with the most room: the
+carry arc from a family (pulled in, lifted mid-way); the approach straight, along the carry arc or from above (up,
+across and down, the empty hand free to tilt); the release with the jaws opened less; the way back to rest straight,
+with the hand closed, along the carry arc or straight up first. pick_place reports world_contacts (with the move),
+min_clearance_mm (and where), clearance_ok, the arc, those detours and each move's clearance (path); any contact fails
+it, and so does a planned move that still passes into a box (blocked), naming the move and the box. The workspace
+drops samples that hit the room (usable_workspace_fraction); the payload sweep, a capacity test, ignores the room.
+Without a world nothing changes.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -105,6 +111,12 @@ GROUPS = {
     "world": (B_WORLD, B_OBJ | B_ARM | B_JAW | B_PROX | B_NOOBJ),   # the robot and the object, never the table or each other
 }
 CLEAR_MM = 10.0                    # world mode: the carry arc keeps this far from every obstacle box
+CARRIED = ("lift", "move", "place")          # plan phases with the object in the hand
+LIFTS_MM = (40.0, 80.0, 120.0)               # world mode: how much higher a detour may take the empty hand
+OPEN_LESS_MM = 4.0                           # world mode: a release that opens the jaws only this far past the object
+MOVES = {"approach": "the approach", "descent": "the descent to the object", "grasp": "the grasp", "lift": "the lift",
+         "carry": "the carry", "set-down": "the set-down", "release": "the release",
+         "rise": "the rise from the place spot", "return": "the way back to rest"}
 SKIP_KINDS = ("fastener", "cable", "visual")
 
 # servo model
@@ -145,6 +157,11 @@ def _mat2quat(R) -> np.ndarray:
     q = np.zeros(4)
     mujoco.mju_mat2Quat(q, np.ascontiguousarray(R, float).ravel())
     return q
+
+
+def _cross(a, b):
+    """np.cross of two 3-vectors without its per-call overhead: the same products and differences, bit for bit."""
+    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
 
 
 def _minjerk(s):
@@ -1158,6 +1175,7 @@ class _Robot:
         self.sz = _surface_top(W) if W is not None else 0.0
         self.arc = None
         self.detours = {}
+        self.path, self.blocked = [], None
 
     # ------------------------------------------------------------------ kinematics
     def q_ready(self) -> np.ndarray:
@@ -1171,9 +1189,10 @@ class _Robot:
         mj.mj_kinematics(m, d)
         return d.site_xpos[self.site].copy() / MM, d.site_xmat[self.site].reshape(3, 3).copy()
 
-    def ik(self, p_mm, axis=None, q0=None, iters=80, tol_mm=0.2, approach=(0, 0, -1.0)):
+    def ik(self, p_mm, axis=None, q0=None, iters=80, tol_mm=0.2, approach=(0, 0, -1.0), free=0.0):
         """Damped least squares to a TCP position (mm) with top-down approach; ``axis`` = object long axis (world)
-        to align the fingers with (dof >= 5). Returns (q, pos_err_mm, rot_err_rad)."""
+        to align the fingers with (dof >= 5). ``free`` (0 to 1) weakens the orientation terms by that share: 1 asks
+        for the position only (an empty hand that may tilt on the way). Returns (q, pos_err_mm, rot_err_rad)."""
         mj, m, d = self._mj, self.model, self.dik
         q = (self.q_ready() if q0 is None else np.asarray(q0, float)).copy()
         p = np.asarray(p_mm, float) * MM
@@ -1182,8 +1201,8 @@ class _Robot:
         jp = np.zeros((3, m.nv))
         jr = np.zeros((3, m.nv))
         ya = self.info.obj_axis_tcp
-        use_yaw = axis is not None and self.n >= 5
-        wr = 0.15
+        use_yaw = axis is not None and self.n >= 5 and free < 1.0
+        wr = 0.15 * (1.0 - free) if free else 0.15
         ep_n = er_n = 1e9
         for _ in range(iters):
             d.qpos[self.qadr] = q
@@ -1192,7 +1211,7 @@ class _Robot:
             x = d.site_xpos[self.site]
             Rm = d.site_xmat[self.site].reshape(3, 3)
             ep = p - x
-            er = np.cross(Rm[:, 2], zd)
+            er = np.zeros(3) if free >= 1.0 else _cross(Rm[:, 2], zd)
             if use_yaw:
                 y = Rm @ ya
                 yd = np.asarray(axis, float)
@@ -1200,16 +1219,16 @@ class _Robot:
                 yd = yd / max(np.linalg.norm(yd), 1e-9)
                 if np.dot(y, yd) < 0:
                     yd = -yd
-                ey = np.cross(y, yd)
+                ey = _cross(y, yd)
                 # a 6-DOF wrist controls tilt about the TCP x axis, which the z term already corrects:
                 # count only the yaw part of the y term there, or each step overshoots ~2x and oscillates
                 er = er + (zd * np.dot(ey, zd) if self.n >= 6 else ey)
-            ep_n, er_n = np.linalg.norm(ep), np.linalg.norm(er)
+            ep_n, er_n = math.sqrt(ep.dot(ep)), math.sqrt(er.dot(er))      # np.linalg.norm's arithmetic
             if ep_n < tol_mm * MM and er_n < 2e-3:
                 break
             mj.mj_jacSite(m, d, jp, jr, self.site)
             J = np.vstack([jp[:, self.dadr], wr * jr[:, self.dadr]])
-            e = np.r_[ep, wr * er]
+            e = np.concatenate((ep, wr * er))
             lam = 1e-5 + 1e-3 * min(1.0, ep_n * 10)
             dq = J.T @ np.linalg.solve(J @ J.T + lam * np.eye(6), e)
             mx = np.abs(dq).max()
@@ -1276,16 +1295,18 @@ class _Robot:
     # ------------------------------------------------------------------ world mode
     def clearance(self, d, with_object=False, distmax=0.5):
         """Smallest distance (mm) between the robot (plus the object when carried) and the world boxes at the pose
-        already in ``d`` (kinematics done), and where: (mm, robot geom, world geom). Bounding spheres prune the pairs
-        so only the few that can be closest go to mj_geomDistance."""
+        already in ``d`` (kinematics done), and where: (mm, robot geom, world geom); ``distmax`` (m) when nothing is
+        closer. Each robot geom's bounding sphere against the box itself (an exact lower bound, tight for walls and
+        shelves) prunes the pairs so only the few that can be closest go to mj_geomDistance."""
         mj, m = self._mj, self.model
         if not hasattr(mj, "mj_geomDistance"):          # added in MuJoCo 3.1.6; only world mode needs it
             raise RuntimeError("World mode needs MuJoCo 3.1.6 or newer: pip install -U mujoco")
         W = self.world_geoms
         R = np.r_[self.robot_geoms, [self.obj_geom]] if with_object else self.robot_geoms
-        cw, rw = d.geom_xpos[W], m.geom_rbound[W]
-        cr, rr = d.geom_xpos[R], m.geom_rbound[R]
-        lb = np.linalg.norm(cr[:, None, :] - cw[None, :, :], axis=2) - rr[:, None] - rw[None, :]
+        loc = np.abs(np.matmul(d.geom_xpos[R][None, :, :] - d.geom_xpos[W][:, None, :], d.geom_xmat[W].reshape(-1, 3, 3)))
+        loc -= m.geom_size[W][:, None, :]                  # each geom centre in each box's axes, outside its faces
+        np.maximum(loc, 0.0, out=loc)
+        lb = (np.sqrt((loc * loc).sum(axis=2)) - m.geom_rbound[R][None, :]).T
         order = np.argsort(lb, axis=None)
         best, pair = distmax, (int(R[0]), int(W[0]))
         ft = np.zeros(6)
@@ -1298,14 +1319,17 @@ class _Robot:
                 best, pair = dist, (int(R[i]), int(W[j]))
         return best / MM, pair[0], pair[1]
 
-    def pose_carried(self, d, q, g):
-        """Arm at q, gripper at g, the object held in the grasp (as _simulate starts with it in hand); kinematics."""
+    def pose_carried(self, d, q, g, carried=True):
+        """Arm at q, gripper at g, the object held in the grasp (as _simulate starts with it in hand; left out when not
+        `carried`); kinematics."""
         mj, m = self._mj, self.model
         d.qpos[:] = 0
         d.qpos[self.qadr] = q
         if self.g_q:
             self.set_grip(d, g)
         mj.mj_kinematics(m, d)
+        if not carried:
+            return
         p, Rm = self.tcp_pose(d)
         info = self.info
         Ro = np.c_[Rm @ info.obj_close_tcp, Rm @ info.obj_axis_tcp, Rm @ np.array([0, 0, 1.0])]
@@ -1332,10 +1356,31 @@ class _Plan:
         self.markers = []
         self.ik_err_mm = 0.0
         self.notes = []
+        self.moves = []                 # [name, first sample] per move (MOVES), for world mode's clearance per move
 
     @property
     def T(self):
         return self.t[-1]
+
+    def move(self, name):
+        self.moves.append([name, len(self.t) - 1])
+
+    def branch(self):
+        """A scratch plan from where this one ends: a candidate move is built and checked there, and the chosen one
+        appended with extend(), giving the samples building it here would."""
+        b = _Plan(self.rob, self.qe, self.g[-1], self.ph[-1])
+        b.t = [self.T]
+        return b
+
+    def extend(self, b):
+        off = len(self.t) - 1
+        self.t += b.t[1:]
+        self.q += b.q[1:]
+        self.g += b.g[1:]
+        self.ph += b.ph[1:]
+        self.markers += b.markers
+        self.moves += [[nm, i + off] for nm, i in b.moves]
+        self.ik_err_mm = max(self.ik_err_mm, b.ik_err_mm)
 
     @property
     def qe(self):
@@ -1359,14 +1404,15 @@ class _Plan:
         s = _minjerk(np.arange(1, n + 1) / n)
         self._push([q0 + (np.asarray(q1) - q0) * si for si in s], phase, grip)
 
-    def cart(self, fn, T, phase, grip=None):
-        """fn(s in [0,1]) -> (p_mm, axis_world | None); s already eased by the caller if wanted."""
+    def cart(self, fn, T, phase, grip=None, free=0.0):
+        """fn(s in [0,1]) -> (p_mm, axis_world | None); s already eased by the caller if wanted. `free` (a share,
+        or fn(s) -> share): how much of the hand's orientation is left to the IK (Robot.ik; an empty hand)."""
         n = max(1, int(round(T / PLAN_DT)))
         q = self.qe
         qs = []
         for i in range(1, n + 1):
             p, ax = fn(i / n)
-            q, ep, _ = self.rob.ik(p, ax, q, iters=25)
+            q, ep, _ = self.rob.ik(p, ax, q, iters=25, free=free(i / n) if callable(free) else free)
             self.ik_err_mm = max(self.ik_err_mm, ep)
             qs.append(q)
         self._push(qs, phase, grip)
@@ -1402,7 +1448,7 @@ class _Run:
 
 
 def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_hand=False, payload_fn=None,
-              on_step=None, record=True, scenario="") -> _Run:
+              on_step=None, record=True, scenario="", perturb=None) -> _Run:
     mj, m = rob._mj, rob.model
     d = rob.data
     mj.mj_resetData(m, d)
@@ -1431,6 +1477,8 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
         yaw = obj_yaw if obj_yaw is not None else rob.opts.object_yaw
         yaw = yaw if yaw is not None else math.atan2(y0, x0)
         oz = rob.R + 0.2
+        if perturb:
+            x0, y0, yaw, oz = _perturb_start(rob, perturb, x0, y0, yaw)
         if rob.opts.world is not None:
             oz += rob.sz
         d.qpos[rob.obj_q:rob.obj_q + 3] = [x0 * MM, y0 * MM, oz * MM]
@@ -1442,6 +1490,7 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
     mj.mj_forward(m, d)
 
     hits = {} if len(rob.world_geoms) else None   # world mode: first contact of each (link, obstacle) pair
+    servo = _servo(perturb, dt, rob.n) if perturb else None
     integ = np.zeros(rob.n)
     imax = 0.5 * rob.eff
     g_ctrl = g_start
@@ -1463,11 +1512,14 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
         a = frac[step]
         qr = Q[k] * (1 - a) + Q[k2] * a
         qdr = QD[k] * (1 - a) + QD[k2] * a
-        q = d.qpos[rob.qadr]
-        err = qr - q
-        integ = np.clip(integ + KI * rob.kp * err * dt, -imax, imax)
-        u = d.qfrc_bias[rob.dadr] + rob.kvv * qdr + integ
-        d.ctrl[rob.aid] = qr + u / rob.kp
+        if servo is not None:
+            integ = servo(step, rob, d, qr, qdr, integ, imax)
+        else:
+            q = d.qpos[rob.qadr]
+            err = qr - q
+            integ = np.clip(integ + KI * rob.kp * err * dt, -imax, imax)
+            u = d.qfrc_bias[rob.dadr] + rob.kvv * qdr + integ
+            d.ctrl[rob.aid] = qr + u / rob.kp
         if rob.g_act is not None:
             gt = Gm[k]
             closing = (gt - g_ctrl) * g_dir < 0
@@ -1505,6 +1557,124 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
     stats["max_speed_pct"] = {n: round(float(stats["max_speed"][i] / max(vmax[i], 1e-6) * 100.0), 1)
                               for i, n in enumerate(info.arm_joints)}
     return _Run(frames, stats)
+
+
+# ====================================================================== robustness trials (perturb=, never by default)
+# A trial executes the nominal plan in a world that differs from the design. Every key is optional and absent means
+# nominal: off_across_mm / off_along_mm / yaw_deg (the object's start, relative to its long axis), size_scale,
+# mass_g, friction_scale (pads and object), grip_scale (grip-force calibration), torque_scale (servo torque and gain),
+# deadband_deg, encoder_cpr / encoder_noise (counts) / noise_seed, rate_hz (host set-points, held between updates),
+# mount_dx_mm / mount_dy_mm / mount_yaw_deg (the room moves the other way), box_offsets_mm ([dx, dy] per box),
+# timestep, impratio. The host still plans and computes with the nominal values.
+
+def _perturb_start(rob, p, x0, y0, yaw):
+    """The object's start in a trial: off its mark across and along its long axis, turned, resized."""
+    ax = np.array([-math.sin(yaw), math.cos(yaw), 0.0])
+    off = np.cross([0, 0, 1.0], ax) * p.get("off_across_mm", 0.0) + ax * p.get("off_along_mm", 0.0)
+    return x0 + off[0], y0 + off[1], yaw + math.radians(p.get("yaw_deg", 0.0)), rob.R * p.get("size_scale", 1.0) + 0.2
+
+
+def _servo(p, dt, n):
+    """A trial's servo model, or None (the nominal loop): the host reads encoders of encoder_cpr counts per turn with
+    encoder_noise counts of noise, sends set-points at rate_hz and holds them; each servo ignores position errors
+    inside deadband_deg (backlash as a deadband) and drives with its own, possibly derated, gain."""
+    if not any(k in p for k in ("rate_hz", "encoder_cpr", "encoder_noise", "deadband_deg")):
+        return None
+    res = 2 * math.pi / p["encoder_cpr"] if p.get("encoder_cpr") else 0.0
+    sig = p.get("encoder_noise", 0.0) * (res or 2 * math.pi / 4096)
+    rng = np.random.default_rng(p.get("noise_seed", 0))
+    hold = max(1, int(round(1.0 / (p["rate_hz"] * dt)))) if p.get("rate_hz") else 1
+    wdb = math.radians(p.get("deadband_deg", 0.0))
+    cmd = [None]
+
+    def step(i, rob, d, qr, qdr, integ, imax):
+        q_true = d.qpos[rob.qadr]
+        q_meas = q_true + (rng.normal(0, sig, n) if sig > 0 else 0.0)
+        if res:
+            q_meas = np.round(q_meas / res) * res
+        if i % hold == 0:
+            err = qr - q_meas
+            integ = np.clip(integ + KI * rob.kp * err * dt * hold, -imax, imax)
+            u = d.qfrc_bias[rob.dadr] + rob.kvv * qdr + integ
+            cmd[0] = qr + u / rob.kp
+        e = cmd[0] - q_meas
+        if wdb > 0:
+            e = np.sign(e) * np.maximum(np.abs(e) - wdb, 0.0)
+        d.ctrl[rob.aid] = q_true + e
+        return integ
+    return step
+
+
+PERTURBED = ("geom_size", "geom_rbound", "geom_aabb", "geom_friction", "geom_pos", "geom_quat", "body_mass",
+             "body_inertia", "actuator_forcerange", "actuator_gainprm", "actuator_biasprm")
+
+
+@contextlib.contextmanager
+def _perturbed(rob, p):
+    """A trial's changes to the compiled model (object size and mass, friction, grip-force calibration, servo torque
+    and gain, the room's offsets, solver settings); the nominal model is put back bit for bit afterwards."""
+    if not p:
+        yield
+        return
+    m = rob.model
+    keep = {k: getattr(m, k).copy() for k in PERTURBED}
+    opt = (m.opt.timestep, m.opt.impratio, m.opt.disableflags)
+    try:
+        g, (shape, R, L) = rob.obj_geom, _object_dims(rob.design)
+        s = p.get("size_scale")
+        if s is not None:
+            Ra, La = R * s, L * s
+            if shape == "cylinder":
+                half = max(La / 2 - Ra, 0.5)
+                m.geom_size[g, :2] = [Ra * MM, half * MM]
+                m.geom_rbound[g] = (Ra + half) * MM
+                m.geom_aabb[g, 3:] = [Ra * MM, Ra * MM, (Ra + half) * MM]
+            elif shape == "sphere":
+                m.geom_size[g, 0] = Ra * MM
+                m.geom_rbound[g] = Ra * MM
+                m.geom_aabb[g, 3:] = Ra * MM
+            else:
+                m.geom_size[g] = [Ra * MM, La / 2 * MM, Ra * MM]
+                m.geom_rbound[g] = math.sqrt(2 * Ra * Ra + La * La / 4) * MM
+                m.geom_aabb[g, 3:] = m.geom_size[g]
+        if s is not None or "mass_g" in p:
+            mnom = rob.design.object.mass_g / 1000.0
+            ma = p.get("mass_g", rob.design.object.mass_g) / 1000.0
+            m.body_mass[rob.obj] = ma
+            m.body_inertia[rob.obj] = keep["body_inertia"][rob.obj] * (ma / mnom) * (s or 1.0) * (s or 1.0)
+        if "friction_scale" in p:
+            for gi in [g, *np.nonzero(m.geom_contype == B_JAW)[0]]:
+                m.geom_friction[gi, 0] = keep["geom_friction"][gi, 0] * p["friction_scale"]
+        if "grip_scale" in p and rob.g_act is not None:
+            m.actuator_forcerange[rob.g_act] *= p["grip_scale"]
+        if "torque_scale" in p:
+            for a in rob.aid:
+                m.actuator_forcerange[a] *= p["torque_scale"]
+                m.actuator_gainprm[a, 0] *= p["torque_scale"]
+                m.actuator_biasprm[a, 1] *= p["torque_scale"]
+        if len(rob.world_geoms) and any(k in p for k in ("mount_dx_mm", "mount_dy_mm", "mount_yaw_deg", "box_offsets_mm")):
+            yaw = -math.radians(p.get("mount_yaw_deg", 0.0))
+            c, sn = math.cos(yaw), math.sin(yaw)
+            Rz = np.array([[c, -sn, 0], [sn, c, 0], [0, 0, 1.0]])
+            shift = -np.array([p.get("mount_dx_mm", 0.0), p.get("mount_dy_mm", 0.0), 0.0]) * MM
+            offs = p.get("box_offsets_mm") or []
+            for k, gid in enumerate(rob.world_geoms):
+                o = offs[k] if k < len(offs) else (0.0, 0.0)
+                m.geom_pos[gid] = Rz @ keep["geom_pos"][gid] + shift + np.array([o[0], o[1], 0.0]) * MM
+                m.geom_quat[gid] = _qmul([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)], keep["geom_quat"][gid])
+            if not np.array_equal(m.geom_pos, keep["geom_pos"]) or not np.array_equal(m.geom_quat, keep["geom_quat"]):
+                # the compiled collision hierarchy still has the boxes where they were: without the midphase every pair
+                # is tested where the boxes are now (a moved box was otherwise passed through without a contact)
+                m.opt.disableflags |= int(rob._mj.mjtDisableBit.mjDSBL_MIDPHASE)
+        if "timestep" in p:
+            m.opt.timestep = float(p["timestep"])
+        if "impratio" in p:
+            m.opt.impratio = float(p["impratio"])
+        yield
+    finally:
+        for k, v in keep.items():
+            getattr(m, k)[:] = v
+        m.opt.timestep, m.opt.impratio, m.opt.disableflags = opt
 
 
 def _world_hits(rob: _Robot, d, t, hits: dict):
@@ -1680,13 +1850,14 @@ def _default_arc(rob, p0, p1, q0, ax0=None):
     return _arc(p0, p1, 0.3, 0.0, ax0)
 
 
-def _clear_arc(rob, p0, p1, q0, ax0=None):
+def _clear_arc(rob, p0, p1, q0, ax0=None, verify=None):
     """World mode: the first arc, in the usual order and then a wider family (pulled in 6-50 %, lifted 0-40 mm), that
     is reachable like the usual one and whose IK sweep, object in hand, stays CLEAR_MM from every obstacle box; with a
-    clear room that is the arc the plain table gets. When none is clear, the reachable one with the most clearance
-    (the simulation then reports the contact). This chooses among arcs; it is not a motion planner. rob.arc["usual"]
-    says whether the arc is the one the plain table gets (_default_arc's), so nobody is told it was changed for the room
-    when it wasn't."""
+    clear room that is the arc the plain table gets. `verify(fn)` (world mode's plan) then checks an arc that passed at
+    the carry's own 10 ms samples: one that comes closer there is not clear after all. When none is clear, the reachable
+    one with the most clearance (the path check then reports it). This chooses among arcs; it is not a motion planner.
+    rob.arc["usual"] says whether the arc is the one the plain table gets (_default_arc's), so nobody is told it was
+    changed for the room when it wasn't."""
     d = rob._mj.MjData(rob.model)
     g = rob.info.grip_contact
     best, tried, usual = None, 0, None
@@ -1705,6 +1876,8 @@ def _clear_arc(rob, p0, p1, q0, ax0=None):
             worst = min(worst, rob.clearance(d, with_object=True)[0])
             if worst < CLEAR_MM and best is not None and worst <= best[0]:
                 break                          # not clear, and no better than the fallback so far: next arc
+        if worst >= CLEAR_MM and verify is not None:
+            worst = min(worst, verify(fn))
         if worst >= CLEAR_MM:
             rob.arc = {"inward": inward, "bump_mm": bump, "min_clearance_mm": round(float(worst), 1), "tried": tried,
                        "clear": True, "usual": (inward, bump) == (usual or (0.3, 0.0))}
@@ -1721,29 +1894,60 @@ def _clear_arc(rob, p0, p1, q0, ax0=None):
     return best[3]
 
 
-def _joint_clearance(rob, d, q0, q1, g) -> float:
-    """World mode: the smallest clearance (mm) between the robot (gripper at g, no object in hand) and the room along
-    the joint-space move q0 -> q1, sampled about every 0.02 rad of the joint that turns most."""
-    q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
-    n = int(np.clip(np.ceil(np.abs(q1 - q0).max() / 0.02), 8, 160)) + 1
-    worst = math.inf
-    for u in np.linspace(0.0, 1.0, n):
-        rob.pose_carried(d, q0 + (q1 - q0) * u, g)
-        worst = min(worst, rob.clearance(d)[0])
-    return worst
+def _held(rob, g) -> float:
+    """The jaws' real opening for a commanded gripper value: told to close past the object (only ever while holding it),
+    they stop on it."""
+    c = rob.info.grip_contact
+    return c if (g - c) * (1.0 if rob.info.grip_open >= c else -1.0) < 0 else g
 
 
-def _arc_clearance(rob, d, at, e0, e1, q, g):
-    """World mode: (clearance mm, q at at(e1), reachable) for the hand following the carry arc (`at`: the arc by its
-    eased parameter) from e0 to e1, gripper at g and nothing in it (the arc itself was chosen with the object in hand)."""
-    worst, ok = math.inf, True
+def _along(rob, d, plan, i0=1, i1=None, stop=-math.inf):
+    """World mode: the smallest clearance (mm) between the robot (and the object while it is carried) and the boxes over
+    plan samples i0..i1-1, one every 10 ms as the simulation follows them: (mm, sample, robot geom, world geom); inf when
+    there are none. Stops once it is below `stop` (a candidate that can no longer beat the best one)."""
+    i1 = len(plan.t) if i1 is None else i1
+    best, cut, last = (math.inf, i0, None, None), 0.5, None
+    for k in range(i0, i1):
+        held, g = plan.ph[k] in CARRIED, _held(rob, plan.g[k])
+        if last is not None and held == last[0] and g == last[1] and np.array_equal(plan.q[k], last[2]):
+            continue                           # a hold: the same pose as the sample before
+        last = (held, g, plan.q[k])
+        rob.pose_carried(d, plan.q[k], g, held)
+        c, rg, wg = rob.clearance(d, with_object=held, distmax=cut)
+        if c < best[0]:
+            best, cut = (c, k, rg, wg), max(c * MM, 0.0)
+            if c < stop:
+                break
+    return best
+
+
+def _choose(rob, d, plan, cands):
+    """World mode: build each candidate move, (via, extra, build(branch) -> False to skip), on a branch of the plan,
+    check it every 10 ms and append the first that keeps CLEAR_MM, else the one with the most room (the earlier one on a
+    tie). Returns the record for rob.detours: {via, min_clearance_mm, clear, **extra}."""
+    best = None
+    for via, extra, build in cands:
+        b = plan.branch()
+        if build(b) is False:
+            continue
+        c = _along(rob, d, b, stop=-math.inf if best is None else best[0])[0]
+        if best is None or c > best[0]:
+            best = (c, via, extra, b)
+        if c >= CLEAR_MM:
+            break
+    c, via, extra, b = best
+    plan.extend(b)
+    return {"via": via, "min_clearance_mm": round(float(min(c, 500.0)), 1), "clear": bool(c >= CLEAR_MM), **extra}
+
+
+def _arc_q(rob, at, e0, e1, q):
+    """q at at(e1), following the arc (`at`: by its eased parameter) by IK from at(e0), and whether it stays in reach."""
+    ok = True
     for e in np.linspace(e0, e1, max(9, int(abs(e1 - e0) * 40) + 1)):
         p, ax = at(e)
         q, ep, er = rob.ik(p, ax, q, iters=60)
         ok = ok and ep < 0.5 and er < 5e-3
-        rob.pose_carried(d, q, g)
-        worst = min(worst, rob.clearance(d)[0])
-    return worst, q, ok
+    return q, ok
 
 
 def _arc_e_at(rob, p0, p1, q_rest):
@@ -1759,73 +1963,149 @@ def _arc_e_at(rob, p0, p1, q_rest):
     return float(e) if 0.02 < e < 0.98 else None
 
 
-def _clear_approach(rob, plan, above_pick, above_place, ax, q_above, s):
-    """World mode: from the rest pose to above the object. The joint move straight there when it keeps CLEAR_MM from
-    every box; else a short move to where the carry arc passes the rest pose's direction, then along the arc (chosen to
-    keep clear of the boxes) to above the object. The one with the most room when neither is clear: the simulation
-    then reports the contact. Records rob.detours["approach"]."""
-    d, g, q0 = rob._mj.MjData(rob.model), rob.info.grip_open, plan.qe
-    c = _joint_clearance(rob, d, q0, q_above, g)
-    best = (c, "direct", None, None)
-    e_rest = _arc_e_at(rob, above_pick, above_place, q0) if c < CLEAR_MM else None
-    if e_rest is not None:
-        arc = rob.arc
-        at = _feasible_arc(rob, above_pick, above_place, q_above, ax).at   # the carry arc, as chosen after the lift
-        rob.arc = arc
-        c_arc, q_mid, ok = _arc_clearance(rob, d, at, 0.0, e_rest, q_above, g)
-        c2 = min(c_arc, _joint_clearance(rob, d, q0, q_mid, g))
-        if ok and c2 > c:
-            best = (c2, "carry path", at, q_mid)
-    c, via, at, q_mid = best
-    rob.detours["approach"] = {"via": via, "min_clearance_mm": round(float(min(c, 500.0)), 1), "clear": bool(c >= CLEAR_MM)}
-    if at is None:
-        plan.joint(q_above, NOMINAL["to_hover"] * s, "approach")
-        return
-    plan.joint(q_mid, 0.7 * NOMINAL["to_hover"] * s, "approach")
-    plan.cart(lambda v: at(e_rest * (1.0 - _minjerk(v))), max(0.6, NOMINAL["move"] * e_rest) * s, "approach")
+def _clear_approach(rob, d, plan, above_pick, above_place, ax, q_above, s, arc, hover0):
+    """World mode: from the rest pose to above the object, checked every 10 ms. The joint move straight there when it
+    keeps CLEAR_MM from every box; else a short move to where the carry arc passes the rest pose's direction, then
+    along the arc (chosen to keep clear of the boxes) to above the object; else from above: straight up from the rest
+    pose to 40, 80 or 120 mm over the hover height, across at that height and straight down to above the object, the
+    empty hand free to tilt on the way and vertical again at the bottom (a vertical hand that high is out of reach for
+    most arms). The one with the most room when none is clear (the path check then reports it). Records
+    rob.detours["approach"]."""
+    q0 = plan.qe
+    p_rest = rob.fk(q0)[0]
+
+    def above(dh, top_rest, top_pick):
+        def go(b):
+            b.cart(lambda u: (_line(p_rest, top_rest)(u), None),
+                   max(0.4, NOMINAL["descend"] * s * (top_rest[2] - p_rest[2]) / hover0), "approach", free=1.0)
+            b.cart(lambda u: (_line(top_rest, top_pick)(u), None), NOMINAL["to_hover"] * s, "approach", free=1.0)
+            b.cart(lambda u: (_line(top_pick, above_pick)(u), ax), max(0.4, NOMINAL["descend"] * s * dh / hover0),
+                   "approach", free=lambda u: 1.0 - u)
+        return go
+
+    def cands():
+        yield "direct", {}, lambda b: b.joint(q_above, NOMINAL["to_hover"] * s, "approach")
+        e_rest = _arc_e_at(rob, above_pick, above_place, q0)
+        if e_rest is not None:
+            q_mid, ok = _arc_q(rob, arc.at, 0.0, e_rest, q_above)
+            if ok:
+                yield "carry path", {}, lambda b: (
+                    b.joint(q_mid, 0.7 * NOMINAL["to_hover"] * s, "approach"),
+                    b.cart(lambda v: arc.at(e_rest * (1.0 - _minjerk(v))), max(0.6, NOMINAL["move"] * e_rest) * s, "approach"))
+        for dh in LIFTS_MM:
+            top_pick = above_pick + [0, 0, dh]
+            top_rest = np.r_[p_rest[:2], max(p_rest[2], top_pick[2])]
+            q_t, e_t, _ = rob.ik(top_rest, None, q0, iters=100, free=1.0)
+            if e_t > 0.5 or rob.ik(top_pick, None, q_t, iters=100, free=1.0)[1] > 0.5:
+                break
+            yield "from above", {"rise_mm": dh}, above(dh, top_rest, top_pick)
+    rob.detours["approach"] = _choose(rob, d, plan, cands())
 
 
-def _clear_retreat(rob, plan, fn, above_pick, above_place, s):
-    """World mode: from above the place spot back to the rest pose. The joint move straight there when it keeps
-    CLEAR_MM from every box; else the same with the hand first closed to the object's width; else (hand closed, as it
-    was on the way over) back along the carry arc `fn` to where it passes the rest pose's direction, then to the rest
-    pose; else back along the whole arc, then the way the approach came. The one with the most room when none is
-    clear: the simulation then reports the contact. The hand opens again at rest. Records rob.detours["retreat"]."""
-    d, q0, q_rest = rob._mj.MjData(rob.model), plan.qe, rob.q_ready()
-    g_open, g_hold = rob.info.grip_open, rob.info.grip_contact
-    c = _joint_clearance(rob, d, q0, q_rest, g_open)
-    best = (c, "direct", None, g_open)
-    if c < CLEAR_MM:
-        c2 = _joint_clearance(rob, d, q0, q_rest, g_hold)
-        if c2 > best[0]:
-            best = (c2, "direct, hand closed", None, g_hold)
-        if c2 < CLEAR_MM:
-            e_rest = _arc_e_at(rob, above_pick, above_place, q_rest)
-            for e_end in [e for e in (e_rest, 0.0) if e is not None]:
-                c_arc, q_end, ok = _arc_clearance(rob, d, fn.at, 1.0, e_end, q0, g_hold)
-                if not ok:
-                    continue
-                c3 = min(c_arc, _joint_clearance(rob, d, q_end, q_rest, g_hold))
-                if c3 > best[0]:
-                    best = (c3, "carry path" if e_end > 0 else "carry path and approach", e_end, g_hold)
-                if c3 >= CLEAR_MM:
-                    break
-    c, via, e_end, g = best
-    rob.detours["retreat"] = {"via": via, "min_clearance_mm": round(float(min(c, 500.0)), 1), "clear": bool(c >= CLEAR_MM)}
+def _clear_release(rob, d, plan, place, above_place, ax, s):
+    """World mode: let go of the object and rise straight back to the hover point, checked every 10 ms: the jaws open
+    as usual, else (a box beside the place spot) only OPEN_LESS_MM past the object. Records rob.detours["release"];
+    returns the time the object was released."""
+    info = rob.info
+    _, opening = _grip_times(rob)
+    sgn = 1.0 if info.grip_open >= info.grip_contact else -1.0
+    less = info.grip_contact + sgn * OPEN_LESS_MM * (1.0 if info.grip_kind == "prismatic" else 1.0 / max(info.lever_mm, 1.0))
+    t_rel = {}
+
+    def build(g, via):
+        def go(b):
+            b.move("release")
+            b.hold(0.1, "release", grip=g)
+            b.hold(0.5 * opening, "release")
+            b.cart(lambda u: (_line(place + [0, 0, 1.5], place + [0, 0, 5.0])(u), ax), 0.5 * opening + 0.1, "release")
+            t_rel[via] = b.T
+            b.mark("released")
+            b.move("rise")
+            b.cart(lambda u: (_line(place + [0, 0, 5.0], above_place)(u), ax), 0.9 * s, "retreat")
+        return go
+
+    def cands():
+        yield "full", {}, build(info.grip_open, "full")
+        if info.grip_kind != "none" and (info.grip_open - less) * sgn > 0.5:
+            yield "opened less", {"open_mm": OPEN_LESS_MM}, build(less, "opened less")
+    rob.detours["release"] = _choose(rob, d, plan, cands())
+    return t_rel[rob.detours["release"]["via"]]
+
+
+def _clear_retreat(rob, d, plan, fn, above_pick, above_place, s, hover0):
+    """World mode: from above the place spot back to the rest pose, checked every 10 ms. The joint move straight there
+    when it keeps CLEAR_MM from every box; else the same with the hand first closed to the object's width; else (hand
+    closed, as it was on the way over) back along the carry arc `fn` to where it passes the rest pose's direction, then
+    to the rest pose; else back along the whole arc, then the way the approach came; else straight up 40, 80 or 120 mm
+    first, then to the rest pose. The one with the most room when none is clear (the path check then reports it). The
+    hand opens fully again at rest. The rise keeps the hand's position on the vertical but not its orientation (it is
+    empty), so arms with no top-down room above the place spot can still rise. Records rob.detours["retreat"]."""
+    q0, q_rest = plan.qe, rob.q_ready()
+    g_open, g_hold, g_now = rob.info.grip_open, rob.info.grip_contact, plan.g[-1]
     closing, opening = _grip_times(rob)
-    if g != g_open:
-        plan.hold(closing, "retreat", grip=g)
-    if e_end is not None:                  # back along the arc at the speed it was carried over
-        span = 1.0 - e_end
-        plan.cart(lambda v: fn.at(1.0 - span * _minjerk(v)), max(0.6, NOMINAL["move"] * span) * s, "retreat")
-    plan.joint(q_rest, 1.2 * s, "retreat")
-    if g != g_open:
-        plan.hold(opening, "retreat", grip=g_open)
+
+    def build(g, e_end=None, up=0.0):
+        def go(b):
+            if g != g_now:
+                b.hold(closing, "retreat", grip=g)
+            if up:                             # an empty hand: it may tilt on the way up
+                b.cart(lambda u: (_line(above_place, above_place + [0, 0, up])(u), None),
+                       max(0.4, NOMINAL["descend"] * s * up / hover0), "retreat", free=1.0)
+            if e_end is not None:              # back along the arc at the speed it was carried over
+                span = 1.0 - e_end
+                b.cart(lambda v: fn.at(1.0 - span * _minjerk(v)), max(0.6, NOMINAL["move"] * span) * s, "retreat")
+            b.joint(q_rest, 1.2 * s, "retreat")
+            if g != g_open:
+                b.hold(opening, "retreat", grip=g_open)
+        return go
+
+    def cands():
+        yield "direct", {}, build(g_now)
+        yield "direct, hand closed", {}, build(g_hold)
+        e_rest = _arc_e_at(rob, above_pick, above_place, q_rest)
+        for e_end in [e for e in (e_rest, 0.0) if e is not None]:
+            if _arc_q(rob, fn.at, 1.0, e_end, q0)[1]:
+                yield "carry path" if e_end > 0 else "carry path and approach", {}, build(g_hold, e_end)
+        for dh in LIFTS_MM:
+            if rob.ik(above_place + [0, 0, dh], None, q0, iters=100, free=1.0)[1] > 0.5:
+                break
+            yield "straight up first", {"rise_mm": dh}, build(g_hold, up=dh)
+    rob.detours["retreat"] = _choose(rob, d, plan, cands())
 
 
-def _world_metrics(rob, design, run) -> dict:
-    """World mode, pick_place: contacts recorded during the simulation, and the smallest clearance between the
-    robot (and the object while carried) and the room over the simulated frames, with where it happens."""
+def _move_at(plan, t) -> str:
+    """The move (MOVES) the plan is in at time t."""
+    k = min(int(t / PLAN_DT + 1e-9), len(plan.t) - 1)
+    name = plan.moves[0][0] if plan.moves else ""
+    for nm, i in plan.moves:
+        if i < k:
+            name = nm
+    return name
+
+
+def _check_path(rob, plan):
+    """World mode: every move of the finished plan checked against the boxes every 10 ms (the object with the hand while
+    it is carried): rob.path, one {move, phase, min_clearance_mm, clear, at?} per move, and rob.blocked, the first move
+    whose planned path still passes into a box, which fails the simulation however the run goes (no alternative kept
+    clear of it)."""
+    d = rob._mj.MjData(rob.model)
+    ends = [i for _, i in plan.moves[1:]] + [len(plan.t)]
+    rob.path, rob.blocked = [], None
+    for (name, i0), i1 in zip(plan.moves, ends):
+        c, k, rg, wg = _along(rob, d, plan, i0, i1)
+        e = {"move": name, "phase": plan.ph[min(i0 + 1, i1 - 1)], "min_clearance_mm": round(float(min(c, 500.0)), 1),
+             "clear": bool(c >= CLEAR_MM)}
+        if rg is not None and c < 500.0:
+            e["at"] = {"t": round(float(plan.t[k]), 2), "link": rob.where(rg), "obstacle": rob.world_names.get(wg, "")}
+        rob.path.append(e)
+        if c < 0.0 and rob.blocked is None:
+            rob.blocked = e
+
+
+def _world_metrics(rob, design, run, plan) -> dict:
+    """World mode, pick_place: contacts recorded during the simulation (each with the move and plan phase it happened
+    in), the smallest clearance between the robot (and the object while carried) and the room over the simulated frames,
+    with where it happens, and the plan's own check of every move (path, blocked)."""
     W = rob.opts.world
     d = rob._mj.MjData(rob.model)
     best = (math.inf, None, None, 0.0)
@@ -1842,10 +2122,15 @@ def _world_metrics(rob, design, run) -> dict:
         if mc < best[0]:
             best = (mc, rg, wg, f["t"])
     hits = run.stats.get("world_contacts") or []
+    for h in hits:
+        h["move"] = _move_at(plan, h["t"])
+        h["phase"] = plan.ph[min(int(h["t"] / PLAN_DT + 1e-9), len(plan.ph) - 1)]
     mc = round(float(best[0]), 1) if math.isfinite(best[0]) else None
     out = {"world": W.get("id", ""), "world_sha": W.get("sha", ""), "world_contacts": hits, "min_clearance_mm": mc,
-           "clearance_ok": bool(not hits and mc is not None and mc >= CLEAR_MM), "arc": rob.arc,
-           "detours": dict(rob.detours)}
+           "clearance_ok": bool(not hits and mc is not None and mc >= CLEAR_MM and rob.blocked is None), "arc": rob.arc,
+           "detours": dict(rob.detours), "path": list(rob.path)}
+    if rob.blocked is not None:
+        out["blocked"] = dict(rob.blocked)
     if best[1] is not None:
         out["min_clearance_at"] = {"t": round(float(best[3]), 2), "link": rob.where(best[1]),
                                    "obstacle": rob.world_names.get(best[2], "")}
@@ -1869,6 +2154,7 @@ def _grasp_sequence(rob, plan, pick, s, hover):
     """approach (descend open), grasp, lift. Returns the q at the grasp."""
     ax = _pick_axis(rob, pick)
     above = pick + [0, 0, hover]
+    plan.move("descent")
     plan.cart(lambda u: (_line(above, pick)(u), ax), NOMINAL["descend"] * s, "approach")
     plan.mark("at grasp height")
     q_grasp = plan.qe.copy()
@@ -1878,65 +2164,112 @@ def _grasp_sequence(rob, plan, pick, s, hover):
     k = 1.0 if info.grip_kind == "prismatic" else 1.0 / max(info.lever_mm, 1.0)
     t_touch = t_close + max(abs(info.grip_open - info.grip_contact) - GRIP_SLOW_MM * k, 0.0) / info.grip_speed \
         + GRIP_SLOW_MM * k / (0.25 * info.grip_speed)
+    plan.move("grasp")
     plan.hold(0.15, "grasp", grip=info.grip_close)
     plan.hold(closing + 0.35, "grasp")
     plan.mark("contact", t_touch)
     plan.mark("{grip}", t_close + closing)
+    plan.move("lift")
     plan.cart(lambda u: (_line(pick, above)(u), ax), NOMINAL["lift"] * s, "lift")
     return q_grasp
 
 
-def _pick_place(rob: _Robot, design, fast=False):
-    info = rob.info
+def _pick_place(rob: _Robot, design, fast=False, perturb=None):
+    plan, at = _plan_pick_place(rob, design, fast)
+    with _perturbed(rob, perturb):
+        run, metrics = _run_pick_place(rob, design, plan, at, perturb)
+    return plan, run, metrics
+
+
+def _plan_pick_place(rob: _Robot, design, fast=False):
+    """The pick-and-place plan, always for the nominal design (a robustness study plans once and runs it many times):
+    (plan, at), `at` holding the targets and times the run and its metrics need. World mode checks the finished plan
+    every 10 ms (rob.path, rob.blocked)."""
     s = _cycle_scale(rob, design)
     pick, place = _targets(rob, design)
     ax_pick = _pick_axis(rob, pick)
     a0, a1 = _arc_angles(pick, place)
     ax_place = _rotz(ax_pick, a1 - a0)               # the object turns with the base on the way over
     hover = min(_hover_mm(rob, pick, ax_pick), _hover_mm(rob, place, ax_place))
+    plan, at = _plan_at(rob, design, fast, s, pick, place, ax_pick, ax_place, hover)
+    if len(rob.world_geoms):
+        _check_path(rob, plan)
+    return plan, at
+
+
+def _plan_at(rob, design, fast, s, pick, place, ax_pick, ax_place, hover):
+    info = rob.info
+    world = len(rob.world_geoms) > 0
     q_hover, e1, _ = rob.ik_robust(pick + [0, 0, hover], ax_pick)
     _, e2, _ = rob.ik_robust(place + [0, 0, 1.5], ax_place, seeds=[q_hover])
     plan = _Plan(rob, rob.q_ready(), info.grip_open, "approach")
+    plan.move("approach")
     plan.hold(0.25, "approach")
     above_pick, above_place = pick + [0, 0, hover], place + [0, 0, hover]
-    if len(rob.world_geoms):                          # world mode: around the boxes when the direct move isn't clear
-        _clear_approach(rob, plan, above_pick, above_place, ax_pick, q_hover, s)
+    if world:                                         # world mode: around the boxes when the direct move isn't clear
+        d = rob._mj.MjData(rob.model)
+
+        def verify(fn):                               # the carry at its own 10 ms samples, object in hand
+            b = _Plan(rob, q_hover, info.grip_close, "move")
+            b.cart(fn, NOMINAL["move"] * s, "move")
+            return _along(rob, d, b)[0]
+        arc = _clear_arc(rob, above_pick, above_place, q_hover, ax_pick, verify)
+        _clear_approach(rob, d, plan, above_pick, above_place, ax_pick, q_hover, s, arc, hover)
     else:
         plan.joint(q_hover, NOMINAL["to_hover"] * s, "approach")
     plan.mark("above the object")
     _grasp_sequence(rob, plan, pick, s, hover)
     plan.mark("lifted")
     t_move = plan.T
-    arc = _feasible_arc(rob, above_pick, above_place, plan.qe, ax_pick)
+    if not world:
+        arc = _feasible_arc(rob, above_pick, above_place, plan.qe, ax_pick)
+    plan.move("carry")
     plan.cart(arc, NOMINAL["move"] * s, "move")
+    plan.move("set-down")
     plan.cart(lambda u: (_line(above_place, place + [0, 0, 1.5])(u), ax_place), NOMINAL["place"] * s, "place")
     plan.mark("set down")
     t_release = plan.T
-    _, opening = _grip_times(rob)
-    plan.hold(0.1, "release", grip=info.grip_open)
-    plan.hold(0.5 * opening, "release")
-    plan.cart(lambda u: (_line(place + [0, 0, 1.5], place + [0, 0, 5.0])(u), ax_place), 0.5 * opening + 0.1, "release")
-    t_released = plan.T
-    plan.mark("released")
-    plan.cart(lambda u: (_line(place + [0, 0, 5.0], above_place)(u), ax_place), 0.9 * s, "retreat")
-    if not fast and len(rob.world_geoms):
-        _clear_retreat(rob, plan, arc, above_pick, above_place, s)
+    if world:
+        t_released = _clear_release(rob, d, plan, place, above_place, ax_place, s)
+    else:
+        _, opening = _grip_times(rob)
+        plan.move("release")
+        plan.hold(0.1, "release", grip=info.grip_open)
+        plan.hold(0.5 * opening, "release")
+        plan.cart(lambda u: (_line(place + [0, 0, 1.5], place + [0, 0, 5.0])(u), ax_place), 0.5 * opening + 0.1, "release")
+        t_released = plan.T
+        plan.mark("released")
+        plan.move("rise")
+        plan.cart(lambda u: (_line(place + [0, 0, 5.0], above_place)(u), ax_place), 0.9 * s, "retreat")
+    if not fast:
+        plan.move("return")
+    if not fast and world:
+        _clear_retreat(rob, d, plan, arc, above_pick, above_place, s, hover)
     elif not fast:
         plan.joint(rob.q_ready(), 1.2 * s, "retreat")
     plan.hold(0.3, "retreat")
+    return plan, {"pick": pick, "place": place, "e1": e1, "e2": e2, "hover": hover, "t_move": t_move,
+                  "t_release": t_release, "t_released": t_released}
 
+
+def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
+    """Simulate a pick-and-place plan and measure it: (run, metrics). `perturb`: a robustness trial (_simulate; the
+    model changes come from _perturbed around this call); `on_step(t, data, phase)` also sees every step."""
+    info = rob.info
+    pick, place, e1, e2 = at["pick"], at["place"], at["e1"], at["e2"]
+    t_move, t_release, t_released = at["t_move"], at["t_release"], at["t_released"]
     # monitor in-hand slip between the end of the grasp and the release
     st = {"rel0": None, "slip": 0.0, "grip": [], "carry": False}
 
-    def on_step(t, d, ph):
+    def monitor(t, d, ph):
         if ph in ("lift", "move", "place") and t < t_release:
             rel = _rel_obj(rob, d)
             if st["rel0"] is None:
                 st["rel0"] = rel
             st["slip"] = max(st["slip"], float(np.linalg.norm(rel - st["rel0"])))
-        return True
+        return True if on_step is None else on_step(t, d, ph)
 
-    run = _simulate(rob, plan, obj_xy=pick[:2], on_step=on_step)
+    run = _simulate(rob, plan, obj_xy=pick[:2], on_step=monitor, perturb=perturb)
     _label_grip(plan, run)
     fr = run.frames
     carry = [f["grip_n"] for f in fr if f["phase"] in ("lift", "move")]
@@ -1975,15 +2308,23 @@ def _pick_place(rob: _Robot, design, fast=False):
         W = rob.opts.world
         metrics.update({"world": W.get("id", ""), "world_sha": W.get("sha", ""), "world_contacts": [], "clearance_ok": True})
     if len(rob.world_geoms):
-        metrics.update(_world_metrics(rob, design, run))
+        metrics.update(_world_metrics(rob, design, run, plan))
+        b = rob.blocked
         if metrics["world_contacts"]:
             h = metrics["world_contacts"][0]
             metrics["success"] = False
             metrics["failure"] = (f"the {h['link'].replace('_', ' ')} touches {h['obstacle']} in the arm's starting pose"
                                   if h["t"] < 0.05 else
-                                  f"the {h['link'].replace('_', ' ')} hits {h['obstacle']} at {h['t']:.1f} s")
+                                  f"the {h['link'].replace('_', ' ')} hits {h['obstacle']} during "
+                                  f"{MOVES.get(h['move'], 'the run')} at {h['t']:.1f} s")
             plan.mark(f"hits {h['obstacle']}", h["t"])
-    return plan, run, metrics
+        elif b is not None:                # the planned path itself passes into a box: fails however the run went
+            metrics["success"] = False
+            metrics["failure"] = (f"the {b['at']['link'].replace('_', ' ')} would pass {-b['min_clearance_mm']:.1f} mm "
+                                  f"into {b['at']['obstacle']} during {MOVES.get(b['move'], 'the run')} at "
+                                  f"{b['at']['t']:.1f} s, and no clear way around it was found")
+            plan.mark(f"path into {b['at']['obstacle']}", b["at"]["t"])
+    return run, metrics
 
 
 def _sized_reach(rob, design):
@@ -2405,9 +2746,11 @@ def _scenario_doc(rob, design, name, plan, run, metrics, points=None) -> dict:
     return out
 
 
-def _run_one(rob, design, name, fast):
+def _run_one(rob, design, name, fast, perturb=None):
+    if perturb and name != "pick_place":
+        raise ValueError("perturb: robustness trials run the pick_place scenario")
     if name == "pick_place":
-        plan, run, metrics = _pick_place(rob, design, fast)
+        plan, run, metrics = _pick_place(rob, design, fast, perturb)
         return _scenario_doc(rob, design, name, plan, run, metrics)
     if name == "payload_sweep":
         plan, run, metrics = _payload_sweep(rob, design, fast)
@@ -2435,12 +2778,14 @@ def _write(outdir, name, doc):
     return path
 
 
-def run(asm, design, scenario: str, outdir: str | None = None, fast: bool = False, **opts) -> dict:
+def run(asm, design, scenario: str, outdir: str | None = None, fast: bool = False, perturb: dict | None = None,
+        **opts) -> dict:
     """Run one scenario; writes ``outdir/sim_<scenario>.json`` and ``outdir/robot.xml`` when outdir is given.
-    Returns the scenario document (same content as the JSON)."""
+    Returns the scenario document (same content as the JSON). ``perturb``: one robustness trial of pick_place (see
+    _perturb_start); the plan stays the nominal one."""
     rob = _make_robot(asm, design, fast, opts)
     t0 = time.time()
-    doc = _run_one(rob, design, scenario, fast)
+    doc = _run_one(rob, design, scenario, fast, perturb)
     doc["info"]["wall_s"] = round(time.time() - t0, 2)
     if outdir:
         os.makedirs(outdir, exist_ok=True)

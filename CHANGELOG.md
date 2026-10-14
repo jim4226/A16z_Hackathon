@@ -61,6 +61,47 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   move from the rest pose would sweep through a box, the approach and the return to rest follow the carry path too.
   It is not a motion planner. Needs MuJoCo 3.1.6 or newer.
   `morph world <project> --starter desk` (or `--off`) does the same from a terminal; [docs/WORLD.md](docs/WORLD.md).
+- **Robustness studies** (beta): one nominal simulation says a
+  design works once, exactly as drawn. A study runs a revision's own pick-and-place plan hundreds of times in worlds
+  drawn from the project's tolerances (the object off its mark, turned, its size and mass, pad friction, grip-force
+  calibration, servo torque, deadband, encoder noise, the host's set-point rate and, in World mode, the mount and every
+  box; each range says where it comes from), labels every run (placed, jaws stayed shut, dragged, missed grasp, dropped,
+  over-force, hit the room in a named phase) and reports the success rate with a Wilson 95 % interval, the rule that
+  best isolates each failure group, and whether that failure holds at half the timestep and with softer friction
+  ("model-sensitive: test it on the real robot"). The default egg-picker succeeds in 140 of 200 runs (63-76 %); 58 of
+  the 60 failures are the jaws staying shut at release (half the runs with the egg turned 3-9 degrees end that way), and
+  that failure changes with the solver's settings. Runs are reproducible from the seed on any number of worker
+  processes, saved as they finish and resumable (Ctrl+C keeps them): `morph study egg-picker [--runs N] [--stress]`.
+  In the Studio, the **Robustness** card under the Simulation tab's pick-and-place result runs a study of the revision
+  on screen (50, 200 or 1,000 runs, or a stress test with every range doubled), shows its progress live, stops it on
+  request within seconds (the finished runs stay, and it carries on later), says what the result means and what it
+  doesn't, replays a failing run in the 3D view, and lists every tolerance with where its range comes from. Editors
+  start studies and change tolerances (a change marks older studies outdated); every member of a team reads them.
+  Studies run on the Studio's computer, so `morph studio --remote` on a bigger machine is how a team brings its own
+  compute; one study at a time per project, at most 10,000 runs from the Studio. Where no study exists the card says
+  so: one nominal run tests nothing around it. Simulation, for the tolerances shown; not a field failure rate.
+- **World mode checks the whole path** (beta): every move of the pick and place (the approach, the descent to the
+  object, the grasp, the lift, the carry, the set-down, the release, the rise and the way back to rest) is checked
+  against the grey boxes every 10 ms, with the object while it is carried. A move that comes within 10 mm tries its
+  alternatives (along the carry path, from higher up, the release with the hand opened only 4 mm past the object, the
+  way back straight up first) and keeps the first that stays clear; when none does, the simulation fails and says
+  which move and which box ("the jaw left hits Carton wall during the set-down at 5.0 s"). The World panel's status
+  line says which way the arm went. Simulations without a room are unchanged.
+- **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path
+  against the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can
+  be noisy or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot
+  becomes a grey box, and the next simulation plans around it. A generated room of a million triangles is checked in 7
+  to 12 seconds.
+- Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
+  the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
+  from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the
+  mount 4.5 to 10 mm off.
+- Robustness studies keep their runs when the Studio stops: after a crash or a closed window the study reads "Stopped
+  when the Studio stopped after N of M runs" at once, with the runs it saved, and *Carry on* finishes it with the same
+  runs as if it had never stopped. A revision that can't be studied (its simulation failed, a preview-only build), and
+  a study whose revision was replaced or whose Morph code changed since, are refused before anything starts, with the
+  reason. A failure group that holds every run gets no rule, and successful runs that fail under other solver settings
+  are flagged as well: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
 - `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
   a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
   (whether ffmpeg was found), Teams and World mode.
@@ -150,6 +191,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 
 ### Fixes
 
+- World mode: the AI review no longer brings back the move arrows of a box you had deselected (they floated where the
+  box had been); a box still selected keeps them.
 - A failed stage stays failed instead of being reused as feasible by a later edit; required output files are
   checked; fallback CAD is labelled preview-only.
 - SO-101 gripper firmware uses radians.

@@ -45,6 +45,10 @@ ROUTES = {
     # world mode (F5)
     ("GET", "/api/world"): "viewer", ("POST", "/api/world"): "editor", ("PUT", "/api/world/upload"): "editor",
     ("POST", "/api/world/obstacles/auto"): "editor", ("POST", "/api/world/inspect"): "editor",
+    # robustness studies (B2): viewers read results and replay runs; editors start, stop and set tolerances
+    ("GET", "/api/study"): "viewer", ("POST", "/api/study"): "editor", ("POST", "/api/study/cancel"): "editor",
+    ("POST", "/api/study/resume"): "editor", ("GET", "/api/study/tolerances"): "viewer",
+    ("POST", "/api/study/tolerances"): "editor", ("GET", "/api/study/replay"): "viewer",
     # teams (F4)
     ("POST", "/api/team/join"): PUBLIC,
     ("GET", "/api/me"): "viewer", ("POST", "/api/me"): "viewer", ("POST", "/api/me/link"): "viewer",

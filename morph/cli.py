@@ -620,6 +620,68 @@ def cmd_world(a) -> int:
     return 0 if pp.get("success") else 1
 
 
+def cmd_study(a) -> int:
+    """`morph study NAME [--rev rNNN] [--runs N] [--workers N] [--stress] [--seed S]`: a robustness study (beta) of a
+    revision's pick and place, run here and printed as text. Ctrl+C stops it and keeps the finished runs; the same
+    command again carries on from them (a larger --runs deepens a finished study)."""
+    import threading
+
+    from .services import robust
+
+    p = _robot_project(a.name)
+    cores = robust.cores()
+    if a.workers is not None and not 1 <= a.workers <= cores:
+        print(f"{a.name}: use 1 to {cores} worker processes (this computer has {cores} CPU core{'s' if cores != 1 else ''}).",
+              file=sys.stderr)
+        return 1
+    cancel, out, last = threading.Event(), {}, {"t": 0.0, "phase": None}
+
+    def progress(ev):
+        now = time.time()
+        if ev["phase"] != last["phase"] or now - last["t"] >= 15 or ev["status"] in ("done", "cancelled"):
+            last.update(t=now, phase=ev["phase"])
+            rate = f", {_pct(ev['p'])} succeed so far" if ev.get("p") is not None else ""
+            eta = f", about {ev['eta_s']:.0f} s left" if ev.get("eta_s") else ""
+            what = {"prepare": "rebuilding the robot and its plan", "runs": "runs", "checks": "solver checks",
+                    "done": "done"}.get(ev["phase"], ev["phase"])
+            print(f"  {ev['elapsed_s']:6.1f} s  {what}: {ev['done']} of {ev['n']}{rate}{eta}", flush=True)
+
+    def work():
+        try:
+            out["doc"] = robust.run_study(p.root, a.rev, runs=a.runs, seed=a.seed, stress=a.stress, workers=a.workers,
+                                          timestep=a.timestep / 1000.0, checks=not a.no_checks, cancel=cancel,
+                                          progress=progress)
+        except robust.StudyError as exc:
+            out["error"] = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            out["error"] = f"{exc.__class__.__name__}: {exc}"
+
+    n = a.workers or robust.default_workers()
+    print(f"{a.name}: robustness study (beta), {a.runs} randomized run{'s' if a.runs != 1 else ''} on {n} worker "
+          f"process{'es' if n != 1 else ''}. "
+          "Ctrl+C stops it and keeps the finished runs.")
+    t = threading.Thread(target=work, daemon=True, name="morph-study")
+    t.start()
+    try:
+        while t.is_alive():
+            t.join(0.2)
+    except KeyboardInterrupt:
+        print("Stopping; finished runs are kept (run the same command again to carry on).", flush=True)
+        cancel.set()
+        t.join()
+    if "error" in out:
+        print(f"{a.name}: {out['error']}", file=sys.stderr)
+        return 1
+    doc = out["doc"]
+    print(robust.report(doc))
+    print(f"Saved in {os.path.join(p.root, robust.STUDIES, doc['id'])}")
+    return 0 if doc["status"] == "done" else 130
+
+
+def _pct(v) -> str:
+    return f"{v * 100:.1f}%"
+
+
 def cmd_source(a):
     p = _project(a.name)
     rev = a.rev or p.latest()
@@ -1151,6 +1213,19 @@ def main(argv=None) -> int:
     s.add_argument("--trials", type=int, default=4)
     s.add_argument("--fast", action="store_true", help="shorter simulations")
     s.set_defaults(fn=cmd_world)
+
+    s = sub.add_parser("study", help="robustness study (beta): a revision's pick and place, many times, in randomized "
+                                     "worlds within the project's tolerances")
+    s.add_argument("name")
+    s.add_argument("--rev", help="the revision (default: the newest)")
+    s.add_argument("--runs", type=int, default=200, help="randomized runs (default 200)")
+    s.add_argument("--workers", type=int, help="worker processes (default: MORPH_STUDY_WORKERS, else cores minus one)")
+    s.add_argument("--stress", action="store_true", help="double every tolerance range")
+    s.add_argument("--seed", type=int, default=1, help="the same seed gives the same runs (default 1)")
+    s.add_argument("--timestep", type=float, default=1.0, help="simulation step in ms (default 1, as the Studio)")
+    s.add_argument("--no-checks", action="store_true",
+                   help="skip re-running each failure group at half the timestep and with impratio=1")
+    s.set_defaults(fn=cmd_study)
 
     s = sub.add_parser("subq", help="SubQ Snap: triage one request with your SUBQ_API_KEY and print the answers")
     s.add_argument("text")

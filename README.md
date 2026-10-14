@@ -189,13 +189,40 @@ Roles, disciplines, reviews, releases and the security notes: [docs/TEAMS.md](do
 workbench, or your own room scan as a `.glb`. Place the robot on a surface, mark walls and furniture as grey boxes
 and where people walk or sit, and save: the pick and place is simulated again in that room (no other stage reruns),
 and **Check placement** gives a measured verdict. The simulation sees only the grey boxes, and it is not a motion
-planner.
+planner. With a room scan, the check also measures the simulated path against the scan itself (a warning, never the
+verdict), and **Add box here** turns a near miss into a grey box the next simulation keeps clear of.
 
 ```bash
 morph world egg-picker --starter desk     # or --off for the plain table again
 ```
 
 Limits, the optional AI review and what it sends: [docs/WORLD.md](docs/WORLD.md).
+
+### Robustness studies (beta)
+
+One nominal run says a design works once, exactly as drawn. `morph study` runs a revision's pick and place hundreds of
+times in randomized worlds within the project's tolerances (the object off its mark and turned, its size and mass,
+friction, grip-force calibration, servo torque and deadband, encoder noise, the set-point rate and, in World mode,
+the mount and every box) and reports how often it succeeds with a 95 % interval, what the failures have in common, and
+whether they hold up under other simulator settings.
+
+```bash
+morph study egg-picker                 # 200 runs and the solver checks: about 2 minutes on 4 cores
+morph study egg-picker --runs 1000     # deeper: the first 200 are kept
+morph study egg-picker --stress        # every tolerance range doubled
+```
+
+Results are saved in the project (`.studies/`) as each run finishes, so Ctrl+C keeps them and the same command
+carries on. It is simulation, for the tolerances shown; not a field failure rate.
+
+In the Studio the same study is the **Robustness** card under the Simulation tab's pick-and-place result: run one for
+the revision on screen, follow it live, cancel it (the finished runs stay), see each failure group with the condition
+that best separates it and whether it holds under other solver settings, replay a failing run in the 3D view, and edit
+the tolerances (each shows where its range comes from). Studies run on the Studio's computer: start the Studio with
+`--remote` on a machine with more cores and everyone's browser uses them.
+
+How to read a study, what "model-sensitive" means, what happens when the Studio stops in the middle of one, and its
+limits: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
 
 ### SubQ Snap (optional)
 

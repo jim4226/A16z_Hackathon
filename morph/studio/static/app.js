@@ -11,9 +11,10 @@ import * as importer from './importer.js';
 import * as video from './video.js';
 import * as team from './team.js';
 import * as world from './world.js';
+import * as study from './study.js';
 
 // Feature modules (static/<feature>.js) export init(studio); each adds one import line above and one entry here.
-const FEATURES = [newrobot, importer, video, team, world];
+const FEATURES = [newrobot, importer, video, team, world, study];
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];

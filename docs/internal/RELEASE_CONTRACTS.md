@@ -47,6 +47,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room |
 | `<p>/brief.json` | F1 | the final brief that created the project |
 | `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
+| `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
 | `<p>/.team/comments.jsonl`, `reviews.jsonl`, `proposals.jsonl`, `branches.json`, `releases.json` | F4 | Teams |
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
 | `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h) |
@@ -202,6 +203,8 @@ A job applies its changes to the newest revision when its turn comes. If one of 
     or they signed out everywhere (the stream checks its member every 2 s, `api_team.StreamCheck`); the page then opens
     the sign-in page, which tells that browser why
   - `world {stage, status, text, result?}`
+  - `study {id, rev, status, phase, done, n, successes, failures, unstable, groups, p, ci, eta_s, elapsed_s,
+    first_result_s, summary?}`: a robustness study's progress (section 16; `groups`: the failures so far by group)
 - Agent roles for `agent` events: `triage` (SubQ), `designer` (Claude), `feasibility` (code),
   `pipeline`, `sourcing` (Darwin), `memory` (Keewano), `vision` (Claude/SubQ on frames), `reviewer`.
 
@@ -248,7 +251,10 @@ studio = {
   `FEATURES` array at the top of app.js, and an appended CSS section headed `/* ---- <feature> ---- */`.
 - `FEATURES` (I2a): `newrobot` (header and project menu), `importer` (header, project menu, page-wide drop), `video`
   (chat tools), `team` (header and inspector tabs; adds nothing when `/api/me` says Teams is off), `world` (viewer
-  tools; needs the WebGL viewer). Each injects or links its own CSS.
+  tools; needs the WebGL viewer). Each injects or links its own CSS. B2-S2: `study` (the Robustness card in the
+  Simulation tab's result column, section 16): it places itself after `#views .view[data-view="sim"] .side > .success`
+  while the tab's `[data-scen] button.on` is `pick_place` (the tab redraws that column, so it is put back each time) and
+  plays a replayed run through `window.morph.viewer`, as world.js does; those selectors are part of this contract.
 - I2b: `app.js` keeps each started feature's `init()` result (`started`, a Map), so the chat's import offer can call
   the importer's `open()`. Once the features started, an empty chat gets one assistant line naming the entry points
   that were mounted (`featureTips`). A media-only drop (video or photo files) goes to Show Morph the job through
@@ -657,3 +663,224 @@ in sections 3, 4 and 8. The rest that other code relies on:
   New robot, Import and video browsers and the Teams owner's (World mode always has it, through SwiftShader); and
   `PLAYWRIGHT_CHROMIUM` names the browser. A page fails on script or console errors, requests to
   other sites or sideways scrolling; a Studio fails on any traceback.
+
+## 16. Simulation track: robustness studies (B2-S1 the engine, B2-S2 the Studio routes and the card)
+
+One nominal simulation says a design works once, exactly as drawn. A **study** runs a revision's own nominal
+pick-and-place plan (planned once, as the Studio's simulation plans it) many times in worlds drawn from the project's
+tolerance spec, labels every run, and reports the success rate with its interval, the failure groups, the one rule
+that best isolates each and whether it survives other solver settings. Simulation, for the tolerances shown; never a
+field failure rate (section 0, honesty).
+
+- **Code.** `morph/services/robust.py` (the engine: spec, sampling, workers, analysis, storage) and
+  `morph/studio/jobs.py` (heavy jobs beside the build queue); both outside `pipeline_version()`. `simulate.py` has
+  only the hook below. `tests/test_sim_golden.py` pins every nominal output (robot.xml, each `sim_<scenario>.json`
+  with its frames, `run_all`'s return value, the MuJoCo state after each scenario) for the egg-picker (full and fast),
+  the SO-101 and a world with a box on the carry path: with `perturb=None` the simulation stays bit-identical
+  (hashes per environment; elsewhere the test is skipped). The H2 and H7 changes to `simulate.py` keep it green.
+- **Hook** (`simulate.py`, pick_place only): `run(asm, design, "pick_place", perturb=...)`, or for a study
+  `_plan_pick_place(rob, design)` once, then per run `with _perturbed(rob, p): _run_pick_place(rob, design, plan, at,
+  p, on_step)`. Keys, all optional (absent = nominal): `off_across_mm`, `off_along_mm`, `yaw_deg` (the object's start,
+  relative to its long axis), `size_scale`, `mass_g`, `friction_scale` (pads and object), `grip_scale`, `torque_scale`
+  (servo torque and P gain), `deadband_deg`, `encoder_cpr`, `encoder_noise` (counts), `noise_seed`, `rate_hz` (host
+  set-points, held between updates), `mount_dx_mm`, `mount_dy_mm`, `mount_yaw_deg` (the room moves the other way),
+  `box_offsets_mm` ([dx, dy] per world box), `timestep`, `impratio`. The plan, the host's gains and the targets stay
+  nominal; `_perturbed` puts the compiled model back bit for bit (also when a run raises). A run that moves the room
+  turns MuJoCo's midphase off for that run: the compiled collision hierarchy still has the boxes where they were, and a
+  moved box would otherwise be passed through.
+- **Tolerance spec** (`robust.default_spec(design, world)`, `tolerances(root, rev)`): entries `{name, label, unit,
+  lo, hi, nominal, source, on, edited}` in a fixed sampling order (never reorder or insert):
+  `object_across_mm`, `object_along_mm`, `object_yaw_deg`, `object_size`, `object_mass_g`, `pad_friction`, `grip_force`,
+  `servo_torque`, `servo_deadband_deg`, `encoder_noise`, `setpoint_hz`, then in World mode `mount_dx_mm`, `mount_dy_mm`,
+  `mount_yaw_deg`, `box_error_mm`. Defaults and sources follow the research (egg mass 50-72 g from USDA weight
+  classes, FSR 400 calibration, ST3215 torque, backlash and 4096-count encoder; the rest "assumed"); other objects and
+  servo families get relative ranges marked "assumed". A project's edits live in `<p>/.studies/tolerances.json`
+  (`save_tolerances(root, {name: {lo?, hi?, on?}} | {"world_preset": name} | {"reset": true}, rev, by)`: finite numbers
+  inside `robust.LIMITS`, `lo <= hi`; anything else is a `StudyError`). A study records the spec's sha
+  (`base_spec_sha`); once the project's spec changes, `load()` marks the older study `outdated`. **World presets:**
+  `robust.register_world_preset(name, fn(sim_world, design) -> the four world entries)`; `standard` is mount +/-10 mm
+  and +/-2 deg, each box 0-15 mm (H2 adds scan presets). Stress mode doubles every range about its nominal (floors in
+  `robust.FLOOR`).
+- **Runs.** Run `i` of a study draws its world from `SeedSequence([seed, i])` only (every entry draws, also when
+  switched off, so editing one range never moves the others): outcomes do not depend on the number of workers or the
+  batch size, a deeper study extends a shallower one, and the default seed (1) reproduces the published egg-picker
+  study (140 of 200 at 1 ms). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
+  more than 45 mm off: the jaws stayed shut and carried it), `drag`, `missed_grasp` (not lifted half the hover height),
+  `dropped` (more than 12 mm of slip in transit), `over_force` (the product's damage check), `unreachable`,
+  `world_collision` grouped as `world_collision:<phase>` (the plan's phase at the first contact); `unstable` (MuJoCo's
+  BADQPOS, BADQVEL, BADQACC or BADCTRL warnings, after which MuJoCo restarts the run from its first frame, a full
+  contact or constraint buffer, or a non-finite state) and `error` runs are listed and never counted.
+- **Statistics.** Wilson 95 % for the success rate and every group; Clopper-Pearson (exact) when no run, or every run,
+  fails (200 runs, none failing: at least 98.17 %, shown as 98.1). Each group gets the one-parameter interval (on the
+  value, or on the distance from nominal for two-sided ranges; 26 quantile cuts) with the best Youden's J, `significant`
+  when above the 95th percentile of what 60 shuffles of the outcomes reach. **Model sensitivity:** every group's runs
+  (at most 20) and 15 successes are re-run at half the timestep and with `impratio=1`; a group is `model_sensitive`
+  when, under either, fewer than 80 % of its runs still fail the same way or at least 20 % (and 2) of the successes now
+  do. Copy: section 0's honesty notes and heavy_plan's notes 1-3 ("This result changes with the simulator's friction or
+  timestep settings. Test it on the real robot." is `robust.SENSITIVE`).
+- **Workers.** `multiprocessing` with the spawn start method on every OS, `MORPH_STUDY_WORKERS` (default cores minus
+  one) at `MORPH_STUDY_NICE` (default 5; below-normal priority on Windows). A short-lived process rebuilds the
+  revision's robot the way the pipeline built it and plans once; the robot travels to the workers packed (pickle, only
+  over the study's own pipes, never through a file) with a mesh-free skeleton of the assembly, so a worker is up and
+  loaded in about 0.3 s on an idle machine (0.9 s at load 9-14) at about 140 MB. A rebuilt model that differs from the
+  revision's `sim/robot.xml` is reported (`model.matches_revision: false`). A dead worker's runs are tried once more
+  elsewhere. Study processes mute MuJoCo's warning handler (it writes `MUJOCO_LOG.TXT` into the current folder) and read
+  the warning counters instead.
+- **Storage** (`<p>/.studies/`, a hidden folder: never a project, never exported): `tolerances.json`; `active.json`
+  (the running study's lock, its heartbeat is the file's mtime: older than 30 s means it stopped); `<id>/study.json`
+  (definition, effective spec, status `queued|preparing|running|checking|done|cancelled|error`, read back as
+  `interrupted` when its process stopped, `model`, `timing`, `summary`); `<id>/runs.jsonl` and `<id>/checks.jsonl`
+  (one row per run, about 0.5 KB). `<id>` is 12 hex digits of the sha256 of (revision, design, pipeline version,
+  seed, timestep, stress, spec). Studies never write inside `rNNN/` and never change a stage hash.
+- **Heavy jobs** (`morph/studio/jobs.py`): `jobs.manager(studio)` (one per Studio; `HeavyJobs(home, emit=...)`
+  elsewhere): `start_study(project, rev=None, *, runs=200, seed=1, stress=False, workers=None, timestep=0.001,
+  checks=True, by=None)` -> job (`StudyError`; `StudyBusy` when one runs for that project, in any process), `status`,
+  `cancel` (within 2 s; finished runs kept), `wait`, `resume(project, id)`, `interrupted()`, `result(project, id,
+  rows=False)`, `studies`, `tolerances`, `save_tolerances`, `replay(project, id, run)` (a run's
+  `sim_pick_place.json` document with a `robustness` block, for the viewer). A job never takes the room's lock, its job
+  queue or `Studio.builds`; jobs on different projects take turns (`MORPH_HEAVY_JOBS`, default 1 at once).
+- **Event** `study {id, rev, status, phase: prepare|runs|checks|done, done, n, successes, failures, unstable, groups, p,
+  ci, eta_s, elapsed_s, first_result_s, stress, summary?}` to the project's room (`groups`: the counted failures so far
+  by group, B2-S2), at most four a second plus every phase change and the end (`summary`: n, successes, p, wilson95,
+  clopper_pearson95, groups with id, label, count, rate, model_sensitive).
+- **CLI:** `morph study <project> [--rev rNNN] [--runs N] [--workers N] [--stress] [--seed S] [--timestep ms]
+  [--no-checks]` prints the study as ASCII text; Ctrl+C keeps the finished runs and the same command carries on.
+- **Studio routes (B2-S2, `morph/studio/api_study.py`)**, all with `?project=`; starting, cancelling, resuming and
+  editing tolerances need an editor, reading and replays a viewer (Teams' role table lists all seven):
+  - `GET /api/study[?rev=]`: `{job, studies, latest, latest_stress, stopped, limits, host, rate, may, notes,
+    group_labels}`. `latest`/`latest_stress` are the newest plain and stress study of `rev` (default: the newest
+    revision; never one whose revision now holds another design, `rev_changed`) as records with `card`; `stopped`: the
+    cancelled or interrupted studies that can carry on; `limits {max_runs, max_workers, workers, timesteps_ms,
+    default_runs}`; `host {name, cores, remote}` (studies run on the Studio's computer: with `--remote` that is how a
+    team brings its compute); `rate.per_worker` (runs/s per worker process at 1 ms, as the shown studies or else the
+    project's newest timed study measured it, or 0.7); `may.start` (false for a Teams viewer). `GET /api/study?id=`
+    gives one record with its `card`.
+  - `POST /api/study {runs?, stress?, rev?, seed?, timestep_ms?, workers?, checks?}` -> 202 `{job}`. Refused with a
+    plain reason: `timestep_ms` 0.5, 1 or 2; at most `MAX_RUNS` (10,000) one-millisecond runs' worth (5,000 at 0.5 ms,
+    20,000 at 2 ms; `morph study` takes more); at most one worker process per core; 409 while one runs for the
+    project (any process), 404 for a revision that isn't there. The same settings again carry on with, or deepen, the
+    saved study.
+  - `POST /api/study/cancel` (409 when none runs), `POST /api/study/resume {id}` -> 202.
+  - `GET|POST /api/study/tolerances {changes, rev?}`: the spec with each entry's `limit` (what an edit may use) and the
+    world `presets`; `changes` as `save_tolerances`.
+  - `GET /api/study/replay?id=&run=[&variant=]`: the run's `sim_pick_place.json` document, simulated again in a spawned
+    study process (`robust.replay(process=True)`: MuJoCo's log and the CPU stay out of the Studio's process), one at a
+    time per Studio, the last eight kept in memory; 503 (try again) after 120 s waiting for another replay, or when its
+    process can't start, stops or takes over 5 minutes; `robustness` adds `recorded` (the row the study saved),
+    `matches_record` (false: Morph's simulation changed since) and `label`.
+  - `api_study.card(doc)` and `headline(doc)` give the card's words (heavy_plan section 6): "Succeeds in 140 of 200
+    randomized runs (95% CI 63-76%); the nominal run succeeds." (interval bounds rounded away from the estimate, so the
+    shown interval always holds the computed one; all or none succeeding uses the exact bound, "at least 98.1% with 95%
+    confidence"), `NOTES["simulation"]`, the flags (outdated, revision gone or changed, stopped part way, unstable and
+    error runs, rebuilt with other Morph code) and each group's share, rule (with "could be chance"), sensitivity
+    (`robust.SENSITIVE`) and example run. `NOTES["none"]`: "One nominal run. Small differences in placement or hardware
+    aren't tested."
+  - The Studio stops a project's study before Delete project and Reset demo (`jobs.stop(studio, name)`, up to 5 s; its
+    runs are kept, in the trash with a deleted project) and every study when it stops (`jobs.shutdown(studio)`).
+  - `robust.load()` adds `rev_changed`; `studies()` reads each revision's spec once.
+- **The card (`static/study.js`, feature `study`):** under the pick-and-place result in the Simulation tab (section 4):
+  the note where no study exists; live progress (`study` events: phase, run k of n, the success rate so far with its
+  interval, failures so far by group, time left estimated); the result with its flags, at most two failure groups
+  (label, share, "Most likely when: <rule>", the model-sensitive or "Same under other solver settings" badge, Replay)
+  and Details (a dialog: every group with its check counts, what matters most (Youden's J against chance), every
+  tolerance with its source, editable for editors, and the project's studies); for editors a start row (50, 200 or
+  1,000 runs, Stress test, "Run N more" to deepen, an estimate of the time on the Studio's computer), Cancel and Carry
+  on. A replay plays in the 3D view (the viewer's title names the run) until the tab plays something else; without a
+  3D view the card gives the run's numbers. A Teams viewer's page (`body.tm-readonly`, `may.start` false) keeps the
+  results and replays and loses the controls (`.sd-edit`).
+- **Whole-path clearance (B2-S3, H2; `simulate.py`, world mode only).** The plan is cut into moves (`simulate.MOVES`:
+  approach, descent, grasp, lift, carry, set-down, release, rise, return; `worlds.MOVES` is a copy a test keeps equal),
+  each checked against the boxes at every 10 ms plan sample with the object while it is carried (`CARRIED`). A move that
+  comes within `CLEAR_MM` tries its alternatives and keeps the first that stays 10 mm clear, else the one with the most
+  room (`_choose`): the approach `direct`, `carry path`, `from above` (`rise_mm`: 40, 80 or 120 mm, `LIFTS_MM`; the
+  empty hand may tilt on the way); the release `full` or `opened less` (`open_mm`: `OPEN_LESS_MM` = 4 mm past the
+  object); the way back `direct`, `direct, hand closed`, `carry path`, `carry path and approach`, `straight up first`
+  (`rise_mm`); the carry arc keeps E3's family, now confirmed every 10 ms. The pick and place spots never move.
+  Pick-and-place metrics add `path` (one `{move, phase, min_clearance_mm, clear, at?: {t, link, obstacle}}` per move)
+  and, when a move is still planned into a box, `blocked` (that entry): the simulation fails "the <link> would pass X mm
+  into <box> during <move> at T s, and no clear way around it was found" (a contact in the run reads "the <link> hits
+  <box> during <move> at T s"; `world_contacts` entries add `move` and `phase`), and `clearance_ok` is false.
+  `detours` gains `release` and the new `via` values; `GET /api/world` returns `sim.path` and `sim.blocked`, and the
+  World panel's status line says which way the arm went. Simulations without a world are bit-identical (golden hashes
+  unchanged); the world golden (`egg-picker-bin-world`) was re-recorded for the new checks. Planning in world mode
+  takes at most about 0.4 s more (worst measured 0.91 s against 0.49 s, at load 7-14).
+- **World-tolerance presets (B2-S3, H2).** `register_world_preset(name, fn, label=None, room_only=False)`;
+  `PRESET_LABELS`, `ROOM_ONLY`. `room` ("Only the room varies: the mount and every box; the object and the hardware stay
+  nominal"): the standard world ranges (mount +/-10 mm and +/-2 deg, each box 0-15 mm) with every other entry off, so
+  every failure is the room's; entries still draw in the fixed order, so a room study's worlds match a standard one's.
+  `GET /api/study/tolerances` adds `preset_labels`; the card's tolerance dialog shows a World tolerances select
+  (`data-f="preset"`, editors only); a room-only study's card carries `api_study.NOTES["room_only"]`. Measured: a carton
+  wall 12 mm from the open jaws at the place spot, 200 runs at 1 ms, seed 3: 185 of 200 succeed (Wilson 88.0-95.4 %),
+  15 `world_collision:release` (7.5 %, 4.6-12.0 %), rule "mount 4.5 to 10.0 mm off in y", not model-sensitive.
+- **Clearance to the room scan (B2-S3, H3; `morph/studio/worlds.py`).** `scan_clearance(glb_path, world, doc,
+  robot_xml, *, near_mm=10, floor_cut_mm=10, time_limit_s=20, max_faces=MAX_FACES, per_pose=False)`: the revision's
+  simulated frames (`sim_pick_place.json`, posed about every 10 ms) in its own collision model (`sim/robot.xml`, the
+  object while carried) against the uploaded scan. The scan is cropped to within `SCAN_CUT_MM` (50 mm) of a geom's
+  bounding sphere at some pose (64 mm cells), big triangles cut to the part near the arm, triangles rising no more
+  than `floor_cut_mm` above the mount surface dropped; each triangle is covered by its own points (`_scan_samples`:
+  rows along its longest edge at most `SCAN_SAMPLE_MM`/2 apart, points at most `SCAN_SAMPLE_MM` apart, so no point of
+  it is further than rho <= 1.41 mm from one) in a scipy cKDTree (sliding midpoint, no compact nodes, every query
+  bounded). Robot geoms (fixed ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine
+  samples (1 mm edges, 2 mm faces) are measured against the tree, and those that could be the closest get exact
+  point-triangle distances (`closest_on_triangles`) to every triangle with a point within their bound. Two passes:
+  every pose coarsely (bounds), then the most promising first; found to `SCAN_TOL_MM` (0.05 mm); below `SCAN_TOUCH_MM`
+  (0.5 mm) it touches. Returns `{min_clearance_mm (None beyond 50 mm), at {t, link, point (world mm)}, regions,
+  stats, note}`, with `per_pose` also `poses [[t, mm|None]]`; never raises for a bad scan or model:
+  `{"skipped": reason, "note"}`. `regions` (at most `SCAN_MAX_REGIONS` = 8, the closest first): the near misses
+  (closer than `near_mm`) grouped by 30 mm, each `{id: "scan-k", label: "Scan near miss k", min_clearance_mm, t, link,
+  point, points, box {center, half, yaw_deg}}`: the scanned surface within 30 mm of them in the world frame along the
+  mount surface's axes, at least 20 mm thick (grown away from the arm), down to the surface when it or the scan under
+  it nearly reaches it. Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm
+  over whole runs); a generated room of 998,664 triangles in 6.5-8.3 s at load 3-6 and 10.6 s at load 7-11
+  (`MORPH_SLOW=1`).
+  `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer
+  than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured
+  against the scanned surface, which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it.
+  `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
+  (`_ADVICE["scan"]`). `POST /api/world/inspect` measures it when the world has `room.glb` and the revision was
+  simulated in this room as it is now (else a skip saying so), kept in memory per (project, revision, world sha, room
+  file size and mtime), the last eight; it sends `world {stage: "scan", status: "start" | "done", text}` and an `agent`
+  event (`feasibility`, `code`).
+- **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
+  the box size) and **Add box here**: the box joins the world's grey boxes as `{id: region id (made unique), label,
+  center, half, yaw_deg, source: "auto"}`; *Save and simulate* then plans around it, and the next check measures the new
+  path. Browser test: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan`.
+- **Under attack (B2-S4).** An adversarial review of the track; what other code relies on since:
+  - `robust.StudyConflict` (a `StudyError`; the routes answer 409) for what can't run as asked: a revision with nothing
+    to study (`robust.studyable(p, rev)`: the simulation stage failed or never ran, a preview-only build, no pick and
+    place; `new_study` checks it before a job is queued, so `POST /api/study` answers at once instead of 202 and a
+    failed job), a gripper-only project (`meta.json` whose kind isn't `robot`), carrying on a study whose revision now
+    holds another design (`robust.REPLACED`) or whose pipeline code changed since (`robust.CODE_CHANGED`), and replaying
+    a study whose revision was replaced.
+  - Locks and restarts: `active()` treats a lock whose `pid` is gone from this computer (its `host`) as stale at once
+    (`robust._alive`; elsewhere the 30 s heartbeat decides, as before). The heartbeat also saves the study's `done`.
+    `load()` reads an interrupted or failed study's `done` and `summary` from its saved runs (kept per `runs.jsonl` size
+    and mtime) and adds `code_changed`; `studies()` lists it. `GET /api/study`'s `stopped` and `HeavyJobs.interrupted()`
+    leave out studies that can't carry on (revision missing or replaced, code changed). A job's `id` follows its
+    events (a study whose tolerances were edited while it waited is another study).
+  - Sizes: `robust.cores()` (the cores this process may use: `os.process_cpu_count()`, else the affinity mask),
+    `default_workers()` never above it (also with `MORPH_STUDY_WORKERS`), `run_study(workers=)` 1 to
+    `robust.MAX_WORKERS` (256) or `StudyError` before anything is locked, `morph study --workers` 1 to `cores()`, and
+    `limits.max_workers`/`host.cores` report `cores()`. Tolerance edits take `on` only as true or false and `reset`
+    only as `true`; a change that isn't an object is refused by name.
+  - Replays: `GET /api/study/replay` checks the study, run, check and revision (`_replayable`) before it waits for the
+    one replay slot, and at most `api_study.REPLAY_QUEUE` (3) wait; the next is answered 503 at once.
+  - Numbers: a group that holds every counted run has `rule: null` (nothing left to separate); rule text reads "X% fail
+    this way vs Y% otherwise"; `summary.successes_sensitive` is true when, under either solver setting, at least 20 %
+    (and 2) of the counted re-runs of successful runs fail (null when nothing was re-run), shown as the card's flag
+    `api_study.NOTES["successes_sensitive"]` (`robust.SUCCESSES_SENSITIVE`) and a line of `report()`; a study whose runs
+    were all unstable or errors has the headline `robust.uncounted(k)` ("No run could be counted: ...") instead of none.
+  - The scan check's memory (`api_world._SCANS`) also keys on the revision's `sim/sim_pick_place.json` (size, mtime) and
+    the sha256 of its `sim/robot.xml`: Reset demo reuses revision names.
+  - Study processes are spawned on every OS, so each imports the main module again: scripts that call `robust` guard
+    their work with `if __name__ == "__main__":` (`morph`, `python -m morph.cli` and pytest already do).
+- **Ownership.** The simulation track owns the study hook in `simulate.py` (the `perturb` keys, `_perturbed`,
+  `_plan_pick_place`, `_run_pick_place`, `_scenario_doc`) and the world-path names (`MOVES`, `CARRIED`, `CLEAR_MM`,
+  `PLAN_DT`), `morph/services/robust.py`, `morph/studio/jobs.py`, `api_study.py`, `static/study.js`, and the scan check
+  in `worlds.py`/`api_world.py`. Other packages call `simulate.run(...)` without `perturb`. A change that moves a
+  nominal output re-records `tests/test_sim_golden.py` on purpose and says so in its report. Changing what a
+  perturbation key means, the tolerance order (`robust.BASE`, `robust.WORLD`) or the draw order changes every saved
+  study: bump `robust.VERSION`, so the same settings start a new study and older ones can't be carried on.
+- **Docs:** `docs/ROBUSTNESS.md` (what a study is, its tolerances and their sources, how to read the card,
+  model-sensitive results, restarts, `--remote`, limits); `docs/WORLD.md` covers the whole-path check, the scan warning
+  and Add box here.

@@ -17,17 +17,21 @@ is not there when the browser has no WebGL).
    the robot stands on.
 4. **People areas:** mark walkways and seats, so the checks can say when the arm reaches into them.
 5. **Save and simulate:** saving the world reruns only the simulation stage; every other stage is reused. The pick and
-   place then runs against the boxes, with a carry path picked to stay at least 10 mm clear of them with the object in
-   hand. When the straight move from the rest pose would sweep through a box, the approach and the return to rest go
-   along that carry path instead (the hand closed to the object's width on the way back). The line under the room's
-   name says how the newest simulation went, how close the arm came to a box, and whether it took another path.
+   place then runs against the boxes. Every move of it (the approach, the descent to the object, the grasp, the lift,
+   the carry, the set-down, the release, the rise and the way back to rest) is checked against the boxes every 10 ms,
+   with the object while it is carried. The carry path is picked to stay at least 10 mm clear; a move that would come
+   closer tries its alternatives: the approach and the way back along the carry path (the hand closed to the object's
+   width on the way back), the approach from higher up, the release with the hand opened only 4 mm past the object,
+   and the way back straight up first. The first that keeps 10 mm wins, else the one with the most room. A move that
+   would still pass into a box fails the simulation, naming the move and the box. The line under the room's name says
+   how the newest simulation went, how close the arm came to a box, and which other way it took.
    *Play in the room* replays it there, and *Walk* lets you walk through the room (WASD and the mouse, or drag to
    look where the browser won't lock the mouse): you start on a walkway when there is one, else on the floor a step or
    two from the robot, with it in sight.
 6. **Check placement:** measured checks decide the verdict (*ready*, *needs changes* or *blocked*): the simulation ran
    in this room, both targets are in reach and on the surface, the arm stays clear of the boxes, the base sits on the
    surface, tip-over (a heuristic), people areas inside the reach, anything overhead, and how much of the workspace
-   stays clear.
+   stays clear. With a room scan, it also measures the simulated path against the scan itself (below).
 
 Each revision is simulated in exactly the room its design names: every saved room is kept under its hash in
 `<project>/world/saved/`, so editing the room while a build waits never changes what that build simulates, and a
@@ -39,6 +43,38 @@ morph world egg-picker --starter desk     # save the desk and rerun the simulati
 morph world egg-picker                    # the room and how the newest simulation went in it
 morph world egg-picker --off              # back to the plain table
 ```
+
+## Clearance to the room scan (a warning)
+
+The simulation sees only the grey boxes, so *Check placement* also measures how close the simulated arm (and the object
+while it is carried), posed every 10 ms along the newest simulation, comes to the uploaded scan. It looks at the part
+of the scan near the arm: the scan's triangles are covered by points of their own that a k-d tree searches, and the
+closest ones get exact point-to-triangle distances; on scans made of a world's own boxes it agrees with MuJoCo's own
+distances to within a few tenths of a millimetre. The result is a warning, never the verdict: "Measured against the
+scanned surface, which can be noisy or have holes. A warning, not a verdict." It names the part of the arm and the
+time, and says *touches or passes through* below 0.5 mm.
+
+Each place where the arm comes within 10 mm of the scan is listed with **Add box here**: a grey box over that part of
+the scan (standing on the surface when the scan under it does), added to the room. *Save and simulate* then plans
+around it, and the next check measures the new path. The check takes up to 20 seconds on a large scan (7.5 seconds for
+a generated room of a million triangles on an idle 4-core computer, 11.5 on a busy one); its answer is kept until the
+room, the scan or the revision's simulation changes.
+
+- Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
+  goes counts as a near miss.
+- Scanned triangles that rise no more than 10 mm above the surface the robot stands on are left out (that is the
+  surface itself).
+- A scan only shows the sides it saw: a near miss behind a hole is not found, and a box from *Add box here* is at least
+  20 mm thick, grown away from the arm.
+
+## Robustness studies in a room
+
+A [robustness study](ROBUSTNESS.md) of a revision simulated in a room also varies where the robot is mounted (+/-10 mm
+and +/-2 degrees) and where each grey box is (0 to 15 mm, in a random direction), and a run that touches a box fails as
+*Hit a box in the room during* the move it was in. Under the study's tolerances, **Only the room varies** keeps the
+object and the hardware nominal, so every failure is the room's. A carton wall 12 mm from the open jaws at the place
+spot, which passes the 10 mm check in the nominal run: 15 of 200 runs hit it (95 % CI 4.6 to 12 %), all during the
+release, most often with the mount 4.5 to 10 mm off in y.
 
 ## Optional reviews (only when you ask)
 
@@ -58,9 +94,10 @@ review: no pictures are rendered or sent. What Anthropic and SubQ keep: [PRIVACY
 - **The simulation sees only the grey boxes and the surface.** A scan is visual only: anything without a box is
   invisible to the simulation, and the scale is only as good as the length you typed. Check clearances in the real
   room before running the arm.
-- **Not a motion planner.** It picks one carry arc from a fixed family, and sends the approach and the return to rest
-  along it when the straight move would touch a box. The descent, the grasp and the release are not re-planned around
-  obstacles: a contact there fails the run and passing closer than 10 mm is pointed out, but neither is avoided.
+- **Not a motion planner.** Every move is checked every 10 ms, but the only ways around a box are the fixed ones above:
+  a carry arc from a fixed family, the approach and the way back along it, from higher up or straight up first, and the
+  release opened less. When none keeps clear the simulation fails and says which move and which box; it doesn't
+  search for other paths. The pick and place spots never move: a box right over the object fails the run.
 - The payload sweep ignores the room, and the shake test only reports contacts.
 - Walking collides with the boxes and with scans up to 400,000 triangles; larger scans walk against the boxes and the
   floor only, and the panel says so.

@@ -343,6 +343,8 @@ class Studio:
         if room.jobs.busy() or not room.lock.acquire(blocking=False):
             raise Refused(f"{name} is building or has changes waiting: delete it when its queue is empty.")
         try:
+            from . import jobs
+            jobs.stop(self, name)  # its robustness study first (finished runs are kept, in the trash with the project)
             trash = projects.delete(self.home, name)
             with self._rooms:
                 self.rooms.pop(name, None)
@@ -650,7 +652,9 @@ class Studio:
                 if room.jobs.busy() or not room.lock.acquire(blocking=False):
                     return False
                 held.append(room)
+            from . import jobs
             for room in rooms:
+                jobs.stop(self, room.name)  # Reset demo stops the project's robustness study too (its runs are kept)
                 p = room.p
                 keep = baseline(p)
                 if not keep:
@@ -1582,6 +1586,9 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        from . import jobs
+        jobs.shutdown(studio)  # robustness studies stop and keep their runs; the same settings carry on next time
 
 
 FEATURE_ERRORS = {}  # feature module -> why it didn't load (its routes are off; the rest of the Studio works)

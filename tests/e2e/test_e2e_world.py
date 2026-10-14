@@ -8,7 +8,9 @@ browser with software WebGL.
   and kept, the scanned surface, a simulation in the room, then walking in it;
 - the measured check and the AI review without a key (the measured review, no pictures sent), and with a stand-in
   Claude in the Studio process (six pictures, findings, suggested changes applied, a tour with its captions);
-- the panel at 1600x900, 1280x720 and 910 px wide, and no drawing while nothing moves.
+- the panel at 1600x900, 1280x720 and 910 px wide, and no drawing while nothing moves;
+- a scanned bench whose post the simulation can't see: the check measures the path against the scan, warns, and
+  "Add box here" makes the post a grey box the next simulation goes round.
 
 MORPH_E2E=1 runs these (about two minutes each; the first also builds the demo robots once, about two more;
 MORPH_E2E_WORLD_HOME=<dir> keeps them between runs). MORPH_E2E_PORTS=8835-8838 picks the Studios' ports.
@@ -112,6 +114,14 @@ class Studio:
     def get(self, path: str):
         with urllib.request.urlopen(self.base + path, timeout=60) as r:
             return json.loads(r.read())
+
+    def call(self, method: str, path: str, body=None, raw: bytes | None = None):
+        """A change as the page sends it (with X-Morph-Client): JSON, or raw bytes for an upload."""
+        req = urllib.request.Request(self.base + path, method=method, data=raw if raw is not None else json.dumps(body).encode(),
+                                     headers={"X-Morph-Client": "1", "Content-Type": "application/octet-stream" if raw is not None
+                                              else "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status, json.loads(r.read())
 
     def calls(self) -> list:
         if not self.stand_in or not os.path.exists(self.stand_in):
@@ -659,6 +669,77 @@ def _stand_in(port: int, home: str, record: str):
     worlds._claude_ready = lambda: True
     print("Claude stand-in: a canned review of the desk; nothing leaves this computer", flush=True)
     server.serve(RobotProject(os.path.join(home, "egg-picker")), "127.0.0.1", port, home=home)
+
+
+def bench_scan_glb(path):
+    """A bench scanned with a 41 x 41 x 70 mm post on it, as a phone exports it (one .glb, y up, metres). The robot will
+    stand on the bench top at the world origin; the post stands beside the egg-picker's way back to rest."""
+    import numpy as np
+    import trimesh
+
+    tf = trimesh.transformations
+    parts = [trimesh.creation.box((1.1, 1.2, 0.025), tf.translation_matrix((0.1, 0.0, -0.0125))),
+             trimesh.creation.box((0.0414, 0.0414, 0.0696), tf.translation_matrix((0.2314, 0.095, 0.0348)))]
+    for m, rgb in zip(parts, ((166, 132, 98), (70, 96, 150))):
+        m.visual.face_colors = np.tile([*rgb, 255], (len(m.faces), 1))
+    mesh = trimesh.util.concatenate(parts)
+    mesh.apply_transform(tf.rotation_matrix(-np.pi / 2, (1, 0, 0)))
+    scene = trimesh.Scene()
+    scene.add_geometry(mesh, node_name="scan", geom_name="scan")
+    with open(path, "wb") as fh:
+        fh.write(scene.export(file_type="glb"))
+    return path
+
+
+def test_add_box_here_from_the_room_scan(run, tmp_path):
+    """The simulation only sees grey boxes; the check also measures its path against the scan itself. A post that has no
+    box is a near miss (a warning, never a fail); Add box here makes it a grey box, and the next simulation goes round it."""
+    studio, pg = run((1280, 720))
+    pg.open_world()
+    with open(bench_scan_glb(str(tmp_path / "bench.glb")), "rb") as fh:
+        st, up = studio.call("PUT", "/api/world/upload?project=egg-picker&name=bench.glb", raw=fh.read())
+    assert st == 200 and up["faces"] == 24, up
+    world = {"id": "bench", "name": "Bench scan", "asset": "room.glb", "asset_sha": up["draft"]["asset_sha"], "units": "m",
+             "up": "y", "scale": 1.0, "source": {"kind": "glb", "name": "bench.glb"},
+             "mount": {"position": [0.0, 0.0, 0.0], "yaw_deg": 0.0}, "obstacles": [], "zones": [],
+             "surface": {"label": "Bench top", "center": [100.0, 0.0, -12.5], "half": [550.0, 600.0, 12.5], "yaw_deg": 0.0}}
+    before = pg.rev()
+    st, saved = studio.call("POST", "/api/world?project=egg-picker", {"world": world})
+    assert st == 202, saved
+    pg.built(before, "the bench scan")
+    assert pg.metrics()["success"] and "no grey boxes to keep clear of" in pg.status(), pg.status()
+    pg.click(".wv-panel button[data-a='check']")
+    until(lambda: pg.world("!panel.state.busy && !!panel.state.result"), 120, "the check with the scan")
+    scan = pg.world("panel.state.result.checks.find(c => c.id === 'scan')")
+    assert scan and scan["status"] == "warn" and scan["value"] < 10 and scan["regions"], scan
+    assert pg.world("panel.state.result.verdict") != "blocked"                  # a warning, never a verdict
+    text = " ".join(pg.pg.inner_text(".wv-panel").split())
+    assert "A warning, not a verdict." in text and re.search(r"Scan near miss 1: (touches|\d+\.\d mm from) the ", text), text
+    add = ".wv-panel button[data-a='scanbox'][data-arg='0']"
+    assert pg.pg.inner_text(add) == "Add box here"
+    pg.ev("() => window.morphWorld.wv.frameOverview(0)")
+    pg.pg.locator(add).scroll_into_view_if_needed()
+    pg.shot("s3_scan_near_miss")
+    pg.click(add)
+    assert pg.world("wv.world.obstacles.map(o => [o.id, o.label, o.source])") == [["scan-1", "Scan near miss 1", "auto"]]
+    assert pg.pg.inner_text(add) == "Added" and pg.pg.is_disabled(add)
+    box = pg.world("wv.world.obstacles[0]")
+    g = scan["regions"][0]["box"]
+    assert box["center"] == g["center"] and box["half"] == g["half"] and abs(box["center"][2] - box["half"][2]) < 0.2, box
+    pg.save("the post as a grey box")
+    m = pg.metrics()
+    assert m["success"] and not m["world_contacts"] and m["min_clearance_at"]["obstacle"] == "Scan near miss 1", m
+    assert m["min_clearance_mm"] >= 10.0 and "closest" in pg.status() and "Scan near miss 1" in pg.status(), pg.status()
+    pg.click(".wv-panel button[data-a='check']")
+    until(lambda: pg.world("!panel.state.busy && !!panel.state.result && panel.state.result.rev") == pg.rev(), 120,
+          "the check of the new simulation")
+    after = pg.world("panel.state.result.checks.find(c => c.id === 'scan')")
+    assert after["status"] == "pass" and after["value"] >= 10 and not after["regions"], after
+    pg.ev("() => window.morphWorld.wv.frameOverview(0)")
+    pg.pg.locator(".wv-panel .wv-check", has_text="scanned surface").scroll_into_view_if_needed()
+    pg.shot("s3_scan_box_added")
+    pg.check()
+
 
 
 if __name__ == "__main__" and len(sys.argv) == 5 and sys.argv[1] == "stand-in":
