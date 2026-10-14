@@ -80,6 +80,22 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Studies run on the Studio's computer, so `morph studio --remote` on a bigger machine is how a team brings its own
   compute; one study at a time per project, at most 10,000 runs from the Studio. Where no study exists the card says
   so: one nominal run tests nothing around it. Simulation, for the tolerances shown; not a field failure rate.
+- **World mode checks the whole path** (beta): every move of the pick and place (the approach, the descent to the
+  object, the grasp, the lift, the carry, the set-down, the release, the rise and the way back to rest) is checked
+  against the grey boxes every 10 ms, with the object while it is carried. A move that comes within 10 mm tries its
+  alternatives (along the carry path, from higher up, the release with the hand opened only 4 mm past the object, the
+  way back straight up first) and keeps the first that stays clear; when none does, the simulation fails and says
+  which move and which box ("the jaw left hits Carton wall during the set-down at 5.0 s"). The World panel's status
+  line says which way the arm went. Simulations without a room are unchanged.
+- **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path
+  against the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can
+  be noisy or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot
+  becomes a grey box, and the next simulation plans around it. A generated room of a million triangles is checked in 7
+  to 11 seconds.
+- Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
+  the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
+  from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the
+  mount 4.5 to 10 mm off.
 - `morph export <project> [--rev r003] [--full] -o file.zip`: the Studio's Export from a terminal, with `team.json` on
   a team. `morph doctor` lists each feature's status: New robot, Import (xacro and STEP support), Show Morph the job
   (whether ffmpeg was found), Teams and World mode.

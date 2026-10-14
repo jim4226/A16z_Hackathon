@@ -189,7 +189,8 @@ Roles, disciplines, reviews, releases and the security notes: [docs/TEAMS.md](do
 workbench, or your own room scan as a `.glb`. Place the robot on a surface, mark walls and furniture as grey boxes
 and where people walk or sit, and save: the pick and place is simulated again in that room (no other stage reruns),
 and **Check placement** gives a measured verdict. The simulation sees only the grey boxes, and it is not a motion
-planner.
+planner. With a room scan, the check also measures the simulated path against the scan itself (a warning, never the
+verdict), and **Add box here** turns a near miss into a grey box the next simulation keeps clear of.
 
 ```bash
 morph world egg-picker --starter desk     # or --off for the plain table again

@@ -788,3 +788,60 @@ field failure rate (section 0, honesty).
   on. A replay plays in the 3D view (the viewer's title names the run) until the tab plays something else; without a
   3D view the card gives the run's numbers. A Teams viewer's page (`body.tm-readonly`, `may.start` false) keeps the
   results and replays and loses the controls (`.sd-edit`).
+- **Whole-path clearance (B2-S3, H2; `simulate.py`, world mode only).** The plan is cut into moves (`simulate.MOVES`:
+  approach, descent, grasp, lift, carry, set-down, release, rise, return; `worlds.MOVES` is a copy a test keeps equal),
+  each checked against the boxes at every 10 ms plan sample with the object while it is carried (`CARRIED`). A move that
+  comes within `CLEAR_MM` tries its alternatives and keeps the first that stays 10 mm clear, else the one with the most
+  room (`_choose`): the approach `direct`, `carry path`, `from above` (`rise_mm`: 40, 80 or 120 mm, `LIFTS_MM`; the
+  empty hand may tilt on the way); the release `full` or `opened less` (`open_mm`: `OPEN_LESS_MM` = 4 mm past the
+  object); the way back `direct`, `direct, hand closed`, `carry path`, `carry path and approach`, `straight up first`
+  (`rise_mm`); the carry arc keeps E3's family, now confirmed every 10 ms. The pick and place spots never move.
+  Pick-and-place metrics add `path` (one `{move, phase, min_clearance_mm, clear, at?: {t, link, obstacle}}` per move)
+  and, when a move is still planned into a box, `blocked` (that entry): the simulation fails "the <link> would pass X mm
+  into <box> during <move> at T s, and no clear way around it was found" (a contact in the run reads "the <link> hits
+  <box> during <move> at T s"; `world_contacts` entries add `move` and `phase`), and `clearance_ok` is false.
+  `detours` gains `release` and the new `via` values; `GET /api/world` returns `sim.path` and `sim.blocked`, and the
+  World panel's status line says which way the arm went. Simulations without a world are bit-identical (golden hashes
+  unchanged); the world golden (`egg-picker-bin-world`) was re-recorded for the new checks. Planning in world mode
+  takes at most about 0.4 s more (worst measured 0.91 s against 0.49 s, at load 7-14).
+- **World-tolerance presets (B2-S3, H2).** `register_world_preset(name, fn, label=None, room_only=False)`;
+  `PRESET_LABELS`, `ROOM_ONLY`. `room` ("Only the room varies: the mount and every box; the object and the hardware stay
+  nominal"): the standard world ranges (mount +/-10 mm and +/-2 deg, each box 0-15 mm) with every other entry off, so
+  every failure is the room's; entries still draw in the fixed order, so a room study's worlds match a standard one's.
+  `GET /api/study/tolerances` adds `preset_labels`; the card's tolerance dialog shows a World tolerances select
+  (`data-f="preset"`, editors only); a room-only study's card carries `api_study.NOTES["room_only"]`. Measured: a carton
+  wall 12 mm from the open jaws at the place spot, 200 runs at 1 ms, seed 3: 185 of 200 succeed (Wilson 88.0-95.4 %),
+  15 `world_collision:release` (7.5 %, 4.6-12.0 %), rule "mount 4.5 to 10.0 mm off in y", not model-sensitive.
+- **Clearance to the room scan (B2-S3, H3; `morph/studio/worlds.py`).** `scan_clearance(glb_path, world, doc,
+  robot_xml, *, near_mm=10, floor_cut_mm=10, time_limit_s=20, max_faces=MAX_FACES, per_pose=False)`: the revision's
+  simulated frames (`sim_pick_place.json`, posed about every 10 ms) in its own collision model (`sim/robot.xml`, the
+  object while carried) against the uploaded scan. The scan is cropped to within `SCAN_CUT_MM` (50 mm) of a geom's
+  bounding sphere at some pose (64 mm cells), big triangles cut to the part near the arm, triangles rising no more
+  than `floor_cut_mm` above the mount surface dropped; each triangle is covered by its own points (`_scan_samples`:
+  rows along its longest edge at most `SCAN_SAMPLE_MM`/2 apart, points at most `SCAN_SAMPLE_MM` apart, so no point of
+  it is further than rho <= 1.41 mm from one) in a scipy cKDTree (sliding midpoint, no compact nodes, every query
+  bounded). Robot geoms (fixed ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine
+  samples (1 mm edges, 2 mm faces) are measured against the tree, and those that could be the closest get exact
+  point-triangle distances (`closest_on_triangles`) to every triangle with a point within their bound. Two passes:
+  every pose coarsely (bounds), then the most promising first; found to `SCAN_TOL_MM` (0.05 mm); below `SCAN_TOUCH_MM`
+  (0.5 mm) it touches. Returns `{min_clearance_mm (None beyond 50 mm), at {t, link, point (world mm)}, regions,
+  stats, note}`, with `per_pose` also `poses [[t, mm|None]]`; never raises for a bad scan or model:
+  `{"skipped": reason, "note"}`. `regions` (at most `SCAN_MAX_REGIONS` = 8, the closest first): the near misses
+  (closer than `near_mm`) grouped by 30 mm, each `{id: "scan-k", label: "Scan near miss k", min_clearance_mm, t, link,
+  point, points, box {center, half, yaw_deg}}`: the scanned surface within 30 mm of them in the world frame along the
+  mount surface's axes, at least 20 mm thick (grown away from the arm), down to the surface when it or the scan under
+  it nearly reaches it. Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm
+  over whole runs); a generated room of 998,664 triangles in 6.5-8.3 s at load 3-6 and 10.6 s at load 7-11
+  (`MORPH_SLOW=1`).
+  `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer
+  than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured
+  against the scanned surface, which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it.
+  `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
+  (`_ADVICE["scan"]`). `POST /api/world/inspect` measures it when the world has `room.glb` and the revision was
+  simulated in this room as it is now (else a skip saying so), kept in memory per (project, revision, world sha, room
+  file size and mtime), the last eight; it sends `world {stage: "scan", status: "start" | "done", text}` and an `agent`
+  event (`feasibility`, `code`).
+- **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
+  the box size) and **Add box here**: the box joins the world's grey boxes as `{id: region id (made unique), label,
+  center, half, yaw_deg, source: "auto"}`; *Save and simulate* then plans around it, and the next check measures the new
+  path. Browser test: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan`.
