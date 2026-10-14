@@ -334,14 +334,14 @@ def _files(home, curated_dirs):
                 st = os.lstat(p)
             except OSError:
                 continue
-            if stat.S_ISREG(st.st_mode):
-                out.append((p, curated, st.st_mtime_ns, st.st_size))
+            if stat.S_ISREG(st.st_mode):  # the inode too: a file replaced within one clock tick at the same size is new
+                out.append((p, curated, st.st_mtime_ns, st.st_size, st.st_ino))
     return tuple(out)
 
 
 def _build(files, policy) -> Catalog:
     cat = Catalog()
-    for p, curated, _, size in files:
+    for p, curated, _, size, _ino in files:
         source = os.path.basename(p)
         try:
             if size > MAX_MANIFEST_BYTES:
@@ -349,6 +349,7 @@ def _build(files, policy) -> Catalog:
             with open(p, encoding="utf-8-sig") as fh:  # a manifest saved by Notepad starts with a BOM
                 doc = json.loads(fh.read(), parse_constant=_no_constant)
             info, tools, creds = parse_manifest(doc, source=source, curated=curated, policy=policy)
+            info["sha256"] = fingerprint(doc)  # what a pin (an approved draft) is bound to
             if info["id"] in cat.providers:
                 raise ManifestError(f"provider {info['id']} is already in the catalog"
                                     + (" (a built-in provider)" if cat.providers[info["id"]]["curated"] else ""))
@@ -394,9 +395,37 @@ def read_state(home: str | None = None) -> dict:
 
 
 def enabled_names(cat: Catalog, home: str | None = None) -> set:
-    """Morph's own tools are on unless the owner turned them off; the owner's own manifests are off until turned on."""
-    over = read_state(home)["enabled"]
-    return {n for n, t in cat.tools.items() if over.get(n, t.curated)}
+    """Morph's own tools are on unless the owner turned them off; the owner's own manifests are off until turned on. A
+    manifest installed from an approved draft (pinned) is on only while its content still has the approved sha256."""
+    over, pins = read_state(home)["enabled"], read_pins(home)
+    return {n for n, t in cat.tools.items() if over.get(n, t.curated) and pin_ok(cat, t, pins) is not False}
+
+
+# ------------------------------------------------------------------------------------------------ pins (drafts)
+def _pins_path(home: str | None = None) -> str:
+    return os.path.join(store.tools_dir(home), "pins.json")
+
+
+def read_pins(home: str | None = None) -> dict:
+    """{provider id: {sha256, file, by, at, draft, docs}}: the owner's manifests installed from an approved draft."""
+    data = store.read_json(_pins_path(home), {}) or {}
+    pins = data.get("pins") if isinstance(data, dict) else None
+    return {k: v for k, v in (pins or {}).items() if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("sha256"), str)}
+
+
+def pin(provider: str, sha256: str, home: str | None = None, **info) -> dict:
+    """Bind an owner manifest to the sha256 the owner approved (draft.py); any later change turns its tools off."""
+    with store.locked(store.tools_dir(home)):
+        pins = read_pins(home)
+        pins[provider] = {**info, "sha256": sha256, "at": store.utc()}
+        store.write_json(_pins_path(home), {"pins": pins})
+    return pins[provider]
+
+
+def pin_ok(cat: Catalog, tool: Tool, pins: dict) -> bool | None:
+    """None: the tool's manifest isn't pinned; True: it still has the approved content; False: it changed since."""
+    p = pins.get(tool.provider) if not tool.curated else None
+    return None if p is None else (cat.providers.get(tool.provider) or {}).get("sha256") == p["sha256"]
 
 
 def set_enabled(name: str, on: bool, home: str | None = None) -> bool:

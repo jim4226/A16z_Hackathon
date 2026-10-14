@@ -195,6 +195,7 @@ class Toolbox:
         self._lock = threading.Lock()
         self._active: dict = {}
         self._cancel: set = set()
+        self._drafts = None
         self._summaries: dict = {}  # run id -> (file stat, summary): listing many runs never re-reads unchanged files
 
     # ---------------------------------------------------------------- catalog
@@ -206,25 +207,43 @@ class Toolbox:
 
     def tools(self) -> dict:
         """GET /api/tools: every catalog tool, whether it is on, its key (set or not, never the value), its approval and
-        warnings, plus the manifests that failed to load."""
-        cat, appr = self.catalog(), self.approvals.all()
+        warnings, plus the manifests that failed to load. A tool installed from an approved draft adds `drafted`: the
+        approved sha256, whether its manifest changed since (then it is off) and who approved it."""
+        cat, appr, pins = self.catalog(), self.approvals.all(), catalog.read_pins(self.home)
         on = self.enabled(cat)
         out = []
         for t in sorted(cat.tools.values(), key=lambda t: (t.service.lower(), t.name)):
-            a, c = appr.get(t.name), t.credential
+            a, c, p = appr.get(t.name), t.credential, None if t.curated else pins.get(t.provider)
             out.append({"name": t.name, **t.card(), "description": t.description, "enabled": t.name in on, "paid": t.paid,
                         "warnings": list(t.warnings), "verified": (cat.providers.get(t.provider) or {}).get("verified"),
                         "key": None if c is None else {"env": c.env, "label": c.label, "set": bool(self.env.get(c.env)),
                                                        "url": c.url, "where": c.where, "hosts": list(c.hosts)},
                         "approval": {k: a.get(k) for k in ("mode", "by", "at")} if a and a.get("fingerprint") == t.fingerprint
-                        and t.side_effect == "read" else None})
-        return {"tools": out, "errors": list(cat.errors), "spend_cap_usd": policy.SPEND_CAP_USD}
+                        and t.side_effect == "read" else None,
+                        **({"drafted": {"sha256": p["sha256"], "changed": catalog.pin_ok(cat, t, pins) is False,
+                                        "by": p.get("by"), "at": p.get("at"), "draft": p.get("draft"), "docs": p.get("docs")}}
+                           if p else {})})
+        return {"tools": out, "errors": list(cat.errors), "spend_cap_usd": policy.SPEND_CAP_USD,
+                "drafts": self.drafts.waiting()}
+
+    @property
+    def drafts(self):
+        """Tool drafts (draft.py, Morph writes a tool, preview), one manager per toolbox."""
+        with self._lock:
+            if self._drafts is None:
+                from .draft import Drafts
+                self._drafts = Drafts(self)
+            return self._drafts
 
     def set_enabled(self, name: str, on: bool, *, by: str | None = None) -> dict:
-        """Owner only (T3's route): turn one tool on or off. Runs already started keep the tools they were sent."""
+        """Owner only (T3's route): turn one tool on or off. Runs already started keep the tools they were sent. A drafted
+        tool whose manifest changed after it was approved stays off until a new draft of it is approved."""
         cat = self.catalog()
         if name not in cat.tools:
             raise ToolboxError(f"There is no tool called {str(name)[:60]} in the catalog.", 404)
+        if on and catalog.pin_ok(cat, cat.tools[name], catalog.read_pins(self.home)) is False:
+            raise ToolboxError(f"{cat.tools[name].title} changed after it was approved, so Morph keeps it off: draft it again "
+                               "(Keys, New tool) to review and approve the new version.", 409)
         changed = catalog.set_enabled(name, bool(on), self.home)
         if changed:
             audit.append("tool_enabled" if on else "tool_disabled", home=self.home, by=by, tool=name)
@@ -508,6 +527,7 @@ class Toolbox:
                         os.remove(os.path.join(folder, fn))
                 except OSError:
                     pass
+        self.drafts.recover()  # drafts a stopped Studio left drafting fail; old ones go
         return out
 
     # ---------------------------------------------------------------- the loop

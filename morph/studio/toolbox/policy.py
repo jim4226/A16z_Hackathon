@@ -46,7 +46,8 @@ class Check:
 
 # ------------------------------------------------------------------------------------------------ approvals
 class Approvals:
-    """MORPH_HOME/.tools/approvals.json: {tool: {"fingerprint", "mode": "always" | "key_saved", "by", "at"}}."""
+    """MORPH_HOME/.tools/approvals.json: {tool: {"fingerprint", "mode": "always" | "key_saved" | "draft", "by", "at"}}
+    ("draft": granted when the owner approved the drafted tool's spec, draft.py)."""
 
     def __init__(self, home: str | None = None):
         self.home = store.home_dir(home)
