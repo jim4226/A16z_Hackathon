@@ -54,6 +54,14 @@ LINES = [  # (header, line, catalog key): only the part name or MPN names a moto
     (["Part", "Description", "Qty"], ["Servo", "Feetech STS3215 12V", "6"], "sts3215"),      # a bare "Servo"
     (["Part", "Description", "Qty"], ["Bus servo", "XL430-W250-T", "4"], "xl430_w250"),
     (["Part", "Qty", "Specs"], ["XL430-W250-T", "4", "12V"], "xl430_w250"),                  # one variant only
+    # named only as a motor, with a brand, the joint it drives or a count: what its description says
+    (["Part", "Qty", "Notes"], ["Feetech servo", "6", "STS3215 12V"], "sts3215"),
+    (["Part", "Qty", "Notes"], ["Gripper servo", "1", "SG90"], "sg90"),
+    (["Part", "Qty", "Notes"], ["Servo (x6)", "6", "STS3215 12V"], "sts3215"),
+    (["Part", "Qty", "Notes"], ["Wrist bus servo", "1", "STS3215 7.4V"], "sts3215_7v4"),
+    # what a servo comes with doesn't make it an accessory
+    (["Part", "Qty", "Notes"], ["STS3215 servo with horn and screws", "6", "12V"], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215 Servo 7.4V, 1/345 gear (C001, incl. cable)", "6", ""], "sts3215_7v4"),
     # not motors, whatever their notes say
     (["Part", "Qty", "Comments"], ["M3x8 screw", "20", "for the STS3215 12V horn"], None),
     (["Part", "Qty", "Notes"], ["Waveshare bus servo driver board", "1", "drives the STS3215 12V servos"], None),
@@ -61,6 +69,15 @@ LINES = [  # (header, line, catalog key): only the part name or MPN names a moto
     (["Part", "Qty", "Details"], ["Servo horn", "6", "aluminium, fits STS3215"], None),
     (["Part", "Qty", "Specs"], ["12 V 5 A power supply", "1", "enough for six STS3215 12V servos"], None),
     (["Part", "Qty", "Description"], ["Servo driver board", "1", "for STS3215 12V"], None),
+    # not motors either: parts named after the servo they are for
+    (["Part", "Qty", "Notes"], ["12V 5A power supply for STS3215 servos", "1", ""], None),
+    (["Part", "Qty", "Notes"], ["Bus servo driver board for STS3215", "1", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo horn", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 mounting bracket", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["Servo extension cable", "6", "for STS3215"], None),
+    (["Part", "Qty", "Notes"], ["Gripper servo bracket", "1", "SG90"], None),
+    (["Description", "Qty"], ["M3 screw for STS3215 12V", "20"], None),
+    (["Description", "Qty"], ["Waveshare servo driver board for the STS3215 12V servos", "1"], None),
 ]
 
 

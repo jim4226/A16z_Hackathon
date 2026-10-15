@@ -692,7 +692,12 @@ in sections 3, 4 and 8. The rest that other code relies on:
   description, notes, details or specs column then only picks that motor's variant when the name doesn't
   (`autoprofile.VARIANT_RX`: "12V" is the 12 V STS3215, "7.4V" or C001/C044/C046 the 7.4 V one), so a screw or a
   driver board whose notes name the servo stays a fastener or electronics. A line named only "Servo" (or "Bus servo",
-  "Motor") is what its description says. Rows add `description` and `catalog_name`. An object import whose grip would bend the fingers
+  "Motor") is what its description says. R4: a name that is a part for a motor (`bom.ACCESSORY`: horn, bracket, mount,
+  plate, cover, case, adapter, board, driver, controller, power supply, screw, nut, cable, hub, extension, tester,
+  charger, battery and the like, in the name before what it comes with: "with", "incl.", "(", "+") is never a catalog
+  motor, so "12V 5A power supply for STS3215 servos" or "STS3215 servo horn" isn't one; and a name that is a motor's
+  kind with up to three words before it and a count after it (`bom.GENERIC_MOTOR`: "Feetech servo", "Gripper servo",
+  "Servo (x6)") is what its description says. Rows add `description` and `catalog_name`. An object import whose grip would bend the fingers
   gets New robot's repair (`api_import._fit_fingers`: `brief.preflight`'s deflection check, the beam 1.5 mm thicker at
   a time up to 14 mm), said in its reply. When an import's build isn't feasible (a robot's first build, an object's
   revision), `api_import._explain` posts an assistant message in that project's chat (kept in its history) with up to

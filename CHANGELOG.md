@@ -32,7 +32,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   stretched-out pose). On a Studio other computers use, links are off unless it was started with
   `--allow-url-import`. A parts list line is a catalog motor when its part name or MPN names one, and its
   description or notes pick the variant (a "12V" STS3215 stays the 12 V servo); notes that mention the servo on a
-  screw or a driver board don't make it one. The preview shows the MPN and the description. An object whose grip would bend the fingers gets the
+  screw or a driver board don't make it one, and neither does a name like "STS3215 servo horn" or "12V power supply
+  for STS3215 servos". A line named "Feetech servo", "Gripper servo" or "Servo (x6)" is the motor its description
+  names. The preview shows the MPN and the description. An object whose grip would bend the fingers gets the
   thicker beam New robot would give it. An import whose build isn't feasible says why in its project's chat, with the
   fixes Morph can build as buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).
 - **Show Morph the job** (beta): add a phone video or photos of the task done by hand. Morph picks still frames in
