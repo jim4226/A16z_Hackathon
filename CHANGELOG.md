@@ -372,9 +372,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   gripper without force sensors grips the same way, and one with them gets the limit as a hard cap at its force stop.
   A hobby PWM gripper servo has no torque limit; that is an issue when its stall force could crush the object.
 - Firmware with force sensors that get no reading through a whole close (a sensor missing, unplugged or dead) used to
-  squeeze on to the gripper's maximum-squeeze stop. It now closes only a little past the closed position (about 1 mm
-  on the egg-picker), goes back to it, and prints "!GRIP no force reading" on the serial port; a reading lost while
-  holding keeps the jaw where it is.
+  squeeze on to the gripper's maximum-squeeze stop with nothing limiting it. The gripper servo's torque limit now caps
+  that squeeze at the firmware's force limit; with no reading by the stop the jaw goes back to the closed position and
+  the firmware prints "!GRIP no force reading" on the serial port; a reading lost while holding keeps the jaw where it is.
 - The manual's first pick-and-place test names the robot's own object (it asked for a hard-boiled egg and a raw one
   whatever the robot picks), and a robot without force sensors is told what to watch instead of a grip-force readout.
 - New robot: saying an object is fragile ("pick up a raw egg without cracking it", the README's example, or the
@@ -423,3 +423,25 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Production cost no longer reads as a per-unit price when it is mostly molds. At quantity 1 the BOM tab said
   "Production $77,742"; it now says $4,771 per unit + $72,971 tooling, once, and the Manufacturing cards and the
   inspector say how much of the unit cost is tooling spread over how many units.
+- Robots no longer drop what they carry in their own shake test while the build says every check passed. Round one's
+  single grip source took the holding force from the gripper stage's grasp simulation, whose contour pads cradle a can
+  at half the force the robot's own fingers need: a 370 g can was gripped at 4.56 N per finger and dropped (213 mm),
+  and so were bottles, a watering bottle and a cup of pet food, robots 6c49545 had built without trouble. The holding
+  force is now never below the static friction hold, m g / (2 mu gain); an object with no damage force is gripped at
+  three times it (13.9 N for the can), a 1.5x margin over the shake test's 1.9 g; and every simulated scenario that
+  fails is an issue that says why ("shake test failed in simulation (object dropped)"), so the robot no longer reads as
+  passing its software checks. Teams' tag and "Built r002: ..." line and Import's verdict say "software checks pass"
+  or how many issues the checks found, as New robot does, instead of "feasible".
+- One stall-force model per gripper: one pinion drives both racks of a generated gripper, so each finger gets the
+  servo's torque x 0.6 / (2 x pitch radius). Sizing, the gripper stage and the torque limit used three models: the
+  can-mover's firmware capped F at a 165.9 N "hard stop" its servo gives 82.9 N of. The firmware's limit, the
+  simulation's jaws and the standalone gripper's servo choice now use the honest figure.
+- Force-sensing grippers grip an object narrower than their calibration gauge: the close looked for a reading only
+  1 mm past the gauge and released an egg 2 mm narrower ("no force reading"); it now closes as far as the max-squeeze
+  stop under the torque limit's cap. Grippers without force sensors closed to the gauge position, where a torque limit
+  has nothing to push against; G now closes past the object, so the torque limit really sets the squeeze (a hobby servo,
+  which has none, squeezes with all its torque and is simulated that way), as the manual and the plan say.
+- Stock jaws (the SO-101): the torque limit was set for the grip 70 mm from the jaw's pivot, but the egg sits 62 mm
+  out, so the simulation squeezed 2.83 N (3.41 N peak) for a 2.52 N target. It is now set at the lever where the
+  simulation grasps the object. An open-loop grip (a torque limit, no force sensor) aims at the middle of the object's
+  window, since nothing measures it: the SO-101 grips an egg at 4.58 N and a strawberry at 0.7 N.

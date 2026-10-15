@@ -1326,7 +1326,7 @@ Fixes of the release review's engineering findings. What other code relies on si
   gripper analysis, grasp simulation and `morph.electronics.plan`; for an imported robot `imported.gripper_summary`,
   whose stock-jaw window uses the simulation's closed form for flat jaws (it slips below 1.5 x m g / 2 mu, is damaged
   above `max_force_n` / 1.5; the target is the Grip force target when set, else the window's own with a 0.5 N floor,
-  at most 80 % of the servo's squeeze at `JAW_LEVER_MM`). `morph.electronics.force_window(o, hold, sensor, target,
+  at most 80 % of the servo's squeeze at the grasp lever, section 20). `morph.electronics.force_window(o, hold, sensor, target,
   floor)` is that formula; nothing else computes a target. `electronics2.plan(design, sizing, grip=force)` copies the
   plan into `eplan.grip` (a plan's own grip passes through; without one it runs `gripper_stage(simulate=False)`,
   keeping a partial plan's or `sizing["grip_target_n"]`'s target) and adds an issue when the target is outside its
@@ -1368,7 +1368,8 @@ Fixes of the release review's engineering findings. What other code relies on si
   force sensors: `imported.gripper_summary` returns `sensor` "none" whatever `finger.sensor` says (a warning when it
   asks for FSRs), so no FSR is bought, wired, programmed (`PIN_FSR_L/R` -1) or calibrated, and the templates, New
   robot's SO-101 brief, the import session and the chat keep `finger.sensor` "none" for them. Force plans carry
-  `jaw` ("rack" or "revolute") and `lever_mm` (pinion radius, or `JAW_LEVER_MM` / a profile's `jaw_lever_mm`).
+  `jaw` ("rack" or "revolute") and `lever_mm` (pinion radius, or the stock jaw's lever at the simulated grasp,
+  `imported.grasp_lever`; `JAW_LEVER_MM` / a profile's `jaw_lever_mm` only when that can't be worked out).
   `electronics2.grip_torque_limit(grip, gkey, servo_v, family)` gives `eplan.grip.torque_limit` (`force_n`, `nm`,
   `fraction` of the stall torque at the rail, `per_n`, `register`, `short`), None for hobby PWM: without force sensors
   it is the grip (the target at the jaw's lever; a rack jaw per finger F = torque x 0.6 / 2r), with them a cap at the
@@ -1376,8 +1377,8 @@ Fixes of the release review's engineering findings. What other code relies on si
   force exceeds the object's limit. The firmware writes it at start-up and when the e-stop clears (`gripTorque()`:
   Feetech register 48 in 0.1 %, DYNAMIXEL Goal PWM in percent) and F re-sets it on a sensorless gripper. A sensorless
   revolute jaw is simulated with that torque (`asm.meta["grip_torque_nm"]`). Firmware with force sensors that read
-  under `GRIP_SENSE_N` through a whole close stops at `GRIP_CLOSED` after probing `GRIP_PROBE` past it and prints
-  `!GRIP no force reading`; it never closes to `GRIP_MIN` on no reading. `tests/fw_stubs/grip_harness.cpp` runs the
+  under `GRIP_SENSE_N` through a whole close probes to `GRIP_MIN` (`GRIP_PROBE` is the whole overtravel past
+  `GRIP_CLOSED`, section 20), goes back to `GRIP_CLOSED` and prints `!GRIP no force reading down to GRIP_MIN`. `tests/fw_stubs/grip_harness.cpp` runs the
   generated sketch's control loop on the host for the tests.
 
 ## 19. Brief, inspector and pipeline (release review fixes, track E2)
@@ -1457,7 +1458,8 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   N mm" when the sized value differs from the asked one by 1 mm or more; New robot's done card and `morph robot`'s
   summary ("adjusted: ...") list them.
 - **Software checks, not validation (ENG-12).** New robot's done view is titled "Your robot is designed"; a robot
-  whose summary is feasible gets the tag "Software checks pass" (never "Feasible") and "Its software checks pass:
+  whose summary is feasible (every simulated scenario included, section 20) gets the tag "Software checks pass" (never
+  "Feasible") and "Its software checks pass:
   simulation, torque margins, DRC and DFM. Not bench-validated: build and test it before you rely on it."; the pipeline
   agent line says "every software check passed". The Firmware pane opens with "Generated firmware, not bench-tested: it
   hasn't been compiled for this board or run on the arm ..." (`electronics.firmware_validation` is unverified); the
@@ -1477,3 +1479,59 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   unchanged: `bom.totals.per_config` and `configs[k].unit_cost` still include tooling / quantity. The egg-picker in
   production at quantity 1: $4,771 per unit + $72,971 tooling ($77,742 each with tooling).
 
+## 20. Grip physics and honest checks (release review fixes, track E3)
+
+Round 2 of the grip fixes: what round 1's single grip source got wrong, found by re-checking it. What other code
+relies on since:
+
+- **One jaw model (E-N7).** `morph.electronics.jaw_force(torque_nm, lever_mm, jaw)` is the per-finger squeeze of each
+  gripper type: a rack-and-pinion jaw's one pinion drives both racks, so each finger gets torque x `GEAR_EFF` (0.6) /
+  (2 x pitch radius); a stock revolute jaw on the servo's horn, torque / lever. `jaw_torque(force_n, lever_mm, jaw,
+  losses=True)` inverts it (`losses=False`: the torque that can never squeeze harder, the force-sensing gripper's cap).
+  Everything uses them: `servo_max_force` (the force plan's `servo_stall_force_n`, its `limit_n` for an object without
+  a damage force, so the firmware's `GRIP_LIMIT_N` and the F command's cap, and its "reaches only" issue), the
+  standalone gripper's `choose_servo` (the first hobby servo its printed mechanism mounts whose stall force is at
+  least twice the target), `sizing.gripper.stall_force_n` (at the rail), the generated arm's gripper joint `effort` (the
+  stall force per finger at the rail: the URDF, and the simulation's cap on the squeeze and its grip-limited payload),
+  `electronics2.grip_torque_limit`, the gripper's current estimate, `eplan.grip.stall_force_n` (new: per finger at
+  stall on the rail) and the stock jaw's `servo_stall_force_n`. The STS3215 12 V gripper on a 10.5 mm pinion gives
+  82.9 N per finger (the force plan said 165.9 N, sizing 221 N).
+- **The hold and the target (E-N1).** The force plan's `hold_force_n` is never below `static_hold_n`, the static
+  friction hold m g / (2 mu gain) (`morph.electronics.static_hold(o, gain)`, `gain` the pad's wedge gain, 1 for flat
+  stock jaws); the grasp simulation's bisection (`sim_hold_n`) only ever raises it. Its contour pads cradle a can at
+  2.34 N per finger that the robot's own fingers drop below 4.65 N. `force_window` gives an object without a damage
+  force twice its lower bound as the target (it gave 1.3x): three times the static hold, a 1.5x margin over the robot's
+  shake test, which loads the grip with about 1.9 g. An object with a damage force keeps min(sqrt(lo x hi), 2 x lo)
+  when a force sensor regulates the squeeze (`sensor` given); without one the squeeze is open loop (a torque limit, so
+  it varies with where the object sits, the gearbox's friction and the supply) and the target is the window's
+  geometric mean sqrt(lo x hi), as far from both ends as the window allows: the SO-101's egg 4.58 N (2.52 N before; its
+  shake test crept 5.01 mm with the squeeze exactly 2.52 N), its strawberry 0.7 N (0.5 N, 2 % of the servo's torque).
+  The simulation's closed form (`simulate._grip_force_target` without a shipped grip) and New robot's Keewano
+  preflight use `static_hold` too. The 370 g can: 4.56 N per finger before (its shake test dropped it), 13.94 N now.
+- **What G does (E-N2, E-N3).** `grip_motion()["probe"]` is the whole overtravel (`GRIP_CLOSED - GRIP_MIN`): a
+  force-sensing close looks for a reading as far as the max-squeeze stop, so an egg 8 % narrower than the calibration
+  gauge (1.76 mm per jaw) gets gripped; the torque limit, written at start-up as a cap at the force limit, bounds the
+  squeeze meanwhile; with no reading by `GRIP_MIN` it goes back to `GRIP_CLOSED` and says so. Without force sensors G
+  commands `GRIP_MIN`, past the object (it commanded `GRIP_CLOSED`, the gauge contact, where a torque limit has no
+  position error to act on): the torque limit sets the squeeze, or a hobby servo's whole torque. The simulation models
+  exactly that: its jaw is commanded past contact, force-limited at the torque limit's force, and a sensorless hobby
+  servo squeezes with its stall force (`arm.grip_meta` puts `eplan.grip.stall_force_n` in `asm.meta["grip_squeeze_n"]`).
+  The firmware header, the plan's warning ("G closes the jaws past the object and the gripper servo's torque limit
+  sets the squeeze") and the manual (`manual._grip_sentence`, with `GRIP_MIN` in the joint's unit) say the same. A
+  hobby PWM gripper with force sensors gets a warning when its stall force exceeds the object's damage force: nothing
+  backs the sensors up. `tests/fw_stubs/grip_harness.cpp` takes the object's contact offset as `argv[2]`.
+- **The stock jaw's lever (E-N6).** `imported.grasp_lever(design, sizing)` is the lever where the simulation grasps the
+  object (`simulate.grasp_lever(asm, design)`: `_describe(..., grasp_only=True)`, the hand's and the jaws' pieces
+  only), worked out on the robot's own jaws with sizing's servos and the object's shape and size, on the camera-free
+  URDF, memoized (about 2 s). `imported.gripper_summary` puts it in `lever_mm`, so the torque limit is set for the
+  target there and the simulated squeeze is the target: the SO-101 grasps the egg 62.2 mm from its pivot (it squeezed
+  2.83 N, 3.41 N peak, for a 2.52 N target with the limit set at 70 mm) and a strawberry 70.0 mm.
+- **Every simulated scenario counts (ENG-12).** `pipeline2.sim_issue(name, scenario)` is the summary's issue for a
+  scenario that failed, saying why ("shake test failed in simulation (object dropped (213 mm slip))"; `SIM_CHECKS`
+  names the four); `summarize` adds one for every failed scenario, not only the pick and place, and lists their names
+  in `summary.sim_failed`. So `feasible`, New robot's "Software checks pass" and "every software check passed", the
+  inspector's tag (which no longer lists a scenario the summary already counts), Teams' tag and "Built r002: software
+  checks pass" (it said "feasible"), Import's "Imported X: software checks pass" / "its software checks found issues"
+  (it said "isn't feasible yet") and `morph import`'s line all follow every check. `tests/test_grip_sweep.py`
+  (MORPH_SLOW) builds the two demo robots and 22 one-liners: every scenario passes or the build names it, and no
+  scenario that passed on 6c49545 fails.
