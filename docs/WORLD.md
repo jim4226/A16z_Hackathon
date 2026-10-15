@@ -69,9 +69,9 @@ closer at that place (the robot moved, say), the place is offered again with a b
 moving or turning such a box by hand, or setting the room's scale again, makes it a plain grey box. The same box is
 never added twice, and a box the room holds already is never offered again.
 
-The check, the boxes' fit included, has 20 seconds. On a busy 4-core computer (load 11-13) the review's desk scan, a
-vase 9 mm from the arm's path, takes 10 to 11.5 seconds, and the same desk with the wrist touching the vase 8 to 12.5
-seconds at load 2-4 and 17 seconds at load 8; a generated room of a million triangles takes 10.5 seconds at load 7. When
+The check, the boxes' fit included, has 20 seconds. On a 4-core computer the review's desk scan, a vase 9 mm from the
+arm's path, takes 7.5 to 8.5 seconds at load 4-7 and 10 to 11.5 at load 11-13; the same desk with the wrist touching the
+vase 9 to 10 seconds at load 2-3 and 17 at load 8; a generated room of a million triangles 10.5 seconds at load 7. When
 a check can't measure the whole path in time, it never claims more room than it measured: it says how close the arm
 comes at most (the closest distance it did measure: "The wrist comes within at most 4.6 mm of the scanned surface"), or
 that there wasn't time to measure it, and that only part of the path was measured. It says whether checking again when

@@ -1350,13 +1350,15 @@ field failure rate (section 0, honesty).
   second counted as long as the first: it took 0.5 to 5 times as long in the scans measured). A second pass cut short
   after the closest point is measured (every pose and point left has a bound at or above it) is not truncated;
   `stats.unlisted_mm` then bounds the near misses not listed. Measured on the review's desk scan (2,872 triangles near
-  the arm, 667 poses, the 9.0 mm vase near miss), alternating with 22bec48 at the default 20 s and load 11-13: 22bec48
-  took 16.4-17.8 s and was cut short in 2 of 4 runs; R4 took 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and was
-  never cut short. The same scan with the mount moved 15 mm (the wrist touching the vase, 0.2 mm): 7.8-12.4 s at load
-  2-4 and 17.2 s at load 8, against 21-30 s at load 4-5 before, which a 20 s check always cut short. Per-pose distances,
-  the closest point and the regions are identical to 22bec48 on the desk scan's three revisions (with and without the
-  box, and moved). Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm over
-  whole runs); a generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1 1.3 s; `MORPH_SLOW=1`).
+  the arm, 667 poses, the 9.0 mm vase near miss), alternating with 22bec48 at the default 20 s: at load 3.7-7.0, 22bec48
+  took 12.3-13.1 s and R4 7.5-8.5 s (pass 1 0.75-0.97 s against 5.7-5.8 s; regions and fit 0.9-1.2 s); at load 11-13,
+  22bec48 took 16.4-17.8 s and was cut short in 2 of 4 runs, R4 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and
+  was never cut short. The same scan with the mount moved 15 mm (the wrist touching the vase, 0.2 mm): R4 9.1-9.8 s at
+  load 2-3 (22bec48 stopped in its first pass at 15.7 s and said the part checked stayed more than 50 mm away), 7.8-12.4
+  s at load 2-4 and 17.2 s at load 8, against 21-30 s at load 4-5 before, which a 20 s check always cut short. Per-pose
+  distances, the closest point and the regions are identical to 22bec48 on the desk scan's three revisions (with and
+  without the box, and moved). Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to
+  0.21 mm over whole runs); a generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1 1.3 s; `MORPH_SLOW=1`).
   `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer
   than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured
   against the scanned surface, which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it. R4,
