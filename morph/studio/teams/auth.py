@@ -24,7 +24,7 @@ import threading
 import time
 import unicodedata
 
-from ..security import looks_like_secret, secret_refused
+from ..security import TEAM_CODE, looks_like_secret, secret_refused
 from . import audit, disciplines
 from .store import COLORS, POLICY, TeamStore, merged_policy, new_id, parse_ts, utc
 
@@ -44,6 +44,16 @@ class AuthError(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
+
+
+def new_code(prefix: str, nbytes: int) -> str:
+    """A Teams code: `prefix` and `nbytes` random bytes in base64url (secrets.token_urlsafe), drawn again in the rare
+    case it has no capital letter (one draw in about 95,000 for 16 bytes), so the key filter always knows it
+    (security.TEAM_CODE) while snake_case names such as mt_shoulder_joint_torque_limit pass."""
+    while True:
+        code = prefix + secrets.token_urlsafe(nbytes)
+        if TEAM_CODE.fullmatch(code):
+            return code
 
 
 def _hash(code: str) -> str:
@@ -229,7 +239,7 @@ def create_invite(by: str | None, role: str = "editor", tags=(), name_hint: str 
         except ValueError:
             hint = ""
     days = min(max(float(days or INVITE_DAYS), 0.01), INVITE_DAYS)
-    code = "mi_" + secrets.token_urlsafe(16)
+    code = new_code("mi_", 16)
     t = _now(now)
 
     def fn(data):
@@ -322,7 +332,7 @@ def redeem_invite(code: str, name: str = "", ip: str | None = None, home: str | 
 def create_link(member_id: str, by: str | None = None, home: str | None = None, minutes: float = LINK_MINUTES, now=None) -> dict:
     """A one-time sign-in link for a member's other device (or the owner link from the CLI): 15 minutes, single use."""
     t = _now(now)
-    code = "ml_" + secrets.token_urlsafe(16)
+    code = new_code("ml_", 16)
     minutes = min(max(float(minutes or LINK_MINUTES), 0.1), LINK_MINUTES)
 
     def fn(data):
@@ -458,7 +468,7 @@ def create_token(member_id: str, label: str = "", home: str | None = None, now=N
     """A script token for X-Morph-Token: shown once, stored as its SHA-256, acts with the member's role."""
     _no_secret(str(label or ""))
     label = " ".join(str(label or "").split())[:40] or "script"
-    token = "mt_" + secrets.token_urlsafe(32)
+    token = new_code("mt_", 32)
     t = _now(now)
 
     def fn(data):

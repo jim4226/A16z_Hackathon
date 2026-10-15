@@ -577,9 +577,15 @@ members; a member can hold several.
   hours. The capability envelope (section 6) clamps much tighter.
 - **Keys.** Requests carrying an API key use `security.open_keyed()` (never follow a redirect with the key).
   One filter, `security.looks_like_secret(text)` (`holds_secret(value)` for every string of a structured value), covers
-  Claude, SubQ and Keewano keys, the value of any saved `MORPH_TOOL_*` key, a token with a manifest's key prefix that
-  fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in codes (`mt_`, `mi_`, `ml_`
-  followed by 20 or more token characters). Every free-text field people type uses it and refuses with 400
+  Claude (`sk-ant-`) and Keewano (`kwpat-`) keys, other `sk-` keys (20 or more token characters with a digit, unless
+  they read as a hyphenated phrase such as `sk-6x40-stainless-steel-screws`: `security._phrase`), the value of any key
+  saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a manifest's key
+  prefix that fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in codes. Teams
+  codes are made by `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, always with a capital
+  letter), so `security.TEAM_CODE` knows each one; any other `mi_`/`ml_`/`mt_` run of 20 or more characters counts
+  when it has a capital or a digit and doesn't read as a snake_case phrase, so `mt_shoulder_joint_torque_limit` or
+  `ml_inference_pipeline_enabled` pass. The tool runner redacts and refuses with the same shapes
+  (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
   label), a project's `need`, a world's labels, and every Teams text field (comments, change request titles and

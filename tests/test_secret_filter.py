@@ -23,13 +23,19 @@ KEYS = {
     "keewano": "kwpat-ABCDEFGH0123",
     "team_script_token": "mt_" + "Q" * 43,
     "team_invite": "mi_inviteCode0123456789ab",
-    "team_sign_in_link": "ml_linkCode01234567890abcd",
+    "team_sign_in_link": "ml_linkCode0123456789abcd",
     "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFU",
     "saved_tool_key": TOOL_VALUE,
 }
 ORDINARY = ("make it thin-and-light", "use an sk-thin-and-light finger", "format_quantity in smt_placement_list",
             "the mt_ prefix", "Mouser part 511-STM32F103C8T6", "Swap to Dynamixel servos", "sort socks by colour",
-            "a robot that picks strawberries, 30 per minute", "uuid 123e4567-e89b-12d3-a456-426614174000")
+            "a robot that picks strawberries, 30 per minute", "uuid 123e4567-e89b-12d3-a456-426614174000",
+            # snake_case names and part names with a key's prefix: a key is random, these are words
+            "rename mt_shoulder_joint_torque_limit to something shorter",
+            "the firmware flag ml_inference_pipeline_enabled is off", "set mi_gripper_force_threshold_value lower",
+            "use sk-6x40-stainless-steel-screws", "order sk-m3x12-din912-a2-70-stainless-steel bolts",
+            "mount it on sk-2020-aluminium-extrusion-500mm", "SO101 kit: sk-SO101-follower-arm-kit-v2",
+            "mt_servo2_torque_limit_value and ml_model_v2_inference_enabled", "mi_wrist_roll_offset_deg = 3")
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +68,55 @@ def test_chat_and_every_teams_field_use_one_filter(kind):
     with pytest.raises(ValueError):
         auth.clean_name(f"Ed {KEYS[kind]}"[:40] if kind != "jwt" else KEYS[kind])
     assert security.holds_secret({"answers": [{"name": "x"}, {"note": text}]})
+
+
+def test_every_code_morph_makes_is_caught_and_snake_case_names_are_not(tmp_path):
+    """Teams codes are random base64url of a fixed length with a capital letter (auth.new_code makes sure): the filter
+    knows each one by that, so a name with the same prefix (mt_shoulder_joint_torque_limit) is not taken for one."""
+    home = str(tmp_path / "projects")
+    owner = auth.init_team("Jim", home=home)
+    made = [owner["code"], auth.create_invite(owner["member"]["id"], "editor", [], "", home=home)["code"],
+            auth.create_link(owner["member"]["id"], home=home)["code"],
+            auth.create_token(owner["member"]["id"], "nightly", home=home)["token"]]
+    made += [auth.new_code(prefix, n) for prefix, n in (("mi_", 16), ("ml_", 16), ("mt_", 32)) for _ in range(3000)]
+    for code in made:
+        assert auth.CODE_RX.match(code)
+        for text in (code, f"my invite is {code}.", f"http://studio:8765/?invite={code}&x=1", f"token={code}"):
+            assert security.looks_like_secret(text), text
+    token = "mt_Xq3_Lp9ZbN2wV7aR5kT1mC8yH4uF6jD0sE2gW9oK3iB"
+    assert security.TEAM_CODE.fullmatch(token)
+    for cut in (token[:30], token + "_and_more", f"Ed {token}"[:40]):  # a code cut short or run on
+        assert security.looks_like_secret(cut), cut
+    for name in ("mt_" + "shoulder_joint_torque_limit_x", "mi_" + "gripper_force_threshold", "ml_" + "a" * 22,
+                 "mt_" + "w" * 43, "mt_PWM_frequency_limit_hz", "xmi_inviteCode0123456789ab"):
+        assert not security.looks_like_secret(name), name  # words, no capital or digit, or inside a longer word
+
+
+def test_an_sk_key_is_told_from_a_part_name_by_its_random_run():
+    for key in ("sk-live-9f3kd02kfiq0alz7vnm4xq", "sk-AbCdEf0123456789ghIJkl", "sk-test0123456789abcdefghij",
+                "sk-proj-Ab3_dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z-a5B7c9D1", "sk-" + "a1b2c3d4" * 4,
+                "sk-ant-api03-abcdefghijkl", "kwpat-ABCDEFGH0123"):
+        assert security.has_key(f"key: {key}") and security.looks_like_secret(key), key
+    for name in ("sk-6x40-stainless-steel-screws", "sk-thin-and-light-but-strong", "sk-M6x40-DIN912-A2-70-stainless",
+                 "sk-2020-aluminium-extrusion-500mm", "sk-short1"):
+        assert not security.has_key(name), name
+
+
+def test_a_saved_key_is_refused_whatever_its_shape(monkeypatch):
+    """A key saved in the Keys dialog is refused by its value: a Keewano project key has no prefix to know it by."""
+    from morph import keys
+    assert set(security.SAVED_KEYS) == set(keys.NAMES) - {"KEEWANO_PROJECT_ID"}
+    monkeypatch.setenv("KEEWANO_API_KEY", "proj7Hq2Zx9LmP4w")
+    assert security.looks_like_secret("the keewano key proj7Hq2Zx9LmP4w, use it")
+    monkeypatch.setenv("KEEWANO_PROJECT_ID", "12345678")
+    assert not security.looks_like_secret("project 12345678")  # an id, not a key
+
+
+def test_the_tool_runner_redacts_keys_and_keeps_part_names():
+    from morph.studio.toolbox import http_tool
+    text = "sk-6x40-stainless-steel-screws in stock; key sk-live-9f3kd02kfiq0alz7vnm4xq; mt_shoulder_joint_torque_limit"
+    assert http_tool.redact(text) == ("sk-6x40-stainless-steel-screws in stock; key [redacted]; "
+                                      "mt_shoulder_joint_torque_limit")
 
 
 def test_ordinary_text_still_passes_everywhere():

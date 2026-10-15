@@ -19,10 +19,59 @@ MAX_MESSAGE = 8000          # characters in one chat message
 PROJECT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 ROBOT_SOURCE = re.compile(r"[a-z0-9][a-z0-9_-]{0,47}")
 WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
-# Claude (sk-ant-), SubQ (sk- with a digit somewhere, so "sk-thin-and-light" is no key) and Keewano (kwpat-) keys, and
-# Morph Teams' own codes: script tokens (mt_), invite codes (mi_) and sign-in link codes (ml_), which act as a member
-SECRET = re.compile(r"\b(sk-ant-[A-Za-z0-9_-]{8,}|sk-(?=[A-Za-z_-]*[0-9])[A-Za-z0-9_-]{20,}|kwpat-[A-Za-z0-9_-]{8,}"
-                    r"|m[til]_[A-Za-z0-9_-]{20,})")
+# Keys and codes nobody may paste outside the Keys dialog, told apart from ordinary words by how each one is made:
+# - a Claude key starts sk-ant- and a Keewano personal access token kwpat-: the prefix is enough;
+# - any other sk- key (SubQ's) is sk- and a random run: 20 or more token characters with a digit among them, unless
+#   they read as a hyphenated phrase (_phrase), such as the part names sk-6x40-stainless-steel-screws or
+#   sk-thin-and-light;
+# - Morph Teams' codes, which act as a member, are random base64url (secrets.token_urlsafe): invite (mi_) and sign-in
+#   link (ml_) codes 22 characters long and script tokens (mt_) 43, each with a capital letter (teams.auth.new_code
+#   redraws the one draw in about 95,000 without), so TEAM_CODE knows every one. Any other mi_/ml_/mt_ run of 20 or
+#   more characters (part of a code, a code with more text stuck to it) counts too when it has a capital or a digit
+#   and doesn't read as a snake_case phrase: mt_shoulder_joint_torque_limit, ml_inference_pipeline_enabled and
+#   mt_servo2_torque_limit are names, not codes;
+# - the value of a key saved in the Keys dialog (SAVED_KEYS), whatever its shape.
+TEAM_CODE = re.compile(r"(?:m[il]_(?=[A-Za-z0-9_-]{0,21}[A-Z])[A-Za-z0-9_-]{22}"
+                       r"|mt_(?=[A-Za-z0-9_-]{0,42}[A-Z])[A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])")
+# what may be a key or a code; _is_key decides for the sk- and m*_ runs
+SECRET = re.compile(r"\b(?:sk-ant-[A-Za-z0-9_-]{8,}|kwpat-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-]))"
+                    r"|(?<![A-Za-z0-9])m[til]_[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])")
+SAVED_KEYS = ("ANTHROPIC_API_KEY", "SUBQ_API_KEY", "KEEWANO_API_KEY", "KEEWANO_PAT")  # keys.KEYS but the project id
+_WORD = re.compile(r"[a-z]+|[A-Z][a-z]*|[A-Z]+")
+
+
+def _phrase(body: str) -> bool:
+    """Three or more parts joined by - or _, each a word (lower case, Capitalised or CAPITALS) or at most 6 characters
+    (6x40, m3x12, din912, v2), and one a word of 4 letters or more: words and part numbers, not a key's random run.
+    A random 22-character code reads as one about once in 3,800 draws (TEAM_CODE catches it anyway)."""
+    parts = [p for p in re.split(r"[-_]+", body) if p]
+    return (len(parts) >= 3 and all(len(p) <= 6 or _WORD.fullmatch(p) for p in parts)
+            and any(len(p) >= 4 and _WORD.fullmatch(p) for p in parts))
+
+
+def _is_key(match) -> bool:
+    token = match.group(0)
+    if token.startswith(("sk-ant-", "kwpat-")):
+        return True
+    body = token[3:]
+    if token.startswith("sk-"):
+        return any(c.isdigit() for c in body) and not _phrase(body)
+    return bool(TEAM_CODE.fullmatch(token)) or (re.search(r"[A-Z0-9]", body) is not None and not _phrase(body))
+
+
+def has_key(text: str) -> bool:
+    """True when `text` holds something shaped like a Claude, SubQ or Keewano key or a Morph Teams code (SECRET)."""
+    return isinstance(text, str) and any(_is_key(m) for m in SECRET.finditer(text))
+
+
+def redact_keys(text: str, mark: str = "[redacted]") -> str:
+    """`text` with everything has_key() finds replaced by `mark`."""
+    return SECRET.sub(lambda m: mark if _is_key(m) else m.group(0), text)
+
+
+def _saved_key_in(text: str, env=None) -> bool:
+    env = os.environ if env is None else env
+    return any(len(v) >= 8 and v in text for v in ((env.get(n) or "").strip() for n in SAVED_KEYS))
 
 
 def secret_refused(where: str) -> str:
@@ -73,11 +122,12 @@ def contained_path(root: str, relative: str, decode: bool = True) -> str | None:
 
 def looks_like_secret(text: str) -> bool:
     """The one filter for free text people type (chat, New robot, Show Morph the job's cards, every Teams text field):
-    a Claude, SubQ or Keewano key, a Morph Teams script token, invite or sign-in code, or a tool's key (toolbox: the
-    value of a saved MORPH_TOOL_* key, a token with a manifest's key prefix that fits its pattern, a bearer token)."""
+    a Claude, SubQ or Keewano key (by its shape, or the value of one saved in the Keys dialog), a Morph Teams script
+    token, invite or sign-in code, or a tool's key (toolbox: the value of a saved MORPH_TOOL_* key, a token with a
+    manifest's key prefix that fits its pattern, a bearer token). Ordinary names are not keys: see SECRET."""
     if not isinstance(text, str) or not text:
         return False
-    if SECRET.search(text):
+    if has_key(text) or _saved_key_in(text):
         return True
     from .toolbox import catalog
     return catalog.looks_like_tool_key(text)

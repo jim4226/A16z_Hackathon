@@ -38,7 +38,7 @@ import urllib.parse
 from dataclasses import dataclass
 
 from ... import __version__
-from ..security import SECRET
+from ..security import has_key, redact_keys
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 SIDE_EFFECTS = ("read", "write", "upload", "spend")
@@ -240,7 +240,7 @@ def validate_input(schema: dict, args) -> dict:
                 _check_scalar(f"{k}[{i}]", p["items"], x)
         else:
             _check_scalar(k, p, v)
-        if SECRET.search(json.dumps(v)):
+        if has_key(json.dumps(v)):
             raise ValueError(f"{k} looks like an API key; keys never go in tool arguments")
     return args
 
@@ -579,7 +579,7 @@ def redact(text: str, secrets=()) -> str:
         if s and len(s) >= 8:
             for form in _forms(s):
                 text = text.replace(form, "[redacted]")
-    return SECRET.sub("[redacted]", text)
+    return redact_keys(text)
 
 
 def run(spec: dict, args, *, credential: dict | None = None, secret: str | None = None, policy: HttpPolicy = DEFAULT_POLICY,
@@ -620,7 +620,7 @@ def run(spec: dict, args, *, credential: dict | None = None, secret: str | None 
     outgoing = json.dumps([r["path"], [q for q in r["query"] if not (auth and auth["in"] == "query" and q[0] == auth["name"])],
                            (r["body"] or b"").decode("utf-8", "replace"), {k: v for k, v in r["headers"].items()
                                                                            if not (auth and auth["in"] == "header" and k == auth["name"])}])
-    if SECRET.search(outgoing) or any(f in outgoing for s in used if len(s) >= 8 for f in _forms(s)):
+    if has_key(outgoing) or any(f in outgoing for s in used if len(s) >= 8 for f in _forms(s)):
         return done("error", {"error": "blocked", "detail": "the request would carry a key outside its own slot"})
     lim = spec.get("limits") or {}
     timeout = min(float(lim.get("timeout_s", 15)), policy.max_timeout_s)
