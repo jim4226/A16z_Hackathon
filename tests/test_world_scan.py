@@ -10,6 +10,7 @@ import math
 import os
 import sys
 import time
+import types
 
 import numpy as np
 import pytest
@@ -273,7 +274,8 @@ def test_a_box_not_fitted_in_time_is_not_offered(tmp_path, nominal, monkeypatch)
     (g,) = res["regions"]
     assert g["box"] is None and "ran out of time" in g["no_box"] and res["stats"]["fit_timeout"], g
     assert not {k for k in g if k.startswith("_")}
-    assert "too close to the path for a box" in worlds.scan_check(res)["text"]
+    assert "there wasn't time to fit a box that keeps clear of the path" in worlds.scan_check(res)["text"]
+    assert "less busy" in g["no_box"]
 
 
 def test_the_scan_check_warns_and_never_fails():
@@ -284,18 +286,40 @@ def test_the_scan_check_warns_and_never_fails():
              ({"min_clearance_mm": 4.2, "at": {**at, "link": "object"}, "regions": [region]}, "warn", "The object comes within"),
              ({"min_clearance_mm": 23.4, "at": at, "regions": []}, "pass", "At least 23 mm between the arm and the scanned surface (closest: the jaw left at 4.2 s)."),
              ({"min_clearance_mm": None, "at": None, "regions": []}, "pass", "The arm stays more than 50 mm from the scanned surface."),
-             ({"min_clearance_mm": 23.4, "at": at, "regions": [], "stats": {"truncated": True}}, "warn", "Only part of the path was checked"),
-             ({"min_clearance_mm": 23.4, "at": at, "regions": [], "stats": {"truncated": True}}, "warn",
-              "At least 23 mm between the arm and the scanned surface in the part of the path checked (closest"),
+             # cut short: the closest distance measured is the most room the arm has, never "at least" or "more than"
+             ({"min_clearance_mm": 23.4, "at": at, "regions": [], "stats": {"truncated": True, "limit_s": 20.0}}, "warn",
+              "The jaw left comes within at most 23.4 mm of the scanned surface at 4.2 s. Only part of the path was "
+              "measured in the 20 s a check has (a large scan or a busy computer): checking again when the computer is "
+              "less busy may measure all of it."),
+             ({"min_clearance_mm": 8.0, "at": at, "regions": [], "stats": {"truncated": True, "lower_mm": 3.0}}, "warn",
+              "The jaw left comes within at most 8.0 mm of the scanned surface at 4.2 s (no closer than 3.0 mm). There "
+              "wasn't time to measure that place closely enough to offer a box for it."),
+             ({"min_clearance_mm": 0.3, "at": at, "regions": [], "stats": {"truncated": True}}, "warn",
+              "The jaw left touches or passes through the scanned surface at 4.2 s."),
+             ({"min_clearance_mm": 4.6, "at": at, "regions": [], "stats": {"truncated": True, "limit_s": 20.0, "need_s": 52.0}},
+              "warn", "Only part of the path was measured in the 20 s a check has (a large scan or a busy computer): at "
+              "this pace, measuring all of it would take more than twice that, so checking again helps only on a much "
+              "less busy computer."),
+             ({"min_clearance_mm": None, "at": None, "regions": [], "stats": {"truncated": True, "part_clear": True,
+                                                                             "poses_checked": 150, "unique_poses": 600}},
+              "warn", "In the part of the path checked (25% of it), the arm stays more than 50 mm from the scanned surface."),
              ({"min_clearance_mm": None, "at": None, "regions": [], "stats": {"truncated": True}}, "warn",
-              "In the part of the path checked, the arm stays more than 50 mm from the scanned surface. Only part of the "
-              "path was checked in time (a large scan or a busy computer): Check placement again to measure it all."),
+              "There wasn't time to measure how close the arm comes to the scanned surface. Only part of the path"),
+             # the closest is measured, but time ran out before every other near miss was listed
+             ({"min_clearance_mm": 8.0, "at": at, "regions": [region], "stats": {"unlisted_mm": 8.3}}, "warn",
+              "Time ran out before every place closer than 10 mm was listed; any other is at least 8.3 mm from the arm."),
+             ({"min_clearance_mm": 8.0, "at": at, "regions": [{**region, "box": None}], "stats": {"fit_timeout": True}},
+              "warn", "1 place closer than 10 mm: there wasn't time to fit a box that keeps clear of the path."),
              ({"skipped": "The room scan has no triangles."}, "skip", "The room scan has no triangles.")]
     for scan, status, text in cases:
         c = worlds.scan_check(scan)
         assert c["id"] == "scan" and c["status"] == status and text in c["text"], (c, text)
         assert c["text"].endswith(" " + worlds.SCAN_NOTE) and c["note"] == worlds.SCAN_NOTE
     assert "1 place closer than 10 mm: Add box here turns it into a grey box" in worlds.scan_check(cases[1][0])["text"]
+    for scan, _, _ in cases:                            # cut short, it never says the arm keeps more room than measured
+        if (scan.get("stats") or {}).get("truncated") and not (scan.get("stats") or {}).get("part_clear"):
+            text = worlds.scan_check(scan)["text"]
+            assert "more than 50 mm" not in text and "At least" not in text and "Check placement again" not in text, text
     # inside the world check: a touching scan never changes the verdict, and the measured review advises on it
     w = worlds.starter("desk")
     out = worlds.checks(w, results(w), robot=ROBOT, design=design(), scan=cases[0][0])
@@ -394,6 +418,55 @@ def test_out_of_time_says_so(tmp_path, nominal):
     assert res["stats"]["truncated"]
     c = worlds.scan_check(res)
     assert c["status"] in ("warn", "skip") and ("Only part of the path" in c["text"] or "too large" in c["text"])
+
+
+class Clock:
+    """A clock that moves one second each time it is read: a check cut short at the same place on every computer."""
+
+    def __init__(self):
+        self.t = 1000.0
+
+    def monotonic(self):
+        self.t += 1.0
+        return self.t
+
+
+TOUCHING_VASE = ((264.2, 72.0), 22.0, 170.0)     # TALL_VASE 7.8 mm nearer the path: the gripper touches it (0.2 mm)
+
+
+@pytest.mark.parametrize("vase, limits", [
+    (TOUCHING_VASE, (8, 20, 60, 200, 560, 1300)),                 # the review's rD: the wrist touched, cut short
+    (TALL_VASE, (300, 545, 555, 560, 565, 570))])                 # 8.0 mm: cut in the second pass too
+def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nominal, monkeypatch, vase, limits):
+    """Cut short anywhere (the first pass, the second, or after the closest place was measured), the check reports the
+    closest distance it measured, a real distance from a point of the robot to the scan, as "at most", and a lower
+    bound only from poses it bounded: never "more than 50 mm" or "at least" where the arm comes closer. Uncut, the
+    answer is the whole path's. (A clock that moves one second a reading cuts the check at the same place every run.)"""
+    rob, doc = nominal
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*vase)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    full = measure(room, ROOM, doc, rob.xml)
+    true = full["min_clearance_mm"]
+    assert not full["stats"]["truncated"] and true < worlds.SCAN_NEAR_MM, full
+    seen = set()
+    for limit in limits:
+        with monkeypatch.context() as mp:
+            mp.setattr(worlds, "time", types.SimpleNamespace(monotonic=Clock().monotonic))
+            res = worlds.scan_clearance(room, ROOM, doc, rob.xml, time_limit_s=float(limit))
+        st, c, mc = res["stats"], worlds.scan_check(res), res["min_clearance_mm"]
+        assert c["status"] == "warn", (limit, c)
+        if not st["truncated"]:                         # the closest approach is the whole path's
+            assert mc == true and res["at"] == full["at"], (limit, res)
+            seen.add("listed in part" if st.get("unlisted_mm") is not None else "whole")
+            continue
+        seen.add("pass 1" if st["poses_checked"] < st["unique_poses"] else "pass 2")
+        assert "Only part of the path was measured" in c["text"] and "Check placement again" not in c["text"], c
+        assert "more than 50 mm" not in c["text"] and "At least" not in c["text"], (limit, c["text"])
+        assert mc is not None and true <= mc + 0.05, (limit, true, res)    # it comes at least as close as it says
+        assert ("touches" in c["text"]) if mc < worlds.SCAN_TOUCH_MM else (f"within at most {mc:.1f} mm" in c["text"])
+        if st.get("lower_mm") is not None:
+            assert st["lower_mm"] <= true + 0.05 and f"no closer than {st['lower_mm']:.1f} mm" in c["text"], (limit, st)
+    assert seen >= {"pass 1", "whole"} and (seen >= {"pass 2", "listed in part"} if vase is TALL_VASE else True), seen
 
 
 # ------------------------------------------------------------------ a room of a million triangles

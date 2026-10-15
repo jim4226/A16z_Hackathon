@@ -923,11 +923,16 @@ SCAN_TOL_MM = 0.05           # the closest approach is found to within this (it 
 SCAN_TOUCH_MM = 0.5          # closer than this the arm touches or passes through the scan: no need to look closer
 SCAN_WORKERS = -1           # threads for the big k-d tree queries (-1: every core)
 SCAN_FINE_MM, SCAN_COARSE_MM = (1.0, 2.0), 8.0      # robot surface samples: (edges, faces) near the scan; elsewhere
+SCAN_CELL_MM = 24.0          # the coarse samples of a geom grouped in cells this size, each skipped when far from the scan
+SCAN_RBOUND_CLASSES_MM = (16.0, 48.0)                # geoms' bounding spheres tested in these size classes
 SCAN_MAX_REGIONS, SCAN_GROW_MM, SCAN_MIN_BOX_MM = 8, 30.0, 20.0
 SCAN_COVER_MM = SCAN_NEAR_MM  # a near miss this close to a grey box is the box's: the simulation keeps clear of that
 SCAN_FIT_MIN_MM = 5.0        # a box trimmed to keep clear of the path thinner than this is no box (none is offered)
 SCAN_FIT_TOL_MM = 0.05
-SCAN_RESERVE_SHARE, SCAN_RESERVE_MAX_S = 0.25, 5.0   # of the time limit, kept for the near-miss regions and their boxes
+# once there are near misses, the measuring passes leave the regions and their boxes about what the fit needs (it
+# poses the robot once per pose: about 1-1.5 ms a pose measured), with room to spare, and never more than a share
+SCAN_FIT_S_PER_POSE, SCAN_RESERVE_MIN_S, SCAN_RESERVE_SHARE = 0.003, 0.5, 0.25
+SCAN_RETRY_FACTOR = 2.0      # a check cut short that needs more than this many times its limit: checking again won't do
 
 
 def _cross_rows(a, b):
@@ -1140,9 +1145,18 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     saying why), so adding it never makes the clearance worse; a trimmed box keeps the place it was made for as
     "covers" (its box before trimming), which Add box here saves with it. Near misses within SCAN_COVER_MM of one of
     the world's grey boxes, or of the place a grey box was added for, are left to that box (stats["covered"] counts
-    those regions): they are not offered again. The measuring passes stop SCAN_RESERVE_SHARE of `time_limit_s`
-    early (at most SCAN_RESERVE_MAX_S) so the regions and their boxes are done within the limit; a box not fitted in
-    time isn't offered (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps."""
+    those regions): they are not offered again. Once there are near misses, the measuring passes stop early enough
+    for the regions and their boxes to be done within the limit (about SCAN_FIT_S_PER_POSE a pose, at least
+    SCAN_RESERVE_MIN_S, at most SCAN_RESERVE_SHARE of it); a box not fitted in time isn't offered
+    (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps.
+
+    Cut short (stats["truncated"]), the answer never claims more room than was measured: "min_clearance_mm" is the
+    closest distance measured anywhere, the second pass's exact ones or the first pass's coarse robot samples to the
+    scan's points (a real distance, so the arm comes at least that close), with stats["lower_mm"] a lower bound when
+    every pose was bounded, ["poses_checked"] of ["unique_poses"], ["part_clear"] when every pose looked at stays
+    beyond SCAN_CUT_MM, and ["need_s"] the time the whole check would take at this pace. A second pass cut short
+    after the closest point was measured (nothing left could come closer) is not truncated: stats["unlisted_mm"]
+    then says how close the near misses not listed could be."""
     import mujoco
     import trimesh
     from scipy.spatial import cKDTree
@@ -1151,7 +1165,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
 
     t0 = time.monotonic()
     end = t0 + time_limit_s                             # everything, the boxes' fit too, is done by then
-    deadline = end - min(SCAN_RESERVE_MAX_S, SCAN_RESERVE_SHARE * time_limit_s)     # the measuring passes
+    deadline = end                                      # the measuring passes: earlier once there are near misses
     stats = {"faces": 0, "kept_faces": 0, "triangles": 0, "samples": 0, "poses": 0, "points": 0, "refined": 0,
              "pairs": 0, "truncated": False}
     try:
@@ -1252,8 +1266,9 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     tree = cKDTree(S, balanced_tree=False, compact_nodes=False)
     nt = len(A)
     stats["tree_s"] = round(time.monotonic() - t0, 2)
-    # ---- each geom's surface, sampled coarsely (pruning) and finely (measuring; the coarse samples too), own frame
-    shape = {}
+    # ---- each geom's surface, sampled coarsely (pruning) and finely (measuring; the coarse samples too), own frame;
+    # the coarse samples also grouped by SCAN_CELL_MM cell, so the parts of a big geom far from the scan are skipped
+    shape, cells = {}, {}
     for g in geoms:
         if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH:
             mid = m.geom_dataid[g]
@@ -1266,10 +1281,21 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         fine = np.vstack([_hull_samples(pts, *SCAN_FINE_MM), coarse])
         dpar, par = cKDTree(coarse).query(fine)
         shape[int(g)] = (coarse, fine, par, float(dpar.max()))       # each fine sample's coarse one, and how far
+        key = _cell_keys(np.floor(coarse / SCAN_CELL_MM).astype(np.int64))
+        uk, cell = np.unique(key, return_inverse=True)
+        lo_c, hi_c = np.full((len(uk), 3), np.inf), np.full((len(uk), 3), -np.inf)
+        np.minimum.at(lo_c, cell, coarse)
+        np.maximum.at(hi_c, cell, coarse)
+        mid = (lo_c + hi_c) / 2.0
+        rad = np.zeros(len(uk))
+        np.maximum.at(rad, cell, np.sqrt(((coarse - mid[cell]) ** 2).sum(1)))
+        cells[int(g)] = (mid, rad + 1e-6, cell.ravel())             # the coarse samples by cell: centre, radius, whose
     if not shape:
         stats["seconds"] = round(time.monotonic() - t0, 2)
         return out
     cmax = max(v[3] for v in shape.values())
+    rb = 1000.0 * m.geom_rbound
+    size_class = np.digitize(rb, SCAN_RBOUND_CLASSES_MM)              # the bounding-sphere test, small geoms apart
     fixed = np.array([g for g in robot if int(g) in shape and m.body_weldid[m.geom_bodyid[g]] == 0], int)
     moving = np.array([g for g in robot if int(g) in shape and m.body_weldid[m.geom_bodyid[g]] != 0], int)
     carried = np.r_[moving, [g for g in obj_geoms if int(g) in shape]].astype(int)
@@ -1282,23 +1308,43 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
 
     def coarse_at(k, limit):
         """Pose k: the geoms that may come within `limit` of the scan (the ones that never move only at the first
-        pose, unless every pose is asked for), and their coarse samples' distances to the nearest scan points (inf
-        where too far to matter)."""
+        pose, unless every pose is asked for), their coarse samples' distances to the nearest scan points (inf where
+        too far to matter), and the closest of those samples: (geom, sample, scan point) or None.
+        The bounding spheres are tested by size class (a small geom's centre needs only a small search), then the
+        cells of coarse samples; a sample in a cell whose sphere is beyond the samples' search bound would be inf."""
         pose(poses[k][1], poses[k][2])
         gs = carried if poses[k][3] in held else moving
         if k == 0 or per_pose:
             gs = np.r_[fixed, gs].astype(int)
         if not len(gs):
-            return gs, []
-        r = 1000.0 * m.geom_rbound[gs]
-        dc, _ = tree.query(d.geom_xpos[gs] * 1000.0, k=1, distance_upper_bound=limit + rho + float(r.max()))
+            return gs, [], None
+        r = rb[gs]
+        dc = np.full(len(gs), np.inf)
+        for c in np.unique(size_class[gs]):
+            sel = size_class[gs] == c
+            dc[sel] = tree.query(d.geom_xpos[gs[sel]] * 1000.0, k=1, distance_upper_bound=limit + rho + float(r[sel].max()))[0]
         gs = gs[dc - r - rho < limit]
         if not len(gs):
-            return gs, []
-        P = [placed(g, shape[int(g)][0]) for g in gs]
+            return gs, [], None
+        bound = limit + rho + cmax
+        cc = [placed(g, cells[int(g)][0]) for g in gs]
+        rc = np.concatenate([cells[int(g)][1] for g in gs])
+        dcc = tree.query(np.vstack(cc), k=1, distance_upper_bound=bound + float(rc.max()))[0]
+        hot = np.split(dcc - rc < bound + 1e-6, np.cumsum([len(x) for x in cc])[:-1])
+        sel = [h[cells[int(g)][2]] for g, h in zip(gs, hot)]
+        P = [placed(g, shape[int(g)][0][s]) for g, s in zip(gs, sel)]
         P = np.vstack(P) if len(P) > 1 else P[0]
-        dq, _ = tree.query(P, k=1, distance_upper_bound=limit + rho + cmax, workers=SCAN_WORKERS if len(P) > 2048 else 1)
-        return gs, np.split(dq, np.cumsum([len(shape[int(g)][0]) for g in gs])[:-1])
+        dq = [np.full(len(s), np.inf) for s in sel]
+        if not len(P):
+            return gs, dq, None
+        dp, ip = tree.query(P, k=1, distance_upper_bound=bound, workers=SCAN_WORKERS if len(P) > 2048 else 1)
+        for x, s, part in zip(dq, sel, np.split(dp, np.cumsum([int(s.sum()) for s in sel])[:-1])):
+            x[s] = part
+        i = int(dp.argmin())
+        if not np.isfinite(dp[i]):
+            return gs, dq, None
+        j = int(np.searchsorted(np.cumsum([int(s.sum()) for s in sel]), i, "right"))
+        return gs, dq, (int(gs[j]), P[i], int(ip[i]))
 
     def exact(Pc, ub):
         """Exact distances from points Pc to the scan, and the closest points. The closest point lies on a triangle
@@ -1331,11 +1377,15 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     # and is measured with the rest), so the exact pass starts tight and takes the most promising poses first. The
     # poses go spread out (every 16th, then those halfway between, ...): cut short on a busy computer, it has still
     # looked along the whole path, not only its start
-    lb, ubk, seen, same = np.full(len(poses), np.inf), np.full(len(poses), np.inf), {}, {}
+    lb, ubk, seen, same, ub_at = np.full(len(poses), np.inf), np.full(len(poses), np.inf), {}, {}, {}
+    visited = np.zeros(len(poses), bool)
     first = list(range(len(poses)))                     # standing still: the first pose of the stillness says it all
     for k in range(1, len(poses)):
         if np.array_equal(poses[k][1], poses[k - 1][1]) and np.array_equal(poses[k][2], poses[k - 1][2]):
             first[k] = first[k - 1]
+    unique = sum(1 for k, k0 in enumerate(first) if k == k0)
+    # the boxes' share of the time: only once there are near misses to fit them to, and about what the fit needs
+    reserve = min(SCAN_RESERVE_SHARE * time_limit_s, max(SCAN_RESERVE_MIN_S, SCAN_FIT_S_PER_POSE * unique))
     for k in _spread(len(poses)):
         if first[k] != k:
             same[k] = first[k]
@@ -1343,15 +1393,22 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         if time.monotonic() > deadline:
             stats["truncated"] = True
             break
-        gs, dq = coarse_at(k, SCAN_CUT_MM if per_pose else max(near_mm, min(SCAN_CUT_MM, float(ubk.min()))))
+        gs, dq, close = coarse_at(k, SCAN_CUT_MM if per_pose else max(near_mm, min(SCAN_CUT_MM, float(ubk.min()))))
+        visited[k] = True
         if len(gs):
             lb[k] = max(0.0, min(float(x.min()) - rho - shape[int(g)][3] for g, x in zip(gs, dq)))
             ubk[k] = min(float(x.min()) for x in dq)
             seen[k] = (gs, dq)                        # pass 2 visits only these, with a tighter bound: reused
+            if close is not None:
+                ub_at[k] = close
+            if ubk[k] < near_mm:                        # a near miss: leave time for its box
+                deadline = min(deadline, end - reserve)
     ub = float(ubk.min())
+    cut1 = bool(stats["truncated"])
     stats["pass1_s"] = round(time.monotonic() - t0 - stats["prepare_s"], 2)
-    # pass 2, fine and exact
-    for k in np.argsort(lb, kind="stable"):
+    # pass 2, fine and exact; cut short, `rest` is how close what it didn't measure could come at most
+    order2, rest, refined, limit = np.argsort(lb, kind="stable"), math.inf, 0, SCAN_CUT_MM
+    for n2, k in enumerate(order2):
         bound = min(SCAN_CUT_MM, float(ubk[k])) if per_pose else min(SCAN_CUT_MM, ub, best["d"])
         limit = max(near_mm, bound)
         if not lb[k] < limit:
@@ -1359,7 +1416,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
                 continue
             break
         if time.monotonic() > deadline:
-            stats["truncated"] = True
+            rest = float(lb[k])                         # in order: the poses after it are no closer
             break
         t = poses[k][0]
         pose(poses[k][1], poses[k][2])
@@ -1383,6 +1440,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             c = c[np.argsort(da[c], kind="stable")]
             c = c[np.unique(ia[c], return_index=True)[1]]
             near.append((ia[c], P[c], da[c], np.full(len(c), t), owner[c]))
+            deadline = min(deadline, end - reserve)
         order = np.argsort(da, kind="stable")
         pose_best, done = math.inf, 0
         while done < len(order):                        # nearest first, while a point could still be the closest
@@ -1395,7 +1453,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             if not len(idx):
                 break
             if time.monotonic() > deadline:
-                stats["truncated"] = True
+                rest = max(0.0, float(da[idx].min()) - rho)  # this pose's points not measured yet
                 break
             done += step
             D, Q = exact(P[idx], da[idx])
@@ -1403,16 +1461,43 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             pose_best = min(pose_best, float(D[i0]))
             if D[i0] < best["d"]:
                 best = {"d": float(D[i0]), "t": t, "g": int(owner[idx[i0]]), "q": Q[i0], "p": P[idx[i0]]}
+            if best["d"] < near_mm:
+                deadline = min(deadline, end - reserve)
+        if rest < math.inf:                             # cut short inside this pose: the next ones are no closer
+            rest = min(rest, float(lb[order2[n2 + 1]]) if n2 + 1 < len(order2) else math.inf)
+            break
+        refined += 1
         if per_pose and pose_best < SCAN_CUT_MM:
             out["poses"][k][1] = round(pose_best, 2)
     for k, k0 in same.items() if per_pose else ():
         out["poses"][k][1] = out["poses"][k0][1]
     stats["pass2_s"] = round(time.monotonic() - t0 - stats["prepare_s"] - stats["pass1_s"], 2)
-    if best["d"] < SCAN_CUT_MM:
-        b = m.geom_bodyid[best["g"]]
-        out["min_clearance_mm"] = round(best["d"], 1)
-        out["at"] = {"t": round(float(best["t"]), 2), "link": "object" if b == obj_body else m.body(b).name,
-                     "point": [round(float(v), 1) for v in to_world(world, best["q"])]}
+    # cut short, the answer never claims more room than was measured: the closest distance measured anywhere (pass 2's
+    # exact ones, or pass 1's coarse samples, which are points of the robot too) is the most the arm keeps clear
+    final = best["d"] < SCAN_TOUCH_MM or (not cut1 and rest >= best["d"] - SCAN_TOL_MM)
+    stats.update(truncated=not final, limit_s=time_limit_s, poses_checked=int(visited.sum()), unique_poses=unique)
+    if final and rest < near_mm:                        # every place closer than near_mm isn't listed, the closest is
+        stats["unlisted_mm"] = round(math.floor(rest * 10.0) / 10.0, 1)
+    close = best
+    if not final:
+        if ub < best["d"] and ub_at:
+            k = min(ub_at, key=lambda i: ubk[i])
+            g, p, j = ub_at[k]
+            close = {"d": float(ubk[k]), "t": poses[k][0], "g": g, "q": S[j], "p": p}
+        lower = 0.0 if cut1 else min(best["d"], rest)
+        stats["lower_mm"] = round(math.floor(lower * 10.0) / 10.0, 1) if lower > 0.0 else None
+        stats["part_clear"] = bool(close["d"] >= SCAN_CUT_MM and float(lb[visited].min(initial=math.inf)) >= SCAN_CUT_MM)
+        if cut1:                                        # at this pace: pass 1 for every pose, pass 2 not counted
+            need = stats["prepare_s"] + stats["pass1_s"] * unique / max(1, int(visited.sum()))
+        else:
+            todo = int(np.sum(lb < limit))
+            need = stats["prepare_s"] + stats["pass1_s"] + stats["pass2_s"] * todo / max(1, refined)
+        stats["need_s"] = round(need, 1)
+    if close["d"] < SCAN_CUT_MM:
+        b = m.geom_bodyid[close["g"]]
+        out["min_clearance_mm"] = round(close["d"], 1)
+        out["at"] = {"t": round(float(close["t"]), 2), "link": "object" if b == obj_body else m.body(b).name,
+                     "point": [round(float(v), 1) for v in to_world(world, close["q"])]}
     t1 = time.monotonic()
     out["regions"] = _scan_regions(world, near, S, best if best["d"] < near_mm else None, m, obj_body, floor_cut_mm, stats)
     stats["regions_s"] = round(time.monotonic() - t1, 2)
@@ -1498,7 +1583,8 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
         if late or time.monotonic() > deadline:
             late = True
             r["box"] = None
-            r["no_box"] = "Morph ran out of time to fit a box here that keeps clear of the path: Check placement again."
+            r["no_box"] = ("Morph ran out of time to fit a box here that keeps clear of the path: checking again when the "
+                           "computer is less busy may fit one.")
             continue
         P = np.vstack(pts) if pts else np.zeros((0, 3))
         if len(P):                                       # one point per quarter-millimetre cell
@@ -1747,36 +1833,58 @@ def scan_check(scan: dict) -> dict:
     if scan.get("skipped"):
         return _check("scan", label, "skip", f"{_sentence(scan['skipped'])} {SCAN_NOTE}", view=view, note=SCAN_NOTE)
     mc, at, regions = scan.get("min_clearance_mm"), scan.get("at") or {}, scan.get("regions") or []
+    stats = scan.get("stats") or {}
     who = "the object" if at.get("link") == "object" else f"the {str(at.get('link') or 'arm').replace('_', ' ')}"
     when = f" at {float(at.get('t') or 0.0):.1f} s" if at else ""
-    cut = bool((scan.get("stats") or {}).get("truncated"))
-    if mc is None:
-        st, text = "pass", (f"{'In the part of the path checked, the' if cut else 'The'} arm stays more than "
-                            f"{SCAN_CUT_MM:.0f} mm from the scanned surface.")
+    cut = bool(stats.get("truncated"))
+    lower = stats.get("lower_mm")
+    if cut and mc is None:                              # cut short: only what was measured, never more room than that
+        part = (f" ({100.0 * stats['poses_checked'] / stats['unique_poses']:.0f}% of it)"
+                if stats.get("unique_poses") and stats.get("poses_checked") is not None else "")
+        text = (f"In the part of the path checked{part}, the arm stays more than {SCAN_CUT_MM:.0f} mm from the "
+                "scanned surface." if stats.get("part_clear") else
+                "There wasn't time to measure how close the arm comes to the scanned surface.")
+        st = "warn"
+    elif mc is None:
+        st, text = "pass", f"The arm stays more than {SCAN_CUT_MM:.0f} mm from the scanned surface."
     elif mc < SCAN_TOUCH_MM:
         st, text = "warn", _sentence(f"{who} touches or passes through the scanned surface{when}")
+    elif cut:
+        st, text = "warn", _sentence(f"{who} comes within at most {mc:.1f} mm of the scanned surface{when}"
+                                     + (f" (no closer than {lower:.1f} mm)" if lower else ""))
     elif mc < SCAN_NEAR_MM:
         st, text = "warn", _sentence(f"{who} comes within {mc:.1f} mm of the scanned surface{when}")
     else:
-        st, text = "pass", (f"At least {mc:.0f} mm between the arm and the scanned surface "
-                            f"{'in the part of the path checked ' if cut else ''}(closest: {who}{when}).")
+        st, text = "pass", f"At least {mc:.0f} mm between the arm and the scanned surface (closest: {who}{when})."
     if regions:
         n, boxed = len(regions), sum(1 for r in regions if r.get("box") is not None)
         text += f" {n} place{'s' if n != 1 else ''} closer than {SCAN_NEAR_MM:.0f} mm"
         if boxed:
             text += (f": Add box here turns {'one' if n != 1 else 'it'} into a grey box the simulation keeps clear of, "
                      "trimmed so it is no closer to the path than the scan.")
+        elif stats.get("fit_timeout"):
+            text += ": there wasn't time to fit a box that keeps clear of the path."
         else:
             text += ": too close to the path for a box; move the robot or the thing."
-    covered = (scan.get("stats") or {}).get("covered") or 0
+    elif cut and mc is not None and mc < SCAN_NEAR_MM:
+        text += " There wasn't time to measure that place closely enough to offer a box for it."
+    covered = stats.get("covered") or 0
     if covered:
         text += (f" {covered} {'other ' if regions else ''}place{'s' if covered != 1 else ''} closer than "
                  f"{SCAN_NEAR_MM:.0f} mm {'have' if covered != 1 else 'has'} a grey box already, so "
                  f"{'they are' if covered != 1 else 'it is'} not offered again.")
+    if stats.get("unlisted_mm") is not None:
+        u = float(stats["unlisted_mm"])
+        text += (f" Time ran out before every place closer than {SCAN_NEAR_MM:.0f} mm was listed"
+                 + (f"; any other is at least {u:.1f} mm from the arm." if u > 0 else "."))
     if cut:
-        st = "warn"
-        text += (" Only part of the path was checked in time (a large scan or a busy computer): Check placement "
-                 "again to measure it all.")
+        limit, need = float(stats.get("limit_s") or 20.0), stats.get("need_s")
+        text += f" Only part of the path was measured in the {limit:.0f} s a check has (a large scan or a busy computer)"
+        if need is not None and need > SCAN_RETRY_FACTOR * limit:     # checking again won't finish it either
+            text += (": at this pace, measuring all of it would take more than twice that, so checking again helps "
+                     "only on a much less busy computer.")
+        else:
+            text += ": checking again when the computer is less busy may measure all of it."
     return _check("scan", label, st, f"{text} {SCAN_NOTE}", mc, "mm", view, where=at, regions=regions, note=SCAN_NOTE)
 
 

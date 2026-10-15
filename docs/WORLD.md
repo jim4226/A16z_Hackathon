@@ -64,9 +64,17 @@ makes the clearance worse. When a box that keeps clear would be thinner than 5 m
 the thing. *Save and simulate* then plans around it, and the next check measures the new path. A near miss within 10 mm
 of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box away from it
 (a vase's rim just under the arm): the same place is not offered again, and the check says it has a grey box already.
-The same box is never added twice. The check, the boxes' fit included, takes up to 20 seconds on a large scan (7.5
-seconds for a generated room of a million triangles on an idle 4-core computer, 11.5 on a busy one); its answer is
-kept until the room, the scan or the revision's simulation changes.
+The same box is never added twice.
+
+The check, the boxes' fit included, has 20 seconds. On a busy 4-core computer (load 11-13) the review's desk scan, a
+vase 9 mm from the arm's path, takes 10 to 11.5 seconds, and the same desk with the wrist touching the vase 8 to 12.5
+seconds at load 2-4 and 17 seconds at load 8; a generated room of a million triangles takes 10.5 seconds at load 7. When
+a check can't measure the whole path in time, it never claims more room than it measured: it says how close the arm
+comes at most (the closest distance it did measure: "The wrist comes within at most 4.6 mm of the scanned surface"), or
+that there wasn't time to measure it, and that only part of the path was measured. It says whether checking again when
+the computer is less busy may finish it, or whether, at that pace, it would take more than twice as long. Its answer is
+kept until the room, the scan or the revision's simulation changes, except an answer cut short or one whose box ran out
+of time to be fitted: *Check placement* measures those again.
 
 - Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
   goes counts as a near miss.

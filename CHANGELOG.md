@@ -103,9 +103,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   be noisy or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot
   becomes a grey box, trimmed so it is no closer to the path than the scan, and the next simulation plans around it. A
   place next to a grey box, or one a box was added for (even when the trim moved the box away from it), isn't offered
-  again, and the same box is never added twice. The check, the boxes' fit included, stays within its 20 seconds; a
-  generated room of a million triangles is checked in 7 to 12 seconds. Cut short on a busy computer, it has still
-  looked along the whole path, says its numbers are for the part it checked, and measures again when asked again.
+  again, and the same box is never added twice. The check, the boxes' fit included, stays within its 20 seconds: the
+  review's desk scan takes 10 to 11.5 seconds on a busy 4-core computer (load 11-13), where it used to take 16 to 18
+  and was often cut short; a generated room of a million triangles takes 10.5 seconds at load 7. The boxes' share of
+  the time is set aside only once there is a near miss, sized from what fitting the boxes takes. Cut short, the check
+  never claims more room than it measured: it says the arm comes within at most the closest distance it measured, or
+  that there wasn't time to measure it, says only part of the path was measured, and says whether checking again
+  when the computer is less busy may finish it. Answers cut short, or whose box ran out of time to be fitted, aren't
+  kept, so Check placement measures them again.
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the
