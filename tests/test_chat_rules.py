@@ -38,6 +38,20 @@ def test_make_it_cheaper_steps_down_while_the_object_still_fits():
                             "(4 joints, hobby PWM servos).")
 
 
+def test_cheaper_stops_before_hobby_servos_that_cant_grip_the_object_safely():
+    # the egg-picker's force-sensing hobby gripper can't reach an egg at the small end of its size without risking
+    # stall when a sensor reads nothing (a plan issue): "make it cheaper" stepped into that infeasible robot
+    from morph.studio.projects import template
+
+    d = template("egg-picker")
+    assert (d.arm.actuator_family, int(d.arm.dof)) == ("smart_bus", 5)
+    assert say("make it cheaper", d)["changes"] == {"arm.dof": 4}
+    out = say("make it cheaper", d.with_changes({"arm.dof": 4}))
+    assert out["changes"] == {} and out["reply"] == (
+        "Nothing to change: this is already the cheapest arm Morph makes that grips the raw egg safely (4 joints, "
+        "smart-bus servos): a hobby PWM gripper servo has no torque limit to back its grip up.")
+
+
 def test_cheaper_never_drops_below_the_object():
     d = egg_arm(**{"object.mass_g": 250.0, "arm.dof": 5})                    # smart bus, 5 joints: 200 g at 2x
     assert say("lower the cost", d)["changes"] == {"arm.dof": 4}             # 4 joints lift 300 g

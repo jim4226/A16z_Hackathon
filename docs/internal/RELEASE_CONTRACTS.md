@@ -650,7 +650,8 @@ in sections 3, 4 and 8. The rest that other code relies on:
 - **New robot and chat:** typed answers keep the object being discussed (`brief._typed_answer`); `LAYOUTS` has the
   typed-only `left_to_right`; an archetype's `place` ("plant", "feeding spot") replaces the bin in its layout's words.
   Without Claude, `intent.cost_down` steps "cheaper" down the cost ladder only while the arm still lifts the object at
-  2x margin (`capability.payload_g`), "faster"/"slower" scale the cycle time within `capability.CYCLE_S`, and a
+  2x margin (`capability.payload_g`), and to hobby PWM servos only while their gripper still grips it safely
+  (`intent._hobby_grips`: no `hobby_gripper` issue, section 22; the egg-picker stops at smart-bus), "faster"/"slower" scale the cycle time within `capability.CYCLE_S`, and a
   `said` entry starting with `intent.NOTE` reports a change that is already there instead of making one.
   `agents.after_build(no_source=)` says why sourcing was skipped.
 - **World mode:** `GET /api/world` adds `ai {claude, subq}` (which reviewers would answer now) and, for the newest

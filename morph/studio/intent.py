@@ -93,9 +93,19 @@ CHEAPER = re.compile(r"\b(cheaper|cheapest|less expensive|cost less|lower (?:the
                      r"(?:parts )?(?:cost|price)s?|save money|costs? down)\b")
 
 
+def _hobby_grips(d: Design) -> bool:
+    """Whether hobby PWM servos would still grip the object safely: their gripper servo has no torque limit, so a
+    force-sensing close may not reach the object's small end and a sensorless one may not hold it (the plan's
+    hobby_gripper issues, brief.classify)."""
+    from .brief import classify, preflight
+
+    return "hobby_gripper" not in classify(preflight({**d.flat(), "arm.actuator_family": "hobby_pwm"})["issues"])
+
+
 def cost_down(d: Design, ch: dict, said: list):
     """"Make it cheaper": one step down the cost ladder that still lifts the object with a 2x torque margin
-    (capability.PAYLOAD_G): Dynamixel to smart-bus servos, then one joint fewer, then hobby PWM servos."""
+    (capability.PAYLOAD_G): Dynamixel to smart-bus servos, then one joint fewer, then hobby PWM servos when they still
+    grip it safely (_hobby_grips)."""
     from .capability import payload_g
 
     if d.arm.source:
@@ -109,9 +119,12 @@ def cost_down(d: Design, ch: dict, said: list):
     elif dof > 4 and payload_g(fam, dof - 1) >= g:
         ch["arm.dof"] = dof - 1
         said.append(f"{dof - 1}-DOF arm (one servo fewer; top-down picks need only 4 joints)")
-    elif fam == "smart_bus" and payload_g("hobby_pwm", dof) >= g:
+    elif fam == "smart_bus" and payload_g("hobby_pwm", dof) >= g and _hobby_grips(d):
         ch["arm.actuator_family"] = "hobby_pwm"
         said.append("actuators → hobby PWM servos (the cheapest; they have no position feedback)")
+    elif fam == "smart_bus" and payload_g("hobby_pwm", dof) >= g:
+        said.append(f"{NOTE}this is already the cheapest arm Morph makes that grips the {d.object.name or 'object'} safely "
+                    f"({dof} joints, smart-bus servos): a hobby PWM gripper servo has no torque limit to back its grip up")
     else:
         label = {"hobby_pwm": "hobby PWM", "smart_bus": "smart-bus", "dynamixel": "Dynamixel"}.get(fam, fam)
         said.append(f"{NOTE}this is already the cheapest arm Morph makes for a {g:g} g object ({dof} joints, {label} servos)")
