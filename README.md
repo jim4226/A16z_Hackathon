@@ -305,9 +305,10 @@ an offline fallback. `morph subq "help me sort socks"` tries a key by hand.
 ### Live prices and agent tools (beta)
 
 **Live prices** in the BOM tab has Claude check current distributor prices and stock for the purchased parts with
-Morph's read-only distributor tools (Mouser; Farnell, element14 and Newark). When a tool needs your key or your OK, the
-run asks in the chat and carries on once you answer; each key goes only to its own service, never to Claude. Each price
-names the tool that answered, one Morph can't find in that answer is marked "check it", and nothing is ever ordered.
+Morph's read-only distributor tools: Mouser, and Farnell (element14, Newark), which ships turned off until its API terms
+have had a legal review ([docs/TOOLS.md](docs/TOOLS.md)). When a tool needs your key or your OK, the run asks in the
+chat and carries on once you answer; each key goes only to its own service, never to Claude. Each price says which
+distributor it is from, one Morph can't find in that answer is marked "check it", and nothing is ever ordered.
 The distributor tools were written from their providers' documentation and are not yet tried with real keys. The owner
 can add tools as JSON manifests, or have Claude draft one from an API's documentation (preview):
 [docs/TOOLS.md](docs/TOOLS.md).

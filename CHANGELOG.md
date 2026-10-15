@@ -115,7 +115,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   settings are flagged as well: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
 - **Live prices** (beta): in the BOM tab, Claude checks current distributor prices and stock for the purchased parts
   with Morph's read-only distributor tools (Mouser, and Farnell, element14 and Newark; written from their API
-  documentation and marked "Not yet tried with a real key"). Each run gets a card in the chat that says what it used
+  documentation and marked "Not yet tried with a real key"). The Farnell tool ships turned off until a legal review of
+  Farnell's API terms, which limit storing its data and passing it on: Keys says so next to it, and only the owner
+  turns it on. Every price says which distributor it is from ("from Farnell/element14", "from Mouser Electronics"),
+  on the card, in Show prices and in Claude's summary. Each run gets a card in the chat that says what it used
   and what it waits for: **Key needed** names the service, what the key is for, its cost and what is sent, with Add
   key (opens Keys on that key), Get a key and Skip; once the key is saved the run continues by itself ("Key added,
   continuing…"), and a key the service refuses can be replaced. A tool that asks first shows a **Tool request** card
@@ -211,9 +214,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   names, links, robot names, frames or what you typed. Team activity is never sent.
 - Board exports no longer carry Morph's licence; `morph kicad --license` adds one when you choose.
 - Live prices sends the distributor only the keywords or part numbers it searches for (from your parts list), with
-  your key for that distributor, and sends the parts list to Claude; cards, events and logs never carry a key, a
-  tool's answer or Claude's messages. Farnell's terms don't allow storing its data, so its answers stay only in the
-  run, which is deleted after 7 days.
+  your key for that distributor, and sends the parts list and what each tool answered to Claude; the run's file keeps
+  those answers (cut down, without keys) for up to 7 days, and cards, events and logs never carry a key, a tool's
+  answer or Claude's messages.
 - Drafting a tool (preview) sends Claude the need you typed, the documentation's address and the tool ids and key
   names Morph already uses; Claude's web fetch reads pages of that documentation site only. Morph keeps the pages'
   addresses and the lines that name each host, not the pages. Darwin's suggestions send the need to Darwin's public

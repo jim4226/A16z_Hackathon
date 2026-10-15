@@ -7,11 +7,21 @@ purchased parts of one revision. Nothing is ever ordered, reserved or paid for.
 
 A tool is a **spec, not code**: a JSON manifest that says which address to call, what to send and what to keep from
 the answer. One hardened runner in Morph executes every manifest the same way. Morph ships two read-only distributor
-manifests (Mouser, and Farnell with element14 and Newark), the owner of a Studio can add their own, and Claude can
-draft one from an API's documentation for the owner to review (*Morph writes a tool*, preview).
+manifests (Mouser, and Farnell with element14 and Newark; Farnell's is off until you turn it on, see below), the owner
+of a Studio can add their own, and Claude can draft one from an API's documentation for the owner to review (*Morph
+writes a tool*, preview).
 
 Everything here is beta. The distributor tools were written from the providers' documentation and have **not yet been
 tried with real keys**; the Studio tags them "Not yet tried with a real key" until someone has.
+
+### Farnell (element14, Newark) is off until a legal review
+
+Farnell's API terms limit storing its data and passing it on, and nobody has yet checked with a lawyer how they apply to
+what Live prices does with every tool's answers: it sends them to Claude and keeps them, cut to the fields the manifest
+names, in the run's file for up to 7 days. So Morph ships the Farnell tool turned off. Keys, under "Tools agents can
+use", says so next to it, and the owner can turn it on: do that only if your own agreement with Farnell allows it.
+Once it is on, it works like the Mouser tools, and every price it gave is shown "from Farnell/element14", in the
+Studio and in Claude's summary.
 
 ## How an agent finds a tool
 
@@ -158,6 +168,9 @@ a made-up distributor), cut to one tool:
   pointer (or an object in the list there) has every `match` field is a refused key, and the card offers **Replace
   key**. Only a tool that sends a key may have one.
 - `limits`: at most 30 seconds and 2 MiB per call.
+- `off_by_default` (optional): why one of Morph's own tools starts off, shown next to it in Keys (an owner's own
+  tools start off anyway). `attribution` (optional): how its data is credited wherever Morph shows it ("from
+  Farnell/element14"); without it, the service's name.
 
 Unknown fields are refused at every level. A manifest that breaks a rule isn't loaded; Keys lists it with the reason.
 An owner manifest that reuses one of Morph's provider ids, tool names or key names is not loaded. The full rules are in
@@ -193,7 +206,7 @@ last control. Read the hosts and lookups before you approve.
 | What | How it was checked | With real services |
 |---|---|---|
 | Mouser keyword and part number search | Written from Mouser's Swagger document (read 2026-10-13). Offline tests check what the runner sends and what it keeps from an answer that follows the documented schema (made-up values, plus a line that tries to give Claude instructions) | Not tried. `tests/test_toolbox_vendors_live.py` (`MORPH_LIVE=1` with a Mouser key) |
-| Farnell, element14 and Newark keyword search | Written from the Product Search API (REST) description (read 2026-10-13). Offline tests on the documentation's own example answer | Not tried. Same file, with an element14 key |
+| Farnell, element14 and Newark keyword search | Written from the Product Search API (REST) description (read 2026-10-13). Offline tests on an answer in its documented shape with made-up values (plus a line that tries to give Claude instructions). Off by default until a legal review of Farnell's terms | Not tried. Same file, with an element14 key |
 | The requests to Claude: tool search, the catalog held back, strict core tools, fallbacks, an unchanged prefix on every resume | The real Anthropic SDK over a mock transport; the stored prefix is compared on every resume and after a restart | Not tried. `tests/test_toolbox_live.py` (`MORPH_LIVE=1` with an Anthropic key) |
 | Live prices end to end | A real Studio with a local stand-in for Claude (`tests/fake_claude.py`) and a fixture distributor, in a real browser at three window sizes (`tests/e2e/test_e2e_tools.py`, `MORPH_E2E=1`) | Not tried with real Claude and a real Mouser key |
 | Drafting a tool | The stand-in with a made-up API's documentation, clean and with planted instructions for AI agents (`tests/e2e/test_e2e_tool_draft.py`) | Not tried. `tests/test_toolbox_draft_live.py` (real Claude and a real documentation page) |

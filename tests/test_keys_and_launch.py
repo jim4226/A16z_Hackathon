@@ -49,7 +49,7 @@ def test_saving_keys_keeps_the_rest_of_the_file(env):
     status = keys.status()
     assert {k["name"]: k["set"] for k in status} == {"ANTHROPIC_API_KEY": True, "KEEWANO_API_KEY": False,
                                                     "KEEWANO_PAT": True, "KEEWANO_PROJECT_ID": False, "SUBQ_API_KEY": False,
-                                                    "MORPH_TOOL_ELEMENT14_KEY": False, "MORPH_TOOL_MOUSER_KEY": False}
+                                                    "MORPH_TOOL_MOUSER_KEY": False}  # Farnell's tool ships off: no key
     assert "sk-ant-test" not in json.dumps(status) and "kwpat-new" not in json.dumps(status)  # never the values
     assert keys.save({"KEEWANO_PAT": ""}) == ["KEEWANO_PAT"]  # Remove
     assert "KEEWANO_PAT" not in os.environ and "KEEWANO_PAT=" in env.read_text(encoding="utf-8").splitlines()
@@ -172,7 +172,8 @@ def test_keys_from_the_studio_dialog(studio_server, env, monkeypatch):
 def test_the_keys_dialog_names_every_claude_feature_and_where_keys_are_saved(tmp_path, env, monkeypatch):
     """The Claude section lists everything the Anthropic key powers, and the header names the folder .env is in on
     every system: the Morph folder in a checkout (not "next to run_studio.bat", which macOS and Linux don't use), the
-    settings folder's path for an installed wheel."""
+    settings folder's path for an installed wheel. Under "Tools agents can use", Farnell's tool is off and says why
+    (its API terms await a legal review) and what turning it on means; Mouser's are on."""
     pw = pytest.importorskip("playwright.sync_api")
     from morph import resources
     chrome = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
@@ -203,6 +204,12 @@ def test_the_keys_dialog_names_every_claude_feature_and_where_keys_are_saved(tmp
                 note = pg.evaluate("[...document.querySelectorAll('#keysDlg .ksec')].find((s) => s.querySelector('.ks-h b')"
                                    "?.textContent === 'Claude').innerText")
                 assert all(note.count(f) == 1 for f in features), note        # listed once: the key's line doesn't repeat it
+                tools = pg.evaluate("[...document.querySelectorAll('#keysDlg .ktoolist label.kt')].map((r) => "
+                                    "[r.querySelector('input').dataset.tool, r.querySelector('input').checked, r.innerText])")
+                farnell = next(t for t in tools if t[0] == "element14_search_keyword")
+                assert farnell[1] is False and "legal review" in farnell[2] and "go to Claude" in farnell[2], farnell
+                assert "only if your agreement with Farnell allows that" in farnell[2], farnell
+                assert sorted(t[0] for t in tools if t[1]) == ["mouser_search_keyword", "mouser_search_part_number"], tools
                 pg.close()
         finally:
             browser.close()

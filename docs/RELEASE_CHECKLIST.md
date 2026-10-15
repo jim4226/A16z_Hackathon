@@ -37,6 +37,9 @@ line. A release ships only when every line is ticked or has a written reason in 
       tests/test_toolbox_vendors_live.py tests/test_toolbox_draft_live.py` passes (a few cents of Claude usage), and
       each distributor manifest whose test passed has `verified.live` set to that date. A manifest nobody tried keeps
       `live: null`, so the Studio says "Not yet tried with a real key"; the release notes say which.
+- [ ] Farnell (element14): until a legal review of its API terms says Morph may keep its answers in run files and send
+      them to Claude, `morph/studio/toolbox/catalog/element14.json` keeps `off_by_default` (Keys shows it off, with why)
+      and the release notes say the Farnell tool ships off.
 
 ## Manual QA
 
@@ -62,7 +65,7 @@ Run each on a clean machine or a fresh user account, from a fresh clone of the r
 | 16 | Robustness study (Windows, macOS and Linux) | Simulation tab, pick and place: run a 200-run study, cancel it part way, *Carry on*, replay a failing run, open Details. Start another and close the Studio's window (or end its process) mid-study; start the Studio again. | Live progress, then the result with its interval and "This is simulation, ..."; cancel stops within seconds and keeps the finished runs; the replay plays in the 3D view. After the restart the card says "Stopped when the Studio stopped after N of M runs" with those runs, and *Carry on* finishes it. No study process is left running (Task Manager, Activity Monitor or `ps`). |
 | 17 | World mode with a real room scan | Upload a phone scan (.glb) of a bench, place the robot, *Save and simulate*, *Check placement*; *Add box here* on a near miss; *Save and simulate* again. | The scan check warns and never sets the verdict, naming each near miss; the added box appears; the next simulation plans around it. |
 | 18 | Live prices with real keys: Anthropic, then Mouser | BOM tab, **Live prices (beta)**; add the Mouser key from the Key needed card. | The card says what the key is for, what is sent and to which host; after Save the run continues by itself; prices show "from Mouser Electronics" and two of them match mouser.com. The key's value appears nowhere: search `projects/.runs/`, `projects/.tools/` and the terminal output for it. |
-| 19 | An element14 key | Keys, Tools agents can use: Farnell on, Mouser off; Live prices again. | Prices from Farnell. Its answers are kept only in the run's file, which the Studio deletes 7 days after the run last changed. |
+| 19 | An element14 key, only where your agreement with Farnell allows it | Keys, Tools agents can use: Farnell is off and says why; turn Farnell on and Mouser off; Live prices again. | Farnell's note names the legal review and what turning it on means. Prices read "from Farnell/element14" on the card, in Show prices and in Claude's summary. Its answers stay in the run's file, which the Studio deletes 7 days after the run last changed. |
 | 20 | A wrong key | Save a wrong Mouser key; Live prices. | "Mouser Electronics refused the key" with Replace key, and replacing it continues the run. If the card shows a failed call instead, write down the status Mouser answered. |
 | 21 | Runs that stop | Start Live prices, then turn off *Let agents use tools*; start another and quit the Studio while it works, then start it again. | "Agent tools were turned off" with Open Keys and Continue, which finishes once they are on; after the restart, "The Studio restarted while this ran" and Continue. |
 | 22 | Draft a tool (preview) | On a need card, Draft a tool from a small read-only API's official documentation; approve; run again with its real key. | The review names each host with the documentation's line; the next run asks for the new key; the tool answers with the real key. |

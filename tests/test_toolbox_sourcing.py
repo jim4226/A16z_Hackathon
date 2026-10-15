@@ -138,6 +138,45 @@ def test_a_price_check_reads_the_bom_pauses_for_the_mouser_key_and_records_only_
     assert secrets_absent([claude.requests, ev, done], MOUSER_KEY)
 
 
+def test_farnell_is_off_until_the_owner_turns_it_on_and_its_prices_say_from_farnell_element14(env, monkeypatch):
+    """element14.json ships off_by_default (Farnell's API terms limit storing and passing on its data, pending a legal
+    review): a run never offers it to Claude until the owner turns it on, and then every price it gave is credited
+    "from Farnell/element14", in the record and in what Claude is asked to say."""
+    from test_toolbox_vendors import E14_KEY
+    monkeypatch.setenv("MORPH_TOOL_ELEMENT14_KEY", "unset")
+    monkeypatch.delenv("MORPH_TOOL_ELEMENT14_KEY")
+
+    def priced(body):
+        return {"content": [{"type": "tool_use", "id": "toolu_rec", "name": "morph_prices_record", "input": {"lines": [
+            {"item": ITEMS[0], "distributor": "Farnell UK", "part_number": "9000301", "unit_price": 21.84, "currency": "GBP",
+             "quantity": 1, "stock": 342, "tool": "element14_search_keyword"}]}}], "stop_reason": "tool_use"}
+
+    off = ScriptedClaude(final("No distributor tool here."))
+    st, _ = studio(env, off)
+    view, _ = agents.start_price_check(st, st.room(), {}, None)
+    deferred = [t["name"] for t in off.requests[0]["tools"] if t.get("defer_loading")]
+    assert view["status"] == "done" and sorted(deferred) == ["mouser_search_keyword", "mouser_search_part_number"]
+    row = next(t for t in st.toolbox.tools()["tools"] if t["name"] == "element14_search_keyword")
+    assert row["enabled"] is False and "legal review" in row["off_by_default"] and row["credit"] == "Farnell/element14"
+    mouser = next(t for t in st.toolbox.tools()["tools"] if t["name"] == "mouser_search_keyword")
+    assert mouser["enabled"] is True and mouser["off_by_default"] == "" and mouser["credit"] == "Mouser Electronics"
+
+    st.toolbox.set_enabled("element14_search_keyword", True, by="m_owner")
+    claude = ScriptedClaude(search_and_call(("element14_search_keyword", "toolu_e", {"term": "any:STS3215", "store": "uk.farnell.com"})),
+                            priced, final("STS3215 from Farnell/element14: 21.84 each. Nothing was ordered."))
+    st, vendor = studio(env, claude)
+    view, _ = agents.start_price_check(st, st.room(), {"rev": "r001"}, None)
+    e14 = next(t for t in claude.requests[0]["tools"] if t["name"] == "element14_search_keyword")
+    assert 'say they are from Farnell/element14' in e14["description"]
+    assert "credit each price to the distributor" in claude.requests[0]["system"][0]["text"]
+    assert view["status"] == "paused" and view["cards"][0]["env"] == "MORPH_TOOL_ELEMENT14_KEY"
+    st.toolbox.on_credentials_saved(keys.save({"MORPH_TOOL_ELEMENT14_KEY": E14_KEY}, home=env["home"]))
+    done = st.toolbox.get(view["id"])
+    assert done["status"] == "done" and vendor.requests[0]["host"] == "api.element14.com"
+    [line] = done["result"]["lines"]
+    assert (line["source"], line["service"], line["matched"]) == ("Farnell/element14", "Farnell (element14, Newark)", True)
+
+
 def test_darwin_search_passes_darwins_question_on_and_never_answers_it(env, monkeypatch):
     class Resp(io.BytesIO):
         def __enter__(self):

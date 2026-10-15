@@ -718,7 +718,7 @@ reference.
 
 | Path | Contents |
 |---|---|
-| `.tools/catalog/*.json` | the owner's own manifests (off until the owner turns each tool on); Morph's ship in `morph/studio/toolbox/catalog/` (on by default; package data: the first one adds `catalog/*.json` to pyproject's package-data and MANIFEST.in) |
+| `.tools/catalog/*.json` | the owner's own manifests (off until the owner turns each tool on); Morph's ship in `morph/studio/toolbox/catalog/` (on by default unless the manifest has `off_by_default`, as `element14.json` does (W3); package data: the first one adds `catalog/*.json` to pyproject's package-data and MANIFEST.in) |
 | `.tools/state.json` | `{enabled: {tool: bool}}`, the owner's overrides |
 | `.tools/approvals.json` | `{tools: {tool: {fingerprint, mode: always \| key_saved, by, at}}}` |
 | `.tools/audit.jsonl` + `audit.head` | hash-chained log (`audit.verify(home)`): tool_enabled/disabled, keys_saved (names only), tool_approved (once \| always \| key_saved), tool_skipped/denied/refused, tool_call {run, tool, kind, host, ok, status, ms, cost_usd, outcome}, run_started/paused/resumed/interrupted/done/failed/refused/cancelled/expired, run_cancel_requested. Never a key, an argument or an answer |
@@ -727,7 +727,11 @@ reference.
 **Manifests** (`morph.tool_manifest/1`, `catalog.parse_manifest`): one provider each: `id` (2-24 of a-z0-9, never a name
 Morph uses: morph, darwin, mcp, tool, web, claude, anthropic, subq, keewano, code, computer, bash), `service`,
 `privacy` (required), `hosts` (public DNS names: no IP literal, localhost or local-network name), optional `summary`,
-`homepage`, `verified {docs, checked, live, notes}`, `credentials[]` {id, env `MORPH_TOOL_[A-Z0-9_]{2,40}`, label, what,
+`homepage`, `verified {docs, checked, live, notes}`, `off_by_default` (W3: 10-400 characters saying why one of Morph's
+own tools starts off; `catalog.default_on(tool)` is `curated and not off_by_default`, and the owner's switch in
+`.tools/state.json` still wins), `attribution` (W3: 2-60 characters, whom its data is credited to, `Tool.credit`, else
+the service; Claude's tool description then asks it to say "from <attribution>" wherever it gives that data),
+`credentials[]` {id, env `MORPH_TOOL_[A-Z0-9_]{2,40}`, label, what,
 where, url, hosts (a subset), pattern (`^...$`, no groups or alternation, never matches ""), prefix?, cost?, privacy?} and
 `tools[]` {name `<id>_...`, title, description (Morph-written for Morph's own), side_effect read | write | upload | spend,
 sends, request {method, url, query, headers, body}, auth? {credential, in: header | query, name, prefix}, input_schema
@@ -747,8 +751,9 @@ from morph.studio.toolbox import Toolbox, ToolboxError, Builtin, register
 tb = Toolbox(studio.home, emit=fn)       # one per Studio; emit(event) is called from run threads
 tb.recover()                             # at Studio start: running runs -> interrupted pauses; 7-day expiry
 tb.tools() -> {tools: [{name, tool, title, service, provider, description, side_effect, sends, privacy, host,
-               cost_usd, cost_note, curated, enabled, paid, warnings, verified, key: {env, label, set, url, where,
-               hosts} | None, approval: {mode, by, at} | None}], errors, spend_cap_usd}      # GET /api/tools
+               cost_usd, cost_note, curated, enabled, paid, off_by_default, credit, warnings, verified, key: {env,
+               label, set, url, where, hosts} | None, approval: {mode, by, at} | None}], errors, spend_cap_usd}
+                                                                                              # GET /api/tools
 tb.set_enabled(name, on, by=)            # POST /api/tools/enable|disable (owner)
 tb.start(agent=, system=, prompt=, project=, core=[Builtin | name], context=, title=, by=, effort="medium",
          max_tokens=16000, binding=None) -> view    # POST /api/runs/start (editor); drives in the background
@@ -889,18 +894,23 @@ retry; returns Darwin's `status` and `question`, which the agent passes on and n
 and `morph_prices_record`, which keeps a line only for an item of this parts list, a catalog tool that answered in this
 run, a distributor and part number, and a price of 0 or more; `matched` says whether the part number and the price
 appear in that tool's answers. The record is `{rev, checked_at, lines: [{item, distributor, part_number, unit_price,
-currency, quantity, stock, tool, service, matched}], dropped: [{item, why}]}`, merged by (item, distributor, part
-number). `darwin.search` results now carry `status` (completed | needs_input | no_match) and `question`; the BOM tab's
+currency, quantity, stock, tool, service, source, matched}], dropped: [{item, why}]}`, merged by (item, distributor,
+part number); `source` (W3) is the tool's `credit`, which the card and Show prices print as "from <source>" on every
+line, matched or not, and the system prompt asks Claude to credit each price in its summary. `darwin.search` results now carry `status` (completed | needs_input | no_match) and `question`; the BOM tab's
 Darwin shortlist is unchanged.
 
 **Catalog** (`morph/studio/toolbox/catalog/`, package data in pyproject and MANIFEST.in): `mouser.json`
 (`mouser_search_keyword`, `mouser_search_part_number`; POST to api.mouser.com with the key in the `apiKey` query
 parameter; `MORPH_TOOL_MOUSER_KEY`) and `element14.json` (`element14_search_keyword`, GET api.element14.com
-`/catalog/products` with `callInfo.apiKey`; 46 stores; `MORPH_TOOL_ELEMENT14_KEY`), read-only, no fee, written from
+`/catalog/products` with `callInfo.apiKey`; 46 stores; `MORPH_TOOL_ELEMENT14_KEY`; W3: `off_by_default` until a legal
+review of Farnell's API terms, which limit storing its data and passing it on, and `attribution` "Farnell/element14"),
+read-only, no fee, written from
 the providers' API documentation (`verified.docs`, `checked` 2026-10-13, `live: null`: the Keys dialog and the cards
 say "Not yet tried with a real key"). `response.keep` (`{extracted field: [names]}`) keeps only the named fields of an
 object or of each object of a list. A curated tool may be read-only with POST (Mouser's search) without a warning.
-Contract tests run each manifest against a recorded or documented answer (`tests/fixtures/tools/answers/`).
+Contract tests run each manifest against an answer in its documented shape with made-up values, or one recorded from
+the service (`tests/fixtures/tools/answers/`; THIRD_PARTY_NOTICES names the recorded ones; no copy of a provider's
+documentation example).
 
 **Front end** (`static/tools.js`, FEATURES entry `tools`; styles in the `tools:` section of style.css): one card per
 run of the tab's project in the chat, rebuilt from `GET /api/runs` when the page loads, when the chat is redrawn and
@@ -917,7 +927,8 @@ card per call. Members who can't act see "Ask the owner to add the <key> in Keys
 Claude it says so and opens Keys on `ANTHROPIC_API_KEY`: when `GET /api/runs` last said `ready.claude: false` it asks
 again and, still false, sends no start (no refused request in the browser console); a start refused with 503 does the
 same. The Keys dialog lists "Tools agents can use" with an
-on/off switch per tool. New on the feature bus (section 4): app.js sends `{type: "connection", live: true, again}`
+on/off switch per tool, and a tool's `off_by_default` text under it (whether on or off). New on the feature bus
+(section 4): app.js sends `{type: "connection", live: true, again}`
 whenever the page's event stream opens, so a feature can reload what a stream that opened late (after the 3 s wait
 before the first state load) or reopened after a drop may have missed; tools.js refreshes its cards then.
 

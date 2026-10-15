@@ -606,8 +606,9 @@ PRICE_SYSTEM = (
     "For a part no distributor tool covers, darwin_search finds agents (shops and services) on Darwin; it only "
     "shortlists and never orders. If Darwin asks a question, such as an email address, pass it on to the person and never "
     "answer it for them. When you need a kind of tool the catalog doesn't have, say so with morph_tools_request.\n\n"
-    "Finish with a short summary for the person: what you priced and where, and what you couldn't price and why. Nothing "
-    "has been ordered or reserved, so never say otherwise.")
+    "Finish with a short summary for the person: what you priced and where (credit each price to the distributor whose "
+    "tool gave it, as that tool's description asks), and what you couldn't price and why. Nothing has been ordered or "
+    "reserved, so never say otherwise.")
 _PRICE_FIELDS = ("item", "distributor", "part_number", "unit_price", "currency", "quantity", "stock", "tool")
 
 
@@ -739,7 +740,7 @@ def _prices_record(inp, ctx):
         kept.append({"item": item, "distributor": dist, "part_number": pn, "unit_price": price,
                      "currency": cur.strip()[:8] if isinstance(cur, str) and cur.strip() else None,
                      "quantity": n("quantity"), "stock": n("stock"), "tool": tool.name, "service": tool.service,
-                     "matched": pn in text and (price is None or _price_in(price, text))})
+                     "source": tool.credit, "matched": pn in text and (price is None or _price_in(price, text))})
     from .toolbox import store
     old = (store.read_json(os.path.join(store.runs_dir(ctx["home"]), f"{ctx['run']}.json"), {}) or {}).get("result") or {}
     merged = {(x["item"], x["distributor"], x["part_number"]): x for x in old.get("lines") or [] if isinstance(x, dict)}

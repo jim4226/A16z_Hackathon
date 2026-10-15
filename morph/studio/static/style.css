@@ -911,9 +911,11 @@ body.tm-readonly .msg .fixacts { display: none; }   /* an import's fixes: editor
 .tl-res, .tl-sum { border-top: 1px solid var(--line2); padding-top: 7px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
 .tl-k { font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
 .tl-prices { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
-.tl-prices li { display: flex; gap: 8px; justify-content: space-between; font-size: 12px; }
-.tl-prices .it { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
+.tl-prices li { display: flex; flex-wrap: wrap; column-gap: 8px; justify-content: space-between; font-size: 12px; }
+.tl-prices .it { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
 .tl-prices .pr { flex: none; color: var(--ink); font-weight: 600; }
+.tl-prices .src { flex: 1 0 100%; color: var(--dim); font-size: 11px; margin-top: -1px; }
+.tl-table .src { color: var(--dim); font-size: 11px; white-space: nowrap; }
 .tl-sum p { margin: 0; font-size: 12px; color: var(--ink2); white-space: pre-wrap; line-height: 1.5; }
 .tl-table { overflow-x: auto; margin-top: 10px; border: 1px solid var(--line2); border-radius: 9px; }
 .tl-table .table th { position: static; } .tl-table td.mono { white-space: nowrap; }

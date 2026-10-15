@@ -387,8 +387,8 @@ def test_prices_found_show_on_the_card_in_show_prices_and_on_the_bom_button(brow
     text = page.card()
     total = len({r["item"] for r in json.load(open(os.path.join(w.home, "egg-picker", "r001", "results.json")))["bom"]["rows"]
                  if r["make_or_buy"] == "buy" and r["category"] not in ("pcb", "material", "fabricated")})
-    assert f"2 of {total} purchased lines priced · FixParts (test fixture)".upper() in text.upper()  # an uppercase label
-    assert "$13.90" in text and "$4.20 check" in text
+    assert f"2 of {total} purchased lines priced · from FixParts (test fixture)".upper() in text.upper()  # an uppercase label
+    assert "$13.90 from FixParts (test fixture)" in text and "$4.20 check from FixParts (test fixture)" in text  # every price credited
     assert page.acts() == ["prices"]
     until(lambda: page.pg.inner_text(".tl-bom") == "Live prices (beta) · 2 priced", what="the button's count")
     page.shot("prices_card")
@@ -396,7 +396,7 @@ def test_prices_found_show_on_the_card_in_show_prices_and_on_the_bom_button(brow
     until(lambda: page.pg.evaluate("!!document.querySelector('#featModal.on .tl-table')"), what="Show prices")
     rows = page.pg.evaluate("[...document.querySelectorAll('#featModal .tl-table tbody tr')].map(r => r.innerText.split('\\t').map(x => x.trim()))")
     assert rows[0][:6] == [items[0], "FixParts", "STS3215", "$13.90", "1", "412"] and "from FixParts" in rows[0][6]
-    assert rows[1][:6] == [items[1], "FixParts", "ESP32-S3", "$4.20", "1", "–"] and rows[1][6] == "check it"
+    assert rows[1][:6] == [items[1], "FixParts", "ESP32-S3", "$4.20", "1", "–"] and rows[1][6] == "check it from FixParts (test fixture)"
     assert "Nothing was ordered." in page.pg.inner_text("#featModal") and "Check again" in page.pg.inner_text("#featModal")
     page.shot("show_prices")
     page.pg.keyboard.press("Escape")
