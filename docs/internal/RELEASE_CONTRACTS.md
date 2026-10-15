@@ -619,9 +619,9 @@ members; a member can hold several.
   (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
-  label), a project's `need`, a world's labels, and every Teams text field (comments, change request titles and
-  notes, close reasons, review and decision notes, release names and notes, branch names, display names, script
-  token labels, the team's name). A refused New robot request leaves no draft, no event and no call to SubQ or Claude.
+  label), a project's `need`, a world's labels, an import's name and answers (`POST /api/import/<id>/commit`), and
+  every Teams text field (comments, change request titles and notes, close reasons, review and decision notes, release
+  names and notes, branch names, display names, invite name hints, script token labels, the team's name). A refused New robot request leaves no draft, no event and no call to SubQ or Claude.
 - **Served files.** `/files` and `/static` serve regular files only (never a pipe or device); generated files
   under `/files` get the sandbox policy, so they can't run script with the Studio's origin.
 - **Agent tool calls** (section 15) go only through `toolbox.http_tool.run`, which executes a declarative manifest

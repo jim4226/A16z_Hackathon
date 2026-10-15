@@ -27,6 +27,7 @@ import traceback
 
 from ..importers import ImportFailed, session as sess
 from ..importers.common import LIMITS, ledger_entry, set_home
+from .security import holds_secret, secret_refused
 
 _busy: dict = {}
 _doomed: dict = {}            # sessions deleted while a download or build was running: removed when it ends
@@ -235,6 +236,8 @@ def commit(req, sid):
     name = body.get("name")
     if name is not None and (not isinstance(name, str) or len(name) > 80):
         return _err(400, "The name must be text of at most 80 characters.")
+    if holds_secret({"name": name, "answers": body.get("answers")}):  # names end up in project, robot and team views
+        return _err(400, secret_refused("into an import's name or answers"))
     if not _claim(sid):
         return _err(409, "This import is busy; try again in a moment.")
     emit = _emitter(req)
