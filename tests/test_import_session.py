@@ -247,6 +247,9 @@ def test_api_commit_robot_builds_in_the_background(home, tmp_path, monkeypatch):
         return {"project": plan["project"], "rev": "r001", "summary": {}}
 
     monkeypatch.setattr(api_import.sess, "build", fake_build)
+    for bad in ({"name": "arm sk-ant-api03-ABCDEFGH012345"}, {"answers": {"arm_joints": ["kwpat-ABCDEFGH0123"]}}):
+        s, out = api_import.dispatch(_req(st, "POST", f"/api/import/{sid}/commit", {"candidate": 0, **bad}))
+        assert s == 400 and "Keys dialog" in out["error"] and not built  # a key never names a project or a robot
     s, out = api_import.dispatch(_req(st, "POST", f"/api/import/{sid}/commit", {"candidate": 0, "name": "Box Arm"}))
     assert s == 202 and out["kind"] == "robot" and out["project"] == "box-arm" and "design" not in out
     for _ in range(100):

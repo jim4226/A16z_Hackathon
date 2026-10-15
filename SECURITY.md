@@ -24,10 +24,21 @@ Morph Studio is a local app: a small web server on your computer, used from your
   type, shape) are checked before anything is created or read. Generated files open sandboxed, so they can't run
   scripts with the Studio's rights. The page loads nothing from other sites.
 - A connection gets 20 seconds in all to send its request line and headers, and the Studio serves at most 64
-  connections at once, 48 of them live event streams. More get a "busy" answer (503) straight away, so slow or idle
-  connections can't tie the server up.
+  connections at once, 48 of them live event streams. One address may hold at most 16 connections that haven't signed
+  in (with the access link or a team session), and signed-in pages don't count towards that. More get a "busy" answer
+  (503) straight away, so one client without the access link can't tie the server up. Only loopback addresses
+  (127.x.x.x and ::1, the Studio's own computer talking to itself) have no such cap; the computer's network addresses
+  (its LAN address, say) are capped like any other. Many addresses together still can fill every slot, which is one
+  more reason to use remote mode only on a network you trust.
+- A reverse proxy or tunnel on the Studio's computer (to add HTTPS, say, or `ssh -L`) passes every client on from
+  127.0.0.1, so the Studio sees one loopback address: the 16-connection cap no longer applies to any of them (only the
+  64 in all do), and wrong access codes from any of them count against that one address. Give the proxy its own
+  per-client connection and rate limits.
 - API keys live in `.env`, readable by your user only on macOS and Linux. The Studio never sends a key back to the
-  browser or prints it.
+  browser or prints it. Text you type anywhere else (chat, New robot, Show Morph the job, Teams comments and names)
+  that looks like an API key or a Morph access code, or holds a key you saved, is refused before it is saved, shown or
+  sent. Keys and codes are random, so names that only share their prefix (`mt_shoulder_joint_torque_limit`,
+  `sk-6x40-stainless-steel-screws`) pass.
 - Every optional service (Claude, Keewano, Darwin, SubQ) can be switched off; [docs/PRIVACY.md](docs/PRIVACY.md)
   lists what each one receives.
 - Imports treat every file and link as hostile: archive limits (entries, sizes, compression ratio, no links or nested
@@ -73,8 +84,10 @@ Morph Studio is a local app: a small web server on your computer, used from your
   anyone who can watch that network can copy them. Use remote mode only on a network you trust or over a VPN such as
   Tailscale. From anywhere else, use an SSH tunnel instead (`ssh -L 8765:127.0.0.1:8765 you@server`, no `--remote`).
   Never open port 8765 to the internet. Restarting Morph changes the code, unless `MORPH_TOKEN` in `.env` fixes it.
-  After 10 different wrong codes from one address, Morph stops checking that address's codes for 15 minutes. Still
-  keep the generated code, or make `MORPH_TOKEN` long (20 or more characters).
+  The code Morph makes (96 random bits) can't be guessed, so it is always checked: wrong guesses from an address never
+  lock out the person there who has the link. A code you choose with `MORPH_TOKEN` might be guessable, so after 10
+  different wrong codes from one address Morph stops checking that address's codes for 15 minutes, the right one
+  included. Keep the generated code, or make `MORPH_TOKEN` long and random (20 or more characters).
 - **Team mode is plain HTTP too.** Invite and sign-in links and session cookies can be copied by anyone who can watch
   the network: use it on a network you trust, or behind HTTPS (a tunnel or VPN). An approval records who reviewed a
   revision; it doesn't certify that a robot is safe.

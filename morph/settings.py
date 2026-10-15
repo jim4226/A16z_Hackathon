@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
 
 DEFAULTS = {
@@ -35,17 +34,49 @@ def path() -> str:
     return os.path.join(home(), ".settings.json")
 
 
-def load() -> dict:
-    """The saved settings over the defaults; unknown keys and non-boolean values in the file are ignored."""
-    out = dict(DEFAULTS)
+PROBLEM = ("Morph couldn't {verb} its settings file ({file}: {why}), so every switch {where} is off, network lookups "
+           "included, until you set them again.")
+
+
+def _raw():
+    """The settings file's object; None when there is no file; False when it is there but can't be read."""
     try:
         with open(path(), encoding="utf-8") as fh:
             raw = json.load(fh)
+    except FileNotFoundError:
+        return None
     except (OSError, ValueError):
-        return out
-    if isinstance(raw, dict):
-        out.update({k: v for k, v in raw.items() if k in DEFAULTS and isinstance(v, bool)})
-    return out
+        return False
+    return raw if isinstance(raw, dict) else False
+
+
+def _not_a_switch(raw: dict) -> str | None:
+    """The first known setting whose value isn't true or false (a hand edit such as "yes"), or None."""
+    return next((k for k in DEFAULTS if k in raw and not isinstance(raw[k], bool)), None)
+
+
+def load() -> dict:
+    """The saved settings over the defaults; unknown keys in the file are ignored. A file that is there but can't be
+    read, or that holds a value that isn't true or false, turns every switch off (fail closed: a switch someone turned
+    off must never come back on by itself, and Morph can't tell what such a file meant); problem() says why."""
+    raw = _raw()
+    if raw is None:
+        return dict(DEFAULTS)
+    if raw is False or _not_a_switch(raw):
+        return {k: False for k in DEFAULTS}
+    return {k: raw.get(k, v) for k, v in DEFAULTS.items()}
+
+
+def problem(terminal: bool = False) -> str | None:
+    """Why the switches are all off although nobody turned them off, or None: for the Keys dialog, whose switches are
+    below the note, or for a terminal (`morph doctor`) with `terminal`."""
+    raw = _raw()
+    bad = _not_a_switch(raw) if isinstance(raw, dict) else None
+    if raw is not False and bad is None:
+        return None
+    why = (f"{bad} is {json.dumps(raw[bad])[:40]}, not true or false" if bad else "damaged, or edited by hand")
+    return PROBLEM.format(verb="use" if bad else "read", file=os.path.basename(path()), why=why,
+                          where="in the Studio's Keys, Privacy and network" if terminal else "below")
 
 
 def save(changes) -> dict:
@@ -58,28 +89,20 @@ def save(changes) -> dict:
             raise ValueError(f"unknown setting {k}")
         if not isinstance(v, bool):
             raise ValueError(f"{k} must be true or false")
+    from .services.durable import write_json
     with _LOCK:
         values = {**load(), **changes}
-        os.makedirs(home(), exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix=".settings.", suffix=".tmp", dir=home())
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-                json.dump(values, fh, indent=2)
-                fh.write("\n")
-            os.replace(tmp, path())
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        write_json(path(), values, indent=2)  # synced: a power cut leaves the old settings or the new, never an empty file
     return values
 
 
 def describe(values: dict | None = None) -> str:
-    """One line for `morph doctor`: "network lookups on, Darwin sourcing on, Keewano events off, ..."."""
+    """One line for `morph doctor`: "network lookups on, Darwin sourcing on, Keewano events off, ..." (and why, when
+    the settings file can't be read)."""
     values = values or load()
-    return ", ".join(f"{LABELS[k]} {'on' if values[k] else 'off'}" for k in DEFAULTS)
+    line = ", ".join(f"{LABELS[k]} {'on' if values[k] else 'off'}" for k in DEFAULTS)
+    why = problem(terminal=True)
+    return f"{line} ({why})" if why else line
 
 
 def offline() -> bool:

@@ -397,7 +397,10 @@ def health(timeout: float = 5) -> dict:
 
 def lint(body: dict, timeout: float = 15) -> tuple:
     """Dev and CI only, no key: SubQ checks a request's shape before the key, so 401 means the body is valid and 422
-    returns what is wrong. (ok, message)."""
+    returns what is wrong. (ok, message). The body still goes to api.subq.ai, so nothing is sent while network
+    lookups are off (MORPH_OFFLINE=1 or the Studio's switch)."""
+    if not _network():
+        return False, "not sent: network lookups are off"
     try:
         _post("/systemone", json.dumps(body).encode(), timeout, None)
         return True, "unexpected 200 without a key"

@@ -44,21 +44,76 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}`. `projects.create(meta=)` adds keys but never sets kind, created_utc, created_by, origin, demo or source (those come from its own arguments) |
 | `<p>/rNNN/` | pipeline | unchanged; names sort numerically (W0b) |
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
-| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room |
+| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs; `.morph/queue-<studio>.jsonl`: a Studio's queue journal for the room while jobs are open; `.morph/first-build.json`: a first build that waits to be asked for again (W3, section 2) |
 | `<p>/brief.json` | F1 | the final brief that created the project |
 | `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
 | `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
 | `<p>/.team/comments.jsonl`, `reviews.jsonl`, `proposals.jsonl`, `branches.json`, `releases.json` | F4 | Teams |
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
-| `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h) |
+| `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h). An upload counts in `session.json` `files` only once it is all there; while it streams it is a reservation in `pending` (limits count both), and at startup `Session.tidy()` removes `*.part-*` files and reservations a stop left, keeping
+those of an upload another running Studio is streaming (each reservation names its Studio, `rooms.owner_live`) (W3) |
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
-| `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph) |
+| `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
-| `.team/` | F4 | `team.json`, `secret` (0600), `audit.jsonl` |
+| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; files nobody holds are removed after 10 minutes |
+| `.team/` | F4 | `team.json` (+ `team.json.bak`: the copy before its last change, 0600, W3), `secret` (0600), `audit.jsonl` |
 | `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
 | `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
 
 Folders starting with `.` are never projects: `projects()` and `reset()` must skip them.
+
+**Durability (W3).** A crash, a power cut or a full disk can stop any write half way; it may cost the record being
+written, never the ones around it (`morph/services/durable.py`, outside pipeline_version):
+- Every JSON-lines file is appended with `durable.append_line(path, line)` (chat, ledger, study rows, Teams records,
+  tool requests): a last line left without its newline is ended first, so the new record never joins it. Every reader
+  skips a line that doesn't parse (and decodes with `errors="replace"`): `Project.entries()`, `read_jsonl`,
+  `read_rows`, `Hub._load`.
+- Switches fail closed: `settings.load()` turns every switch off when `.settings.json` is there but can't be read
+  (or a value isn't true or false), `settings.problem()` says why, `/api/settings` and `/api/keys` carry it as
+  `settings_problem` (the Keys dialog shows it), and `morph doctor` prints it in its terminal wording
+  (`problem(terminal=True)`: "every switch in the Studio's Keys, Privacy and network is off"). A value that isn't true
+  or false is named ("telemetry_enabled is "yes", not true or false"). Saving any switch writes them all.
+- The hash-chained audit logs (`.team/audit.jsonl`, `.tools/audit.jsonl`) share `morph/studio/chainlog.py`. Each entry
+  is flushed and fsynced (and a new log's folder synced) before `audit.head` is written, so a power cut never leaves a
+  head that names an entry the log lost. The entry
+  after a cut-off line carries `cut: {bytes, sha256}` of it and chains on from the last whole entry, and an entry whose
+  `audit.head` update didn't happen (a stop between the two writes) is chained on, not flagged. `verify()` answers ok
+  with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line
+  as before; `morph team audit --verify` prints the note.
+- `morph studio` (the command line: `main()` without argv) ends its process with `cli._leave` once `serve()` has
+  returned (Ctrl+C): study workers ended, stdout and stderr flushed, then `os._exit`. Interpreter shutdown added nothing
+  but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one stop in twelve. So every
+  record must be on disk when it is written (the rules here), never at exit.
+- Stopping never waits for the network: lookups run in parallel on `morph/services/background.DaemonPool` (Darwin
+  `source`/`suggest`, `keys.check`, BoardRepo), whose daemon threads the interpreter doesn't join at exit, where
+  `concurrent.futures` ran every queued lookup to its timeout first. New code that fans network calls out uses it.
+- Every record replaced whole goes through `durable.write_text` / `write_json`: a temp file beside it, flushed and
+  fsynced, `os.replace` (retried for a second while Windows holds the old file open), then the folder synced on POSIX.
+  That covers design.json and results.json, meta.json (`projects.write_meta`, a fork's results), settings, study
+  records (`robust._write_json`), Teams files (`teams/store.write_json`), tool files (`toolbox/store.write_text`) and the
+  chat file's compaction.
+- A revision is finished when its results.json and design.json each parse as a JSON object (`Project.finished()`,
+  cached by mtime and size in `durable.readable_json`); `Project.latest()`, `Room.completed()`, `projects.finished()`,
+  Teams' `collab.revs()`, studies and the time card all count only those (an export lists every revision whose
+  results.json parses). `Studio.state` builds the newest one it can show (a revision that raises is skipped, never a
+  500).
+- A build (`RobotProject.run`) reads its parent before it claims a number (an unreadable parent: ValueError "rNNN's saved
+  files can't be read", no folder made), claims with `Project.claim_build()`, which takes the OS lock
+  `.morph/build-rNNN.lock` (`durable.BuildLock`, freed by the system when the process ends) before the folder exists and
+  skips a number another process holds, and releases it at the end. A build that raises before its results.json is in
+  place removes its folder (`Project.discard`): a full disk gets its space back.
+- A robot project whose meta.json doesn't parse stays one (`projects.project_root` accepts it when a revision's results
+  say `kind: "robot"` or it has `.morph/`): listed, opened, deleted. `projects.repair_meta` (in `tidy` and
+  `backfill_demo`, before anything writes it) keeps it as `meta.json.damaged-<UTC>` and writes `{kind: "robot", source
+  (from the newest design), need: "", origin: "default", demo (egg-picker and so101), created_utc, repaired_utc,
+  repaired_from}`.
+- When a Studio starts (`projects.tidy`, for every robot project) and when the launcher starts (its two demos, before it
+  builds a missing one): the newest revisions that aren't finished and whose lock nobody holds are renamed
+  `rNNN.incomplete-<time>` and named in the terminal; ones set aside more than a day ago move to `.trash/`; the
+  `rNNN.deleted-*` leftovers of a deletion a locked file stopped are deleted.
+- A full disk (ENOSPC, EDQUOT) reads `durable.DISK_FULL` ("The disk is full: free some space on this computer, then try
+  again."): routes answer 507 with it (the generic handler, Teams' `_safe`, settings and keys), a build's chat error says
+  it. The Teams and toolbox lock files close their descriptor and remove themselves when their first write fails.
 
 ## 2. Server routing contract (W0b implements; everyone else uses)
 
@@ -86,12 +141,25 @@ class Request:
 
 - Every request passes the existing checks first: Host/Origin, the access token or Teams session, the
   body cap and the role check. In remote mode, an address that sent 10 different wrong access codes is
-  answered 429 for 15 minutes without its codes being compared.
-- POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; the page sends `1`; 403
-  without it); `studio.api` sends it.
+  answered 429 for 15 minutes, and a code the person chose (`MORPH_TOKEN`, `make_handler(..., chosen=True)`, the
+  default) is not even compared; the code Morph made (`access_token()`, 96 random bits; `serve(token_chosen=False)`,
+  which the CLI passes) is always compared, so the person at that address with the link still signs in.
+  Teams codes are all random (`auth.Throttle`): past 10 wrong ones in 10 minutes an address's wrong codes are
+  answered 429, and a right invite, sign-in link or script token still works. Since a right code is checked while its
+  address is blocked, wrong ones keep arriving: each address keeps only its last 10 (`Guesses`, `Throttle`; the block
+  lasts until the oldest of them ages out), and at most 4096 addresses are remembered, the one that failed longest ago
+  forgotten first, so a flood costs the same memory and time per request as ten wrong codes.
+- POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; 403 without it); `studio.api` sends
+  it. Its value names the client: the page sends its tab's id (16 hex digits, kept in `sessionStorage` across reloads),
+  and the server holds it in `rooms.REQUESTER` while a route runs, so the jobs that route queues know which tab asked.
 - A connection has `HEADER_TIMEOUT` (20 s) in all for its request line and headers. The server serves at most
-  `MAX_CONNECTIONS` (64) connections at once, `MAX_STREAMS` (48) of them `/api/events` streams; past either cap the
-  answer is 503 at once. A stream notices a closed tab within a second and frees its slot. A route that holds its
+  `MAX_CONNECTIONS` (64) connections at once, `MAX_STREAMS` (48) of them `/api/events` streams, and at most
+  `MAX_UNSIGNED_PER_ADDRESS` (16) from one address that haven't signed in yet (loopback addresses only aside,
+  `_Server.exempt`: 127.0.0.0/8, ::1 and their IPv4-mapped forms, not the computer's other addresses; a reverse proxy
+  or tunnel on the same computer makes every client loopback, SECURITY.md says so; a connection stops counting once its
+  access code or Teams session checks out, `_Server.signed_in`);
+  past any cap the answer is 503 at once.
+  A stream notices a closed tab within a second and frees its slot. A route that holds its
   connection open for long (a stream of its own) should take a slot the same way (`req.handler.server.open_stream()` /
   `close_stream()`).
 - Feature modules register their routes in `morph/studio/api_<feature>.py`. `server.py` imports every
@@ -117,7 +185,8 @@ class Request:
   `Request.save(path)` (raw bodies in 1 MiB chunks; `save` removes the file again if the upload is cut
   off), `Request.upload_path(suffix)` (a new file in `.uploads/`), `set_role_hook(fn)` for Teams:
   `fn(req, role)` returns the member dict or raises `HTTPError(401|403)`. A body that stops arriving answers
-  400 ("cut off"). An unexpected exception in a handler answers 500 with the error text.
+  400 ("cut off"). An unexpected exception in a handler answers 500 with the error text; a full disk answers 507 "The
+  disk is full: ..." (W3).
 - Roles of the core routes (Teams' role table starts from these): **viewer**: `GET /api/state`, `/api/rev`,
   `/api/events`, `/api/jobs`, `/api/projects`, `/api/settings`, `/api/export`, `/files/*`, and the old
   `POST /api/project` (it only checks a name); **editor**: `POST /api/chat`, `/api/params`, `/api/jobs/cancel`,
@@ -141,14 +210,18 @@ studio.room(name=None) -> Room           # ValueError (bad name), rooms.UnknownP
 Room: name, p (RobotProject), hub (Hub: send(event), history), jobs (JobQueue), lock, completed(), latest(),
       emit(event)                         # emit: pipeline events, remembered for tabs that open mid-build
 studio.queue_chat(room, text, *, base_rev=None, by=None) -> Job                  # rooms.QueueFull when 10 wait
-studio.queue_changes(room, changes, *, label, reply=None, source="", user_text=None, base_rev=None, by=None)
-studio.queue_build(room, design, *, label="first design", by=None)              # a parentless build
+studio.queue_changes(room, changes, *, label, reply=None, source="", user_text=None, base_rev=None, by=None,
+                     record=None)         # record: more for the queue journal (W3)
+studio.queue_build(room, design, *, label="first design", by=None)              # a parentless build; journaled with
+                                                                                # its design
 studio.create_project(name=None, *, source="", design=None, need=None, origin="default", by=None, meta=None,
                       label="first design", on_room=None)
     -> (room, job)                        # projects.create + queue_build + project_created to every tab; on_room(room)
                                           # runs before the build is queued (subscribe there to miss no event)
 studio.queue_changes(..., kind="change", proposed_by=None)  # proposed_by: a Teams change request's author (ledger)
-studio.when_done(job, fn)                 # fn(job) on a background thread once the job ended (any status)
+studio.when_done(job, fn)                 # fn(job) on a background thread once the job ended (any status); a job
+                                          # that ends as a conflict hands fn the job its Apply queued once that ends,
+                                          # or itself once dropped (Job.answer, Job.successor; W3)
 Studio(project, home, *, team=False, allow_url_import=False); RobotProject.run(..., by=None, proposed_by=None)
 studio.fork_project(project, rev=None, name=None, *, by=None) -> (room, job | None, info)
 studio.delete_project(name) -> trash folder; studio.broadcast(event)
@@ -159,10 +232,52 @@ projects (morph/studio/projects.py): create(home, name=None, *, source, design, 
 ```
 
 A job applies its changes to the newest revision when its turn comes. If one of its keys changed after its
-`base_rev` (default: the newest revision when it was queued), it ends as `conflict` instead. Every changed value
+`base_rev` (default: the newest revision when it was queued), it ends as `conflict` instead. A change made by the same
+client's earlier requests does not count (W3): `Job.after` lists the jobs of the same member (`by`) from the same tab or
+script (`Job.origin`, the `X-Morph-Client` value) that were waiting or building when it was queued, and the revisions
+they made are left out of the comparison, so one tab's quick second edit builds on its first instead of being held
+back; another tab's or another member's change, or a revision that had finished before the request was made, still
+counts. The question names the keys as the Parameters panel does (`labels.names`: "Reach and Build changed after
+r001, ..."); `conflict.keys` stays the raw keys. Every changed value
 (chat, Claude's tool output, parameters, a resolved conflict) must pass `security.design_values()` first, and
 `projects.create()` checks every value of a design it is given; a value no robot can have ends the job as `error`
 ("Couldn't apply that: ...") or raises ValueError. `projects.as_design()` refuses keys a Design doesn't have.
+
+**A Studio that stops with work open (W3).** Each room's queue is journaled in `<p>/.morph/queue-<studio>.jsonl`, one
+file per Studio process (`JobQueue`, `durable.append_line`; `<studio>` is `rooms.OWNER`): `{op: "queued", id, kind,
+label, by, base_rev, studio, pid, host, ...record}` when a job is queued (a first build's `design` and `cut`, a change's
+`changes`), `{op: "started", id}` when a first build gets the build slot, `{op: "held", ..., conflict, data}` when a job
+ends as a conflict waiting for an answer, `{op: "ended", id, status}` otherwise (an answered conflict: `answered`). The
+file is removed whenever nothing waits, runs or waits for an answer. Which Studio still runs is told by an OS lock, not
+by pid or host name (a pid is reused after a reboot, a Mac's name changes with its network): every Studio process holds
+`projects/.studios/<studio>.lock` (`rooms.claim`, fcntl.flock / msvcrt.locking via `durable.BuildLock`) from its start
+until the system frees it when the process ends, however it ends. When a Studio starts (`Studio._recover`, after
+`projects.tidy`), a project with a journal whose Studio's lock is held (`rooms.journal_live`) is left alone ("another
+Morph Studio on this projects folder is still working on it"); otherwise every journal of the project is read
+(`rooms.journals`, `rooms.open_jobs`; an older plain `queue.jsonl` counts as a stopped Studio's) and removed, and:
+- a first build (`kind: "build"`) of a project with no finished revision is queued again from its design, labelled
+  `"<label> (rebuilt after a stop)"`, and the chat says "The Studio stopped before <project>'s first build finished:
+  building it again now."; features learn of it through `rooms.RESUMED` hooks `fn(studio, room, job, meta)` (New robot
+  marks its brief built when it ends). Without a journal (an older Morph, `morph robot new` stopped in a terminal), the
+  design of the first revision `tidy()` just set aside is used. Its `cut` counts the times a stop cut it off after it
+  had started; at `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
+  at every start): it is kept in `<p>/.morph/first-build.json` (`projects.park_first_build`), the chat and the terminal
+  say "The Studio stopped twice while building <project>'s first design, so Morph won't start it again on its own ...
+  send "build it again" here ... delete <project> from the project menu", the terminal repeats it at every start, an
+  edit is answered with how to go on, and the chat message "build it again" (`Studio.AGAIN`: also "try again",
+  "rebuild", "retry") queues it once more (`Studio._no_revision_yet`); the record goes once a first revision is built;
+- every other open job gets one assistant line, "The Studio stopped before this was built: “<label>”. Send it again if
+  you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own.
+  A job whose revision was written before the stop took its `ended` line with it (one of the newest 12 finished
+  revisions has its label, cut to 48 characters, and a results.json newer than the job; each revision accounts for one
+  job) is skipped: it was built;
+- a conflict waiting for an answer waits again (`JobQueue.restore`, same id: the page draws its Apply / Drop again);
+- then `rooms.STARTED` hooks `fn(studio)` run: a team Studio reopens every change request that is applied but has no
+  revision (`api_team.reopen_stopped`, `last_error` "the Studio stopped before it finished. Apply it again") and tells
+  whoever applied it and its author in their inbox.
+New robot's Build on a brief that reads "building" answers `already: true` only while its project builds or has a
+finished revision (`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's
+own empty project goes to `.trash` first, so the name is kept).
 
 ## 3. Live events (SSE)
 
@@ -171,7 +286,14 @@ A job applies its changes to the newest revision when its turn comes. If one of 
   with `to` (a member id) reaches only that member's tabs and is never saved in the chat history.
 - `user` and `assistant` events carry the `job` they belong to. A conflict is an `assistant` event with
   `conflict {job, keys, base_rev, rev}`: the change was not applied because `keys` changed after
-  `base_rev`; the tab offers "Apply to rev" or "Drop it" (`POST /api/jobs/resolve`).
+  `base_rev`; the tab offers "Apply to rev" or "Drop it" (`POST /api/jobs/resolve`). Since W3 a conflict waits for its
+  answer in `JobQueue.waiting` (at most `MAX_CONFLICTS`, 50; past that the oldest is dropped and the room told), however
+  many jobs run meanwhile: `GET /api/state` and `GET /api/jobs` list the waiting ones in `conflicts` (job infos with
+  `status: "conflict"`, `position: null` and `conflict`), and every `queue` event carries the current `conflicts`. A tab
+  shows the buttons (`.qacts.qconf`) on a conflict message while its job is listed, after a reload too, and replaces
+  them with "No longer waiting for an answer." once it isn't. The first answer takes it (`JobQueue.take_conflict`);
+  another tab's later Apply or Drop gets 409, and an Apply that meets a full queue (429) leaves it waiting. Reset demo
+  drops a demo project's waiting conflicts with its chat (`JobQueue.drop_conflicts`).
 - Chat routing (I2b): a chat message that asks for another robot, or to bring in an existing one, is not interpreted
   as an edit of the open project. `agents.chat_offer(text, design, open_project)` decides, in this order: harmful
   text, questions, small talk and messages that open like an edit ("make it", "use", "swap" ...) stay edits; clear
@@ -268,7 +390,8 @@ studio = {
   narrower the inspector is an overlay opened by `#inspBtn` (`body.insp-open`; Escape closes it); Teams' `show(tab)`
   opens it. Teams hides the other features' entry points for a viewer (`body.tm-readonly`: `#suggest`, `.nr-headbtn`,
   `.nr-menubtn`, `#importBtn`, `.imp-menu`, `.vj-btn`, `#viewerTools`, and since E2 `#presentBtn` and `#paramsBar`, with
-  `#paramsBody` read-only) and disables the chat box, Send and Apply, so those class names are part of this contract. It
+  `#paramsBody` read-only, and since W3 the conflict buttons `.msg .qacts.qconf .btn`, whose `.qnote` says an editor can
+  answer) and disables the chat box, Send and Apply, so those class names are part of this contract. It
   hides `#keysBtn` from every member who isn't an owner (`body.tm-nokeys`): keys and settings are owner-only routes.
 
 ## 5. SubQ client (`morph/studio/subq.py`)
@@ -449,6 +572,13 @@ members; a member can hold several.
 - Invite links: single-use, 7-day expiry, 128-bit code stored hashed.
 - Signed session cookies: `id.issued.HMAC(secret, id|issued|epoch)`. Revoking bumps the epoch.
 - The audit log is hash-chained.
+- A team.json that doesn't parse is never read as "no team" (W3): `TeamStore.read()`/`update()` raise
+  `teams.store.TeamFileError` (a ValueError naming the line and column and `team.json.bak`). Every `morph team` command
+  exits with it, `morph team init` never writes over it, `morph studio --team` refuses to start with it, and a running
+  team Studio answers 503 with it to every request and page (nobody is signed in) until the file is fixed. Browsers
+  get `TeamFileError.public`, which names the file from the projects folder (`projects/.team/team.json`), never the
+  server's own path; the terminal gets the full text once (`api_team.team_problem`). Build errors in the chat name
+  files the same way (`durable.explain(exc, home)`).
 
 ## 9. Security rules for all features
 
@@ -477,7 +607,21 @@ members; a member can hold several.
   pipeline work grows with sizes, and one absurd value (a 1 km object) would hold the shared build slot for
   hours. The capability envelope (section 6) clamps much tighter.
 - **Keys.** Requests carrying an API key use `security.open_keyed()` (never follow a redirect with the key).
-  Chat messages that look like a key (`looks_like_secret`) are refused before they are shown, saved or sent.
+  One filter, `security.looks_like_secret(text)` (`holds_secret(value)` for every string of a structured value), covers
+  Claude (`sk-ant-`) and Keewano (`kwpat-`) keys, other `sk-` keys (20 or more token characters with a digit, unless
+  they read as a hyphenated phrase such as `sk-6x40-stainless-steel-screws`: `security._phrase`), the value of any key
+  saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a manifest's key
+  prefix that fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in codes. Teams
+  codes are made by `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, always with a capital
+  letter), so `security.TEAM_CODE` knows each one; any other `mi_`/`ml_`/`mt_` run of 20 or more characters counts
+  when it has a capital or a digit and doesn't read as a snake_case phrase, so `mt_shoulder_joint_torque_limit` or
+  `ml_inference_pipeline_enabled` pass. The tool runner redacts and refuses with the same shapes
+  (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
+  (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
+  robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
+  label), a project's `need`, a world's labels, an import's name and answers (`POST /api/import/<id>/commit`), and
+  every Teams text field (comments, change request titles and notes, close reasons, review and decision notes, release
+  names and notes, branch names, display names, invite name hints, script token labels, the team's name). A refused New robot request leaves no draft, no event and no call to SubQ or Claude.
 - **Served files.** `/files` and `/static` serve regular files only (never a pipe or device); generated files
   under `/files` get the sandbox policy, so they can't run script with the Studio's origin.
 - **Agent tool calls** (section 15) go only through `toolbox.http_tool.run`, which executes a declarative manifest
@@ -691,7 +835,7 @@ reference.
 | Path | Contents |
 |---|---|
 | `.tools/catalog/*.json` | the owner's own manifests (off until the owner turns each tool on); Morph's ship in `morph/studio/toolbox/catalog/` (on by default; package data: the first one adds `catalog/*.json` to pyproject's package-data and MANIFEST.in) |
-| `.tools/state.json` | `{enabled: {tool: bool}}`, the owner's overrides |
+| `.tools/state.json` | `{enabled: {tool: bool}}`, the owner's overrides. A file that can't be read turns every tool off (`read_state(...)["damaged"]`, listed in `GET /api/tools` errors); turning one on writes the others off, as shown. A `pins.json` that can't be read turns the owner's own manifests off (W3) |
 | `.tools/approvals.json` | `{tools: {tool: {fingerprint, mode: always \| key_saved, by, at}}}` |
 | `.tools/audit.jsonl` + `audit.head` | hash-chained log (`audit.verify(home)`): tool_enabled/disabled, keys_saved (names only), tool_approved (once \| always \| key_saved), tool_skipped/denied/refused, tool_call {run, tool, kind, host, ok, status, ms, cost_usd, outcome}, run_started/paused/resumed/interrupted/done/failed/refused/cancelled/expired, run_cancel_requested. Never a key, an argument or an answer |
 | `.runs/<id>.json` + `<id>.lock` | one agent run (`run_[0-9a-f]{16}`); deleted at Studio start 7 days after its last change |
@@ -1055,7 +1199,8 @@ pass (1280x720, 1600x900, 910 px; every card state) found no console errors beyo
 violations and no sideways scrolling.
 
 Not changed here (other features' files): the New robot request and Teams comments don't refuse a pasted tool or
-SubQ key the way chat does (`security.looks_like_secret`; Teams uses its own `collab.SECRET_RX`).
+SubQ key the way chat does (`security.looks_like_secret`; Teams uses its own `collab.SECRET_RX`). Since the release
+review (W3) they do: every free-text field uses the one filter of section 9, and `collab.SECRET_RX` is gone.
 
 ## 16. Simulation track: robustness studies (B2-S1 the engine, B2-S2 the Studio routes and the card)
 
@@ -1089,7 +1234,9 @@ field failure rate (section 0, honesty).
   classes, FSR 400 calibration, ST3215 torque, backlash and 4096-count encoder; the rest "assumed"); other objects and
   servo families get relative ranges marked "assumed". A project's edits live in `<p>/.studies/tolerances.json`
   (`save_tolerances(root, {name: {lo?, hi?, on?}} | {"world_preset": name} | {"reset": true}, rev, by)`: finite numbers
-  inside `robust.LIMITS`, `lo <= hi`; anything else is a `StudyError`). A study records the spec's sha
+  inside `robust.LIMITS`, `lo <= hi`; anything else is a `StudyError`; a tolerances.json that can't be read raises
+  `TolerancesUnreadable`, a 409, from `tolerances()` and every edit but `{"reset": true}`: never the defaults
+  silently, never written over; W3). A study records the spec's sha
   (`base_spec_sha`); once the project's spec changes, `load()` marks the older study `outdated`. **World presets:**
   `robust.register_world_preset(name, fn(sim_world, design) -> the four world entries)`; `standard` is mount +/-10 mm
   and +/-2 deg, each box 0-15 mm (H2 adds scan presets). Stress mode doubles every range about its nominal (floors in
@@ -1128,10 +1275,13 @@ field failure rate (section 0, honesty).
 - **Heavy jobs** (`morph/studio/jobs.py`): `jobs.manager(studio)` (one per Studio; `HeavyJobs(home, emit=...)`
   elsewhere): `start_study(project, rev=None, *, runs=200, seed=1, stress=False, workers=None, timestep=0.001,
   checks=True, by=None)` -> job (`StudyError`; `StudyBusy` when one runs for that project, in any process), `status`,
-  `cancel` (within 2 s; finished runs kept), `wait`, `resume(project, id)`, `interrupted()`, `result(project, id,
+  `cancel` (within 2 s; finished runs kept; a study still waiting for its turn goes as if never asked for, but
+  `shutdown()` keeps it: W3), `wait`, `resume(project, id)`, `interrupted()`, `result(project, id,
   rows=False)`, `studies`, `tolerances`, `save_tolerances`, `replay(project, id, run)` (a run's
   `sim_pick_place.json` document with a `robustness` block, for the viewer). A job never takes the room's lock, its job
-  queue or `Studio.builds`; jobs on different projects take turns (`MORPH_HEAVY_JOBS`, default 1 at once).
+  queue or `Studio.builds`; jobs on different projects take turns (`MORPH_HEAVY_JOBS`, default 1 at once). A new
+  study waiting for its turn is on disk at once (`robust.save_queued`: status `queued`, `queued_by` this process), so
+  a Studio that stops before it starts lists it as `interrupted`, to carry on (W3).
 - **Event** `study {id, rev, status, phase: prepare|runs|checks|done, done, n, successes, failures, unstable, groups, p,
   ci, eta_s, elapsed_s, first_result_s, stress, summary?}` to the project's room (`groups`: the counted failures so far
   by group, B2-S2), at most four a second plus every phase change and the end (`summary`: n, successes, p, wilson95,

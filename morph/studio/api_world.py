@@ -28,6 +28,7 @@ from collections import OrderedDict
 
 from . import worlds
 from .worlds import WorldError
+from .security import holds_secret, secret_refused
 
 INSPECT_MAX_BODY = 16 << 20
 
@@ -156,6 +157,8 @@ def save_world(req):
                 raw = worlds.starter(body["starter"])
             elif isinstance(body.get("world"), dict):
                 raw = body["world"]
+                if holds_secret(raw):  # its labels are saved, shown to everyone and sent with an AI review
+                    return _err(400, secret_refused("in a world's labels"))
             else:
                 return _err(400, "Send {starter: desk | counter | workbench}, {world: {...}} or {off: true}.")
             w, h = worlds.save(room.p.root, raw)

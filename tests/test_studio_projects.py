@@ -304,6 +304,22 @@ def test_reset_waits_for_a_demo_build(tmp_path, builds):
     assert st.reset() and RobotProject(str(home / "egg-picker")).revs() == ["r001"]
 
 
+def test_reset_drops_the_conflicts_waiting_for_an_answer(tmp_path, builds):
+    """Reset demo clears the chat and removes the revisions a waiting conflict was about: it stops waiting too."""
+    home = tmp_path / "projects"
+    _rev(home / "egg-picker", "r001", None)
+    (home / "egg-picker" / "meta.json").write_text(json.dumps({"kind": "robot", "demo": True}))
+    st = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    room = st.room()
+    finish(st.queue_params(room, {"arm.dof": 6}))
+    late = st.queue_params(room, {"arm.dof": 4}, base_rev="r001")
+    finish(late)
+    assert [j["id"] for j in st.state(room)["conflicts"]] == [late.id]
+    assert st.reset() and st.state(room)["conflicts"] == [] and late.status == "dropped"
+    with pytest.raises(LookupError):
+        st.resolve(room, late.id, "apply")
+
+
 # ------------------------------------------------------------------ the CLI makes projects the same way
 
 def test_cli_robot_new_uses_the_project_service(tmp_path, monkeypatch, builds):

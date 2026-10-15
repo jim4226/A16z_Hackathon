@@ -192,17 +192,11 @@ def open_app_window(url: str):
 
 
 def _set_aside_cut_off(proj):
-    """A build cut off mid-way (window closed, Ctrl+C) leaves rNNN/design.json without results.json,
-    which would stop every later launch. Move it aside; the next build reuses the number."""
-    for rev in reversed(proj.revs()):
-        d = proj.rev_dir(rev)
-        if os.path.isfile(os.path.join(d, "results.json")):
-            break
-        print(f"{os.path.basename(proj.root)}: {rev} was cut off mid-build; setting it aside")
-        try:
-            os.rename(d, f"{d}.incomplete-{int(time.time())}")
-        except OSError:
-            break
+    """A build cut off mid-way (window closed, Ctrl+C) leaves rNNN/design.json without results.json, and a power cut can
+    leave a results.json that doesn't parse: either would stop every later launch. Move it aside; the next build reuses
+    the number (projects.set_aside_unfinished; the Studio does the same for every project when it starts)."""
+    from .studio import projects
+    projects.set_aside_unfinished(proj, say=print)
 
 
 COMMENT_NOTE = "Ignoring the rest of the line from # on: it is a comment, not options for Morph."
@@ -252,10 +246,13 @@ def cmd_studio(a):
     token = None if team else access_token(a.host, fixed or None)
     local = "127.0.0.1" if a.host in ("0.0.0.0", "") else a.host
     link = f"http://{local}:{a.port}/" + (f"?token={token}" if token else "")
+    # a server without a screen: its link is opened from another computer (a browser here would be a text one in the
+    # terminal, which Python's webbrowser runs and waits for)
+    headless = sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
     with socket.socket() as sock:  # a Studio left running in another window would share the port on Windows
         sock.settimeout(1)
         if sock.connect_ex((local, a.port)) == 0:
-            if a.open:
+            if a.open and not headless:
                 open_app_window(f"http://{local}:{a.port}")
             sys.exit(f"Morph Studio is already running at http://{local}:{a.port}. To restart it, stop it first "
                      "(Ctrl+C in its terminal, or close that window).")
@@ -280,12 +277,12 @@ def cmd_studio(a):
     for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
         _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
-    if not p.revs():
+    if not p.finished():
         print(f"no project {a.name} yet: generating the first robot (about a minute)...")
         cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if a.name == "so101" else None, demo=a.name in projects.DEMOS))
     other = "so101" if a.name != "so101" else "egg-picker"
-    if not RobotProject(os.path.join(HOME, other)).revs():
+    if not RobotProject(os.path.join(HOME, other)).finished():
         print(f"also preparing the {other} project for the project switcher...")
         cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if other == "so101" else None, demo=True))
@@ -300,16 +297,40 @@ def cmd_studio(a):
         from .studio.teams import cli as teams_cli
         # with --remote, at the address teammates reach: the invite links Share makes start with the page's address
         lan = lan_address() if a.host in ("0.0.0.0", "") else None
-        link = teams_cli.team_link(home=HOME, base_url=f"http://{lan or local}:{a.port}", out=None)["url"]
-    headless = sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        try:
+            link = teams_cli.team_link(home=HOME, base_url=f"http://{lan or local}:{a.port}", out=None)["url"]
+        except ValueError as exc:  # team.json can't be read (teams.store.TeamFileError): never "no owner", never a traceback
+            sys.exit(str(exc))
     if a.open and not headless:  # a server without a screen: the link printed below is opened from another computer
         import threading
         threading.Timer(1.5, open_app_window, args=(link,)).start()
     extra = {**({"team": True, "link": link} if team else {}),
-             **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {})}
+             **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {}),
+             **({"token_chosen": False} if token and not fixed else {})}  # Morph's own random code: never locked out
     serve(p, a.host, a.port, home=HOME, token=token, **extra)
 
 
+
+
+def _leave(rc: int):
+    """End a stopped Studio's process now, without the interpreter's shutdown. Everything the Studio keeps is written as
+    it happens (whole-file replaces and appended lines), and serve() has stopped its studies; what shutdown would add
+    is waiting for threads nothing needs any more and running native libraries' finalizers. After a build in this
+    process (the launcher's first robot), MuJoCo's and the OSMesa renderer's crashed now and then while shutdown
+    collected them ("Segmentation fault", exit code -11, after Ctrl+C). Study workers still running are ended, as the
+    multiprocessing exit handler would, and the terminal output is flushed first."""
+    try:
+        import multiprocessing
+        for child in multiprocessing.active_children():
+            child.terminate()
+    except Exception:  # noqa: BLE001  (leaving must not fail)
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001
+            pass
+    os._exit(rc)
 
 
 def _robot_summary(p, rev) -> list:
@@ -401,6 +422,9 @@ def cmd_robot_brief(a) -> int:
         sys.exit(f"--name {name}: use lower-case letters, digits and dashes (up to 40).")
     if len(text) > 2000:
         sys.exit("Keep the request under 2,000 characters.")
+    from .studio.security import looks_like_secret, secret_refused
+    if looks_like_secret(text):  # before it goes to SubQ or Claude
+        sys.exit(secret_refused("in a robot description"))
     asking = not a.defaults and sys.stdin.isatty() and sys.stdout.isatty()
 
     def timeline(ev):  # the agents timeline, as the Studio's dialog shows it
@@ -656,6 +680,13 @@ def cmd_study(a) -> int:
         print(f"{a.name}: use 1 to {cores} worker processes (this computer has {cores} CPU core{'s' if cores != 1 else ''}).",
               file=sys.stderr)
         return 1
+    try:  # what can't run is said before the banner (the study itself checks again)
+        robust.new_study(p.root, a.rev, runs=a.runs, seed=a.seed, stress=a.stress, timestep=a.timestep / 1000.0)
+        if robust.active(p.root) is not None:
+            raise robust.StudyBusy("A robustness study is already running for this project.")
+    except robust.StudyError as exc:
+        print(f"{a.name}: {exc}", file=sys.stderr)
+        return 1
     cancel, out, last = threading.Event(), {}, {"t": 0.0, "phase": None}
 
     def progress(ev):
@@ -731,10 +762,25 @@ def cmd_darwin(a):
     print(json.dumps(darwin.search(a.query, a.n), indent=2))
 
 
-def cmd_ask(a):
+def cmd_ask(a) -> int:
+    """`morph ask "<SQL>"`: rows of the project's Keewano events, or why there are none (not configured, network
+    lookups off, or the query failed) with exit status 1."""
+    from . import settings
+
+    if not (os.environ.get("KEEWANO_PAT") and os.environ.get("KEEWANO_PROJECT_ID")):
+        print("Keewano not configured: add KEEWANO_PAT and KEEWANO_PROJECT_ID (Keys in the Studio, or .env).",
+              file=sys.stderr)
+        return 1
+    if not settings.network_allowed():
+        print("Not sent: network lookups are off" + (" (MORPH_OFFLINE=1)." if settings.offline() else
+                                                     " (Keys, Privacy and network)."), file=sys.stderr)
+        return 1
     rows = keewano.query(a.sql)
-    print("Keewano not configured (KEEWANO_PAT, KEEWANO_PROJECT_ID)" if rows is None
-          else json.dumps(rows, indent=2, default=str))
+    if rows is None:  # keewano.query printed why
+        print("Keewano didn't answer the query; nothing was changed.", file=sys.stderr)
+        return 1
+    print(json.dumps(rows, indent=2, default=str))
+    return 0
 
 
 def cmd_kicad(a):
@@ -1058,10 +1104,15 @@ def subq_triage(text: str) -> tuple:
 
 def cmd_subq(a) -> int:
     """One SubQ Snap triage of a request, printed: for trying a SubQ key (about 1,000 input tokens per run)."""
+    from . import settings
     from .studio import subq
 
     state, questions = subq_triage(a.text)
-    if a.lint:  # no key: SubQ checks the request's shape before the key
+    if a.lint:  # no key: SubQ checks the request's shape before the key (the request text still goes to api.subq.ai)
+        if not settings.network_allowed():
+            print("Not sent: network lookups are off" + (" (MORPH_OFFLINE=1)." if settings.offline() else
+                                                         " (Keys, Privacy and network)."))
+            return 1
         ok, msg = subq.lint({"model": subq.SNAP, "state": state, "questions": questions})
         print(("valid request: " if ok else "invalid request: ") + msg)
         return 0 if ok else 1
@@ -1095,10 +1146,11 @@ def cmd_subq(a) -> int:
 
 def _console_safe():
     """A console that can't show a character (cp1252 on Windows, output redirected without PYTHONUTF8) prints
-    "?" instead of stopping the command with UnicodeEncodeError."""
+    "?" instead of stopping the command with UnicodeEncodeError. Every line goes out when it is printed, also into a
+    log file or a pipe (nohup, a service): the Studio's access link and sign-in links are needed while it runs."""
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="replace")
+            stream.reconfigure(errors="replace", line_buffering=True)
         except (AttributeError, ValueError, OSError):
             pass
 
@@ -1259,7 +1311,8 @@ def main(argv=None) -> int:
 
     s = sub.add_parser("subq", help="SubQ Snap: triage one request with your SUBQ_API_KEY and print the answers")
     s.add_argument("text")
-    s.add_argument("--lint", action="store_true", help="only check the request's shape (no key needed)")
+    s.add_argument("--lint", action="store_true", help="only check the request's shape: it still goes to api.subq.ai, "
+                                                       "without a key (nothing is sent while network lookups are off)")
     s.add_argument("--json", action="store_true", help="print SubQ's raw answers")
     s.add_argument("--no-cache", action="store_true", help="ask SubQ even if the same request was answered this week")
     s.add_argument("--timeout", type=float, default=15.0)
@@ -1310,6 +1363,8 @@ def main(argv=None) -> int:
     a = ap.parse_args(_studio_argv(sys.argv[1:] if argv is None else list(argv)))
     t0 = time.time()
     rc = a.fn(a)
+    if a.cmd == "studio" and argv is None:  # the Studio stopped (Ctrl+C) with everything saved: this process is done
+        _leave(rc if isinstance(rc, int) else 0)
     # every pipeline command's wall-clock goes into the time study
     if a.cmd in ("new", "explore", "change") and getattr(a, "name", None):
         _project(a.name).log({"type": "tool_time", "cmd": a.cmd, "seconds": round(time.time() - t0, 2)})

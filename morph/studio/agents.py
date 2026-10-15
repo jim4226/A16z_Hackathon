@@ -670,9 +670,9 @@ def _tools_request(inp, ctx):
     folder = store.tools_dir(ctx["home"])
     try:
         with store.locked(folder):
+            from ..services.durable import append_line
             path = os.path.join(folder, "requests.jsonl")
-            with open(path, "a", encoding="utf-8", newline="\n") as fh:
-                fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+            append_line(path, json.dumps(line, ensure_ascii=False))
             os.chmod(path, 0o600)
     except (OSError, TimeoutError):
         pass

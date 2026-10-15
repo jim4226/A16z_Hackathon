@@ -21,6 +21,7 @@ import tempfile
 import zipfile
 
 from ..robot.pipeline2 import ORDER, artifact_problem, stage_problem
+from ..services.durable import readable_json
 from .security import contained_path
 
 MAX_EXPORT_BYTES = 200 * 1024 * 1024
@@ -154,7 +155,9 @@ def _plan(project, rev, full: bool, keep=None) -> tuple[dict, list, str]:
         if held:
             manifest.update(left_out=held, left_out_note=LEFT_OUT)
         return manifest, files, f"{safe}-{rev}.zip"
-    revs = [r for r in project.revs() if os.path.isfile(os.path.join(project.rev_dir(r), "results.json"))]
+    # a revision being built, cut off, or whose results can't be read is never exported (one with a damaged design.json
+    # still is: its record is the history's)
+    revs = [r for r in project.revs() if readable_json(os.path.join(project.rev_dir(r), "results.json"))]
     if not revs:
         raise ExportError("This project has no finished revisions to export.", 409)
     if rev is not None:

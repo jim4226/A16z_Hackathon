@@ -14,7 +14,6 @@ import copy
 import json
 import os
 import secrets
-import tempfile
 import threading
 import time
 
@@ -88,7 +87,16 @@ class FileLock:
         while True:
             try:
                 self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                os.write(self.fd, f"{os.getpid()} {time.time():.0f}".encode())
+                try:
+                    os.write(self.fd, f"{os.getpid()} {time.time():.0f}".encode())
+                except BaseException:  # a full disk: never keep the descriptor, nor a lock file nobody holds
+                    os.close(self.fd)
+                    self.fd = None
+                    try:
+                        os.remove(self.path)
+                    except OSError:
+                        pass
+                    raise
                 return self
             except FileExistsError:
                 try:
@@ -154,32 +162,10 @@ def ensure_dir(folder: str, private: bool = False):
 
 def write_json(path: str, data, private: bool = False):
     """Atomic JSON write: temp file in the same folder, fsync, os.replace (retried briefly: Windows refuses to
-    replace a file another process is reading)."""
-    folder = os.path.dirname(path)
-    ensure_dir(folder)
-    fd, tmp = tempfile.mkstemp(prefix=".tmp.", suffix=".json", dir=folder)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump(data, fh, indent=1, ensure_ascii=False)
-            fh.write("\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        if private and os.name != "nt":
-            os.chmod(tmp, 0o600)
-        for attempt in range(20):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:
-                if attempt == 19:
-                    raise
-                time.sleep(0.05)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    replace a file another process is reading), the folder synced (durable.write_text)."""
+    from ...services.durable import write_text
+    ensure_dir(os.path.dirname(path))
+    write_text(path, json.dumps(data, indent=1, ensure_ascii=False) + "\n", private=private)
 
 
 def read_json(path: str, default=None):
@@ -191,17 +177,18 @@ def read_json(path: str, default=None):
 
 
 def append_jsonl(path: str, obj: dict):
-    """One JSON object per line. Callers hold locked(folder), so lines never interleave."""
+    """One JSON object per line. Callers hold locked(folder), so lines never interleave; a line cut off by a crash or a
+    full disk is ended first, so it never swallows this one (read_jsonl skips it)."""
+    from ...services.durable import append_line
     ensure_dir(os.path.dirname(path))
-    with open(path, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + "\n")
+    append_line(path, json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
 
 
 def read_jsonl(path: str) -> list:
     """Every parseable object line; a torn last line (a crash mid-write) is skipped."""
     out = []
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:  # a line cut inside a character must not stop the rest
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -221,9 +208,47 @@ def exists(home: str | None = None) -> bool:
     return os.path.isfile(os.path.join(team_dir(home), "team.json"))
 
 
+class TeamFileError(ValueError):
+    """team.json is there but can't be read: Morph refuses to treat it as no team, or to write over it. str() names the
+    file by its full path (the terminal, `morph team`); `public` names it from the projects folder
+    (projects/.team/team.json), for browsers: where the server keeps its files is nobody else's business."""
+
+    def __init__(self, message: str, public: str | None = None):
+        super().__init__(message)
+        self.public = public or message
+
+
+def _team_json(path: str) -> dict:
+    """team.json's object; {} when there is none; TeamFileError, naming the line and column and the backup Morph kept
+    (team.json.bak, the copy before its last change), when it is there but doesn't parse."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        where = f" at line {exc.lineno}, column {exc.colno}" if isinstance(exc, json.JSONDecodeError) else ""
+        data, why = None, f"can't be read{where} (damaged, or edited by hand)"
+    else:
+        why = "doesn't hold a team"
+    if isinstance(data, dict):
+        return data
+    bak = path + ".bak"
+    shown = "/".join((os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(path)))) or "projects",
+                      os.path.basename(os.path.dirname(path)), os.path.basename(path)))  # projects/.team/team.json
+
+    def say(name, backup):
+        fix = (f"Fix it, or put back the copy Morph kept before its last change ({backup})" if os.path.isfile(bak) else
+               "Fix it, or restore it from a backup")
+        return (f"{name} {why}. Morph won't use or overwrite it: no one can sign in and no team command works until it "
+                f"is fixed. {fix}, then start again.")
+    raise TeamFileError(say(path, bak), public=say(shown, shown + ".bak"))
+
+
 class TeamStore:
     """team.json in MORPH_HOME/.team/: read() is cached by the file's mtime and size (it runs on every request);
-    update(fn) re-reads under the lock, lets fn change the dict, then writes it atomically."""
+    update(fn) re-reads under the lock, lets fn change the dict, then writes it atomically, keeping the copy before the
+    change as team.json.bak. A team.json that can't be read raises TeamFileError from both: never "no team"."""
 
     _cache: dict = {}
 
@@ -249,19 +274,18 @@ class TeamStore:
         if key is None:
             return {}
         if hit is None or hit[0] != key:
-            data = read_json(self.path, {})
-            if not isinstance(data, dict):
-                data = {}
+            data = _team_json(self.path)
             hit = self._cache[self.path] = (key, data)
         return copy.deepcopy(hit[1])
 
     def update(self, fn):
         with locked(self.dir):
-            data = read_json(self.path, {}) if self.exists() else {}
-            if not isinstance(data, dict):
-                data = {}
+            data = _team_json(self.path)
+            before = copy.deepcopy(data) if data else None
             out = fn(data)
             data["version"] = VERSION
+            if before is not None:  # the last good copy, for the day this one is damaged
+                write_json(self.path + ".bak", before, private=True)
             write_json(self.path, data, private=True)
             self._cache.pop(self.path, None)
             return out

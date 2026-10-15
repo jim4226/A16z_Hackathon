@@ -1048,6 +1048,7 @@ body.tm-readonly #paramsBar { display: none; }
 body.tm-nokeys #keysBtn { display: none; }
 body.tm-readonly #form { opacity: .75; } body.tm-readonly #send { opacity: .45; cursor: not-allowed; }
 body.tm-readonly #paramsBody { pointer-events: none; opacity: .8; }
+body.tm-readonly .msg .qacts.qconf .btn { display: none; } body.tm-readonly .msg .qacts.qconf .qnote { display: inline; }
 .tm-gone { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(8, 9, 12, .72); }
 .tm-gone .glass { display: grid; gap: 6px; padding: 18px 22px; border-radius: var(--r3); max-width: min(420px, calc(100vw - 32px)); font-size: 13px; }
 .tm-gone span { color: var(--muted); font-size: 12px; }

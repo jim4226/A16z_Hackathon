@@ -53,7 +53,7 @@ class Job:
         self.status, self.error, self.event, self.n = "queued", None, None, study["n"]
         self.cancel, self.finished = threading.Event(), threading.Event()
         self.created, self.started, self.ended, self.cancel_asked = time.time(), None, None, None
-        self.thread = None
+        self.thread, self.queued_record = None, False
 
     def view(self) -> dict:
         ev = self.event or {}
@@ -105,6 +105,10 @@ class HeavyJobs:
                 raise StudyBusy(f"A robustness study is already running for {project} (started from another Studio or a "
                                 "terminal).")
             job = self.jobs[project] = Job(project, root, params, study, by)
+            try:  # on disk while it waits: a Studio that stops first lists it as interrupted, to carry on
+                job.queued_record = robust.save_queued(root, study)
+            except OSError:
+                job.queued_record = False
             self.waiting.append(job)
             self._send(job, self._event(job, "queued"), force=True)
             view = job.view()
@@ -119,8 +123,9 @@ class HeavyJobs:
             raise StudyError("There is no such study.")
         return self.start_study(project, doc["rev"], runs=int(doc["n"]), by=by, study_id=study_id)
 
-    def cancel(self, project: str) -> dict | None:
-        """Stop the project's study (within about 2 s): finished runs are kept and it can be resumed."""
+    def cancel(self, project: str, keep: bool = False) -> dict | None:
+        """Stop the project's study (within about 2 s): finished runs are kept and it can be resumed. One still waiting
+        for its turn goes as if never asked for, unless `keep` (the Studio is stopping: it is listed as interrupted)."""
         with self.lock:
             job = self.jobs.get(project)
             if job is None or job.finished.is_set():
@@ -131,8 +136,17 @@ class HeavyJobs:
                 self.waiting.remove(job)
                 job.status, job.ended = "cancelled", time.time()
                 job.finished.set()
+                if job.queued_record and not keep:
+                    self._drop_queued(job, job.id)
                 self._send(job, self._event(job, "cancelled"), force=True)
         return job.view()
+
+    @staticmethod
+    def _drop_queued(job: Job, sid: str):
+        try:
+            robust.drop_queued(job.root, sid)
+        except (OSError, StudyError):
+            pass
 
     def wait(self, project: str, timeout: float | None = None) -> bool:
         job = self.jobs.get(project)
@@ -141,7 +155,7 @@ class HeavyJobs:
     def shutdown(self, timeout: float = 5.0):
         """Cancel every job (the Studio is stopping); their saved runs stay resumable."""
         for project in list(self.jobs):
-            self.cancel(project)
+            self.cancel(project, keep=True)
         for job in list(self.jobs.values()):
             job.finished.wait(timeout)
 
@@ -223,6 +237,9 @@ class HeavyJobs:
     def _progress(self, job: Job, ev: dict):
         prev = job.event or {}
         job.status = ev.get("status", job.status)
+        if ev.get("id", job.id) != job.id and job.queued_record:  # the tolerances changed while it waited: a new study
+            job.queued_record = False                                # runs, and the one written for the wait goes
+            self._drop_queued(job, job.id)
         job.id = ev.get("id", job.id)            # the study that runs (tolerances edited while it waited: a new one)
         force = ev.get("phase") != prev.get("phase") or ev.get("status") != prev.get("status") or "summary" in ev
         self._send(job, ev, force=force)

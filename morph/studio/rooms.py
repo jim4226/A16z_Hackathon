@@ -10,16 +10,150 @@ pipeline builds run at once across rooms.
 from __future__ import annotations
 
 import collections
+import contextvars
 import json
 import os
 import queue
+import re
 import secrets
-import tempfile
+import socket
 import threading
 import time
 import traceback
+import weakref
 
 from ..robot.pipeline2 import RobotProject
+from ..services import durable
+
+
+# The client whose request is being handled: the page's tab (its X-Morph-Client value) or a script. Set by the server
+# around each route; a job queued meanwhile remembers it, so one tab's quick edits aren't conflicts with each other.
+REQUESTER = contextvars.ContextVar("morph_requester", default=None)
+
+
+# Feature hooks run when a Studio starts (Studio._recover): RESUMED fn(studio, room, job, meta) for a first build it queued
+# again (a stop cut it off), STARTED fn(studio) once every project is recovered. A hook that fails never stops the Studio.
+RESUMED: list = []
+STARTED: list = []
+HOST = socket.gethostname()
+
+# Which Studio wrote a queue journal. Each Studio process has its own id (OWNER) and, while it runs, holds an OS lock on
+# <projects>/.studios/<OWNER>.lock (claim); the system frees that lock when the process ends, however it ends (Ctrl+C,
+# a crash, a kill, a power cut). So a journal whose Studio's lock is free was left by a stopped Studio, and one whose
+# lock is held belongs to a Studio still running on the same projects folder, whatever the pid or the computer's name
+# says (pids are reused after a reboot, and a Mac's name changes with its network).
+OWNER = secrets.token_hex(8)
+STUDIOS = ".studios"
+JOURNAL = re.compile(r"queue(?:-([0-9a-f]{16}))?\.jsonl")  # queue-<owner>.jsonl; plain queue.jsonl: no owner known
+_CLAIMS = weakref.WeakValueDictionary()  # realpath of a projects folder -> its Claim
+_CLAIMS_LOCK = threading.Lock()
+STALE_LOCK_S = 600  # another Studio's lock file nobody holds is removed once it is this old (never one just made)
+
+
+def owner_lock(home: str, owner: str) -> str:
+    return os.path.join(home, STUDIOS, f"{owner}.lock")
+
+
+class Claim:
+    """This process's OS lock on <home>/.studios/<OWNER>.lock: held while anything of this process uses that projects
+    folder (a Studio keeps it, a JobQueue takes it before it writes its journal), released when the last of them is
+    gone, and by the system when the process ends, however it ends. `real`: the file system can lock (on one that
+    can't, a network share say, a second Studio on the same folder can't be told from a stopped one)."""
+
+    def __init__(self, home: str):
+        self.lock = durable.BuildLock(owner_lock(home, OWNER))
+        self.lock.acquire()
+        self.real = self.lock.real
+        weakref.finalize(self, self.lock.release)
+
+
+def claim(home: str) -> Claim:
+    """The Claim of projects folder `home` (taken once; lock files other Studios left behind are removed then)."""
+    key = os.path.realpath(home)
+    with _CLAIMS_LOCK:
+        held = _CLAIMS.get(key)
+        if held is None:
+            held = _CLAIMS[key] = Claim(home)
+            _sweep(home)
+        return held
+
+
+def _sweep(home: str):
+    folder, now = os.path.join(home, STUDIOS), time.time()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for n in names:
+        path = os.path.join(folder, n)
+        if n == f"{OWNER}.lock" or not n.endswith(".lock"):
+            continue
+        try:
+            if now - os.path.getmtime(path) < STALE_LOCK_S or durable.BuildLock.held(path):
+                continue
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def journal_owner(path: str) -> str | None:
+    """The Studio (OWNER) that wrote the queue journal at `path`, from its name; None for an older plain queue.jsonl."""
+    m = JOURNAL.fullmatch(os.path.basename(path))
+    return m.group(1) if m else None
+
+
+def journals(root: str) -> list:
+    """The queue journals in project folder `root` (<root>/.morph/queue-<owner>.jsonl, one per Studio that had jobs
+    open there), oldest first."""
+    folder = os.path.join(root, ".morph")
+    try:
+        names = [n for n in os.listdir(folder) if JOURNAL.fullmatch(n)]
+    except OSError:
+        return []
+    def when(path):
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return 0.0
+    return sorted((os.path.join(folder, n) for n in names), key=lambda path: (when(path), path))
+
+
+def owner_live(home: str, owner) -> bool:
+    """True when `owner` (rooms.OWNER of some process) is another process that still holds its lock on projects folder
+    `home` (claim): what it left there is still its own. This process, and anything unnamed, never is."""
+    return (isinstance(owner, str) and re.fullmatch(r"[0-9a-f]{16}", owner) is not None and owner != OWNER
+            and durable.BuildLock.held(owner_lock(home, owner)))
+
+
+def journal_live(path: str, home: str) -> bool:
+    """True when the Studio that writes the journal at `path` still runs (another Studio on the same projects folder:
+    its jobs are its own). This process's own journal and an older one without an owner are never live."""
+    return owner_live(home, journal_owner(path))
+
+
+def open_jobs(path: str) -> list:
+    """The jobs a queue journal (JobQueue.journal) says were still open when its Studio stopped, in the order they were
+    queued: the last line of each job, `op` "queued" (waiting or building) or "held" (a conflict waiting for an answer),
+    with `started: True` when its build had started (a first build cut off mid-build). Lines that don't parse are
+    skipped."""
+    last = collections.OrderedDict()
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(e, dict) or not isinstance(e.get("id"), str):
+                    continue
+                if e.get("op") == "started":
+                    if e["id"] in last:
+                        last[e["id"]]["started"] = True
+                elif e.get("op") in ("queued", "held", "ended"):
+                    last[e["id"]] = {**last.get(e["id"], {}), **e}  # what each line adds; the newest op wins
+    except OSError:
+        return []
+    return [e for e in last.values() if e["op"] in ("queued", "held")]
 
 
 class UnknownProject(LookupError):
@@ -73,14 +207,10 @@ class Hub:
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             if self._lines >= 2 * self.MAX_HISTORY:
-                fd, tmp = tempfile.mkstemp(prefix=".chat.", suffix=".tmp", dir=os.path.dirname(self.path))
-                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-                    fh.writelines(json.dumps(e) + "\n" for e in self.history)
-                os.replace(tmp, self.path)
+                durable.write_text(self.path, "".join(json.dumps(e) + "\n" for e in self.history))
                 self._lines = len(self.history)
             else:
-                with open(self.path, "a", encoding="utf-8", newline="\n") as fh:
-                    fh.write(json.dumps(event) + "\n")
+                durable.append_line(self.path, json.dumps(event))  # a cut-off last line never swallows this one
                 self._lines += 1
         except (OSError, TypeError, ValueError):
             traceback.print_exc()  # a full disk loses saved chat, never the build
@@ -144,12 +274,22 @@ class Job:
         self.id = secrets.token_hex(6)
         self.kind, self.fn, self.by, self.base_rev, self.label = kind, fn, by, base_rev, label or kind
         self.status, self.result, self.error, self.conflict, self.data = "queued", None, None, None, {}
+        self.origin = REQUESTER.get()  # the tab or script that asked
+        self.after = ()                # its own requests (same member and tab) still waiting or building when it asked
         self.created, self.started, self.finished = time.time(), None, None
         self._done = threading.Event()
+        self.answered = threading.Event()  # a conflict got its answer: "resolved" (see successor) or "dropped"
+        self.successor = None              # the job a resolved conflict's Apply queued: it builds this request
 
     def wait(self, timeout: float | None = None) -> bool:
         """True once the job has finished (whatever its status)."""
         return self._done.wait(timeout)
+
+    def answer(self, status: str, successor: "Job | None" = None):
+        """This conflict was answered: Apply queued `successor` ("resolved"), or it was dropped."""
+        self.successor = successor
+        self.status = status
+        self.answered.set()
 
     def info(self, position: int | None = None) -> dict:
         out = {"id": self.id, "kind": self.kind, "by": self.by, "status": self.status, "position": position,
@@ -163,10 +303,18 @@ class Job:
 
 class JobQueue:
     """First in, first out, one job at a time per room. The worker thread starts with the first job and ends when the
-    queue is empty. Every change is published to the room as a `queue` event."""
+    queue is empty. Every change is published to the room as a `queue` event. A job that ended as a conflict waits for
+    an answer (Apply or Drop) in `waiting` until someone gives one, however many jobs run meanwhile.
+
+    The queue is journaled in <project>/.morph/queue-<OWNER>.jsonl (`journal`, one file per Studio process): a line
+    when a job is queued (`record`: what it takes to tell about it, or to build it again), when a first build starts
+    building (started), when it ends as a conflict waiting for an answer, and when it ends otherwise. The file goes once
+    nothing waits or runs. A Studio that stopped with jobs open leaves it; the next Studio finds it when it starts
+    (Studio._recover): a first build is built again, an edit is named in the chat, a conflict waits again."""
 
     MAX_QUEUED = 10
-    KEEP = 50  # finished jobs remembered for wait/resolve
+    KEEP = 50            # finished jobs remembered for wait/resolve
+    MAX_CONFLICTS = 50   # conflicts waiting for an answer; past it the oldest is dropped (and the room is told)
 
     def __init__(self, room: "Room"):
         self.room = room
@@ -174,23 +322,86 @@ class JobQueue:
         self.pending = collections.deque()
         self.running = None
         self.jobs = collections.OrderedDict()
+        self.waiting = collections.OrderedDict()  # job id -> a conflict nobody has answered yet
         self.worker = None
+        p = getattr(room, "p", None)
+        self.journal = os.path.join(p.root, ".morph", f"queue-{OWNER}.jsonl") if p is not None else None
+        self.home = os.path.dirname(p.root) if p is not None else None
+        self.claim = None  # this process's lock on the projects folder, taken before the first journal line
+
+    # -- the journal
+    def _log(self, op: str, job: Job, **fields):
+        """One journal line (under self.cond). A journal that can't be written never stops the queue."""
+        if not self.journal:
+            return
+        try:
+            if self.claim is None:  # the lock that tells other Studios this journal's writer still runs
+                self.claim = claim(self.home)
+            os.makedirs(os.path.dirname(self.journal), exist_ok=True)
+            durable.append_line(self.journal, json.dumps({"op": op, "id": job.id, "studio": OWNER, "pid": os.getpid(),
+                                                          "host": HOST, **fields}, default=str))
+        except (OSError, TypeError, ValueError):
+            traceback.print_exc()
+
+    def started(self, job: Job):
+        """`job`'s build has the build slot and starts now (Studio.build): a stop from here on cut it off."""
+        with self.cond:
+            self._log("started", job)
+
+    def _ended(self, job: Job):
+        self._log("ended", job, status=job.status)
+        self._settle()
+
+    def _settle(self):
+        """Nothing waits, runs or waits for an answer: the journal has nothing left to tell, so it goes."""
+        if self.journal and self.running is None and not self.pending and not self.waiting:
+            try:
+                os.remove(self.journal)
+            except OSError:
+                pass
+
+    def restore(self, entry: dict):
+        """A conflict the journal says was still waiting for an answer when the Studio stopped: it waits again (its
+        question is in the chat history, so the tabs show Apply and Drop for it)."""
+        with self.cond:
+            job = Job(entry.get("kind") or "change", None, by=entry.get("by"), base_rev=entry.get("base_rev"),
+                      label=entry.get("label") or "")
+            job.id, job.origin = entry["id"], entry.get("origin")
+            job.status, job.conflict = "conflict", entry.get("conflict") or {}
+            job.data = dict(entry.get("data") or {})
+            job.finished = time.time()
+            job._done.set()
+            self.waiting[job.id] = job
+            self._log("held", job, **self._held(job))
+        return job
+
+    @staticmethod
+    def _held(job: Job) -> dict:
+        return {"kind": job.kind, "label": job.label, "by": job.by, "origin": job.origin, "base_rev": job.base_rev,
+                "conflict": job.conflict, "data": job.data}
 
     def submit(self, kind: str, fn, *, by: str | None = None, base_rev: str | None = None, label: str = "",
-               announce=None) -> Job:
-        """Queue `fn(job)`. `announce(job)` runs before the job can start (to send the user's message first).
+               announce=None, record: dict | None = None) -> Job:
+        """Queue `fn(job)`. `announce(job)` runs before the job can start (to send the user's message first). `record`:
+        what the journal keeps besides kind, label and who asked (a first build's design, a change request's id).
         Raises QueueFull."""
         with self.cond:
             if len(self.pending) >= self.MAX_QUEUED:
                 raise QueueFull(f"{self.MAX_QUEUED} changes are already waiting for {self.room.name}. Try again when "
                                 "some of them have been built.")
             job = Job(kind, fn, by=by, base_rev=base_rev, label=label)
+            # what the same person asked from the same tab before this and is still waiting or building: this request
+            # builds on it, so a change it makes is never a conflict for this one (server.Studio._conflict)
+            job.after = tuple(j for j in [self.running, *self.pending]
+                              if j is not None and j.by == job.by and j.origin == job.origin)
             if announce:
                 announce(job)
             self.pending.append(job)
             self.jobs[job.id] = job
             while len(self.jobs) > self.KEEP + self.MAX_QUEUED + 1:
                 self.jobs.popitem(last=False)
+            self._log("queued", job, kind=kind, label=job.label, by=by, base_rev=base_rev, ts=time.time(),
+                      **(record or {}))
             self.publish()
             if self.worker is None or not self.worker.is_alive():
                 self.worker = threading.Thread(target=self._work, daemon=True, name=f"morph-room-{self.room.name}")
@@ -199,7 +410,56 @@ class JobQueue:
 
     def get(self, job_id) -> Job | None:
         with self.cond:
-            return self.jobs.get(job_id) if isinstance(job_id, str) else None
+            if not isinstance(job_id, str):
+                return None
+            return self.jobs.get(job_id) or self.waiting.get(job_id)
+
+    def hold(self, job: Job, conflict: dict):
+        """`job` ends as a conflict and waits for an answer: listed in conflicts() (state, `queue` events) until
+        take_conflict() hands it to whoever answers first."""
+        with self.cond:
+            job.status, job.conflict = "conflict", conflict
+            self.waiting[job.id] = job
+            self._log("held", job, **self._held(job))
+            gone = []
+            while len(self.waiting) > self.MAX_CONFLICTS:
+                _, old = self.waiting.popitem(last=False)
+                old.answer("dropped")
+                gone.append(old)
+                self._log("ended", old, status="dropped")
+        for old in gone:
+            self.publish(old)
+            self.room.hub.send({"type": "assistant", "text": f"Dropped without an answer: {old.label[:80]} "
+                                f"({self.MAX_CONFLICTS} newer changes were waiting for one).", "noop": True, "job": old.id,
+                                **({"by": old.by} if old.by else {})})
+
+    def take_conflict(self, job_id) -> Job | None:
+        """The waiting conflict `job_id` for the one answer it gets (two tabs answering at once: one gets it), or None."""
+        with self.cond:
+            job = self.waiting.pop(job_id, None) if isinstance(job_id, str) else None
+            if job is None or job.status != "conflict":
+                return None
+            self._log("ended", job, status="answered")  # a full queue holds it again (hold: "held" once more)
+            self._settle()
+            return job
+
+    def drop_conflicts(self) -> list:
+        """Every waiting conflict ends as dropped (Reset demo removed the revisions, and the chat, they were about)."""
+        with self.cond:
+            gone = list(self.waiting.values())
+            self.waiting.clear()
+            for job in gone:
+                job.answer("dropped")
+                self._log("ended", job, status="dropped")
+            self._settle()
+        for job in gone:
+            self.publish(job)
+        return gone
+
+    def conflicts(self) -> list:
+        """The conflicts waiting for an answer, oldest first (position None, status "conflict", conflict {...})."""
+        with self.cond:
+            return [j.info() for j in self.waiting.values()]
 
     def cancel(self, job_id) -> Job | None:
         """Take a job that has not started out of the queue."""
@@ -210,6 +470,7 @@ class JobQueue:
             self.pending.remove(job)
             job.status, job.finished = "cancelled", time.time()
             job._done.set()
+            self._ended(job)
         self.publish(job)
         return job
 
@@ -229,7 +490,7 @@ class JobQueue:
         with self.cond:
             jobs = self.snapshot() + ([finished.info()] if finished is not None else [])
             try:
-                self.room.hub.send({"type": "queue", "jobs": jobs})
+                self.room.hub.send({"type": "queue", "jobs": jobs, "conflicts": self.conflicts()})
             except Exception:  # noqa: BLE001  (an event that can't be sent must not stop the queue)
                 traceback.print_exc()
 
@@ -238,6 +499,7 @@ class JobQueue:
             with self.cond:
                 if not self.pending:
                     self.worker = None
+                    self._settle()
                     return
                 job = self.pending.popleft()
                 job.status, job.started = "running", time.time()
@@ -254,8 +516,12 @@ class JobQueue:
                 self.room.hub.send({"type": "assistant", "text": f"Error: {exc}", "job": job.id})
             finally:
                 job.finished = time.time()
+                job.after = ()  # read when it started; a chain of quick edits keeps no finished job alive through it
                 with self.cond:
                     self.running = None
+                    if job.status != "conflict":  # a conflict stays open in the journal ("held") until it is answered
+                        self._log("ended", job, status=job.status)
+                    self._settle()
                     self.publish(job)
                 job._done.set()
 
@@ -291,8 +557,9 @@ class Room:
         return {**live, "nodes": dict(live["nodes"])} if live else None
 
     def completed(self) -> list:
-        """Revisions with results: what tabs show. A revision still being built (or cut off) has only design.json."""
-        return [r for r in self.p.revs() if os.path.isfile(os.path.join(self.p.rev_dir(r), "results.json"))]
+        """Revisions with readable results: what tabs show. A revision still being built, cut off or damaged doesn't
+        count (Project.finished)."""
+        return self.p.finished()
 
     def latest(self) -> str | None:
         revs = self.completed()

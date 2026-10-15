@@ -7,12 +7,15 @@
   `id.issued.HMAC(secret, id|issued|epoch)`, valid 30 days. Nothing else is stored, so sessions survive restarts;
   revoking a member (or "sign out everywhere") bumps their epoch, which ends every session at once.
 - Script tokens (`X-Morph-Token`) are stored hashed and shown once.
-- Wrong codes are throttled per IP address. Every comparison of a secret is constant-time.
+- Wrong codes are throttled per IP address: past the limit a wrong one is answered 429. Every code here is random (128
+  bits or more, never guessable), so a right one is always checked and works: another person's wrong tries at the same
+  address never lock out the person who has the link. Every comparison of a secret is constant-time.
 """
 
 from __future__ import annotations
 
 import base64
+import collections
 import hashlib
 import hmac
 import re
@@ -21,6 +24,7 @@ import threading
 import time
 import unicodedata
 
+from ..security import TEAM_CODE, looks_like_secret, secret_refused
 from . import audit, disciplines
 from .store import COLORS, POLICY, TeamStore, merged_policy, new_id, parse_ts, utc
 
@@ -42,6 +46,16 @@ class AuthError(Exception):
         self.status = status
 
 
+def new_code(prefix: str, nbytes: int) -> str:
+    """A Teams code: `prefix` and `nbytes` random bytes in base64url (secrets.token_urlsafe), drawn again in the rare
+    case it has no capital letter (one draw in about 95,000 for 16 bytes), so the key filter always knows it
+    (security.TEAM_CODE) while snake_case names such as mt_shoulder_joint_torque_limit pass."""
+    while True:
+        code = prefix + secrets.token_urlsafe(nbytes)
+        if TEAM_CODE.fullmatch(code):
+            return code
+
+
 def _hash(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
@@ -59,12 +73,19 @@ def clean_name(name, fallback: str = "") -> str:
     if not isinstance(name, str):
         name = ""
     name = "".join(c for c in name if unicodedata.category(c)[0] != "C" and c not in "<>@\\")
+    _no_secret(name)
     name = " ".join(name.split())[:40].strip()
     if not name:
         name = " ".join((fallback or "").split())[:40].strip()
     if not name:
         raise ValueError("Type your name (up to 40 characters) so the team knows who made each change.")
     return name
+
+
+def _no_secret(text: str):
+    """Names and labels everyone on the team sees use the Studio's one key filter (security.looks_like_secret)."""
+    if looks_like_secret(text):
+        raise ValueError(secret_refused("into a name or a label"))
 
 
 def _unique(name: str, members: dict, skip=None) -> str:
@@ -110,30 +131,37 @@ def _member(name: str, role: str, tags, members: dict, by=None, now=None) -> dic
 
 
 class Throttle:
-    """Per-address failure counter: `limit` wrong codes within `window` seconds block that address until the
-    oldest failure ages out. In memory only (a restart forgets it); bounded to `cap` addresses."""
+    """Per-address failure counter: `limit` wrong codes within `window` seconds block that address until the oldest
+    of its last `limit` failures ages out. Only those last `limit` are kept: a right code is always checked, so wrong
+    ones keep coming in while an address is blocked, and a flood from one address must cost the same memory and time
+    per request as ten wrong codes. In memory only (a restart forgets it); bounded to `cap` addresses, the one that
+    failed longest ago forgotten first."""
 
     def __init__(self, limit: int = 10, window: float = 600.0, cap: int = 4096):
         self.limit, self.window, self.cap = limit, window, cap
-        self.fails, self.lock = {}, threading.Lock()
+        self.fails, self.lock = {}, threading.Lock()  # address -> deque of its last `limit` failure times, oldest first
 
     def wait(self, ip, now=None) -> float:
         now = _now(now)
         with self.lock:
-            ts = [t for t in self.fails.get(ip or "?", []) if now - t < self.window]
-            if ts:
-                self.fails[ip or "?"] = ts
-            else:
+            ts = self.fails.get(ip or "?")
+            while ts and now - ts[0] >= self.window:
+                ts.popleft()
+            if not ts:
                 self.fails.pop(ip or "?", None)
+                return 0.0
             return max(0.0, ts[0] + self.window - now) if len(ts) >= self.limit else 0.0
 
     def fail(self, ip, now=None):
         now = _now(now)
         with self.lock:
-            if len(self.fails) >= self.cap and (ip or "?") not in self.fails:
-                oldest = min(self.fails, key=lambda k: self.fails[k][-1] if self.fails[k] else 0)
-                self.fails.pop(oldest, None)
-            self.fails.setdefault(ip or "?", []).append(now)
+            ts = self.fails.pop(ip or "?", None)  # put back last: the dict's order is when each address last failed
+            if ts is None:
+                if len(self.fails) >= self.cap:
+                    self.fails.pop(next(iter(self.fails)))
+                ts = collections.deque(maxlen=self.limit)
+            ts.append(now)
+            self.fails[ip or "?"] = ts
 
     def clear(self, ip=None):
         with self.lock:
@@ -146,10 +174,13 @@ class Throttle:
 THROTTLE = Throttle()
 
 
-def _check_throttle(ip, now=None):
+def _failed(ip, now=None):
+    """A wrong code from `ip`: counted, and once the address is past the limit the refusal is a 429 instead."""
     wait = THROTTLE.wait(ip, now)
+    THROTTLE.fail(ip, now)
     if wait > 0:
-        raise AuthError(429, f"Too many wrong codes from this address. Wait {max(1, round(wait / 60))} minute(s), then try again.")
+        raise AuthError(429, f"Too many wrong codes from this address. Wait {max(1, round(wait / 60))} minute(s) before "
+                             "trying another, or open a link you were sent: those still work.")
 
 
 # ------------------------------------------------------------------ team
@@ -159,6 +190,7 @@ def init_team(owner_name: str, team_name: str = "", home: str | None = None, now
     """Create the team with its first member (owner + generalist) and return a one-time owner link."""
     st = TeamStore(home)
     name = clean_name(owner_name)
+    _no_secret(str(team_name or ""))
     tname = " ".join(str(team_name or "").split())[:60] or f"{name}'s team"
 
     def fn(data):
@@ -200,14 +232,15 @@ def create_invite(by: str | None, role: str = "editor", tags=(), name_hint: str 
     if role not in ROLES:
         raise ValueError("Choose a role: viewer, editor or owner.")
     tags = disciplines.validate(tags)
+    _no_secret(str(name_hint or ""))  # a key in the name refuses the invite (it used to vanish from the hint unsaid)
     hint = ""
     if name_hint:
         try:
             hint = clean_name(name_hint)
-        except ValueError:
+        except ValueError:  # nothing printable left: no hint
             hint = ""
     days = min(max(float(days or INVITE_DAYS), 0.01), INVITE_DAYS)
-    code = "mi_" + secrets.token_urlsafe(16)
+    code = new_code("mi_", 16)
     t = _now(now)
 
     def fn(data):
@@ -262,10 +295,9 @@ def revoke_invite(invite_id: str, by: str | None, home: str | None = None) -> di
 
 def redeem_invite(code: str, name: str = "", ip: str | None = None, home: str | None = None, now=None) -> tuple:
     """Join with an invite: creates the member and returns (public member, session cookie value)."""
-    _check_throttle(ip, now)
     t = _now(now)
     if not isinstance(code, str) or not CODE_RX.match(code) or not code.startswith("mi_"):
-        THROTTLE.fail(ip, now)
+        _failed(ip, now)
         raise AuthError(400, "That invite link is not valid. Ask the team owner for a new one.")
 
     def fn(data):
@@ -289,7 +321,7 @@ def redeem_invite(code: str, name: str = "", ip: str | None = None, home: str | 
     try:
         m, extra = st.update(fn)  # a refusal raises inside fn, so nothing is written
     except AuthError:
-        THROTTLE.fail(ip, now)
+        _failed(ip, now)
         raise
     audit.append("sign_in", by=m["id"], home=home, via="invite", invite=extra, role=m["role"], ip=ip or "")
     return public_member(m), sign_session(m["id"], m.get("epoch", 0), st.secret(), t)
@@ -301,7 +333,7 @@ def redeem_invite(code: str, name: str = "", ip: str | None = None, home: str | 
 def create_link(member_id: str, by: str | None = None, home: str | None = None, minutes: float = LINK_MINUTES, now=None) -> dict:
     """A one-time sign-in link for a member's other device (or the owner link from the CLI): 15 minutes, single use."""
     t = _now(now)
-    code = "ml_" + secrets.token_urlsafe(16)
+    code = new_code("ml_", 16)
     minutes = min(max(float(minutes or LINK_MINUTES), 0.1), LINK_MINUTES)
 
     def fn(data):
@@ -335,10 +367,9 @@ def link_status(code: str, home: str | None = None, now=None) -> dict | None:
 
 
 def redeem_link(code: str, ip: str | None = None, home: str | None = None, now=None) -> tuple:
-    _check_throttle(ip, now)
     t = _now(now)
     if not isinstance(code, str) or not CODE_RX.match(code) or not code.startswith("ml_"):
-        THROTTLE.fail(ip, now)
+        _failed(ip, now)
         raise AuthError(400, "That sign-in link is not valid.")
 
     def fn(data):
@@ -354,7 +385,7 @@ def redeem_link(code: str, ip: str | None = None, home: str | None = None, now=N
     try:
         m = st.update(fn)
     except AuthError:
-        THROTTLE.fail(ip, now)
+        _failed(ip, now)
         raise
     audit.append("sign_in", by=m["id"], home=home, via="link", ip=ip or "")
     return public_member(m), sign_session(m["id"], m.get("epoch", 0), st.secret(), t)
@@ -436,8 +467,9 @@ def clear_cookie(port, secure: bool = False) -> str:
 
 def create_token(member_id: str, label: str = "", home: str | None = None, now=None) -> dict:
     """A script token for X-Morph-Token: shown once, stored as its SHA-256, acts with the member's role."""
+    _no_secret(str(label or ""))
     label = " ".join(str(label or "").split())[:40] or "script"
-    token = "mt_" + secrets.token_urlsafe(32)
+    token = new_code("mt_", 32)
     t = _now(now)
 
     def fn(data):
@@ -478,8 +510,6 @@ def revoke_token(member_id: str, token_id: str, home: str | None = None) -> bool
 
 def verify_token(token, ip: str | None = None, home: str | None = None, now=None) -> dict | None:
     if not isinstance(token, str) or not token:
-        return None
-    if THROTTLE.wait(ip, now) > 0:
         return None
     if not CODE_RX.match(token) or not token.startswith("mt_"):
         THROTTLE.fail(ip, now)

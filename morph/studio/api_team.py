@@ -27,9 +27,11 @@ import traceback
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
+from ..services import durable
+from .rooms import STARTED
 from .teams import activity, audit, auth, collab, roles
 from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing, watching
-from .teams.store import TeamStore, exists
+from .teams.store import TeamFileError, TeamStore, exists
 
 CONFIG = {"home": None, "secure": False, "enabled": False}
 MAX_FORM = 8192
@@ -103,11 +105,15 @@ def role_hook(req, role: str, member: dict | None = None) -> dict | None:
     from .routes import HTTPError
 
     home = _home(req)
-    if member is None:
-        member = authenticate(req.handler, home=home)
-    if role == roles.PUBLIC:
-        return member
-    if not authorize(member, req.method, req.path, declared=role, home=home):
+    try:
+        if member is None:
+            member = authenticate(req.handler, home=home)
+        if role == roles.PUBLIC:
+            return member
+        allowed = authorize(member, req.method, req.path, declared=role, home=home)
+    except TeamFileError as exc:  # team.json can't be read: nothing is allowed until it is fixed
+        raise HTTPError(503, team_problem(exc)) from None
+    if not allowed:
         if member is None:
             raise HTTPError(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
         raise HTTPError(403, refusal(member, req.method, req.path, role))
@@ -279,16 +285,16 @@ def landing(handler, home: str | None = None) -> bool:
     if "invite" not in q and "link" not in q:
         return False
     ip = _ip(handler)
-    if auth.THROTTLE.wait(ip) > 0:  # the page tells a valid code from a wrong one, so wrong ones count
-        _write(handler, 429, _page("Morph Studio", "<h1>Morph Studio</h1><p class=\"bad\">Too many wrong links from this address. "
-                                                   "Wait a few minutes, then open the link again.</p>"), "text/html; charset=utf-8", csp=JOIN_CSP)
-        return True
     if "invite" in q:
         status, page = join_page(q["invite"][0].strip(), home=home)
     else:
         status, page = link_page(q["link"][0].strip(), home=home)
-    if status == 400 or (status == 410 and "link" in q):
+    if status == 400 or (status == 410 and "link" in q):  # the page tells a valid code from a wrong one: wrong ones count
+        past = auth.THROTTLE.wait(ip) > 0
         auth.THROTTLE.fail(ip)
+        if past:  # a right link still opens (its codes are random: guessing one is hopeless)
+            status, page = 429, _page("Morph Studio", "<h1>Morph Studio</h1><p class=\"bad\">Too many wrong links from this "
+                                                      "address. Wait a few minutes before trying another one.</p>")
     _write(handler, status, page, "text/html; charset=utf-8", csp=JOIN_CSP)
     return True
 
@@ -372,6 +378,19 @@ def _notify(req, ids, kind: str, text: str, ref: dict | None = None):
     return sent
 
 
+_TOLD = {"problem": None}
+
+
+def team_problem(exc) -> str:
+    """What a browser is told about a team.json that can't be read (TeamFileError.public: the file named from the
+    projects folder, never the server's own path); the terminal gets the full text once, when it changes."""
+    full = str(exc)
+    if _TOLD["problem"] != full:
+        _TOLD["problem"] = full
+        print(full, flush=True)
+    return getattr(exc, "public", None) or full
+
+
 def _safe(fn):
     def run(req, *a):
         try:
@@ -381,12 +400,16 @@ def _safe(fn):
             if getattr(exc, "gate", None):
                 out["gate"] = exc.gate
             return exc.status, out
+        except TeamFileError as exc:  # team.json can't be read: nothing changes until it is fixed
+            return _err(503, team_problem(exc))
         except ValueError as exc:
             return _err(400, str(exc))
         except TimeoutError as exc:
             return _err(503, str(exc))
         except Exception as exc:  # noqa: BLE001  (never leak a traceback to the browser)
             traceback.print_exc()
+            if durable.disk_full(exc):
+                return _err(507, durable.DISK_FULL)
             return _err(500, f"The team service failed ({exc.__class__.__name__}); see the Studio's terminal.")
     run.__name__ = fn.__name__
     run.__doc__ = fn.__doc__
@@ -702,7 +725,8 @@ def _enqueue(req, job: dict) -> bool:
         root, home, send = room.p.root, _home(req), room.hub.send
 
         def finished(q):
-            error = None if q.result else (q.error or {"noop": "nothing to change: the design already has these values"}
+            error = None if q.result else (q.error or {"noop": "nothing to change: the design already has these values",
+                                                       "dropped": "it clashed with a newer change and was dropped"}
                                            .get(q.status, f"the build ended as {q.status}"))
             job_finished(root, job, rev=q.result, error=error, home=home, send=send)
         studio.when_done(q, finished)
@@ -754,6 +778,30 @@ def proposals_close(req):
     out = _decorate_proposal(root, p, members, _policy(req))
     _emit(req, {"type": "proposal", "action": "close", "proposal": out})
     return 200, {"ok": True, "proposal": out}
+
+
+STOPPED = "the Studio stopped before it finished. Apply it again"
+
+
+def reopen_stopped(studio) -> list:
+    """When a team Studio starts: a change request that was applied but has no revision was being built (or waited to
+    be) when the Studio stopped, so nothing will finish it; it is opened again with why, and the person who applied it
+    and its author are told. No build of this Studio is running yet, so none is cut short. Returns [(project, id)]."""
+    if not getattr(studio, "team", False):
+        return []
+    from . import projects
+    out = []
+    for info in projects.list_projects(studio.home):
+        root = os.path.join(studio.home, info["name"])
+        for p in collab.proposals(root, status="applied"):
+            if p.get("applied_rev"):
+                continue
+            collab.proposal_done(root, p["id"], error=STOPPED)
+            out.append((info["name"], p["id"]))
+            text = f"Change request #{p.get('n')} wasn't built: the Studio stopped. It is open again, to apply again."
+            for mid in {p.get("applied_by"), p.get("by")} - {None}:
+                activity.notify(studio.home, mid, "job", text, project=info["name"], ref={"proposal": p["id"]})
+    return out
 
 
 def job_finished(project_root: str, job: dict, rev: str | None = None, error: str | None = None, home: str | None = None, send=None):
@@ -1044,3 +1092,6 @@ def dispatch(req):
 
 
 register()  # the Studio loads every api_*.py at start (contracts section 2); the routes answer only in team mode
+
+
+STARTED.append(reopen_stopped)

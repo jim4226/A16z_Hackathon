@@ -229,6 +229,21 @@ def test_check_health_and_lint(stub, monkeypatch):
     assert subq.check() == {"ok": False, "detail": "no key set"}
 
 
+@pytest.mark.parametrize("how", ["MORPH_OFFLINE", "settings"])
+def test_lint_sends_nothing_while_network_lookups_are_off(stub, monkeypatch, capsys, how):
+    """`morph subq --lint` sends the request text to SubQ (without a key): not while network lookups are off."""
+    import argparse
+    if how == "MORPH_OFFLINE":
+        monkeypatch.setenv("MORPH_OFFLINE", "1")
+    else:
+        settings.save({"network_enabled": False})
+    assert subq.lint({"model": subq.SNAP, "state": "x", "questions": QS}) == (False, "not sent: network lookups are off")
+    rc = cli.cmd_subq(argparse.Namespace(text=SECRET_TEXT, lint=True, json=False, no_cache=False, timeout=2.0))
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("Not sent: network lookups are off") and stub.seen == [] and stub.paths == []
+    assert ("MORPH_OFFLINE=1" in out) == (how == "MORPH_OFFLINE")
+
+
 # ------------------------------------------------------------------ the rest of Morph
 
 def test_keys_and_integrations_know_subq(stub, monkeypatch, tmp_path):

@@ -42,14 +42,26 @@ def test_only_known_switches_and_booleans(changes):
     assert not os.path.exists(settings.path())
 
 
-def test_a_damaged_file_falls_back_to_the_defaults():
+def test_a_damaged_file_turns_every_switch_off():
+    """Fail closed (W3): a switch someone turned off must never come back on because the file can't be read."""
     os.makedirs(settings.home(), exist_ok=True)
-    for text in ("{not json", "[true]", json.dumps({"telemetry_enabled": "yes", "network_enabled": False, "x": 1})):
+    for text in ("{not json", "[true]"):
         with open(settings.path(), "w", encoding="utf-8") as fh:
             fh.write(text)
         got = settings.load()
-        assert got["telemetry_enabled"] is False and set(got) == set(settings.DEFAULTS)
-    assert settings.load()["network_enabled"] is False  # the valid value in the last file still counts
+        assert set(got) == set(settings.DEFAULTS) and not any(got.values()) and settings.problem()
+    with open(settings.path(), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"telemetry_enabled": "yes", "network_enabled": True, "x": 1}))
+    got = settings.load()   # a value that isn't true or false: Morph can't tell what the file meant, so all off, and why
+    assert not any(got.values())
+    assert settings.problem() == ("Morph couldn't use its settings file (.settings.json: telemetry_enabled is \"yes\", "
+                                  "not true or false), so every switch below is off, network lookups included, until "
+                                  "you set them again.")
+    assert "every switch in the Studio's Keys, Privacy and network is off" in settings.describe()  # morph doctor
+    assert "below" not in settings.describe()
+    with open(settings.path(), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"telemetry_enabled": True, "x": "anything"}))  # unknown keys are no problem
+    assert settings.load()["telemetry_enabled"] is True and settings.problem() is None
 
 
 def test_offline_env_and_switch_turn_everything_off(monkeypatch):

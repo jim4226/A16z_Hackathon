@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -126,3 +127,146 @@ def test_doctor_names_stages_that_were_not_built(home, monkeypatch, capsys):
     cli.cmd_doctor(argparse.Namespace(offline=True))
     out = capsys.readouterr().out
     assert "egg-picker r001: electronics error (no controller fits); cad blocked (not built: needs electronics)" in out
+
+
+# ------------------------------------------------------------------ what the CLI says, and when
+
+
+def _studio_home(home):
+    """egg-picker and so101 with a revision this code built, so `morph studio` starts without building anything."""
+    for name in ("egg-picker", "so101"):
+        root = home / name
+        (root / "r001").mkdir(parents=True)
+        (root / "meta.json").write_text(json.dumps({"kind": "robot", "need": name}), encoding="utf-8")
+        (root / "r001" / "design.json").write_text(Design().dumps(), encoding="utf-8")
+        (root / "r001" / "results.json").write_text(json.dumps({"parent": None, "summary": {},
+                                                                "pipeline_version": pipeline2.pipeline_version()}),
+                                                    encoding="utf-8")
+
+
+def test_the_access_link_reaches_a_log_file_while_the_studio_runs(tmp_path):
+    """`morph studio --remote > studio.log` (nohup, a service, the launcher on a server): the access link is in the log
+    while the Studio runs, not when an output buffer happens to fill, nor never (a Studio stopped with SIGTERM)."""
+    _studio_home(tmp_path / "projects")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    env = {**os.environ, "PYTHONPATH": CODE, "MORPH_HOME": str(tmp_path / "projects"), "MORPH_OFFLINE": "1"}
+    for k in ("PYTHONUNBUFFERED", "MORPH_TOKEN", "DISPLAY", "WAYLAND_DISPLAY"):
+        env.pop(k, None)
+    run = ("import sys; from morph import keys; keys.ENV_PATH = sys.argv[1]; from morph import cli; "
+           "sys.exit(cli.main(sys.argv[2:]))")                     # .env in the test's folder, never the checkout's
+    log = tmp_path / "studio.log"
+    with open(log, "wb") as out:
+        proc = subprocess.Popen([sys.executable, "-c", run, str(tmp_path / ".env"), "studio", "egg-picker", "--remote",
+                                 "--port", str(port)], stdout=out, stderr=subprocess.STDOUT, env=env, cwd=str(tmp_path))
+    try:
+        deadline = time.time() + 120
+        while time.time() < deadline and "?token=" not in log.read_text(encoding="utf-8", errors="replace"):
+            assert proc.poll() is None, log.read_text(encoding="utf-8", errors="replace")[-2000:]
+            time.sleep(0.2)
+        text = log.read_text(encoding="utf-8", errors="replace")
+        assert "?token=" in text and "Access code: " in text, text[-2000:]
+        assert proc.poll() is None                                  # and the Studio is still running
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(20)
+
+
+def test_relaunching_on_a_server_without_a_screen_opens_no_browser(home, monkeypatch, capsys):
+    """The launchers pass --open; on a headless Linux server a second launch while a Studio runs must not start a text
+    browser in the terminal (Python's webbrowser runs w3m or lynx there and waits for it)."""
+    opened = []
+    monkeypatch.setattr(cli, "open_app_window", lambda url: opened.append(url))
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen(1)
+        a = argparse.Namespace(name="egg-picker", host="127.0.0.1", port=busy.getsockname()[1], open=True, remote=False,
+                               team=False, allow_url_import=False)
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        with pytest.raises(SystemExit, match="already running"):
+            cli.cmd_studio(a)
+        assert opened == []
+        monkeypatch.setenv("DISPLAY", ":0")                         # a desktop: the running Studio's window comes up
+        with pytest.raises(SystemExit, match="already running"):
+            cli.cmd_studio(a)
+        assert opened == [f"http://127.0.0.1:{a.port}"]
+
+
+def test_morph_ask_says_why_there_are_no_rows(home, monkeypatch, capsys):
+    from morph import keewano, settings
+    calls = []
+    monkeypatch.setattr(keewano, "query", lambda sql: calls.append(sql) or None)
+    assert cli.main(["ask", "SELECT 1"]) == 1
+    assert "Keewano not configured" in capsys.readouterr().err and calls == []
+    monkeypatch.setenv("KEEWANO_PAT", "kwpat-test-not-real")
+    monkeypatch.setenv("KEEWANO_PROJECT_ID", "00000000-0000-0000-0000-000000000000")
+    monkeypatch.setenv("MORPH_OFFLINE", "1")
+    assert cli.main(["ask", "SELECT 1"]) == 1
+    err = capsys.readouterr().err
+    assert "network lookups are off (MORPH_OFFLINE=1)" in err and "not configured" not in err and calls == []
+    monkeypatch.delenv("MORPH_OFFLINE")
+    settings.save({"network_enabled": False})
+    assert cli.main(["ask", "SELECT 1"]) == 1
+    assert "network lookups are off (Keys, Privacy and network)" in capsys.readouterr().err and calls == []
+    settings.save({"network_enabled": True})
+    assert cli.main(["ask", "SELECT 1"]) == 1                       # configured and allowed, but no answer
+    err = capsys.readouterr().err
+    assert "didn't answer" in err and "not configured" not in err and calls == ["SELECT 1"]
+    monkeypatch.setattr(keewano, "query", lambda sql: [{"n": 1}])
+    assert cli.main(["ask", "SELECT 1"]) == 0 and json.loads(capsys.readouterr().out) == [{"n": 1}]
+
+
+def test_morph_study_refuses_before_it_announces_a_study(home, monkeypatch, capsys):
+    (home / "offl").mkdir(parents=True)                             # a gripper-only project of the earlier prototype
+    (home / "offl" / "meta.json").write_text(json.dumps({"need": "pick up an egg"}), encoding="utf-8")
+    assert cli.main(["study", "offl", "--runs", "2", "--workers", "1"]) == 1
+    out = capsys.readouterr()
+    assert out.err.startswith("offl: ") and "randomized run" not in out.out
+
+
+def test_a_stopped_studio_process_leaves_without_interpreter_shutdown(tmp_path, monkeypatch):
+    """`morph studio` (the command line, argv None) ends its process with _leave once serve() returns: interpreter
+    shutdown ran native finalizers that crashed now and then after an in-process build (exit code -11). Called with
+    argv (a script, a test), main() returns as usual."""
+    from morph.studio import server
+    _studio_home(tmp_path / "projects")
+    monkeypatch.setattr(cli, "HOME", str(tmp_path / "projects"))
+    monkeypatch.setattr(server, "serve", lambda *a, **k: None)
+    left = []
+    monkeypatch.setattr(cli, "_leave", left.append)
+    monkeypatch.setattr(sys, "argv", ["morph", "studio", "egg-picker", "--port", "1"])
+    cli.main()
+    assert left == [0]
+    cli.main(["studio", "egg-picker", "--port", "1"])
+    assert left == [0]
+
+
+def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
+    code = ("import multiprocessing as mp, sys, time\n"
+            "from morph import cli\n"
+            "if __name__ == '__main__':\n"
+            "    child = mp.get_context('spawn').Process(target=time.sleep, args=(600,), daemon=True)\n"
+            "    child.start()\n"
+            "    print(child.pid, end=' ')\n"
+            "    sys.stdout.write('saved')\n"
+            "    cli._leave(0)\n")
+    script = tmp_path / "leave.py"
+    script.write_text(code, encoding="utf-8")
+    out = subprocess.run([sys.executable, str(script)], cwd=CODE, env={**os.environ, "PYTHONPATH": CODE},
+                         capture_output=True, text=True, timeout=60)
+    pid, said = out.stdout.split()
+    assert out.returncode == 0 and said == "saved"
+    from morph.services.durable import process_alive
+    for _ in range(100):                                  # the worker was ended, not left behind
+        if not process_alive(int(pid)):
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("the study worker outlived the Studio")

@@ -213,6 +213,9 @@ def test_wrong_links_are_throttled_and_a_refused_build_reopens_the_change_reques
         assert call(base, "GET", "/?invite=mi_" + "x" * 22)[0] == 400
     s, page, _ = call(base, "GET", "/?link=ml_" + "y" * 22)
     assert s == 429 and "Too many wrong links" in page
+    inv = auth.create_invite(ids["Jim"], "viewer", [], "Kim", home=site["home"])
+    s, page, _ = call(base, "GET", inv["path"])                      # a right link still opens from that address
+    assert s == 200 and "Join R Cubed" in page
     auth.THROTTLE.clear()
     p = collab.create_proposal(root, ids["Vic"], "CNC it", {"fab.process": "cnc_router"}, members=members(site["home"]))
 

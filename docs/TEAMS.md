@@ -126,15 +126,28 @@ open and what they're looking at.
 - **Plain HTTP.** Sign-in and invite links, session cookies and everything the team does travel unencrypted between
   browsers and the Studio. Use it on a network you trust, over a VPN such as Tailscale, or through an SSH tunnel
   (`ssh -L 8765:127.0.0.1:8765 you@server` on each laptop, with the Studio started without `--remote`).
+- **Connections.** One address may hold at most 16 connections that haven't signed in, so someone without a link
+  can't take every connection by opening idle ones. A connection counts only until its link or session is checked, so
+  teammates behind one router don't run into it in normal use. Many addresses together still can fill the Studio's
+  64 connections: keep it on a network you trust. Behind a reverse proxy or tunnel on the Studio's own computer every
+  teammate arrives as 127.0.0.1, so this cap doesn't apply and wrong codes from any of them count together: give the
+  proxy its own limits (SECURITY.md).
 - **Links and sessions.** Invite codes (128-bit) and script tokens are stored hashed. Invites work once for 7 days;
   sign-in links once for 15 minutes. Sessions are signed cookies valid for 30 days; removing a member (Share, *Remove*,
   or `morph team revoke`) signs them out everywhere, and their open pages stop within seconds and say why. An address
-  that sends 10 wrong codes within 10 minutes is refused until the oldest of them is 10 minutes old (behind a tunnel
-  everyone shares one address, so a script with a wrong token can hold up new sign-ins for up to 10 minutes; existing
-  sessions are unaffected).
+  that sends 10 wrong codes within 10 minutes has its further wrong codes refused until the oldest of its last 10 is 10
+  minutes old (only those 10 are remembered, however many more arrive). Every code is random (128 bits or more, and
+  always with a capital letter, which is how the key filter tells a pasted code from a name such as
+  `mt_shoulder_joint_torque_limit`), so a right invite, sign-in link or script token still works
+  from that address: behind a tunnel everyone shares one address, and a script with a wrong token can't hold up
+  anyone else's sign-in.
 - **What is logged.** The audit log (`projects/.team/audit.jsonl`, hash-chained) records sign-ins with IP addresses,
   invites, role changes, API key and settings changes (names only, never values), exports, imports (with their links),
-  Reset demo and deleted projects.
+  Reset demo and deleted projects. `morph team audit --verify` reports an edited, removed or reordered line; a line cut
+  off by a crash or a full disk is named as that (its event is lost), not as tampering.
+- **If team.json is damaged.** Morph stops instead of guessing: every `morph team` command and the team Studio say which
+  line can't be read, and nobody can sign in until it is fixed. Morph keeps the copy from before its last change as
+  `projects/.team/team.json.bak`: put it back (or fix the line) and start again. `morph team init` never writes over it.
 - **Where the data is.** Members, invites and the audit log are in `projects/.team/`; comments, change requests,
   reviews, branches and releases in each `projects/<project>/.team/`. Nothing is sent anywhere: Teams makes no Claude,
   SubQ or Keewano calls, and team activity is never sent to Keewano.

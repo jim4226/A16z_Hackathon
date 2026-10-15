@@ -19,6 +19,7 @@ import hmac
 import html
 import importlib
 import io
+import ipaddress
 import json
 import mimetypes
 import os
@@ -40,13 +41,15 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from ..pipeline import REV
 from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline_version
+from ..services import durable
 from ..spec import diff
 from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
-from .rooms import Hub, QueueFull, Room, UnknownProject  # noqa: F401  (Hub: older code imports it from here)
+from .rooms import (REQUESTER, RESUMED, STARTED, Hub, QueueFull, Room, UnknownProject,  # noqa: F401  (Hub: older code
+                    claim, journal_live, journals, open_jobs)  # imports it from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
-                       looks_like_secret, param_changes, project_name)
+                       looks_like_secret, param_changes, project_name, secret_refused)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
@@ -86,8 +89,9 @@ def _design(p: RobotProject, rev: str) -> dict | None:
 def baseline(p: RobotProject) -> str | None:
     """The newest clean build of the project's ORIGINAL design (its first revision's): a revision with no
     parent whose design equals r001's. Later parentless revisions can carry an earlier take's edits
-    (the start-up rebuild rebuilds the latest design), so they don't count."""
-    revs = p.revs()
+    (the start-up rebuild rebuilds the latest design), so they don't count. Only finished revisions count: a damaged
+    one is never kept as the clean build."""
+    revs = p.finished()
     if not revs:
         return None
     orig = _design(p, revs[0])
@@ -96,17 +100,8 @@ def baseline(p: RobotProject) -> str | None:
 
 
 def _remove_rev(p: RobotProject, rev: str) -> bool:
-    """Delete a revision folder, all or nothing: rename it out of the project first (Windows refuses
-    while any file inside is open, and then nothing has been touched), then delete the renamed copy.
-    revs() only lists names like r012, so a leftover "r012.deleted-..." folder is invisible."""
-    d = p.rev_dir(rev)
-    trash = f"{d}.deleted-{time.time_ns()}"
-    try:
-        os.rename(d, trash)
-    except OSError:
-        return False
-    shutil.rmtree(trash, ignore_errors=True)
-    return True
+    """Delete a revision folder, all or nothing (Project.discard)."""
+    return p.discard(rev)
 
 
 def integrations() -> dict:
@@ -283,9 +278,185 @@ class Studio:
         self.rooms = {self.start: Room(self.start, project)}
         self._rooms = threading.Lock()
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
+        self.claim = claim(self.home)  # the lock that tells another Studio on this folder that this one runs
+        if not self.claim.real:
+            print(f"{self.home} can't hold file locks (a network folder?): run only one Morph Studio on it at a time, "
+                  "or one may take the other's unfinished work for a stopped Studio's.")
+        tidied = projects.tidy(self.home, say=print)  # revisions a stop cut off or a power cut damaged: set aside
         _start_features(self.home)
         self.toolbox = None
         _start_tools(self)
+        self._recover(tidied)
+
+    # -- a Studio that stopped with work open (Ctrl+C, a closed window, a crash)
+    REBUILT = " (rebuilt after a stop)"
+    FIRST_BUILD_TRIES = 2  # a first build the Studio stopped during this often waits to be asked for again
+    AGAIN = re.compile(r"(?:please\s+)?(?:(?:build|try)(?:\s+it)?\s+again|rebuild(?:\s+it)?|retry)\s*[.!]*", re.I)
+
+    def _recover(self, tidied: dict | None = None):
+        """What the queue journals (rooms.JobQueue) say was open when the Studio stopped, project by project: a first
+        build is queued again (a new project, an import or a fork stays empty for good otherwise), every other change
+        is named in the chat so it can be sent again (it is never re-run: it may no longer be wanted), and a conflict
+        waits for its answer again. A project with no finished revision and no journal, whose first build was set aside
+        just now (cut off under an older Morph, or in the CLI), is built again from that design. A first build the
+        Studio stopped during FIRST_BUILD_TRIES times is not started again (_park). Then the features' STARTED hooks run
+        (Teams reopens change requests a stop left applied but unbuilt). Never raises."""
+        aside = (tidied or {}).get("set_aside") or {}
+        for info in projects.list_projects(self.home):
+            name = info["name"]
+            try:
+                self._recover_project(name, aside.get(name) or [])
+            except Exception:  # noqa: BLE001  (one odd project never stops the Studio)
+                traceback.print_exc()
+        for hook in list(STARTED):
+            try:
+                hook(self)
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+
+    def _recover_project(self, name: str, set_aside: list):
+        root = os.path.join(self.home, name)
+        paths = journals(root)
+        if any(journal_live(path, self.home) for path in paths):  # that Studio's lock is held: it still runs
+            print(f"{name}: another Morph Studio on this projects folder is still working on it; leaving its queue alone")
+            return
+        entries = [e for path in paths for e in open_jobs(path)]
+        finished = RobotProject(root).finished()
+        parked = projects.parked_first_build(root)
+        if parked is not None and finished:
+            projects.unpark_first_build(root)  # built after all (by an older Morph, or by hand)
+        if not entries and (finished or not set_aside):
+            for path in paths:  # nothing open in them (a stop just before the file went)
+                _remove(path)
+            if parked is not None and not finished:
+                print(self._parked_text(name, parked.get("cut"), terminal=True))
+            return
+        room = self.room(name)
+        for path in paths:  # their open jobs are handled here; what still waits is journaled again
+            _remove(path)
+        built = []  # (label, when) of the newest revisions: a job whose revision was written just before the stop
+        for rev in finished[-12:]:
+            try:
+                built.append((str(room.p.load_results(rev).get("label") or ""),
+                              os.path.getmtime(os.path.join(room.p.rev_dir(rev), "results.json"))))
+            except (OSError, ValueError, AttributeError):
+                continue
+
+        def built_by(e):  # the revision this job made, when the stop took its "ended" line (one revision, one job)
+            try:
+                ts = float(e.get("ts") or 0)
+            except (TypeError, ValueError):
+                return None
+            return next((b for b in built if b[0] == str(e.get("label") or "")[:48] and b[1] >= ts), None)
+
+        first = None
+        for e in entries:
+            if e["op"] == "held":
+                room.jobs.restore(e)
+            elif e.get("kind") == "build":
+                if not finished and first is None and isinstance(e.get("design"), dict):
+                    first = e
+            elif (hit := built_by(e)) is not None:
+                built.remove(hit)  # it was built; only its journal line was lost with the stop
+            else:
+                label = str(e.get("label") or e.get("kind"))
+                label = label[6:] if label.startswith("edit: ") else label  # a parameter edit: "Object mass → 70 g"
+                what = f"change request {label}" if e.get("kind") == "proposal" else f"\u201c{label[:120]}\u201d"
+                again = ("It is open again: apply it again if you still want it." if self.team else
+                         "A team Studio (morph studio --team) opens it again.")
+                room.hub.send({"type": "assistant", "noop": True, "job": e["id"], **({"by": e["by"]} if e.get("by") else {}),
+                               "text": f"The Studio stopped before this was built: {what}. Send it again if you still "
+                                       "want it." if e.get("kind") != "proposal" else
+                                       f"The Studio stopped before {what} was built. {again}"})
+        if finished:
+            return
+        design, label, by, cut = None, "first design", None, 0
+        if first is not None:
+            design, label, by = first["design"], first.get("label") or label, first.get("by")
+            cut = _count(first.get("cut")) + (1 if first.get("started") else 0)  # times a stop cut it off mid-build
+        else:  # no journal (an older Morph, or the CLI): the design of the first revision set aside just now
+            for rev in sorted(set_aside, key=lambda r: int(r[1:])):
+                path = next((os.path.join(root, n, "design.json") for n in sorted(os.listdir(root), reverse=True)
+                             if n.startswith(f"{rev}.incomplete-")), None)
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        design = json.load(fh)
+                    cut = 1
+                    break
+                except (OSError, TypeError, ValueError):
+                    continue
+        if not isinstance(design, dict):
+            if first is not None or set_aside:
+                room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
+                               "finished, and Morph has no design to build it from. Delete this project from the project "
+                               "menu, or make it again."})
+            return
+        try:
+            built_design = projects.as_design(design)
+        except ValueError as exc:
+            room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
+                           f"finished, and its design can't be read ({exc}). Delete this project, or make it again."})
+            return
+        label = label[:-len(self.REBUILT)] if label.endswith(self.REBUILT) else label
+        if cut >= self.FIRST_BUILD_TRIES:
+            self._park(room, design, label, by, cut)
+            return
+        room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
+                       "finished: building it again now."})
+        job = self.queue_build(room, built_design, label=label[:48 - len(self.REBUILT)] + self.REBUILT, by=by, cut=cut)
+        self._resumed(room, job)
+
+    def _resumed(self, room: Room, job):
+        """A first build queued again (after a stop, or asked for again): features learn of it (rooms.RESUMED; New
+        robot marks its brief built when it ends)."""
+        meta = projects.read_meta(room.p.root)
+        for hook in list(RESUMED):
+            try:
+                hook(self, room, job, meta)
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+
+    def _park(self, room: Room, design: dict, label: str, by, cut: int):
+        """A first build the Studio stopped during `cut` times isn't started again on its own: if something in the
+        design stops the Studio (memory, a crash in a native library), it would stop it at every start. It waits in
+        projects.FIRST_BUILD until someone sends "build it again" in the project's chat (_no_revision_yet)."""
+        projects.park_first_build(room.p.root, {"design": design, "label": label, "by": by, "cut": cut})
+        room.hub.send({"type": "assistant", "noop": True, "text": self._parked_text(room.name, cut)})
+        print(self._parked_text(room.name, cut, terminal=True))
+
+    @staticmethod
+    def _parked_text(name: str, cut, terminal: bool = False) -> str:
+        n = _count(cut)
+        times = "twice" if n == 2 else f"{n} times" if n > 1 else "once"
+        if terminal:
+            return (f"{name}: the Studio stopped {times} while building its first design, so Morph won't start it again "
+                    f"on its own. To try once more, send \"build it again\" in {name}'s chat in the Studio; to give up "
+                    f"on it, delete {name} from the project menu.")
+        return (f"The Studio stopped {times} while building {name}'s first design, so Morph won't start it again on its "
+                "own: if something in this design stops the Studio, it would stop it at every start. To try once more, "
+                f"send \"build it again\" here. To give up on it, delete {name} from the project menu.")
+
+    def _no_revision_yet(self, room: Room, job, msg: str | None = None):
+        """A change asked of a project with no finished revision: there is nothing to change yet. A first build that
+        waits to be asked for again (_park) starts when the message is "build it again" (AGAIN)."""
+        parked = projects.parked_first_build(room.p.root)
+        if parked is None:
+            return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing to "
+                                                 "change. Wait for its first build.")
+        if msg is None or not self.AGAIN.fullmatch(msg.strip()):
+            return self._say(room, job, "error", f"{room.name} has no finished revision yet, and its first build isn't "
+                                                 "running: send \"build it again\" to try it once more, or delete the "
+                                                 "project from the project menu.")
+        if any(j.get("kind") == "build" for j in room.jobs.snapshot()):
+            return self._say(room, job, "noop", f"{room.name}'s first design is already being built.", noop=True)
+        try:
+            design = projects.as_design(parked["design"])
+        except ValueError as exc:
+            return self._say(room, job, "error", f"Its design can't be read ({exc}). Delete this project, or make it again.")
+        again = self.queue_build(room, design, label=str(parked.get("label") or "first design")[:48],
+                                 by=job.by if job is not None else None, cut=_count(parked.get("cut")))
+        self._resumed(room, again)
+        return self._say(room, job, "noop", f"Building {room.name}'s first design again.", noop=True)
 
     @property
     def p(self) -> RobotProject:
@@ -390,11 +561,20 @@ class Studio:
         revs = room.completed()
         out = {"project": room.name, "start": self.start, "projects": self.projects(), "revs": revs,
                "history": list(room.hub.history), "integrations": integrations(), "compute": compute_info(self.remote),
-               "queue": room.jobs.snapshot(), "building": room.building()}
-        if revs:
-            out["current"] = rev_payload(room.p, revs[-1], room.name)
+               "queue": room.jobs.snapshot(), "conflicts": room.jobs.conflicts(), "building": room.building()}
+        for rev in reversed(revs):  # one revision Morph can't show never takes the whole project down (500)
+            try:
+                out["current"] = rev_payload(room.p, rev, room.name)
+                break
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+        if "current" in out:
             parent = out["current"]["parent"]
-            out["previous"] = rev_payload(room.p, parent, room.name) if parent in revs else None
+            try:
+                out["previous"] = rev_payload(room.p, parent, room.name) if parent in revs else None
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+                out["previous"] = None
         return out
 
     def artifact(self, rel: str) -> str | None:
@@ -436,21 +616,27 @@ class Studio:
 
     def _conflict(self, room: Room, job, base: str, changes: dict) -> bool:
         """A queued change whose keys were changed by someone else after it was asked for (on job.base_rev) is not
-        applied over them: the job is marked conflict and the room is asked to apply it on `base` or drop it."""
+        applied over them: the job is marked conflict and the room is asked to apply it on `base` or drop it. The
+        revisions that the same person's requests from the same tab made meanwhile (job.after: still waiting or
+        building when this one was asked, so it builds on them) are no one else's change."""
         if job is None or not job.base_rev or job.base_rev == base:
             return False
-        since = None
-        if job.base_rev in room.completed():
+        since, revs = None, room.completed()
+        if job.base_rev in revs and base in revs:
+            own = {j.result for j in getattr(job, "after", ()) if j.result}
+            chain = revs[revs.index(job.base_rev):revs.index(base) + 1]
             try:
-                since = set(diff(room.p.load_design(job.base_rev), room.p.load_design(base)))
+                since = set()
+                for a, b in zip(chain, chain[1:]):
+                    if b not in own:
+                        since |= set(diff(room.p.load_design(a), room.p.load_design(b)))
             except (OSError, ValueError, KeyError, TypeError):
                 since = None
         keys = sorted(set(changes) & since) if since is not None else sorted(changes)
         if not keys:
             return False
-        job.status = "conflict"
-        job.conflict = {"keys": keys, "base_rev": job.base_rev, "rev": base}
-        why = (f"{', '.join(keys)} changed after {job.base_rev}, which this request was based on" if since is not None
+        room.jobs.hold(job, {"keys": keys, "base_rev": job.base_rev, "rev": base})  # waits for Apply or Drop
+        why = (f"{labels.names(keys)} changed after {job.base_rev}, which this request was based on" if since is not None
                else f"{job.base_rev}, which this request was based on, no longer exists")
         room.emit({"type": "assistant", "text": f"Not applied yet: {why}. Apply it to {base} anyway, or drop it?",
                    "changes": changes, "conflict": {"job": job.id, **job.conflict}, **self._tag(job)})
@@ -467,8 +653,7 @@ class Studio:
                     room.emit({"type": "user", "text": user_text})
                 base = room.latest()
                 if base is None:
-                    return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing "
-                                                         "to change. Wait for its first build.")
+                    return self._no_revision_yet(room, job)
                 cur = room.p.load_design(base)
                 changes = self._expand(changes)
                 try:
@@ -500,7 +685,7 @@ class Studio:
                 return rev
             except Exception as exc:  # noqa: BLE001  (shown in the chat; the room keeps working)
                 traceback.print_exc()
-                self._say(room, job, "error", f"Error: {exc}")
+                self._say(room, job, "error", f"Error: {durable.explain(exc, self.home)}")
                 return None
             finally:
                 room.live = None
@@ -543,8 +728,7 @@ class Studio:
                     room.emit({"type": "user", "text": msg})
                 base = room.latest()
                 if base is None:
-                    return self._say(room, job, "error", "This project has no finished revision yet, so there is "
-                                                         "nothing to change. Wait for its first build.")
+                    return self._no_revision_yet(room, job, msg)
                 cur = room.p.load_design(base)
                 if route and self._offer(room, job, msg, cur):
                     return None
@@ -570,8 +754,11 @@ class Studio:
             try:
                 t0 = time.time()
                 with self.builds:
+                    if job is not None:
+                        room.jobs.started(job)  # a stop from here on cut it off (the journal counts it)
                     rev = room.p.run(design, parent=None, label=label[:48], verbose=False, on_event=room.emit,
                                      by=job.by if job is not None else None)
+                projects.unpark_first_build(room.p.root)
                 room.p.log({"type": "tool_time", "cmd": "studio", "seconds": round(time.time() - t0, 2)})
                 if job is not None:
                     job.result = rev
@@ -581,7 +768,7 @@ class Studio:
                 return rev
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
-                self._say(room, job, "error", f"Error: {exc}")
+                self._say(room, job, "error", f"Error: {durable.explain(exc, self.home)}")
                 return None
             finally:
                 room.live = None
@@ -589,11 +776,21 @@ class Studio:
     @staticmethod
     def when_done(job, fn):
         """Run fn(job) on a background thread once `job` has ended, whatever its status: what a feature does after a
-        build it queued (the brief's after-build agents, a change request's bookkeeping, an import's progress)."""
+        build it queued (the brief's after-build agents, a change request's bookkeeping, an import's progress). A job
+        that ends as a conflict isn't over yet: fn gets the job its Apply queued once that ends, or the job itself once
+        it is dropped (a restart forgets a conflict's follow-ups: the features' start-up hooks cover those)."""
         def wait():
-            job.wait()
+            end = job
+            while True:
+                end.wait()
+                if end.status == "conflict":
+                    end.answered.wait()
+                if end.status == "resolved" and end.successor is not None:
+                    end = end.successor  # applied anyway: what that build does is this request's outcome
+                    continue
+                break
             try:
-                fn(job)
+                fn(end)
             except Exception:  # noqa: BLE001  (a feature's follow-up never breaks the room)
                 traceback.print_exc()
         threading.Thread(target=wait, daemon=True, name=f"morph-after-{job.id}").start()
@@ -608,42 +805,51 @@ class Studio:
 
     def queue_changes(self, room: Room, changes: dict, *, label: str, reply: str | None = None, source: str = "",
                       user_text: str | None = None, base_rev: str | None = None, by: str | None = None, kind="change",
-                      proposed_by: str | None = None):
+                      proposed_by: str | None = None, record: dict | None = None):
         """Queue design changes (parameter edits, applied video findings, an imported object, a world, a Teams change
-        request built by `by` for its author `proposed_by`, a resolved conflict). Raises QueueFull."""
+        request built by `by` for its author `proposed_by`, a resolved conflict). `record`: more for the queue's
+        journal (a change request's id). Raises QueueFull."""
         def say(job):
             if proposed_by:
                 job.data["proposed_by"] = proposed_by
             if user_text:
                 room.hub.send({"type": "user", "text": user_text, "job": job.id, **({"by": by} if by else {})})
         return room.jobs.submit(kind, lambda job: self.apply(changes, label, reply=reply, source=source, room=room, job=job),
-                                by=by, label=label, base_rev=base_rev or room.latest(), announce=say)
+                                by=by, label=label, base_rev=base_rev or room.latest(), announce=say,
+                                record={"changes": changes, **(record or {})})
 
     def queue_params(self, room: Room, changes: dict, *, base_rev: str | None = None, by: str | None = None):
         desc = labels.describe(changes)  # "Build → Pilot", as the Parameters panel names them
         return self.queue_changes(room, changes, label=f"edit: {desc}", reply=f"Parameter edit: {desc}.",
                                   base_rev=base_rev, by=by, kind="params")
 
-    def queue_build(self, room: Room, design, *, label: str = "first design", by: str | None = None):
-        """Queue a parentless build of `design` (a new project's first revision). Raises QueueFull."""
+    def queue_build(self, room: Room, design, *, label: str = "first design", by: str | None = None, cut: int = 0):
+        """Queue a parentless build of `design` (a new project's first revision). The journal keeps the design, so a
+        Studio that stops before it finishes builds it again when it starts; `cut`: how often a stop has cut this
+        build off already (Studio._recover). Raises QueueFull."""
+        record = {"design": design.to_dict() if hasattr(design, "to_dict") else design, **({"cut": cut} if cut else {})}
         return room.jobs.submit("build", lambda job: self.build(design, room=room, label=label, job=job), by=by,
-                                label=label)
+                                label=label, record=record)
 
     def resolve(self, room: Room, job_id, action: str, by: str | None = None):
         """Answer a conflict: "apply" queues the same changes on the newest revision (checked again when they run),
         "drop" forgets them. Returns the new job (apply) or None (drop); LookupError when there is no such conflict."""
-        job = room.jobs.get(job_id)
-        if job is None or job.status != "conflict":
+        job = room.jobs.take_conflict(job_id)  # one answer: a second tab's Apply or Drop finds nothing to answer
+        if job is None:
             raise LookupError("That change is no longer waiting for an answer.")
         if action == "drop":
-            job.status = "dropped"
+            job.answer("dropped")
             room.jobs.publish(job)
             room.emit({"type": "assistant", "text": f"Dropped: {job.label[:80]}", "noop": True, **self._tag(job)})
             return None
         d = job.data
-        new = self.queue_changes(room, d["changes"], label=d["label"], reply=d.get("reply"), source=d.get("source", ""),
-                                 base_rev=room.latest(), by=by or job.by, kind=job.kind, proposed_by=d.get("proposed_by"))
-        job.status = "resolved"
+        try:
+            new = self.queue_changes(room, d["changes"], label=d["label"], reply=d.get("reply"), source=d.get("source", ""),
+                                     base_rev=room.latest(), by=by or job.by, kind=job.kind, proposed_by=d.get("proposed_by"))
+        except QueueFull:
+            room.jobs.hold(job, job.conflict)  # still waiting: it can be applied once the queue has room
+            raise
+        job.answer("resolved", new)
         room.jobs.publish(job)
         return new
 
@@ -707,6 +913,7 @@ class Studio:
                         keep = p.run(p.load_design(keep), parent=None, label="rebuilt with latest Morph", verbose=False)
                 p.log({"type": "demo_reset", "rev": keep, "complete": complete})
                 room.hub.clear_history()
+                room.jobs.drop_conflicts()  # their questions were in the chat just cleared, about revisions now gone
             for room in rooms:
                 room.hub.send({"type": "project", "project": room.name, "reset": True})
             return True
@@ -736,6 +943,10 @@ DRAIN_MAX = 8 << 20  # a refused body up to this size is read and dropped, so th
 HEADER_TIMEOUT = 20.0
 MAX_CONNECTIONS = 64
 MAX_STREAMS = 48
+# connections one address may hold before it has signed in (loopback addresses aside: every tab of a local Studio, and
+# everyone behind a reverse proxy on this computer, comes from 127.0.0.1), so one address without the access code can't
+# take every slot; signed-in connections (event streams, uploads) don't count
+MAX_UNSIGNED_PER_ADDRESS = 16
 LINGER = 2.0  # seconds a client turned away at the cap has to finish sending before its socket is closed
 BUSY = (b'{"ok": false, "error": "The Studio is answering as many connections as it can. Try again in a few seconds."}')
 
@@ -791,33 +1002,69 @@ def artifact_path(p: RobotProject, rel: str) -> str | None:
 
 
 class Guesses:
-    """Wrong access codes per address. After LIMIT different wrong codes within WINDOW seconds, that address's codes
-    are not even compared until the window has passed, so a short MORPH_TOKEN can't be found by trying many. The same
-    wrong code sent again (a tab left open while the Studio restarted with a new code) counts once."""
+    """Wrong access codes per address. After LIMIT different wrong codes within WINDOW seconds, a code the person chose
+    (MORPH_TOKEN) is not even compared for that address until the window has passed, so a short one can't be found by
+    trying many. The code Morph makes (96 random bits) can't be guessed, so it is always compared: wrong guesses from an
+    address never lock out the person at that address who has the link. The same wrong code sent again (a tab left open
+    while the Studio restarted with a new code) counts once. Each address keeps only its last LIMIT wrong codes, so a
+    flood of them (still compared, for the code Morph made) costs no more memory or time per request than ten."""
 
     LIMIT, WINDOW, ADDRESSES = 10, 900, 4096
 
     def __init__(self):
-        self.lock, self.wrong = threading.Lock(), {}  # address -> {sha256 of a wrong code: when}
+        # address -> {16 bytes of a wrong code's sha256: when}, oldest first; addresses in the order they last failed
+        self.lock, self.wrong = threading.Lock(), {}
+
+    def _live(self, ip: str, now: float) -> dict:
+        codes = self.wrong.get(ip)
+        if codes is None:
+            return {}
+        while codes and now - next(iter(codes.values())) > self.WINDOW:
+            del codes[next(iter(codes))]
+        if not codes:
+            del self.wrong[ip]
+        return codes
 
     def blocked(self, ip: str) -> bool:
         with self.lock:
-            now, codes = time.monotonic(), self.wrong.get(ip) or {}
-            for h in [h for h, t in codes.items() if now - t > self.WINDOW]:
-                del codes[h]
-            return len(codes) >= self.LIMIT
+            return len(self._live(ip, time.monotonic())) >= self.LIMIT
 
     def failed(self, ip: str, code: str):
         with self.lock:
-            if ip not in self.wrong and len(self.wrong) >= self.ADDRESSES:
+            now = time.monotonic()
+            codes = self._live(ip, now)
+            self.wrong.pop(ip, None)
+            if not codes and len(self.wrong) >= self.ADDRESSES:
                 self.wrong.pop(next(iter(self.wrong)))
-            self.wrong.setdefault(ip, {})[hashlib.sha256(code.encode()).hexdigest()] = time.monotonic()
+            h = hashlib.sha256(code.encode()).digest()[:16]
+            codes.pop(h, None)  # a code sent again moves to the end with its new time
+            while len(codes) >= self.LIMIT:
+                del codes[next(iter(codes))]
+            codes[h] = now
+            self.wrong[ip] = codes
 
 
-def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None):
+def _count(value) -> int:
+    """A count from a journal or record line: 0 unless it is a whole number from 0 to 99."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 100 else 0
+
+
+def _remove(path: str):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None, *, chosen: bool = True):
     """The request handler. A team Studio (studio.team) signs people in as members (session cookie or script token,
-    api_team) instead of the access token, and the Teams role table checks every route."""
+    api_team) instead of the access token, and the Teams role table checks every route. `chosen`: the access code is
+    one a person picked (MORPH_TOKEN), so it may be guessable and wrong guesses lock its address out (Guesses);
+    False for the code access_token() made."""
     guesses = Guesses()
+    wait_note = ("Too many wrong access codes from this computer. Wait 15 minutes, then try again." if chosen else
+                 "Too many wrong access codes from this computer. Open the access link printed where Morph Studio was "
+                 "started: it still works.")
     if studio.team:
         from . import api_team as team
     else:
@@ -875,24 +1122,32 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
             return f"morph_access_{self.server.server_address[1]}"  # cookies ignore the port
 
         def _code(self, code: str) -> bool | None:
-            """True for the access code, False for a wrong one, None (not compared) when this address has tried too
-            many different wrong codes lately."""
+            """True for the access code, False for a wrong one, None when this address has tried too many different
+            wrong codes lately (a code the person chose is then not even compared; Morph's own still signs in)."""
             ip = self.client_address[0]
-            if guesses.blocked(ip):
+            if chosen and guesses.blocked(ip):
                 return None
             if hmac.compare_digest(code.encode(), token.encode()):
                 return True
+            past = guesses.blocked(ip)
             guesses.failed(ip, code)
-            return False
+            return None if past else False
 
         def _signed_in(self) -> bool:
             """Remote Studios: the browser opened the access link (its cookie), or a script sends the token. Team
             Studios: a member's session cookie or script token (self._member)."""
-            self._throttled, self._member = False, None
+            self._throttled, self._member, self._team_problem = False, None, None
             if team is not None:
-                self._member = team.authenticate(self, home=studio.home)
+                try:
+                    self._member = team.authenticate(self, home=studio.home)
+                except ValueError as exc:  # team.json can't be read (TeamFileError): nobody is signed in until it is fixed
+                    self._team_problem = team.team_problem(exc)
+                    return False
+                if self._member is not None:
+                    self._counted_out()
                 return self._member is not None
             if not token:
+                self._counted_out()
                 return True
             jar = SimpleCookie()
             try:
@@ -904,23 +1159,37 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 return False
             ok = self._code(got)
             self._throttled = ok is None
+            if ok:
+                self._counted_out()
             return bool(ok)
 
+        def _counted_out(self):
+            """Signed in: this connection stops counting against its address's cap (_Server.signed_in)."""
+            done = getattr(self.server, "signed_in", None)
+            if done is not None:
+                done(self.request)
+
         def _sign_in_page(self, bad=False):
+            if getattr(self, "_team_problem", None):
+                return self._error(503, self._team_problem)
             if team is not None:  # invites and sign-in links are the way in (a removed member's browser is told why)
-                status, page, ctype, csp = team.signed_out_page(home=studio.home, handler=self)
+                try:
+                    status, page, ctype, csp = team.signed_out_page(home=studio.home, handler=self)
+                except ValueError as exc:  # team.json can't be read (TeamFileError)
+                    return self._error(503, team.team_problem(exc))
                 return self._send(status, page, ctype, csp=csp)
-            note = ('<p class="bad">Too many wrong access codes from this computer. Wait 15 minutes, then try again.</p>'
-                    if bad == "throttled" else
+            note = (f'<p class="bad">{html.escape(wait_note)}</p>' if bad == "throttled" else
                     '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
             page = SIGN_IN.replace("HOST", html.escape(socket.gethostname())).replace("BAD", note)
             return self._send(429 if bad == "throttled" else 401, page.encode(), "text/html; charset=utf-8", csp=SIGN_IN_CSP)
 
         def _refuse_sign_in(self):
+            if getattr(self, "_team_problem", None):
+                return self._error(503, self._team_problem)
             if team is not None:
                 return self._error(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
             if self._throttled:
-                return self._error(429, "Too many wrong access codes from this computer. Wait 15 minutes, then try again.")
+                return self._error(429, wait_note)
             return self._error(401, "open the access link printed where Morph Studio was started")
 
         def _access_link(self, u) -> bool:
@@ -1033,7 +1302,11 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                     if len(raw) != n:
                         raise BodyError(400, "The request body was cut off.")
                     req.body = json_object(raw)
-                out = r.fn(req)
+                asking = REQUESTER.set((self.headers.get(CLIENT_HEADER) or "")[:64] or None)  # this tab or script
+                try:
+                    out = r.fn(req)
+                finally:
+                    REQUESTER.reset(asking)
             except HTTPError as exc:
                 return self._error(exc.status, exc.message)
             except BodyError as exc:
@@ -1042,6 +1315,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 traceback.print_exc()
                 if getattr(self, "_responded", False):
                     return None
+                if durable.disk_full(exc):
+                    return self._error(507, durable.DISK_FULL)
                 return self._error(500, f"The Studio hit an error: {exc.__class__.__name__}: {exc}")
             if out is None:
                 return None
@@ -1056,8 +1331,11 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 return self._error(403, "This Studio only answers its own page.")
             if self._access_link(u):
                 return None
-            if team is not None and team.landing(self, home=studio.home):  # /?invite= and /?link= pages, before sign-in
-                return None
+            try:
+                if team is not None and team.landing(self, home=studio.home):  # /?invite= and /?link= pages, before sign-in
+                    return None
+            except ValueError as exc:  # team.json can't be read (TeamFileError)
+                return self._error(503, team.team_problem(exc))
             if not self._signed_in():
                 if u.path in ("/", "/index.html"):
                     return self._sign_in_page(bad="throttled" if self._throttled else False)
@@ -1087,6 +1365,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
 
         do_POST = do_PUT = do_DELETE = _change
 
+    H.guesses = guesses  # tests read it
     return H
 
 
@@ -1216,7 +1495,7 @@ def _files(req):
 
 @route("GET", "/api/jobs", role="viewer")
 def _api_jobs(req):
-    return 200, {"jobs": req.room.jobs.snapshot()}
+    return 200, {"jobs": req.room.jobs.snapshot(), "conflicts": req.room.jobs.conflicts()}
 
 
 @route("POST", "/api/chat")
@@ -1227,8 +1506,7 @@ def _api_chat(req):
     if len(msg) > MAX_MESSAGE:
         raise HTTPError(400, f"That message is too long: {MAX_MESSAGE:,} characters at most.")
     if looks_like_secret(msg):
-        raise HTTPError(400, "That looks like an API key. Paste keys in the Keys dialog, never in chat; this message "
-                             "was not sent or saved.")
+        raise HTTPError(400, secret_refused("in chat"))
     room = req.room
     try:  # {edit: true}: the person chose "Change <project> instead" for a message that read like a new robot
         job = req.studio.queue_chat(room, msg.strip(), base_rev=_base_rev(req, room), by=_by(req),
@@ -1319,6 +1597,8 @@ def _api_projects_create(req):
     name, need, brief = _text(body, "name", 80), _text(body, "need", 2000), _text(body, "brief_id", 64)
     if brief is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", brief):
         raise HTTPError(400, "brief_id is not a brief id.")
+    if looks_like_secret(need):  # meta.json keeps it, the project menu shows it to everyone, exports carry it
+        raise HTTPError(400, secret_refused("in a project's description"))
     design = None
     try:
         if kind == "design":
@@ -1417,7 +1697,8 @@ def _api_export(req):
 def _keys_state(studio: Studio) -> dict:
     from .. import keys, settings
     return {"keys": keys.status(home=studio.home), "integrations": integrations(), "settings": settings.load(),
-            "file": os.path.basename(keys.ENV_PATH), "compute": compute_info(studio.remote)}
+            "settings_problem": settings.problem(), "file": os.path.basename(keys.ENV_PATH),
+            "compute": compute_info(studio.remote)}
 
 
 @route("GET", "/api/keys", role="owner")
@@ -1436,6 +1717,8 @@ def _api_keys_save(req):
     except ValueError as exc:
         raise HTTPError(400, str(exc)) from None
     except OSError as exc:
+        if durable.disk_full(exc):
+            raise HTTPError(507, durable.DISK_FULL) from None
         raise HTTPError(500, f"Couldn't save the keys: Morph can't write {os.path.basename(keys.ENV_PATH)} here "
                              f"({exc.strerror or exc.__class__.__name__}). Set them as environment variables instead, "
                              "or move Morph to a folder you can write to.") from None
@@ -1460,7 +1743,7 @@ def _api_keys_check(req):  # POST: it calls the services with the person's keys
 @route("GET", "/api/settings", role="viewer")
 def _api_settings(req):
     from .. import settings
-    return 200, {"settings": settings.load(), "integrations": integrations()}
+    return 200, {"settings": settings.load(), "settings_problem": settings.problem(), "integrations": integrations()}
 
 
 @route("POST", "/api/settings", role="owner")
@@ -1471,10 +1754,11 @@ def _api_settings_save(req):
     except ValueError as exc:
         raise HTTPError(400, str(exc)) from None
     except OSError as exc:
-        raise HTTPError(500, f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).") from None
+        raise HTTPError(507 if durable.disk_full(exc) else 500, durable.DISK_FULL if durable.disk_full(exc) else
+                        f"Couldn't save the settings ({exc.strerror or exc.__class__.__name__}).") from None
     _audit(req, "settings_changed", values=values)
     keewano._ratio_cache.clear()
-    return 200, {"ok": True, "settings": values, "integrations": integrations()}
+    return 200, {"ok": True, "settings": values, "settings_problem": settings.problem(), "integrations": integrations()}
 
 
 class _Server(ThreadingHTTPServer):
@@ -1486,32 +1770,65 @@ class _Server(ThreadingHTTPServer):
 
     def __init__(self, *args, **kwargs):
         self.slots, self.connections, self.streams = threading.Lock(), 0, 0
+        self.unsigned, self.unsigned_by = {}, {}  # connection -> its address, and per address, until it signs in
         self.turned_away, self.closer = queue.SimpleQueue(), None
         super().__init__(*args, **kwargs)
 
+    @staticmethod
+    def exempt(address: str) -> bool:
+        """Loopback addresses have no per-address cap (a local Studio's tabs, or a reverse proxy on this computer)."""
+        try:
+            ip = ipaddress.ip_address(address.split("%")[0])
+        except ValueError:
+            return False
+        return ip.is_loopback or bool(getattr(ip, "ipv4_mapped", None) and ip.ipv4_mapped.is_loopback)
+
     def process_request(self, request, client_address):
-        """A thread per connection, up to max_connections at once; past that, a 503 straight from here, without
-        reading the request, so idle or slow clients can never take every thread."""
+        """A thread per connection, up to max_connections at once, and up to MAX_UNSIGNED_PER_ADDRESS from one address
+        that hasn't signed in yet; past either, a 503 straight from here, without reading the request, so idle or slow
+        clients can never take every thread."""
+        addr = str(client_address[0]) if client_address else ""
+        counted = not self.exempt(addr)
         with self.slots:
-            ok = self.connections < self.max_connections
-            self.connections += ok
+            ok = self.connections < self.max_connections and not (
+                counted and self.unsigned_by.get(addr, 0) >= MAX_UNSIGNED_PER_ADDRESS)
+            if ok:
+                self.connections += 1
+                if counted:
+                    self.unsigned[request] = addr
+                    self.unsigned_by[addr] = self.unsigned_by.get(addr, 0) + 1
         if not ok:
             return self._busy(request)
         try:
             super().process_request(request, client_address)
         except BaseException:
-            self._release()
+            self._release(request)
             raise
 
     def process_request_thread(self, request, client_address):
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self._release()
+            self._release(request)
 
-    def _release(self):
+    def signed_in(self, request):
+        """The connection presented a valid access code or session: it no longer counts against its address."""
+        with self.slots:
+            self._forget(request)
+
+    def _forget(self, request):
+        addr = self.unsigned.pop(request, None)
+        if addr is not None:
+            n = self.unsigned_by.get(addr, 0) - 1
+            if n > 0:
+                self.unsigned_by[addr] = n
+            else:
+                self.unsigned_by.pop(addr, None)
+
+    def _release(self, request=None):
         with self.slots:
             self.connections -= 1
+            self._forget(request)
 
     def open_stream(self) -> bool:
         with self.slots:
@@ -1573,19 +1890,21 @@ class _Server(ThreadingHTTPServer):
 
     def handle_error(self, request, client_address):
         # a browser tab closing mid-response is normal; don't print a traceback for it
-        import sys
         if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
             return
         super().handle_error(request, client_address)
 
 
 def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None, token: str | None = None, *,
-          team: bool = False, allow_url_import: bool = False, link: str | None = None):
+          team: bool = False, allow_url_import: bool = False, link: str | None = None, token_chosen: bool | None = None):
     """Run the Studio. `team`: Morph Teams (members sign in with invite or sign-in links; MORPH_TOKEN plays no part),
-    `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers."""
-    if not project.revs():
+    `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers.
+    `token_chosen`: False when `token` is one access_token() made (the CLI makes it to print the link first), so wrong
+    guesses never lock out its address (Guesses); default: a given token is the person's own."""
+    if not project.finished():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
+    chosen = bool(token) if token_chosen is None else token_chosen
     token = None if team else access_token(host, token)
     studio.remote = bool(token) or (team and not is_loopback(host))
     if team:
@@ -1597,7 +1916,7 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     # Studio: the member's session decides, so a tunnel's or the LAN's address works too
     allowed = None if token or team else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}
     try:
-        httpd = _Server((host, port), make_handler(studio, allowed, token))
+        httpd = _Server((host, port), make_handler(studio, allowed, token, chosen=chosen))
     except OSError as exc:
         if exc.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", errno.EADDRINUSE)):
             raise SystemExit(f"Port {port} is busy ({exc}): Morph Studio is probably already running. Stop it "
@@ -1629,6 +1948,10 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
                   "asks (System Settings, Network, Firewall).")
     else:
         print(f"Morph Studio: http://{host}:{port}  (project {project.root}; Ctrl+C to stop)")
+    try:
+        sys.stdout.flush()  # into a log file or a pipe now, not when its buffer fills: the links are needed while it runs
+    except (AttributeError, OSError, ValueError):
+        pass
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

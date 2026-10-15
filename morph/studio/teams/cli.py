@@ -101,6 +101,8 @@ def team_audit_verify(home: str | None = None, out=print) -> dict:
     res = audit.verify(home)
     if res["ok"]:
         _say(out, f"Audit log OK: {res['lines']} entries, hash chain intact ({utc()}).")
+        if res.get("note"):  # a line cut off by a crash or a full disk: no tampering, but its event is lost
+            _say(out, f"Note: {res['note']}.")
     else:
         _say(out, f"Audit log FAILED at entry {res['line']}: {res['error']}.")
     return res

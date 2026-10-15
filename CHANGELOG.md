@@ -225,7 +225,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   message that looks like an API key (Claude, SubQ or Keewano) is refused.
 - API keys are never sent on to another server when a service answers with a redirect (SubQ, Keewano). A `.env` from
   an older Morph that others could read is made private when the Studio starts.
-- Remote mode: after 10 different wrong access codes from one address, that address waits 15 minutes.
+- Remote mode: after 10 different wrong access codes from one address, a `MORPH_TOKEN` you chose isn't checked from
+  that address for 15 minutes.
 - The server never opens a pipe or device file, and a request whose body stops arriving gets an answer.
 - Every value a chat edit, Claude or a request can set must fit limits far wider than any robot Morph builds: a
   kilometre-wide object used to hold the build slot for hours. Designs with unknown keys are refused. `morph robot
@@ -263,6 +264,24 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   draft's review never links an address Morph refused; a drafted service named like a Windows device (aux, com1) is
   saved under another name. Tests now search every request, event, file, log and export for marker keys, and cover
   the Teams roles, remote mode and two tabs answering the same card.
+- One key filter for everything people type: chat, New robot (the request and every answer), Show Morph the job's
+  cards, a project's description, a world's labels and every Teams text field (comments, change requests, reviews,
+  releases, branch and display names, script token labels) refuse a Claude, SubQ, Keewano or tool key, a bearer token,
+  or a Teams script token, invite or sign-in code before anything is saved, shown or sent. New robot used to keep such
+  a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ
+  and tool keys through; drafts saved before this stay until their 7-day cleanup. The filter knows keys and codes by
+  their random part, so snake_case names and part names that only share a prefix (`mt_shoulder_joint_torque_limit`,
+  `ml_inference_pipeline_enabled`, `sk-6x40-stainless-steel-screws`) are no longer refused, and a key saved in the
+  Keys dialog is refused whatever its shape.
+- Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
+  access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
+  teammates behind one router don't run into it in normal use. Many addresses together can still fill the slots
+  (SECURITY.md).
+- Wrong codes from one address no longer lock out the person there who has the link: Morph's own access code and
+  every Teams invite, sign-in link and script token are random, so a right one is always checked and works (only a
+  `MORPH_TOKEN` you chose still makes that address wait). A script's live updates no longer end when someone at the
+  same address mistypes links. Each address keeps only its last 10 wrong codes, so a flood of them costs the Studio
+  no more memory or time per request than ten.
 
 ### Fixes
 
@@ -351,3 +370,61 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   waiting for a key or still working, as it already stopped the project's robustness study: such a run could carry
   on later in a new project that took the same name, or for a revision Reset demo had removed, and price the parts
   of a robot it was never started for. Its card says why it stopped.
+- A quick second edit of the same setting, made while the first still builds, builds on it: the newest choice used to
+  come back as a conflict with your own first edit and be held back. A change another tab or teammate made meanwhile
+  is still asked about, by name ("Build changed after r001") instead of its key.
+- A change waiting for Apply or Drop keeps its buttons after a reload and in tabs opened later; once anyone answers it,
+  every other tab's buttons go (a late click used to fail), and a viewer is told an editor can answer instead of being
+  shown buttons.
+- With its output going to a log file or a pipe (nohup, a service), the Studio's access link and the owner's sign-in
+  link reach it at once: they used to wait in a buffer, and a Studio stopped with SIGTERM never wrote them.
+- `morph subq --lint` sends nothing while network lookups are off or `MORPH_OFFLINE=1` (it sent the request text to
+  SubQ anyway). `morph ask` tells "not configured" apart from "network lookups are off" and a failed query, and exits
+  1 without rows; `morph study` says why it can't study a project or revision before announcing a study. Relaunching
+  on a Linux server without a screen while a Studio runs no longer opens a text browser in the terminal.
+- A crash or a full disk that cut off the last line of a log no longer loses the next one too: the next chat
+  message, ledger entry (the Time saved card disappeared), robustness run or Teams record joined the cut-off line and
+  was lost with it. The team and tool audit logs report such a line as cut off by a crash or a full disk instead of
+  "edited by hand", and a stop between writing an entry and its `audit.head` is no longer flagged as tampering.
+- A results.json left empty or cut off (a power cut, a crash while it was saved) no longer stops the launcher with a
+  traceback, or breaks its project with a 500 on every request and a new cut-off revision on every edit: when the
+  Studio starts, such a revision and any build a stop cut off are set aside (named in the terminal; after a day they
+  move to `projects/.trash/`), a revision Morph can't read is never shown or built on, and every record is synced to
+  the disk before it replaces the old one. A build that fails before it finishes (a full disk) removes its revision
+  folder, so the space comes back; a full disk reads "The disk is full" in the chat and in dialogs, and a full disk no
+  longer leaves Teams and tool files "busy" for 30 seconds afterwards. A build another Studio or the CLI is still
+  running is never set aside.
+- A Studio stopped during a build (Ctrl+C, a closed window, a crash) no longer strands what it was doing. When it
+  starts again, a new, imported or forked project whose first build was cut off is built again (labelled "rebuilt
+  after a stop"; it stayed empty for good, and New robot's Build kept answering with the dead project); edits that were
+  waiting or building are named in the chat so they can be sent again (they disappeared without a word); a change
+  waiting for Apply or Drop waits again; a Teams change request that was applied but not built is open again, with
+  why, for whoever applied it and its author (it read "applied" with no revision and could not be applied again or
+  closed); and a robustness study waiting for its turn is listed as stopped, to carry on (it vanished). Whether
+  another Studio on the same projects folder still runs is told by a lock the system frees when it stops, so a
+  stopped Studio's work is never left alone because its process number was reused after a reboot or the computer's
+  name changed. A first build the Studio stopped during twice is not started again on its own (one that crashes the
+  Studio would crash it at every start): the chat and the terminal say so, and "build it again" in the project's chat
+  tries once more.
+- A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
+  taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
+  `meta.json` made from its revisions, with the damaged one kept beside it.
+- Teams: a damaged `team.json` (cut off, or a bad hand edit) is no longer read as "no team": `morph team members`
+  printed nothing, the team Studio said "The team has no owner", and the suggested `morph team init` replaced every
+  member, invite, token and the policy. Now every team command and the team Studio name the line and column that
+  can't be read, nobody signs in, nothing writes over it, and Morph keeps the copy from before its last change as
+  `team.json.bak` to put back.
+- Damaged settings fail closed: a `.settings.json` that can't be read used to turn network lookups, Darwin sourcing
+  and agent tools back on without a word (PRIVACY.md promises Off keeps everything on this computer). Now every
+  switch is off, and the Keys dialog and `morph doctor` say why, until you set them again. Agent tools you turned off
+  stay off when the tools' state file is damaged, and a damaged `tolerances.json` is reported instead of studies
+  running on the defaults and the next edit writing over it.
+- Import: a Studio stopped during an upload no longer leaves the import session claiming a file it doesn't have (it
+  counted the whole file before it arrived, so Find said there was nothing to import and the size limit was used up);
+  a file counts once it is all there, and the half-written file is removed when the Studio starts again.
+- Ctrl+C stops the Studio at once while Darwin lookups hang (a server that accepts and never answers): the Studio
+  waited for every queued lookup to time out in turn, about a minute for one Find agents, and ignored Ctrl+C meanwhile.
+  Network lookups (Darwin, Test keys, BoardRepo) now run on threads the process never waits for when it stops.
+- Stopping the Studio with Ctrl+C no longer ends now and then with "Segmentation fault" (exit code -11) after the
+  launcher built a robot before serving: the stopped Studio's process ends without the interpreter's shutdown, whose
+  clean-up of the 3D libraries crashed. Everything was already saved; nothing else changes.

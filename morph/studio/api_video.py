@@ -25,6 +25,7 @@ import time
 
 from ..resources import pip_install_command
 from . import ffmpeg, vision
+from .security import holds_secret, secret_refused
 
 try:  # Wave 0's router; until it is merged the handlers are plain functions (the tests call them directly)
     from .routes import route
@@ -402,7 +403,11 @@ def apply(req):
         result, answers = body.get("result"), body.get("answers")
         if result is not None and not isinstance(result, dict) or answers is not None and not isinstance(answers, dict):
             return 400, {"ok": False, "error": "Send result and answers as JSON objects."}
+        if holds_secret(answers):  # what was typed in a card: told at once, before it can reach a design
+            return 400, {"ok": False, "error": secret_refused("in a card")}
         return 200, {"ok": True, "mapping": vision.map_to_changes(result, _design(req), answers)}
+    if holds_secret([body.get("changes"), body.get("label")]):  # before anything is queued, shown or saved
+        return 400, {"ok": False, "error": secret_refused("in a card")}
     try:
         changes, notes = vision.validate_changes(body.get("changes"))
     except ValueError as exc:

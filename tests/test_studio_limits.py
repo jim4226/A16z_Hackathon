@@ -184,3 +184,81 @@ def test_an_answer_given_before_the_body_arrives_is_not_reset_away(live, path, b
         got += data
     assert got.startswith(b"HTTP/1.0 404")
     assert s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR) == 0   # no reset arrived (Linux reads past one)
+
+
+# ------------------------------------------------------------------ one address can't take every slot (remote mode)
+
+
+@pytest.fixture
+def remote(tmp_path, monkeypatch):
+    """A remote Studio (access code "the-access-code") where 127.0.0.2 plays another computer: the cap per address
+    applies to every address here (normally loopback is exempt), 3 unsigned connections per address, 12 in all."""
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    monkeypatch.setattr(server, "HEADER_TIMEOUT", 10.0, raising=False)
+    monkeypatch.setattr(server, "MAX_UNSIGNED_PER_ADDRESS", 3, raising=False)
+    monkeypatch.setattr(server._Server, "max_connections", 12, raising=False)
+    monkeypatch.setattr(server._Server, "exempt", staticmethod(lambda address: False))
+    root = tmp_path / "projects" / "egg"
+    (root / "r001").mkdir(parents=True)
+    (root / "meta.json").write_text(json.dumps({"kind": "robot", "source": "", "need": "egg"}), encoding="utf-8")
+    (root / "r001" / "design.json").write_text(Design().dumps(), encoding="utf-8")
+    (root / "r001" / "results.json").write_text(json.dumps({"rev": "r001", "parent": None, "summary": {}}), encoding="utf-8")
+    studio = server.Studio(RobotProject(str(root)), str(tmp_path / "projects"))
+    httpd = server._Server(("0.0.0.0", 0), server.make_handler(studio, None, "the-access-code"))
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    socks = []
+
+    def connect(source="127.0.0.1"):
+        s = socket.create_connection(("127.0.0.1", port), timeout=5, source_address=(source, 0))
+        socks.append(s)
+        return s
+
+    yield studio, httpd, port, connect
+    for s in socks:
+        s.close()
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def signed(connect, port, path, source="127.0.0.1"):
+    s = connect(source)
+    s.sendall(f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Morph-Token: the-access-code\r\n\r\n".encode())
+    return s
+
+
+def test_idle_connections_from_one_address_leave_room_for_everyone_else(remote):
+    studio, httpd, port, connect = remote
+    held = [connect("127.0.0.2") for _ in range(3)]       # someone without the code holds what one address may
+    assert wait_for(lambda: httpd.connections == 3)
+    t0 = time.monotonic()
+    more = [connect("127.0.0.2") for _ in range(9)]       # and every further one is turned away at once
+    assert all(head(s).startswith(b"HTTP/1.0 503") for s in more) and time.monotonic() - t0 < 2.0
+    assert wait_for(lambda: httpd.connections == 3)
+    t0 = time.monotonic()
+    ok = signed(connect, port, "/api/state")               # the person with the code is answered straight away
+    assert head(ok).startswith(b"HTTP/1.0 200") and time.monotonic() - t0 < 1.0
+    streams = [signed(connect, port, "/api/events") for _ in range(5)]   # signed-in tabs don't count against an address
+    assert all(head(s).startswith(b"HTTP/1.0 200") for s in streams)
+    assert wait_for(lambda: httpd.streams == 5 and httpd.unsigned_by == {"127.0.0.2": 3})
+    nocode = [connect("127.0.0.1") for _ in range(3)]      # the cap is per address: this one has its own 3
+    assert wait_for(lambda: httpd.unsigned_by == {"127.0.0.2": 3, "127.0.0.1": 3})
+    assert head(connect("127.0.0.1")).startswith(b"HTTP/1.0 503")
+    for s in held + nocode + streams:
+        s.close()
+    assert wait_for(lambda: httpd.connections == 0 and httpd.unsigned_by == {} and httpd.unsigned == {}, timeout=5)
+
+
+def test_a_wrong_code_does_not_sign_a_connection_in(remote):
+    studio, httpd, port, connect = remote
+    s = connect("127.0.0.2")
+    s.sendall(f"GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Morph-Token: wrong-code-1\r\n\r\n".encode())
+    assert head(s).startswith(b"HTTP/1.0 401")
+    assert wait_for(lambda: httpd.connections == 0 and httpd.unsigned_by == {})
+
+
+def test_loopback_addresses_have_no_cap_per_address():
+    assert server._Server.exempt("127.0.0.1") and server._Server.exempt("127.0.0.2") and server._Server.exempt("::1")
+    assert server._Server.exempt("::ffff:127.0.0.1")
+    assert not server._Server.exempt("192.168.1.20") and not server._Server.exempt("10.0.0.5")
+    assert not server._Server.exempt("::ffff:192.168.1.20") and not server._Server.exempt("")

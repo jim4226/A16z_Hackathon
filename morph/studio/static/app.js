@@ -71,7 +71,17 @@ const getJSON = (u) => fetchOnce(u, 'json');
 const getText = (u) => fetchOnce(u, 'text');
 
 // Every request names this tab's project (?project=); changes also carry X-Morph-Client, which the server requires
-// on POST, PUT and DELETE (another site's page can't send it).
+// on POST, PUT and DELETE (another site's page can't send it). Its value names this tab (kept across reloads), so the
+// server knows a quick second edit builds on this tab's first one, still building, instead of conflicting with it.
+const TAB = (() => {
+  const bytes = () => { try { return crypto.getRandomValues(new Uint8Array(8)); } catch (e) { return Array.from({ length: 8 }, () => Math.random() * 256 | 0); } };
+  const make = () => Array.from(bytes(), (b) => b.toString(16).padStart(2, '0')).join('');
+  try {
+    let t = sessionStorage.getItem('morph.tab');
+    if (!/^[0-9a-f]{16}$/.test(t || '')) { t = make(); sessionStorage.setItem('morph.tab', t); }
+    return t;
+  } catch (e) { return make(); }
+})();
 class ServerBackend {
   label = 'Live';
   constructor(project) { this.name = project || ''; this.gen = 0; this.es = null; }
@@ -115,7 +125,7 @@ async function getFresh(url) {
   return r.json();
 }
 function send(method, url, body) {
-  return fetch(url, { method, headers: { 'Content-Type': 'application/json', 'X-Morph-Client': '1' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  return fetch(url, { method, headers: { 'Content-Type': 'application/json', 'X-Morph-Client': TAB }, body: body === undefined ? undefined : JSON.stringify(body) });
 }
 function post(url, body) {
   return send('POST', url, body)
@@ -260,7 +270,7 @@ function toast(text) {
 }
 
 // ------------------------------------------------------------------ app state
-const S = { project: '', start: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null, integrations: {}, busy: false, queue: [], loaded: false };
+const S = { project: '', start: '', projects: [], revs: [], current: null, previous: null, latest: null, labels: {}, tab: 'robot', pending: {}, robotKey: null, integrations: {}, busy: false, queue: [], conflicts: [], loaded: false };
 let backend, viewer, panels, presenter, keysDlg;
 
 const ctx = {
@@ -306,7 +316,7 @@ async function openProject(name) {
   if (!name || !backend?.setProject) return false;
   if (name === S.project) return true;
   const prev = S.project;
-  stopTour(); typing(false); sysMsg = null; liveProv = null; S.busy = false; S.queue = [];
+  stopTour(); typing(false); sysMsg = null; liveProv = null; S.busy = false; S.queue = []; S.conflicts = [];
   S.project = name;
   const listening = backend.setProject(name);
   setUrlProject(name);
@@ -347,7 +357,7 @@ async function loadState(st, { fresh = false, first = false } = {}) {
     typing(false); sysMsg = null; liveProv = null; S.busy = false;
   }
   S.project = st.project; S.start = st.start || S.start; S.projects = st.projects || S.projects; S.revs = st.revs || [];
-  S.latest = st.current?.rev || null; S.queue = st.queue || [];
+  S.latest = st.current?.rev || null; S.queue = st.queue || []; S.conflicts = st.conflicts || [];  // conflicts first: the history's questions get their buttons
   S.integrations = st.integrations || S.integrations;
   S.compute = st.compute || S.compute;
   setUrlProject(st.project);
@@ -356,7 +366,7 @@ async function loadState(st, { fresh = false, first = false } = {}) {
   for (const m of st.history || []) addMsg(m.type, m.text, m);
   S.chatEmpty = !(st.history || []).length;
   if (S.chatEmpty) {
-    addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : ''}.`
+    addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : (st.queue || []).length ? ': its first build is waiting for its turn' : ''}.`
       : fresh && !first ? `Opened ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`
         : `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`);
   }
@@ -368,7 +378,7 @@ async function loadState(st, { fresh = false, first = false } = {}) {
     $('#viewsEmpty p').textContent = `No finished revision of ${st.project} yet.`;
     $('#views').classList.add('norev');  // the robot, its simulations and the other tabs wait for one
   }
-  renderQueue();
+  renderQueue([...S.queue, ...S.conflicts]);
   if (st.building) {  // opened mid-build: show the run so far; its events continue the strip
     const nodes = nodesOf(S.current), b = st.building;
     liveProv = Object.fromEntries(nodes.map(([k]) => [k, b.nodes?.[k] || 'queued']));
@@ -435,7 +445,28 @@ function setConn(kind, text) {
 }
 
 // ------------------------------------------------------------------ chat
-// opts: {changes, job, conflict, noop, live} (a chat event); a conflict asks, with buttons, while it is live
+// opts: {changes, job, conflict, noop, live} (a chat event); a conflict asks, with buttons, while it waits for an answer
+// (live, or listed in the state's conflicts after a reload); once anyone answers it, every tab's buttons go
+const waiting = (id) => (S.conflicts || []).some((j) => j.id === id);
+function conflictActs(el, conflict) {
+  const c = h('div', 'qacts qconf');
+  c.dataset.job = conflict.job;
+  c.innerHTML = `<button class="btn primary" type="button" data-q="apply">Apply to ${esc(conflict.rev)}</button><button class="btn ghost" type="button" data-q="drop">Drop it</button><span class="qnote" hidden>An editor can apply it or drop it.</span>`;
+  $$('button', c).forEach((b) => (b.onclick = () => {
+    $$('button', c).forEach((x) => (x.disabled = true));
+    backend.resolve(conflict.job, b.dataset.q);
+  }));
+  el.lastElementChild.appendChild(c);
+}
+function gone() {  // a conflict someone answered (or that a restart forgot): its question stays, its buttons go
+  const note = h('div', 'qgone');
+  note.textContent = 'No longer waiting for an answer.';
+  return note;
+}
+const answered = (c) => c.replaceWith(gone());
+function pruneConflicts() {
+  $$('#messages .qacts.qconf').forEach((c) => { if (!waiting(c.dataset.job)) answered(c); });
+}
 function addMsg(role, text, opts = {}) {
   const el = document.createElement('div');
   el.className = `msg ${role}`;
@@ -448,14 +479,9 @@ function addMsg(role, text, opts = {}) {
       c.innerHTML = Object.entries(changes).map(([k, v]) => `<span class="chip mono">${esc(k)} = <b>${esc(pretty(Array.isArray(v) ? v[1] : v, true))}</b></span>`).join('');
       el.lastElementChild.appendChild(c);
     }
-    if (opts.conflict && opts.live && backend?.resolve) {
-      const c = h('div', 'qacts');
-      c.innerHTML = `<button class="btn primary" type="button" data-q="apply">Apply to ${esc(opts.conflict.rev)}</button><button class="btn ghost" type="button" data-q="drop">Drop it</button>`;
-      $$('button', c).forEach((b) => (b.onclick = () => {
-        $$('button', c).forEach((x) => (x.disabled = true));
-        backend.resolve(opts.conflict.job, b.dataset.q);
-      }));
-      el.lastElementChild.appendChild(c);
+    if (opts.conflict?.job && backend?.resolve) {
+      if (opts.live || waiting(opts.conflict.job)) conflictActs(el, opts.conflict);
+      else el.lastElementChild.appendChild(gone());
     }
     if (opts.offer && opts.live && backend?.chat) offerActs(el, opts.offer);
   } else if (role === 'system') {
@@ -862,7 +888,8 @@ function onEvent(ev) {
     case 'assistant': typing(false); addMsg('assistant', ev.text, { ...ev, live: true }); if (/^(Error|Couldn't apply)/.test(ev.text || '')) { S.busy = false; S.errorAt = performance.now(); } if (ev.noop) S.noopAt = performance.now(); break;
     case 'queue': {
       S.queue = (ev.jobs || []).filter((j) => j.position != null);
-      renderQueue(ev.jobs);
+      if (ev.conflicts) { S.conflicts = ev.conflicts; pruneConflicts(); }
+      renderQueue([...(ev.jobs || []), ...S.conflicts]);
       const run = (ev.jobs || []).find((j) => j.status === 'running');
       if (run?.kind === 'chat' && $(`#messages .msg.user[data-job="${CSS.escape(run.id)}"]`)) typing(true);
       break;
@@ -1004,7 +1031,7 @@ function emitBus(ev) {
 }
 async function apiCall(method, path, params, body, raw = false) {
   const url = backend?.q ? backend.q(path, params) : path;
-  const headers = method === 'GET' ? {} : { 'X-Morph-Client': '1' };
+  const headers = method === 'GET' ? {} : { 'X-Morph-Client': TAB };
   let data;
   if (body != null) {
     data = raw ? body : JSON.stringify(body);

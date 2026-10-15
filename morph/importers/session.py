@@ -54,7 +54,8 @@ def imports_dir(home_dir: str | None = None) -> str:
 
 
 def cleanup(home_dir: str | None = None, max_age_s: float = MAX_AGE_S) -> int:
-    """Delete import sessions older than max_age_s (the Studio calls this at startup). Returns how many."""
+    """Delete import sessions older than max_age_s (the Studio calls this at startup) and tidy the others (Session.tidy:
+    uploads a stop cut off). Returns how many were deleted."""
     root = imports_dir(home_dir)
     n = 0
     if not os.path.isdir(root):
@@ -70,9 +71,15 @@ def cleanup(home_dir: str | None = None, max_age_s: float = MAX_AGE_S) -> int:
             if now - os.path.getmtime(os.path.join(d, "session.json")) > max_age_s:
                 shutil.rmtree(d, ignore_errors=True)
                 n += 1
+                continue
         except OSError:
             shutil.rmtree(d, ignore_errors=True)
             n += 1
+            continue
+        try:
+            Session(sid, home_dir).tidy()  # a session kept for later: nothing half-uploaded left in it
+        except (OSError, ValueError, KeyError, ImportFailed):
+            traceback.print_exc()
     return n
 
 
@@ -113,10 +120,8 @@ class Session:
             return json.load(fh)
 
     def _save(self, st: dict):
-        tmp = os.path.join(self.root, f".session-{secrets.token_hex(4)}.json")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(st, fh, indent=1)
-        os.replace(tmp, os.path.join(self.root, "session.json"))
+        from ..services.durable import write_json
+        write_json(os.path.join(self.root, "session.json"), st)  # synced, then renamed over the old one
 
     def delete(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -130,20 +135,26 @@ class Session:
             raise ImportFailed("Send each file with a Content-Length.")
         if length > LIMITS["upload_file"]:
             raise ImportFailed(f"{os.path.basename(rel)} is {length / MB:.0f} MB; the limit is {LIMITS['upload_file'] // MB} MB per file.")
+        tok = secrets.token_hex(4)
+        from ..studio import rooms
+        claim = rooms.claim(self.home)  # noqa: F841  (held while this upload streams: another Studio's tidy() keeps it)
         with _lock(self.id):
+            # what is being streamed is reserved under `pending`, never counted as a file before it is all there: a
+            # Studio stopped mid-upload never leaves a session claiming a file it doesn't have
             st = self.state()
+            pending = st.setdefault("pending", {})
             old = st["files"].get(rel, 0)
-            if rel not in st["files"] and len(st["files"]) >= LIMITS["session_files"]:
+            coming = [p for p in pending.values() if p[0] != rel]
+            if rel not in st["files"] and len(st["files"]) + len(coming) >= LIMITS["session_files"]:
                 raise ImportFailed(f"More than {LIMITS['session_files']:,} files; drop only the robot's folder.")
-            if st["bytes"] - old + length > LIMITS["upload_total"]:
-                raise ImportFailed(f"{(st['bytes'] - old + length) / MB:.0f} MB is over the {LIMITS['upload_total'] // MB} MB "
-                                   "limit for one import.")
-            st["bytes"] += length - old
-            st["files"][rel] = length
+            total = st["bytes"] - old + sum(p[1] for p in coming) + length
+            if total > LIMITS["upload_total"]:
+                raise ImportFailed(f"{total / MB:.0f} MB is over the {LIMITS['upload_total'] // MB} MB limit for one import.")
+            pending[tok] = [rel, length, rooms.OWNER]
             st["status"] = "new"
             self._save(st)
         target = os.path.join(self.files, *rel.split("/"))
-        tmp = target + f".part-{secrets.token_hex(4)}"
+        tmp = target + f".part-{tok}"
         got = 0
         try:
             if contained(self.files, os.path.dirname(target)) is None:
@@ -169,12 +180,53 @@ class Session:
                 os.remove(tmp)
             with _lock(self.id):
                 st = self.state()
-                if st["files"].get(rel) == length:
-                    st["files"].pop(rel)
-                    st["bytes"] -= length
-                    self._save(st)
+                (st.get("pending") or {}).pop(tok, None)
+                self._save(st)
             raise
+        with _lock(self.id):  # all there: now it counts
+            st = self.state()
+            (st.get("pending") or {}).pop(tok, None)
+            st["files"][rel] = length
+            st["bytes"] = sum(st["files"].values())
+            self._save(st)
         return {"path": rel, "size": got}
+
+    def tidy(self) -> bool:
+        """What a stopped Studio left in this session: the half-written `*.part-*` files go, so do the reservations of
+        uploads that never finished, and a file recorded before it arrived (sessions from before uploads were reserved)
+        is forgotten. An upload another Studio on the same projects folder is still streaming (its lock, rooms.claim,
+        is held) keeps its reservation and its part file. True when something changed."""
+        from ..studio import rooms
+        changed, cut = False, set()
+        with _lock(self.id):
+            pending = self.state().get("pending") or {}
+        live = {tok for tok, p in pending.items() if isinstance(p, list) and len(p) > 2 and rooms.owner_live(self.home, p[2])}
+        for folder, _, names in os.walk(self.files):
+            for n in names:
+                m = re.fullmatch(r"(.+)\.part-([0-9a-f]{8})", n)
+                if m and m.group(2) not in live:
+                    try:
+                        os.remove(os.path.join(folder, n))
+                        changed = True
+                    except OSError:
+                        pass
+                    cut.add(os.path.relpath(os.path.join(folder, m.group(1)), self.files).replace(os.sep, "/"))
+        with _lock(self.id):
+            st = self.state()
+            kept = {tok: p for tok, p in (st.get("pending") or {}).items() if tok in live}
+            if (st.get("pending") or {}) != kept:
+                st["pending"], changed = kept, True
+            if not st.get("pending"):
+                st.pop("pending", None)
+            gone = [rel for rel in cut if rel in st["files"] and not os.path.exists(os.path.join(self.files, *rel.split("/")))]
+            for rel in gone:
+                st["files"].pop(rel)
+            if gone:
+                st["bytes"] = sum(st["files"].values())
+                changed = True
+            if changed:
+                self._save(st)
+        return changed
 
     def add_path(self, path: str) -> list:
         """Copy a local file or folder into the session (the CLI path), with the same limits as uploads."""

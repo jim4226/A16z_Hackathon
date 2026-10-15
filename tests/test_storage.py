@@ -17,7 +17,11 @@ def test_revisions_sort_by_number(tmp_path):
         os.mkdir(os.path.join(p.root, name))
     (tmp_path / "p" / "r5000").write_text("a file, not a revision", encoding="utf-8")
     assert p.revs() == ["r002", "r010", "r999", "r1000"]
-    assert p.latest() == "r1000"
+    assert p.latest() is None                    # folders only: nothing finished yet
+    for rev in ("r010", "r999", "r1000"):
+        for name in ("design.json", "results.json"):
+            (tmp_path / "p" / rev / name).write_text("{}" if rev != "r999" or name == "design.json" else "{", encoding="utf-8")
+    assert p.finished() == ["r010", "r1000"] and p.latest() == "r1000"   # r999's results don't parse
     assert p.claim_rev() == "r1001" and os.path.isdir(os.path.join(p.root, "r1001"))
 
 

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
 import time
 
@@ -58,27 +57,10 @@ def read_json(path: str, default=None):
 
 
 def write_text(path: str, text: str):
-    """Replace `path` with `text` (UTF-8), atomically and readable by this user only."""
-    folder = os.path.dirname(os.path.abspath(path))
-    ensure_dir(folder)
-    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".tmp.", suffix=".part")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(text)
-        for attempt in range(20):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:  # Windows: another thread is reading the old file right now
-                if attempt == 19:
-                    raise
-                time.sleep(0.025)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    """Replace `path` with `text` (UTF-8), atomically, synced to the disk and readable by this user only."""
+    from ...services import durable
+    ensure_dir(os.path.dirname(os.path.abspath(path)))
+    durable.write_text(path, text, private=True, prefix=".tmp.")
     try:
         os.chmod(path, 0o600)
     except OSError:
@@ -101,7 +83,16 @@ class _FileLock:
         while True:
             try:
                 self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                os.write(self.fd, f"{os.getpid()} {time.time():.0f}".encode())
+                try:
+                    os.write(self.fd, f"{os.getpid()} {time.time():.0f}".encode())
+                except BaseException:  # a full disk: never keep the descriptor, nor a lock file nobody holds
+                    os.close(self.fd)
+                    self.fd = None
+                    try:
+                        os.remove(self.path)
+                    except OSError:
+                        pass
+                    raise
                 return self
             except FileExistsError:
                 try:
