@@ -770,11 +770,21 @@ class Studio:
     @staticmethod
     def when_done(job, fn):
         """Run fn(job) on a background thread once `job` has ended, whatever its status: what a feature does after a
-        build it queued (the brief's after-build agents, a change request's bookkeeping, an import's progress)."""
+        build it queued (the brief's after-build agents, a change request's bookkeeping, an import's progress). A job
+        that ends as a conflict isn't over yet: fn gets the job its Apply queued once that ends, or the job itself once
+        it is dropped (a restart forgets a conflict's follow-ups: the features' start-up hooks cover those)."""
         def wait():
-            job.wait()
+            end = job
+            while True:
+                end.wait()
+                if end.status == "conflict":
+                    end.answered.wait()
+                if end.status == "resolved" and end.successor is not None:
+                    end = end.successor  # applied anyway: what that build does is this request's outcome
+                    continue
+                break
             try:
-                fn(job)
+                fn(end)
             except Exception:  # noqa: BLE001  (a feature's follow-up never breaks the room)
                 traceback.print_exc()
         threading.Thread(target=wait, daemon=True, name=f"morph-after-{job.id}").start()
@@ -822,7 +832,7 @@ class Studio:
         if job is None:
             raise LookupError("That change is no longer waiting for an answer.")
         if action == "drop":
-            job.status = "dropped"
+            job.answer("dropped")
             room.jobs.publish(job)
             room.emit({"type": "assistant", "text": f"Dropped: {job.label[:80]}", "noop": True, **self._tag(job)})
             return None
@@ -833,7 +843,7 @@ class Studio:
         except QueueFull:
             room.jobs.hold(job, job.conflict)  # still waiting: it can be applied once the queue has room
             raise
-        job.status = "resolved"
+        job.answer("resolved", new)
         room.jobs.publish(job)
         return new
 

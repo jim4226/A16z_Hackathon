@@ -438,3 +438,41 @@ def test_a_study_waiting_for_its_turn_is_listed_after_a_stop(home, tmp_path, mon
     hj.shutdown(timeout=0.1)                                               # the Studio stops: it stays, to carry on
     gate.set()
     assert os.path.exists(os.path.join(robust.study_dir(str(home / "so101"), sid), "study.json"))
+
+
+def test_a_change_request_whose_build_clashed_and_was_applied_anyway_records_its_revision(home, builds):
+    """A change request's build that clashes with a newer change waits for Apply or Drop like any other; its record
+    follows the answer (it used to be reopened with "the build ended as conflict" and never got the revision Apply
+    built). A dropped one is reopened, saying why."""
+    from test_team_util import make_team, members
+    ids, _ = make_team(str(home))
+    root = str(home / "egg")
+    st = server.Studio(RobotProject(root), str(home), team=True)
+    egg = st.room("egg")
+    req = SimpleNamespace(room=egg, studio=st)
+    for answer in ("apply", "drop"):
+        builds.gate, builds.started = threading.Event(), threading.Event()
+        first = st.queue_params(egg, {"build.quantity": 40 if answer == "apply" else 41}, by=ids["Ana"])
+        assert builds.started.wait(5)                                       # Ana's edit builds ...
+        p = collab.create_proposal(root, ids["Raj"], f"Quantity ({answer})", {"build.quantity": 77 if answer == "apply" else 78},
+                                   members=members(home))
+        job = collab.apply_proposal(root, p["id"], ids["Jim"], members=members(home))
+        assert api_team._enqueue(req, job)                                 # ... while Jim applies Raj's request
+        q = egg.jobs.get(job["job"])
+        builds.gate.set()
+        finish(first, q)
+        assert q.status == "conflict"
+        time.sleep(0.3)
+        assert collab.get_proposal(root, p["id"])["status"] == "applied"     # waiting for an answer, not reopened
+        new = st.resolve(egg, q.id, answer, by=ids["Jim"])
+        if new is not None:
+            finish(new)
+        for _ in range(100):
+            got = collab.get_proposal(root, p["id"])
+            if got["status"] != "applied" or got.get("applied_rev"):
+                break
+            time.sleep(0.05)
+        if answer == "apply":
+            assert got["status"] == "applied" and got["applied_rev"] == new.result == egg.latest(), got
+        else:
+            assert got["status"] == "open" and "dropped" in got["last_error"], got

@@ -278,10 +278,18 @@ class Job:
         self.after = ()                # its own requests (same member and tab) still waiting or building when it asked
         self.created, self.started, self.finished = time.time(), None, None
         self._done = threading.Event()
+        self.answered = threading.Event()  # a conflict got its answer: "resolved" (see successor) or "dropped"
+        self.successor = None              # the job a resolved conflict's Apply queued: it builds this request
 
     def wait(self, timeout: float | None = None) -> bool:
         """True once the job has finished (whatever its status)."""
         return self._done.wait(timeout)
+
+    def answer(self, status: str, successor: "Job | None" = None):
+        """This conflict was answered: Apply queued `successor` ("resolved"), or it was dropped."""
+        self.successor = successor
+        self.status = status
+        self.answered.set()
 
     def info(self, position: int | None = None) -> dict:
         out = {"id": self.id, "kind": self.kind, "by": self.by, "status": self.status, "position": position,
@@ -416,7 +424,7 @@ class JobQueue:
             gone = []
             while len(self.waiting) > self.MAX_CONFLICTS:
                 _, old = self.waiting.popitem(last=False)
-                old.status = "dropped"
+                old.answer("dropped")
                 gone.append(old)
                 self._log("ended", old, status="dropped")
         for old in gone:
@@ -441,7 +449,7 @@ class JobQueue:
             gone = list(self.waiting.values())
             self.waiting.clear()
             for job in gone:
-                job.status = "dropped"
+                job.answer("dropped")
                 self._log("ended", job, status="dropped")
             self._settle()
         for job in gone:

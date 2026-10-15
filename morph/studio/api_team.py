@@ -725,7 +725,8 @@ def _enqueue(req, job: dict) -> bool:
         root, home, send = room.p.root, _home(req), room.hub.send
 
         def finished(q):
-            error = None if q.result else (q.error or {"noop": "nothing to change: the design already has these values"}
+            error = None if q.result else (q.error or {"noop": "nothing to change: the design already has these values",
+                                                       "dropped": "it clashed with a newer change and was dropped"}
                                            .get(q.status, f"the build ended as {q.status}"))
             job_finished(root, job, rev=q.result, error=error, home=home, send=send)
         studio.when_done(q, finished)

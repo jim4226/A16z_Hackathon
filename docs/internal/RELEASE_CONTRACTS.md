@@ -215,7 +215,9 @@ studio.create_project(name=None, *, source="", design=None, need=None, origin="d
     -> (room, job)                        # projects.create + queue_build + project_created to every tab; on_room(room)
                                           # runs before the build is queued (subscribe there to miss no event)
 studio.queue_changes(..., kind="change", proposed_by=None)  # proposed_by: a Teams change request's author (ledger)
-studio.when_done(job, fn)                 # fn(job) on a background thread once the job ended (any status)
+studio.when_done(job, fn)                 # fn(job) on a background thread once the job ended (any status); a job
+                                          # that ends as a conflict hands fn the job its Apply queued once that ends,
+                                          # or itself once dropped (Job.answer, Job.successor; W3)
 Studio(project, home, *, team=False, allow_url_import=False); RobotProject.run(..., by=None, proposed_by=None)
 studio.fork_project(project, rev=None, name=None, *, by=None) -> (room, job | None, info)
 studio.delete_project(name) -> trash folder; studio.broadcast(event)
