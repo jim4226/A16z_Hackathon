@@ -268,11 +268,14 @@ def test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop(text)
     assert "estop" in b.changes["electronics.extras"] and re.search(r"\bhands (?:over|you)\b", b.summary), b.summary
 
 
-def test_hobby_servos_that_cant_grip_the_object_safely_become_smart_bus_servos():
+@pytest.mark.parametrize("text", ["a 4 dof arm with hobby servos to pick up ping pong balls",
+                                  "a 4 dof arm with hobby servos to move 40 g wooden blocks 50 mm wide"])
+def test_hobby_servos_that_cant_grip_the_object_safely_become_smart_bus_servos(text):
     # a hobby gripper servo has no torque limit: its force-sensing close can't reach a ping pong ball at the small end of
-    # its size without risking stall when a sensor reads nothing (a plan issue), so New robot's repair uses smart-bus
-    # servos, as it does when hobby servos can't hold the load, and says so
-    b = agents.run_turn(agents.run_turn(text="a 4 dof arm with hobby servos to pick up ping pong balls"), action="defaults")
+    # its size without risking stall when a sensor reads nothing, and without force sensors its position-only close holds
+    # a 50 mm block 8 % over its nominal size at stall (plan issues), so New robot's repair uses smart-bus servos, as it
+    # does when hobby servos can't hold the load, and says so
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
     assert b.preflight["issues"] == [] and b.changes["arm.actuator_family"] == "smart_bus"
     assert any(a["kind"] == "repair" and a["text"].startswith("A hobby PWM gripper servo has no torque limit")
                for a in b.assumptions)

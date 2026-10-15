@@ -471,12 +471,18 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - A robot set to Force sensor: none is no longer refused with "add finger.sensor=fsr402" when its gripper servo's torque
   limit sets the squeeze (smart-bus and Dynamixel grippers): the egg-picker without force sensors now passes its
   software checks, the egg intact. A hobby servo gripper, which has no torque limit, is still told.
-- A hobby PWM gripper servo (an MG996R) is never held at stall: without force sensors G closed it to its max-squeeze stop,
-  3 mm past a can, where it sat at its stall current (2.5 A) for the whole carry, and hobby servos have no overload
-  protection. G now closes it only as far past the object as its own position loop needs for the grip, never past
-  what the servo holds continuously (its rated torque): 0.49 mm for the can, 10 N against its 13.94 N target and the
-  6.97 N it needs not to slip; a 900 g can's target, above the stall, is an issue. F sets that distance, up to the
-  servo's rated torque or the object's limit, whichever is lower. With force
+- A hobby PWM gripper servo (an MG996R) is no longer driven to stall: without force sensors G closed it to its
+  max-squeeze stop, 3 mm past a can, where it sat at its stall current (2.5 A) for the whole carry, and hobby servos
+  have no overload protection. G now closes it only as far past the calibration gauge as its own position loop needs
+  for the grip, never past what the servo holds continuously (its rated torque): 0.49 mm for the can, 10 N against
+  its 13.94 N target and the 6.97 N it needs not to slip; a 900 g can's target, above the stall, is an issue. An
+  object larger than the gauge is held further past its own contact, so G also closes no further than keeps one at
+  the large end of its size (8 % over nominal) under 80 % of the stall and under its damage force; where no close
+  can (a can at the large end is 2.64 mm per jaw over and would be held at stall, as would an egg or a water bottle)
+  the plan says so as an issue, New robot uses smart-bus servos and chat's "make it cheaper" stops before hobby
+  servos. The simulation and robustness studies fail a trial that holds the servo at stall ("Held the gripper servo
+  at stall"); they counted a can 4 % over its size placed. F sets that distance, up to the servo's rated torque, the
+  object's limit or what keeps the large end of its size under 80 % of the stall, whichever is lowest. With force
   sensors a close that has read nothing by GRIP_PROBE stops there and opens (it went on to the stop): far enough to
   reach the object at the small end of its size (8 % under nominal) where a dead sensor then stays under 80 % of the
   stall (0.96 mm for a grape); otherwise (an egg would need 1.92 mm) it stops where a gauge-sized object gets the force

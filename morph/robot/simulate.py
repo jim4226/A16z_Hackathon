@@ -330,6 +330,7 @@ class _Info:
     grip_effort: float = 0.0        # actuator limit on the gripper joint (N for a jaw pair, N*m for a hinge)
     grip_force_max: float = 0.0     # per-finger force at the gripper actuator's full effort (N)
     grip_open_loop: bool = False    # a hobby servo held grip_close past contact: its position loop sets the squeeze
+    grip_squeeze_mm: float = 0.0    # ... that far past the gauge contact (mm at the jaw): _open_loop_stalls
     grip_probe_mm: float | None = None   # a hobby servo's force-sensing close reads no further past the gauge contact
                                          # (mm at the jaw) than this, then gives up and opens (_probe_gives_up)
     excluded: list = field(default_factory=list)
@@ -888,6 +889,7 @@ def _describe(asm, design, opts: SimOptions, grasp_only: bool = False):
                          "color": _object_color(design), "axis": "z"},
                  grip_kind=kind, grip_contact=float(contact), grasp_offset=offset, lever_mm=lever, grip_speed=speed,
                  grip_effort=effort, grip_force_max=fmax, grip_open_loop=bool(open_mm) and kind in ("prismatic", "revolute"),
+                 grip_squeeze_mm=open_mm if kind in ("prismatic", "revolute") else 0.0,
                  grip_probe_mm=(float(asm.meta["grip_probe_mm"]) if (asm.meta or {}).get("grip_probe_mm") is not None
                                 and opts.grip_force_n is None and kind in ("prismatic", "revolute") else None),
                  excluded=sorted(set(excluded)), dropped_parts=dropped, geoms=specs, notes=notes)
@@ -2304,6 +2306,22 @@ def _probe_gives_up(rob: _Robot, perturb) -> dict | None:
     return {"narrower_mm": round(narrower, 3), "probe_mm": probe} if narrower > probe + 1e-9 else None
 
 
+def _open_loop_stalls(rob: _Robot, perturb) -> dict | None:
+    """A hobby servo without force sensors or a torque limit: its firmware closes it grip_squeeze_mm past the gauge
+    contact (electronics2.open_loop_squeeze), and its own position loop reaches its stall force GRIP_SAT_MM past the
+    object's contact. So a trial's object wider than the gauge by the rest of that per jaw holds the servo at stall,
+    drawing its stall current for the whole carry with no overload protection: {wider_mm, squeeze_mm}, or None. (The
+    plan keeps every size of the object in its band under PROBE_STALL_SHARE of the stall, or says it can't.)"""
+    info = rob.info
+    s = (perturb or {}).get("size_scale")
+    if not info.grip_open_loop or s is None:
+        return None
+    wider = rob.R * (float(s) - 1.0)
+    if info.grip_squeeze_mm + wider < GRIP_SAT_MM - 1e-9:
+        return None
+    return {"wider_mm": round(wider, 3), "squeeze_mm": round(info.grip_squeeze_mm, 4)}
+
+
 def _given_up(rob: _Robot, plan, gave_up: dict):
     """The plan as the firmware runs it when its force-sensing close gives up: the jaws close to GRIP_PROBE past the
     gauge contact (short of the object) for as long as the grasp's close takes, then open for the rest of the run."""
@@ -2328,7 +2346,7 @@ def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
     """Simulate a pick-and-place plan and measure it: (run, metrics). `perturb`: a robustness trial (_simulate; the
     model changes come from _perturbed around this call); `on_step(t, data, phase)` also sees every step. A hobby
     servo's force-sensing close that would read nothing gives up and opens, as its firmware does (_probe_gives_up):
-    the run fails with that named."""
+    the run fails with that named; so does one whose sensorless close holds the servo at stall (_open_loop_stalls)."""
     info = rob.info
     pick, place, e1, e2 = at["pick"], at["place"], at["e1"], at["e2"]
     t_move, t_release, t_released = at["t_move"], at["t_release"], at["t_released"]
@@ -2388,6 +2406,15 @@ def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
                                 f"reads to before it gives up (GRIP_PROBE): its firmware opens with !GRIP no force "
                                 f"reading and leaves the {name}"))
         plan.mark("!GRIP no force reading: the jaws open", at["t_move"])
+    stalled = _open_loop_stalls(rob, perturb)
+    if stalled:
+        name = design.object.name or "object"
+        metrics.update(success=False, grip_stalled=stalled)
+        metrics.setdefault("failure", f"the {name} is {stalled['wider_mm']:.2f} mm per jaw wider than the calibration "
+                                      f"gauge, and the hobby gripper servo, closed {stalled['squeeze_mm']:.2f} mm past "
+                                      f"the gauge, is held at its stall (its whole stall force and current) for the "
+                                      f"whole carry, with no overload protection")
+        plan.mark("the gripper servo is held at stall", at["t_move"])
     if not len(rob.world_geoms) and rob.opts.world:      # a world without boxes: simulated there, nothing to hit
         W = rob.opts.world
         metrics.update({"world": W.get("id", ""), "world_sha": W.get("sha", ""), "world_contacts": [], "clearance_ok": True})

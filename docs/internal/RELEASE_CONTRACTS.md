@@ -1102,7 +1102,8 @@ field failure rate (section 0, honesty).
   study (150 of 200 at 1 ms; 140 before the simulation gripped at the gripper stage's 2.34 N). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
   more than 45 mm off: the jaws stayed shut and carried it), `drag`, `no_force_reading` (a hobby gripper's
   force-sensing close gave up on an object narrower than its probe: `metrics["grip_gave_up"]`, section 22),
-  `missed_grasp` (not lifted half the hover height),
+  `stalled` (a sensorless hobby gripper's close held its servo at stall on an object wider than the gauge, the object
+  intact: `metrics["grip_stalled"]`, section 22), `missed_grasp` (not lifted half the hover height),
   `dropped` (more than 12 mm of slip in transit), `over_force` (the product's damage check), `unreachable`,
   `world_collision` grouped as `world_collision:<phase>` (the plan's phase at the first contact); `unstable` (MuJoCo's
   BADQPOS, BADQVEL, BADQACC or BADCTRL warnings, after which MuJoCo restarts the run from its first frame, a full
@@ -1626,13 +1627,32 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     squeezes a gauge-sized object with: the target, more when floored, `rated_n` when the target is above it
     (`capped`; a 370 g can's 13.94 N target squeezes 10 N, 0.49 mm past contact; a 900-1400 g can, whose target is
     above the servo's stall, no longer has it held at stall 1.5 mm past contact, and is an issue: 10 N is below the
-    16.95-26.37 N it needs not to slip). The firmware's `GRIP_SQUEEZE` (in the joint's
-    unit) is that distance and G commands `GRIP_CLOSED - GRIP_SQUEEZE`, never `GRIP_MIN`; F sets it
-    (`GRIP_SQUEEZE_PER_N` = band / stall, at least `GRIP_SQUEEZE_LEAST`). `eplan.grip.limit_n` (`GRIP_LIMIT_N`, F's
-    cap) is min(the object's limit, `rated_n`): F raises a squeeze planned below that up to it (a servo softer than the
-    model squeezes less than F says, and F can't take it further) and never holds the servo past its rated torque. A
-    capped grip writes the squeeze as `GRIP_TARGET_N` and is a plan issue only when `rated_n` is below the window's low
-    end, the force the object needs not to slip (`grip_problems`). A floored squeeze above the object's limit (a stock
+    16.95-26.37 N it needs not to slip). The jaws are calibrated on a gauge of the object's nominal size and the object
+    strays from it by `OBJECT_SIZE_SPREAD` (below) each way, so one at the large end of its size is held `spread_mm`
+    (that share of its half-width) further past its own contact. `room_mm` = min(`PROBE_STALL_SHARE` x band, band x
+    the object's damage force / stall) is how far past its contact that object may be held; `covers` is whether two
+    position commands fit in `room_mm - spread_mm`, and then `squeeze_mm` is at most that (`band_capped` when this
+    lowers it; `band_n`, stall x (room - spread) / band, is what that squeezes a gauge-sized object with). `large_n`
+    is what the large end gets. Without `covers` the squeeze stays as above and the plan has an issue
+    (`grip_problems`: "... closes by position only, so a <object> at the large end of its size, <spread> mm per jaw
+    wider than the calibration gauge ... is held <squeeze + spread> mm past its contact, with <its whole stall force
+    | N, x % of it> ..."); with `band_capped` a squeeze below the window's low end is an issue too. On an MG996R
+    egg-picker hand (1.2 mm room): a 370 g soda can (2.64 mm spread) and a water bottle (2.60 mm) get the issue, an
+    egg too (1.76 mm; it also has the gripper stage's "add finger.sensor=fsr402"), an 18 mm marker (0.72 mm) covers
+    (0.16 mm squeeze, 18.13 N at its large end, above the 10 N rated torque: a warning). The firmware's
+    `GRIP_SQUEEZE` (in the joint's unit) is that distance and G commands `GRIP_CLOSED - GRIP_SQUEEZE`, never
+    `GRIP_MIN`; F sets it (`GRIP_SQUEEZE_PER_N` = band / stall, at least `GRIP_SQUEEZE_LEAST`).
+    `eplan.grip.limit_n` (`GRIP_LIMIT_N`, F's cap) is min(the object's limit, `rated_n`, and `band_n` when `covers`): F
+    raises a squeeze planned below that up to it (a servo softer than the model squeezes less than F says, and F can't
+    take it further), never holds a gauge-sized object past the servo's rated torque, and with `covers` never holds the
+    large end of the band past `room_mm`. A capped grip writes the squeeze as `GRIP_TARGET_N` and is a plan issue only
+    when `rated_n` is below the window's low end, the force the object needs not to slip (`grip_problems`). The
+    simulation (`simulate._open_loop_stalls`, `_Info.grip_squeeze_mm`) fails a pick-and-place trial whose object
+    (`size_scale`) is wider than the gauge by `GRIP_SAT_MM - grip_squeeze_mm` per jaw or more, where the servo's own
+    position loop holds it at stall: `metrics["grip_stalled"]` {wider_mm, squeeze_mm} and `metrics["failure"]`; a
+    robustness study counts it as `stalled` ("Held the gripper servo at stall ..."), unless the object was also
+    crushed (`over_force`). The plan keeps a margin the simulation doesn't (80 % of the stall against the stall
+    itself), as its hold margin does. A floored squeeze above the object's limit (a stock
     jaw's 70 mm lever makes one count 0.54 mm at a strawberry) is a plan issue. Torque-limited and force-sensing grips
     keep `GRIP_SQUEEZE` = the whole overtravel (G still commands `GRIP_MIN` without sensors);
   - with force sensors (`open_loop_squeeze(grip, gkey, family, width_mm)`) the firmware's `GRIP_PROBE` is `probe_mm`:
@@ -1655,7 +1675,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     (`_given_up`), fails, and names it: `metrics["grip_gave_up"]` {narrower_mm, probe_mm} and `metrics["failure"]`; a
     robustness study counts it as `no_force_reading` ("Let go with !GRIP ..."). The firmware's first reading needs
     `GRIP_SENSE_N` (0.05 N) of squeeze, a few hundredths of a millimetre, so the two agree to within that. New
-    robot's repair (`brief.repair`, issue kind `hobby_gripper`, which also takes the capped-hold issue above) switches
+    robot's repair (`brief.repair`, issue kind `hobby_gripper`, which also takes the capped-hold and size-band issues
+    above) switches
     a hobby PWM arm with such an issue to smart-bus servos and says so, also when the person asked for hobby servos
     ("a 4 dof arm with hobby servos to pick up ping pong balls"), as it does when they can't hold the load.
     `tests/fw_stubs/grip_harness.cpp` prints `max` (`GRIP_MAX`) too.

@@ -1380,10 +1380,10 @@ ISSUE_KINDS = (("torque", r"needs [\d.]+ N·m"), ("supply", r"^supply .*margin")
                ("deflection", r"tip deflection|bending safety factor"),
                ("grip", r"no safe grip force|grip force [\d.]+ N < required|reaches only .* per finger"),
                ("stroke", r"stroke too small"), ("printer", r"exceeds the .* (?:build volume|printer bed)"),
-               # a hobby gripper servo, with no torque limit, can't cover the object's size with force sensors or hold it
-               # without them (electronics2.open_loop_squeeze)
+               # a hobby gripper servo, with no torque limit, can't cover the object's size with force sensors, or without
+               # them hold it or keep every size of it under stall (electronics2.open_loop_squeeze)
                ("hobby_gripper", r"has no torque limit to back up the force sensors, and reaching|"
-                                 r"hobby gripper servo has no torque limit and holds only"))
+                                 r"hobby gripper servo has no torque limit and (?:holds only|closes by position only)"))
 
 
 def classify(issues: list) -> set:

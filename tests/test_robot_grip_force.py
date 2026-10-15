@@ -286,7 +286,8 @@ def test_a_sensorless_hobby_gripper_closes_only_as_far_as_its_squeeze_and_is_sim
     counted the 13.94 N target. G now closes only as far past the object as the servo's own position loop needs for the
     target (it reaches stall SERVO_BAND_MM past contact), never past what the servo holds continuously (its rated
     torque: the can's 13.94 N target becomes 10 N, still above the 6.97 N it needs not to slip), and the budget, the
-    simulation, the plan and the manual use that squeeze."""
+    simulation, the plan and the manual use that squeeze. A can at the large end of its size still meets the stall, so
+    the plan has an issue (test_a_sensorless_hobby_grip_keeps_every_size_of_its_object_under_stall_or_says_it_cant)."""
     from morph import electronics
     from morph.robot import catalog
 
@@ -299,16 +300,18 @@ def test_a_sensorless_hobby_gripper_closes_only_as_far_as_its_squeeze_and_is_sim
     assert g["torque_limit"] is None and g["sensor"] == "none" and g["stall_force_n"] > g["target_n"] > rated
     assert ol["rated_n"] == pytest.approx(rated, abs=0.005) and ol["capped"]
     assert ol["squeeze_mm"] == pytest.approx(electronics.SERVO_BAND_MM * rated / g["stall_force_n"], abs=1e-4)
-    assert g["squeeze_n"] == ol["rated_n"] < g["target_n"] and g["squeeze_n"] > g["window_n"][0] and not ep["issues"]
+    assert g["squeeze_n"] == ol["rated_n"] < g["target_n"] and g["squeeze_n"] > g["window_n"][0]
+    assert [i[:91] for i in ep["issues"]] == ["gripper: the hobby gripper servo has no torque limit and closes by "
+                                             "position only, so a soda"]
     # the power budget counts the servo's share of stall at that squeeze, not a stall
     row = next(a for a in ep["power_budget"]["per_actuator"] if a["joint"] == "gripper")
     share = electronics.jaw_torque(g["squeeze_n"], g["lever_mm"], g["jaw"]) / s["torque_nm"]
     assert row["avg_a"] == pytest.approx(s["idle_a"] + s["stall_a"] * share * 0.5, abs=0.01)
     assert row["avg_a"] < s["stall_a"] / 2
-    w = next(w for w in ep["warnings"] if f"G closes the jaws only {ol['squeeze_mm']:.2f} mm past the object" in w)
+    w = next(w for w in ep["warnings"] if f"G closes the jaws only {ol['squeeze_mm']:.2f} mm past the calibration gauge" in w)
     assert (f"less than the {g['target_n']:g} N target: the most it holds continuously, its rated torque), 32 % of its "
-            f"stall force and current. It never closes as far as its {g['stall_force_n']:g} N stall, about "
-            f"{electronics.SERVO_BAND_MM:g} mm past contact") in w and "100 %" not in w
+            f"stall force and current. A soda can at the large end of its size, 2.64 mm per jaw wider than the gauge, "
+            f"gets its whole stall force (a plan issue).") in w and "100 %" not in w
     assert w.endswith(f"F <newtons> sets how far G closes, up to {g['limit_n']:g} N (the servo's rated torque)")
     assert not [w for w in ep["warnings"] if "rated to hold continuously" in w]
     assert g["limit_n"] == ol["rated_n"]          # F goes up to the rated torque, never past it
@@ -334,9 +337,11 @@ def test_a_hobby_grip_the_servo_cant_hold_continuously_is_an_issue_not_a_stall()
     g, ol = ep["grip"], ep["grip"]["open_loop"]
     assert g["target_n"] > g["stall_force_n"] and ol["capped"] and g["squeeze_n"] == g["limit_n"] == ol["rated_n"]
     assert ol["squeeze_mm"] < 0.4 * ol["servo_band_mm"]
-    assert ep["issues"] == [f"gripper: the hobby gripper servo has no torque limit and holds only {ol['rated_n']:g} N per "
-                            f"finger continuously (its rated torque), below the {g['window_n'][0]:g} N the soda can needs "
-                            "not to slip: use a stronger gripper servo, or a bus servo whose torque limit sets the squeeze"]
+    assert ep["issues"][1:] == [f"gripper: the hobby gripper servo has no torque limit and holds only {ol['rated_n']:g} N "
+                                f"per finger continuously (its rated torque), below the {g['window_n'][0]:g} N the soda can "
+                                "needs not to slip: use a stronger gripper servo, or a bus servo whose torque limit sets "
+                                "the squeeze"]
+    assert "closes by position only" in ep["issues"][0]          # and a can at the large end of its size stalls it
     assert not [w for w in ep["warnings"] if "100 %" in w]
 
 
@@ -473,6 +478,63 @@ def test_no_hobby_servo_is_commanded_to_stall(tmp_path, name, design):
             assert ol["probe_n"] == pytest.approx(g["stall_force_n"] * ol["probe_mm"] / band, abs=0.01)
         else:
             assert r["state"] == "HOLD" and abs(r["force"] - g["target_n"]) <= 0.15 * g["target_n"], r
+
+
+@pytest.mark.parametrize("obj, changes, covers", [
+    ("marker", {}, True), ("marker", {"object.max_force_n": 20.0}, True),    # 18 mm: 0.72 mm per jaw over at 108 %
+    ("soda can", {}, False), ("water bottle", {}, False), ("soda can", {"object.mass_g": 900.0}, False)])
+def test_a_sensorless_hobby_grip_keeps_every_size_of_its_object_under_stall_or_says_it_cant(tmp_path, obj, changes, covers):
+    """A hobby PWM gripper without force sensors closes by position only, and G set how far past the calibration gauge
+    for a gauge-sized object: one larger than the gauge within its size band (OBJECT_SIZE_SPREAD, 8 % each way) is held
+    that much further past its own contact. A 370 g can 2 % over its nominal 66 mm got 76 % of the MG996R's stall, from
+    4 % over its whole stall, for the whole carry and with no overload protection, and the simulation (and so a
+    robustness study) counted it placed; a sensorless egg 6 % over was crushed. G now closes no further than keeps an
+    object at the large end of the band under PROBE_STALL_SHARE of the stall and under its damage force, F can't raise
+    it past that, and when no close can (the can is 2.64 mm per jaw over at 108 %, past the 1.2 mm to that share) the
+    plan says so as an issue New robot repairs; the simulation fails a trial that holds the servo at stall."""
+    from morph import electronics
+    from morph.studio import brief
+
+    d = Design().with_changes({**EGG_ROBOT, **object_changes(obj), "finger.sensor": "none",
+                               "arm.actuator_family": "hobby_pwm", **changes})
+    exe, ep = _compile_firmware(tmp_path, d)
+    g, ol, band = ep["grip"], ep["grip"]["open_loop"], electronics.SERVO_BAND_MM
+    spread = electronics.OBJECT_SIZE_SPREAD * d.object.diameter_mm / 2
+    dmg = d.object.max_force_n
+    room = min(electronics.PROBE_STALL_SHARE * band, band * dmg / g["stall_force_n"] if dmg else band)
+    assert ol["spread_mm"] == pytest.approx(spread, abs=1e-3) and ol["covers"] is covers
+    told = [i for i in ep["issues"] if "closes by position only" in i]
+    assert bool(told) is not covers and brief.classify(told) == ({"hobby_gripper"} if told else set()), ep["issues"]
+    if told:
+        assert f"{spread:.2f} mm per jaw wider than the calibration gauge" in told[0], told
+    for f in (None, 1000.0, 3.0):
+        r, out = _run_exe(exe, 0.0, 0.0, f)
+        deepest = r["closed"] - r["lowest"]                     # mm past the gauge contact: the most G or F commands
+        if covers:   # the largest object of the band stays under 80 % of stall and under its damage force
+            assert deepest + spread <= room + 1e-3 and deepest >= 2 * ol["step_mm"] - 1e-3, (f, r)
+            if f is None:
+                assert deepest == pytest.approx(ol["squeeze_mm"], abs=1e-3), r
+                assert ol["large_n"] == pytest.approx(g["stall_force_n"] * (deepest + spread) / band, abs=0.02)
+        else:        # the plan's issue; G still squeezes a gauge-sized object as planned
+            want = min(f or g["squeeze_n"], g["limit_n"]) * band / g["stall_force_n"]
+            assert deepest == pytest.approx(max(want, 2 * ol["step_mm"]), abs=1e-3), (f, r)
+    if covers:
+        assert ol["large_n"] <= electronics.PROBE_STALL_SHARE * g["stall_force_n"] + 0.01
+        assert not dmg or ol["large_n"] <= dmg
+        w = next(w for w in ep["warnings"] if "G closes the jaws only" in w)
+        assert (f"at the large end of its size, {spread:.2f} mm per jaw wider than the gauge, gets about "
+                f"{ol['large_n']:g} N") in w
+    sz = arm.size(d)
+    asm = arm.build(d, sz, ep)
+    m = simulate.run(asm, d, "pick_place", perturb={"size_scale": 1.0 + electronics.OBJECT_SIZE_SPREAD},
+                     fast=True)["metrics"]
+    if covers:       # (an 18 mm marker misses its place on this arm whatever the gripper: not asserted here)
+        assert "grip_stalled" not in m, m
+    else:
+        assert not m["success"] and m["grip_stalled"]["wider_mm"] == pytest.approx(spread, abs=1e-3), m
+        assert "held at its stall" in m["failure"], m["failure"]
+    m = simulate.run(asm, d, "pick_place", fast=True)["metrics"]           # a gauge-sized object never stalls it
+    assert "grip_stalled" not in m, m
 
 
 @pytest.mark.parametrize("obj, covers", [("egg", False), ("grape", True)])

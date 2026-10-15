@@ -420,6 +420,39 @@ def test_a_study_of_a_revision_that_now_holds_another_design_says_so(project, pr
     assert robust.load(project, doc["id"])["rev_changed"] is False
 
 
+def test_a_sensorless_hobby_grip_that_holds_its_servo_at_stall_is_a_failure_with_its_name(tmp_path):
+    """A hobby PWM gripper without force sensors on a 370 g can: G closes 0.49 mm past the calibration gauge, so a can
+    8 % over its nominal size is held 3.13 mm past its own contact, at the servo's stall, for the whole carry. The
+    study counted it placed; it now fails it as "stalled", as the simulation does, and the plan says so as an issue."""
+    from morph.cli import EGG_ROBOT
+    from morph.robot import pipeline2
+    from morph.studio.intent import object_changes
+
+    d = Design().with_changes({**EGG_ROBOT, **object_changes("soda can"), "finger.sensor": "none",
+                               "arm.actuator_family": "hobby_pwm"})
+    info = projects.create(str(tmp_path), "hobby-can", origin="default", demo=False, unique=False)
+    root, sz = info["root"], arm.size(d)
+    force = pipeline2.gripper_stage(d, sz, simulate=False)["force"]
+    ep = electronics2.plan(d, sz, grip=force)
+    assert any("closes by position only" in i for i in ep["issues"])
+    rev = os.path.join(root, "r001")
+    os.makedirs(rev)
+    with open(os.path.join(rev, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(d.dumps())
+    doc = simulate.run(arm.build(d, sz, ep), d, "pick_place", os.path.join(rev, "sim"), fast=True)
+    res = {"rev": "r001", "kind": "robot", "stage_status": {"sim": "computed"}, "provenance": {"sim": "computed"},
+           "gripper": {"force": force}, "sims": {"mjcf": "robot.xml", "scenarios": {"pick_place": {
+               "file": "sim_pick_place.json", "title": "Pick and place", "metrics": doc["metrics"]}}}}
+    with open(os.path.join(rev, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    runner = robust.Runner(robust.prepare(root, "r001", 0.002)["blob"])
+    rows = {s: runner.run({"i": 0, "params": {"object_size": s}, "perturb": {"size_scale": s}}) for s in (1.0, 1.08)}
+    assert rows[1.0]["outcome"] != "stalled"
+    assert rows[1.08]["outcome"] == "stalled" and not rows[1.08]["success"], rows[1.08]
+    assert robust.group_label("stalled", "can") == ("Held the gripper servo at stall: the can was wider than its "
+                                                    "position-only close allows")
+
+
 # ------------------------------------------------------------------ acceptance (MORPH_SLOW=1)
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 200 runs at 1 ms plus the solver checks (minutes)")

@@ -453,6 +453,7 @@ PHASES = {"approach": "the approach", "grasp": "the grasp", "lift": "the lift", 
 LABELS = {"jam": "Jaws stayed shut at release: the {obj} was carried away", "drag": "Dragged off the target",
           "missed_grasp": "Missed the grasp", "dropped": "Dropped on the way",
           "no_force_reading": "Let go with !GRIP: the {obj} was narrower than the force-sensing close reaches",
+          "stalled": "Held the gripper servo at stall: the {obj} was wider than its position-only close allows",
           "over_force": "Squeezed harder than the {obj} can take", "unreachable": "Out of reach",
           "world_collision": "Hit a box in the room during {phase}", "error": "The simulation stopped with an error",
           "unstable": "Numerically unstable (not counted)"}
@@ -1050,6 +1051,8 @@ class Runner:
             outcome = "unstable"
         elif met.get("grip_gave_up"):      # a hobby gripper's force-sensing close read nothing and opened (!GRIP)
             outcome = "no_force_reading"
+        elif met.get("grip_stalled") and met["intact"]:   # a hobby gripper's sensorless close held its servo at stall
+            outcome = "stalled"
         elif ok:
             outcome = "placed"
         elif contacts:

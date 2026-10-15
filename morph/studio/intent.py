@@ -95,8 +95,8 @@ CHEAPER = re.compile(r"\b(cheaper|cheapest|less expensive|cost less|lower (?:the
 
 def _hobby_grips(d: Design) -> bool:
     """Whether hobby PWM servos would still grip the object safely: their gripper servo has no torque limit, so a
-    force-sensing close may not reach the object's small end and a sensorless one may not hold it (the plan's
-    hobby_gripper issues, brief.classify)."""
+    force-sensing close may not reach the object's small end, and a sensorless one may not hold it or keep every size of
+    it below stall (the plan's hobby_gripper issues, brief.classify)."""
     from .brief import classify, preflight
 
     return "hobby_gripper" not in classify(preflight({**d.flat(), "arm.actuator_family": "hobby_pwm"})["issues"])

@@ -736,17 +736,31 @@ def _grip_sentence(grip: dict, name: str) -> str:
         at = (f" (gripper = {motion['closed'] - motion['squeeze']:.2f} {motion.get('unit', '')})"
               if motion.get("squeeze") is not None and motion.get("closed") is not None else "")
         rated = ol.get("rated_n")
+        from ..electronics import PROBE_STALL_SHARE
+
+        under = (f"under {PROBE_STALL_SHARE * 100:.0f} % of the stall"
+                 + (" and its damage force" if grip.get("object_limit_n") else ""))
         cap = ("its rated torque, what it holds continuously" if rated is not None and lim is not None and lim >= rated - 0.005
+               else f"what keeps a {name} at the large end of its size {under}"
+               if ol.get("covers") and ol.get("band_n") is not None and lim is not None and lim >= ol["band_n"] - 0.005
                else f"the {name}'s limit")
-        below = (f" (less than Morph's {t:g} N target: the most it holds continuously)" if ol.get("capped") else "")
+        below = (f" (less than Morph's {t:g} N target: the most that keeps a {name} at the large end of its size {under})"
+                 if ol.get("band_capped") else
+                 f" (less than Morph's {t:g} N target: the most it holds continuously)" if ol.get("capped") else "")
+        large = ""
+        if ol.get("spread_mm") is not None and ol.get("large_n") is not None:
+            large = (f" The jaws are set on a gauge of the {name}'s nominal size; one at the large end of its size, "
+                     f"{ol['spread_mm']:.2f} mm per jaw wider, is held that much further past its contact and gets about "
+                     f"{ol['large_n']:g} N per finger" + ("." if ol.get("covers") else
+                                                          ", at or near stall: the plan lists this as an issue."))
         return (f"This gripper has no force sensors and its hobby servo no torque limit, so G closes it only "
-                f"{ol['squeeze_mm']:.2f} mm past the {name}{at}, where the servo's own position loop squeezes about "
-                f"{sq:g} N per finger{below}; it would reach its {stall:g} N stall about {ol['servo_band_mm']:g} mm past "
-                f"contact and, held there, overheat (hobby servos have no overload protection). Check the squeeze once "
-                f"with a kitchen scale between the jaws. To change it send F followed by newtons: F sets how far G closes "
-                f"from Morph's model of the servo, up to {lim:g} N ({cap}). A servo softer than the model squeezes less "
-                f"than F says, and F can't ask for more than {lim:g} N; lower it if the servo hums or warms while it holds"
-                + within)
+                f"{ol['squeeze_mm']:.2f} mm past a gauge-sized {name}{at}, where the servo's own position loop squeezes "
+                f"about {sq:g} N per finger{below}; it would reach its {stall:g} N stall about {ol['servo_band_mm']:g} mm "
+                f"past contact and, held there, overheat (hobby servos have no overload protection).{large} Check the "
+                f"squeeze once with a kitchen scale between the jaws. To change it send F followed by newtons: F sets how "
+                f"far G closes from Morph's model of the servo, up to {lim:g} N ({cap}). A servo softer than the model "
+                f"squeezes less than F says, and F can't ask for more than {lim:g} N; lower it if the servo hums or warms "
+                f"while it holds" + within)
     where = (f"with the object {grip.get('lever_mm', 0):g} mm from the jaw's pivot (more nearer the pivot, less towards the tip)"
              if revolute else f"through its {grip.get('lever_mm', 0):g} mm pinion")
     return (f"This gripper has no force sensors: G closes it past the {name}{stop}, and the gripper servo's torque limit, "
