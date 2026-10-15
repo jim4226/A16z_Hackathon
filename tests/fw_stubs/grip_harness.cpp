@@ -1,6 +1,8 @@
 // Appended to a generated Feetech morph_arm.ino by tests/test_robot_grip_force.py: the Arduino and SCServo calls the
 // sketch makes, answered and recorded, then O, G and 30 s of 10 ms control ticks with a force sensor that reads
-// argv[1] newtons per unit the jaw closes past 0 (0: no sensor fitted, or no reading). Prints one RESULT line.
+// argv[1] newtons per unit the jaw closes past the object (0: no sensor fitted, or no reading). The object meets the
+// jaws argv[2] units past 0 (0: the calibration gauge's size; 1.5: an object 1.5 mm per jaw narrower). Prints one
+// RESULT line.
 #include <cstdio>
 static unsigned long _ms = 0;
 unsigned long millis() { return _ms; }
@@ -8,10 +10,11 @@ void delay(unsigned long d) { _ms += d; }
 void pinMode(int, int) {}
 void digitalWrite(int, int) {}
 int digitalRead(int) { return HIGH; }
-float SQUEEZE_N_PER_UNIT = 0.0f;   // force sensor model: 0 = nothing fitted (or wired); else N per unit closed past 0
+float SQUEEZE_N_PER_UNIT = 0.0f;   // force sensor model: 0 = nothing fitted (or wired); else N per unit closed past contact
+float CONTACT_OFFSET = 0.0f;       // the object meets the jaws this far past 0 (narrower than the gauge)
 int analogRead(int pin) {
   if (pin == PIN_VSERVO_SENSE) return (int)(VSERVO_NOMINAL / VSERVO_DIVIDER / ADC_VREF * ADC_MAX);
-  float f = -gC * SQUEEZE_N_PER_UNIT;
+  float f = (-gC - CONTACT_OFFSET) * SQUEEZE_N_PER_UNIT;
   if (f <= 0.0f) return 0;
   float r = FSR_K / f, v = ADC_VREF * FSR_R_DIV / (FSR_R_DIV + r);
   return (int)(v / ADC_VREF * ADC_MAX);
@@ -54,6 +57,7 @@ int SMS_STS::Ping(u8) { return 0; }
 
 int main(int argc, char **argv) {
   SQUEEZE_N_PER_UNIT = argc > 1 ? (float)atof(argv[1]) : 0.0f;
+  CONTACT_OFFSET = argc > 2 ? (float)atof(argv[2]) : 0.0f;
   setup();
   char o[] = "O"; command(o);
   for (int i = 0; i < 500; i++) { _ms += 10; tick(0.01f); }

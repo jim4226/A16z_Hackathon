@@ -409,12 +409,13 @@ def _object_surface(design, spacing=1.0, offset=0.0) -> np.ndarray:
 def _grip_force_target(asm, design, override=None, generated_fingers=True, cap=None) -> float:
     """Per-finger clamp force the firmware regulates to (N): the one it ships (asm.meta["grip_target_n"], which the robot
     builders copy from the electronics plan, itself the gripper stage's force plan), else the Grip force target, else
-    that force plan's closed form (morph.electronics.force_window). ``generated_fingers`` = Morph's own pads (contour /
-    V wedge gain and the FSR range apply); False for a stock gripper (flat jaws). ``cap``: the jaws' own limit (the
-    gripper joint's effort), else design.gripper.force_n."""
+    that force plan's closed form (morph.electronics.force_window). A sensorless hobby servo regulates nothing: its
+    firmware squeezes with the servo's stall force (asm.meta["grip_squeeze_n"]). ``generated_fingers`` = Morph's own
+    pads (contour / V wedge gain and the FSR range apply); False for a stock gripper (flat jaws). ``cap``: the jaws'
+    own limit (the gripper joint's effort), else design.gripper.force_n."""
     o, f = design.object, design.finger
     cap = max(cap if cap else design.gripper.force_n, 0.5)
-    for key in ("grip_target_n", "grip_force_n"):
+    for key in ("grip_squeeze_n", "grip_target_n", "grip_force_n"):
         if asm.meta.get(key):
             override = override or asm.meta[key]
     if override:

@@ -200,9 +200,11 @@ def test_the_gripper_torque_limit_comes_from_the_grip():
     g = electronics2.plan(egg, sz, grip=pipeline2.gripper_stage(egg, sz, simulate=False)["force"])["grip"]
     assert g["torque_limit"]["force_n"] == g["limit_n"] == 19.0
     assert g["torque_limit"]["nm"] == pytest.approx(19.0 * 2 * egg.electronics.pinion_radius_mm / 1000, abs=1e-4)
-    assert [w for w in ep["warnings"] if "torque limit sets the grip (2 % of its stall torque for 0.5 N" in w]
+    assert [w for w in ep["warnings"] if "G closes the jaws past the object and the gripper servo's torque limit sets "
+            "the squeeze (2 % of its stall torque for 0.5 N" in w]
     pwm = _plan_so101(**{"arm.actuator_family": "hobby_pwm"})
-    assert pwm[2]["grip"]["torque_limit"] is None and [w for w in pwm[2]["warnings"] if "closes with all its torque" in w]
+    assert pwm[2]["grip"]["torque_limit"] is None
+    assert [w for w in pwm[2]["warnings"] if "G closes the jaws past the object with all its torque" in w]
     assert any("no torque limit" in i for i in imported.gripper_summary(pwm[0], pwm[1])["force"]["issues"])
 
 
@@ -215,7 +217,23 @@ def test_the_simulation_squeezes_a_stock_jaw_with_the_firmwares_torque_limit():
     assert info.grip_force_n == pytest.approx(ep["grip"]["target_n"])
 
 
-def _run_firmware(tmp_path, d, newtons_per_unit):
+def test_a_sensorless_hobby_gripper_is_simulated_squeezing_with_all_its_torque():
+    """A hobby PWM servo has no torque limit: without force sensors its firmware closes past the object with all its
+    torque, so the simulation squeezes with the servo's stall force per finger, not the target it can't regulate."""
+    d = Design().with_changes({**EGG_ROBOT, **object_changes("soda can"), "finger.sensor": "none",
+                               "arm.actuator_family": "hobby_pwm"})
+    sz = arm.size(d)
+    ep = electronics2.plan(d, sz, grip=pipeline2.gripper_stage(d, sz, simulate=False)["force"])
+    g = ep["grip"]
+    assert g["torque_limit"] is None and g["stall_force_n"] > g["target_n"]
+    asm = arm.build(d, sz, ep)
+    assert asm.meta["grip_squeeze_n"] == g["stall_force_n"]
+    info, _ = simulate._describe(asm, d, simulate._opts(None))
+    assert info.grip_force_n == pytest.approx(min(g["stall_force_n"], asm.joint("gripper").effort))
+    assert [w for w in ep["warnings"] if f"about {g['stall_force_n']:g} N per finger" in w]
+
+
+def _compile_firmware(tmp_path, d):
     import shutil
     import subprocess
 
@@ -232,24 +250,71 @@ def _run_firmware(tmp_path, d, newtons_per_unit):
     res = subprocess.run(["g++", "-std=gnu++17", "-I" + stubs, str(tmp_path / "run.cpp"), "-o", str(exe)],
                          capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
-    out = subprocess.run([str(exe), str(newtons_per_unit)], capture_output=True, text=True, timeout=120).stdout
+    return exe, ep
+
+
+def _run_exe(exe, newtons_per_unit, offset=0.0):
+    """Run the compiled sketch's grip loop: a force sensor reading `newtons_per_unit` per unit closed past the object,
+    which meets the jaws `offset` units past the calibrated zero (an object narrower than the gauge)."""
+    import subprocess
+
+    out = subprocess.run([str(exe), str(newtons_per_unit), str(offset)], capture_output=True, text=True, timeout=120).stdout
     fields = dict(kv.split("=") for kv in next(ln for ln in out.splitlines() if ln.startswith("RESULT")).split()[1:])
-    return {k: (float(v) if k not in ("state",) else v) for k, v in fields.items()}, out, ep
+    return {k: (float(v) if k not in ("state",) else v) for k, v in fields.items()}, out
 
 
-def test_the_firmware_never_squeezes_blind_to_its_max_squeeze_stop(tmp_path):
-    """The generated firmware itself, compiled and run: with no force reading through the whole close it stops at
-    GRIP_CLOSED and says so, never GRIP_MIN; a working sensor still closes to the target; a stock jaw closes to
-    GRIP_CLOSED with its torque limit written once."""
-    r, out, _ = _run_firmware(tmp_path / "egg0", template("egg-picker"), 0.0)
-    assert r["lowest"] > r["min"] and r["final"] == r["closed"] and r["state"] == "POS"
-    assert "!GRIP no force reading" in out and r["torque_writes"] == 1
+def _run_firmware(tmp_path, d, newtons_per_unit, offset=0.0):
+    exe, ep = _compile_firmware(tmp_path, d)
+    return (*_run_exe(exe, newtons_per_unit, offset), ep)
+
+
+def test_the_firmware_with_no_force_reading_stops_under_its_torque_cap_and_says_so(tmp_path):
+    """The generated firmware itself, compiled and run: with no force reading all the way to its max-squeeze stop it
+    goes back to GRIP_CLOSED and says so (meanwhile the torque limit, written at start-up, caps the squeeze at the
+    firmware's force limit); a working sensor still closes to the target."""
+    r, out, ep = _run_firmware(tmp_path / "egg0", template("egg-picker"), 0.0)
+    assert r["lowest"] == pytest.approx(r["min"], abs=0.1)           # probed to the stop (within one 10 ms tick)
+    assert r["final"] == r["closed"] and r["state"] == "POS"
+    assert "!GRIP no force reading down to GRIP_MIN" in out and r["torque_writes"] == 1
+    tl = ep["grip"]["torque_limit"]              # the cap: the force limit at the pinion with no gear losses
+    assert tl["force_n"] == ep["grip"]["limit_n"] and r["torque"] == round(tl["fraction"] * 1000)
     r, out, ep = _run_firmware(tmp_path / "egg20", template("egg-picker"), 20.0)   # 20 N per mm past contact
     assert r["state"] == "HOLD" and r["closed"] > r["final"] > r["min"] and "!GRIP" not in out
     assert abs(r["force"] - ep["grip"]["target_n"]) <= 0.15 * ep["grip"]["target_n"]
-    r, out, ep = _run_firmware(tmp_path / "so101", _so101(), 0.0)
-    assert r["lowest"] == r["closed"] == 0.0 and r["state"] == "POS" and r["torque_writes"] == 1
-    assert r["torque"] == round(max(ep["grip"]["torque_limit"]["fraction"] * 1000, 10))
+
+
+def test_a_force_sensing_gripper_grips_an_object_narrower_than_its_gauge(tmp_path):
+    """The robustness study varies the egg from 92 % to 108 % of its size; the jaws are calibrated on a gauge of the
+    nominal size. The force-sensing close used to give up 1 mm past the gauge ('no force reading') and release an egg
+    more than 2 mm narrower; it now closes as far as GRIP_MIN looking for the target, on soft and stiff objects."""
+    d = template("egg-picker")
+    exe, ep = _compile_firmware(tmp_path, d)
+    t = ep["grip"]["target_n"]
+    band = 0.08 * d.object.diameter_mm / 2                     # 92 % of the size: 1.76 mm per jaw for a 44 mm egg
+    for k in (20.0, 5.0):
+        for off in (0.0, 1.2, band, 2.5):
+            r, out = _run_exe(exe, k, off)
+            assert r["state"] == "HOLD" and "!GRIP" not in out, (k, off, r)
+            assert abs(r["force"] - t) <= 0.15 * t and r["min"] < r["final"] < -off, (k, off, r)
+
+
+def test_sensorless_jaws_close_past_the_object_so_the_torque_limit_sets_the_squeeze(tmp_path):
+    """A sensorless rack-and-pinion gripper closed to the calibrated contact (gripper = 0), where the jaws only touch a
+    gauge-size object: no position error, so the torque limit the manual and the plan promised never squeezed. G now
+    closes towards GRIP_MIN, past the object, with the torque limit written; the simulation commands the same."""
+    can = Design().with_changes({**EGG_ROBOT, **object_changes("soda can"), "finger.sensor": "none"})
+    for name, d in (("can", can), ("so101", _so101())):
+        r, out, ep = _run_firmware(tmp_path / name, d, 0.0)
+        tl = ep["grip"]["torque_limit"]
+        assert r["lowest"] == r["final"] == r["min"] < r["closed"] and r["state"] == "POS" and "!GRIP" not in out, r
+        assert r["torque_writes"] == 1 and r["torque"] == round(max(tl["fraction"] * 1000, 10)) and tl["force_n"] == ep["grip"]["target_n"]
+        code = open(next((tmp_path / name).rglob("morph_arm.ino")), encoding="utf-8").read()
+        assert "close past the object towards GRIP_MIN; the gripper servo's torque limit sets the squeeze" in code
+        sz = imported.size(d) if d.arm.source else arm.size(d)
+        asm = (imported.build if d.arm.source else arm.build)(d, sz, ep)
+        info, _ = simulate._describe(asm, d, simulate._opts(None))
+        assert info.grip_close < info.grip_contact                      # the simulated jaws are commanded past it too
+        assert info.grip_force_n == pytest.approx(ep["grip"]["target_n"])   # and squeeze at the torque limit's force
 
 
 # ------------------------------------------------------------------ the grip holds what the robot does with it

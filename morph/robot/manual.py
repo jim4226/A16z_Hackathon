@@ -714,16 +714,19 @@ def _grip_sentence(grip: dict, name: str) -> str:
     if grip.get("sensor") == "fsr402":
         out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
         return out + "; to change the target send F followed by newtons" + within
-    revolute = (grip.get("motion") or {}).get("kind") == "revolute"
-    zero = "jaw faces touching" if revolute else "the calibrated contact position"
+    motion = grip.get("motion") or {}
+    revolute = motion.get("kind") == "revolute"
+    stop = (f" (gripper = {motion['lo']:.2f} {motion.get('unit', '')}, its max-squeeze stop)" if motion.get("lo") is not None
+            else " (its max-squeeze stop)")
     tl = grip.get("torque_limit")
     if not tl:
-        return (f"This gripper has no force sensors and its hobby servo no torque limit: G closes it towards gripper = 0 "
-                f"({zero}) with all the servo's torque. Morph's grip target for the {name} is {t:g} N per finger"
-                + (f" (window: {window})." if window else "."))
+        stall = grip.get("stall_force_n")
+        return (f"This gripper has no force sensors and its hobby servo no torque limit: G closes it past the {name}"
+                f"{stop} with all the servo's torque" + (f", about {stall:g} N per finger" if stall else "")
+                + f". Morph's grip target for the {name} is {t:g} N per finger" + (f" (window: {window})." if window else "."))
     where = (f"with the object {grip.get('lever_mm', 0):g} mm from the jaw's pivot (more nearer the pivot, less towards the tip)"
              if revolute else f"through its {grip.get('lever_mm', 0):g} mm pinion")
-    return (f"This gripper has no force sensors: G closes it towards gripper = 0 ({zero}) and the gripper servo's torque limit, "
+    return (f"This gripper has no force sensors: G closes it past the {name}{stop}, and the gripper servo's torque limit, "
             f"{tl['fraction'] * 100:.0f} % of its stall torque, sets the squeeze: {t:g} N per finger {where}. Check it once with "
             f"a kitchen scale between the jaws; to change it send F followed by newtons" + within)
 

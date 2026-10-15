@@ -562,13 +562,20 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
     if grip["sensor"] == "fsr402":
         sensors += [{"ref": "S1", "key": "fsr402", "where": "jaw_left", "signal": "FSR_L"},
                     {"ref": "S2", "key": "fsr402", "where": "jaw_right", "signal": "FSR_R"}]
+        if not grip.get("torque_limit") and grip.get("stall_force_n") and design.object.max_force_n and \
+                grip["stall_force_n"] > design.object.max_force_n:
+            warnings.append(f"the hobby gripper servo has no torque limit to back up the force sensors: a sensor or lead "
+                            f"fault lets it squeeze with up to {grip['stall_force_n']:g} N per finger, above the "
+                            f"{design.object.max_force_n:g} N that damages the {design.object.name or 'object'}")
     elif grip.get("torque_limit"):
-        warnings.append(f"no force sensors on the fingers: the gripper servo's torque limit sets the grip "
-                        f"({grip['torque_limit']['fraction'] * 100:.0f} % of its stall torque for {grip['target_n']:g} N per "
-                        "finger), open loop: check it once with a kitchen scale")
+        warnings.append(f"no force sensors on the fingers: G closes the jaws past the object and the gripper servo's torque "
+                        f"limit sets the squeeze ({grip['torque_limit']['fraction'] * 100:.0f} % of its stall torque for "
+                        f"{grip['target_n']:g} N per finger), open loop: check it once with a kitchen scale")
     else:
-        warnings.append("no force sensors on the fingers and no torque limit on the hobby gripper servo: it closes with all "
-                        "its torque (open loop)")
+        warnings.append("no force sensors on the fingers and no torque limit on the hobby gripper servo: G closes the jaws "
+                        "past the object with all its torque"
+                        + (f" (about {grip['stall_force_n']:g} N per finger), open loop" if grip.get("stall_force_n")
+                           else " (open loop)"))
     if "wrist_camera" in extras:
         sensors.append({"ref": "CAM1", "key": "wrist_camera", "where": "gripper_base", "signal": "USB to host"})
     if "imu" in extras:
@@ -1244,15 +1251,17 @@ FW_PROTOCOL = """//   J q1 .. qN       joint targets in radians (order below), c
 def _grip_commands(fsr: bool, torque: bool) -> dict:
     """What G, F and Z do in this firmware, for its header."""
     if fsr:
-        return {"grip_g": "grip: close until the fingertip force reaches the target, then hold it (with no force reading "
-                          "by GRIP_CLOSED + GRIP_PROBE, stop at GRIP_CLOSED)",
+        return {"grip_g": "grip: close until the fingertip force reaches the target, then hold it (an object narrower "
+                          "than the gauge too, as far as GRIP_MIN; with no force reading by then, back to GRIP_CLOSED)",
                 "grip_f": "grip force target in newtons (capped at GRIP_LIMIT_N)",
                 "grip_z": "calibrate the force sensors with a known mass resting on the left pad"}
     if torque:
-        return {"grip_g": "grip: close to GRIP_CLOSED; the gripper servo's torque limit sets the squeeze (no force sensors)",
+        return {"grip_g": "grip: close past the object towards GRIP_MIN; the gripper servo's torque limit sets the squeeze "
+                          "(no force sensors)",
                 "grip_f": "grip force in newtons: sets the gripper servo's torque limit (capped at GRIP_LIMIT_N)",
                 "grip_z": "calibrate force sensors (none are fitted: replies with the unchanged factor)"}
-    return {"grip_g": "grip: close to GRIP_CLOSED and hold there (no force sensors, and hobby servos have no torque limit)",
+    return {"grip_g": "grip: close past the object towards GRIP_MIN with all the servo's torque (no force sensors, and "
+                      "hobby servos have no torque limit)",
             "grip_f": "grip force in newtons (kept for status: nothing here can regulate it)",
             "grip_z": "calibrate force sensors (none are fitted: replies with the unchanged factor)"}
 
@@ -1295,7 +1304,9 @@ def grip_motion(design, ep: dict, asm) -> dict:
     return {"kind": kind, "unit": "rad" if kind == "revolute" else "mm", "lo": lo, "hi": hi, "zero": zero,
             "per_unit": per_unit, "closed": max(lo, min(0.0, hi)), "close_speed": min(8.0 * scale, vmax),
             "open_speed": min(25.0 * scale, vmax), "backoff": scale, "force_gain": 10.0 * scale,
-            "probe": max(min(scale, (max(lo, min(0.0, hi)) - lo) / 2.0), 0.0)}
+            # a force-sensing close looks for a reading all the way to the max-squeeze stop: an object narrower than the
+            # calibration gauge (an egg at 92 % of its nominal size) meets the jaws past GRIP_CLOSED
+            "probe": max(max(lo, min(0.0, hi)) - lo, 0.0)}
 
 
 def rail_problems(acts: list, supply: dict, config: str) -> list:
@@ -1446,9 +1457,13 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
           f"#define GRIP_{'CH' if bus == 'pwm' else 'ID'}          {ga['channel'] if bus == 'pwm' else ga['id']}",
           f"const float GRIP_PER_UNIT   = {_c(motion['per_unit'], 6)};   // {unit} per {gu}",
           f"float GRIP_ZERO             = {_c(motion['zero'], 1)};   // {unit} at {gu} = 0 (calibrate)",
-          f"const float GRIP_MIN        = {_c(motion['lo'], 6)};   // {gu}: max squeeze (joint and servo limit)",
+          f"const float GRIP_MIN        = {_c(motion['lo'], 6)};   // {gu}: max squeeze (joint and servo limit); G "
+          + ("closes towards it until the force reaches the target" if fsr else
+             "closes towards it, past the object, so the " + ("torque limit" if tl else "servo's full torque") + " sets the squeeze"),
           f"const float GRIP_MAX        = {_c(motion['hi'], 6)};   // {gu}: fully open",
-          f"const float GRIP_CLOSED     = {_c(motion['closed'], 6)};   // {gu}: close target without force sensors",
+          f"const float GRIP_CLOSED     = {_c(motion['closed'], 6)};   // {gu}: the calibrated zero ("
+          + ("jaw faces touching" if motion["kind"] == "revolute" else "jaws on the gauge") + ")"
+          + ("; a close with no force reading goes back here" if fsr else ""),
           f"const float GRIP_CLOSE_SPEED = {_c(motion['close_speed'], 6)};   // {gu}/s",
           f"const float GRIP_OPEN_SPEED = {_c(motion['open_speed'], 6)};   // {gu}/s",
           f"const float GRIP_BACKOFF    = {_c(motion['backoff'], 6)};   // {gu}: step back when the force limit trips",
@@ -1457,7 +1472,8 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
           f"const float GRIP_LIMIT_N    = {_c(grip['limit_n'], 2)};   // hard stop (object damage / sensor range)",
           "const float GRIP_SENSE_N    = 0.05f;   // N: any force reading at all (an FSR 402 reads nothing below about 0.2 N)",
           f"const float GRIP_PROBE      = {_c(motion['probe'], 6)};   // {gu}: how far past GRIP_CLOSED the jaw may close before "
-          "a force sensor reads anything",
+          "a force sensor reads anything: to GRIP_MIN, so an object narrower than the gauge still gets gripped (the "
+          "torque limit caps the squeeze meanwhile)",
           f"const float GRIP_TORQUE_PER_N = {_c(tl['per_n'] if tl else 0.0, 6)};   // gripper servo torque limit per N at the jaw, "
           + (f"as a fraction of its stall torque on the {ep['supply']['servo_v']:g} V rail ({grip['lever_mm']:g} mm "
              f"{'pinion' if grip['jaw'] == 'rack' else 'lever'})" if tl else "0: hobby PWM servos have no torque limit"),
@@ -1676,7 +1692,8 @@ void command(char *s) {
       break;
     case 'V': if (n) speedScale = constrain(v[0], 0.05f, 1.0f); break;
     case 'W': if (n) { gstate = G_POS; gT = constrain(v[0], GRIP_MIN, GRIP_MAX); } break;
-    case 'G': gstate = (PIN_FSR_L >= 0 || PIN_FSR_R >= 0) ? G_CLOSING : G_POS; if (gstate == G_POS) gT = GRIP_CLOSED; gripI = 0; gripSeen = 0.0f; break;
+    case 'G':   // force sensors: close on the force loop; none: close past the object, the torque limit sets the squeeze
+      gstate = (PIN_FSR_L >= 0 || PIN_FSR_R >= 0) ? G_CLOSING : G_POS; if (gstate == G_POS) gT = GRIP_MIN; gripI = 0; gripSeen = 0.0f; break;
     case 'O': gstate = G_POS; gT = GRIP_MAX; break;
     case 'F':
       if (n) GRIP_TARGET_N = constrain(v[0], 0.1f, GRIP_LIMIT_N);
@@ -1720,9 +1737,9 @@ void gripControl(float dt) {
     if (force > gripSeen) gripSeen = force;
     if (force >= GRIP_TARGET_N) { gstate = G_HOLD; gT = gC; }
     else gT = gC - GRIP_CLOSE_SPEED * dt;
-    if (gripSeen < GRIP_SENSE_N && gT <= GRIP_CLOSED - GRIP_PROBE) {   // nothing read: never squeeze on, to GRIP_MIN
+    if (gripSeen < GRIP_SENSE_N && gT <= GRIP_CLOSED - GRIP_PROBE) {   // nothing read all the way to GRIP_MIN: no object, or no sensor
       gT = GRIP_CLOSED; gstate = G_POS;
-      out->println("!GRIP no force reading: stopped at GRIP_CLOSED instead of squeezing on (check the force sensors and their leads)");
+      out->println("!GRIP no force reading down to GRIP_MIN: back at GRIP_CLOSED instead of squeezing on (check the force sensors and their leads)");
     }
     if (gT <= GRIP_MIN) { gT = GRIP_MIN; gstate = G_HOLD; }
   } else if (gstate == G_HOLD) {                                         // PI on the force error
