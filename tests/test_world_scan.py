@@ -570,6 +570,47 @@ def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nom
     assert seen >= {"pass 1", "whole"} and (seen >= {"pass 2", "listed in part"} if vase is TALL_VASE else True), seen
 
 
+@pytest.mark.parametrize("dy, truth, text", [
+    (4.40, 9.96, "comes within 9.9 mm of the scanned surface"),     # a near miss: before, "At least 10 mm" and a 10.0 row
+    (0.37, 8.17, "comes within 8.1 mm of the scanned surface"),     # before, 8.2
+    (21.06, 16.76, "At least 16 mm between the arm and the scanned surface")])     # before, "At least 17 mm"
+def test_no_distance_is_rounded_up(tmp_path, nominal, dy, truth, text):
+    """The tall vase moved `dy` mm along y, so the closest approach (`truth`, pose by pose to 0.01 mm) has a fraction
+    that rounds up: every distance the check keeps or shows is rounded down instead (to 0.1 mm, "At least" to the
+    millimetre), so it never claims more room than was measured, and a near miss of 9.96 mm is never 10."""
+    rob, doc = nominal
+    (cx, cy), r, h = TALL_VASE
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh((cx, cy + dy), r, h)])
+    res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml, per_pose=True)
+    pp = min(v for _, v in res["poses"] if v is not None)
+    assert pp == pytest.approx(truth, abs=0.015), pp
+    assert res["min_clearance_mm"] == math.floor(pp * 10 + 1e-6) / 10, (res["min_clearance_mm"], pp)
+    near = pp < worlds.SCAN_NEAR_MM
+    assert bool(res["regions"]) == near, res["regions"]
+    for g in res["regions"]:
+        assert g["min_clearance_mm"] <= pp and (g.get("covers") or {}).get("clearance_mm", 0.0) <= pp, g
+        assert g["box_clearance_mm"] is None or g["box_clearance_mm"] <= g["min_clearance_mm"] + 0.2, g
+    c = worlds.scan_check(res)
+    assert c["status"] == ("warn" if near else "pass") and text in c["text"] and c["value"] <= pp, c
+    assert ("At least" in c["text"]) != near and "10.0" not in c["text"], c
+
+
+@pytest.mark.parametrize("mc, status, text", [
+    (30.68, "pass", "At least 30 mm between the arm and the scanned surface"),
+    (47.64, "pass", "At least 47 mm"), (10.0, "pass", "At least 10 mm"),
+    (9.97, "warn", "comes within 9.9 mm"), (9.5, "warn", "comes within 9.5 mm"), (0.49, "warn", "touches")])
+def test_the_scan_check_rounds_its_numbers_down(mc, status, text):
+    """However the distance comes (a scan measured before, a hand-made answer), the text rounds it down: 30.68 mm is
+    "At least 30 mm", not 31, and 9.97 mm "comes within 9.9 mm", never 10.0 next to "closer than 10 mm"."""
+    at = {"t": 3.2, "link": "wrist", "point": [0.0, 0.0, 0.0]}
+    c = worlds.scan_check({"min_clearance_mm": mc, "at": at, "regions": []})
+    assert c["status"] == status and text in c["text"], c
+    cut = worlds.scan_check({"min_clearance_mm": 9.97, "at": at, "regions": [], "stats": {"truncated": True, "lower_mm": 3.06}})
+    assert "within at most 9.9 mm" in cut["text"] and "no closer than 3.0 mm" in cut["text"], cut
+    part = worlds.scan_check({"min_clearance_mm": 8.0, "at": at, "regions": [], "stats": {"unlisted_mm": 8.39}})
+    assert "any other is at least 8.3 mm" in part["text"], part
+
+
 def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):
     """Cut short before the first pose is measured (the clock runs out while the scan is prepared), the check has
     measured nothing: it says there wasn't time, never that the part of the path checked is clear."""

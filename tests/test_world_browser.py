@@ -235,6 +235,44 @@ def test_the_panel_waits_on_the_other_tabs_and_a_walk_stops_there(server, browse
     page.close()
 
 
+def test_the_panels_clearances_are_never_rounded_up(server, browser):
+    """The World panel's numbers round a clearance down, never up: the status line's closest box (9.97 mm reads 9.9,
+    next to "Under 10 mm"; before, "closest 10 mm"), the marker on the closest place, and a scan near miss's row and
+    its box's distance from the path (to 0.1 mm)."""
+    page = _page(browser)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{server}/tools/world_demo.html", timeout=120000)
+    page.wait_for_function("window.ready === true", timeout=120000)
+    desk, doc, inspect = _desk_inputs()
+    page.evaluate("([w, d, i]) => window.demo.load(w, d, {inspect: i})", [desk, doc, inspect])
+    status = page.evaluate("""() => { const p = window.demo.panel;
+      p.state.sim = {rev: 'r002', world: 'desk', world_sha: 'demo', success: true, min_clearance_mm: 9.97,
+                     min_clearance_at: {t: 3.5, link: 'jaw_left', obstacle: 'Mug'}, clearance_ok: false, world_contacts: []};
+      p.state.active = {id: 'desk', sha: 'demo'}; p.state.saved = {sha: 'demo', world: {name: 'Desk'}};
+      return p._status()[1]; }""")
+    assert "closest 9.9 mm, to Mug" in status and "Under 10 mm" in status, status
+    far = page.evaluate("() => { window.demo.panel.state.sim.min_clearance_mm = 30.68; return window.demo.panel._status()[1]; }")
+    assert "closest 30 mm, to Mug" in far, far
+    label = page.evaluate("""(d) => { const wv = window.demo.wv;
+      wv._contactMarks({...d, metrics: {...d.metrics, min_clearance_mm: 9.97, world_contacts: [],
+                                        min_clearance_at: {t: 3.5, link: 'jaw_left', obstacle: 'Mug'}}});
+      return [...wv.base.children].filter((o) => o.userData.contact).map((o) => o.userData.label); }""", doc)
+    assert label == ["9.9 mm"], label
+    region = {"id": "scan-1", "label": "Scan near miss 1", "min_clearance_mm": 9.97, "t": 3.2, "link": "wrist",
+              "point": [0.0, 0.0, 0.0], "box": {"center": [0.0, 0.0, 50.0], "half": [20.0, 20.0, 50.0], "yaw_deg": 0.0},
+              "box_clearance_mm": 9.99, "trimmed": True}
+    scan = worlds.scan_check({"min_clearance_mm": 9.9, "at": {"t": 3.2, "link": "wrist", "point": [0.0, 0.0, 0.0]},
+                              "regions": [region]})
+    rows = page.evaluate("""(c) => { const p = window.demo.panel;
+      p.state.result = {...p.state.result, checks: [c], verdict: 'ready', review: {findings: [], source: 'rules'}};
+      p.render(); return [...document.querySelectorAll('.wv-panel .wv-scan')].map((e) => e.textContent); }""", scan)
+    assert len(rows) == 1 and "9.9 mm from the wrist" in rows[0] and "9.9 mm from the path" in rows[0], rows
+    assert "10.0" not in rows[0], rows
+    assert not errors, errors
+    page.close()
+
+
 def test_glb_room_scale_place_and_boxes(server, browser, tmp_path):
     """A scan that came in at half size: place the robot on the counter, measure the counter with the two-point tool
     and type its true length, then find boxes (the server's answer for the page's world), use the scanned surface,

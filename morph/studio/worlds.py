@@ -1491,7 +1491,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     final = best["d"] < SCAN_TOUCH_MM or (not cut1 and rest >= best["d"] - SCAN_TOL_MM)
     stats.update(truncated=not final, limit_s=time_limit_s, poses_checked=int(visited.sum()), unique_poses=unique)
     if final and rest < near_mm:                        # every place closer than near_mm isn't listed, the closest is
-        stats["unlisted_mm"] = round(math.floor(rest * 10.0) / 10.0, 1)
+        stats["unlisted_mm"] = floor_mm(rest)
     close = best
     if not final:
         if ub < best["d"] and ub_at:
@@ -1499,7 +1499,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             g, p, j = ub_at[k]
             close = {"d": float(ubk[k]), "t": poses[k][0], "g": g, "q": S[j], "p": p}
         lower = 0.0 if cut1 else min(best["d"], rest)
-        stats["lower_mm"] = round(math.floor(lower * 10.0) / 10.0, 1) if lower > 0.0 else None
+        stats["lower_mm"] = floor_mm(lower) if lower > 0.0 else None
         stats["part_clear"] = bool(visited.any() and close["d"] >= SCAN_CUT_MM
                                    and float(lb[visited].min(initial=math.inf)) >= SCAN_CUT_MM)
         if cut1:                                        # at this pace: pass 1 for every pose, and pass 2 as long
@@ -1510,7 +1510,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         stats["need_s"] = round(need, 1)
     if close["d"] < SCAN_CUT_MM:
         b = m.geom_bodyid[close["g"]]
-        out["min_clearance_mm"] = round(close["d"], 1)
+        out["min_clearance_mm"] = floor_mm(close["d"])              # rounded down: never more room than measured
         out["at"] = {"t": round(float(close["t"]), 2), "link": "object" if b == obj_body else m.body(b).name,
                      "point": [round(float(v), 1) for v in to_world(world, close["q"])]}
     t1 = time.monotonic()
@@ -1553,7 +1553,7 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
     point once clear of it stays clear and is dropped. A trimmed region keeps its box before trimming as "covers".
     Past `deadline` no box is offered for the regions not yet fitted (stats["fit_timeout"])."""
     R = regions[0]["_R"]
-    boxes = [(r["_lo"].copy(), r["_hi"].copy(), float(r["min_clearance_mm"])) for r in regions]
+    boxes = [(r["_lo"].copy(), r["_hi"].copy(), float(r.get("_d", r["min_clearance_mm"]))) for r in regions]
     near = [[] for _ in boxes]
     lo_all = np.array([b[0] for b in boxes])
     hi_all = np.array([b[1] for b in boxes])
@@ -1594,7 +1594,7 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
                 if close.any():
                     near[b].append(X[close])
     for r, (lo, hi, target), pts in zip(regions, boxes, near):
-        for key in ("_lo", "_hi", "_R"):
+        for key in ("_lo", "_hi", "_R", "_d"):
             r.pop(key, None)
         if late or time.monotonic() > deadline:
             late = True
@@ -1638,16 +1638,16 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
             ok = False
         if not ok:
             r["box"] = None
-            r["no_box"] = (f"A box here would come closer to the path than the scan ({target:.1f} mm) unless it were "
+            r["no_box"] = (f"A box here would come closer to the path than the scan ({_mm1(target)} mm) unless it were "
                            f"thinner than {SCAN_FIT_MIN_MM:.0f} mm: move the robot or the thing instead.")
             continue
         dd = _box_dist(P, lo, hi) if len(P) else np.zeros(0)
-        r["box_clearance_mm"] = round(float(dd.min()), 1) if len(dd) else None     # None: further than it, all along
+        r["box_clearance_mm"] = floor_mm(dd.min()) if len(dd) else None     # None: further than it, all along
         r["trimmed"] = bool(np.any(np.abs(lo - lo0) > 1e-6) or np.any(np.abs(hi - hi0) > 1e-6))
         if r["trimmed"]:                                # the near miss's place: Add box here keeps it with the box, with
             yaw = r["box"]["yaw_deg"]                   # the distance the box was fitted to (a closer path is offered again)
             clo, chi = np.maximum(lo0, lo - SCAN_COVERS_MAX_MM), np.minimum(hi0, hi + SCAN_COVERS_MAX_MM)
-            r["covers"] = {**_world_box(world, R, clo, chi, yaw), "clearance_mm": round(target, 1)}
+            r["covers"] = {**_world_box(world, R, clo, chi, yaw), "clearance_mm": floor_mm(target)}
             r["box"] = _world_box(world, R, lo, hi, yaw)
     if late and stats is not None:
         stats["fit_timeout"] = True
@@ -1786,7 +1786,7 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None) -
         j = idx[np.argmin(D[idx])]
         b = m.geom_bodyid[G[j]]
         centre = to_world(world, R @ ((lo + hi) / 2.0))
-        regions.append({"min_clearance_mm": round(float(D[j]), 1), "t": round(float(TT[j]), 2),
+        regions.append({"min_clearance_mm": floor_mm(D[j]), "_d": float(D[j]), "t": round(float(TT[j]), 2),
                         "link": "object" if b == obj_body else m.body(b).name,
                         "point": [round(float(v), 1) for v in to_world(world, Q[j])],
                         "box": {"center": [round(float(v), 1) for v in centre],
@@ -1836,7 +1836,7 @@ def _box_local(box: dict, p) -> np.ndarray:
 
 
 def _footprint(robot: dict | None) -> list | None:
-    """[[x0, y0], [x1, y1]] of the base link's parts (robot base frame, mm) from robot.json."""
+    """[[x0, y0], [x1, y1]] of the base link's parts (robot base frame, mm) from robot.json, rounded outwards."""
     if not isinstance(robot, dict):
         return None
     root = robot.get("root") or "base"
@@ -1851,7 +1851,8 @@ def _footprint(robot: dict | None) -> list | None:
                 continue
     if not np.all(np.isfinite(lo)):
         return None
-    return [[round(float(lo[0]), 1), round(float(lo[1]), 1)], [round(float(hi[0]), 1), round(float(hi[1]), 1)]]
+    up = lambda v: -floor_mm(-v)        # noqa: E731  (to 0.1 mm outwards: the base is never smaller than its parts)
+    return [[floor_mm(lo[0]), floor_mm(lo[1])], [up(hi[0]), up(hi[1])]]
 
 
 def _robot_mass(results: dict, robot: dict | None) -> float | None:
@@ -1874,6 +1875,30 @@ def _flat(design) -> dict:
 
 def _sentence(s: str) -> str:
     return s[:1].upper() + s[1:] + ("" if s.endswith(".") else ".")
+
+
+def floor_mm(v) -> float:
+    """A measured distance (mm) kept or shown to 0.1 mm, rounded down: never more room than was measured (9.96 mm is
+    9.9, not the 10.0 that would be clear). Float noise aside: 2.3 stays 2.3."""
+    return math.floor(float(v) * 10.0 + 1e-6) / 10.0
+
+
+def mm_text(v) -> str:
+    """A clearance as the texts show it, rounded down: to 0.1 mm under CLEAR_OK_MM (9.97 reads 9.9, never 10), to the
+    millimetre from there (30.68 reads 30, not 31)."""
+    x = floor_mm(v)
+    return f"{x:.1f}" if x < CLEAR_OK_MM else f"{math.floor(x + 1e-9):.0f}"
+
+
+def mm_up_text(v) -> str:
+    """Room that is missing (mm: an overlap, an overhang) as the texts show it, rounded up: never less than measured."""
+    x = math.ceil(float(v) * 10.0 - 1e-6) / 10.0
+    return f"{x:.1f}" if x < CLEAR_OK_MM else f"{math.ceil(x - 1e-9):.0f}"
+
+
+def _mm1(v) -> str:
+    """A distance to 0.1 mm, rounded down."""
+    return f"{floor_mm(v):.1f}"
 
 
 def _check(cid, label, status, text, value=None, unit="", view="overview", **extra) -> dict:
@@ -1909,12 +1934,12 @@ def scan_check(scan: dict) -> dict:
     elif mc < SCAN_TOUCH_MM:
         st, text = "warn", _sentence(f"{who} touches or passes through the scanned surface{when}")
     elif cut:
-        st, text = "warn", _sentence(f"{who} comes within at most {mc:.1f} mm of the scanned surface{when}"
-                                     + (f" (no closer than {lower:.1f} mm)" if lower else ""))
-    elif mc < SCAN_NEAR_MM:
-        st, text = "warn", _sentence(f"{who} comes within {mc:.1f} mm of the scanned surface{when}")
+        st, text = "warn", _sentence(f"{who} comes within at most {_mm1(mc)} mm of the scanned surface{when}"
+                                     + (f" (no closer than {_mm1(lower)} mm)" if lower else ""))
+    elif floor_mm(mc) < SCAN_NEAR_MM:
+        st, text = "warn", _sentence(f"{who} comes within {_mm1(mc)} mm of the scanned surface{when}")
     else:
-        st, text = "pass", f"At least {mc:.0f} mm between the arm and the scanned surface (closest: {who}{when})."
+        st, text = "pass", f"At least {mm_text(mc)} mm between the arm and the scanned surface (closest: {who}{when})."
     if regions:
         n, boxed = len(regions), sum(1 for r in regions if r.get("box") is not None)
         text += f" {n} place{'s' if n != 1 else ''} closer than {SCAN_NEAR_MM:.0f} mm"
@@ -1925,7 +1950,7 @@ def scan_check(scan: dict) -> dict:
             text += ": there wasn't time to fit a box that keeps clear of the path."
         else:
             text += ": too close to the path for a box; move the robot or the thing."
-    elif cut and mc is not None and mc < SCAN_NEAR_MM:
+    elif cut and mc is not None and floor_mm(mc) < SCAN_NEAR_MM:
         text += " There wasn't time to measure that place closely enough to offer a box for it."
     covered = stats.get("covered") or 0
     if covered:
@@ -1935,7 +1960,7 @@ def scan_check(scan: dict) -> dict:
     if stats.get("unlisted_mm") is not None:
         u = float(stats["unlisted_mm"])
         text += (f" Time ran out before every place closer than {SCAN_NEAR_MM:.0f} mm was listed"
-                 + (f"; any other is at least {u:.1f} mm from the arm." if u > 0 else "."))
+                 + (f"; any other is at least {_mm1(u)} mm from the arm." if u > 0 else "."))
     if cut:
         limit, need = float(stats.get("limit_s") or 20.0), stats.get("need_s")
         text += f" Only part of the path was measured in the {limit:.0f} s a check has (a large scan or a busy computer)"
@@ -2010,20 +2035,20 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
         elif blocked and isinstance(blocked.get("at"), dict):
             b = blocked["at"]
             text = (f"The planned path takes the {str(b.get('link', 'arm')).replace('_', ' ')} "
-                    f"{-float(blocked.get('min_clearance_mm') or 0.0):.1f} mm into {b.get('obstacle')} during "
+                    f"{mm_up_text(-float(blocked.get('min_clearance_mm') or 0.0))} mm into {b.get('obstacle')} during "
                     f"{MOVES.get(blocked.get('move'), 'the run')} ({b.get('t', 0):.1f} s), and no clear way around it was found.")
             out.append(_check("clearance", "Clearance along the path", "fail", text, blocked.get("min_clearance_mm"), "mm",
                               "along_path", where=b))
         elif mc is None or mc < 0:
             out.append(_check("clearance", "Clearance along the path", "fail", f"The arm passes through a box{where}.",
                               mc, "mm", "along_path", where=at))
-        elif mc < CLEAR_OK_MM:
+        elif floor_mm(mc) < CLEAR_OK_MM:                # rounded down, never up: 9.97 mm is a near miss of 9.9 mm
             out.append(_check("clearance", "Clearance along the path", "warn",
-                              f"Only {mc:.0f} mm between the arm and the room{where}; {CLEAR_OK_MM:.0f} mm or more is OK.",
+                              f"Only {_mm1(mc)} mm between the arm and the room{where}; {CLEAR_OK_MM:.0f} mm or more is OK.",
                               mc, "mm", "along_path", where=at))
         else:
             out.append(_check("clearance", "Clearance along the path", "pass",
-                              f"At least {mc:.0f} mm between the arm and the room{where}.", mc, "mm", "along_path", where=at))
+                              f"At least {mm_text(mc)} mm between the arm and the room{where}.", mc, "mm", "along_path", where=at))
     elif in_world and not sw["obstacles"]:
         out.append(_check("clearance", "Clearance along the path", "warn",
                           "This world has no grey boxes, so the simulation sees only the surface. Add a box for anything "
@@ -2065,10 +2090,10 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
         for c in corners:
             loc = _box_local(surf, c)
             margins.append(min(surf["half"][0] - abs(loc[0]), surf["half"][1] - abs(loc[1])))
-        mg = round(float(min(margins)), 1)
+        mg = floor_mm(min(margins))                     # rounded down: never more margin than measured
         st = "pass" if mg >= FOOT_MARGIN_MM else ("warn" if mg >= 0 else "fail")
-        text = (f"The base sits {mg:.0f} mm inside the edge of the {surf['label'].lower()}." if mg >= 0 else
-                f"The base hangs {-mg:.0f} mm over the edge of the {surf['label'].lower()}.")
+        text = (f"The base sits {mm_text(mg)} mm inside the edge of the {surf['label'].lower()}." if mg >= 0 else
+                f"The base hangs {mm_up_text(-mg)} mm over the edge of the {surf['label'].lower()}.")
         if st == "warn":
             text += f" Keep {FOOT_MARGIN_MM:.0f} mm or more."
         out.append(_check("footprint", "Base on the surface", st, text, mg, "mm", "base", footprint_mm=fp))
@@ -2118,13 +2143,13 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
             names = ", ".join(z["label"] for z, _ in hits)
             st = "warn"
             share = f"{frac * 100:.0f}%" if frac >= 0.01 else "under 1%"
-            text = (f"The arm's reach ({reach3:.0f} mm + {PEOPLE_MARGIN_MM:.0f} mm) overlaps {names}"
+            text = (f"The arm's reach ({math.ceil(reach3 - 1e-6):.0f} mm + {PEOPLE_MARGIN_MM:.0f} mm) overlaps {names}"
                     + (f"; {share} of its workspace is inside." if frac > 0 else ".")
                     + " Slow it down near people or add a guard.")
         else:
             st, text = "pass", "No walkway or seat is within the arm's reach plus 100 mm."
         out.append(_check("people", "People zones out of reach", st, text, frac, "fraction", "walkway",
-                          zones=[{"label": z["label"], "kind": z["kind"], "distance_mm": round(d, 1)} for z, d in hits]))
+                          zones=[{"label": z["label"], "kind": z["kind"], "distance_mm": floor_mm(d)} for z, d in hits]))
     elif sw["zones"]:
         out.append(_check("people", "People zones out of reach", "skip", "The workspace simulation is missing.", view="walkway"))
     # ---- boxes over the robot (wall cabinets, a shelf) it could reach when it stretches up
@@ -2145,10 +2170,12 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
             out.append(_check("overhead", "Room above the arm", "pass", "Nothing hangs over the robot.", view="overview"))
         else:
             gap, o = worst
+            gap = floor_mm(gap)                         # rounded down: never more room than measured
             st = "pass" if gap >= 50.0 else "warn"
-            text = (f"{o['label']} is {gap:.0f} mm above the arm's highest reach." if gap >= 0 else
-                    f"Stretched up, the arm reaches {-gap:.0f} mm into {o['label']} above it; keep its moves below it.")
-            out.append(_check("overhead", "Room above the arm", st, text, round(gap, 1), "mm", "overview"))
+            text = (f"{o['label']} is {mm_text(gap)} mm above the arm's highest reach." if gap >= 0 else
+                    f"Stretched up, the arm reaches {mm_up_text(-gap)} mm into {o['label']} above it; keep its moves "
+                    "below it.")
+            out.append(_check("overhead", "Room above the arm", st, text, gap, "mm", "overview"))
     uf = ws.get("usable_workspace_fraction")
     if in_world and isinstance(uf, (int, float)):
         out.append(_check("workspace", "Room to move", "pass" if uf >= 0.5 else "warn",

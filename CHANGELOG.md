@@ -115,6 +115,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the path
   was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short, or
   whose box ran out of time to be fitted, aren't kept, so Check placement measures them again.
+- World mode's distances are rounded down, never up, wherever they are kept or shown (the room scan, the simulation's
+  clearance, a near miss's row, the base's margin, the room above the arm, the World panel and `morph world`): to 0.1
+  mm under 10 mm, to the millimetre from there. Before, 30.68 mm read "At least 31 mm", and a near miss of 9.96 mm was
+  kept as 10.0, so the scan check passed it as "At least 10 mm" and the simulation called it clear.
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the

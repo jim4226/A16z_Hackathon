@@ -92,9 +92,40 @@ def test_clearance_texts_name_what_and_where():
     _, c = run(pp={"success": False, "world_contacts": [{"t": 3.2, "link": "jaw_left", "obstacle": "Mug"}]})
     assert "jaw left hits Mug at 3.2 s" in c["clearance"]["text"]
     _, c = run(pp={"min_clearance_mm": 5.0})
-    assert "Only 5 mm" in c["clearance"]["text"] and "Mug" in c["clearance"]["text"]
+    assert "Only 5.0 mm" in c["clearance"]["text"] and "Mug" in c["clearance"]["text"]
     _, c = run(d=design(**{"task.place_x_mm": 240.0, "task.place_y_mm": 330.0}))
     assert "inside Mug" in c["targets"]["text"]
+
+
+@pytest.mark.parametrize("mc, status, text", [
+    (9.97, "warn", "Only 9.9 mm between the arm and the room"),       # before: "Only 10 mm ...; 10 mm or more is OK"
+    (9.5, "warn", "Only 9.5 mm between the arm and the room"), (5.04, "warn", "Only 5.0 mm"),
+    (30.68, "pass", "At least 30 mm between the arm and the room"),   # before: "At least 31 mm"
+    (10.0, "pass", "At least 10 mm"), (47.64, "pass", "At least 47 mm")])
+def test_the_simulations_clearance_is_never_rounded_up(mc, status, text):
+    """The clearance along the simulated path, shown rounded down (to 0.1 mm under 10 mm, else to the millimetre):
+    never more room than was measured, and a near miss is never shown as the 10 mm that would be OK."""
+    _, c = run(pp={"min_clearance_mm": mc})
+    assert c["clearance"]["status"] == status and text in c["clearance"]["text"], c["clearance"]
+    assert "Only 10 mm" not in c["clearance"]["text"], c["clearance"]
+
+
+def test_the_base_margin_and_the_room_overhead_are_never_rounded_up():
+    """The base 19.96 mm inside the desk's edge is "19 mm" with the advice to keep 20 (before: "20 mm", a pass), and
+    a cabinet 49.97 mm over the arm's highest reach is "49 mm above" (before: "50"); 0.04 mm into it is "0.1 mm"."""
+    robot = {**ROBOT, "parts": [{**ROBOT["parts"][0], "bbox": [[-70.04, -70, 0], [70.04, 70, 12]]}, ROBOT["parts"][1]]}
+    w = moved(dy=140.0)
+    c = {x["id"]: x for x in W.checks(w, results(w), robot=robot, design=design())["checks"]}
+    assert c["footprint"]["value"] <= 19.96 and c["footprint"]["status"] == "warn", c["footprint"]
+    assert c["footprint"]["text"].startswith("The base sits 19 mm inside the edge") and "Keep 20 mm or more." in \
+        c["footprint"]["text"], c["footprint"]
+    counter = W.starter("counter")
+    room = run(world=counter, ws={"max_height_mm": 0.0})[1]["overhead"]["value"]     # its bottom over the counter top
+    for hmax, status, text, most in ((room - 49.97, "warn", "is 49 mm above the arm's highest reach", 49.97),
+                                     (room - 50.0, "pass", "is 50 mm above", 50.0),
+                                     (room + 0.04, "warn", "reaches 0.1 mm into", -0.04)):
+        o = run(world=counter, ws={"max_height_mm": hmax})[1]["overhead"]
+        assert o["status"] == status and text in o["text"] and o["value"] <= most, (hmax, o)
 
 
 def test_people_zones_workspace_share_and_targets():

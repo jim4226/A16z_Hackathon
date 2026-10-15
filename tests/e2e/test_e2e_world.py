@@ -34,6 +34,8 @@ import urllib.request
 
 import pytest
 
+from morph.studio import worlds
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CHROME = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
 SHOTS = os.environ.get("MORPH_E2E_SHOTS")
@@ -323,7 +325,7 @@ def test_desk_placement_with_a_turn_and_a_box_on_the_carry_path(run, home):
     assert m["arc"]["clear"] and m["arc"]["min_clearance_mm"] >= 10.0 and m["arc"]["usual"] is False, m["arc"]  # past the bin
     st = pg.status()
     near = m["min_clearance_at"]["obstacle"]
-    assert "pick and place succeeds" in st and "carry path" in st and f"closest {round(m['min_clearance_mm'])} mm, to {near}" in st, st
+    assert "pick and place succeeds" in st and "carry path" in st and f"closest {worlds.mm_text(m['min_clearance_mm'])} mm, to {near}" in st, st
     # the closest call is said, not hidden: here the open jaws pass the desk's mug at the place spot (the release is not
     # re-planned around boxes), under the 10 mm the carry path keeps
     assert m["clearance_ok"] == (m["min_clearance_mm"] >= 10.0) and (m["clearance_ok"] or "Under 10 mm" in st), (m, st)
@@ -430,7 +432,7 @@ def test_room_scan_scale_place_boxes_simulate_and_walk(run, tmp_path):
     m = pg.metrics()
     assert m["success"] and m["world"] == "room" and m["clearance_ok"], m
     st = pg.status()
-    assert re.search(r"r\d+ in kitchen: pick and place succeeds; closest \d+ mm, to ", st), st
+    assert re.search(r"r\d+ in kitchen: pick and place succeeds; closest \d+(?:\.\d)? mm, to ", st), st
     pg.ev("() => window.morphWorld.wv.frameOverview(0)")
     pg.shot("e2e_scan_simulated")
     # walking: on the kitchen floor, in front of the counter, the robot in sight; W walks forward; Esc stops
@@ -639,7 +641,7 @@ def _stand_in(port: int, home: str, record: str):
     import anthropic
 
     from morph.robot.pipeline2 import RobotProject
-    from morph.studio import server, worlds
+    from morph.studio import server
 
     class Messages:
         def create(self, **kw):

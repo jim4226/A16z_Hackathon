@@ -31,7 +31,10 @@ is not there when the browser has no WebGL).
 6. **Check placement:** measured checks decide the verdict (*ready*, *needs changes* or *blocked*): the simulation ran
    in this room, both targets are in reach and on the surface, the arm stays clear of the boxes, the base sits on the
    surface, tip-over (a heuristic), people areas inside the reach, anything overhead, and how much of the workspace
-   stays clear. With a room scan, it also measures the simulated path against the scan itself (below).
+   stays clear. With a room scan, it also measures the simulated path against the scan itself (below). Every distance
+   these checks keep or show is rounded down, never up: to 0.1 mm under 10 mm and to the millimetre from there, so
+   9.97 mm reads 9.9 (never the 10 mm that is OK) and 30.68 mm reads "at least 30 mm"; room that is missing (the base
+   over the edge, the arm into a box) is rounded up.
 
 Each revision is simulated in exactly the room its design names: every saved room is kept under its hash in
 `<project>/world/saved/`, so editing the room while a build waits never changes what that build simulates, and a

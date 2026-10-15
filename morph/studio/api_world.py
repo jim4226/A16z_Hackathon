@@ -331,7 +331,7 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
     mc, n = res.get("min_clearance_mm"), len(res.get("regions") or [])
     cut = bool((res.get("stats") or {}).get("truncated"))
     text = (res["skipped"] if res.get("skipped") else
-            (f"Closest to the scan: {'at most ' if cut else ''}{mc:.1f} mm" if mc is not None else
+            (f"Closest to the scan: {'at most ' if cut else ''}{worlds.floor_mm(mc):.1f} mm" if mc is not None else
              "Not all measured in time" if cut else f"Nothing within {worlds.SCAN_CUT_MM:.0f} mm of the scan")
             + (f", {n} near miss{'es' if n != 1 else ''}" if n else "") + (" (cut short)" if cut and mc is not None else ""))
     _send(room, {"type": "agent", "role": "feasibility", "provider": "code", "status": "skipped" if res.get("skipped") else "done",

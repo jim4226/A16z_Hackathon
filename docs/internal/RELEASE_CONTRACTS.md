@@ -1287,7 +1287,16 @@ field failure rate (section 0, honesty).
   `detours` gains `release` and the new `via` values; `GET /api/world` returns `sim.path` and `sim.blocked`, and the
   World panel's status line says which way the arm went. Simulations without a world are bit-identical (golden hashes
   unchanged); the world golden (`egg-picker-bin-world`) was re-recorded for the new checks. Planning in world mode
-  takes at most about 0.4 s more (worst measured 0.91 s against 0.49 s, at load 7-14).
+  takes at most about 0.4 s more (worst measured 0.91 s against 0.49 s, at load 7-14). R5: every clearance the world
+  metrics keep (`min_clearance_mm`, each `path` entry's, `detours`, `arc`) is rounded down to 0.1 mm
+  (`simulate.floor_mm`), never up, so `clearance_ok` is false at 9.96 mm (it was kept as 10.0 and called clear); `clear`
+  and the planner still compare the unrounded distances. The world golden was re-recorded for both recorded
+  environments: 7 numbers of `sim_pick_place.json` (and `run_all`) changed, each 0.1 mm lower; the frames and every
+  MuJoCo state are bit-identical. `worlds.checks` shows those distances rounded down too (`mm_text`: to 0.1 mm under 10
+  mm, to the millimetre from there): "Only 9.9 mm between the arm and the room; 10 mm or more is OK.", "At least 30 mm
+  between the arm and the room" for 30.68 (it read 31); the base's margin and the room above the arm likewise, with the
+  base's parts rounded outwards (`_footprint`) and room that is missing (an overhang, the arm into a box) rounded up
+  (`mm_up_text`). The World panel (`world.js` `mmDown`) and `morph world` follow the same rule.
 - **World-tolerance presets (B2-S3, H2).** `register_world_preset(name, fn, label=None, room_only=False)`;
   `PRESET_LABELS`, `ROOM_ONLY`. `room` ("Only the room varies: the mount and every box; the object and the hardware stay
   nominal"): the standard world ranges (mount +/-10 mm and +/-2 deg, each box 0-15 mm) with every other entry off, so
@@ -1311,7 +1320,11 @@ field failure rate (section 0, honesty).
   the whole path; R4: the bounding spheres tested by size class, `SCAN_RBOUND_CLASSES_MM`, and the coarse samples by
   `SCAN_CELL_MM` = 24 mm cell, a cell skipped when its sphere is beyond the samples' search bound: the same answers pose
   by pose, about 6-8 times faster), then the lowest bounds first; found to `SCAN_TOL_MM` (0.05 mm); below
-  `SCAN_TOUCH_MM` (0.5 mm) it touches. Returns `{min_clearance_mm (None beyond 50 mm), at {t, link, point (world mm)},
+  `SCAN_TOUCH_MM` (0.5 mm) it touches. R5: every distance it keeps (`min_clearance_mm`, a region's `min_clearance_mm`
+  and `box_clearance_mm`, `covers.clearance_mm`, `stats.lower_mm` and `stats.unlisted_mm`) is rounded down to 0.1 mm
+  (`floor_mm`), never up, while the boxes are fitted to the unrounded distance; `scan_check` shows them the same way
+  (`mm_text`): 30.68 mm reads "At least 30 mm" (it read 31), and a near miss of 9.96 mm, which was kept as 10.0 and
+  passed as "At least 10 mm" beside a "10.0 mm" row, is kept as 9.9 and "comes within 9.9 mm". Returns `{min_clearance_mm (None beyond 50 mm), at {t, link, point (world mm)},
   regions, stats, note}`, with `per_pose` also `poses [[t, mm|None]]`; never raises for a bad scan or model:
   `{"skipped": reason, "note"}`. `regions` (at most `SCAN_MAX_REGIONS` = 8, the closest first): the near misses (closer
   than `near_mm`) grouped by 30 mm, each `{id: "scan-k", label: "Scan near miss k", min_clearance_mm, t, link, point,

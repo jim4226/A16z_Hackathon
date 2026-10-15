@@ -639,7 +639,7 @@ def cmd_world(a) -> int:
     clear = pp.get("min_clearance_mm")
     print(f"{a.name} {base} simulates in {design.world.id} ({design.world.sha}): pick and place "
           f"{'succeeds' if pp.get('success') else 'fails'}"
-          + (f", closest {clear:.0f} mm to a box" if isinstance(clear, (int, float)) else "")
+          + (f", closest {worlds.mm_text(clear)} mm to a box" if isinstance(clear, (int, float)) else "")
           + (f", {len(pp['world_contacts'])} contacts" if pp.get("world_contacts") else ""))
     print("  " + worlds.NOTES["world"])
     return 0 if pp.get("success") else 1

@@ -91,8 +91,23 @@ def test_the_check_takes_every_10_ms_sample(egg):
             held = plan.ph[k] in simulate.CARRIED
             rob.pose_carried(dd, plan.q[k], simulate._held(rob, plan.g[k]), held)
             ref = min(ref, rob.clearance(dd, with_object=held)[0])
-        assert e["move"] == name and e["min_clearance_mm"] == round(min(ref, 500.0), 1), (name, e, ref)
+        assert e["move"] == name and e["min_clearance_mm"] == math.floor(min(ref, 500.0) * 10.0 + 1e-6) / 10.0, (name, e, ref)
+        assert e["clear"] == (ref >= simulate.CLEAR_MM)
     assert np.allclose(np.diff(plan.t), simulate.PLAN_DT)                # one sample every 10 ms
+
+
+@pytest.mark.parametrize("raw, kept, ok", [(9.96, 9.9, False), (30.68, 30.6, True), (10.0, 10.0, True), (-0.04, -0.1, False)])
+def test_the_simulated_clearance_is_kept_rounded_down(egg, raw, kept, ok):
+    """The smallest clearance over the simulated frames is kept to 0.1 mm rounded down, never up: 9.96 mm is 9.9 and
+    not clear (before: 10.0, "clear"), 30.68 is 30.6, and 0.04 mm into a box is 0.1 mm into it."""
+    d, asm = egg
+    rob = simulate._make_robot(asm, d, True, {"world": bench(bin_beside_the_arc(d, 20.0))})
+    plan, at = simulate._plan_pick_place(rob, d, True)
+    run_, met = simulate._run_pick_place(rob, d, plan, at)
+    real = rob.clearance
+    rob.clearance = lambda dd, with_object=False: (raw, *real(dd, with_object=with_object)[1:])
+    m = simulate._world_metrics(rob, d, run_, plan)
+    assert m["min_clearance_mm"] == kept and m["clearance_ok"] is ok, m["min_clearance_mm"]
 
 
 @pytest.mark.parametrize("off", [36.0])

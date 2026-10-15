@@ -38,6 +38,9 @@ const DEG = Math.PI / 180;
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const r1 = (x) => Math.round(x * 10) / 10;
+// a clearance as the texts show it, rounded down, never up: to 0.1 mm under 10 mm (9.97 reads 9.9, not 10), to the mm
+// from there (30.68 reads 30, not 31); worlds.mm_text does the same in Python
+const mmDown = (x) => { const v = Math.floor(x * 10 + 1e-6) / 10; return v < 10 ? v.toFixed(1) : String(Math.floor(v + 1e-9)); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const uid = () => Math.random().toString(36).slice(2, 8);
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4();
@@ -1093,7 +1096,7 @@ export class WorldView {
       g.position.fromArray(p);
       g.add(new THREE.Mesh(new THREE.SphereGeometry(c.near ? 9 : 13, 20, 12), new THREE.MeshBasicMaterial({ color: c.color, toneMapped: false })),
         new THREE.Mesh(new THREE.RingGeometry(20, 26, 40), new THREE.MeshBasicMaterial({ color: c.color, transparent: true, opacity: 0.7, side: THREE.DoubleSide, toneMapped: false })));
-      g.userData = { contact: c, label: c.near ? `${Math.round(m.min_clearance_mm)} mm` : `hits ${c.obstacle}` };
+      g.userData = { contact: c, label: c.near ? `${mmDown(m.min_clearance_mm)} mm` : `hits ${c.obstacle}` };
       this.base.add(noRay(g));
     }
     this._dirty();
@@ -1794,7 +1797,7 @@ export class WorldPanel {
     const same = sim.world === s.active?.id && (!s.saved || sim.world_sha === s.saved.sha);
     let t = `${sim.rev} in ${s.saved?.world?.name || sim.world}: pick and place ${sim.success ? 'succeeds' : 'fails'}`;
     if (!sim.success && sim.failure) t += ` (${sim.failure})`;
-    if (sim.min_clearance_mm != null) t += `; closest ${Math.round(sim.min_clearance_mm)} mm, to ${sim.min_clearance_at?.obstacle || 'a grey box'}`;
+    if (sim.min_clearance_mm != null) t += `; closest ${mmDown(sim.min_clearance_mm)} mm, to ${sim.min_clearance_at?.obstacle || 'a grey box'}`;
     else t += '; no grey boxes to keep clear of';
     const arc = sim.arc, back = sim.detours?.retreat, there = sim.detours?.approach, rel = sim.detours?.release;
     const ways = [];
@@ -1897,7 +1900,7 @@ export class WorldPanel {
         ${rv.skipped ? `<div class="wv-note warn">${esc(rv.skipped)}</div>` : ''}${rv.note ? `<div class="wv-note warn">${esc(rv.note)}</div>` : ''}${rv.error ? `<div class="wv-note warn">${esc(rv.error)}</div>` : ''}
         ${r.asked?.subq && !r.subq ? '<div class="wv-note warn">SubQ didn\'t answer (no SubQ key, it is paused, or it declined the pictures): only the checks above.</div>' : ''}
         <div style="margin-top:6px">${(r.checks || []).map((c) => `<div class="wv-check"><span class="st ${esc(c.status)}">${esc(c.status)}</span><span>${esc(c.text)}</span></div>`
-          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${(+g.min_clearance_mm).toFixed(1)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; ${g.box ? `box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm${g.box_clearance_mm != null ? `, ${(+g.box_clearance_mm).toFixed(1)} mm from the path` : ''}${g.trimmed ? ' (trimmed to keep clear of it)' : ''}` : esc(g.no_box || 'no box')}</span>${g.box ? B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: 'A grey box over this part of the scan, no closer to the path than the scan: the simulation keeps the arm clear of it' }) : ''}</div>`).join('') : '')).join('')}</div>
+          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${mmDown(+g.min_clearance_mm)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; ${g.box ? `box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm${g.box_clearance_mm != null ? `, ${mmDown(+g.box_clearance_mm)} mm from the path` : ''}${g.trimmed ? ' (trimmed to keep clear of it)' : ''}` : esc(g.no_box || 'no box')}</span>${g.box ? B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: 'A grey box over this part of the scan, no closer to the path than the scan: the simulation keeps the arm clear of it' }) : ''}</div>`).join('') : '')).join('')}</div>
         ${rv.summary && rv.source === 'claude' ? `<div class="wv-note">${esc(SRC.claude)}: ${esc(rv.summary)}</div>` : ''}
         ${(rv.findings || []).length ? `<div style="margin-top:7px">${rv.findings.map((f) => `<div class="wv-find ${esc(f.severity)}"><span class="src">${esc(SRC[f.source] || f.source)} · ${esc(f.category)} · ${esc(VIEW_TITLE[f.viewpoint] || f.viewpoint)}</span>
           <div>${esc(f.evidence)}</div><div class="wv-note" style="margin-top:2px">${esc(f.recommendation)}</div></div>`).join('')}</div>` : ''}

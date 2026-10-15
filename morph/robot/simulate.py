@@ -111,6 +111,14 @@ GROUPS = {
     "world": (B_WORLD, B_OBJ | B_ARM | B_JAW | B_PROX | B_NOOBJ),   # the robot and the object, never the table or each other
 }
 CLEAR_MM = 10.0                    # world mode: the carry arc keeps this far from every obstacle box
+
+
+def floor_mm(v: float) -> float:
+    """A clearance (mm) kept to 0.1 mm, rounded down: never more room than was measured (9.96 mm is 9.9, not the 10.0
+    that would be clear). Float noise aside: 2.3 stays 2.3."""
+    return math.floor(float(v) * 10.0 + 1e-6) / 10.0
+
+
 CARRIED = ("lift", "move", "place")          # plan phases with the object in the hand
 LIFTS_MM = (40.0, 80.0, 120.0)               # world mode: how much higher a detour may take the empty hand
 OPEN_LESS_MM = 4.0                           # world mode: a release that opens the jaws only this far past the object
@@ -1879,7 +1887,7 @@ def _clear_arc(rob, p0, p1, q0, ax0=None, verify=None):
         if worst >= CLEAR_MM and verify is not None:
             worst = min(worst, verify(fn))
         if worst >= CLEAR_MM:
-            rob.arc = {"inward": inward, "bump_mm": bump, "min_clearance_mm": round(float(worst), 1), "tried": tried,
+            rob.arc = {"inward": inward, "bump_mm": bump, "min_clearance_mm": floor_mm(worst), "tried": tried,
                        "clear": True, "usual": (inward, bump) == (usual or (0.3, 0.0))}
             return fn
         if best is None or worst > best[0]:
@@ -1888,7 +1896,7 @@ def _clear_arc(rob, p0, p1, q0, ax0=None, verify=None):
         rob.arc = {"tried": tried, "clear": False, "usual": True,
                    "note": "no arc of the family is reachable; using the default"}
         return _arc(p0, p1, 0.3, 0.0, ax0)
-    rob.arc = {"inward": best[1], "bump_mm": best[2], "min_clearance_mm": round(float(best[0]), 1), "tried": tried,
+    rob.arc = {"inward": best[1], "bump_mm": best[2], "min_clearance_mm": floor_mm(best[0]), "tried": tried,
                "clear": False, "usual": (best[1], best[2]) == (usual or (0.3, 0.0)),
                "note": f"no arc keeps {CLEAR_MM:.0f} mm from the room; using the one with the most room"}
     return best[3]
@@ -1937,7 +1945,7 @@ def _choose(rob, d, plan, cands):
             break
     c, via, extra, b = best
     plan.extend(b)
-    return {"via": via, "min_clearance_mm": round(float(min(c, 500.0)), 1), "clear": bool(c >= CLEAR_MM), **extra}
+    return {"via": via, "min_clearance_mm": floor_mm(min(c, 500.0)), "clear": bool(c >= CLEAR_MM), **extra}
 
 
 def _arc_q(rob, at, e0, e1, q):
@@ -2093,7 +2101,7 @@ def _check_path(rob, plan):
     rob.path, rob.blocked = [], None
     for (name, i0), i1 in zip(plan.moves, ends):
         c, k, rg, wg = _along(rob, d, plan, i0, i1)
-        e = {"move": name, "phase": plan.ph[min(i0 + 1, i1 - 1)], "min_clearance_mm": round(float(min(c, 500.0)), 1),
+        e = {"move": name, "phase": plan.ph[min(i0 + 1, i1 - 1)], "min_clearance_mm": floor_mm(min(c, 500.0)),
              "clear": bool(c >= CLEAR_MM)}
         if rg is not None and c < 500.0:
             e["at"] = {"t": round(float(plan.t[k]), 2), "link": rob.where(rg), "obstacle": rob.world_names.get(wg, "")}
@@ -2125,7 +2133,7 @@ def _world_metrics(rob, design, run, plan) -> dict:
     for h in hits:
         h["move"] = _move_at(plan, h["t"])
         h["phase"] = plan.ph[min(int(h["t"] / PLAN_DT + 1e-9), len(plan.ph) - 1)]
-    mc = round(float(best[0]), 1) if math.isfinite(best[0]) else None
+    mc = floor_mm(best[0]) if math.isfinite(best[0]) else None              # rounded down: never more room than measured
     out = {"world": W.get("id", ""), "world_sha": W.get("sha", ""), "world_contacts": hits, "min_clearance_mm": mc,
            "clearance_ok": bool(not hits and mc is not None and mc >= CLEAR_MM and rob.blocked is None), "arc": rob.arc,
            "detours": dict(rob.detours), "path": list(rob.path)}
