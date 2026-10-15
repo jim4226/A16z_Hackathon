@@ -176,7 +176,9 @@ class Claim:
         try:
             if os.name == "nt":
                 import msvcrt
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+
+                from ...services.durable import nt_lock
+                nt_lock(fd, msvcrt.LK_NBLCK)  # a byte past the file's content: the file stays readable
             else:
                 import fcntl
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -194,9 +196,9 @@ class Claim:
         try:
             if os.name == "nt":
                 import msvcrt
+                from ...services.durable import nt_lock
                 try:
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                    nt_lock(fd, msvcrt.LK_UNLCK)
                 except OSError:
                     pass
             else:

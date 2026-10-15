@@ -185,7 +185,7 @@ def test_relaunching_on_a_server_without_a_screen_opens_no_browser(home, monkeyp
     monkeypatch.setattr(cli.sys, "platform", "linux")
     with socket.socket() as busy:
         busy.bind(("127.0.0.1", 0))
-        busy.listen(1)
+        busy.listen(8)  # never accepted: Windows refuses a connection once the backlog is full, as if nothing listened
         a = argparse.Namespace(name="egg-picker", host="127.0.0.1", port=busy.getsockname()[1], open=True, remote=False,
                                team=False, allow_url_import=False)
         monkeypatch.delenv("DISPLAY", raising=False)

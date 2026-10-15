@@ -135,7 +135,16 @@ def disk_full(exc) -> bool:
 def explain(exc, home: str | None = None) -> str:
     """What to tell a person about `exc`: DISK_FULL for a full disk (or quota), else the error's own text, with the
     projects folder `home` named by its own name (projects/kb1/r002/...) rather than the server's full path."""
-    text = DISK_FULL if disk_full(exc) else str(exc) or exc.__class__.__name__
+    if disk_full(exc):
+        return DISK_FULL
+    if home and isinstance(exc, OSError) and exc.filename is not None and exc.strerror:
+        # str(exc) writes the file names as Python literals: on Windows every backslash doubled, so the projects
+        # folder's path no longer matches it. Name the files from the error itself instead.
+        code = f"[WinError {exc.winerror}]" if getattr(exc, "winerror", None) else f"[Errno {exc.errno}]"
+        names = [relative(os.fsdecode(f), home).replace(os.sep, "/") for f in (exc.filename, exc.filename2)
+                 if f is not None]
+        return f"{code} {exc.strerror}: " + " -> ".join(f"'{n}'" for n in names)
+    text = str(exc) or exc.__class__.__name__
     return relative(text, home) if home else text
 
 
@@ -177,6 +186,19 @@ def process_alive(pid) -> bool:
     return True
 
 
+# Windows locks are mandatory: a locked byte can't be read, so locking the lock file's first byte made the file
+# unreadable to anyone copying or backing up the projects folder while a Studio ran. The byte locked there lies far
+# past anything a lock file holds (the system allows locking beyond the end of a file).
+NT_LOCK_AT = 1 << 30
+
+
+def nt_lock(fd: int, mode) -> None:
+    """msvcrt.locking(fd, mode, 1) on the byte at NT_LOCK_AT, never on the file's content."""
+    import msvcrt
+    os.lseek(fd, NT_LOCK_AT, os.SEEK_SET)
+    msvcrt.locking(fd, mode, 1)
+
+
 class BuildLock:
     """An OS file lock (fcntl.flock / msvcrt.locking) on `path`, taken without waiting: held while a revision builds, so
     the start-up sweep of another process (a second Studio, the CLI) never sets aside a build that is still running.
@@ -197,7 +219,7 @@ class BuildLock:
         try:
             if os.name == "nt":
                 import msvcrt
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                nt_lock(fd, msvcrt.LK_NBLCK)
             else:
                 import fcntl
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -217,8 +239,7 @@ class BuildLock:
             if os.name == "nt":
                 import msvcrt
                 try:
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                    nt_lock(fd, msvcrt.LK_UNLCK)
                 except OSError:
                     pass
         finally:

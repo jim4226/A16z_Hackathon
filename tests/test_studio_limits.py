@@ -193,6 +193,11 @@ def test_an_answer_given_before_the_body_arrives_is_not_reset_away(live, path, b
 def remote(tmp_path, monkeypatch):
     """A remote Studio (access code "the-access-code") where 127.0.0.2 plays another computer: the cap per address
     applies to every address here (normally loopback is exempt), 3 unsigned connections per address, 12 in all."""
+    try:
+        with socket.socket() as probe:  # Linux and Windows answer on all of 127/8; macOS only on 127.0.0.1 by default
+            probe.bind(("127.0.0.2", 0))
+    except OSError:
+        pytest.skip("this computer has no second loopback address (127.0.0.2) to play another computer")
     monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
     monkeypatch.setattr(server, "HEADER_TIMEOUT", 10.0, raising=False)
     monkeypatch.setattr(server, "MAX_UNSIGNED_PER_ADDRESS", 3, raising=False)

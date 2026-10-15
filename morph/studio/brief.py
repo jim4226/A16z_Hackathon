@@ -1757,8 +1757,16 @@ def draft_path(home: str, bid: str) -> str | None:
     if not isinstance(bid, str) or not ID_RE.match(bid):
         return None
     root = _drafts(home)
-    p = os.path.realpath(os.path.join(root, bid + ".json"))
-    return p if os.path.commonpath([root, p]) == root else None
+    p = os.path.join(root, bid + ".json")  # the id is 16 hex characters: the name itself can't leave the folder
+    if not os.path.islink(p):
+        # never realpath a draft itself: on Windows one being deleted while still open resolves into
+        # \\?\C:\$Extend\$Deleted, and comparing that with the folder raised instead of answering
+        return p
+    real = os.path.realpath(p)  # a link someone put here is followed only while it stays in the folder
+    try:
+        return real if os.path.commonpath([root, real]) == root else None
+    except ValueError:  # another drive on Windows
+        return None
 
 
 def save_draft(b: Brief, home: str) -> str | None:
