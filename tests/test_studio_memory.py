@@ -57,6 +57,31 @@ def test_the_worker_ends_when_idle_and_the_next_job_starts_another(monkeypatch):
     assert second.wait(10) and second.status == "done"
 
 
+def test_trim_collects_what_a_build_left_in_reference_cycles():
+    """A build leaves hundreds of MB in reference cycles that Python's collector reaches only now and then; malloc can't
+    give that back until they are collected, so trim() collects first (R3: 530 MB idle after start-up without it, 300
+    with it)."""
+    import gc
+    import weakref
+
+    class Node:
+        pass
+
+    was = gc.isenabled()
+    gc.disable()                                         # as if the collector's next full pass were far off
+    try:
+        a, b = Node(), Node()
+        a.other, b.other = b, a
+        gone = weakref.ref(a)
+        del a, b
+        assert gone() is not None                        # only a cycle collection frees it
+        memory.trim()
+        assert gone() is None
+    finally:
+        if was:
+            gc.enable()
+
+
 @pytest.mark.skipif(not GLIBC, reason="glibc only (malloc_trim, mallopt)")
 def test_trim_and_the_arena_cap_reach_glibc():
     assert isinstance(memory.trim(), bool)
@@ -72,6 +97,17 @@ def test_the_launcher_caps_malloc_arenas_and_the_studio_does_too():
     assert serve.index("memory.limit_arenas()") < serve.index("studio = Studio(")
 
 
+def test_the_start_up_builds_share_the_arenas_and_are_trimmed_before_the_studio_waits():
+    """`morph studio` builds the demo robots (and rebuilds old ones) before serve(), outside any room's job queue: the
+    arena cap comes before the first of those builds, and what they freed goes back before serve()."""
+    src = open(os.path.join(REPO, "morph", "cli.py"), encoding="utf-8").read()
+    studio = src[src.index("def cmd_studio("):]
+    studio = studio[:studio.index("\ndef ")]
+    first_build = min(studio.index("cmd_robot("), studio.index("proj.run("))
+    assert studio.index("memory.limit_arenas()") < first_build
+    assert first_build < studio.rindex("memory.trim()") < studio.rindex("serve(p, ")
+
+
 def _call(port, method, path, body=None):
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
@@ -82,10 +118,12 @@ def _call(port, method, path, body=None):
 
 @pytest.mark.skipif(not (SLOW and GLIBC), reason="MORPH_SLOW=1 on Linux: six real builds in a Studio (10 to 20 minutes)")
 def test_a_studios_memory_stays_near_one_builds_needs_over_six_builds(tmp_path):
-    """Six parameter edits, alternating between the two demo robots, in a Studio started as the launcher starts it. Before
-    the fix its resident memory climbed after every build: 444, 706, 805, 971, 1058, 1242 MB (with MALLOC_ARENA_MAX=2
-    alone, 484 to 1011 MB). Now it goes up and down between 300 and 600 MB (which room built last, what its caches
-    hold): at most 800 MB, and the last three builds leave no more than 200 MB above the first three on average."""
+    """A fresh Studio started as the launcher starts it builds the two demo robots before it serves, then six parameter
+    edits alternate between them. Before ROB-11 its resident memory climbed after every build: 444, 706, 805, 971,
+    1058, 1242 MB (with MALLOC_ARENA_MAX=2 alone, 484 to 1011 MB); with each job trimmed but neither the start-up builds
+    nor the reference cycles, it idled at 783 MB after start-up and went 383 to 698 MB between builds. Now (R3) it idles
+    at about 300 MB after start-up and stays at 280 to 340 MB between builds: under 500 MB after start-up, under 600 MB
+    after any build, and the last three builds no more than 200 MB above the first three on average."""
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "e2e"))
     from live_studio import free_port                                    # inside MORPH_E2E_PORTS when that is set
     port = free_port()
@@ -116,6 +154,8 @@ def test_a_studios_memory_stays_near_one_builds_needs_over_six_builds(tmp_path):
                 time.sleep(1)
         for room in ("egg-picker", "so101"):
             idle(room)
+        time.sleep(2)
+        started = rss()
         seen = []
         for i in range(6):
             room = ("egg-picker", "so101")[i % 2]
@@ -124,7 +164,7 @@ def test_a_studios_memory_stays_near_one_builds_needs_over_six_builds(tmp_path):
             idle(room)
             time.sleep(2)
             seen.append(rss())
-        assert max(seen) < 800 and sum(seen[3:]) / 3 - sum(seen[:3]) / 3 < 200, seen
+        assert started < 500 and max(seen) < 600 and sum(seen[3:]) / 3 - sum(seen[:3]) / 3 < 200, (started, seen)
     finally:
         proc.send_signal(signal.SIGINT)
         try:

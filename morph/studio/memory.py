@@ -1,14 +1,17 @@
 """The Studio's memory after builds. A build allocates a few hundred MB (meshes, simulations, manufacturing files) and
-frees them, but glibc's malloc keeps freed memory for reuse, in one arena per thread that built: a long-running Studio
-grew to 1.1-1.2 GB after a handful of builds. limit_arenas() caps the arenas at two (what MALLOC_ARENA_MAX=2 does,
-which run_studio.sh also sets), and trim() hands what a build freed back to the system once it ends. Each room's
-builds run on one long-lived thread (rooms.JobQueue). Off glibc (macOS, Windows, musl) both do nothing.
+frees them, but not all at once: much of it sits in reference cycles that Python's collector reaches only now and
+then, and glibc's malloc keeps freed memory for reuse, in one arena per thread that built. A long-running Studio grew
+to 1.1-1.2 GB after a handful of builds. limit_arenas() caps the arenas at two (what MALLOC_ARENA_MAX=2 does, which
+run_studio.sh also sets), and trim() collects the cycles and hands what a build freed back to the system once it
+ends (after each room job, and after the start-up builds). Each room's builds run on one long-lived thread
+(rooms.JobQueue). Off glibc (macOS, Windows, musl) only the collection happens.
 """
 
 from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import gc
 import sys
 import threading
 
@@ -42,6 +45,8 @@ def limit_arenas(n: int = 2) -> bool:
 
 
 def trim() -> bool:
-    """Return the memory malloc holds free in every arena to the system (malloc_trim(0)). True when some went back."""
+    """Collect the garbage in reference cycles (a build leaves hundreds of MB there), then return the memory malloc
+    holds free in every arena to the system (malloc_trim(0)). True when some went back."""
+    gc.collect()
     lib = _glibc()
     return bool(lib and lib.malloc_trim(0) == 1)

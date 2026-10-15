@@ -273,7 +273,8 @@ def cmd_studio(a):
                      f"{os.path.join(HOME, a.name, 'report.html')} for it. Morph Studio opens whole robots: "
                      "run_studio.bat / ./run_studio.sh, or `python -m morph.cli studio egg-picker --open`.")
     from . import keys
-    from .studio import projects
+    from .studio import memory, projects
+    memory.limit_arenas()  # before the start-up builds below: they share two malloc arenas, as the Studio's builds do
     if keys.ensure_env_file():
         print("Created .env for your API keys (optional): use the Keys button in the Studio, or edit .env.")
     projects.backfill_demo(HOME)  # robots this launcher made before 0.2: Reset demo touches only demo projects
@@ -308,6 +309,7 @@ def cmd_studio(a):
     extra = {**({"team": True, "link": link} if team else {}),
              **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {})}
     print(f"Projects folder: {os.path.abspath(HOME)}{resources.projects_home_note(HOME)}")
+    memory.trim()  # what the start-up builds freed goes back to the system before the Studio waits for work
     serve(p, a.host, a.port, home=HOME, token=token, **extra)
 
 

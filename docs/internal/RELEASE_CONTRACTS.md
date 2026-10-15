@@ -191,14 +191,19 @@ A job applies its changes to the newest revision when its turn comes. If one of 
 ("Couldn't apply that: ...") or raises ValueError. `projects.as_design()` refuses keys a Design doesn't have.
 
 A room's jobs run on one thread (`rooms.JobQueue`, W3): it starts with the first job, waits up to `IDLE_S` = 600 s for
-the next before it ends, and calls `memory.trim()` (glibc's `malloc_trim(0)`; nothing on other systems) after each
-job. `serve()` calls `memory.limit_arenas()` (glibc `mallopt(M_ARENA_MAX, 2)`) before the Studio starts its threads,
-and run_studio.sh exports `MALLOC_ARENA_MAX=2` unless it is set. Measured over six parameter edits alternating the two
+the next before it ends, and calls `memory.trim()` after each job: `gc.collect()` (R3: a build leaves hundreds of MB
+in reference cycles), then glibc's `malloc_trim(0)` (nothing on other systems). `morph studio` calls
+`memory.limit_arenas()` (glibc `mallopt(M_ARENA_MAX, 2)`) before its start-up builds (the demo robots, a rebuild
+with newer code) and `memory.trim()` after them, just before `serve()`, which calls `limit_arenas()` too; run_studio.sh
+exports `MALLOC_ARENA_MAX=2` unless it is set. R3, measured the same way (a fresh home, MALLOC_ARENA_MAX=2, RSS once
+both rooms are idle, after each of six edits, and 60 s later): without the start-up trim and the collection, 783 MB
+idle after start-up, 383-698 MB after the builds, 703 MB idle; with them, 296-304 MB, 284-334 MB, 314-383 MB, and a
+peak of 1088 MB while building. Measured over six parameter edits alternating the two
 demo robots (Linux, 16 GB), the resident memory after each: before, 444, 706, 805, 971, 1058, 1242 MB (peak 1.5 GB;
 with `MALLOC_ARENA_MAX=2` alone still 484 to 1011 MB); after, 326, 520, 375, 550, 605, 500 MB from `morph studio`
 (peak 1.13 GB) and 322, 508, 355, 422, 469, 389 MB as run_studio.sh starts it (peak 1.01 GB).
-tests/test_studio_memory.py repeats it with MORPH_SLOW=1 (at most 800 MB after any build, and the last three no more
-than 200 MB above the first three on average).
+tests/test_studio_memory.py repeats it with MORPH_SLOW=1 (R3: under 500 MB idle after start-up, under 600 MB after any
+build, and the last three no more than 200 MB above the first three on average).
 
 ## 3. Live events (SSE)
 
