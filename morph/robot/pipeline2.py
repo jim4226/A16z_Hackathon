@@ -600,6 +600,7 @@ def summarize(r: dict) -> dict:
     bom = (r.get("bom") or {}).get("totals", {})
     man = r.get("manual") or {}
     joints = sz.get("joints", [])
+    stretch = pay.get("stretch_payload_g")
     issues = list(sz.get("issues", [])) + list(cad.get("issues", []) or []) + list((g.get("analysis") or {}).get("issues", [])) + \
         list((g.get("force") or {}).get("issues", [])) + list(cad.get("validate", []) or []) + \
         list((r.get("eplan") or {}).get("issues", []) or []) + list(el.get("issues", []) or []) + list(mfg.get("issues", []) or [])
@@ -627,9 +628,11 @@ def summarize(r: dict) -> dict:
         "grip_target_n": (g.get("force") or {}).get("target_force_n"),
         "pick_place_success": pp.get("success"), "cycle_time_s": pp.get("cycle_time_s"),
         # the payload sweep's measured maximum is top-down at payload_test_reach_mm from the base, not at full reach;
-        # stretch_payload_g is the static capacity stretched straight out (both with a servo at stall)
+        # stretch_payload_g is the static capacity stretched straight out (both with a servo at stall). Below zero the
+        # arm can't hold even its own weight out there: no payload (0 g), stretch_holds_itself False and the joint
         "max_payload_g": pay.get("max_payload_g"), "payload_test_reach_mm": pay.get("test_reach_mm"),
-        "stretch_payload_g": pay.get("stretch_payload_g"), "stretch_reach_mm": pay.get("stretch_reach_mm"),
+        "stretch_payload_g": None if stretch is None else max(stretch, 0.0), "stretch_reach_mm": pay.get("stretch_reach_mm"),
+        "stretch_holds_itself": None if stretch is None else stretch >= 0, "stretch_limited_by": pay.get("stretch_limited_by"),
         "workspace_reach_mm": ws.get("reach_mm"),
         "top_down_reach_mm": (ws.get("top_down_reach_mm") or [None, None])[1],
         "max_torque_pct": max((pp.get("max_torque_pct") or {}).values(), default=None),

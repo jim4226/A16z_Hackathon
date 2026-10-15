@@ -456,3 +456,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   hand-over with an emergency stop ("hands over drink cans"); "open boxes arrive on the left" was read as opening boxes,
   "sort twist ties" as twisting, and screw caps, brass inserts, plugs and an assembly line the same way. A hand-over
   now needs a person to receive it ("give it back to her" and "hand the cup to my mum" count, which they didn't).
+- An arm that can't hold its own weight stretched out no longer shows a negative payload there ("Payload stretched out
+  at 465 mm -13 g" for the SO-101 on Dynamixel servos at 7.4 V). The inspector and `morph robot` say "none" and that
+  the shoulder servo can't hold the arm stretched out, so it carries payloads only closer in.

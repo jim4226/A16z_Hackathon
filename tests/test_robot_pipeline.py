@@ -205,3 +205,18 @@ def test_every_failed_simulated_scenario_is_an_issue():
     assert "pick-and-place failed in simulation (squeezed 4.1 N per finger, above the 3 N that damages it)" in crushed["issues"]
     passed = summarize({"sims": {"scenarios": {k: {"metrics": ok} for k in sims}}})
     assert passed["sim_failed"] == [] and not [i for i in passed["issues"] if "simulation" in i]
+
+
+def test_a_stretched_out_payload_is_never_negative():
+    # the SO-101 on Dynamixel servos at 7.4 V can't hold even its own arm stretched out: the static capacity there is
+    # -13 g, which the inspector showed as "Payload stretched out at 465 mm -13 g" and the CLI as stretch_payload_g=-13.0
+    from morph.robot.pipeline2 import summarize
+
+    sweep = {"metrics": {"stretch_payload_g": -13.0, "stretch_reach_mm": 465.4, "stretch_limited_by": "shoulder_lift",
+                         "max_payload_g": 265.0, "test_reach_mm": 251.8}}
+    s = summarize({"sims": {"scenarios": {"payload_sweep": sweep}}})
+    assert (s["stretch_payload_g"], s["stretch_holds_itself"], s["stretch_limited_by"]) == (0.0, False, "shoulder_lift")
+    sweep["metrics"]["stretch_payload_g"] = 216.0
+    s = summarize({"sims": {"scenarios": {"payload_sweep": sweep}}})
+    assert (s["stretch_payload_g"], s["stretch_holds_itself"]) == (216.0, True)
+    assert summarize({})["stretch_holds_itself"] is None

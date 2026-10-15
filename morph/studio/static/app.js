@@ -703,9 +703,16 @@ function renderInspector(cur, prev) {
     ['Mass', s.robot_mass_kg != null ? (+s.robot_mass_kg).toFixed(2) : '–', 'kg', 'robot_mass_kg'],
     ['Unit cost', s.unit_cost != null ? money(s.unit_cost) : '–', null, 'unit_cost'],
   ];
+  // stretched straight out, an arm whose servo can't hold even its own weight has no payload there: never a negative one
+  const noStretch = (x) => x.stretch_holds_itself === false || (typeof x.stretch_payload_g === 'number' && x.stretch_payload_g < 0);
+  const stretchJoint = String(s.stretch_limited_by || '').replace(/^j\d+_/, '').replace(/_/g, ' ');
   const rows = [];
   for (const [label, k, unit, better] of METRICS) {
-    const v = s[k], pv = ps[k];
+    let v = s[k], pv = ps[k];
+    if (k === 'stretch_payload_g') {     // a revision saved before the summary clamped it may hold the deficit
+      if (typeof v === 'number' && v < 0) v = 0;
+      if (typeof pv === 'number' && pv < 0) pv = 0;
+    }
     if (v == null && pv == null) continue;
     let delta = '', fl = '';
     if (prev && pv != null && JSON.stringify(v) !== JSON.stringify(pv)) {
@@ -721,7 +728,8 @@ function renderInspector(cur, prev) {
       } else txt = `was ${pretty(pv, true)}`;
       delta = `<span class="delta ${cls}">${esc(txt)}</span>`;
     }
-    const val = typeof v === 'boolean' ? (v ? '<span class="tag good">pass</span>' : '<span class="tag bad">fail</span>')
+    const val = k === 'stretch_payload_g' && noStretch(s) ? '<span class="tag warn">none</span>'
+      : typeof v === 'boolean' ? (v ? '<span class="tag good">pass</span>' : '<span class="tag bad">fail</span>')
       : unit === '$' ? money(v) : fmt(v, unit);
     // say where each payload was measured: the sweep's top-down pose, or stretched straight out
     const at = { max_payload_g: s.payload_test_reach_mm, stretch_payload_g: s.stretch_reach_mm }[k];
@@ -745,7 +753,8 @@ function renderInspector(cur, prev) {
       ${changes.length ? `<div class="chg">${changes.map(([k, [a, b]]) => `<div class="c"><div class="k">${esc(k)}</div><div class="vv"><span class="o">${esc(pretty(a, true))}</span>${I('arrow', 'sm')}<span class="n">${esc(pretty(b, true))}</span></div></div>`).join('')}</div>`
         : `<div class="muted" style="font-size:12px">${cur.parent ? 'No parameter changes.' : 'First revision: everything was generated from the request.'}</div>`}</div>
     <div class="isec"><div class="sec-t">Metrics${prev ? `<span class="r">Δ vs ${esc(prev.rev)}</span>` : ''}</div><table class="mt-table">${rows.join('')}</table>
-      ${s.max_payload_g != null || s.stretch_payload_g != null ? '<div class="mt-note">Payloads are the most the arm holds before a servo stalls, at that distance from the base axis: not a working load. Sizing keeps a torque margin over the object for that.</div>' : ''}</div>
+      ${s.max_payload_g != null || s.stretch_payload_g != null ? '<div class="mt-note">Payloads are the most the arm holds before a servo stalls, at that distance from the base axis: not a working load. Sizing keeps a torque margin over the object for that.</div>' : ''}
+      ${noStretch(s) ? `<div class="mt-note stretch-none">Stretched out${s.stretch_reach_mm != null ? ` at ${Math.round(s.stretch_reach_mm)} mm` : ''} the arm can't hold even its own weight${stretchJoint ? `: its ${esc(stretchJoint)} servo stalls` : ''}. It carries payloads only closer in.</div>` : ''}</div>
     ${force?.window_n && force.window_n[0] != null && force.window_n[1] != null ? `<div class="isec"><div class="sec-t">Grip force window<span class="r">per finger</span></div><div class="fw">${forceWindowSVG(force)}</div>${keewanoLine(cur)}</div>` : ''}
     <div class="isec"><div class="sec-t">Issues &amp; warnings</div>
       ${errs.map(([n, e]) => `<div class="issue bad">${I('x', 'sm')}<span><b>${esc(n)}</b>: ${esc(e)}</span></div>`).join('')}

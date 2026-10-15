@@ -87,6 +87,19 @@ def test_the_payload_and_reach_labels_say_what_was_measured(inspect):
     assert "OBJECT MASS" in facts.upper() and "\nPAYLOAD" not in facts.upper()
 
 
+@pytest.mark.parametrize("saved", [{"stretch_payload_g": 0.0, "stretch_holds_itself": False}, {"stretch_payload_g": -13.0}])
+def test_a_stretched_out_payload_is_never_negative(inspect, saved):
+    # it read "Payload stretched out at 465 mm -13 g" for an SO-101 whose shoulder can't hold the arm stretched out
+    # (a revision saved before the summary clamped it holds the -13 g itself)
+    pg = inspect({"summary": {**SUMMARY, "stretch_reach_mm": 465.4, "stretch_limited_by": "shoulder_lift", **saved}})
+    rows = dict(pg.evaluate("[...document.querySelectorAll('#insp .mt-table tr')].map(r => [...r.cells].map(c => c.innerText))"))
+    assert rows["Payload stretched out at 465 mm"].strip() == "none"
+    note = " ".join(pg.inner_text("#insp .stretch-none").split())
+    assert note == "Stretched out at 465 mm the arm can't hold even its own weight: its shoulder lift servo stalls. It " \
+                   "carries payloads only closer in."
+    assert "-13" not in pg.inner_text("#insp")
+
+
 def test_the_inspector_says_what_sizing_changed_from_the_request(inspect):
     # the egg-picker asks for 320 mm and is built at 475 mm: the parameter, the inspector and its issues say so
     note = "reach raised from 320 to 475 mm: top-down pick/place at 234 / 233 mm with a 175 mm wrist + hand"

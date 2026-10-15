@@ -1572,3 +1572,10 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   by up to four words and "to" a person ("give it back to her", "hand the cup to my mum"); "them" or "it" alone are the
   things, so "pass them to the packing station" is a pick and place with no emergency stop. `PERSON_NEAR` uses it for
   those verbs (help, assist and serve keep "them"). `tests/test_brief_answers.py` holds both ways' tables.
+- **No negative payload (E-N9).** The payload sweep's `stretch_payload_g` is the static capacity stretched straight
+  out, and stays as computed in the simulation's metrics (below zero: the deficit). The summary clamps it at 0 and adds
+  `stretch_holds_itself` (False when a servo can't hold even the arm's own weight out there; None without a sweep) and
+  `stretch_limited_by` (the joint). The inspector shows "none" for it with a note ("Stretched out at 465 mm the arm
+  can't hold even its own weight: its shoulder lift servo stalls. It carries payloads only closer in.") and `morph
+  robot`'s summary prints `stretch_payload_g=none` and the same sentence; both also read a revision saved with the
+  negative number. The SO-101 on Dynamixel servos at a 7.4 V rail is such an arm (-13 g, shoulder_lift).

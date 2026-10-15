@@ -299,9 +299,16 @@ def _robot_summary(p, rev) -> list:
     keys = ["dof", "reach_mm", "actuators", "min_torque_margin", "parts", "robot_mass_kg", "pick_place_success",
             "cycle_time_s", "max_payload_g", "payload_test_reach_mm", "stretch_payload_g", "electronics_config", "pcb",
             "build_config", "unit_cost", "assembly_steps"]
-    print(f"\n{rev}: " + "  ".join(f"{k}={s.get(k)}" for k in keys))
+    stretch = s.get("stretch_payload_g")
+    none = s.get("stretch_holds_itself") is False or (isinstance(stretch, (int, float)) and stretch < 0)
+    print(f"\n{rev}: " + "  ".join(f"{k}={'none' if k == 'stretch_payload_g' and none else s.get(k)}" for k in keys))
     for i in s.get("issues", []):
         print(f"  x {i}")
+    if none:   # never a negative payload: stretched out, a servo can't hold even the arm's own weight
+        joint = s.get("stretch_limited_by")
+        reach = s.get("stretch_reach_mm")
+        print(f"  stretched out{f' at {reach:.0f} mm' if reach is not None else ''} the arm can't hold even its own "
+              f"weight{f' ({joint} stalls)' if joint else ''}: it carries payloads only closer in")
     for n in s.get("notes") or []:
         print(f"  adjusted: {n}")
     return [n for n in ORDER if stage_problem(res, n)]
