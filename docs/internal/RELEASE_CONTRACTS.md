@@ -1660,3 +1660,9 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   the tea to her, please" stay hand-overs. The direct form ("bring her the cup", "pass my dad his pills") keeps any
   "her" but not 's. `PERSON_NEAR` applies the same guards to its person mention and its "for/to her". The tables are in
   `tests/test_brief_answers.py`.
+- **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
+  order, failures included; not the ones it carried over or that were blocked), and `reused`: the stages whose
+  `stage_status` is "reused", early cutoffs included. Keewano's `StageRecomputed` events (`keewano.events_for`) and
+  Teams' activity read `recomputed`, so a wrist-camera or reach edit no longer counts the gripper stage it reused. The
+  start event's `dirty` stays `dirty_nodes(changes)`: the stages the edit may rerun (the Studio's "N of 9 stages
+  affected"); each stage's "node" event then says whether it was reused.

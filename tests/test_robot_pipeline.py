@@ -58,12 +58,24 @@ def test_an_extras_edit_reruns_sizing_and_sim(tmp_path):
     p = RobotProject(str(tmp_path / "egg"))
     d = Design().with_changes(EGG_ROBOT)
     r1 = p.run(d, n_trials=1, verbose=False, fast_sim=True)
-    r2 = p.run(d.with_changes({"electronics.extras": "wrist_camera,imu"}), parent=r1, n_trials=1, verbose=False, fast_sim=True)
+    events = []
+    r2 = p.run(d.with_changes({"electronics.extras": "wrist_camera,imu"}), parent=r1, n_trials=1, verbose=False,
+               fast_sim=True, on_event=events.append)
     a, b = p.load_results(r1), p.load_results(r2)
     assert b["stage_status"]["sizing"] == b["stage_status"]["sim"] == "computed"
     # sizing reran but left the servo rail the gripper stage reads (pipeline2.PARTIAL): its grasp simulation is reused
     assert b["stage_status"]["gripper"] == "reused" and not b.get("errors"), b.get("errors")
     assert b["provenance"]["gripper"] == f"reused from {r1}"
+    # the start event names it as a stage the edit may rerun; its node event, the ledger and Keewano say it was reused
+    from morph import keewano
+
+    assert "gripper" in events[0]["dirty"] and {"type": "node", "node": "gripper", "status": "reused"} in events
+    with open(p.ledger_path, encoding="utf-8") as fh:
+        entry = [json.loads(ln) for ln in fh if ln.strip()][-1]
+    assert entry["rev"] == r2 and "gripper" not in entry["recomputed"] and "gripper" in entry["reused"]
+    assert set(entry["recomputed"]) == {n for n, st in b["stage_status"].items() if st != "reused"}
+    assert ("StageRecomputed", "gripper") not in keewano.events_for(entry)
+    assert ("StageRecomputed", "sizing") in keewano.events_for(entry)
     assert b["sizing"]["hand_mass_g"] >= a["sizing"]["hand_mass_g"] + 15
     # a lower servo rail does change it: the gripper reruns and plans its stall force on the new rail, as a fresh build
     d74 = d.with_changes({"electronics.servo_v": 7.4})
