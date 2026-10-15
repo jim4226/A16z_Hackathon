@@ -219,6 +219,7 @@ def test_wording_that_opens_twists_or_assembles_something_reads_as_that_job(text
     ("give the report to his lab partner", True, True), ("hand the tools to his workshop assistant", True, True),
     ("give the meds to my mum's home carer", True, True), ("hand the cup to her table neighbour", True, True),
     ("give the forms to his line manager", True, True), ("pass the tray to her machine operator", True, True),
+    ("bring the tea to her house cleaning lady", True, True), ("bring the tea to her next door neighbour", True, True),
     # ... and the place is hers when nothing but a function word, a time or manner word, a number or punctuation follows
     ("bring the cup to her old wooden kitchen table", False, False), ("bring the meds to her bedroom twice a day", False, False),
     ("bring the medicine to her home", False, False), ("bring the cup to her room so she can drink it", False, False),
@@ -227,6 +228,9 @@ def test_wording_that_opens_twists_or_assembles_something_reads_as_that_job(text
     ("bring the mail to her desk daily", False, False), ("pass the cups to his kitchen counter.", False, False),
     ("give the cans to his packing station", False, False), ("give the bolts to his assembly line", False, False),
     ("pass the panels to his conveyor", False, False), ("bring the parts to his machine", False, False),
+    ("bring the cup to her kitchen table near the window", False, False),
+    ("bring the cup to her desk next to the lamp", False, False), ("bring the tray to her room up the stairs", False, False),
+    ("bring the files to her office over there", False, False), ("bring the cup to her room's window", False, False),
 ])
 def test_a_hand_over_goes_to_a_person(text, hand_over, near):
     assert bool(re.search(B.HAND_TO_PERSON, text)) is hand_over

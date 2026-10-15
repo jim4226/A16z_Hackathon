@@ -1723,8 +1723,9 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   workshop, kitchen, table, car, door, shed, shelf, drawer, bin, tray, station, line, machine and the like), after at
   most three describing words ("her bedside table", "my mum's kitchen table", "her old wooden kitchen table"), ends
   the noun phrase: the text ends there, or punctuation, a number, a function word (`_NOT_DESCRIBING`: and, at, so,
-  every, please, ...) or an adverb (`_ADVERB`: twice, daily, tonight, upstairs, quickly, ...)
-  follows (`_PHRASE_END`). So "bring the mail to her desk", "bring them to her room", "bring the cups to his office",
+  every, please, ...), an adverb (`_ADVERB`: twice, daily, tonight, upstairs, quickly, ...) or a preposition
+  (`_PREPOSITION`: near, next, over, up, without, ...) follows (`_PHRASE_END`): "bring the cup to her kitchen table
+  near the window" is a pick and place. So "bring the mail to her desk", "bring them to her room", "bring the cups to his office",
   "give the parts to my dad's workshop", "bring the meds to her bedroom twice a day" and "give the bolts to his
   assembly line" are no hand-over. Otherwise the person is the receiver, because a missed hand-over drops the
   emergency stop beside a person: after "her" or 's comes no place ("bring the meds to her twice a day", "gives the
