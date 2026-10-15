@@ -103,7 +103,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   be noisy or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot
   becomes a grey box, trimmed so it is no closer to the path than the scan, and the next simulation plans around it. A
   place next to a grey box, or one a box was added for (even when the trim moved the box away from it), isn't offered
-  again, and the same box is never added twice. The check, the boxes' fit included, stays within its 20 seconds: the
+  again while the path comes no closer there than the box was fitted for; when it does (the robot moved, say), the
+  place is offered again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same
+  box is never added twice, and a box the room holds already is never offered again. The check, the boxes' fit included, stays within its 20 seconds: the
   review's desk scan takes 10 to 11.5 seconds on a busy 4-core computer (load 11-13), where it used to take 16 to 18
   and was often cut short; a generated room of a million triangles takes 10.5 seconds at load 7. The boxes' share of
   the time is set aside only once there is a near miss, sized from what fitting the boxes takes. Cut short, the check

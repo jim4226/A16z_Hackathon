@@ -1320,7 +1320,18 @@ field failure rate (section 0, honesty).
   region also has `covers`, its box before trimming (it holds the region's near-miss points); an obstacle saved with
   `covers` owns the near misses within `SCAN_COVER_MM` of that place too, while the box still lies inside it (+1 mm;
   moved elsewhere it doesn't), so a box trimmed away from its near miss (a vase's top under the arm) isn't offered
-  again. `_fit_boxes` prunes each geom's fine samples by its coarse ones (as pass 2 does), keys points by 0.25 mm
+  again. R4: `covers` also carries `clearance_mm`, the distance the box was fitted to (the region's
+  `min_clearance_mm`), and `rev`, the revision whose path it was (set by the route), and reaches at most
+  `SCAN_COVERS_MAX_MM` = 50 mm past the trimmed box. Such a box and its place own a near miss only while it is no closer
+  than `clearance_mm` (less `SCAN_COVERS_TOL_MM` = 0.1 mm): a path that comes closer there gets the place offered again,
+  with a box fitted to the new path. A `covers` without `clearance_mm`, that the box doesn't lie inside, or that
+  reaches further than 50 mm past the box is ignored (`_covers`), and the box then owns, like any grey box, only the
+  near misses within 10 mm of itself. A region whose fitted box is a box the world holds already (`_same_box`: 0.05 mm,
+  0.01 degree) is left out and counted in `stats.covered`, the rest numbered again (`_already_boxed`): an API client
+  that saves boxes without `covers` can't get the same box offered twice. Measured on the review's desk with the
+  trimmed box and its place saved and the mount moved 15 mm in -x: the wrist comes within 2.2 mm, above the box, and
+  that place is offered with a box fitted to the new path, where 22bec48 said it had a grey box already.
+  `_fit_boxes` prunes each geom's fine samples by its coarse ones (as pass 2 does), keys points by 0.25 mm
   cell, and drops points once clear of the shrinking box. R4: the measuring passes run to `time_limit_s` until there
   is a near miss (a first-pass bound or a second-pass point closer than `near_mm`); from then on they stop early
   enough for the regions and the fit, `SCAN_FIT_S_PER_POSE` (3 ms) a distinct pose, at least `SCAN_RESERVE_MIN_S`
@@ -1365,9 +1376,13 @@ field failure rate (section 0, honesty).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
   the box size, its distance from the path and whether it was trimmed, or why there is no box) and **Add box here**
   (only with a box): the box joins the world's grey boxes as `{id: region id (made unique), label,
-  center, half, yaw_deg, source: "auto", covers?}` (`covers` when the region has one; `worlds.validate` keeps it as a
-  box, the simulation never sees it); a box equal to one the world holds (0.05 mm, 0.01 degree) isn't added again, the
-  row reading Added. *Save and simulate* then plans around it, and the next check measures the new path. Browser test: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan`.
+  center, half, yaw_deg, source: "auto", covers?}` (`covers` when the region has one, with its `clearance_mm` and
+  `rev`; `worlds.validate` keeps it as a box with `clearance_mm` from 0 to 10 mm and `rev` a revision name, the
+  simulation never sees it); a box equal to one the world holds (0.05 mm, 0.01 degree) isn't added again, the row
+  reading Added. R4: a box sized, moved or turned by hand (the gizmo or the panel's numbers, `setBoxFromBase`), or a
+  room rescaled, loses its `covers`. *Save and simulate* then plans around it, and the next check measures the new
+  path. Browser tests: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan` and
+  `::test_a_box_trimmed_off_a_vase_is_added_once_and_not_offered_again`; `tests/test_world_gizmo.py` (hand edits).
 - **Under attack (B2-S4).** An adversarial review of the track; what other code relies on since:
   - `robust.StudyConflict` (a `StudyError`; the routes answer 409) for what can't run as asked: a revision with nothing
     to study (`robust.studyable(p, rev)`: the simulation stage failed or never ran, a preview-only build, no pick and

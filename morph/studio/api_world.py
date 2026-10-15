@@ -325,6 +325,9 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
     except Exception as exc:  # noqa: BLE001  (the scan is a warning: it never takes the rest of the check down)
         res = skip(f"The path couldn't be measured against the scan ({exc.__class__.__name__}).")
     ms = int((time.time() - t0) * 1000)
+    for g in res.get("regions") or []:          # a trimmed box's place names the revision whose path it was fitted to
+        if isinstance(g.get("covers"), dict) and re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", rev):
+            g["covers"]["rev"] = rev
     mc, n = res.get("min_clearance_mm"), len(res.get("regions") or [])
     cut = bool((res.get("stats") or {}).get("truncated"))
     text = (res["skipped"] if res.get("skipped") else

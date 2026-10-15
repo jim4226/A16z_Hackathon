@@ -62,9 +62,12 @@ out at its corners, so the box is measured against the same path first and trimm
 is no closer to the path than the scan there (the row says how close it is, and "trimmed" when it was): adding it never
 makes the clearance worse. When a box that keeps clear would be thinner than 5 mm, none is offered: move the robot or
 the thing. *Save and simulate* then plans around it, and the next check measures the new path. A near miss within 10 mm
-of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box away from it
-(a vase's rim just under the arm): the same place is not offered again, and the check says it has a grey box already.
-The same box is never added twice.
+of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box away from it (a
+vase's rim just under the arm): the same place is not offered again, and the check says it has a grey box already. A box
+added this way keeps how close the path came there and which revision's path it was fitted to: when a new path comes
+closer at that place (the robot moved, say), the place is offered again with a box fitted to the new path. Sizing,
+moving or turning such a box by hand, or setting the room's scale again, makes it a plain grey box. The same box is
+never added twice, and a box the room holds already is never offered again.
 
 The check, the boxes' fit included, has 20 seconds. On a busy 4-core computer (load 11-13) the review's desk scan, a
 vase 9 mm from the arm's path, takes 10 to 11.5 seconds, and the same desk with the wrist touching the vase 8 to 12.5

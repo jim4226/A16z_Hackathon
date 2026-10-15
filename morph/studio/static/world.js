@@ -542,7 +542,7 @@ export class WorldView {
     if (w.surface) { w.surface.center = sc(w.surface.center); w.surface.half = sc(w.surface.half); }
     for (const o of w.obstacles || []) {
       o.center = sc(o.center); o.half = sc(o.half);
-      if (o.covers) { o.covers.center = sc(o.covers.center); o.covers.half = sc(o.covers.half); }
+      delete o.covers;                      // fitted to the path at the old scale: the next check measures afresh
     }
     for (const z of w.zones || []) { if (z.box) { z.box.center = sc(z.box.center); z.box.half = sc(z.box.half); } else { z.polygon = z.polygon.map(sc); z.z = z.z.map((x) => x * k); } }
     for (const c of w.candidates || []) c.position = sc(c.position);
@@ -588,6 +588,7 @@ export class WorldView {
     const o = (this.world.obstacles || []).find((x) => x.id === id);
     if (!o) return false;
     const b = { ...this.boxInBase(o), ...vals };
+    delete o.covers;                        // resized or moved by hand: no longer the box fitted for that place
     const size = [b.w, b.d, b.h].map((x) => clamp(Number.isFinite(x) ? x : 100, 10, 20000));
     o.half = size.map((x) => r1(x / 2));
     o.center = this.baseToWorld([b.x, b.y, this.surfaceTop + clamp(b.bottom || 0, -5000, 5000) + size[2] / 2]).map(r1);
@@ -657,6 +658,7 @@ export class WorldView {
       const g = tc.object;
       const o = g && (this.world.obstacles || []).find((x) => x.id === g.userData.id);
       if (!o) return;
+      delete o.covers;                      // edited by hand: no longer the box fitted for that place
       if (tc.mode === 'scale') {           // the gizmo scales the group: fold it into the box size
         const m = g.userData.mesh, k = g.scale;
         o.half = [m.scale.x * k.x / 2, m.scale.y * k.y / 2, m.scale.z * k.z / 2].map((h) => r1(Math.max(h, 5)));
@@ -1694,8 +1696,9 @@ export class WorldPanel {
 
   /** "Add box here": a place where the simulated path comes close to the room scan becomes a grey box, which the
    * simulation keeps the arm clear of once the world is saved and simulated again. A box trimmed to keep clear of the
-   * path keeps the place it was made for ("covers"), so the next check doesn't offer that place again; a box the world
-   * already holds is never added twice. */
+   * path keeps the place it was made for ("covers": with the distance it was fitted to and its revision), so the next
+   * check offers that place again only when the path comes closer there; a box the world already holds is never added
+   * twice. Editing the box by hand drops its "covers". */
   addScanBox(i) {
     const g = (this.state.result?.checks || []).find((c) => c.id === 'scan')?.regions?.[i], wv = this.wv;
     if (!g?.box || g.added || this.state.busy || !wv.world) return;
@@ -1713,7 +1716,7 @@ export class WorldPanel {
     let id = g.id, k = 2;
     while (ids.has(id)) id = `${g.id}-${k++}`;
     const box = { id, label: g.label, center: [...g.box.center], half: [...g.box.half], yaw_deg: g.box.yaw_deg, source: 'auto' };
-    if (g.covers) box.covers = { center: [...g.covers.center], half: [...g.covers.half], yaw_deg: g.covers.yaw_deg };
+    if (g.covers) box.covers = { ...g.covers, center: [...g.covers.center], half: [...g.covers.half] };
     obs.push(box);
     wv._buildBoxes(); wv.changed('boxes');
     g.added = true;

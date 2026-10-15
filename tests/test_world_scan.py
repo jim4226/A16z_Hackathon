@@ -248,6 +248,7 @@ def test_a_box_trimmed_off_a_vases_top_still_covers_the_near_miss_it_was_made_fo
     obstacle = {"id": g["id"], "label": g["label"], **g["box"], "covers": g["covers"], "source": "auto"}
     w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
                          "obstacles": [obstacle]})
+    assert g["covers"]["clearance_mm"] == g["min_clearance_mm"]                  # the distance the box was fitted to
     assert w["obstacles"][0]["covers"] == g["covers"] and worlds.sim_world(w)["obstacles"][0].keys() == {
         "id", "label", "center", "half", "yaw_deg"}                              # the simulation sees the box only
     res2 = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc, rob.xml)
@@ -255,12 +256,109 @@ def test_a_box_trimmed_off_a_vases_top_still_covers_the_near_miss_it_was_made_fo
     c = worlds.scan_check(res2)
     assert c["status"] == "warn" and "Add box here" not in c["text"], c
     assert "1 place closer than 10 mm has a grey box already, so it is not offered again." in c["text"], c
-    # the box alone is too far from the near miss to own it, and a box moved elsewhere doesn't cover the old place
+    # without its place, the box is too far from the near miss to own it, but the box fitted there again is the same
+    # box: the world holds it already, so it isn't offered (an API client that saves boxes without "covers")
     bare = {k: v for k, v in obstacle.items() if k != "covers"}
+    again = measure(room, {**ROOM, "obstacles": [bare]}, doc, rob.xml)
+    assert not again["regions"] and again["stats"]["covered"] == 1, again
+    # a box moved elsewhere doesn't cover the old place
     moved = {**obstacle, "center": [obstacle["center"][0] + 200.0, *obstacle["center"][1:]]}
-    for ob in (bare, moved):
+    again = measure(room, {**ROOM, "obstacles": [moved]}, doc, rob.xml)
+    assert [r["box"] for r in again["regions"]] == [g["box"]] and not again["stats"]["covered"], again
+    # a box fitted for a path that stayed further away (its target 0.5 mm more than this near miss) covers its place
+    # only for near misses no closer than that: this one is offered again (a box 1 mm narrower, so not the same box)
+    narrower = {**obstacle, "half": [obstacle["half"][0] - 1.0, *obstacle["half"][1:]]}
+    for target, offered in ((g["min_clearance_mm"], False), (g["min_clearance_mm"] + 0.5, True)):
+        ob = {**narrower, "covers": {**g["covers"], "clearance_mm": target}}
         again = measure(room, {**ROOM, "obstacles": [ob]}, doc, rob.xml)
-        assert [r["box"] for r in again["regions"]] == [g["box"]] and not again["stats"]["covered"], again
+        assert bool(again["regions"]) == offered and bool(again["stats"]["covered"]) != offered, (target, again)
+
+
+def test_a_place_is_the_boxs_only_while_it_is_that_box_fitted_there():
+    """A box's place ("covers") counts only with the distance it was fitted to, while the box lies inside it, and
+    when it reaches at most SCAN_COVERS_MAX_MM past the box (a world from an API client can't hide near misses with a
+    huge one); worlds.validate keeps the distance and the revision, and refuses nonsense in them."""
+    box = {"id": "scan-1", "label": "Scan near miss 1", "center": [0.0, 0.0, 50.0], "half": [20.0, 20.0, 50.0],
+           "yaw_deg": 0.0, "source": "auto"}
+    place = {"center": [0.0, 0.0, 65.0], "half": [20.0, 20.0, 65.0], "yaw_deg": 0.0, "clearance_mm": 9.0, "rev": "r002"}
+    assert worlds._covers({**box, "covers": place}) == place
+    assert worlds._covers({**box, "covers": {k: v for k, v in place.items() if k != "clearance_mm"}}) is None
+    assert worlds._covers({**box, "center": [30.0, 0.0, 50.0], "covers": place}) is None          # moved out of it
+    assert worlds._covers({**box, "half": [25.0, 20.0, 50.0], "covers": place}) is None           # made bigger
+    huge = {**place, "center": [0.0, 0.0, 500.0], "half": [600.0, 600.0, 500.0]}
+    assert worlds._covers({**box, "covers": huge}) is None
+    edge = {**place, "half": [20.0 + worlds.SCAN_COVERS_MAX_MM, 20.0, 65.0]}
+    assert worlds._covers({**box, "covers": edge}) == edge
+    # near misses at the place: the box's only while no closer than it was fitted to (to 0.1 mm, as it is shown)
+    w = {"mount": {"position": [0.0, 0.0, 0.0], "yaw_deg": 0.0}, "obstacles": [{**box, "covers": place}]}
+    rim = np.array([[0.0, 0.0, 128.0]] * 3)                    # 28 mm over the box, inside its place
+    got = worlds._near_grey_box(rim, np.array([9.0, 8.95, 2.1]), worlds._grey_boxes(w))
+    assert got.tolist() == [True, True, False]
+    plain = {"mount": w["mount"], "obstacles": [box]}            # a box with no place owns only what is next to it
+    assert worlds._near_grey_box(rim, np.array([9.0, 9.0, 9.0]), worlds._grey_boxes(plain)).tolist() == [False] * 3
+    side = np.array([[25.0, 0.0, 50.0]])
+    assert worlds._near_grey_box(side, np.array([0.5]), worlds._grey_boxes(plain)).tolist() == [True]
+    # saved with the world: the distance and the revision are kept, nonsense refused
+    base = {"id": "bench", "mount": ROOM["mount"], "surface": SURFACE}
+    kept = worlds.validate({**base, "obstacles": [{**box, "covers": place}]})["obstacles"][0]["covers"]
+    assert kept == place
+    for bad in ({"clearance_mm": -1.0}, {"clearance_mm": 40.0}, {"clearance_mm": "far"}, {"rev": "../r1"}, {"rev": 3}):
+        with pytest.raises(worlds.WorldError):
+            worlds.validate({**base, "obstacles": [{**box, "covers": {**place, **bad}}]})
+
+
+DESK_VASE = (-309.49747468305833, -50.50252531694167)     # the review's desk scan: a 44 mm vase beside the egg-picker's path
+
+
+def desk_scan(path):
+    """The review's desk scan (2,872 triangles near the arm): the desk starter's boxes and a 44 mm vase 160 mm tall,
+    as a phone exports it, and the world that places it."""
+    d = worlds.starter("desk")
+    parts = []
+    for b in d["scene"] + d["obstacles"]:
+        parts.append(box_mesh(b))
+    top = d["surface"]["center"][2] + d["surface"]["half"][2]
+    v = trimesh.creation.cylinder(radius=22.0, height=160.0, sections=48)
+    v.apply_translation([*DESK_VASE, top + 80.0])
+    m = trimesh.util.concatenate(parts + [v])
+    glb(path, m.vertices, m.faces)
+    return worlds.validate({**d, "asset": "room.glb", "units": "m", "up": "y", "scale": 1.0, "id": "scan",
+                            "name": "Scanned desk", "source": {"kind": "glb", "starter": "", "name": "desk_scan.glb"}})
+
+
+def desk_simulated(w):
+    sz = arm.size(EGG)
+    asm = arm.build(EGG, sz, electronics2.plan(EGG, {**sz, "grip_target_n": 2.34}))
+    rob = S._make_robot(asm, EGG, True, {"world": worlds.sim_world(w)})
+    plan, at = S._plan_pick_place(rob, EGG, True)
+    run, met = S._run_pick_place(rob, EGG, plan, at)
+    return rob, S._scenario_doc(rob, EGG, "pick_place", plan, run, met), met
+
+
+def test_a_box_added_for_a_near_miss_is_offered_again_when_the_robot_moves_closer(tmp_path):
+    """The review's desk: the wrist passes 9.0 mm over the rim of a scanned vase, and the box offered is trimmed off
+    the top, so it keeps its place ("covers", fitted to 9.0 mm). With that box in the room, the mount moved 15 mm
+    brings the wrist within about 2 mm of the rim, above the trimmed box: the place is the box's no more, and a box
+    fitted to the new path is offered (before, the place was "a grey box already" and nothing was offered)."""
+    room = str(tmp_path / "room.glb")
+    w = desk_scan(room)
+    rob, doc, met = desk_simulated(w)
+    res = measure(room, w, doc, rob.xml)
+    (g,) = res["regions"]
+    assert abs(g["min_clearance_mm"] - 9.0) < 0.3 and g["trimmed"] and g["covers"]["clearance_mm"] == g["min_clearance_mm"]
+    obstacle = {"id": g["id"], "label": g["label"], **g["box"], "covers": g["covers"], "source": "auto"}
+    mount = {**w["mount"], "position": [w["mount"]["position"][0] - 15.0, *w["mount"]["position"][1:]]}
+    moved = worlds.validate({**w, "mount": mount, "obstacles": w["obstacles"] + [obstacle]})
+    rob2, doc2, met2 = desk_simulated(moved)
+    assert met2["success"]                                       # the simulation only sees the trimmed box
+    res2 = measure(room, moved, doc2, rob2.xml)
+    assert res2["min_clearance_mm"] < 4.0 and res2["at"]["link"] == "wrist", res2
+    (g2,) = res2["regions"]
+    assert not res2["stats"]["covered"] and g2["min_clearance_mm"] < g["min_clearance_mm"] - 1.0, res2
+    assert g2["box"] is not None and not worlds._same_box(g2["box"], obstacle), g2       # refitted for the new path
+    assert g2["box_clearance_mm"] is None or g2["box_clearance_mm"] >= g2["min_clearance_mm"] - 0.1, g2
+    c = worlds.scan_check(res2)
+    assert "Add box here" in c["text"] and "grey box already" not in c["text"], c
 
 
 def test_a_box_not_fitted_in_time_is_not_offered(tmp_path, nominal, monkeypatch):

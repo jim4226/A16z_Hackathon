@@ -11,7 +11,8 @@ metres) is mapped into it by `units`, `up` and `scale` (the two-point scale tool
      "mount": {"position": [x, y, z], "yaw_deg": 0.0},              # robot base origin; x axis turned by yaw
      "surface": {"label", "center", "half", "yaw_deg"},              # the box the robot stands on (its top = mount z)
      "obstacles": [{"id", "label", "center", "half", "yaw_deg", "source": "starter|auto|user",
-                    "covers"?: {"center", "half", "yaw_deg"}}],     # Add box here: the scanned place it was made for
+                    "covers"?: {"center", "half", "yaw_deg",        # Add box here: the scanned place it was made for,
+                                "clearance_mm"?, "rev"?}}],         # how close that path came there, and its revision
      "zones": [{"id", "label", "kind": "walkway|seat", "polygon": [[x, y], ...], "z": [z0, z1]} | {..., "box": {...}}],
      "scene": [{"label", "center", "half", "yaw_deg", "color"}],      # furniture drawn for box-only worlds
      "candidates": [{"label": "A|B|C", "position", "yaw_deg"}]}      # other mounts to compare in the AI review
@@ -225,7 +226,15 @@ def validate(raw) -> dict:
         w["obstacles"].append({"id": _unique(ids, _slug(o.get("id") or label, f"box-{i + 1}")), "label": label, **b,
                                "source": o.get("source") if o.get("source") in ("starter", "auto", "user") else "user"})
         if o.get("covers") is not None:                 # the near miss an Add box here box was made for (before trimming)
-            w["obstacles"][-1]["covers"] = _box(o["covers"], f"obstacle {i + 1} covers")
+            cv = o["covers"]
+            w["obstacles"][-1]["covers"] = _box(cv, f"obstacle {i + 1} covers")
+            if cv.get("clearance_mm") is not None:      # the fit's target: the path's distance to the scan there
+                w["obstacles"][-1]["covers"]["clearance_mm"] = _num(cv["clearance_mm"], f"obstacle {i + 1} covers "
+                                                                    "clearance_mm", 0.0, SCAN_NEAR_MM)
+            if cv.get("rev") is not None:               # the revision whose path the box was fitted to
+                if not isinstance(cv["rev"], str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", cv["rev"]):
+                    raise WorldError(f"obstacle {i + 1} covers rev must be a revision name.")
+                w["obstacles"][-1]["covers"]["rev"] = cv["rev"]
     zs = raw.get("zones") or []
     if not isinstance(zs, list) or len(zs) > MAX_ZONES:
         raise WorldError(f"zones must be a list of at most {MAX_ZONES}.")
@@ -927,6 +936,8 @@ SCAN_CELL_MM = 24.0          # the coarse samples of a geom grouped in cells thi
 SCAN_RBOUND_CLASSES_MM = (16.0, 48.0)                # geoms' bounding spheres tested in these size classes
 SCAN_MAX_REGIONS, SCAN_GROW_MM, SCAN_MIN_BOX_MM = 8, 30.0, 20.0
 SCAN_COVER_MM = SCAN_NEAR_MM  # a near miss this close to a grey box is the box's: the simulation keeps clear of that
+SCAN_COVERS_MAX_MM = 50.0    # the place a trimmed box was made for reaches at most this far past the box on any side
+SCAN_COVERS_TOL_MM = 0.1     # a near miss within this of its box's fit target (shown to 0.1 mm) is no closer than it
 SCAN_FIT_MIN_MM = 5.0        # a box trimmed to keep clear of the path thinner than this is no box (none is offered)
 SCAN_FIT_TOL_MM = 0.05
 # once there are near misses, the measuring passes leave the regions and their boxes about what the fit needs (it
@@ -1143,9 +1154,10 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     A region's box is measured against the same swept path and trimmed on the sides that face it until it is no closer
     to the path than the scan there ("box_clearance_mm"; "box": None when that leaves too thin a box, with "no_box"
     saying why), so adding it never makes the clearance worse; a trimmed box keeps the place it was made for as
-    "covers" (its box before trimming), which Add box here saves with it. Near misses within SCAN_COVER_MM of one of
-    the world's grey boxes, or of the place a grey box was added for, are left to that box (stats["covered"] counts
-    those regions): they are not offered again. Once there are near misses, the measuring passes stop early enough
+    "covers" (its box before trimming, with "clearance_mm", the distance it was fitted to), which Add box here saves
+    with it. Near misses within SCAN_COVER_MM of one of the world's grey boxes, or of the place a grey box was added
+    for while they are no closer than it was fitted to, are left to that box, and so are regions whose box the world
+    holds already (stats["covered"] counts those regions): they are not offered again. Once there are near misses, the measuring passes stop early enough
     for the regions and their boxes to be done within the limit (about SCAN_FIT_S_PER_POSE a pose, at least
     SCAN_RESERVE_MIN_S, at most SCAN_RESERVE_SHARE of it); a box not fitted in time isn't offered
     (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps.
@@ -1505,6 +1517,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         t1 = time.monotonic()
         _fit_boxes(world, out["regions"], poses, pose, d, m, shape, fixed, moving, carried, held, end, stats)
         stats["fit_s"] = round(time.monotonic() - t1, 2)
+        out["regions"] = _already_boxed(world, out["regions"], stats)
     stats["seconds"] = round(time.monotonic() - t0, 2)
     return out
 
@@ -1628,13 +1641,41 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
         dd = _box_dist(P, lo, hi) if len(P) else np.zeros(0)
         r["box_clearance_mm"] = round(float(dd.min()), 1) if len(dd) else None     # None: further than it, all along
         r["trimmed"] = bool(np.any(np.abs(lo - lo0) > 1e-6) or np.any(np.abs(hi - hi0) > 1e-6))
-        if r["trimmed"]:
-            yaw = r["box"]["yaw_deg"]
-            r["covers"] = r["box"]                       # the near miss's place: Add box here keeps it with the box
-            r["box"] = {"center": [round(float(v), 1) for v in to_world(world, R @ ((lo + hi) / 2.0))],
-                        "half": [round(float(max(v, 1.0)), 1) for v in (hi - lo) / 2.0], "yaw_deg": yaw}
+        if r["trimmed"]:                                # the near miss's place: Add box here keeps it with the box, with
+            yaw = r["box"]["yaw_deg"]                   # the distance the box was fitted to (a closer path is offered again)
+            clo, chi = np.maximum(lo0, lo - SCAN_COVERS_MAX_MM), np.minimum(hi0, hi + SCAN_COVERS_MAX_MM)
+            r["covers"] = {**_world_box(world, R, clo, chi, yaw), "clearance_mm": round(target, 1)}
+            r["box"] = _world_box(world, R, lo, hi, yaw)
     if late and stats is not None:
         stats["fit_timeout"] = True
+
+
+def _same_box(a: dict, b: dict) -> bool:
+    """The same box to 0.05 mm and 0.01 degree (both rounded to 0.1 mm when saved)."""
+    try:
+        d = (float(a.get("yaw_deg", 0.0)) - float(b.get("yaw_deg", 0.0)) + 180.0) % 360.0 - 180.0
+        return abs(d) < 0.01 and all(abs(float(x) - float(y)) < 0.05 for x, y in
+                                     zip([*a["center"], *a["half"]], [*b["center"], *b["half"]]))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _already_boxed(world, regions, stats) -> list:
+    """The regions left once those whose fitted box the world holds already are taken out (the same place, the same
+    path: adding it again changes nothing), counted in stats["covered"]; the rest numbered again."""
+    obs = world.get("obstacles") or []
+    keep = [r for r in regions if not (r.get("box") and any(_same_box(r["box"], o) for o in obs))]
+    if len(keep) < len(regions):
+        stats["covered"] = int(stats.get("covered") or 0) + len(regions) - len(keep)
+        for i, r in enumerate(keep, 1):
+            r.update({"id": f"scan-{i}", "label": f"Scan near miss {i}"})
+    return keep
+
+
+def _world_box(world, R, lo, hi, yaw) -> dict:
+    """A box given by its corners lo..hi along the surface axes R (robot base frame) as a world-frame box."""
+    return {"center": [round(float(v), 1) for v in to_world(world, R @ ((lo + hi) / 2.0))],
+            "half": [round(float(max(v, 1.0)), 1) for v in (hi - lo) / 2.0], "yaw_deg": yaw}
 
 
 def _inside_box(inner: dict, outer: dict, tol: float = 1.0) -> bool:
@@ -1645,27 +1686,41 @@ def _inside_box(inner: dict, outer: dict, tol: float = 1.0) -> bool:
     return bool(np.all(np.abs((X - np.asarray(outer["center"], float)) @ Ro) <= np.asarray(outer["half"], float) + tol))
 
 
+def _covers(o: dict) -> dict | None:
+    """The place a box Add box here made was fitted for ("covers"), when it still is: it has the fit's distance, the box
+    lies within it (a box moved or made bigger doesn't cover the old place) and it reaches no more than
+    SCAN_COVERS_MAX_MM past the box (a world from elsewhere can't hide near misses with a huge one)."""
+    cv = o.get("covers")
+    if not isinstance(cv, dict) or not isinstance(cv.get("clearance_mm"), (int, float)):
+        return None
+    grown = {**o, "half": [float(h) + SCAN_COVERS_MAX_MM for h in o["half"]]}
+    return cv if _inside_box(o, cv) and _inside_box(cv, grown) else None
+
+
 def _grey_boxes(world) -> list:
-    """The world's grey boxes in the robot base frame: [(centre, half sizes, axes)], and for each box Add box here
-    made, the place it was made for ("covers"), while the box still lies within it (one moved elsewhere doesn't
-    cover the old place)."""
+    """The world's grey boxes in the robot base frame: [(centre, half sizes, axes, closest)]. A box Add box here made
+    from a trimmed region also stands for the place it was made for (_covers), and both only for near misses no closer
+    than the distance it was fitted to (`closest`; None: any near miss)."""
     out = []
     for o in world.get("obstacles") or []:
         try:
-            for bx in [o] + ([o["covers"]] if isinstance(o.get("covers"), dict) and _inside_box(o, o["covers"]) else []):
+            cv = _covers(o)
+            closest = None if cv is None else float(cv["clearance_mm"]) - SCAN_COVERS_TOL_MM
+            for bx in [o] + ([cv] if cv else []):
                 b = box_to_base(world, bx)
-                out.append((np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"]))))
+                out.append((np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"])), closest))
         except (KeyError, TypeError, ValueError):
             continue
     return out
 
 
-def _near_grey_box(P, boxes) -> np.ndarray:
-    """Which points (robot base frame, mm) lie within SCAN_COVER_MM of one of the grey boxes."""
+def _near_grey_box(P, D, boxes) -> np.ndarray:
+    """Which near misses (points P, robot base frame, mm; D their distances to the path) are a grey box's: within
+    SCAN_COVER_MM of it, and no closer to the path than the box was fitted for."""
     out = np.zeros(len(P), bool)
-    for c, h, R in boxes:
+    for c, h, R, closest in boxes:
         e = np.maximum(np.abs((P - c) @ R) - h, 0.0)
-        out |= np.sqrt((e * e).sum(1)) <= SCAN_COVER_MM
+        out |= (np.sqrt((e * e).sum(1)) <= SCAN_COVER_MM) & (True if closest is None else D >= closest)
     return out
 
 
@@ -1674,8 +1729,8 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None) -
     as a box in the world frame along the mount surface's axes: the scanned surface within SCAN_GROW_MM of its points,
     at least SCAN_MIN_BOX_MM thick (grown away from the arm: a scan shows only the side facing it) and down to the
     surface when it, or the scan under it, nearly reaches it (a thing standing there). Near misses next to one of the
-    world's grey boxes (SCAN_COVER_MM), or to the place one was added for, are that box's: a region of nothing else is
-    left out (counted in stats["covered"]). Each region keeps its box in surface axes ("_lo", "_hi", "_R") for _fit_boxes."""
+    world's grey boxes (SCAN_COVER_MM), or to the place one was added for, are that box's (one Add box here fitted
+    only while no closer than it was fitted to): a region of nothing else is left out (counted in stats["covered"]). Each region keeps its box in surface axes ("_lo", "_hi", "_R") for _fit_boxes."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     from scipy.spatial import cKDTree
@@ -1694,7 +1749,7 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None) -
     adj = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(len(Q), len(Q))) if len(pairs) else \
         coo_matrix((len(Q), len(Q)))
     n, lab = connected_components(adj, directed=False)
-    covered = _near_grey_box(Q, _grey_boxes(world))
+    covered = _near_grey_box(Q, D, _grey_boxes(world))
     if stats is not None:
         stats["covered"] = int(len(set(lab[covered].tolist()) - set(lab[~covered].tolist())))
     closest = np.full(n, np.inf)

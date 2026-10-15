@@ -755,6 +755,7 @@ def test_a_box_trimmed_off_a_vase_is_added_once_and_not_offered_again(run, tmp_p
     assert scan and scan["status"] == "warn" and scan["regions"], scan
     g = scan["regions"][0]
     assert g["box"] and g["trimmed"] and g["covers"], g
+    assert g["covers"]["clearance_mm"] == g["min_clearance_mm"] and g["covers"]["rev"] == pg.rev(), g   # fitted for
     add = ".wv-panel button[data-a='scanbox'][data-arg='0']"
     assert pg.pg.inner_text(add) == "Add box here"
     pg.ev("() => window.morphWorld.wv.frameOverview(0)")
@@ -784,6 +785,9 @@ def test_a_box_trimmed_off_a_vase_is_added_once_and_not_offered_again(run, tmp_p
     assert after["status"] == "pass" or "has a grey box already, so it is not offered again" in after["text"], after
     pg.pg.locator(".wv-panel .wv-check", has_text="scanned surface").scroll_into_view_if_needed()
     pg.shot("r3_vase_box_added_1600")
+    # sized by hand, it is no longer the box fitted for that place: the place goes with the edit
+    pg.world("(wv.setBoxFromBase('scan-1', {h: 120}), 1)")
+    assert pg.world("'covers' in wv.world.obstacles[0]") is False
     pg.check()
 
 
