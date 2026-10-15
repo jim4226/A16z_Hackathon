@@ -1,7 +1,7 @@
 // Robustness (beta): a study of the revision on screen, in the Simulation tab's result column under the pick-and-place
 // result (contracts sections 4 and 16). A study runs the revision's own plan many times in slightly different worlds
 // drawn from the project's tolerances: the card shows the success rate with its 95% interval and the honesty notes,
-// each failure group with the rule that isolates it and whether it survives other solver settings, and replays a
+// each failure group with the rule that isolates it and whether it survives other simulator settings, and replays a
 // failing run in the 3D view. Live progress comes from `study` events. Editors start (runs, stress), cancel, carry on
 // and edit the tolerances (each range with its source); everyone else reads and replays. Talks to /api/study*
 // (morph/studio/api_study.py). Without a study the card says so: one nominal run tests nothing around it.
@@ -75,7 +75,8 @@ const PHASE = { approach: 'approach', grasp: 'grasp', lift: 'lift', move: 'carry
 
 // interval bounds rounded away from the estimate (as api_study.interval): what is shown always contains the computed one
 const bound = (v, down, fine) => { const k = fine ? 10 : 1; const x = (down ? Math.floor : Math.ceil)(Math.round(v * 100 * k * 1e6) / 1e6) / k; return fine ? x.toFixed(1) : x.toFixed(0); };
-const interval = (lo, hi) => { const fine = hi - lo < 0.04; return `${bound(lo, true, fine)}-${bound(hi, false, fine)}%`; };
+const likely = (lo, hi) => { const fine = hi - lo < 0.04; return `likely between ${bound(lo, true, fine)}% and ${bound(hi, false, fine)}%`; };
+const INTERVAL_NOTE = 'Likely: the 95% confidence interval. Over the tolerances shown, the true rate is in this range with 95% confidence; fewer runs give a wider range.';
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const mins = (s) => (s < 90 ? `${Math.max(5, Math.round(s / 5) * 5)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 
@@ -168,7 +169,7 @@ class StudyCard {
     const shown = info?.latest;
     if (live) h += this.runHTML(ev, may);
     if (!shown && !live) h += `<p class="sd-none">${esc(info?.notes?.none || "One nominal run. Small differences in placement or hardware aren't tested.")}</p>`;
-    if (shown) h += this.resultHTML(shown, may);
+    if (shown && !(live && ev.rev === this.rev)) h += this.resultHTML(shown, may);   // while a study of this revision runs, its earlier result waits (Details has it)
     if (info?.latest_stress && !live) {
       const c = info.latest_stress.card;
       h += `<div class="sd-stress">${esc(c.headline || 'Stress test: no counted runs yet.')} <button type="button" class="sd-link" data-a="details">Details</button></div>`;
@@ -188,7 +189,7 @@ class StudyCard {
     const info = this.info || {}, n = ev.n || 0, done = ev.done || 0;
     const what = ev.status === 'queued' ? "Waiting: another project's study runs first (one at a time on this computer)."
       : ev.phase === 'prepare' || ev.status === 'preparing' ? 'Preparing: rebuilding the robot and its plan.'
-        : ev.phase === 'checks' ? `Re-running failures at half the timestep and with impratio=1: ${done} of ${n}.`
+        : ev.phase === 'checks' ? `Checking failures with other simulator settings (half the timestep, then softer friction): ${done} of ${n}.`
           : `Run ${done} of ${n}${ev.stress ? ' (stress test)' : ''}.`;
     const k = ev.successes || 0, m = k + (ev.failures || 0), labels = info.group_labels || {};
     const meta = [ev.eta_s != null && ev.status !== 'queued' ? `About ${mins(ev.eta_s)} left (estimated)` : '',
@@ -197,7 +198,7 @@ class StudyCard {
       ev.rev !== this.rev ? `study of ${ev.rev}` : ''].filter(Boolean).join(' · ');
     return {
       what, meta, bar: `${(ev.phase === 'checks' ? 100 : n ? Math.min(100, (done / n) * 100) : 0).toFixed(1)}%`,
-      so: m && ev.ci ? `So far ${k} of ${plural(m, 'run')} ${k === 1 ? 'succeeds' : 'succeed'} (${Math.round((k / m) * 100)}%, 95% CI ${interval(ev.ci[0], ev.ci[1])}).` : '',
+      so: m && ev.ci ? `So far ${k} of ${plural(m, 'run')} ${k === 1 ? 'succeeds' : 'succeed'} (${Math.round((k / m) * 100)}%; ${likely(ev.ci[0], ev.ci[1])}).` : '',
       fails: Object.entries(ev.groups || {}).sort((a, b) => b[1] - a[1]).map(([g, c]) => `${labels[g] || g}: ${c}`).join(' · '),
       unstable: ev.unstable ? `${plural(ev.unstable, 'run')} numerically unstable (not counted)` : '',
     };
@@ -205,7 +206,7 @@ class StudyCard {
 
   runHTML(ev, may) {
     const esc = this.esc, p = this.runParts(ev);
-    const line = (key, cls) => `<div class="${cls}" data-p="${key}"${p[key] ? '' : ' hidden'}>${esc(p[key])}</div>`;
+    const line = (key, cls) => `<div class="${cls}" data-p="${key}"${key === 'so' ? ` title="${esc(this.info?.notes?.interval || INTERVAL_NOTE)}"` : ''}${p[key] ? '' : ' hidden'}>${esc(p[key])}</div>`;
     return `<div class="sd-run" data-sid="${esc(ev.id)}"><div class="sd-line"><span class="spin"></span><span data-p="what">${esc(p.what)}</span></div>
       <div class="sd-bar"><b data-p="bar" style="width:${p.bar}"></b></div>
       ${line('so', 'sd-so')}${line('fails', 'sd-fails')}${line('unstable', 'sd-fails')}${line('meta', 'sd-meta')}
@@ -227,9 +228,9 @@ class StudyCard {
 
   groupHTML(g, sid, wide = false) {
     const esc = this.esc;
-    const badge = g.model_sensitive ? '<span class="tag warn">Model-sensitive</span>' : g.model_sensitive === false ? '<span class="tag good">Same under other solver settings</span>' : '';
+    const badge = g.model_sensitive ? '<span class="tag warn">Model-sensitive</span>' : g.model_sensitive === false ? '<span class="tag good">Same with other simulator settings</span>' : '';
     const busy = this.rp?.busy && this.rp.sid === sid && this.rp.run === g.example_run;
-    return `<div class="sd-g"><div class="sd-gl">${esc(g.label)}</div><div class="sd-gs">${esc(g.share)}</div>
+    return `<div class="sd-g"><div class="sd-gl">${esc(g.label)}</div><div class="sd-gs" title="${esc(this.info?.notes?.interval || INTERVAL_NOTE)}">${esc(g.share)}</div>
       ${g.rule ? `<div class="sd-rule">Most likely when: ${esc(g.rule)}</div>` : ''}
       <div class="sd-ms">${badge}${esc(g.sensitivity)}</div>${wide && g.checks ? `<div class="sd-ck">${esc(g.checks)}</div>` : ''}
       ${g.example_run != null ? `<div class="sd-acts"><button type="button" class="btn" data-a="replay" data-id="${esc(sid)}" data-run="${esc(g.example_run)}" ${this.rp?.busy ? 'disabled' : ''}>${busy ? '<span class="spin"></span>Preparing the replay' : `Replay run ${esc(g.example_run)}`}</button></div>` : ''}</div>`;
@@ -238,7 +239,7 @@ class StudyCard {
   resultHTML(doc, may) {
     const esc = this.esc, I = this.I, c = doc.card || {};
     const groups = c.groups || [];
-    let h = c.headline ? `<p class="sd-head">${esc(c.headline)}</p><p class="sd-note">${esc(c.note)}</p>` : `<p class="sd-none">${esc(this.info?.notes?.none || '')}</p>`;
+    let h = c.headline ? `<p class="sd-head" title="${esc(c.interval_note || INTERVAL_NOTE)}">${esc(c.headline)}</p><p class="sd-note">${esc(c.note)}</p>` : `<p class="sd-none">${esc(this.info?.notes?.none || '')}</p>`;
     const resume = may && (this.info?.stopped || []).some((s) => s.id === doc.id)
       ? ` <button type="button" class="sd-link sd-edit" data-a="resume" data-id="${esc(doc.id)}">Carry on</button>` : '';
     (c.flags || []).forEach((f, i) => { h += `<div class="sd-flag">${I('alert', 'sm')}<span>${esc(f)}${i === (c.flags.length - 1) ? resume : ''}</span></div>`; });
@@ -353,6 +354,8 @@ class StudyCard {
       const r = await this.post('/api/study', { runs: this.form.runs, stress: !!this.form.stress, rev: this.rev });
       if (r?.job) { this.ev = r.job.event || { status: 'queued', n: r.job.n, done: 0, rev: r.job.rev }; this.render(); }
       else this.render();
+      // the Run button may have been scrolled to below the fold: the progress and Cancel take its place in view
+      this.el.querySelector('.sd-run')?.scrollIntoView({ block: 'nearest' });
     }
   }
 

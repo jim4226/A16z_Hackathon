@@ -78,8 +78,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   reproducible from the seed on any number of worker processes, saved as they finish and resumable (Ctrl+C keeps them):
   `morph study egg-picker` (with `--runs 1000` or `--stress`). In the Studio, the **Robustness** card under the
   Simulation tab's pick-and-place result runs a study of the revision on screen (50, 200 or 1,000 runs, or a stress
-  test with every range doubled), shows its progress live, stops it on request within seconds (the finished runs
-  stay, and it carries on later), says what the result means and what it doesn't, replays a failing run in the 3D view,
+  test with every range doubled), shows its progress live in view in place of the earlier result, stops it on request
+  within seconds (the finished runs stay, and it carries on later), says what the result means and what it doesn't in
+  plain words ("likely between 63% and 76%", the 95% interval in its tooltip; no "Most likely when" for a failure group
+  of fewer than 3 runs), replays a failing run in the 3D view,
   and lists every tolerance with where its range comes from. Editors start studies and change tolerances (a change
   marks older studies outdated); every member of a team reads them. Studies run on the Studio's computer, so
   `morph studio --remote` on a bigger machine is how a team brings its own compute; one study at a time per project, at
@@ -105,8 +107,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   when the Studio stopped after N of M runs" at once, with the runs it saved, and *Carry on* finishes it with the same
   runs as if it had never stopped. A revision that can't be studied (its simulation failed, a preview-only build), and
   a study whose revision was replaced or whose Morph code changed since, are refused before anything starts, with the
-  reason. A failure group that holds every run gets no rule, and successful runs that fail under other solver settings
-  are flagged as well: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
+  reason. A failure group that holds every run gets no rule, and successful runs that fail with other simulator
+  settings are flagged as well: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
 - **Live prices** (beta): in the BOM tab, Claude checks current distributor prices and stock for the purchased parts
   with Morph's read-only distributor tools (Mouser, and Farnell, element14 and Newark; written from their API
   documentation and marked "Not yet tried with a real key"). Each run gets a card in the chat that says what it used

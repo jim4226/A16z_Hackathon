@@ -70,11 +70,14 @@ the plan, the gains and the targets stay nominal: the host doesn't know about th
 
 ## How to read the result
 
-**The headline:** "Succeeds in 140 of 200 randomized runs (95% CI 63-76%); the nominal run succeeds." The interval is
-Wilson's 95 % score interval, rounded outward so the interval shown always contains the computed one. When every run
-succeeds, or none does, it is the exact (Clopper-Pearson) bound: "Succeeds in all 200 randomized runs (at least 98.1%
-with 95% confidence)". Few runs give wide intervals, and the card says so with numbers: 3 of 4 is 30-96 %, all of 6 is
-"at least 54.0%". Run more before you trust a difference between two designs whose intervals overlap.
+**The headline:** "Succeeds in 140 of 200 randomized runs (likely between 63% and 76%); the nominal run succeeds."
+"Likely between" is Wilson's 95 % score interval (the card's tooltip says so), rounded outward so the interval shown
+always contains the computed one. When every run succeeds, or none does, it is the exact (Clopper-Pearson) bound:
+"Succeeds in all 200 randomized runs (at least 98.1% with 95% confidence)", or "(likely at most 1.9%)". Few runs give
+wide intervals, and the card says so with numbers: 3 of 4 is likely between 30 % and 96 %, all of 6 is "at least
+54.0%". Run more before you trust a difference between two designs whose intervals overlap. While a study runs, the card
+shows its progress ("So far 10 of 15 runs succeed (67%; likely between 41% and 85%)") and Cancel in place of the
+revision's earlier result, which comes back when it ends (Details shows it meanwhile).
 
 **Failure groups:** each failed run is labelled by what went wrong: the jaws stayed shut at release and carried the
 object away, dragged off the target, missed the grasp, dropped on the way, squeezed harder than the object can take, out
@@ -83,6 +86,7 @@ likely when": the one tolerance range that best separates that group's runs from
 of each value, or of its distance from nominal), as "egg turned 3.4-9.4 deg: 49% fail this way vs 13% otherwise". A rule
 is compared with what the same search finds on shuffled outcomes (the 95th percentile of 60 shuffles); below that it
 says "(could be chance)". A group that holds every counted run gets no rule: there is nothing left to separate it from.
+Nor does a group of fewer than 3 runs: any range around one or two runs "separates" them.
 *Replay run N* plays the group's run closest to nominal in the 3D view.
 
 **Runs that don't count:** a run in which MuJoCo reported a bad position, velocity, acceleration or control (it restarts
@@ -106,8 +110,8 @@ A failure the simulator produces is not always one the robot will have. After th
 most 20) and 15 successful runs are run again at half the timestep and with softer friction (MuJoCo's `impratio=1`). A
 group is **model-sensitive** when, under either setting, fewer than 80 % of its runs still fail the same way, or at
 least 20 % (and at least 2) of the successful runs now fail that way. The card then says: "This result changes with the
-simulator's friction or timestep settings. Test it on the real robot." Otherwise it says the failure is the same under
-other solver settings.
+simulator's friction or timestep settings. Test it on the real robot." Otherwise it says the failure is the same with
+other simulator settings; before the check has run, "Not checked with other simulator settings yet".
 
 The same check covers the successes: when at least 20 % (and 2) of the re-run successful runs fail under either setting,
 the card flags that the success rate itself depends on the simulator's settings. A study in which nothing failed can be

@@ -58,6 +58,7 @@ RISE_MM = 10.0                      # the object rose this far after the release
 CARRIED_MM = 45.0                   # or it ended this far off the target (only closed jaws carry it that far)
 DEFAULT_SEED = 1                    # the seed of the published egg-picker study (140 of 200)
 CHECK_RUNS, CHECK_SUCCESSES = 20, 15
+RULE_MIN_RUNS = 3                   # a failure group needs this many runs before a rule may say where it happens
 CACHED = 4                          # packed robots a long-running process keeps (about 5 MB each)
 NOTE = "Simulation, for the tolerances shown; not a field failure rate."
 SENSITIVE = "This result changes with the simulator's friction or timestep settings. Test it on the real robot."
@@ -570,7 +571,8 @@ def analyze(rows: list, params: list, checks: list | None = None, seed: int = DE
         ex = rs[int(np.argmin(np.linalg.norm((Xi - nom) / span, axis=1)))] if on else rs[0]
         item = {"id": g, "label": group_label(g, obj), "count": len(rs), "rate": round(len(rs) / n, 4),
                 "wilson95": [round(v, 4) for v in wilson(len(rs), n)],
-                "rule": _rule(feats, y, params, seed, obj) if feats and len(rs) < n else None,   # every run: nothing to isolate
+                # every run: nothing to isolate; one or two runs: any range around them "isolates" them, by chance
+                "rule": _rule(feats, y, params, seed, obj) if feats and RULE_MIN_RUNS <= len(rs) < n else None,
                 "example_run": ex["i"], "runs": [r["i"] for r in rs][:500]}
         if checks is not None:
             item.update(_sensitivity(g, pick.get(g, []), ok_ids, checks))

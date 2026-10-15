@@ -1071,7 +1071,7 @@ SubQ key the way chat does (`security.looks_like_secret`; Teams uses its own `co
 One nominal simulation says a design works once, exactly as drawn. A **study** runs a revision's own nominal
 pick-and-place plan (planned once, as the Studio's simulation plans it) many times in worlds drawn from the project's
 tolerance spec, labels every run, and reports the success rate with its interval, the failure groups, the one rule
-that best isolates each and whether it survives other solver settings. Simulation, for the tolerances shown; never a
+that best isolates each and whether it survives other simulator settings. Simulation, for the tolerances shown; never a
 field failure rate (section 0, honesty).
 
 - **Code.** `morph/services/robust.py` (the engine: spec, sampling, workers, analysis, storage) and
@@ -1171,19 +1171,24 @@ field failure rate (section 0, honesty).
     process can't start, stops or takes over 5 minutes; `robustness` adds `recorded` (the row the study saved),
     `matches_record` (false: Morph's simulation changed since) and `label`.
   - `api_study.card(doc)` and `headline(doc)` give the card's words (heavy_plan section 6): "Succeeds in 140 of 200
-    randomized runs (95% CI 63-76%); the nominal run succeeds." (interval bounds rounded away from the estimate, so the
-    shown interval always holds the computed one; all or none succeeding uses the exact bound, "at least 98.1% with 95%
-    confidence"), `NOTES["simulation"]`, the flags (outdated, revision gone or changed, stopped part way, unstable and
-    error runs, rebuilt with other Morph code) and each group's share, rule (with "could be chance"), sensitivity
-    (`robust.SENSITIVE`) and example run. `NOTES["none"]`: "One nominal run. Small differences in placement or hardware
-    aren't tested."
+    randomized runs (likely between 63% and 76%); the nominal run succeeds." (the 95% interval in words,
+    `api_study.likely`; `interval_note` = `NOTES["interval"]` is its tooltip; bounds rounded away from the estimate, so
+    the shown interval always holds the computed one; all or none succeeding uses the exact bound, "at least 98.1% with
+    95% confidence" or "likely at most 1.9%"), `NOTES["simulation"]`, the flags (outdated, revision gone or changed,
+    stopped part way, unstable and error runs, rebuilt with other Morph code) and each group's share ("58 of 200 runs
+    (likely between 23% and 36%)"), rule (with "could be chance"; none for a group of fewer than
+    `robust.RULE_MIN_RUNS` = 3 runs, in `robust.analyze` and again in the card for studies saved before), sensitivity
+    (`robust.SENSITIVE`, or "Not checked with other simulator settings yet.") and example run. `NOTES["none"]`: "One
+    nominal run. Small differences in placement or hardware aren't tested."
   - The Studio stops a project's study before Delete project and Reset demo (`jobs.stop(studio, name)`, up to 5 s; its
     runs are kept, in the trash with a deleted project) and every study when it stops (`jobs.shutdown(studio)`).
   - `robust.load()` adds `rev_changed`; `studies()` reads each revision's spec once.
 - **The card (`static/study.js`, feature `study`):** under the pick-and-place result in the Simulation tab (section 4):
   the note where no study exists; live progress (`study` events: phase, run k of n, the success rate so far with its
-  interval, failures so far by group, time left estimated); the result with its flags, at most two failure groups
-  (label, share, "Most likely when: <rule>", the model-sensitive or "Same under other solver settings" badge, Replay)
+  interval in words, failures so far by group, time left estimated), shown in place of the revision's earlier result
+  while a study of it runs, and scrolled into view (with Cancel) when the editor starts it from the card; the result
+  with its flags, at most two failure groups
+  (label, share, "Most likely when: <rule>", the model-sensitive or "Same with other simulator settings" badge, Replay)
   and Details (a dialog: every group with its check counts, what matters most (Youden's J against chance), every
   tolerance with its source, editable for editors, and the project's studies); for editors a start row (50, 200 or
   1,000 runs, Stress test, "Run N more" to deepen, an estimate of the time on the Studio's computer), Cancel and Carry

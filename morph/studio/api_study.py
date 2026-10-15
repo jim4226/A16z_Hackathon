@@ -49,7 +49,9 @@ NOTES = {
     "successes_sensitive": robust.SUCCESSES_SENSITIVE,
     "robust": "Still fails the same way at half the timestep and with softer friction (impratio=1): not a quirk of the "
               "simulator's settings.",
-    "unchecked": "Not re-run under other solver settings yet.",
+    "unchecked": "Not checked with other simulator settings yet.",
+    "interval": "Likely: the 95% confidence interval. Over the tolerances shown, the true rate is in this range with 95% "
+                "confidence; fewer runs give a wider range.",
     "chance": "could be chance",
     "outdated": "The tolerances changed after this study: it is outdated. Run it again for the ones shown now.",
     "rev_missing": "Its revision no longer exists.",
@@ -113,9 +115,16 @@ def interval(lo: float, hi: float) -> str:
     return f"{_pct(lo, True, fine)}-{_pct(hi, False, fine)}%"
 
 
+def likely(lo: float, hi: float) -> str:
+    """An interval in words: "likely between 63% and 76%" (the 95% interval, bounds rounded away from the estimate)."""
+    fine = hi - lo < 0.04
+    return f"likely between {_pct(lo, True, fine)}% and {_pct(hi, False, fine)}%"
+
+
 def headline(doc: dict) -> str | None:
-    """The study's result in one sentence (heavy_plan section 6, note 1): "Succeeds in 140 of 200 randomized runs (95%
-    CI 63-76%); the nominal run succeeds." None before its first counted run."""
+    """The study's result in one sentence (heavy_plan section 6, note 1): "Succeeds in 140 of 200 randomized runs
+    (likely between 63% and 76%); the nominal run succeeds." The interval is the 95% one (NOTES["interval"] says so on
+    the card). None before its first counted run."""
     s = doc.get("summary") or {}
     n, k = s.get("n") or 0, s.get("successes") or 0
     void = len(s.get("unstable") or []) + len(s.get("errors") or [])
@@ -129,10 +138,10 @@ def headline(doc: dict) -> str | None:
         text = (f"Succeeds in all {n} {runs}" if n > 1 else "Succeeds in its one randomized run") + \
                f" (at least {_pct(cp[0], True, True)}% with 95% confidence)"
     elif k == 0 and cp:
-        text = f"Succeeds in 0 of {n} {runs} (95% CI 0-{_pct(cp[1], False, True)}%)"
+        text = f"Succeeds in 0 of {n} {runs} (likely at most {_pct(cp[1], False, True)}%)"
     else:
         lo, hi = s.get("wilson95") or robust.wilson(k, n)
-        text = f"Succeeds in {k} of {n} {runs} (95% CI {interval(lo, hi)})"
+        text = f"Succeeds in {k} of {n} {runs} ({likely(lo, hi)})"
     if doc.get("stress"):
         text = "With every tolerance doubled (stress test), " + text[0].lower() + text[1:]
     nominal = ((doc.get("model") or {}).get("nominal") or {}).get("success")
@@ -183,18 +192,18 @@ def card(doc: dict) -> dict:
         flags.append(NOTES["successes_sensitive"])
     groups = []
     for g in s.get("groups") or []:
-        rule = g.get("rule") or None
+        rule = (g.get("rule") or None) if g.get("count", 0) >= robust.RULE_MIN_RUNS else None   # studies from before the limit
         lo, hi = g.get("wilson95") or (0.0, 1.0)
         ms = g.get("model_sensitive")
         groups.append({"id": g["id"], "label": g["label"], "count": g["count"],
-                       "share": f"{g['count']} of {n} runs ({interval(lo, hi)}, 95% CI)",
+                       "share": f"{g['count']} of {n} runs ({likely(lo, hi)})",
                        "rule": (rule["text"] + ("" if rule.get("significant") else f" ({NOTES['chance']})")) if rule else None,
                        "significant": bool(rule and rule.get("significant")),
                        "model_sensitive": ms,
                        "sensitivity": NOTES["sensitive"] if ms else NOTES["robust"] if ms is False else NOTES["unchecked"],
                        "checks": _checks_text(g.get("checks")), "example_run": g.get("example_run")})
     return {"headline": headline(doc), "note": NOTES["simulation"], "flags": flags, "groups": groups,
-            "stress": bool(doc.get("stress"))}
+            "interval_note": NOTES["interval"], "stress": bool(doc.get("stress"))}
 
 
 def _view(doc: dict) -> dict:
