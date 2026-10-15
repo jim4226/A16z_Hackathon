@@ -680,14 +680,14 @@ class _Layout:
         return self.L1 + self.L2 + self.L3
 
 
-def _bay_height(design, eplan):
-    mods = [m["key"] for m in ((eplan or {}).get("modules") or [])]
-    hs = [float(catalog.MODULES[k]["dims"]["h"]) for k in mods if k in catalog.MODULES
-          and not catalog.MODULES[k].get("external") and catalog.MODULES[k].get("role") not in ("sensor", "safety")]
-    return max(hs + [22.0])
+# The electronics bay's clear height under the turntable deck (mm). Fixed, not taken from the electronics plan: sizing
+# lays the arm out before the plan exists and the build after it, and with a short turret the deck sets the shoulder's
+# height, so a deck that followed the boards would build (and simulate) another arm than the one sized, and the pipeline
+# reuses the simulation across controller and supply edits (GRAPH). A board taller than this is a build issue.
+BAY_CLEAR_MM = 22.0
 
 
-def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None, eplan=None) -> _Layout:
+def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None) -> _Layout:
     dof = int(design.arm.dof) if int(design.arm.dof) in (4, 5, 6) else 5
     names = arm_joint_names(dof)
     notes, issues = [], []
@@ -704,7 +704,7 @@ def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None, 
         y5.cup_D2 = min(y5.D2, max(abs(v) for v in y5.case_y) + WALL)
     # base: yaw actuator hangs below the turntable, electronics bay height
     foot, floor = 2.5, 3.5
-    bay_h = _bay_height(design, eplan)
+    bay_h = BAY_CLEAR_MM
     B = float(catalog.BEARINGS["lazy_susan_100"]["B"])
     z_j1_min = foot + floor + 1.5 + A1.overall
     z_deck = max(38.0, z_j1_min - B, foot + floor + 8.0 + bay_h + 4.0)
@@ -1096,8 +1096,7 @@ class _Builder:
         gkey = sizing.get("gripper_actuator") or gripper_actuator(design)
         Lm = sizing.get("links_mm", {})
         L1, L2 = float(Lm.get("L1", 150.0)), float(Lm.get("L2", 140.0))
-        self.lay = _layout(design, keys, counts, gkey, L12=L1 + L2, base_h=float(Lm.get("base_h", design.arm.base_height_mm)),
-                           eplan=self.eplan)
+        self.lay = _layout(design, keys, counts, gkey, L12=L1 + L2, base_h=float(Lm.get("base_h", design.arm.base_height_mm)))
         self.lay.L1, self.lay.L2 = L1, L2
         self.asm = Assembly((design.name or "robot").replace("-", "_").replace(" ", "_").lower() or "robot")
         self.lex = {}
@@ -2175,7 +2174,7 @@ class _Builder:
         """Pack the electronics bay (behind the turntable). Returns placements and the base outline."""
         R_f = 72.0
         ep = self.eplan or {}
-        mods = []
+        mods, self.bay_issues = [], []
         custom = ep.get("custom_pcb") if (ep.get("config") == "custom_pcb" or ep.get("custom_pcb")) else None
         for m in ep.get("modules") or []:
             spec = catalog.MODULES.get(m.get("key"))
@@ -2192,6 +2191,9 @@ class _Builder:
             if custom and role in ("controller", "servo_driver", "power"):
                 continue
             d = spec["dims"]
+            if float(d["h"]) > BAY_CLEAR_MM:
+                self.bay_issues.append(f"{m.get('ref', m['key'])} ({spec.get('name', m['key'])}) is {float(d['h']):g} mm "
+                                       f"tall, more than the electronics bay's {BAY_CLEAR_MM:g} mm under the deck")
             mods.append(dict(ref=m.get("ref", m["key"]).lower(), key=m["key"], l=float(d["l"]), w=float(d["w"]),
                              h=float(d["h"]), custom=False))
         if custom:
@@ -3363,7 +3365,7 @@ def build(design, sizing: dict | None = None, electronics_plan: dict | None = No
         "base": {"footprint_bounds": [round(v, 1) for v in b.footprint.bounds], "clamp_holes": [list(np.round(c, 1)) for c in b.clamps]},
         "notes": list(dict.fromkeys(list(sizing.get("notes", [])) + list(L.notes))),
         "warnings": list(b.issues),
-        "issues": [],
+        "issues": list(getattr(b, "bay_issues", [])),
         **grip_meta(electronics_plan),
     })
     return a

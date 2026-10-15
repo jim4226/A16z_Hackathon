@@ -33,11 +33,13 @@ GRAPH = {
     "sizing": (["arm.*", "object.*", "electronics.servo", "electronics.servo_v", "electronics.extras", "build.*",
                 "task.pick_*", "task.place_*", "finger.*", "gripper.*", "electronics.pinion_radius_mm"], [], None),
     # the gripper stage analyses the fingers the build config makes (gripper_design), and leaves the controller and
-    # the supply to the electronics plan: a controller or process change never reruns it (nor asks Mechanical again)
+    # the supply to the electronics plan: a controller or process change never reruns it (nor asks Mechanical again).
+    # It reads sizing's servo rail (its stall forces are worked out on it) and, for an imported robot, the servos
+    # sizing chose; it reads nothing else of sizing (gripper_inputs), so a sizing rerun that leaves those alone reuses it
     "gripper": (["finger.*", "object.*", "gripper.*", "safety_factor", "electronics.target_force_n",
                  "electronics.servo", "electronics.pinion_radius_mm", "arm.actuator_family", "arm.source",
                  "arm.actuator_overrides", "build.config"],
-                [], "gripper"),
+                ["sizing"], "gripper"),
     "electronics": (["electronics.*"], ["sizing", "gripper"], None),
     "cad": (["finger.*", "object.shape", "object.diameter_mm", "object.length_mm", "build.*", "name", "arm.source"],
             ["sizing", "electronics"], "cad"),
@@ -52,6 +54,27 @@ GRAPH = {
     "manual": (["task.*"], ["cad", "manufacturing", "wiring"], "manual"),   # it prints the cycle time and the task
 }
 ORDER = ["sizing", "gripper", "electronics", "cad", "sim", "wiring", "manufacturing", "bom", "manual"]
+
+
+def gripper_inputs(design: Design, sizing: dict | None) -> dict:
+    """The part of sizing's result the gripper stage reads, in sizing's own shape: the servo rail's voltage (the gripper
+    servo's stall force is worked out on it) and, for an imported robot, the servos sizing chose (its stock jaw's grasp
+    is worked out on the robot with them). gripper_stage computes from this alone, so a sizing rerun that leaves it as
+    the parent had it (a wrist camera, a longer reach) reuses the gripper stage instead of rerunning its grasp
+    simulation (PARTIAL)."""
+    sizing = sizing or {}
+    out = {"servo_rail": {"v": (sizing.get("servo_rail") or {}).get("v")}}
+    if design.arm.source:
+        g = sizing.get("gripper") if isinstance(sizing.get("gripper"), dict) else {}
+        out.update(gripper={"actuator": g.get("actuator")}, gripper_actuator=sizing.get("gripper_actuator"),
+                   joints=[{"name": j.get("name"), "actuator": j.get("actuator")} for j in sizing.get("joints") or []])
+    return out
+
+
+# What a stage reads of an upstream stage's result when it reads only part of it: {stage: {upstream: f(design, result)}}.
+# A rerun of that upstream that leaves f(...) as the parent revision had it reuses the stage (an early cutoff), as long
+# as no design key the stage itself reads changed. The stage must compute from f(...) alone (test_robot_stage_reads).
+PARTIAL = {"gripper": {"sizing": gripper_inputs}}
 LABELS = [("sizing", "Sizing"), ("gripper", "Gripper + grasp"), ("electronics", "Electronics plan"),
           ("cad", "Robot CAD"), ("sim", "Simulation"), ("wiring", "Schematic · PCB · FW"),
           ("manufacturing", "Manufacturing"), ("bom", "BOM + sourcing"), ("manual", "Assembly manual")]
@@ -115,8 +138,8 @@ def gripper_actuator(design: Design) -> str:
 
 
 def gripper_design(design: Design) -> tuple:
-    """(the design the gripper stage analyses, the gripper actuator) for a generated arm: the gripper actuator at its
-    rated voltage, and the fingers the robot's CAD makes for its build config (arm.LOOK: printed PETG for a prototype,
+    """(the design the gripper stage analyses, the gripper actuator) for a generated arm: the gripper actuator (its stall
+    force is worked out on the servo rail, gripper_stall_nm), and the fingers the robot's CAD makes for its build config (arm.LOOK: printed PETG for a prototype,
     machined aluminium for a pilot, molded polycarbonate for production), not the standalone gripper's finger.material
     and fab.process, which the robot doesn't build with. A robot's controller and supply are the electronics plan's
     (electronics2), so none is chosen here."""
@@ -129,20 +152,33 @@ def gripper_design(design: Design) -> tuple:
                                 "electronics.mcu": "auto", "finger.material": material, "fab.process": process}), ga
 
 
+def gripper_stall_nm(ga: str, sizing: dict | None) -> float | None:
+    """The gripper servo's stall torque (N·m) on sizing's servo rail, from the actuator catalog every other stage uses
+    (catalog.torque_at); its rated torque when no rail is known. None for a servo the catalog lacks."""
+    from .catalog import ACTUATORS, torque_at
+
+    if ga not in ACTUATORS:
+        return None
+    rail_v = ((sizing or {}).get("servo_rail") or {}).get("v")
+    return torque_at(ga, rail_v or ACTUATORS[ga]["nominal_v"])
+
+
 def gripper_stage(design: Design, sizing: dict | None = None, n_trials: int = 4, simulate: bool = True) -> dict:
     """The gripper stage's result (results.json "gripper"). Its "force" plan is the grip's one source of truth: the
     electronics plan, the firmware, the simulation and the manual take its window, target and limit. An imported robot
     keeps its stock jaw (imported.gripper_summary, from `sizing` when given); a generated arm's gripper is analysed, its
     grasp simulated (simulate=False: the closed-form holding force instead, as the force plan's own fallback) and its force
-    planned on gripper_design(design)."""
+    planned on gripper_design(design), with the gripper servo's stall torque on sizing's servo rail (catalog.torque_at;
+    its rated torque without a sizing). Of sizing it reads only gripper_inputs(design, sizing)."""
     if design.arm.source:
         from . import imported
-        return imported.gripper_summary(design, sizing if (sizing or {}).get("gripper") else imported.size(design))
+        sz = sizing if (sizing or {}).get("gripper") else imported.size(design)
+        return imported.gripper_summary(design, gripper_inputs(design, sz))
     gd, ga = gripper_design(design)
     geom = build_profile(gd)
     a = grip_analysis.analyze(gd, geom)
     s = grip_sim.simulate(gd, geom, n_trials) if simulate else None
-    force = grip_electronics.plan(gd, a, s)
+    force = grip_electronics.plan(gd, a, s, stall_nm=gripper_stall_nm(ga, gripper_inputs(design, sizing)))
     for k in ("mcu", "wiring", "parts", "sensing"):   # the standalone gripper's controller, pins and parts list
         force.pop(k, None)
     out = {"actuator": ga, "analysis": a, "force": force}
@@ -324,7 +360,7 @@ class RobotProject(Project):
 
         for node in ORDER:
             sub = GRAPH[node][2]
-            if node not in todo:
+            if node not in todo or (parent and self._cut_off(node, design, changes, res, prev, parent)):
                 for key in self._keys(node):
                     res[key] = prev.get(key)
                 # a failed, incomplete or preview-only stage stays that way: an unrelated edit never launders it
@@ -389,6 +425,23 @@ class RobotProject(Project):
                   "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"], **({"by": by} if by else {}),
                   **({"proposed_by": proposed_by} if proposed_by else {})})
         return rev
+
+    @staticmethod
+    def _cut_off(node, design, changes, res, prev, parent) -> bool:
+        """Early cutoff: a stage that is only dirty because an upstream stage reran is reused when that upstream left the
+        part of its result the stage reads (PARTIAL) as the parent had it, and every other upstream was reused. A key
+        the stage reads itself, an upstream it reads whole or one that failed now reruns it."""
+        part = PARTIAL.get(node)
+        if not part or any(fnmatch.fnmatch(k, p) for k in changes for p in GRAPH[node][0]):
+            return False
+        for up in GRAPH[node][1]:
+            if res["stage_status"].get(up) == "reused":
+                continue
+            if up not in part or stage_problem(res, up) or stage_problem(prev, up):
+                return False
+            if part[up](design, res.get(OUTPUT_KEYS[up])) != part[up](design, prev.get(OUTPUT_KEYS[up])):
+                return False
+        return True
 
     @staticmethod
     def _keys(node):

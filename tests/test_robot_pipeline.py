@@ -45,20 +45,58 @@ def test_the_gripper_stage_analyses_the_fingers_the_build_makes():
 
 
 def test_moving_accessories_resize_and_resimulate():
-    # a wrist camera or an IMU rides on the gripper: every joint carries it and the simulation moves it
+    # a wrist camera or an IMU rides on the gripper: every joint carries it and the simulation moves it. The gripper
+    # stage reads sizing's servo rail, so it is downstream of sizing; the build reuses it while the rail stays put
     dirty = dirty_nodes(["electronics.extras"])
-    assert {"sizing", "sim"} <= set(dirty) and "gripper" not in dirty
+    assert {"sizing", "gripper", "sim"} <= set(dirty)
 
 
 def test_an_extras_edit_reruns_sizing_and_sim(tmp_path):
+    from morph.robot import arm
+    from morph.robot.pipeline2 import gripper_stage
+
     p = RobotProject(str(tmp_path / "egg"))
     d = Design().with_changes(EGG_ROBOT)
     r1 = p.run(d, n_trials=1, verbose=False, fast_sim=True)
     r2 = p.run(d.with_changes({"electronics.extras": "wrist_camera,imu"}), parent=r1, n_trials=1, verbose=False, fast_sim=True)
     a, b = p.load_results(r1), p.load_results(r2)
     assert b["stage_status"]["sizing"] == b["stage_status"]["sim"] == "computed"
+    # sizing reran but left the servo rail the gripper stage reads (pipeline2.PARTIAL): its grasp simulation is reused
     assert b["stage_status"]["gripper"] == "reused" and not b.get("errors"), b.get("errors")
+    assert b["provenance"]["gripper"] == f"reused from {r1}"
     assert b["sizing"]["hand_mass_g"] >= a["sizing"]["hand_mass_g"] + 15
+    # a lower servo rail does change it: the gripper reruns and plans its stall force on the new rail, as a fresh build
+    d74 = d.with_changes({"electronics.servo_v": 7.4})
+    c = p.load_results(p.run(d74, parent=r1, n_trials=1, verbose=False, fast_sim=True))
+    assert c["stage_status"]["gripper"] == "computed" and c["sizing"]["servo_rail"]["v"] == 7.4
+    fresh = gripper_stage(d74, arm.size(d74), n_trials=1)
+    assert c["gripper"]["force"] == json.loads(json.dumps(fresh["force"]))
+    assert c["gripper"]["force"]["servo_stall_force_n"] < 0.7 * a["gripper"]["force"]["servo_stall_force_n"]
+    # one stall force: the force plan's (to 0.1 N) is the electronics plan's (to 0.01 N), both on the 7.4 V rail
+    assert abs(c["eplan"]["grip"]["stall_force_n"] - c["gripper"]["force"]["servo_stall_force_n"]) <= 0.05
+
+
+def test_a_servo_supply_edit_regrips_an_imported_robot_like_a_fresh_build(tmp_path):
+    # chat "use a 5 V supply" on the SO-101 re-sized it but reused its gripper stage, which reads sizing's servo rail:
+    # the firmware shipped GRIP_LIMIT_N 20.83 N where a fresh build of the same design says 19.29 N
+    import re
+
+    from morph.studio.projects import template
+
+    d = template("so101", "so101")
+    d5 = d.with_changes({"electronics.servo_v": 5.0})
+    p, q = RobotProject(str(tmp_path / "edited")), RobotProject(str(tmp_path / "fresh"))
+    r2 = p.run(d5, parent=p.run(d, n_trials=1, verbose=False, fast_sim=True), n_trials=1, verbose=False, fast_sim=True)
+    rf = q.run(d5, n_trials=1, verbose=False, fast_sim=True)
+    inc, fresh = p.load_results(r2), q.load_results(rf)
+    assert inc["stage_status"]["gripper"] == "computed"
+    assert inc["gripper"] == fresh["gripper"] and inc["eplan"]["grip"] == fresh["eplan"]["grip"]
+
+    def limit(proj, rev):
+        with open(f"{proj.root}/{rev}/electronics/firmware/morph_arm/morph_arm.ino", encoding="utf-8") as fh:
+            return re.search(r"GRIP_LIMIT_N\s*=\s*([\d.]+)", fh.read()).group(1)
+
+    assert limit(p, r2) == limit(q, rf)
 
 
 def test_imported_robots_size_the_camera_they_carry():

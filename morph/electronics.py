@@ -145,7 +145,10 @@ def no_safe_grip(lo: float, hi: float, o, sensor: str | None = None, jaw: str = 
     return f"no safe grip force: holding needs {lo:.2f} N but the limit is {hi:.2f} N ({limit_source(o, sensor)}); {fix}"
 
 
-def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) -> dict:
+def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None, stall_nm: float | None = None) -> dict:
+    """The grip's force plan: window, target, hard limit, the servo and its stall force per finger. `stall_nm` is the
+    servo's stall torque on the supply it runs from (a robot's gripper stage passes it on the arm's servo rail); without
+    it, the servo's rated torque."""
     e, o, f = design.electronics, design.object, design.finger
     issues, warnings = [], []
     sensor = f.sensor if f.sensor in FSR else None
@@ -174,7 +177,7 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
 
     servo = choose_servo(design, target)
     s = servo_spec(servo)
-    f_stall = servo_max_force(servo, e.pinion_radius_mm)
+    f_stall = jaw_force(stall_nm, e.pinion_radius_mm, "rack") if stall_nm else servo_max_force(servo, e.pinion_radius_mm)
     crush_open_loop = o.max_force_n > 0 and f_stall > o.max_force_n
     if f_stall < 1.5 * target:
         issues.append(f"{servo} reaches only {f_stall:.1f} N per finger (< 1.5 x target)")

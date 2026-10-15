@@ -446,3 +446,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   out, so the simulation squeezed 2.83 N (3.41 N peak) for a 2.52 N target. It is now set at the lever where the
   simulation grasps the object. An open-loop grip (a torque limit, no force sensor) aims at the middle of the object's
   window, since nothing measures it: the SO-101 grips an egg at 4.58 N and a strawberry at 0.7 N.
+- Changing the servo supply of an imported robot (chat "use a 5 V supply" on the SO-101) re-plans its grip: the
+  gripper stage kept the old servo rail's numbers and the firmware shipped a 20.83 N grip limit where a fresh build
+  says 19.29 N. A generated arm's grip limit and stall force are now worked out on the servo rail too (they were at the
+  servo's rated voltage). Adding a wrist camera or changing the reach still reuses the gripper's grasp simulation when
+  the servo rail stays the same. A test now checks that every stage reruns when a result it reads changes, not only a
+  setting.

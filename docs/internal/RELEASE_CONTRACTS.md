@@ -1535,3 +1535,31 @@ relies on since:
   (it said "isn't feasible yet") and `morph import`'s line all follow every check. `tests/test_grip_sweep.py`
   (MORPH_SLOW) builds the two demo robots and 22 one-liners: every scenario passes or the build names it, and no
   scenario that passed on 6c49545 fails.
+
+## 21. Stage dependencies, wording and supplies (release review fixes, track E4)
+
+Round 2 of the pipeline and wording fixes. What other code relies on since:
+
+- **A stage reruns when an upstream result it reads changes (E-N4).** `GRAPH["gripper"]` has `sizing` upstream: the
+  imported robot's gripper stage reads sizing's servo rail and servos (`imported.gripper_summary`), and a generated
+  arm's force plan works the gripper servo's stall torque out on sizing's rail (`pipeline2.gripper_stall_nm(ga,
+  sizing)`: `catalog.torque_at`, the catalog every other stage uses; `morph.electronics.plan(..., stall_nm=)`), so
+  `servo_stall_force_n`, `limit_n` (the firmware's `GRIP_LIMIT_N` for an object without a damage force) and the
+  "reaches only" issue are at the rail. An `electronics.servo_v` edit on the SO-101 used to keep the old grip limit
+  (GRIP_LIMIT_N 20.83 N against 19.29 N fresh). `pipeline2.gripper_inputs(design, sizing)` is the only part of sizing
+  the stage reads (the rail's voltage; for an imported robot also the servos), and `pipeline2.PARTIAL` declares it:
+  `RobotProject.run` reuses a stage that is dirty only because an upstream reran, when that part is unchanged and no
+  key of its own changed (an early cutoff), so a wrist camera or a longer reach re-sizes the arm without rerunning the
+  grasp simulation (`provenance` "reused from rNNN"). `dirty_nodes` and Teams' `affected_stages` stay static: they
+  list the gripper stage for every sizing edit. New robot's preflight passes the same rail stall.
+- **The arm is laid out the same before and after the electronics plan.** `arm.BAY_CLEAR_MM` (22 mm) is the electronics
+  bay's clear height under the deck, fixed: the layout no longer takes it from the plan's boards (sizing laid the arm out
+  without them, the build with them, and with a short turret the deck sets the shoulder's height). A board taller than
+  that is a CAD issue. So the simulation, which grips with `eplan.grip` and welds the plan's boards into the base, still
+  doesn't depend on a controller or electronics-config edit, and reuses its result across them (section 19, ENG-8).
+- **The guard.** `tests/test_robot_stage_reads.py` also computes every stage on recording results that log each
+  upstream result (and key in it) a stage reads, and fails when it reads a stage that isn't upstream of it; the
+  simulation's reads of the electronics plan are the one declared exception (`FOREIGN`), checked by swapping every
+  design key the plan reads that the simulation doesn't rerun for (`OTHER`: controller, electronics config) and
+  comparing the simulated robot (`robust._norm_xml` of `simulate.build_mjcf`, and `asm.meta`'s grip). A stage in
+  `PARTIAL` must compute the same from that part alone.
