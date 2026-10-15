@@ -473,9 +473,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   software checks, the egg intact. A hobby servo gripper, which has no torque limit, is still told.
 - A hobby PWM gripper servo (an MG996R) is never held at stall: without force sensors G closed it to its max-squeeze stop,
   3 mm past a can, where it sat at its stall current (2.5 A) for the whole carry, and hobby servos have no overload
-  protection. G now closes it only as far past the object as its own position loop needs for the grip (0.68 mm for
-  the can's 13.94 N, 45 % of its stall); F sets that distance, never past what the servo holds continuously or the
-  grip Morph planned, whichever is more. With force
+  protection. G now closes it only as far past the object as its own position loop needs for the grip, never past
+  what the servo holds continuously (its rated torque): 0.49 mm for the can, 10 N against its 13.94 N target and the
+  6.97 N it needs not to slip; a 900 g can's target, above the stall, is an issue. F sets that distance, up to the
+  servo's rated torque or the object's limit, whichever is lower. With force
   sensors a close that reads nothing stops where a gauge-sized object gets the firmware's force limit (0.92 mm for an
   egg), not at the stop. The power budget, the plan's warning, the manual and the simulation use that squeeze, and a
   hold above the servo's rated torque is a warning.

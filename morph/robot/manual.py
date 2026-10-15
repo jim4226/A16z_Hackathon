@@ -732,12 +732,18 @@ def _grip_sentence(grip: dict, name: str) -> str:
                     f"grip target for the {name} is {t:g} N per finger" + (f" (window: {window})." if window else "."))
         at = (f" (gripper = {motion['closed'] - motion['squeeze']:.2f} {motion.get('unit', '')})"
               if motion.get("squeeze") is not None and motion.get("closed") is not None else "")
+        rated = ol.get("rated_n")
+        cap = ("its rated torque, what it holds continuously" if rated is not None and lim is not None and lim >= rated - 0.005
+               else f"the {name}'s limit")
+        below = (f" (less than Morph's {t:g} N target: the most it holds continuously)" if ol.get("capped") else "")
         return (f"This gripper has no force sensors and its hobby servo no torque limit, so G closes it only "
                 f"{ol['squeeze_mm']:.2f} mm past the {name}{at}, where the servo's own position loop squeezes about "
-                f"{sq:g} N per finger; it would reach its {stall:g} N stall about {ol['servo_band_mm']:g} mm past contact "
-                f"and, held there, overheat (hobby servos have no overload protection). Check the squeeze once with a "
-                f"kitchen scale between the jaws; to change it send F followed by newtons (it sets how far G closes), "
-                f"and lower it if the servo hums or warms while it holds" + within)
+                f"{sq:g} N per finger{below}; it would reach its {stall:g} N stall about {ol['servo_band_mm']:g} mm past "
+                f"contact and, held there, overheat (hobby servos have no overload protection). Check the squeeze once "
+                f"with a kitchen scale between the jaws. To change it send F followed by newtons: F sets how far G closes "
+                f"from Morph's model of the servo, up to {lim:g} N ({cap}). A servo softer than the model squeezes less "
+                f"than F says, and F can't ask for more than {lim:g} N; lower it if the servo hums or warms while it holds"
+                + within)
     where = (f"with the object {grip.get('lever_mm', 0):g} mm from the jaw's pivot (more nearer the pivot, less towards the tip)"
              if revolute else f"through its {grip.get('lever_mm', 0):g} mm pinion")
     return (f"This gripper has no force sensors: G closes it past the {name}{stop}, and the gripper servo's torque limit, "

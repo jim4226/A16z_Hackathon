@@ -1617,12 +1617,18 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   band plus the gear's and the jaw's give); `simulate.GRIP_SAT_MM` is the same number. A gripper servo with no torque
   limit (`electronics2.has_torque_limit` false: hobby PWM) gets `eplan.grip.open_loop` from
   `electronics2.open_loop_squeeze(grip, gkey, family)`:
-  - without force sensors `squeeze_mm` = band x target / stall (at least two position commands, `step_mm` each: a
-    PCA9685 count, 4.88 us, at the jaw), and `squeeze_n` what that squeezes a gauge-sized object with (the target, more
-    when floored). The firmware's `GRIP_SQUEEZE` (in the joint's unit) is that distance and G commands
-    `GRIP_CLOSED - GRIP_SQUEEZE`, never `GRIP_MIN`; F sets it (`GRIP_SQUEEZE_PER_N` = band / stall, at least
-    `GRIP_SQUEEZE_LEAST`). `eplan.grip.limit_n` (`GRIP_LIMIT_N`, F's cap) is also capped at max(squeeze_n, the servo's
-    rated torque as a force), so no F command holds it at stall. A floored squeeze above the object's limit (a stock
+  - without force sensors `squeeze_mm` = band x min(target, `rated_n`) / stall, where `rated_n` is the servo's rated
+    (continuous) torque as a force at the jaw (stall x `rated_nm` / `torque_nm`: 10 N on an MG996R egg-picker hand), at
+    least two position commands (`step_mm` each: a PCA9685 count, 4.88 us, at the jaw), and `squeeze_n` what that
+    squeezes a gauge-sized object with: the target, more when floored, `rated_n` when the target is above it
+    (`capped`; a 370 g can's 13.94 N target squeezes 10 N, 0.49 mm past contact; a 900-1400 g can's target above the
+    servo's stall no longer holds it at stall, 1.5 mm past contact). The firmware's `GRIP_SQUEEZE` (in the joint's
+    unit) is that distance and G commands `GRIP_CLOSED - GRIP_SQUEEZE`, never `GRIP_MIN`; F sets it
+    (`GRIP_SQUEEZE_PER_N` = band / stall, at least `GRIP_SQUEEZE_LEAST`). `eplan.grip.limit_n` (`GRIP_LIMIT_N`, F's
+    cap) is min(the object's limit, `rated_n`): F raises a squeeze planned below that up to it (a servo softer than the
+    model squeezes less than F says, and F can't take it further) and never holds the servo past its rated torque. A
+    capped grip writes the squeeze as `GRIP_TARGET_N` and is a plan issue only when `rated_n` is below the window's low
+    end, the force the object needs not to slip (`grip_problems`). A floored squeeze above the object's limit (a stock
     jaw's 70 mm lever makes one count 0.54 mm at a strawberry) is a plan issue. Torque-limited and force-sensing grips
     keep `GRIP_SQUEEZE` = the whole overtravel (G still commands `GRIP_MIN` without sensors);
   - with force sensors `probe_mm` = band x `limit_n` / stall (None when the stall is below the limit): the firmware's
