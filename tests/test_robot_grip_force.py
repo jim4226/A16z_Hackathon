@@ -225,6 +225,7 @@ def test_new_robot_and_teams_estimate_the_stock_jaws_lever_without_searching(tmp
     from morph.studio import brief
     from morph.studio.teams import impact
 
+    monkeypatch.setattr(imported, "_LEVERS", {})     # only the levers this test's builds work out (not other tests')
     egg = template("so101", "so101")
     sz = imported.size(egg)
     builds = {o: imported.gripper_summary(egg.with_changes(object_changes(o)), sz)["force"] for o in ("raw egg", "strawberry")}
