@@ -172,13 +172,15 @@ def set_aside_unfinished(p: RobotProject, say=None) -> list:
 
 
 # A first build the Studio stopped during more than once (Studio._recover) isn't started again on its own: if something
-# in the design stops the Studio (memory, a crash in a native library), it would stop it at every start. It waits here
-# until someone asks for it again (chat "build it again") or the project is deleted.
+# in the design stops the Studio (memory, a crash in a native library), it would stop it at every start. Neither is one
+# that ended with an error (Studio._failed_first). It waits here until someone asks for it again (chat "build it
+# again") or the project is deleted.
 FIRST_BUILD = os.path.join(".morph", "first-build.json")
 
 
 def parked_first_build(root: str) -> dict | None:
-    """{design, label, by, cut, utc} of a first build that waits to be asked for again, or None."""
+    """{design, label, by, cut, utc, and error for one that ended with an error} of a first build that waits to be
+    asked for again, or None."""
     try:
         with open(os.path.join(root, FIRST_BUILD), encoding="utf-8") as fh:
             rec = json.load(fh)

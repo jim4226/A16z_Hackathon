@@ -565,6 +565,7 @@ class Room:
         self.sourcing = threading.Lock()
         self.live = None  # the revision being built: {rev, parent, dirty, nodes: {node: status}}
         self.last_target = None  # chat: the grip target (N) "gentler grip" scales when a revision reports none
+        self.first_build = None  # a first build that ended with an error, when the disk refused its record (Studio)
 
     def emit(self, event: dict):
         """Send a pipeline event, remembering the build's progress for tabs that open the project mid-build."""

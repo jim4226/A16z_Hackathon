@@ -351,6 +351,57 @@ def test_build_it_again_while_it_builds_is_answered_at_once(home, builds):
     assert not any("couldn't map" in t for t in texts(kb1))
 
 
+def test_build_it_again_retries_a_first_build_that_ended_with_an_error(home, tmp_path, monkeypatch, capsys):
+    """A first build that ended with an error (not a stop) leaves no revision. "build it again" tries it once more
+    (it was answered "Wait for its first build", a build that would never come), an edit says how to go on, and a
+    Studio started later still can."""
+    fake, tries = FakeBuilds(), []
+
+    def flaky(self, design, *a, **k):
+        tries.append(design.name)
+        if len(tries) == 1:
+            raise PermissionError(13, "Permission denied", str(home / "kb1" / "r001" / "cad"))
+        return fake(self, design, *a, **k)
+
+    monkeypatch.setattr(RobotProject, "run", flaky)
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    room, job = st.create_project("kb1", need="a test")
+    finish(job)
+    assert job.status == "error" and room.completed() == [] and "projects/kb1/r001/cad" in texts(room)[-1]
+    finish(st.queue_params(room, {"build.quantity": 4}))                    # an edit: nothing to change yet
+    said = texts(room)[-1]
+    assert 'send "build it again"' in said and "isn't running" in said and "Wait for" not in said, said
+    later = tmp_path / "later"
+    shutil.copytree(home, later)
+    capsys.readouterr()
+    st2 = server.Studio(RobotProject(str(later / "egg")), str(later))     # a later start: the terminal says so too
+    out = capsys.readouterr().out
+    assert "kb1: its first build ended with an error" in out and 'send "build it again" in kb1\'s chat' in out
+    assert "stopped" not in out.split("kb1: ", 1)[1].splitlines()[0] and not st2.room("kb1").jobs.busy()
+    finish(st.queue_chat(room, "build it again"))                           # this Studio: tried once more
+    finish(*(room.jobs.get(j["id"]) for j in room.jobs.snapshot()))
+    assert room.completed() == ["r001"] and "Building kb1's first design again." in texts(room)
+    assert len(tries) == 2 and not (home / "kb1" / ".morph" / "first-build.json").exists()
+    kb1 = st2.room("kb1")                                                   # the later Studio, from the kept design
+    finish(st2.queue_chat(kb1, "Build it again!"))
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert kb1.completed() == ["r001"] and len(tries) == 3
+
+
+def test_an_empty_project_with_nothing_kept_to_build_says_so(home, builds):
+    """No first build running, waiting or kept (one that failed under an older Morph): the chat never says to wait for
+    a first build that will never come."""
+    from morph.studio import projects
+    projects.create(str(home), "kb1")                                      # a project folder, never built
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    kb1 = st.room("kb1")
+    for job in (st.queue_chat(kb1, "build it again"), st.queue_params(kb1, {"build.quantity": 4})):
+        finish(job)
+        said = texts(kb1)[-1]
+        assert job.status == "error" and "kept no design" in said and "delete the project" in said, said
+    assert builds.built == [] and kb1.completed() == []
+
+
 def test_the_parked_first_build_message_never_blames_the_design():
     for terminal in (False, True):
         text = server.Studio._parked_text("kb1", 2, terminal=terminal)

@@ -273,7 +273,13 @@ Morph Studio on this projects folder is still working on it"); otherwise every j
   edit is answered with how to go on, and the chat message "build it again" (`Studio.AGAIN`: also "try again",
   "rebuild", "retry") queues it once more (`Studio._no_revision_yet`); sent while a first build of the project waits
   or runs, it is answered at once, never queued: "<project>'s first design is already being built."
-  (`Studio.queue_chat`); the record goes once a first revision is built;
+  (`Studio.queue_chat`); the record goes once a first revision is built. A first build that ends with an error (not
+  a stop: `Studio.build` caught it) is kept the same way, with its `error` (`Studio._failed_first`; the room keeps it
+  too, should the disk refuse the file): the chat shows the error, every start's terminal says "<project>: its first
+  build ended with an error, so it has no revision yet. To try once more, send "build it again" ...", and "build it
+  again" queues it once more. "Wait for its first build" is said only while one waits or runs; a project with no
+  revision and nothing kept to build says "... Morph kept no design to build it again: delete the project from the
+  project menu and make it again.";
 - every other open job gets one assistant line, "The Studio stopped before this was built: “<label>”. Send it again if
   you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own.
   A job whose revision was written before the stop took its `ended` line with it (one of the newest 12 finished

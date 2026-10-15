@@ -329,7 +329,7 @@ class Studio:
             for path in paths:  # nothing open in them (a stop just before the file went)
                 _remove(path)
             if parked is not None and not finished:
-                print(self._parked_text(name, parked.get("cut"), terminal=True))
+                print(self._parked_text(name, parked.get("cut"), terminal=True, error=parked.get("error")))
             return
         room = self.room(name)
         for path in paths:  # their open jobs are handled here; what still waits is journaled again
@@ -427,6 +427,19 @@ class Studio:
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
 
+    def _failed_first(self, room: Room, design, label: str, by, cut: int, why: str):
+        """A first build that ended with an error (not a stop) left no revision and nothing queued: its design is kept
+        like a parked one (projects.FIRST_BUILD, with the error; on the room too, should the disk refuse the record),
+        so "build it again" in the project's chat tries it once more (_no_revision_yet). Never raises."""
+        label = label[:-len(self.REBUILT)] if label.endswith(self.REBUILT) else label
+        record = {"design": design.to_dict() if hasattr(design, "to_dict") else design, "label": label, "by": by,
+                  "cut": cut, "error": why[:300]}
+        room.first_build = record
+        try:
+            projects.park_first_build(room.p.root, record)
+        except (OSError, TypeError, ValueError):
+            traceback.print_exc()
+
     def _park(self, room: Room, design: dict, label: str, by, cut: int):
         """A first build the Studio stopped during `cut` times isn't started again on its own: if something in the
         design stops the Studio (memory, a crash in a native library), it would stop it at every start. Clean stops
@@ -437,7 +450,11 @@ class Studio:
         print(self._parked_text(room.name, cut, terminal=True))
 
     @staticmethod
-    def _parked_text(name: str, cut, terminal: bool = False) -> str:
+    def _parked_text(name: str, cut, terminal: bool = False, error: str | None = None) -> str:
+        if error:  # _failed_first: no stop, an error ended it
+            return (f"{name}: its first build ended with an error, so it has no revision yet. To try once more, send "
+                    f"\"build it again\" in {name}'s chat in the Studio; to give up on it, delete {name} from the "
+                    "project menu.")
         n = _count(cut)
         times = "twice" if n == 2 else f"{n} times" if n > 1 else "once"
         if terminal:
@@ -451,10 +468,14 @@ class Studio:
     def _no_revision_yet(self, room: Room, job, msg: str | None = None):
         """A change asked of a project with no finished revision: there is nothing to change yet. A first build that
         waits to be asked for again (_park) starts when the message is "build it again" (AGAIN)."""
-        parked = projects.parked_first_build(room.p.root)
+        parked = projects.parked_first_build(room.p.root) or room.first_build
         if parked is None:
-            return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing to "
-                                                 "change. Wait for its first build.")
+            if any(j.get("kind") == "build" for j in room.jobs.snapshot()):
+                return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing "
+                                                     "to change. Wait for its first build.")
+            return self._say(room, job, "error", f"{room.name} has no finished revision yet, its first build isn't "
+                                                 "running and Morph kept no design to build it again: delete the "
+                                                 "project from the project menu and make it again.")
         if msg is None or not self.AGAIN.fullmatch(msg.strip()):
             return self._say(room, job, "error", f"{room.name} has no finished revision yet, and its first build isn't "
                                                  "running: send \"build it again\" to try it once more, or delete the "
@@ -759,8 +780,9 @@ class Studio:
         desc = labels.describe(changes)  # "Build → Pilot", as the Parameters panel names them
         return self.apply(changes, f"edit: {desc}", reply=f"Parameter edit: {desc}.", room=room, job=job)
 
-    def build(self, design, room: Room | None = None, label: str = "first design", job=None) -> str | None:
-        """Build `design` as a revision with no parent: a new project's first revision."""
+    def build(self, design, room: Room | None = None, label: str = "first design", job=None, cut: int = 0) -> str | None:
+        """Build `design` as a revision with no parent: a new project's first revision. One that ends with an error is
+        kept to be asked for again (_failed_first); `cut`: how often a stop cut it off already (queue_build)."""
         room = room or self.room()
         with room.lock:
             try:
@@ -771,6 +793,7 @@ class Studio:
                     rev = room.p.run(design, parent=None, label=label[:48], verbose=False, on_event=room.emit,
                                      by=job.by if job is not None else None)
                 projects.unpark_first_build(room.p.root)
+                room.first_build = None
                 room.p.log({"type": "tool_time", "cmd": "studio", "seconds": round(time.time() - t0, 2)})
                 if job is not None:
                     job.result = rev
@@ -780,7 +803,10 @@ class Studio:
                 return rev
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
-                self._say(room, job, "error", f"Error: {durable.explain(exc, self.home)}")
+                why = durable.explain(exc, self.home)
+                if not room.completed():
+                    self._failed_first(room, design, label, job.by if job is not None else None, cut, why)
+                self._say(room, job, "error", f"Error: {why}")
                 return None
             finally:
                 room.live = None
@@ -849,8 +875,8 @@ class Studio:
         Studio that stops before it finishes builds it again when it starts; `cut`: how often a stop has cut this
         build off already (Studio._recover). Raises QueueFull."""
         record = {"design": design.to_dict() if hasattr(design, "to_dict") else design, **({"cut": cut} if cut else {})}
-        return room.jobs.submit("build", lambda job: self.build(design, room=room, label=label, job=job), by=by,
-                                label=label, record=record)
+        return room.jobs.submit("build", lambda job: self.build(design, room=room, label=label, job=job, cut=cut),
+                                by=by, label=label, record=record)
 
     def resolve(self, room: Room, job_id, action: str, by: str | None = None):
         """Answer a conflict: "apply" queues the same changes on the newest revision (checked again when they run),

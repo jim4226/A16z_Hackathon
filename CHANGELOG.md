@@ -400,8 +400,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   tries once more. A team Studio starting while another one runs on the same projects folder leaves the change
   requests that one is building alone (it reopened them, told their people they weren't built, and the finished build
   left its revision unrecorded). Closing the Studio with Ctrl+C during a first build is no try: only a crash, a kill,
-  a power cut or an error that stops the Studio counts, and the chat no longer suggests the design stopped the Studio. "Build it again" sent again while
-  that build runs is answered at once (it is already being built), not with "I couldn't map that" once it ends.
+  a power cut or an error that stops the Studio counts, and the chat no longer suggests the design stopped the
+  Studio. "Build it again" sent again while that build runs is answered at once (it is already being built), not with
+  "I couldn't map that" once it ends. A first build that ends with an error (not a stop) can be tried again too:
+  "build it again" in its chat builds it once more (it was answered "Wait for its first build", for a build that would
+  never come).
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.
