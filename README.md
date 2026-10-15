@@ -284,8 +284,8 @@ morph study egg-picker --runs 1000
 morph study egg-picker --stress
 ```
 
-The first makes 200 runs and the solver checks (about 2 minutes on 4 cores), `--runs 1000` goes deeper (the first 200
-are kept), and `--stress` doubles every tolerance range.
+The first makes 200 runs and re-runs its failures with other simulator settings (about 2 minutes on 4 cores),
+`--runs 1000` goes deeper (the first 200 are kept), and `--stress` doubles every tolerance range.
 
 Results are saved in the project (`.studies/`) as each run finishes, so Ctrl+C keeps them and the same command
 carries on. It is simulation, for the tolerances shown; not a field failure rate.

@@ -665,7 +665,7 @@ def cmd_study(a) -> int:
             last.update(t=now, phase=ev["phase"])
             rate = f", {_pct(ev['p'])} succeed so far" if ev.get("p") is not None else ""
             eta = f", about {ev['eta_s']:.0f} s left" if ev.get("eta_s") else ""
-            what = {"prepare": "rebuilding the robot and its plan", "runs": "runs", "checks": "solver checks",
+            what = {"prepare": "rebuilding the robot and its plan", "runs": "runs", "checks": "checks with other simulator settings",
                     "done": "done"}.get(ev["phase"], ev["phase"])
             print(f"  {ev['elapsed_s']:6.1f} s  {what}: {ev['done']} of {ev['n']}{rate}{eta}", flush=True)
 

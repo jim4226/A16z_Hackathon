@@ -28,8 +28,10 @@ morph study egg-picker --stress
 morph study egg-picker --rev r003 --seed 7 --timestep 2 --workers 2 --no-checks
 ```
 
-The first makes 200 runs and the solver checks (about 2 minutes on 4 cores), `--runs 1000` goes deeper (the first 200
-are kept), `--stress` doubles every tolerance range, and the last shows the other options.
+The first makes 200 runs and re-runs its failures with other simulator settings (about 2 minutes on 4 cores),
+`--runs 1000` goes deeper (the first 200 are kept), `--stress` doubles every tolerance range, and the last shows the
+other options. It prints the result in the card's words: "likely between" for the 95% confidence interval, and
+"Same with other simulator settings" or "Model-sensitive" for each failure group.
 
 Ctrl+C keeps the finished runs and the same command carries on. It prints the result as plain text and where it is
 saved; it exits 0 when the study finished, 130 when it was stopped and 1 when it couldn't run.
@@ -149,8 +151,8 @@ morph studio --team --remote
 ```
 
 The card names that computer and estimates the time from the project's own measured speed. A run takes about one second
-of computing at 1 ms steps: 200 runs and their solver checks (twice up to 20 runs of each failure group and 15
-successes) take about two minutes on 4 cores.
+of computing at 1 ms steps: 200 runs and their checks with other simulator settings (twice up to 20 runs of each failure
+group and 15 successes) take about two minutes on 4 cores.
 
 - **Worker processes:** the cores the Studio's process may use, minus one (a container's or `taskset`'s share counts,
   not the whole machine's); `MORPH_STUDY_WORKERS` sets another number, never more than those cores. They run at a lower
@@ -182,7 +184,7 @@ under 2 at the start), the cancel, restart and build timings beside other work (
 | A killed Studio | Its study processes end 1.4-1.8 s later; restarted, the study reads "Stopped when the Studio stopped after 8 of 40 runs" at once, and Carry on gives the same 40 runs as a study that never stopped |
 | Reproducibility | The same 40 runs at 1 ms on 1, 2 and 4 worker processes in batches of 2, 4 and 8, and through `morph study` on 1, 2 and 4 |
 | Builds beside studies | A build during two studies starts at once and takes 20.3 s (21.5 s with no study running) |
-| Room only: a carton wall 12 mm from the open jaws | 185 of 200 succeed (Wilson 88.0-95.4 %); 15 hit it during the release (4.6-12.0 %): "mount 4.5 to 10.0 mm off in y: 20% fail this way vs 3% otherwise", the same under other solver settings (15 of 15). 1.3 runs/s on 3 workers: World mode tests every collision pair |
+| Room only: a carton wall 12 mm from the open jaws | 185 of 200 succeed (Wilson 88.0-95.4 %); 15 hit it during the release (4.6-12.0 %): "mount 4.5 to 10.0 mm off in y: 20% fail this way vs 3% otherwise", the same with other simulator settings (15 of 15). 1.3 runs/s on 3 workers: World mode tests every collision pair |
 | Not measured | 1,000 runs on a 16-core `--remote` computer (none here): about 70 s on 15 workers if it scales as it does on 4 cores |
 
 ## Limits
@@ -191,7 +193,7 @@ under 2 at the start), the cancel, restart and build timings beside other work (
 - The plan is the nominal one: a run that starts wrong is not re-planned, which is what a robot without sensing does.
 - One-parameter rules only. Two tolerances that cause a failure together show up as two weaker rules (see *What matters
   most* in Details); there are no interaction or variance-based sensitivity indices yet.
-- The solver checks re-run at most 20 runs of a group and 15 successes, not every run.
+- The checks with other simulator settings re-run at most 20 runs of a group and 15 successes, not every run.
 - No GPU: MuJoCo on the CPU. Tested on Linux; the processes are started the same way on Windows and macOS.
 
 ## Where it is kept

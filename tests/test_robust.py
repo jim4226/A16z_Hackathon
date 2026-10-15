@@ -202,7 +202,38 @@ def test_all_successes_get_the_exact_bound():
     doc = {"project": "egg-picker", "rev": "r001", "id": "0" * 12, "n": 200, "done": 200, "seed": 1, "timestep": 0.001,
            "status": "done", "stress": False, "summary": s, "spec": {"params": params}}
     text = robust.report(doc)
-    assert "Succeeds in all 200 runs: at least 98.2% (95%, exact)." in text and text.isascii()
+    assert "Succeeds in all 200 runs: at least 98.1% with 95% confidence." in text and text.isascii()   # as the card
+    assert robust.INTERVAL_NOTE not in text and "CI" not in text and "solver" not in text
+
+
+def test_the_report_says_it_as_the_card_does():
+    """`morph study` prints the card's words (W3 UX-10): "likely between" for the 95% interval, with the note saying
+    so, and "Same with other simulator settings" or "Model-sensitive" for a failure group's checks, never "95% CI" or
+    "robust to solver settings"."""
+    from morph.studio import api_study
+
+    params = robust.default_spec(projects.template("egg-picker"))["params"]
+    outs = ["placed"] * 6 + ["jam"] * 4
+    rows = [{"i": i, "params": robust.sample(params, 1, i)[0], "outcome": o, "group": o, "success": o == "placed"}
+            for i, o in enumerate(outs)]
+    s = robust.analyze(rows, params)
+    s["groups"][0].update(model_sensitive=False, checks={"half_timestep": {"runs": 4, "still_fail": 4},
+                                                        "impratio_1": {"runs": 4, "still_fail": 3}})
+    doc = {"project": "egg-picker", "rev": "r001", "id": "0" * 12, "n": 10, "done": 10, "seed": 1, "timestep": 0.001,
+           "status": "done", "stress": False, "summary": s, "spec": {"params": params}}
+    text = robust.report(doc)
+    lo, hi = s["wilson95"]
+    assert f"Succeeds in 6 of 10 runs: 60.0% ({api_study.likely(lo, hi)})." in text, text
+    assert api_study.card(doc)["headline"].startswith(f"Succeeds in 6 of 10 randomized runs ({api_study.likely(lo, hi)})")
+    assert robust.INTERVAL_NOTE in text and api_study.card(doc)["interval_note"] == robust.INTERVAL_NOTE
+    assert "       Same with other simulator settings: at half the timestep 4 of 4 still fail this way" in text, text
+    s["groups"][0]["model_sensitive"] = True
+    assert "       Model-sensitive: at half the timestep" in robust.report(doc)
+    zero = robust.analyze([{**r, "outcome": "jam", "group": "jam", "success": False} for r in rows], params)
+    text = robust.report({**doc, "summary": zero})
+    assert "Succeeds in 0 of 10 runs: likely at most 30.9%." in text, text
+    for old in ("95% CI", "robust to solver", "solver settings", "(95%, exact)"):
+        assert old not in text and old not in robust.report(doc), old
 
 
 def test_the_report_counts_single_runs_in_plain_english():
@@ -217,7 +248,9 @@ def test_the_report_counts_single_runs_in_plain_english():
     assert "Succeeds in 2 of 3 runs: 66.7%" in text
     assert "1 run was numerically unstable and is not counted (run 3)." in text
     assert "1 run stopped with an error and is not counted (run 4)." in text
-    assert "\n     1 run  (33.3%, 95% CI" in text and "Timing: 5 runs, 1.2 runs/s on 1 worker," in text
+    assert "Succeeds in 2 of 3 runs: 66.7% (likely between 20% and 94%)." in text, text
+    assert "\n     1 run  (33.3%, likely between 6% and 80%)" in text and "Timing: 5 runs, 1.2 runs/s on 1 worker," in text
+    assert "95% CI" not in text
     one = {**doc, "n": 1, "done": 1, "summary": robust.analyze(rows[:1], params)}
     text = robust.report(one)
     assert "1 of 1 randomized run of pick and place" in text and "Succeeds in its one run: at least 2.5%" in text

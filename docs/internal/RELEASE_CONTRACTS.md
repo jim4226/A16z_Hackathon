@@ -1206,6 +1206,10 @@ field failure rate (section 0, honesty).
   clopper_pearson95, groups with id, label, count, rate, model_sensitive).
 - **CLI:** `morph study <project> [--rev rNNN] [--runs N] [--workers N] [--stress] [--seed S] [--timestep ms]
   [--no-checks]` prints the study as ASCII text; Ctrl+C keeps the finished runs and the same command carries on.
+  `robust.report()` uses the card's words (R3): `robust.likely()` ("likely between 63% and 76%", bounds rounded away
+  from the estimate; `api_study.likely` is the same function) with `robust.INTERVAL_NOTE` saying it is the 95%
+  confidence interval, "at least 98.1% with 95% confidence" when every run succeeds, and "Same with other simulator
+  settings" or "Model-sensitive" for a failure group's checks.
 - **Studio routes (B2-S2, `morph/studio/api_study.py`)**, all with `?project=`; starting, cancelling, resuming and
   editing tolerances need an editor, reading and replays a viewer (Teams' role table lists all seven):
   - `GET /api/study[?rev=]`: `{job, studies, latest, latest_stress, stopped, limits, host, rate, may, notes,

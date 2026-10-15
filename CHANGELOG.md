@@ -85,7 +85,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   test with every range doubled), shows its progress live in view in place of the earlier result, stops it on request
   within seconds (the finished runs stay, and it carries on later), says what the result means and what it doesn't in
   plain words ("likely between 63% and 76%", the 95% interval in its tooltip; no "Most likely when" for a failure group
-  of fewer than 3 runs), replays a failing run in the 3D view,
+  of fewer than 3 runs; `morph study` prints the same words), replays a failing run in the 3D view,
   and lists every tolerance with where its range comes from. Editors start studies and change tolerances (a change
   marks older studies outdated); every member of a team reads them. Studies run on the Studio's computer, so
   `morph studio --remote` on a bigger machine is how a team brings its own compute; one study at a time per project, at

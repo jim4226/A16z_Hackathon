@@ -24,7 +24,6 @@ takes larger ones.
 from __future__ import annotations
 
 import itertools
-import math
 import socket
 import threading
 from collections import OrderedDict
@@ -50,8 +49,7 @@ NOTES = {
     "robust": "Still fails the same way at half the timestep and with softer friction (impratio=1): not a quirk of the "
               "simulator's settings.",
     "unchecked": "Not checked with other simulator settings yet.",
-    "interval": "Likely: the 95% confidence interval. Over the tolerances shown, the true rate is in this range with 95% "
-                "confidence; fewer runs give a wider range.",
+    "interval": robust.INTERVAL_NOTE,
     "chance": "could be chance",
     "outdated": "The tolerances changed after this study: it is outdated. Run it again for the ones shown now.",
     "rev_missing": "Its revision no longer exists.",
@@ -103,22 +101,13 @@ def _cores() -> int:
 
 # ---------------------------------------------------------------------- the card's sentences
 
-def _pct(v: float, down: bool, fine: bool) -> str:
-    """A bound of an interval as a percentage, rounded away from the estimate (a lower bound down, an upper one up)."""
-    k = 10 if fine else 1
-    x = (math.floor if down else math.ceil)(round(v * 100 * k, 6)) / k
-    return f"{x:.1f}" if fine else f"{x:.0f}"
+_pct = robust.bound_pct          # a bound rounded away from the estimate: the interval shown contains the computed one
+likely = robust.likely             # "likely between 63% and 76%" (the 95% interval), as `morph study` says it too
 
 
 def interval(lo: float, hi: float) -> str:
     fine = hi - lo < 0.04
     return f"{_pct(lo, True, fine)}-{_pct(hi, False, fine)}%"
-
-
-def likely(lo: float, hi: float) -> str:
-    """An interval in words: "likely between 63% and 76%" (the 95% interval, bounds rounded away from the estimate)."""
-    fine = hi - lo < 0.04
-    return f"likely between {_pct(lo, True, fine)}% and {_pct(hi, False, fine)}%"
 
 
 def headline(doc: dict) -> str | None:
@@ -163,7 +152,7 @@ def _checks_text(c: dict) -> str | None:
 def card(doc: dict) -> dict:
     """What the Robustness card shows for a study record: the headline, the honesty notes that apply, and each
     failure group in words (its share with the interval, the rule that best isolates it, whether it survives other
-    solver settings, and the run closest to nominal to replay)."""
+    simulator settings, and the run closest to nominal to replay)."""
     s = doc.get("summary") or {}
     n = s.get("n") or 0
     flags = []
