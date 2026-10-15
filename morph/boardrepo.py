@@ -23,7 +23,6 @@ import json
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from urllib.request import Request, urlopen
 
 from . import settings
@@ -137,7 +136,8 @@ def related(keys, live: bool = False) -> list:
     """References relevant to `keys`, in REFERENCES order; with live=True, each with fetch() details."""
     refs = [dict(r) for r in REFERENCES if set(r["for"]) & set(keys)]
     if live and refs:
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        from .services.background import DaemonPool
+        with DaemonPool(4) as pool:  # a fetch that hangs never keeps a stopping Studio alive
             for r, info in zip(refs, pool.map(lambda r: fetch(r["board"]), refs)):
                 r["live"] = info
     return refs

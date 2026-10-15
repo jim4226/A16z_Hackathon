@@ -79,6 +79,9 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   `audit.head` update didn't happen (a stop between the two writes) is chained on, not flagged. `verify()` answers ok
   with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line
   as before; `morph team audit --verify` prints the note.
+- Stopping never waits for the network: lookups run in parallel on `morph/services/background.DaemonPool` (Darwin
+  `source`/`suggest`, `keys.check`, BoardRepo), whose daemon threads the interpreter doesn't join at exit, where
+  `concurrent.futures` ran every queued lookup to its timeout first. New code that fans network calls out uses it.
 - Every record replaced whole goes through `durable.write_text` / `write_json`: a temp file beside it, flushed and
   fsynced, `os.replace` (retried for a second while Windows holds the old file open), then the folder synced on POSIX.
   That covers design.json and results.json, meta.json (`projects.write_meta`, a fork's results), settings, study

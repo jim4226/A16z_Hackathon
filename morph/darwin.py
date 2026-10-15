@@ -23,10 +23,11 @@ import json
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from urllib.request import Request, urlopen
 
 from . import resources, settings
+from .services.background import DaemonPool
 
 API = "https://api.darwin.so/api/v3/search"
 AGENT_PAGE = "https://index.darwin.so/agent/{agent}?capability={cap}"
@@ -190,7 +191,7 @@ def suggest(need: str, limit: int = 4) -> dict:
     darwin_url, ready, sign_in, paid, summary}], cached, error?}."""
     res = search(need, max_results=6, retries=0, timeout=15)
     agents = [a for a in res.get("agents") or [] if a.get("name")][:limit]
-    with ThreadPoolExecutor(max(1, len(agents))) as pool:
+    with DaemonPool(max(1, len(agents))) as pool:  # never keeps a stopping Studio alive
         caps = list(pool.map(lambda a: capability(a.get("capability_id")), agents))
     out = []
     for a, c in zip(agents, caps):
@@ -326,7 +327,7 @@ def source(project, rev: str, max_results: int = 3, workers: int = 4, on_progres
     tasks = tasks_for(results, rev_dir)
 
     found = [None] * len(tasks)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    with DaemonPool(workers) as pool:  # a hung lookup never keeps a stopping Studio alive (services/background.py)
         kw = {k: v for k, v in (("timeout", timeout), ("retries", retries)) if v is not None}  # None: search()'s defaults
         futs = {pool.submit(search, t[2], max_results, **kw): i for i, t in enumerate(tasks)}
         for n, fut in enumerate(as_completed(futs), 1):

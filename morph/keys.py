@@ -16,7 +16,6 @@ import os
 import re
 import tempfile
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
 from . import resources
 
@@ -269,6 +268,7 @@ def check(services=None) -> dict:
     from . import settings
     if not settings.network_allowed():
         return {name: {"ok": False, "detail": "not checked: network lookups are off (Keys, Privacy and network)"} for name in jobs}
-    with ThreadPoolExecutor(len(jobs)) as pool:
+    from .services.background import DaemonPool
+    with DaemonPool(len(jobs)) as pool:  # a check that hangs never keeps a stopping Studio alive
         futures = {name: pool.submit(fn) for name, fn in jobs.items()}
         return {name: f.result() for name, f in futures.items()}

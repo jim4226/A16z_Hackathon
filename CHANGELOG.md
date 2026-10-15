@@ -407,4 +407,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Import: a Studio stopped during an upload no longer leaves the import session claiming a file it doesn't have (it
   counted the whole file before it arrived, so Find said there was nothing to import and the size limit was used up);
   a file counts once it is all there, and the half-written file is removed when the Studio starts again.
-
+- Ctrl+C stops the Studio at once while Darwin lookups hang (a server that accepts and never answers): the Studio
+  waited for every queued lookup to time out in turn, about a minute for one Find agents, and ignored Ctrl+C meanwhile.
+  Network lookups (Darwin, Test keys, BoardRepo) now run on threads the process never waits for when it stops.
