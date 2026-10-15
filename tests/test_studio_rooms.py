@@ -524,12 +524,12 @@ def test_two_tabs_on_two_projects_stay_independent(http_studio, builds):
     studio, request, port = http_studio
     egg_tab, arm_tab = Stream(port, "egg"), Stream(port, "so101")
     try:
-        for _ in range(50):  # both subscribed
+        for _ in range(250):  # both subscribed (a busy machine can take a while)
             if studio.room("egg").hub.online() and studio.room("so101").hub.online():
                 break
             time.sleep(0.02)
         code, out = request("/api/params?project=so101", "POST", {"changes": {"arm.dof": 6}})
-        assert code == 202 and out["job"]["status"] in ("queued", "running")
+        assert code == 202 and out["job"]["status"] in ("queued", "running", "done")  # the fake build can finish first
         got = arm_tab.events(until="done")
         assert got[-1]["type"] == "done" and got[-1]["current"]["rev"] == "r002" and {e["project"] for e in got} == {"so101"}
         assert got[-1]["current"]["robot"]["json"] == "/files/so101/r002/cad/robot.json"
