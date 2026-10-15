@@ -100,21 +100,21 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   way back straight up first) and keeps the first that stays clear; when none does, the simulation fails and says
   which move and which box ("the jaw left hits Carton wall during the set-down at 5.0 s"). The World panel's status
   line says which way the arm went. Simulations without a room are unchanged.
-- **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path
-  against the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can
-  be noisy or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot
-  becomes a grey box, trimmed so it is no closer to the path than the scan, and the next simulation plans around it. A
-  place next to a grey box, or one a box was added for (even when the trim moved the box away from it), isn't offered
-  again while the path comes no closer there than the box was fitted for; when it does (the robot moved, say), the
-  place is offered again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same
-  box is never added twice, and a box the room holds already is never offered again. The check, the boxes' fit included, stays within its 20 seconds: the
-  review's desk scan takes 7.5 to 8.5 seconds on a 4-core computer at load 4-7 (12 to 13 before) and 10 to 11.5 at
-  load 11-13, where it used to take 16 to 18 and was often cut short; a generated room of a million triangles takes 10.5 seconds at load 7. The boxes' share of
-  the time is set aside only once there is a near miss, sized from what fitting the boxes takes. Cut short, the check
-  never claims more room than it measured: it says the arm comes within at most the closest distance it measured, or
-  that there wasn't time to measure it, says only part of the path was measured, and says whether checking again
-  when the computer is less busy may finish it. Answers cut short, or whose box ran out of time to be fitted, aren't
-  kept, so Check placement measures them again.
+- **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path against
+  the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can be noisy
+  or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot becomes a
+  grey box, trimmed so it is no closer to the path than the scan, and the next simulation plans around it. A place next
+  to a grey box, or one a box was added for (even when the trim moved the box away from it), isn't offered again while
+  the path comes no closer there than the box was fitted for; when it does (the robot moved, say), the place is offered
+  again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same box is never added
+  twice, and a box the room holds already is never offered again. The check, the boxes' fit included, stays within its
+  20 seconds: the review's desk scan takes 7.5 to 8.5 seconds on a 4-core computer at load 4-7 (12 to 13 before) and 10
+  to 11.5 at load 11-13, where it used to take 16 to 18 and was often cut short; a generated room of a million triangles
+  takes 10.5 seconds at load 7. The boxes' share of the time is set aside only once there is a near miss, sized from
+  what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm comes
+  within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the path
+  was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short, or
+  whose box ran out of time to be fitted, aren't kept, so Check placement measures them again.
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the
