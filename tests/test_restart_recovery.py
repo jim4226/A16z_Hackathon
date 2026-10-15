@@ -476,3 +476,37 @@ def test_a_change_request_whose_build_clashed_and_was_applied_anyway_records_its
             assert got["status"] == "applied" and got["applied_rev"] == new.result == egg.latest(), got
         else:
             assert got["status"] == "open" and "dropped" in got["last_error"], got
+
+
+def test_a_briefs_first_build_asked_for_again_marks_the_brief_built(home, tmp_path, builds, monkeypatch):
+    """A New robot project whose first build stopped the Studio twice waits; "build it again" builds it, and its brief
+    ends built as after any first build."""
+    monkeypatch.setenv("MORPH_OFFLINE", "1")
+    monkeypatch.setattr(api_brief, "STORE", api_brief.Store())
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    bid = _ready_brief(st.home)
+    builds.gate = threading.Event()
+    status, out = _build_brief(st, bid)
+    assert status == 200 and builds.started.wait(5)
+    first = [st.room("berry-bot").jobs.get(j["id"]) for j in st.room("berry-bot").jobs.snapshot()]
+    after = stopped(home, tmp_path, builds)
+    builds.gate.set()
+    finish(*first)
+    settled()
+    for path in rooms.journals(str(after / "berry-bot")):                   # as if this was its rebuild, cut off too
+        lines = [json.loads(line) for line in open(path, encoding="utf-8")]
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.writelines(json.dumps({**e, "cut": 1} if e["op"] == "queued" else e) + "\n" for e in lines)
+    monkeypatch.setattr(api_brief, "STORE", api_brief.Store())
+    st2 = server.Studio(RobotProject(str(after / "egg")), str(after))
+    room = st2.room("berry-bot")
+    assert not room.jobs.busy() and (after / "berry-bot" / ".morph" / "first-build.json").exists()
+    finish(st2.queue_chat(room, "build it again"))
+    finish(*(room.jobs.get(j["id"]) for j in room.jobs.snapshot()))
+    for _ in range(200):
+        if B.load_draft(str(after), bid) is None:
+            break
+        time.sleep(0.05)
+    settled()
+    assert room.completed() == ["r001"] and os.path.exists(after / "berry-bot" / "brief.json")
+    assert B.load_draft(str(after), bid) is None

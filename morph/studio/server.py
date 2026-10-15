@@ -404,7 +404,12 @@ class Studio:
         room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
                        "finished: building it again now."})
         job = self.queue_build(room, built_design, label=label[:48 - len(self.REBUILT)] + self.REBUILT, by=by, cut=cut)
-        meta = projects.read_meta(root)
+        self._resumed(room, job)
+
+    def _resumed(self, room: Room, job):
+        """A first build queued again (after a stop, or asked for again): features learn of it (rooms.RESUMED; New
+        robot marks its brief built when it ends)."""
+        meta = projects.read_meta(room.p.root)
         for hook in list(RESUMED):
             try:
                 hook(self, room, job, meta)
@@ -448,8 +453,9 @@ class Studio:
             design = projects.as_design(parked["design"])
         except ValueError as exc:
             return self._say(room, job, "error", f"Its design can't be read ({exc}). Delete this project, or make it again.")
-        self.queue_build(room, design, label=str(parked.get("label") or "first design")[:48],
-                         by=job.by if job is not None else None, cut=_count(parked.get("cut")))
+        again = self.queue_build(room, design, label=str(parked.get("label") or "first design")[:48],
+                                 by=job.by if job is not None else None, cut=_count(parked.get("cut")))
+        self._resumed(room, again)
         return self._say(room, job, "noop", f"Building {room.name}'s first design again.", noop=True)
 
     @property
