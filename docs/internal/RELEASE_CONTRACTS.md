@@ -591,10 +591,16 @@ members; a member can hold several.
   get `TeamFileError.public`, which names the file from the projects folder (`projects/.team/team.json`), never the
   server's own path; the terminal gets the full text once (`api_team.team_problem`). Build errors in the chat name
   files the same way (`durable.explain(exc, home)`), and so does every other error text a browser gets from an
-  exception: a queued job that raised (`JobQueue` worker: the chat line and `job.error`, which New robot, Import and
-  Teams pass on), a chat message that couldn't be read, Find agents' `sourcing` error event, a robustness study's
-  `error`, an import's build failure and a route's 500 ("The Studio hit an error: ..."); the terminal keeps the full
-  traceback. A time card that can't be made says only its error's type.
+  exception Morph didn't word itself (one caught as any `Exception` or `OSError`, or a Morph error that carries such
+  an exception's text): a queued job that raised (`JobQueue` worker: the chat line and `job.error`, which New robot,
+  Import and Teams pass on), a chat message that couldn't be read, Find agents' `sourcing` error event, a robustness
+  study's `error` (the job's, the study record's, a robot that couldn't be prepared for it, a replayed run's), a build
+  stage's error or warning in `results.json` (`RobotProject._why`: the pipeline strip and the issue list; machine
+  files and a simulation scenario likewise), every import error (the download, unpacking, each candidate file, Create;
+  `Session._why`) and an import's build failure, ffmpeg's decode error, the Teams impact preview, Apply's "couldn't
+  queue the build" (and the request's `last_error`), New robot's "couldn't create the project" and its preflight
+  issues, a tool manifest that didn't load (the Keys dialog) and a route's 500 ("The Studio hit an error: ..."); the
+  terminal keeps the full traceback. A time card that can't be made says only its error's type.
 
 ## 9. Security rules for all features
 

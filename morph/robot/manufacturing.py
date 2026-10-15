@@ -1891,7 +1891,9 @@ def plan(design, asm, outdir, efinal=None) -> dict:
             else:
                 e["files"] = _write_elec_files(e, outdir, efinal)
         except Exception as exc:  # one bad mesh must not sink the whole plan
-            warnings.append(f"{e['group']}: machine files failed ({exc.__class__.__name__}: {exc})")
+            from ..services.durable import explain  # the page shows it: the projects folder by name (<rev>/mfg here)
+            why = explain(exc, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(outdir)))))
+            warnings.append(f"{e['group']}: machine files failed ({exc.__class__.__name__}: {why})")
         e["how"] = _how(e, design)
     # ---------------------------------------------------------- warnings / insights
     if nq < 5 and any(e["process"] == "pcb_assembly" for e in es):

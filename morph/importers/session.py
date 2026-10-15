@@ -297,8 +297,8 @@ class Session:
                 files, warns = zipsafe.extract(p, dest, fmt)
             except ImportFailed as exc:
                 shutil.rmtree(dest, ignore_errors=True)
-                errors.append(str(exc))
-                emit("unpack", "error", str(exc))
+                errors.append(self._why(exc))
+                emit("unpack", "error", self._why(exc))
                 continue
             os.remove(p)
             warnings += warns[:20]
@@ -476,14 +476,20 @@ class Session:
                 c["ok"] = False
                 c["error"] = c["warnings"][0]
         except ImportFailed as exc:
-            c.update(error=str(exc), scope="error")
-            emit("robot", "error", f"{os.path.basename(f['path'])}: {exc}")
+            c.update(error=self._why(exc), scope="error")
+            emit("robot", "error", f"{os.path.basename(f['path'])}: {self._why(exc)}")
         except Exception as exc:  # noqa: BLE001  (a broken file must not take the whole detection down)
             traceback.print_exc()
-            c.update(error=f"{os.path.basename(f['path'])} couldn't be analysed ({exc.__class__.__name__}: {exc})"[:300],
-                     scope="error")
+            why = f"{exc.__class__.__name__}: {self._why(exc)}"
+            c.update(error=f"{os.path.basename(f['path'])} couldn't be analysed ({why})"[:300], scope="error")
             emit("robot", "error", c["error"])
         return c
+
+    def _why(self, exc) -> str:
+        """An error's text for the import dialog: files named from the projects folder, never the server's own path
+        (durable.explain; an archive or robot file that can't be read says where it is)."""
+        from ..services import durable
+        return durable.explain(exc, self.home)
 
     def _bundle_root(self, rel: str) -> str:
         """The folder the robot's references may use: the top folder of the upload that holds the file."""
@@ -500,7 +506,7 @@ class Session:
             res = mesh_object.object_changes(p, f["format"], answers=answers or {}, bundle=self.files)
             c.update(ok=True, **res)
         except ImportFailed as exc:
-            c["error"] = str(exc)
+            c["error"] = self._why(exc)
         return c
 
     def _bom_candidate(self, index: int, f: dict, answers: dict | None = None) -> dict | None:
@@ -513,7 +519,7 @@ class Session:
             if f["format"] == "markdown":
                 return None
             return {"index": index, "kind": "bom", "file": f["path"], "format": f["format"], "ok": False,
-                    "error": str(exc), "warnings": []}
+                    "error": self._why(exc), "warnings": []}
         if not res["rows"]:
             return None
         return {"index": index, "kind": "bom", "file": f["path"], "format": f["format"], "ok": True, "error": None,
@@ -531,7 +537,7 @@ class Session:
             res = kicad.read(p)
             c.update(ok=True, **res)
         except ImportFailed as exc:
-            c["error"] = str(exc)
+            c["error"] = self._why(exc)
         return c
 
     def _project_candidate(self, index: int, f: dict) -> dict:
@@ -545,7 +551,7 @@ class Session:
             c.update(ok=True, project=res["project"], revisions=len(res["designs"]), source=res.get("source"),
                      robot=bool(res.get("robot")), warnings=res.get("warnings") or [], title=res.get("title"))
         except ImportFailed as exc:
-            c["error"] = str(exc)
+            c["error"] = self._why(exc)
         return c
 
     @staticmethod

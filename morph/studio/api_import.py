@@ -144,7 +144,7 @@ def create(req):
                 raise ImportFailed("Importing from a link is off on this shared Studio. Ask its owner to start it with "
                                    "--allow-url-import, or download the files and drop them here.")
         except ImportFailed as exc:
-            return _err(400, str(exc))
+            return _err(400, durable.explain(exc, home))
     s = sess.Session.create(home, url=url.strip() if url else None)
     if not url:
         return 200, {"ok": True, "id": s.id, "fetching": False}
@@ -157,8 +157,9 @@ def create(req):
             s.fetch(url.strip(), emit, allow=_allow_url(req.studio))
             _set_fetch(s, "done")
         except ImportFailed as exc:
-            _set_fetch(s, "error", str(exc))
-            emit({"type": "import", "id": s.id, "stage": "fetch", "status": "error", "text": str(exc)})
+            why = durable.explain(exc, s.home)
+            _set_fetch(s, "error", why)
+            emit({"type": "import", "id": s.id, "stage": "fetch", "status": "error", "text": why})
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
             _set_fetch(s, "error", f"The download failed ({exc.__class__.__name__}).")
@@ -319,7 +320,8 @@ def _create_project(req, sid: str, s, plan: dict, emit):
                                           on_room=lambda r: sub.update(q=r.hub.subscribe()))
     except (ValueError, FileExistsError, QueueFull) as exc:
         _release(sid)
-        return _err(429 if isinstance(exc, QueueFull) else 400, f"Couldn't create the project: {exc}")
+        return _err(429 if isinstance(exc, QueueFull) else 400,
+                    f"Couldn't create the project: {durable.explain(exc, _home(req))}")
     except BaseException:
         _release(sid)
         raise
@@ -438,7 +440,7 @@ def dispatch(req):
             return _err(405, "That method isn't supported here.")
         return fn(req, sid)
     except ImportFailed as exc:
-        msg = str(exc)
+        msg = durable.explain(exc, _home(req))
         return _err(404 if "expired" in msg or "Unknown import session" in msg else 400, msg)
     except Exception as exc:  # noqa: BLE001  (never leak a traceback to the browser)
         traceback.print_exc()

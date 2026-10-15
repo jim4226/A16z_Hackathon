@@ -346,3 +346,66 @@ def test_errors_a_browser_sees_name_files_from_the_projects_folder(tmp_path, mon
         httpd.server_close()
     assert status == 500 and "projects/egg/r001/bom.json" in out["error"] and str(tmp_path) not in out["error"]
     assert where in capsys.readouterr().err                                     # the terminal: the whole path
+
+
+def test_other_error_texts_a_browser_sees_name_files_from_the_projects_folder(tmp_path, monkeypatch):
+    """The Teams impact preview, Apply's "couldn't queue the build", New robot's preflight, a build stage that raised, a
+    tool manifest that couldn't be read and an import file that couldn't be analysed: each names the file from the
+    projects folder (durable.explain), never where the server keeps it."""
+    import io
+    from types import SimpleNamespace
+
+    from morph.importers import common, session as sess, urdf
+    from morph.studio import api_team, brief
+    from morph.studio.teams import impact
+    from morph.studio.toolbox import catalog
+    home = tmp_path / "projects"
+    egg = robot(home, "egg")
+    where = str(home / "egg" / "r001" / "bom.json")
+
+    def oops(*a, **k):
+        raise PermissionError(13, "Permission denied", where)
+
+    def public(text):
+        return "projects/egg/r001/bom.json" in text and str(tmp_path) not in text
+
+    monkeypatch.setattr(impact, "_impact", oops)                                # the Teams impact preview
+    assert public(impact.impact(egg.root, "r001", {"build.quantity": 2})["error"])
+
+    req = SimpleNamespace(studio=SimpleNamespace(home=str(home)))               # Apply: the build couldn't be queued
+    monkeypatch.setattr(api_team, "_home", lambda r=None: str(home))
+    monkeypatch.setattr(api_team, "_enqueue", oops)
+    monkeypatch.setattr(api_team, "_me", lambda r: {"id": "m1", "name": "Ed"})
+    monkeypatch.setattr(api_team, "_body", lambda r: {"id": "p1"})
+    monkeypatch.setattr(api_team, "_root", lambda r: egg.root)
+    monkeypatch.setattr(api_team, "_members", lambda r: {})
+    monkeypatch.setattr(api_team.collab, "apply_proposal", lambda *a, **k: {"proposal": "p1", "n": 1})
+    done = []
+    monkeypatch.setattr(api_team.collab, "proposal_done", lambda root, pid, error=None: done.append(error))
+    status, out = api_team.proposals_apply(req)
+    assert status == 409 and public(out["error"]) and public(done[0]), (out, done)
+
+    monkeypatch.setattr(common, "_HOME", str(home))                             # New robot's preflight
+    monkeypatch.setattr(brief, "_grip_force", oops)
+    issues = brief.preflight({})["issues"]
+    assert any(public(i) for i in issues if i.startswith("preflight could not run")), issues
+
+    monkeypatch.setattr(RobotProject, "_compute", lambda self, node, *a, **k: oops())  # a build stage that raised
+    rev = egg.run(egg.load_design("r001"), parent=None, label="again", verbose=False)
+    errors = egg.load_results(rev)["errors"]
+    assert errors and all(public(e) for e in errors.values() if e.startswith("PermissionError")), errors
+
+    os.makedirs(catalog.user_dir(str(home)))                                    # a tool manifest (Keys lists it)
+    open(os.path.join(catalog.user_dir(str(home)), "acme.json"), "w", encoding="utf-8").write("{}")
+    real_open = open
+    monkeypatch.setattr(catalog, "open", lambda p, *a, **k: oops() if p.endswith("acme.json") else real_open(p, *a, **k),
+                        raising=False)
+    errs = [e for e in catalog.load(str(home)).errors if e["source"] == "acme.json"]
+    assert errs and public(errs[0]["error"]), errs
+
+    s = sess.Session.create(str(home))                                         # an import file that couldn't be read
+    text = b'<robot name="r"><link name="a"/></robot>'
+    s.add_file("r/r.urdf", io.BytesIO(text), len(text))
+    monkeypatch.setattr(urdf, "normalize", oops)
+    c = s.detect()["candidates"][0]
+    assert "couldn't be analysed (PermissionError" in c["error"] and public(c["error"]), c["error"]

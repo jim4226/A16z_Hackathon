@@ -271,8 +271,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   same address mistypes links. Each address keeps only its last 10 wrong codes, so a flood of them costs the Studio
   no more memory or time per request than ten.
 - Error messages a browser gets (a job that failed, a chat message that couldn't be read, Find agents, a robustness
-  study, an import's build, an unexpected server error) name files from the projects folder (`projects/egg/r002/...`),
-  never where the server keeps them; the terminal still prints the whole error.
+  study, a build stage, an import, a video ffmpeg couldn't read, the Teams preview and Apply, New robot, a tool that
+  didn't load, an unexpected server error) name files from the projects folder (`projects/egg/r002/...`), never where
+  the server keeps them; the terminal still prints the whole error.
 
 ### Fixes
 

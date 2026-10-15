@@ -22,6 +22,7 @@ import threading
 import time
 import traceback
 
+from ..services import durable
 from . import agents
 from . import brief as B
 from . import capability, routes
@@ -230,7 +231,7 @@ def _build(b: B.Brief, home, name, send, create_project, revive=None):
             b.status = "ready"
             STORE.put(home, b)
             send(event(b))
-            return _err(409, f"couldn't create the project: {exc}")
+            return _err(409, f"couldn't create the project: {durable.explain(exc, home)}")
     STORE.put(home, b)
     send(event(b))
     return 200, out

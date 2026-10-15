@@ -756,8 +756,9 @@ def proposals_apply(req):
     try:
         queued = _enqueue(req, job)
     except Exception as exc:  # noqa: BLE001  (a full queue, a stopped room: reopen the request and say why)
-        collab.proposal_done(root, job["proposal"], error=f"couldn't queue the build ({exc})")
-        return _err(getattr(exc, "status", 409), f"Couldn't queue change request #{job['n']}: {exc}")
+        why = durable.explain(exc, _home(req))
+        collab.proposal_done(root, job["proposal"], error=f"couldn't queue the build ({why})")
+        return _err(getattr(exc, "status", 409), f"Couldn't queue change request #{job['n']}: {why}")
     if not queued:
         collab.proposal_done(root, job["proposal"], error="this Studio can't build edits")
         return _err(503, "This Studio can't build edits right now, so the change request stays open.")

@@ -34,6 +34,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
+from ...services import durable
 from . import http_tool, store
 from .http_tool import DEFAULT_POLICY, SpecError
 
@@ -356,8 +357,9 @@ def _build(files, policy) -> Catalog:
             clash = [t.name for t in tools if t.name in cat.tools] + [c.env for c in creds if c.env in cat.credentials]
             if clash:
                 raise ManifestError(f"already in the catalog: {clash[:5]}")
-        except (OSError, UnicodeError, ValueError, RecursionError) as exc:
-            cat.errors.append({"source": source, "curated": curated, "error": str(exc)[:300] or exc.__class__.__name__})
+        except (OSError, UnicodeError, ValueError, RecursionError) as exc:  # the Keys dialog lists it
+            projects = os.path.dirname(os.path.dirname(os.path.dirname(p)))  # <projects>/.tools/catalog/<file>
+            cat.errors.append({"source": source, "curated": curated, "error": durable.explain(exc, projects)[:300]})
             continue
         info["warnings"] = sorted({w for t in tools for w in t.warnings})
         cat.providers[info["id"]] = info

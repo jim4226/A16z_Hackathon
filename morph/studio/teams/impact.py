@@ -15,6 +15,7 @@ import os
 import threading
 import time
 
+from ...services import durable
 from ...spec import Design, diff
 from .disciplines import affected_stages
 from .store import read_json
@@ -177,7 +178,8 @@ def impact(root: str, base_rev: str | None, changes: dict, stages=()) -> dict:
     try:
         out = _impact(root, base_rev, changes or {}, stages or ())
     except Exception as exc:  # noqa: BLE001  (an estimate must never block a change request)
-        out = {"rows": [], "error": f"the numbers couldn't be estimated ({exc.__class__.__name__}: {exc})"}
+        why = durable.explain(exc, os.path.dirname(os.path.abspath(root)))  # files named from the projects folder
+        out = {"rows": [], "error": f"the numbers couldn't be estimated ({exc.__class__.__name__}: {why})"}
     out.update(estimated=True, ms=round((time.perf_counter() - t0) * 1000))
     return out
 

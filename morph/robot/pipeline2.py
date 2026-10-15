@@ -22,7 +22,7 @@ from .. import electronics as grip_electronics
 from .. import sim as grip_sim
 from ..design import build_profile
 from ..pipeline import Project
-from ..services.durable import write_text
+from ..services.durable import explain, write_text
 from ..spec import Design, diff
 from . import catalog_extra  # noqa: F401  (imported robots' parts, needed even when their sizing is reused)
 
@@ -299,7 +299,8 @@ class RobotProject(Project):
                     except Exception as exc:  # show a basic model to look at, but never manufacture the stand-in
                         traceback.print_exc()
                         from . import arm_stub
-                        res.setdefault("warnings", []).append(f"detailed arm generator failed ({exc}); showing the basic "
+                        why = self._why(exc)
+                        res.setdefault("warnings", []).append(f"detailed arm generator failed ({why}); showing the basic "
                                                               "model as a preview only, not for manufacturing")
                         res["preview_only"] = True
                         cache["asm"] = arm_stub.build(design, res["sizing"], res.get("eplan"))
@@ -353,7 +354,7 @@ class RobotProject(Project):
                         status = "error"
             except Exception as exc:  # keep the rest of the pipeline alive; surface the error
                 traceback.print_exc()
-                res.setdefault("errors", {})[node] = f"{exc.__class__.__name__}: {exc}"
+                res.setdefault("errors", {})[node] = f"{exc.__class__.__name__}: {self._why(exc)}"
                 status = "error"
             res["provenance"][node] = status
             res["stage_status"][node] = status
@@ -404,6 +405,11 @@ class RobotProject(Project):
             json.dump(sw, fh, indent=1)
         return sw
 
+    def _why(self, exc) -> str:
+        """A stage's error for results.json, which the page shows: files named from the projects folder (the folder
+        holding this project), never the server's own path (durable.explain); the terminal gets the traceback."""
+        return explain(exc, os.path.dirname(os.path.abspath(self.root)))
+
     def _compute(self, node, design, res, nd, asm, n_trials, fast_sim):
         from . import arm
 
@@ -417,7 +423,8 @@ class RobotProject(Project):
                 except Exception as exc:  # basic numbers to show, but nothing downstream may build on them
                     from . import arm_stub
                     res["sizing"] = arm_stub.size(design)
-                    res.setdefault("errors", {})["sizing"] = f"detailed sizing failed ({exc.__class__.__name__}: {exc}); " \
+                    why = f"{exc.__class__.__name__}: {self._why(exc)}"
+                    res.setdefault("errors", {})["sizing"] = f"detailed sizing failed ({why}); " \
                                                              "the basic estimate is a preview only"
         elif node == "gripper" and design.arm.source:
             from . import imported

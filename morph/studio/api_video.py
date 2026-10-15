@@ -23,6 +23,7 @@ import shutil
 import threading
 import time
 
+from ..services import durable
 from . import ffmpeg, vision
 from .security import holds_secret, secret_refused
 
@@ -361,10 +362,11 @@ def upload(req):
         return 200, {"ok": True, "id": vid, "frames": frames, "duration_s": out["duration_s"], "decoder": "ffmpeg", "ms": out["ms"]}
     except BodyError as exc:
         return exc.status, {"ok": False, "error": str(exc)}
-    except ffmpeg.FFmpegError as exc:
-        send(req, {"type": "video", "id": vid, "stage": "decode", "status": "error", "text": str(exc)})
+    except ffmpeg.FFmpegError as exc:  # its last log line may name the clip: from the projects folder, by name
+        why = durable.explain(exc, home)
+        send(req, {"type": "video", "id": vid, "stage": "decode", "status": "error", "text": why})
         status = {"timeout": 504, "not_video": 415, "no_ffmpeg": 501}.get(exc.code, 422)
-        return status, {"ok": False, "code": exc.code, "error": str(exc)}
+        return status, {"ok": False, "code": exc.code, "error": why}
     except OSError:
         return 507, {"ok": False, "error": "Couldn't store the upload on the Studio computer (is the disk full?)."}
     finally:
