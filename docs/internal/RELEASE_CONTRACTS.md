@@ -1651,7 +1651,10 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     (`size_scale`) is narrower than the gauge by more than that per jaw closes only to the probe and opens
     (`_given_up`), fails, and names it: `metrics["grip_gave_up"]` {narrower_mm, probe_mm} and `metrics["failure"]`; a
     robustness study counts it as `no_force_reading` ("Let go with !GRIP ..."). The firmware's first reading needs
-    `GRIP_SENSE_N` (0.05 N) of squeeze, a few hundredths of a millimetre, so the two agree to within that.
+    `GRIP_SENSE_N` (0.05 N) of squeeze, a few hundredths of a millimetre, so the two agree to within that. New
+    robot's repair (`brief.repair`, issue kind `hobby_gripper`, which also takes the capped-hold issue above) switches
+    a hobby PWM arm with such an issue to smart-bus servos and says so, also when the person asked for hobby servos
+    ("a 4 dof arm with hobby servos to pick up ping pong balls"), as it does when they can't hold the load.
     `tests/fw_stubs/grip_harness.cpp` prints `max` (`GRIP_MAX`) too.
   `eplan.grip.squeeze_n` (every grip: the target, or the open-loop squeeze) is what `_actuator_currents` budgets the
   gripper's current from. A hold above the servo's rated (continuous) torque share is a plan warning. `arm.grip_meta`

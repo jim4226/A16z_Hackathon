@@ -481,8 +481,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   reach the object at the small end of its size (8 % under nominal) where a dead sensor then stays under 80 % of the
   stall (0.96 mm for a grape); otherwise (an egg would need 1.92 mm) it stops where a gauge-sized object gets the force
   limit (0.92 mm), a narrower object isn't gripped, and the plan says so as an issue. The simulation and robustness
-  studies let such an object go too, as "Let go with !GRIP". The power budget, the plan's warning, the manual and the
-  simulation use that squeeze, and a hold above the servo's rated torque is a warning.
+  studies let such an object go too, as "Let go with !GRIP"; New robot then uses smart-bus servos and says why. The
+  power budget, the plan's warning, the manual and the simulation use that squeeze, and a hold above the servo's
+  rated torque is a warning.
 - Teams' change-request preview no longer shows a grip change the build won't make: a new servo supply, servo family
   or build level on the egg-picker read "Grip: grip force target 2.34 → 2.17 N" (New robot's estimate without the
   grasp simulation) and planned the electronics with it. The build keeps the 2.34 N its grasp simulation found, and

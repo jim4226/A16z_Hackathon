@@ -1369,7 +1369,11 @@ def preflight(changes: dict) -> dict:
 ISSUE_KINDS = (("torque", r"needs [\d.]+ N·m"), ("supply", r"^supply .*margin"), ("too_small", r"jaw travel fits|object too small"),
                ("deflection", r"tip deflection|bending safety factor"),
                ("grip", r"no safe grip force|grip force [\d.]+ N < required|reaches only .* per finger"),
-               ("stroke", r"stroke too small"), ("printer", r"exceeds the .* (?:build volume|printer bed)"))
+               ("stroke", r"stroke too small"), ("printer", r"exceeds the .* (?:build volume|printer bed)"),
+               # a hobby gripper servo, with no torque limit, can't cover the object's size with force sensors or hold it
+               # without them (electronics2.open_loop_squeeze)
+               ("hobby_gripper", r"has no torque limit to back up the force sensors, and reaching|"
+                                 r"hobby gripper servo has no torque limit and holds only"))
 
 
 def classify(issues: list) -> set:
@@ -1414,7 +1418,8 @@ def repair(changes: dict, b: Brief, *, max_steps: int = 8, deep: bool = True) ->
     """Preflight, then fix what the generator flags, one rule per issue kind (each fix is an assumption):
     torque -> Dynamixel servos when that arm fits a budget of $1,000 or more, else fewer joints first (the cheaper fix),
     then Dynamixel; finger deflection -> beam +1.5 mm up to 14 mm; object too small -> FSR finger; no safe grip ->
-    FSR finger or a V pad; too big for the printer -> pilot build."""
+    FSR finger or a V pad; a hobby gripper servo that can't grip the object safely -> smart-bus servos (also when the
+    person asked for hobby servos, as for torque); too big for the printer -> pilot build."""
     ch, notes = dict(changes), []
     locked = {k for k in b.hints if k in ("arm.dof", "arm.actuator_family")}
     if value(b, "precision") == "very_tight":
@@ -1485,6 +1490,12 @@ def repair(changes: dict, b: Brief, *, max_steps: int = 8, deep: bool = True) ->
                 notes.append({"kind": "repair", "slot": "object", "text": "A V-groove pad holds this object with less squeeze than "
                               "a contoured one, so it stays inside the force that would damage it."})
                 changed = True
+        if "hobby_gripper" in kinds and ch.get("arm.actuator_family") == "hobby_pwm" and not ch.get("arm.source"):
+            ch["arm.actuator_family"] = "smart_bus"
+            notes.append({"kind": "repair", "slot": "budget", "text": "A hobby PWM gripper servo has no torque limit, so it "
+                          "can't grip this object safely across its size (or hold it as hard as it needs); I used smart-bus "
+                          "servos, whose torque limit sets or backs up the squeeze."})
+            changed = True
         if "printer" in kinds and ch.get("build.config") == "prototype":
             ch["build.config"] = "pilot"
             notes.append({"kind": "repair", "slot": "quantity", "text": "The base shell is larger than a 250 mm printer bed, so I set "
