@@ -332,8 +332,8 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
     _send(room, {"type": "agent", "role": "feasibility", "provider": "code", "status": "skipped" if res.get("skipped") else "done",
                  "ms": ms, "text": text})
     _send(room, {"type": "world", "stage": "scan", "status": "done", "text": text})
-    if (res.get("stats") or {}).get("fit_timeout"):
-        return res                              # a box Morph had no time to fit: Check placement again tries again
+    if (res.get("stats") or {}).get("fit_timeout") or (res.get("stats") or {}).get("truncated"):
+        return res                              # cut short (a busy computer): Check placement again measures again
     with _SCANS_LOCK:
         _SCANS[key] = res
         while len(_SCANS) > 8:

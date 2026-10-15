@@ -285,6 +285,11 @@ def test_the_scan_check_warns_and_never_fails():
              ({"min_clearance_mm": 23.4, "at": at, "regions": []}, "pass", "At least 23 mm between the arm and the scanned surface (closest: the jaw left at 4.2 s)."),
              ({"min_clearance_mm": None, "at": None, "regions": []}, "pass", "The arm stays more than 50 mm from the scanned surface."),
              ({"min_clearance_mm": 23.4, "at": at, "regions": [], "stats": {"truncated": True}}, "warn", "Only part of the path was checked"),
+             ({"min_clearance_mm": 23.4, "at": at, "regions": [], "stats": {"truncated": True}}, "warn",
+              "At least 23 mm between the arm and the scanned surface in the part of the path checked (closest"),
+             ({"min_clearance_mm": None, "at": None, "regions": [], "stats": {"truncated": True}}, "warn",
+              "In the part of the path checked, the arm stays more than 50 mm from the scanned surface. Only part of the "
+              "path was checked in time (a large scan or a busy computer): Check placement again to measure it all."),
              ({"skipped": "The room scan has no triangles."}, "skip", "The room scan has no triangles.")]
     for scan, status, text in cases:
         c = worlds.scan_check(scan)
@@ -370,6 +375,17 @@ def test_gigantic_triangles_and_scans_far_away(tmp_path, nominal):
     far = measure(boxes_glb(tmp_path / "far.glb", [{**POST, "center": [10000.0, 0.0, 34.8]}]), ROOM, doc, rob.xml)
     assert far["min_clearance_mm"] is None and far["regions"] == [] and far["stats"]["triangles"] == 0
     assert worlds.scan_check(far)["status"] == "pass"
+
+
+def test_the_first_pass_looks_along_the_whole_path_first():
+    """Pass 1 visits the poses spread out (every 16th, then halfway between, ...), so a check cut short on a busy
+    computer has looked along the whole path, not only its first seconds (the review's vase is passed at 3.2 s of 6.7)."""
+    for n in (0, 1, 5, 16, 17, 100, 667):
+        order = worlds._spread(n)
+        assert sorted(order) == list(range(n)), n
+    order = worlds._spread(667)
+    assert order[:42] == list(range(0, 667, 16)) and max(order[:42]) >= 656     # the whole path in the first 42
+    assert order[42:84] == list(range(8, 667, 16))
 
 
 def test_out_of_time_says_so(tmp_path, nominal):
@@ -491,6 +507,19 @@ def test_the_world_check_measures_the_path_against_the_scan(tmp_path):
     st, body2 = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
     assert {x["id"]: x for x in body2["checks"]}["scan"] == c["scan"]
     assert not [e for e in room.events if e["type"] == "world" and e["stage"] == "scan"]
+    # a check cut short (a busy computer) or a box not fitted in time isn't kept: checking again measures again
+    for stats in ({"truncated": True}, {"fit_timeout": True}):
+        api_world._SCANS.clear()
+        calls = []
+        real = worlds.scan_clearance
+        worlds.scan_clearance = lambda *a, **k: calls.append(1) or {"min_clearance_mm": None, "at": None, "regions": [],
+                                                                      "stats": stats, "note": worlds.SCAN_NOTE}
+        try:
+            for _ in range(2):
+                api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+        finally:
+            worlds.scan_clearance = real
+        assert len(calls) == 2, stats
     # Reset demo reuses revision names: another simulation under the same name is measured again, never served from
     # memory (here the arm stays where it starts, well away from the post)
     sim = os.path.join(root, "r001", "sim", "sim_pick_place.json")

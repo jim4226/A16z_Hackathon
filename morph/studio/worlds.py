@@ -1328,15 +1328,21 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         return D, Q
 
     # pass 1, coarse, every pose: a lower bound for each, and upper bounds (a coarse sample is a point of the robot
-    # and is measured with the rest), so the exact pass starts tight and takes the most promising poses first
+    # and is measured with the rest), so the exact pass starts tight and takes the most promising poses first. The
+    # poses go spread out (every 16th, then those halfway between, ...): cut short on a busy computer, it has still
+    # looked along the whole path, not only its start
     lb, ubk, seen, same = np.full(len(poses), np.inf), np.full(len(poses), np.inf), {}, {}
-    for k in range(len(poses)):
+    first = list(range(len(poses)))                     # standing still: the first pose of the stillness says it all
+    for k in range(1, len(poses)):
+        if np.array_equal(poses[k][1], poses[k - 1][1]) and np.array_equal(poses[k][2], poses[k - 1][2]):
+            first[k] = first[k - 1]
+    for k in _spread(len(poses)):
+        if first[k] != k:
+            same[k] = first[k]
+            continue
         if time.monotonic() > deadline:
             stats["truncated"] = True
             break
-        if k and np.array_equal(poses[k][1], poses[k - 1][1]) and np.array_equal(poses[k][2], poses[k - 1][2]):
-            same[k] = same.get(k - 1, k - 1)            # standing still: the pose before says it all
-            continue
         gs, dq = coarse_at(k, SCAN_CUT_MM if per_pose else max(near_mm, min(SCAN_CUT_MM, float(ubk.min()))))
         if len(gs):
             lb[k] = max(0.0, min(float(x.min()) - rho - shape[int(g)][3] for g, x in zip(gs, dq)))
@@ -1415,6 +1421,18 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         _fit_boxes(world, out["regions"], poses, pose, d, m, shape, fixed, moving, carried, held, end, stats)
         stats["fit_s"] = round(time.monotonic() - t1, 2)
     stats["seconds"] = round(time.monotonic() - t0, 2)
+    return out
+
+
+def _spread(n: int, step: int = 16) -> list:
+    """0..n-1 in an order that covers the whole range early: every `step`-th, then those halfway between, and so on."""
+    seen, out = np.zeros(n, bool), []
+    while step >= 1:
+        idx = np.arange(0, n, step)
+        idx = idx[~seen[idx]]
+        seen[idx] = True
+        out.extend(idx.tolist())
+        step //= 2
     return out
 
 
@@ -1731,14 +1749,17 @@ def scan_check(scan: dict) -> dict:
     mc, at, regions = scan.get("min_clearance_mm"), scan.get("at") or {}, scan.get("regions") or []
     who = "the object" if at.get("link") == "object" else f"the {str(at.get('link') or 'arm').replace('_', ' ')}"
     when = f" at {float(at.get('t') or 0.0):.1f} s" if at else ""
+    cut = bool((scan.get("stats") or {}).get("truncated"))
     if mc is None:
-        st, text = "pass", f"The arm stays more than {SCAN_CUT_MM:.0f} mm from the scanned surface."
+        st, text = "pass", (f"{'In the part of the path checked, the' if cut else 'The'} arm stays more than "
+                            f"{SCAN_CUT_MM:.0f} mm from the scanned surface.")
     elif mc < SCAN_TOUCH_MM:
         st, text = "warn", _sentence(f"{who} touches or passes through the scanned surface{when}")
     elif mc < SCAN_NEAR_MM:
         st, text = "warn", _sentence(f"{who} comes within {mc:.1f} mm of the scanned surface{when}")
     else:
-        st, text = "pass", f"At least {mc:.0f} mm between the arm and the scanned surface (closest: {who}{when})."
+        st, text = "pass", (f"At least {mc:.0f} mm between the arm and the scanned surface "
+                            f"{'in the part of the path checked ' if cut else ''}(closest: {who}{when}).")
     if regions:
         n, boxed = len(regions), sum(1 for r in regions if r.get("box") is not None)
         text += f" {n} place{'s' if n != 1 else ''} closer than {SCAN_NEAR_MM:.0f} mm"
@@ -1752,9 +1773,10 @@ def scan_check(scan: dict) -> dict:
         text += (f" {covered} {'other ' if regions else ''}place{'s' if covered != 1 else ''} closer than "
                  f"{SCAN_NEAR_MM:.0f} mm {'have' if covered != 1 else 'has'} a grey box already, so "
                  f"{'they are' if covered != 1 else 'it is'} not offered again.")
-    if (scan.get("stats") or {}).get("truncated"):
+    if cut:
         st = "warn"
-        text += " Only part of the path was checked in time: the scan is large."
+        text += (" Only part of the path was checked in time (a large scan or a busy computer): Check placement "
+                 "again to measure it all.")
     return _check("scan", label, st, f"{text} {SCAN_NOTE}", mc, "mm", view, where=at, regions=regions, note=SCAN_NOTE)
 
 

@@ -1302,7 +1302,8 @@ field failure rate (section 0, honesty).
   bounded). Robot geoms (fixed ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine
   samples (1 mm edges, 2 mm faces) are measured against the tree, and those that could be the closest get exact
   point-triangle distances (`closest_on_triangles`) to every triangle with a point within their bound. Two passes:
-  every pose coarsely (bounds), then the most promising first; found to `SCAN_TOL_MM` (0.05 mm); below `SCAN_TOUCH_MM`
+  every pose coarsely (bounds; R3: in `_spread` order, every 16th pose, then those halfway between and so on, so a
+  check cut short has looked along the whole path), then the most promising first; found to `SCAN_TOL_MM` (0.05 mm); below `SCAN_TOUCH_MM`
   (0.5 mm) it touches. Returns `{min_clearance_mm (None beyond 50 mm), at {t, link, point (world mm)}, regions,
   stats, note}`, with `per_pose` also `poses [[t, mm|None]]`; never raises for a bad scan or model:
   `{"skipped": reason, "note"}`. `regions` (at most `SCAN_MAX_REGIONS` = 8, the closest first): the near misses
@@ -1333,7 +1334,8 @@ field failure rate (section 0, honesty).
   `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
   (`_ADVICE["scan"]`). `POST /api/world/inspect` measures it when the world has `room.glb` and the revision was
   simulated in this room as it is now (else a skip saying so), kept in memory per (project, revision, world sha, room
-  file size and mtime), the last eight (R3: not when a box's fit ran out of time, so checking again tries again); it sends `world {stage: "scan", status: "start" | "done", text}` and an `agent`
+  file size and mtime), the last eight (R3: not when the check was cut short or a box's fit ran out of time, so
+  checking again measures again; a cut-short check says its numbers are for the part of the path it checked); it sends `world {stage: "scan", status: "start" | "done", text}` and an `agent`
   event (`feasibility`, `code`).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
   the box size, its distance from the path and whether it was trimmed, or why there is no box) and **Add box here**
