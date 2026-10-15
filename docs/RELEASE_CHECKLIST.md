@@ -3,6 +3,16 @@
 For every tagged release (`vX.Y.Z`, or `vX.Y.ZbN` for a beta). Copy it into the release pull request and tick each
 line. A release ships only when every line is ticked or has a written reason in the PR.
 
+## Decided for 0.2.0b1
+
+The owner's decisions from the release review (W3), so the lines below aren't argued again in the release PR:
+
+| Item | Decision | What it means for the release |
+|---|---|---|
+| REL-6: README's Keewano paragraph | **Keep** the accurate rewrite ("with event sending on, every design, bench test and human minute is logged, and with calibration on, logged results tune the next design's grip force. Both are off by default, and the R Cubed demo history in Keewano is seeded data, not real builds."). `origin/main`'s line ("recursive self-improvement", everything logged and tuning the next design) is not restored: it described both switches as always on. | Nothing to do. A README diff against `main` at that paragraph is intended. |
+| REL-5: GitHub private vulnerability reporting | **The owner's switch.** Only the repository owner can turn it on; on 2026-10-15 `gh api repos/jim4226/A16z_Hackathon/private-vulnerability-reporting` still printed `{"enabled":false}`. Until then SECURITY.md's fallback applies: a public "Security contact" issue with no details. | The line under *Before tagging* stays unticked until the owner turns it on, or the release PR says in writing that 0.2.0b1 ships with the fallback only. |
+| REL-10: Farnell (element14) tool | **Off by default until a legal review** of Farnell's API terms says Morph may keep its answers in run files and send them to Claude. The owner's switch in Keys turns it on for their own Studio. | `element14.json` keeps `off_by_default`; the release notes say the Farnell tool ships off (the line under *Before tagging*). |
+
 ## Before tagging
 
 - [ ] `morph/__init__.py` has the new version, and CHANGELOG.md has its section with every feature that ships (the

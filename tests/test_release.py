@@ -4,6 +4,7 @@ installed wheel carries every file Morph reads (and keeps .env out of site-packa
 import argparse
 import ast
 import http.client
+import json
 import os
 import re
 import shutil
@@ -428,3 +429,20 @@ def test_the_wheel_lists_its_files_instead_of_taking_the_source_archives():
     assert tool["include-package-data"] is False
     assert tool["package-data"]["morph.studio"] == ["static/**/*"]
     assert tool["package-data"]["morph.studio.toolbox"] == ["catalog/*.json"]
+
+
+def test_the_owners_release_decisions_are_recorded_and_kept():
+    """W3: the owner kept README's accurate Keewano paragraph (REL-6, not main's "every design ... is logged, and the
+    measured results tune the next design" with both switches off by default), left private vulnerability reporting
+    to their own switch (REL-5) and ships Farnell off until a legal review (REL-10). The checklist says so."""
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "with event sending on, every design, bench test and human minute is logged, and with calibration on" in readme
+    assert "Both are off by default, and the R Cubed demo history in Keewano is seeded data, not real builds." in readme
+    assert "recursive self-improvement" not in readme
+    checklist = (REPO / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
+    decided = checklist[checklist.index("## Decided for 0.2.0b1"):checklist.index("## Before tagging")]
+    for item, word in (("REL-6", "**Keep**"), ("REL-5", "**The owner's switch.**"), ("REL-10", "**Off by default until")):
+        row = next(ln for ln in decided.splitlines() if ln.startswith(f"| {item}:"))
+        assert word in row, row
+    manifest = json.loads((REPO / "morph" / "studio" / "toolbox" / "catalog" / "element14.json").read_text(encoding="utf-8"))
+    assert manifest.get("off_by_default"), manifest.get("off_by_default")

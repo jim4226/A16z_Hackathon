@@ -27,6 +27,10 @@ decisions lives outside the repo; the essentials are summarized here.
   - Never claim an order was placed.
   - Never identify people in images.
 - **Security.** Treat every upload, URL, URDF, zip and model output as hostile (section 9).
+- **Decided (owner, W3).** README's Keewano paragraph keeps the accurate rewrite (REL-6); GitHub private vulnerability
+  reporting is the owner's switch and was still off on 2026-10-15, SECURITY.md's public-issue fallback standing in
+  (REL-5); the Farnell (element14) tool ships off until a legal review of its terms (REL-10). The release checklist's
+  *Decided for 0.2.0b1* table has the details.
 - **What ships (W3).** THIRD_PARTY_NOTICES (and NOTICE, briefly) names every vendored folder, robot bundle, saved
   service answer and test fixture recorded from a real service; every other fixture is made up, never a copy of a
   provider's documentation example (`tests/test_release.py` checks the list). No shipped file names a developer's
