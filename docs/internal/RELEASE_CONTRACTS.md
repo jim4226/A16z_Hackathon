@@ -39,6 +39,15 @@ decisions lives outside the repo; the essentials are summarized here.
 
 ## 1. Storage layout (MORPH_HOME, default `projects/` in the repo folder)
 
+Every default of that folder is `resources.projects_home()` (W3): `MORPH_HOME` when set; `projects` (relative, the
+launchers start in the Morph folder) in a checkout; for an installed wheel, `projects` in `resources.data_dir()`
+(`%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph`, `$XDG_DATA_HOME/morph` or `~/.local/share/morph`),
+unless `./projects` in the current folder already holds Morph's files or a project (`resources.holds_projects`: a
+`.settings.json`, `.tools`, `.runs`, `.team`, `.robots`, `.imports` or `.briefs`, or a folder with a `ledger.jsonl`),
+which it keeps using. `cli.HOME`, `settings.home()`, `importers.common.home()`, the toolbox's and Teams' `home_dir()` and
+`api_video` all use it; `morph doctor` and `morph studio` print the absolute path, with `projects_home_note()` when
+the choice isn't obvious (MORPH_HOME, or the kept `./projects`).
+
 | Path | Owner | Contents |
 |---|---|---|
 | `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}`. `projects.create(meta=)` adds keys but never sets kind, created_utc, created_by, origin, demo or source (those come from its own arguments) |

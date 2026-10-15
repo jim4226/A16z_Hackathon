@@ -115,6 +115,77 @@ def test_an_installed_wheel_keeps_env_out_of_site_packages(tmp_path, monkeypatch
     assert resources.config_dir() == os.path.join(os.path.expanduser("~"), ".config", "morph")
 
 
+def _as_wheel(tmp_path, monkeypatch) -> Path:
+    """An installed wheel (no checkout) started in an empty folder, with the user's folders under tmp_path."""
+    monkeypatch.setattr(resources, "ROOT", resources.BUNDLED)
+    monkeypatch.setattr(resources, "_HOMES", {})
+    monkeypatch.delenv("MORPH_HOME", raising=False)
+    for var, sub in (("XDG_DATA_HOME", "data"), ("XDG_CONFIG_HOME", "config"), ("LOCALAPPDATA", "local"),
+                     ("HOME", "home"), ("USERPROFILE", "home")):
+        monkeypatch.setenv(var, str(tmp_path / sub))
+    from morph.importers import common
+    monkeypatch.setattr(common, "_HOME", None)  # what a Studio in this process set
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    return work
+
+
+def test_an_installed_wheel_keeps_projects_in_the_users_data_folder(tmp_path, monkeypatch):
+    """A wheel used to keep projects in ./projects of whatever folder it started in, and moved into someone's own folder
+    of that name (README's "delete the projects folder" then meant theirs). Now: MORPH_HOME, else the per-user data
+    folder, unless ./projects already holds Morph projects. Every module agrees, and doctor prints the absolute path."""
+    from morph import settings
+    from morph.importers import common
+    from morph.studio.teams import store as team_store
+    from morph.studio.toolbox import store as tool_store
+
+    monkeypatch.delenv("MORPH_HOME", raising=False)
+    assert resources.projects_home() == "projects"  # a checkout: the Morph folder, where the launchers start
+    work = _as_wheel(tmp_path, monkeypatch)
+    (work / "projects" / "thesis").mkdir(parents=True)
+    (work / "projects" / "thesis" / "notes.txt").write_text("mine", encoding="utf-8")
+    want = os.path.join(resources.data_dir(), "projects")
+    assert os.path.isabs(want) and not want.startswith(str(work)) and "site-packages" not in want
+    if sys.platform.startswith("linux"):
+        assert want == str(tmp_path / "data" / "morph" / "projects")
+    elif os.name == "nt":
+        assert want == str(tmp_path / "local" / "Morph" / "projects")
+    assert resources.projects_home() == want == settings.home() == common.home()
+    assert tool_store.home_dir() == want == team_store.home_dir()
+    assert resources.projects_home_note(want) == ""
+    env = {k: v for k, v in os.environ.items() if k != "MORPH_HOME"}
+    env.update(PYTHONPATH=str(REPO), MORPH_OFFLINE="1")
+    code = ("import argparse, morph.resources as r; r.ROOT = r.BUNDLED; import morph.cli as c; print('HOME=' + c.HOME); "
+            "c.cmd_doctor(argparse.Namespace(offline=True))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=work, env=env, capture_output=True, text=True, timeout=600)
+    assert f"HOME={want}\n" in out.stdout and f"projects folder {want}: can write it" in out.stdout, out.stdout + out.stderr
+    assert sorted(os.listdir(work / "projects")) == ["thesis"] and os.listdir(work / "projects" / "thesis") == ["notes.txt"]
+
+    (work / "projects" / "egg-picker").mkdir()  # projects an older wheel made here: Morph keeps using them and says so
+    (work / "projects" / "egg-picker" / "ledger.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setattr(resources, "_HOMES", {})
+    assert resources.projects_home() == "projects" == settings.home()
+    assert tool_store.home_dir() == str(work / "projects")
+    note = resources.projects_home_note("projects")
+    assert "already holds Morph projects, so Morph keeps using it" in note and want in note and "MORPH_HOME" in note
+    monkeypatch.setenv("MORPH_HOME", str(tmp_path / "mine"))
+    assert resources.projects_home() == str(tmp_path / "mine") == settings.home()
+    assert resources.projects_home_note(str(tmp_path / "mine")) == " (MORPH_HOME)"
+
+
+def test_the_studio_says_where_the_projects_are(tmp_path, monkeypatch, capsys):
+    from morph.studio import server
+    from test_keys_and_launch import _free_port, _robots
+
+    _robots(tmp_path / "projects")
+    monkeypatch.setattr(cli, "HOME", str(tmp_path / "projects"))
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    monkeypatch.setattr(server, "serve", lambda *a, **k: None)
+    cli.cmd_studio(argparse.Namespace(name="egg-picker", host="127.0.0.1", port=_free_port(), open=False, remote=False))
+    assert f"Projects folder: {tmp_path / 'projects'}\n" in capsys.readouterr().out
+
+
 def test_saving_keys_creates_the_settings_folder(tmp_path, monkeypatch):
     target = tmp_path / "config" / "morph" / ".env"
     monkeypatch.setattr(keys, "TEMPLATE", str(tmp_path / "no-template"))

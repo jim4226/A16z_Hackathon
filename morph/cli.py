@@ -18,13 +18,13 @@ import os
 import sys
 import time
 
-from . import agent, boardrepo, darwin, keewano, kicad, report
+from . import agent, boardrepo, darwin, keewano, kicad, report, resources
 from .explore import explore
 from .pipeline import Project
 from .spec import Design
 from .studio.projects import EGG_ROBOT  # noqa: F401  (the default arm; tests and tools import it from here)
 
-HOME = os.environ.get("MORPH_HOME", "projects")
+HOME = resources.projects_home()  # MORPH_HOME, else projects/ in the Morph folder (a wheel: the user's data folder)
 
 
 def _project(name: str) -> Project:
@@ -307,6 +307,7 @@ def cmd_studio(a):
         threading.Timer(1.5, open_app_window, args=(link,)).start()
     extra = {**({"team": True, "link": link} if team else {}),
              **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {})}
+    print(f"Projects folder: {os.path.abspath(HOME)}{resources.projects_home_note(HOME)}")
     serve(p, a.host, a.port, home=HOME, token=token, **extra)
 
 
@@ -909,9 +910,11 @@ def cmd_doctor(a):
         with open(probe, "w", encoding="utf-8") as fh:
             fh.write("\u2192 \u2248 ok")  # characters the generators write; cp1252 cannot encode them
         os.remove(probe)
-        line(True, f"can write {os.path.abspath(HOME)}")
+        line(True, f"projects folder {os.path.abspath(HOME)}{resources.projects_home_note(HOME)}: can write it")
     except OSError as exc:
-        line(False, f"cannot write {os.path.abspath(HOME)} ({exc})", "move the repo out of a read-only or synced folder")
+        line(False, f"projects folder {os.path.abspath(HOME)}: cannot write it ({exc})",
+             "move the Morph folder out of a read-only or synced folder" if checkout else
+             "set MORPH_HOME to a folder you can write")
     if keys.ensure_env_file():
         line(None, f"created {keys.ENV_PATH} from env.example (add your keys there, or with the Keys button in the Studio)")
     for k in keys.status():
@@ -939,7 +942,7 @@ def cmd_doctor(a):
         errs = res.get("errors") or {}
         line(not bad, f"{name} {last}: " + ("all stages built" if not bad else
              "; ".join(f"{n} {st}" + (f" ({errs[n][:120]})" if n in errs else "") for n, st in bad.items())),
-             "send this output to the team; delete the projects folder and start again to rebuild")
+             f"send this output to the team; delete {os.path.abspath(HOME)} and start again to rebuild")
     if not getattr(a, "offline", False) and not settings.network_allowed():
         line(None, "network checks skipped: network lookups are off (Keys, Privacy and network)")
     elif not getattr(a, "offline", False):

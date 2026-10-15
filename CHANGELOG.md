@@ -190,6 +190,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Pythons and the extras `video`, `cad`, `xacro` and `dev`.
 - A wheel now carries the SO-101 robot, Darwin's cached answers and the licences, and keeps `.env` out of
   site-packages. Running from the git folder is unchanged.
+- Morph installed with pip keeps its projects in your user's data folder (`%LOCALAPPDATA%\Morph\projects`,
+  `~/Library/Application Support/Morph/projects`, `~/.local/share/morph/projects`) instead of a `projects` folder in
+  whatever folder it was started from, where it moved into a folder of yours with that name. A `projects` folder that
+  already holds Morph projects is kept, and Morph says so; `MORPH_HOME` still chooses. `morph doctor` and `morph
+  studio` print the projects folder's full path.
 - CI on Windows, macOS and Linux with Python 3.10 to 3.14, a lint job, and a check that the installed wheel builds
   both demo robots.
 - End-to-end browser tests (`tests/e2e`, run with `MORPH_E2E=1` set) start a real Studio, offline and without keys,

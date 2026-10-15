@@ -23,7 +23,8 @@ _GUARD = threading.Lock()
 
 
 def home_dir(home: str | None = None) -> str:
-    return os.path.abspath(home or os.environ.get("MORPH_HOME") or "projects")
+    from ...resources import projects_home
+    return os.path.abspath(home or projects_home())
 
 
 def tools_dir(home: str | None = None) -> str:

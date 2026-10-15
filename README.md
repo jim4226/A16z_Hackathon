@@ -80,7 +80,8 @@ for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIP
   whether every pipeline stage built, lists which features are ready (New robot, Import, Show Morph the job, Teams,
   World mode) with the optional tools they use, and says what to fix. Send its output to the team.
 - A stage marked *error* in the pipeline strip leaves its tab empty; the other stages still work.
-  Delete the `projects` folder and start again to rebuild everything from scratch.
+  Delete the `projects` folder in the Morph folder and start again to rebuild everything from scratch (`morph doctor`
+  prints where your projects are; Morph installed with pip keeps them in your user's data folder).
 - "Morph Studio is already running": close the other terminal window first.
 - Packages broken or half-installed: delete the `.venv` folder and run the launcher again.
 - The right panel (time card, grip force) folds away when the window is 1280 px wide or narrower, as at

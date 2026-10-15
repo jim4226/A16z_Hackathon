@@ -56,7 +56,7 @@ Each service's own terms govern what it does with data you send it.
 
 | What | Where |
 |---|---|
-| Projects: designs, generated CAD, simulations, electronics, firmware, manuals, revision labels (they can include your chat requests) and each project's ledger | `projects/` in the Morph folder, or `MORPH_HOME` |
+| Projects: designs, generated CAD, simulations, electronics, firmware, manuals, revision labels (they can include your chat requests) and each project's ledger | `projects/` in the Morph folder, or `MORPH_HOME`; an installed wheel uses `projects` in `%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph` or `~/.local/share/morph` (`morph doctor` prints it), and the `projects/` paths below are inside it there |
 | API keys, in plain text (readable by your user only on macOS and Linux) | `.env` in the Morph folder; an installed wheel uses `%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph` or `~/.config/morph` |
 | The privacy switches | `projects/.settings.json` |
 | Each project's chat: your messages and the replies | `projects/<project>/.morph/chat.jsonl` |

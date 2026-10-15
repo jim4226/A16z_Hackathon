@@ -199,7 +199,8 @@ def _design(req):
 def _home(req) -> str:
     studio = _studio(req)
     home = getattr(studio, "home", None)
-    return home or os.environ.get("MORPH_HOME") or "projects"
+    from ..resources import projects_home
+    return home or projects_home()
 
 
 def _log(req, entry: dict):

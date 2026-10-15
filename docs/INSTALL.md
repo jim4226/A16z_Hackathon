@@ -128,8 +128,10 @@ release's launcher opens it.
 2. Delete the cache of saved answers: `~/.cache/morph` (on Windows, `%USERPROFILE%\.cache\morph`).
 3. If you no longer use your API keys, revoke them with each provider (Anthropic, Keewano, SubQ).
 
-If you installed Morph as a package with pip instead, run `pip uninstall morph` and delete its settings folder
-(`%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph` or `~/.config/morph`).
+If you installed Morph as a package with pip instead, run `pip uninstall morph` and delete its folders: settings and
+`.env` in `%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph` or `~/.config/morph`, and projects in
+`%LOCALAPPDATA%\Morph\projects`, `~/Library/Application Support/Morph/projects` or `~/.local/share/morph/projects`
+(`morph doctor` prints the folder).
 
 ## When something goes wrong
 
@@ -146,6 +148,17 @@ If you installed Morph as a package with pip instead, run `pip uninstall morph` 
   computers must be on the same network or VPN.
 - **Anything else:** run `.venv\Scripts\python -m morph.cli doctor` (Windows) or `.venv/bin/python -m morph.cli
   doctor`. It checks Python, the packages, keys, the network and whether every stage built, and says what to fix.
+
+## Installed as a package (pip)
+
+A wheel (`python -m pip install` of a `.whl` built with `python -m build`) has no Morph folder, so it keeps its files in
+your user's own folders: `.env` in `%LOCALAPPDATA%\Morph` (Windows), `~/Library/Application Support/Morph` (macOS) or
+`~/.config/morph` (Linux), and projects in `%LOCALAPPDATA%\Morph\projects`, `~/Library/Application Support/Morph/projects`
+or `~/.local/share/morph/projects` (`$XDG_DATA_HOME/morph/projects` when that is set). It never uses a `projects`
+folder that happens to be where you start it, so your own files there stay yours. Two exceptions: `MORPH_HOME` names
+another folder, and a `projects` folder in the current folder that already holds Morph projects (an install from before
+0.2 made them there) is kept, and Morph says so. `morph doctor` and `morph studio` print the projects folder's full
+path. Start the Studio with `morph studio --open`.
 
 ## For developers
 
