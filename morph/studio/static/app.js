@@ -677,9 +677,11 @@ function renderInspector(cur, prev) {
   if (!cur) return;
   const s = cur.summary || {}, ps = prev?.summary || {}, d = cur.design || {};
   const issues = [...(s.issues || [])];
+  // the summary already counts every failed scenario (sim_failed); one saved before that counted the pick and place only
+  const counted = new Set(s.sim_failed || ['pick_place']);
   for (const [name, sm] of Object.entries(cur.sims || {})) {
     const m = sm.metrics || {};
-    if (m.success === false) {
+    if (m.success === false && !counted.has(name)) {
       const why = [m.dropped && 'object dropped', m.place_error_mm != null && `place error ${fmt(m.place_error_mm, 'mm', 0)}`, (m.slip_mm ?? m.max_slip_mm) != null && `slip ${fmt(m.slip_mm ?? m.max_slip_mm, 'mm')}`].filter(Boolean).slice(0, 2).join(', ');
       issues.push(`Simulation · ${sm.title || name} failed${why ? ` (${why})` : ''}`);
     }

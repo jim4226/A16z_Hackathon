@@ -347,7 +347,7 @@ def test_flagship_servo_swap_on_a_remote_team_studio(template, pw, tmp_path):
         jaron.wait_rev("r003")
         lap("r003 built (Jaron's page)")
         until(lambda: "Built r003" in jcard.inner_text(), 60, "the change request's build summary")
-        assert re.search(r"Built r003: weakest joint [\d.]+× → [\d.]+×, \$[\d,]+ → \$[\d,]+ per unit, feasible", " ".join(jcard.inner_text().split()))
+        assert re.search(r"Built r003: weakest joint [\d.]+× → [\d.]+×, \$[\d,]+ → \$[\d,]+ per unit, software checks pass", " ".join(jcard.inner_text().split()))
         feed = [i["text"] for i in jaron.api("GET", "/api/activity?project=egg-picker")[1]["items"]]
         assert any(t.startswith("Jaron made r003: #1 Swap the arm") and "(proposed by Ana)" in t for t in feed), feed[:5]
         lap("applied and built r003")

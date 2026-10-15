@@ -496,6 +496,44 @@ def _jsonable(o):
     return str(o)
 
 
+SIM_CHECKS = {"pick_place": "pick-and-place", "shake": "shake test", "payload_sweep": "payload test",
+              "workspace": "workspace check"}
+
+
+def sim_issue(name: str, scenario: dict) -> str | None:
+    """The summary's issue for a simulated scenario that failed (None when it passed), saying why in plain words:
+    every scenario the robot is simulated in counts, not only the pick and place."""
+    m = (scenario or {}).get("metrics") or {}
+    if m.get("success") is not False:
+        return None
+    what = SIM_CHECKS.get(name, str((scenario or {}).get("title") or name).lower())
+    slip = m.get("slip_mm", m.get("max_slip_mm"))
+    why = []
+    if m.get("error"):
+        why.append(f"it could not run: {m['error']}")
+    if m.get("failure"):
+        why.append(str(m["failure"]))
+    if m.get("intact") is False and m.get("damage_force_n"):
+        why.append(f"squeezed {m.get('grip_n_max', 0):g} N per finger, above the {m['damage_force_n']:g} N that damages it")
+    if m.get("dropped"):
+        why.append("object dropped" + (f" ({slip:g} mm slip)" if slip is not None else ""))
+    elif name == "shake" and slip is not None and slip >= 5.0:
+        why.append(f"object slipped {slip:g} mm in the jaws (5 mm allowed)")
+    if name == "pick_place" and not m.get("dropped") and (m.get("place_error_mm") or 0) > 15.0:
+        why.append(f"placed {m['place_error_mm']:g} mm from the target")
+    if name == "payload_sweep" and m.get("max_payload_g") is not None:
+        why.append(f"holds {m['max_payload_g']:g} g, less than the object's {m.get('rated_payload_g', 0):g} g")
+    if name == "workspace":
+        far = [p for p, k in (("pick", "pick_reachable"), ("place", "place_reachable")) if m.get(k) is False]
+        why.append(f"the {' and '.join(far)} point{'s are' if len(far) > 1 else ' is'} out of reach" if far else
+                   "no reachable workspace")
+    if m.get("note") and "reach" in str(m["note"]):
+        why.append(str(m["note"]))
+    if m.get("world_contacts") and not m.get("failure"):
+        why.append("the arm hits the room")
+    return f"{what} failed in simulation ({'; '.join(dict.fromkeys(why)) or 'object not delivered'})"
+
+
 def summarize(r: dict) -> dict:
     sz = r.get("sizing") or {}
     g = r.get("gripper") or {}
@@ -515,8 +553,12 @@ def summarize(r: dict) -> dict:
     issues = list(dict.fromkeys(issues))   # the wiring stage repeats the plan's issues
     for node, err in (r.get("errors") or {}).items():
         issues.append(f"{node} stage error: {err}")
-    if pp.get("success") is False:
-        issues.append(f"pick-and-place failed in simulation ({pp.get('failure') or pp.get('reason') or 'object not delivered'})")
+    sim_failed = []
+    for name, sc in sims.items():          # every simulated scenario counts: a dropped can in the shake test is an issue
+        why = sim_issue(name, sc)
+        if why:
+            issues.append(why)
+            sim_failed.append(name)
     pending = [n for n in ORDER if stage_problem(r, n)]
     if pending:
         issues.append("not computed: " + ", ".join(pending))
@@ -544,7 +586,7 @@ def summarize(r: dict) -> dict:
         "unit_cost": bom.get("total"), "fab_lead_days": (mfg.get("totals") or {}).get("lead_days"),
         "tooling_cost": (mfg.get("totals") or {}).get("tooling_cost"),
         "assembly_steps": len(man.get("steps", []) or []), "assembly_time_min": man.get("time_min_total"),
-        "feasible": not issues, "issues": issues,
+        "feasible": not issues, "issues": issues, "sim_failed": sim_failed,
         # what sizing changed from the request to make the arm buildable ("reach raised from 320 to 475 mm: ...")
         "notes": list(sz.get("notes") or []),
     }

@@ -285,7 +285,9 @@ export class Importer {
     if (!this.building || this.building.done) return;
     this.building.done = true;
     this.view = 'done';
-    this.s.toast?.(this.building.feasible === false ? `Imported ${project}: not feasible yet` : `Imported ${project}`);
+    const n = (this.building.issues || []).length;
+    this.s.toast?.(this.building.feasible === false ? `Imported ${project}: its software checks found ${n || 'some'} issue${n === 1 ? '' : 's'}`
+      : `Imported ${project}: software checks pass`);
     this.render();
   }
 
@@ -612,7 +614,7 @@ export class Importer {
       let fin = '';
       if (b.done && b.feasible === false) {  // built, but its own checks flag it: say what and how to fix it
         const torque = (b.issues || []).some((x) => /N·m with margin/.test(x));
-        fin = `<div class="imp-row warn" style="margin-top:12px"><span class="dot">${ROW_ICON.warn}</span><span><b>${E(b.project)}</b> is built${b.rev ? ` (${E(b.rev)})` : ''}, but it isn't feasible yet:</span></div>
+        fin = `<div class="imp-row warn" style="margin-top:12px"><span class="dot">${ROW_ICON.warn}</span><span><b>${E(b.project)}</b> is built${b.rev ? ` (${E(b.rev)})` : ''}, but its software checks found issues:</span></div>
           ${this.warnings(b.issues)}
           <div class="imp-note">${torque ? 'A joint needs a stronger servo: import the files again and pick one family under Actuators, so Morph sizes every joint for the worst pose (2x torque margin) on one supply voltage.'
             : 'Open it to see each stage\'s report, then change what it flags in the chat or the parameters.'}</div>`;

@@ -141,3 +141,29 @@ def test_payload_urls_point_at_revision_files(tmp_path):
     rev = rev_payload(p, r1)
     assert rev["robot"]["json"] == f"/files/{r1}/cad/robot.json"
     assert "time_study" in rev and "error" not in rev["time_study"]
+
+
+def test_every_failed_simulated_scenario_is_an_issue():
+    """The summary counted only the pick and place among the simulations: a robot whose shake test dropped the can was
+    'feasible' and New robot said every software check passed. Each failed scenario is now an issue, saying why."""
+    from morph.robot.pipeline2 import summarize
+
+    ok = {"success": True}
+    sims = {"pick_place": {"title": "Pick and place", "metrics": ok},
+            "payload_sweep": {"title": "Payload sweep", "metrics": {"success": False, "max_payload_g": 300.0,
+                                                                     "rated_payload_g": 370.0}},
+            "workspace": {"title": "Reachable workspace", "metrics": {"success": False, "pick_reachable": True,
+                                                                      "place_reachable": False}},
+            "shake": {"title": "Shake test (in-hand slip)", "metrics": {"success": False, "dropped": True, "slip_mm": 212.9}}}
+    s = summarize({"sims": {"scenarios": sims}})
+    assert s["feasible"] is False and s["sim_failed"] == ["payload_sweep", "workspace", "shake"]
+    assert "shake test failed in simulation (object dropped (212.9 mm slip))" in s["issues"]
+    assert "payload test failed in simulation (holds 300 g, less than the object's 370 g)" in s["issues"]
+    assert "workspace check failed in simulation (the place point is out of reach)" in s["issues"]
+    slipped = summarize({"sims": {"scenarios": {"shake": {"metrics": {"success": False, "dropped": False, "slip_mm": 11.72}}}}})
+    assert "shake test failed in simulation (object slipped 11.72 mm in the jaws (5 mm allowed))" in slipped["issues"]
+    crushed = summarize({"sims": {"scenarios": {"pick_place": {"metrics": {"success": False, "intact": False,
+                                                                           "grip_n_max": 4.1, "damage_force_n": 3.0}}}}})
+    assert "pick-and-place failed in simulation (squeezed 4.1 N per finger, above the 3 N that damages it)" in crushed["issues"]
+    passed = summarize({"sims": {"scenarios": {k: {"metrics": ok} for k in sims}}})
+    assert passed["sim_failed"] == [] and not [i for i in passed["issues"] if "simulation" in i]

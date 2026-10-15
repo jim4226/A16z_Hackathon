@@ -756,7 +756,7 @@ export class Team {
         <span class="tag ${g.ok ? 'good' : g.short.startsWith('changes') ? 'bad' : 'warn'}">${esc(released.length ? `released: ${released.map((r) => r.tag).join(', ')}` : g.short)}</span></div>
         <div class="tm-need">${esc(LEVEL[g.level])} builds need ${esc(need)}.</div>
         <div class="tm-grs">${rows}</div>
-        <div class="tm-ck">${ck.feasible === false ? `<span class="tag bad">${icon('alert')}${(ck.issues || []).length} issue${(ck.issues || []).length === 1 ? '' : 's'}</span>` : ck.feasible ? '<span class="tag good">feasible</span>' : ''}
+        <div class="tm-ck">${ck.feasible === false ? `<span class="tag bad">${icon('alert')}${(ck.issues || []).length} issue${(ck.issues || []).length === 1 ? '' : 's'}</span>` : ck.feasible ? '<span class="tag good" title="Simulation, torque margins, DRC and DFM pass; not bench-validated">software checks pass</span>' : ''}
           ${ck.pick_place_success === true ? '<span class="tag good">pick and place ok</span>' : ck.pick_place_success === false ? '<span class="tag bad">pick and place failed</span>' : ''}
           ${ck.unit_cost != null ? `<span class="tag neutral">$${Number(ck.unit_cost).toFixed(0)} per unit (estimated)</span>` : ''}</div>
         ${ck.feasible === false ? `<div class="tm-issues">${(ck.issues || []).slice(0, 3).map((i) => `<div>${esc(i)}</div>`).join('')}</div>` : ''}
@@ -876,7 +876,7 @@ export class Team {
     if (!b) return '';
     const [m0, m1] = b.min_torque_margin || [], [c0, c1] = b.unit_cost || [];
     const bits = [m1 != null ? `weakest joint ${m0 != null ? `${m0}× → ` : ''}${m1}×` : '', c1 != null ? `${c0 != null ? `${money(c0)} → ` : ''}${money(c1)} per unit` : '',
-      b.feasible === false ? `${b.issues} issue${b.issues === 1 ? '' : 's'}` : b.feasible ? 'feasible' : ''].filter(Boolean);
+      b.feasible === false ? `${b.issues} issue${b.issues === 1 ? '' : 's'}` : b.feasible ? 'software checks pass' : ''].filter(Boolean);
     return `<div class="tm-built ${b.feasible === false ? 'bad' : ''}">${icon(b.feasible === false ? 'alert' : 'check')}<span>Built ${this.esc(b.rev)}: ${this.esc(bits.join(', '))}</span></div>`;
   }
   previewHtml(r) {
