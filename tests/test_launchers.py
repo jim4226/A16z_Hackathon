@@ -358,6 +358,37 @@ def test_windows_refuses_only_where_the_python_cant_install_morph():
     assert "Morph needs 64-bit Windows" in said(":unsupported") and "Windows on ARM" not in said(":unsupported")
 
 
+def test_windows_on_arm_checks_that_mujoco_loads_before_the_studio_starts():
+    """On Windows on ARM the x64 Python runs in emulation, and MuJoCo's x64 build uses AVX, which that emulation runs
+    only on Windows 11 24H2 or later: every start there first imports MuJoCo in .venv's Python, and when that fails the
+    launcher says why and what to do instead of the Studio crashing at start-up. Elsewhere nothing changes."""
+    lines = _bat_lines()
+    start = lines.index(":start")
+    assert lines.index('set "WOA="') < start
+    assert {ln for ln in lines[:start] if "WOA=1" in ln} == {
+        'if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "WOA=1"', 'if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "WOA=1"'}
+    i = lines.index(":installed")
+    assert lines[i + 1] == 'if defined WOA .venv\\Scripts\\python.exe -c "import mujoco" >nul 2>&1 || goto mujoco_arm'
+    assert lines[i + 2] == "call .venv\\Scripts\\activate.bat"
+    j = lines.index(":mujoco_arm")
+    said = " ".join(ln[5:] for ln in lines[j:lines.index("goto fail", j)] if ln.startswith("echo "))
+    for words in ("doesn't load on this Windows on ARM computer", "AVX", "Windows 11 version 24H2 or later",
+                  "Update Windows 11 to 24H2 or later", "use another computer", 'python.exe -c "import mujoco"'):
+        assert words in said, (words, said)
+
+
+def test_both_launchers_say_the_same_when_pip_fails():
+    """Which Pythons Morph's packages have builds for, in the same words on Windows, macOS and Linux."""
+    lines = _bat_lines()
+    i = lines.index(":install_failed")
+    bat = " ".join(ln[5:] for ln in lines[i:lines.index("goto fail", i)] if ln.startswith("echo "))
+    sh = (REPO / "run_studio.sh").read_text(encoding="utf-8")
+    sh = sh[sh.index('echo "Installing the packages failed'):]
+    sh = " ".join(ln.strip()[6:-1] for ln in sh.splitlines()[:3] if ln.strip().startswith('echo "'))
+    assert "an x64 Python on Windows" in bat and bat.split("then run this again. ")[1] == sh.split("then run this again. ")[1]
+    assert "Intel or AMD processors" not in sh and "Windows on Intel" not in sh
+
+
 @needs_bash
 @pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 def test_bash_finishes_the_script_it_opened_when_git_replaces_it(tmp_path):

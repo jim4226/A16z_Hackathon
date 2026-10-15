@@ -29,6 +29,11 @@ REM pip fetches packages for the Python's own platform: MuJoCo, Morph's physics 
 REM Intel or AMD (win-amd64) only, so that is the Python Morph needs, also on Windows on ARM (which runs it in emulation)
 set "PYOK=import sys, sysconfig; sys.exit(not ((3, 10) <= sys.version_info[:2] <= (3, 14) and sysconfig.get_platform() == 'win-amd64'))"
 set "PYARM=import sys, sysconfig; sys.exit(sysconfig.get_platform() != 'win-arm64')"
+REM Windows on ARM runs that x64 Python in emulation. MuJoCo's x64 build uses AVX instructions, which the emulation
+REM runs only on Windows 11 24H2 or later: there, every start first checks that .venv's Python can import MuJoCo
+set "WOA="
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "WOA=1"
+if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "WOA=1"
 set "UPDATE="
 set "ARGS="
 set "ARG="
@@ -92,6 +97,7 @@ if errorlevel 1 goto install_failed
 move /y .venv\morph-packages.new .venv\morph-installed.txt >nul
 
 :installed
+if defined WOA .venv\Scripts\python.exe -c "import mujoco" >nul 2>&1 || goto mujoco_arm
 call .venv\Scripts\activate.bat
 REM One line, the last one read from this file: a git pull or --update in another window may replace the file while
 REM the Studio runs, so nothing after it is read from the file. On an error, pause keeps the window open to read it.
@@ -130,8 +136,17 @@ goto fail
 :install_failed
 echo.
 echo Installing the packages failed (details above). Check the internet connection, then run this again.
-echo Morph's packages have builds for 64-bit (x64) Python on Windows, Macs with Apple silicon and 64-bit Linux;
-echo with other Pythons this step fails.
+echo Morph's packages have builds for an x64 Python on Windows, Macs with Apple silicon and 64-bit Linux on Intel or
+echo AMD; with other Pythons this step can fail.
+goto fail
+
+:mujoco_arm
+echo.
+echo MuJoCo, Morph's physics engine, is installed but doesn't load on this Windows on ARM computer. Its x64 build
+echo uses AVX instructions, which Windows' x64 emulation runs only on Windows 11 version 24H2 or later, the most
+echo likely reason. Update Windows 11 to 24H2 or later (Settings, Windows Update), then run this again; or use
+echo another computer: a Mac with Apple silicon, or a Windows or Linux computer with an Intel or AMD processor.
+echo To see the error itself: .venv\Scripts\python.exe -c "import mujoco"
 goto fail
 
 :unsupported

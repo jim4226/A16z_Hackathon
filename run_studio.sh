@@ -145,8 +145,8 @@ install_packages() {  # once, and again only when requirements.txt, constraints.
   if ! .venv/bin/python -m pip install -r requirements.txt -c constraints.txt -e .; then
     echo
     echo "Installing the packages failed (details above). Check the internet connection, then run this again."
-    echo "Morph's packages have builds for Windows on Intel or AMD processors, Macs with Apple silicon and 64-bit"
-    echo "Linux on Intel or AMD; on other computers this step fails."
+    echo "Morph's packages have builds for an x64 Python on Windows, Macs with Apple silicon and 64-bit Linux on Intel or"
+    echo "AMD; with other Pythons this step can fail."
     return 1
   fi
   echo "$want" > .venv/.morph-installed
