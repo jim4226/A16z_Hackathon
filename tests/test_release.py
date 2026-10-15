@@ -141,7 +141,7 @@ def test_an_installed_wheel_keeps_projects_in_the_users_data_folder(tmp_path, mo
     from morph.studio.toolbox import store as tool_store
 
     monkeypatch.delenv("MORPH_HOME", raising=False)
-    assert resources.projects_home() == "projects"  # a checkout: the Morph folder, where the launchers start
+    assert resources.projects_home() == str(REPO / "projects")  # a checkout: its own folder's
     work = _as_wheel(tmp_path, monkeypatch)
     (work / "projects" / "thesis").mkdir(parents=True)
     (work / "projects" / "thesis" / "notes.txt").write_text("mine", encoding="utf-8")
@@ -172,6 +172,49 @@ def test_an_installed_wheel_keeps_projects_in_the_users_data_folder(tmp_path, mo
     monkeypatch.setenv("MORPH_HOME", str(tmp_path / "mine"))
     assert resources.projects_home() == str(tmp_path / "mine") == settings.home()
     assert resources.projects_home_note(str(tmp_path / "mine")) == " (MORPH_HOME)"
+
+
+def test_a_checkouts_projects_are_in_its_folder_whatever_folder_morph_starts_in(tmp_path, monkeypatch):
+    """The launchers install a `morph` command into .venv (README says to activate it): run from another folder,
+    `morph doctor` or `morph studio` used that folder's ./projects, someone's own folder of that name too. A checkout's
+    projects are in its own folder, an absolute path, from any folder; another folder's Morph projects are left where
+    they are, and Morph says how to open them."""
+    from morph import settings
+    from morph.importers import common
+    from morph.studio.teams import store as team_store
+    from morph.studio.toolbox import store as tool_store
+
+    monkeypatch.delenv("MORPH_HOME", raising=False)
+    monkeypatch.setattr(common, "_HOME", None)
+    root = tmp_path / "Morph"                              # a checkout somewhere else (its projects folder not made yet)
+    root.mkdir()
+    monkeypatch.setattr(resources, "ROOT", str(root))
+    work = tmp_path / "work"
+    (work / "projects" / "thesis").mkdir(parents=True)
+    (work / "projects" / "thesis" / "notes.txt").write_text("mine", encoding="utf-8")
+    monkeypatch.chdir(work)
+    want = str(root / "projects")
+    assert resources.checkout() == str(root) and os.path.isabs(want)
+    assert resources.projects_home() == want == settings.home() == common.home() == tool_store.home_dir() == \
+        team_store.home_dir()
+    assert resources.projects_home_note(want) == ""      # someone's own ./projects: not Morph's, nothing to say
+    (work / "projects" / "egg-picker").mkdir()           # Morph projects made here before: left alone, and named
+    (work / "projects" / "egg-picker" / "ledger.jsonl").write_text("", encoding="utf-8")
+    assert resources.projects_home() == want
+    note = resources.projects_home_note(want)
+    assert f"the Morph projects in {work / 'projects'} stay where they are" in note and \
+        f"MORPH_HOME={work / 'projects'}" in note, note
+    monkeypatch.chdir(root)                              # the launchers' folder: nothing to say
+    assert resources.projects_home() == want and resources.projects_home_note(want) == ""
+    env = {k: v for k, v in os.environ.items() if k != "MORPH_HOME"}
+    env.update(PYTHONPATH=str(REPO), MORPH_OFFLINE="1")
+    code = (f"import argparse, morph.resources as r; r.ROOT = {str(root)!r}; import morph.cli as c; "
+            "print('HOME=' + c.HOME); c.cmd_doctor(argparse.Namespace(offline=True))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=work, env=env, capture_output=True, text=True, timeout=600)
+    assert f"HOME={want}\n" in out.stdout and f"projects folder {want} (the Morph folder's;" in out.stdout, \
+        out.stdout + out.stderr
+    assert sorted(os.listdir(work / "projects")) == ["egg-picker", "thesis"]
+    assert os.listdir(work / "projects" / "egg-picker") == ["ledger.jsonl"] and os.path.isdir(want)
 
 
 def test_the_studio_says_where_the_projects_are(tmp_path, monkeypatch, capsys):

@@ -44,9 +44,12 @@ decisions lives outside the repo; the essentials are summarized here.
 
 ## 1. Storage layout (MORPH_HOME, default `projects/` in the repo folder)
 
-Every default of that folder is `resources.projects_home()` (W3): `MORPH_HOME` when set; `projects` (relative, the
-launchers start in the Morph folder) in a checkout; for an installed wheel, `projects` in `resources.data_dir()`
-(`%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph`, `$XDG_DATA_HOME/morph` or `~/.local/share/morph`),
+Every default of that folder is `resources.projects_home()` (W3): `MORPH_HOME` when set; in a checkout, `projects` in
+the Morph folder as an absolute path (`checkout()/projects`, R3), whatever the current folder (the launchers' editable
+`morph` in .venv runs from any folder; Morph projects in another folder's `./projects` are left alone, and
+`projects_home_note()` names them with the MORPH_HOME that opens them); for an installed wheel, `projects` in
+`resources.data_dir()` (`%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph`, `$XDG_DATA_HOME/morph` or
+`~/.local/share/morph`),
 unless `./projects` in the current folder already holds Morph's files or a project (`resources.holds_projects`: a
 `.settings.json`, `.tools`, `.runs`, `.team`, `.robots`, `.imports` or `.briefs`, or a folder with a `ledger.jsonl`),
 which it keeps using. `cli.HOME`, `settings.home()`, `importers.common.home()`, the toolbox's and Teams' `home_dir()` and

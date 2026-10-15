@@ -168,7 +168,8 @@ or `~/.local/share/morph/projects` (`$XDG_DATA_HOME/morph/projects` when that is
 folder that happens to be where you start it, so your own files there stay yours. Two exceptions: `MORPH_HOME` names
 another folder, and a `projects` folder in the current folder that already holds Morph projects (an install from before
 0.2 made them there) is kept, and Morph says so. `morph doctor` and `morph studio` print the projects folder's full
-path. Start the Studio with `morph studio --open`.
+path. Start the Studio with `morph studio --open`. (A Morph folder from git or a release zip keeps its projects in its
+own `projects` folder, even when its `.venv` `morph` command runs from another folder.)
 
 ## For developers
 

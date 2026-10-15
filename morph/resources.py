@@ -100,15 +100,17 @@ _HOMES: dict = {}
 
 
 def projects_home() -> str:
-    """Where projects (and their settings, runs, team and tools) go when MORPH_HOME doesn't say: `projects` in the
-    Morph folder for a checkout (the launchers start there); for an installed wheel, `projects` in data_dir(), unless
+    """Where projects (and their settings, runs, team and tools) go when MORPH_HOME doesn't say: for a checkout,
+    `projects` in the Morph folder, as an absolute path, whatever folder Morph starts in (the launchers install a
+    `morph` command into .venv that works from any folder); for an installed wheel, `projects` in data_dir(), unless
     ./projects in the current folder already holds Morph projects (an install from before 0.2 made it there), which it
     keeps using. Never a folder of the same name that merely exists: Morph would move into someone's own files."""
     env = os.environ.get("MORPH_HOME")
     if env:
         return env
-    if checkout():
-        return "projects"
+    root = checkout()
+    if root:
+        return os.path.join(root, "projects")
     key = os.getcwd()
     if key not in _HOMES:
         _HOMES[key] = "projects" if holds_projects("projects") else os.path.join(data_dir(), "projects")
@@ -120,7 +122,13 @@ def projects_home_note(home: str) -> str:
     env = os.environ.get("MORPH_HOME")
     if env:
         return " (MORPH_HOME)" if os.path.abspath(home) == os.path.abspath(env) else ""
-    if checkout() or os.path.abspath(home) != os.path.abspath("projects"):
+    here = os.path.abspath("projects")
+    if checkout():                                      # started in another folder that has Morph projects of its own
+        if os.path.normcase(os.path.abspath(home)) != os.path.normcase(here) and holds_projects("projects"):
+            return (f" (the Morph folder's; the Morph projects in {here} stay where they are, and MORPH_HOME={here} "
+                    "opens them)")
+        return ""
+    if os.path.abspath(home) != here:
         return ""
     return (f" (it already holds Morph projects, so Morph keeps using it; new installs keep projects in "
             f"{os.path.join(data_dir(), 'projects')}, and MORPH_HOME chooses another folder)")
