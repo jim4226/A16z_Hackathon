@@ -157,7 +157,7 @@ def test_mixed_case_names_with_a_number_pass_and_keys_in_their_shape_are_still_c
 
 
 def test_every_code_morph_makes_reads_as_no_phrase(monkeypatch):
-    """A Teams code is drawn again in the rare case it reads as a phrase (about 1 in 28,000 invite and sign-in codes):
+    """A Teams code is drawn again in the rare case it reads as a phrase (33 in 1,000,000 invite and sign-in codes):
     the filter judges a run of an invite code's length by how random it reads, so a name such as
     ml_policyV1_final_weights passes, and every code Morph makes is still caught."""
     draws = iter(["policyV1_final_weights", "Xq3_Lp9ZbN2wV7aR5kT1mC"])

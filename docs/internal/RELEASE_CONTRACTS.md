@@ -654,8 +654,7 @@ members; a member can hold several.
   `servo1_servo2_servo3` or `xl330_xl430_xm430`, versioned names such as `Servo1`, `yoloV8`, `jointLimit2`,
   `servoID3`, `so101Arm` or `GraspNet1B` (`security._versioned`), and short codes such as `6x40` or `4f8a`; a key in
   groups of one size such as `sk-live-4f8a-91bc-77de-12ab` is a key unless every group with a digit reads as a
-  numbered word), the
-  value of any key saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a
+  numbered word), the value of any key saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a
   manifest's key prefix that fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in
   codes. Every `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital or a digit and doesn't read
   as words and part numbers (`_phrase` again), so `mt_shoulder_joint_torque_limit`, `ml_resnet50_backbone_weights`,
@@ -663,8 +662,23 @@ members; a member can hold several.
   `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, `security.TEAM_CODE`), which draws again a
   code with no capital letter or one `security.has_key` doesn't catch (it reads as a phrase), so every code Morph
   makes is caught. Both rules are heuristics checked against tables of keys and names (`tests/test_secret_filter.py`,
-  KEYS and ORDINARY). The tool runner redacts and refuses with the same shapes
-  (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
+  KEYS and ORDINARY), and measured by `tools/key_filter_rates.py` (seeded; 100,000 random keys per shape). Keys missed,
+  as a share of the keys with a digit (the phrase rule's misses), then of all keys of the shape (adding the keys with
+  no digit, which the `sk-` rule never takes): in groups behind a word, lower-case letters and digits
+  `sk-live-xxxxx-xxxxx-xxxxx` 2.01% / 2.75%, `sk-live-xxxx-xxxx-xxxx-xxxx` 1.66% / 2.25%,
+  `sk-live-xxxxxx-xxxxxx-xxxxxx` 0.86% / 1.14%, five groups of 4 0.67% / 0.80%, four of 5 0.67% / 0.82%, four of 6
+  0.21% / 0.26%, three of 8 0.15% / 0.19% (missed when every group with a digit reads as a numbered word, such as
+  `sk-live-jeta3-poni9-zijkw-dxb52`); capitals and digits 2.00% / 2.73% (three groups of 5) and 1.51% / 2.07% (four
+  of 4); hex 0.27% (three of 5), 0.18% (four of 4), 0.03% (five of 4); mixed-case letters and digits 0.017% / 7.17%
+  (three of 5) and 0.015% / 6.09% (four of 4). Not in groups: `sk-` and 20 base64url characters 0.007% / 3.38%, 24 0.001% / 1.69%, 32
+  0.001% / 0.43%. Teams codes drawn without `new_code`'s redraw: 33 in 1,000,000 invite or sign-in codes and 0 in
+  200,000 script tokens read as a phrase. Names refused (`mt_`/`ml_`/`mi_` and parts joined by `_`, 23 characters or
+  more): plain words 0 of 2,726; a series of 3 and two words 61 of 4,000; a series of 4 and a word 571 of 4,000; two
+  numbered words and two words 84 of 3,958; a versioned word (`gripperV2`) and two words 0 of 1,908; camelCase and a
+  number (`jointLimit2`) and two words 0 of 2,963; three numbered abbreviations (`pwm1`) and a word 2 of 2,634. Every
+  name refused in these sets has no plain word of 4 letters or more (a phrase needs one); part runs such as
+  `sk-608zz-608rs-626zz-bearings` (more short codes than words and names) are refused too. The tool runner redacts
+  and refuses with the same shapes (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
   label), a project's `need`, a world's labels, an import's name and answers (`POST /api/import/<id>/commit`), and

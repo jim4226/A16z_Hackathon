@@ -29,9 +29,10 @@ WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10
 #   link (ml_) codes 22 characters long and script tokens (mt_) 43, each with a capital letter (TEAM_CODE). Every
 #   mi_/ml_/mt_ run of 20 or more characters (a code, part of one, a code with more text stuck to it) counts when it
 #   has a capital or a digit and doesn't read as a phrase, and teams.auth.new_code draws again the rare code without
-#   a capital (one draw in about 95,000) or that reads as one (about one in 28,000 invite and sign-in codes), so every
-#   code Morph makes is caught: mt_shoulder_joint_torque_limit, ml_resnet50_backbone_weights,
-#   mt_shoulderJointTorqueLimit and ml_policyV1_final_weights (as long as an invite code) are names, not codes;
+#   a capital (about one in 114,000 invite and sign-in codes; 34 in 4,000,000 draws) or that reads as one (33 in
+#   1,000,000 of them, 0 in 200,000 script tokens: tools/key_filter_rates.py), so every code Morph makes is caught:
+#   mt_shoulder_joint_torque_limit, ml_resnet50_backbone_weights, mt_shoulderJointTorqueLimit and
+#   ml_policyV1_final_weights (as long as an invite code) are names, not codes;
 # - the value of a key saved in the Keys dialog (SAVED_KEYS), whatever its shape.
 TEAM_CODE = re.compile(r"(?:m[il]_(?=[A-Za-z0-9_-]{0,21}[A-Z])[A-Za-z0-9_-]{22}"
                        r"|mt_(?=[A-Za-z0-9_-]{0,42}[A-Z])[A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])")
@@ -109,10 +110,16 @@ def _phrase(body: str) -> bool:
     phrase: three parts in a row of one length (3 or more), one of them mixing letters and digits other than a
     numbered word (_NUMBERED: arm2, joint3), a versioned name or a part of a series. So left_knee_arm2,
     joint1_joint2_joint3 and baseV7_camera_torque pass.
-    The price, simulated on random keys: up to one in 40 keys written in groups of lower-case (or capital) letters and
-    digits reads as a phrase when every group with a digit looks like a numbered word (sk-live-jeta3-poni9-zijkw-dxb52),
-    and under 2 in 1,000 in groups of hex. Keys not in groups and cut Teams codes miss no more than with no numbered
-    words or series."""
+    The price, measured by tools/key_filter_rates.py (100,000 random keys per shape; the share of those with a digit
+    that read as a phrase, then in brackets the share of all keys missed, counting the ones with no digit, which the sk-
+    rule never takes for keys): in groups behind a word, lower-case letters and digits sk-live-xxxxx-xxxxx-xxxxx 2.01%
+    (2.75%), sk-live-xxxx-xxxx-xxxx-xxxx 1.66% (2.25%), sk-live-xxxxxx-xxxxxx-xxxxxx 0.86% (1.14%), five groups of 4
+    0.67% (0.80%), four of 5 0.67% (0.82%), four of 6 0.21% (0.26%), three of 8 0.15% (0.19%), when every group with a
+    digit reads as a numbered word (sk-live-jeta3-poni9-zijkw-dxb52); in the first two shapes, capitals and digits
+    2.00% (2.73%) and 1.51% (2.07%), hex 0.27% and 0.18% (0.03% in five groups of 4), mixed-case letters and digits
+    0.017% and 0.015% (7.17% and 6.09%: nearly all of them keys with no digit). Not in groups, sk- and 20 base64url
+    characters 0.007% (3.38%), 24 0.001% (1.69%), 32 0.001% (0.43%). The names it refuses, from the same tool, are in
+    RELEASE_CONTRACTS.md section 9 (Keys)."""
     parts = [p for p in re.split(r"[-_]+", body) if p]
     in_series = set()
     for i in range(len(parts) - 2):

@@ -48,9 +48,10 @@ class AuthError(Exception):
 
 def new_code(prefix: str, nbytes: int) -> str:
     """A Teams code: `prefix` and `nbytes` random bytes in base64url (secrets.token_urlsafe), drawn again in the rare
-    case it has no capital letter (one draw in about 95,000 for 16 bytes) or reads as a phrase to the key filter (about
-    one in 28,000 for 16 bytes, none seen in 500,000 for 32), so the filter catches every code Morph makes
-    (security.has_key) while names such as mt_shoulder_joint_torque_limit and ml_policyV1_final_weights pass."""
+    case it has no capital letter (about one in 114,000 for 16 bytes; 34 in 4,000,000 draws) or reads as a phrase to
+    the key filter (33 in 1,000,000 for 16 bytes, none in 200,000 for 32: tools/key_filter_rates.py), so the filter
+    catches every code Morph makes (security.has_key) while names such as mt_shoulder_joint_torque_limit and
+    ml_policyV1_final_weights pass."""
     while True:
         code = prefix + secrets.token_urlsafe(nbytes)
         if TEAM_CODE.fullmatch(code) and has_key(code):

@@ -263,7 +263,17 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   (`ml_yoloV8_grasp_detector`, `ml_gripperV2_checkpoint_final`, `mt_servoID3_offset_degrees`,
   `mt_so101Arm_follower_calib`, `ml_GraspNet1B_weights_file`, `mt_Servo1_torque_limit_value`; these were refused
   whole) pass too, and so does a name as long as a Teams invite code (`ml_policyV1_final_weights`): Morph draws a
-  code again when it would read as words, so every code it makes is still refused. A key written in groups (`sk-live-4f8a-91bc-77de-12ab`) is refused.
+  code again when it would read as words, so every code it makes is still refused. A key written in groups
+  (`sk-live-4f8a-91bc-77de-12ab`) is refused. The filter goes by how random text looks, so it misses some keys and
+  refuses some names (`tools/key_filter_rates.py`, 100,000 random keys per shape): keys written in groups of
+  lower-case letters and digits behind a word are missed when every group with a digit reads as a numbered word, 2.01%
+  of `sk-live-xxxxx-xxxxx-xxxxx` keys that have a digit (2.75% of all of them, counting those with no digit, which an
+  `sk-` key needs), 1.66% (2.25%) of `sk-live-xxxx-xxxx-xxxx-xxxx` and 0.86% (1.14%) of
+  `sk-live-xxxxxx-xxxxxx-xxxxxx`; the first two shapes in capitals and digits 2.00% (2.73%) and 1.51% (2.07%), in hex
+  0.27% and 0.18%; random base64url keys of 20 to 32 characters not in groups 0.007% or less of those with a digit.
+  Names with no plain word of four letters or more can be refused: 571 of 4,000 generated names made of a series of
+  four and one word (such as `mi_cam1_cam2_cam3_cam4_arm`), 84 of 3,958 with two numbered words and two words, 61 of
+  4,000 with a series of three and two words, none made of plain words.
 - Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
   access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
   teammates behind one router don't run into it in normal use. Many addresses together can still fill the slots
