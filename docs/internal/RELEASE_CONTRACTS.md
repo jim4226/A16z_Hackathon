@@ -1579,3 +1579,11 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   can't hold even its own weight: its shoulder lift servo stalls. It carries payloads only closer in.") and `morph
   robot`'s summary prints `stretch_payload_g=none` and the same sentence; both also read a revision saved with the
   negative number. The SO-101 on Dynamixel servos at a 7.4 V rail is such an arm (-13 g, shoulder_lift).
+- **A battery request says what is built (E-N10).** Morph plans mains power only (no battery in the supply catalog).
+  `intent.BATTERY` (battery, LiPo, Li-ion, 18650, cordless, "2S pack") adds `intent.battery_note(design, volts)` to the
+  chat's reply, from the rules or after Claude's: the mains supply the build picks for that servo rail ("a 12 V 10 A
+  mains supply and the servo buck set to 7.4 V", or "... straight to its servos") and "no battery, charger or
+  low-voltage cutoff"; for a lithium pack's voltage (3.7 V a cell, `intent.CELLS` reads "2S") it names every servo whose
+  maximum is below the pack's full charge (4.2 V a cell: the SO-101's 7.4 V STS3215s and a charged 2S pack's 8.4 V).
+  The voltage is still the servo rail (`electronics.servo_v`) when every servo takes it; the chat tool's description
+  tells Claude the same.

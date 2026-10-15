@@ -459,3 +459,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - An arm that can't hold its own weight stretched out no longer shows a negative payload there ("Payload stretched out
   at 465 mm -13 g" for the SO-101 on Dynamixel servos at 7.4 V). The inspector and `morph robot` say "none" and that
   the shoulder servo can't hold the arm stretched out, so it carries payloads only closer in.
+- "Run it from a 7.4 V battery" no longer builds a mains supply in silence. Morph plans mains power only; the chat now
+  says what the robot gets (a 12 V mains supply and the servo buck set to 7.4 V, no battery, charger or low-voltage
+  cutoff), warns when a charged lithium pack would exceed the servos' maximum (2S reads 8.4 V; the SO-101's servos take
+  7.4 V), and understands "run it from a battery" and "a 2S LiPo".

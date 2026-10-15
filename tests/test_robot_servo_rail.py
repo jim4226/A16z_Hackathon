@@ -1,6 +1,8 @@
 """The servo rail: one voltage per arm, decided with the sizing, and every torque margin, the simulation's joint
 efforts and the electronics worked out at it; a rail the user asks for is used when every servo takes it."""
 
+import json
+
 import pytest
 
 from morph.robot import arm, catalog, electronics2, imported
@@ -152,3 +154,51 @@ def test_the_present_caption_says_what_the_dynamixel_swap_does():
         text = fh.read()
     step = text.split("title: 'Edit someone else’s robot'", 1)[1].split("},", 1)[0]
     assert "Six XL430s" in step and "one 12 V supply" in step and "not feasible" in step and "orange" in step
+
+
+@pytest.mark.parametrize("project, msg, servo_v, built, charged", [
+    # the 12 V STS3215s take a charged 2S pack (8.4 V); the SO-101's 7.4 V ones don't
+    ("egg-picker", "run it from a 7.4 V battery", 7.4, "a 12 V 10 A mains supply and the servo buck set to 7.4 V", None),
+    ("egg-picker", "power it from a 2S lipo", 7.4, "a 12 V 10 A mains supply and the servo buck set to 7.4 V", None),
+    ("so101", "run it from a 7.4 V battery", 7.4, "a 12 V 10 A mains supply and the servo buck set to 7.4 V",
+     "a charged 2S lithium pack reads 8.4 V, above the STS3215-7V4's 7.4 V maximum, so don't wire one straight to the "
+     "servos"),
+    ("so101", "run it from a battery", None, "a 6 V 10 A mains supply straight to its servos", None),
+])
+def test_a_battery_request_says_what_the_robot_is_built_with(project, msg, servo_v, built, charged):
+    # "run it from a 7.4 V battery" set a 7.4 V servo rail and built a 12 V mains supply and a servo buck in silence
+    d = template(project, project) if project == "so101" else template(project)
+    r = intent.interpret(msg, d)
+    assert r["changes"] == ({"electronics.servo_v": servo_v} if servo_v else {})
+    note = f"Morph builds robots for mains power, not batteries, so this one gets {built}, with no battery, charger or " \
+           "low-voltage cutoff"
+    assert note in r["reply"]
+    assert (charged in r["reply"]) if charged else "lithium pack" not in r["reply"]
+    # and the build does what the reply says
+    nd = d.with_changes(r["changes"])
+    sup = electronics2.plan(nd, imported.size(nd) if nd.arm.source else arm.size(nd))["supply"]
+    assert f"a {sup['v']:g} V {sup['a']:g} A mains supply" in built and sup["servo_buck"] == ("buck" in built)
+
+
+def test_a_battery_request_answered_by_claude_still_says_what_is_built(monkeypatch):
+    import sys
+    import types
+
+    from morph import settings
+
+    class Client:
+        def __init__(self, **kw):
+            self.messages = types.SimpleNamespace(create=self.create)
+
+        def create(self, **kw):
+            assert "Morph plans mains power only" in json.dumps(kw["tools"])
+            use = types.SimpleNamespace(type="tool_use", name=intent.TOOL["name"],
+                                        input={"changes": {"electronics.servo_v": 7.4}, "reply": "Running it from 7.4 V."})
+            return types.SimpleNamespace(stop_reason="tool_use", content=[use])
+
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=Client))
+    monkeypatch.setattr(settings, "network_allowed", lambda: True)
+    r = intent.interpret("run it from a 7.4 V battery", template("egg-picker"))
+    assert r["source"] == "claude" and r["changes"] == {"electronics.servo_v": 7.4}
+    assert r["reply"].startswith("Running it from 7.4 V. (Morph builds robots for mains power, not batteries, so this one "
+                                 "gets a 12 V 10 A mains supply and the servo buck set to 7.4 V")

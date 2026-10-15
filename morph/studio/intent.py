@@ -290,8 +290,9 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
         ch["electronics.target_force_n"] = round(_target(d) * 1.4, 2)
         said.append("grip 40% firmer")
     m = re.search(r"(\d+(?:\.\d+)?)\s*v\b", t)
-    if m:
-        v = float(m.group(1))
+    cells = CELLS.search(t)     # "a 2S LiPo": 3.7 V a cell
+    v = float(m.group(1)) if m else round(3.7 * int(cells.group(1)), 1) if cells else None
+    if v is not None:
         why = rail_refusal(d.with_changes(ch), v)
         if why:
             said.append(NOTE + why)
@@ -301,6 +302,8 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
     elif re.search(r"\b(?:rated|default|auto(?:matic)?)\s+(?:servo\s+)?(?:supply|voltage|rail)\b", t):
         ch["electronics.servo_v"] = 0.0
         said.append("servo supply → the servos' rated voltage")
+    if BATTERY.search(t):       # never a mains supply built in silence for a battery request
+        said.append(NOTE + battery_note(d.with_changes(ch), v))
     m = re.search(r"(\d+(?:\.\d+)?)\s*(g|grams|kg)\b", t)
     if m and "object.mass_g" not in ch:
         ch["object.mass_g"] = float(m.group(1)) * (1000 if m.group(2) == "kg" else 1)
@@ -310,6 +313,38 @@ def rules(msg: str, d: Design) -> tuple[dict, list]:
         ch["finger.mount_hole_spacing_mm"] = float(m.group(1))
         said.append(f"mount hole spacing → {m.group(1)} mm")
     return ch, said
+
+
+# A battery request. Morph plans mains power only (its supply catalog has no battery), so the reply says what the robot is
+# built with instead, and whether a charged lithium pack of that voltage would be too much for its servos.
+BATTERY = re.compile(r"\bbatter(?:y|ies)\b|\bli-?pos?\b|\bli-?ion\b|\b18650s?\b|\bcordless\b|\b[1-6]\s*s\s+(?:pack|li-?po|li-?ion)")
+CELLS = re.compile(r"\b([1-6])\s*s\s+(?:pack|li-?po|li-?ion|batter)")
+
+
+def battery_note(d: Design, v: float | None = None) -> str:
+    """What a request to run the robot from a battery builds: the mains supply (and servo buck) its servo rail gets, and,
+    for a lithium pack's voltage (3.7 V a cell), the servos whose maximum its full charge (4.2 V a cell) exceeds."""
+    from ..robot import arm, electronics2, imported
+    from ..robot.catalog import ACTUATORS
+
+    plan = "Morph builds robots for mains power, not batteries"
+    try:
+        sz = imported.size(d) if d.arm.source else arm.size(d)
+        sup = electronics2.plan(d, sz)["supply"]
+    except Exception:  # noqa: BLE001  (the build will say what is wrong with the design)
+        return f"{plan}: it plans no battery, charger or low-voltage cutoff"
+    built = f"a {sup['v']:g} V {sup['a']:g} A mains supply" + (f" and the servo buck set to {sup['servo_v']:g} V"
+                                                               if sup["servo_buck"] else " straight to its servos")
+    out = f"{plan}, so this one gets {built}, with no battery, charger or low-voltage cutoff"
+    n = round(v / 3.7) if v else 0
+    if n and abs(v - 3.7 * n) <= 0.15:
+        keys = list(dict.fromkeys(a["key"] for a in electronics2.rail_acts(sz) if a["key"] in ACTUATORS))
+        over = [k for k in keys if ACTUATORS[k]["voltage"][1] < 4.2 * n - 1e-9]
+        if over:
+            out += (f"; a charged {n}S lithium pack reads {4.2 * n:.1f} V, above the "
+                    + ", ".join(f"{k.upper().replace('_', '-')}'s {ACTUATORS[k]['voltage'][1]:g} V" for k in over)
+                    + " maximum, so don't wire one straight to the servos")
+    return out
 
 
 def rail_refusal(d: Design, v: float) -> str | None:
@@ -357,7 +392,8 @@ TOOL = {
                    "arm.actuator_family hobby_pwm|smart_bus|dynamixel; arm.actuator_overrides 'j2=xm430_w350'; "
                    "build.config prototype|pilot|production; build.quantity; task.pick_x_mm/pick_y_mm/place_x_mm/place_y_mm; "
                    "electronics.servo_v the servo supply in volts (0 = the servos' rated voltage; electronics.supply_v "
-                   "does nothing on a robot arm).",
+                   "does nothing on a robot arm). Morph plans mains power only: for a battery, set electronics.servo_v to "
+                   "its voltage; Morph adds to your reply what the robot is built with.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -416,7 +452,15 @@ def _interpret(msg: str, d: Design) -> dict:
         if resp.stop_reason != "refusal":
             for block in resp.content:
                 if block.type == "tool_use" and block.name == TOOL["name"]:
-                    return _from_tool(block.input)
+                    out = _from_tool(block.input)
+                    if BATTERY.search(normalize_units(msg.lower())):   # what is built, whatever the reply says
+                        try:
+                            nd = d.with_changes(out["changes"])
+                        except (KeyError, TypeError, ValueError):
+                            nd = d
+                        note = battery_note(nd, nd.electronics.servo_v or None)
+                        out["reply"] = f"{out['reply']} ({note}.)".strip()
+                    return out
     except Exception:
         pass
     ch, said = rules(msg, d)
