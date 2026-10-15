@@ -50,12 +50,11 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
 | `<p>/.team/comments.jsonl`, `reviews.jsonl`, `proposals.jsonl`, `branches.json`, `releases.json` | F4 | Teams |
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
-| `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h). An upload counts in `session.json` `files` only once it is all there; while it streams it is a reservation in `pending` (limits count both), and at startup `Session.tidy()` removes `*.part-*` files and reservations a stop left, keeping
-those of an upload another running Studio is streaming (each reservation names its Studio, `rooms.owner_live`) (W3) |
+| `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h). An upload counts in `session.json` `files` only once it is all there; while it streams it is a reservation in `pending` (limits count both), and at startup `Session.tidy()` removes `*.part-*` files and reservations a stop left, keeping those of an upload another running Studio is streaming (each reservation names its Studio, `rooms.owner_live`) (W3) |
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
-| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; files nobody holds are removed after 10 minutes |
+| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; a Studio stopped with Ctrl+C removes its own (`cli._leave`), and files nobody holds (a crash, a kill) are removed by a later start after 10 minutes |
 | `.team/` | F4 | `team.json` (+ `team.json.bak`: the copy before its last change, 0600, W3), `secret` (0600), `audit.jsonl` |
 | `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
 | `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
@@ -81,9 +80,12 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line
   as before; `morph team audit --verify` prints the note.
 - `morph studio` (the command line: `main()` without argv) ends its process with `cli._leave` once `serve()` has
-  returned (Ctrl+C): study workers ended, stdout and stderr flushed, then `os._exit`. Interpreter shutdown added nothing
-  but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one stop in twelve. So every
-  record must be on disk when it is written (the rules here), never at exit.
+  returned (Ctrl+C): study workers ended, the process's `.studios/<id>.lock` files released and removed
+  (`rooms.release_claims`, what the Claims' finalizers did), stdout and stderr flushed, then `os._exit`. Interpreter
+  shutdown added nothing but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one
+  stop in twelve. So every record must be on disk when it is written (the rules here), never at exit. A build still
+  running is cut off at once (the interpreter used to wait for its helper threads): `serve()` journals a first build
+  as `interrupted` first (section 2), and the next start picks it up like any build a stop cut off.
 - Stopping never waits for the network: lookups run in parallel on `morph/services/background.DaemonPool` (Darwin
   `source`/`suggest`, `keys.check`, BoardRepo), whose daemon threads the interpreter doesn't join at exit, where
   `concurrent.futures` ran every queued lookup to its timeout first. New code that fans network calls out uses it.

@@ -251,7 +251,9 @@ def test_a_stopped_studio_process_leaves_without_interpreter_shutdown(tmp_path, 
 def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
     code = ("import multiprocessing as mp, sys, time\n"
             "from morph import cli\n"
+            "from morph.studio import rooms\n"
             "if __name__ == '__main__':\n"
+            f"    claim = rooms.claim({str(tmp_path / 'projects')!r})\n"
             "    child = mp.get_context('spawn').Process(target=time.sleep, args=(600,), daemon=True)\n"
             "    child.start()\n"
             "    print(child.pid, end=' ')\n"
@@ -263,6 +265,7 @@ def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
                          capture_output=True, text=True, timeout=60)
     pid, said = out.stdout.split()
     assert out.returncode == 0 and said == "saved"
+    assert os.listdir(tmp_path / "projects" / ".studios") == []   # its lock file went with it, not 10 min later
     from morph.services.durable import process_alive
     for _ in range(100):                                  # the worker was ended, not left behind
         if not process_alive(int(pid)):

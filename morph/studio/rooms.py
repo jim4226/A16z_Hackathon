@@ -78,6 +78,14 @@ def claim(home: str) -> Claim:
         return held
 
 
+def release_claims():
+    """This process ends now (cli._leave, which skips the interpreter's shutdown and so the Claims' finalizers): every
+    lock it holds on a projects folder is released and its file removed, as a Studio that stops cleanly leaves it."""
+    with _CLAIMS_LOCK:
+        for held in list(_CLAIMS.values()):
+            held.lock.release()
+
+
 def _sweep(home: str):
     folder, now = os.path.join(home, STUDIOS), time.time()
     try:

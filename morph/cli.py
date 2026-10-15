@@ -296,12 +296,19 @@ def _leave(rc: int):
     is waiting for threads nothing needs any more and running native libraries' finalizers. After a build in this
     process (the launcher's first robot), MuJoCo's and the OSMesa renderer's crashed now and then while shutdown
     collected them ("Segmentation fault", exit code -11, after Ctrl+C). Study workers still running are ended, as the
-    multiprocessing exit handler would, and the terminal output is flushed first."""
+    multiprocessing exit handler would, the Studio's lock files are removed, as the finalizers would, and the terminal
+    output is flushed first. A build still running is cut off at once (serve() has journaled a first build as
+    "interrupted"); the next start picks it up like any build a stop cut off."""
     try:
         import multiprocessing
         for child in multiprocessing.active_children():
             child.terminate()
     except Exception:  # noqa: BLE001  (leaving must not fail)
+        pass
+    try:  # its lock files in projects/.studios go now, not ten minutes into a later start (rooms._sweep)
+        if "morph.studio.rooms" in sys.modules:
+            sys.modules["morph.studio.rooms"].release_claims()
+    except Exception:  # noqa: BLE001
         pass
     for stream in (sys.stdout, sys.stderr):
         try:
