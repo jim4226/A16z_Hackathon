@@ -1299,7 +1299,18 @@ field failure rate (section 0, honesty).
   it nearly reaches it (W3: then trimmed on the sides facing the swept path until no robot point at any pose comes
   closer to it than the region's `min_clearance_mm`, `box_clearance_mm` and `trimmed` saying so; `box: None` with
   `no_box` when that would leave it thinner than 5 mm; near misses within `SCAN_COVER_MM` = 10 mm of one of the world's
-  grey boxes are that box's, and a region of nothing else is left out, `stats.covered` counting them). Measured: within
+  grey boxes are that box's, and a region of nothing else is left out, `stats.covered` counting them). R3: a trimmed
+  region also has `covers`, its box before trimming (it holds the region's near-miss points); an obstacle saved with
+  `covers` owns the near misses within `SCAN_COVER_MM` of that place too, while the box still lies inside it (+1 mm;
+  moved elsewhere it doesn't), so a box trimmed away from its near miss (a vase's top under the arm) isn't offered
+  again. `_fit_boxes` prunes each geom's fine samples by its coarse ones (as pass 2 does), keys points by 0.25 mm
+  cell, and drops points once clear of the shrinking box; the measuring passes stop `SCAN_RESERVE_SHARE` (25 %) of
+  `time_limit_s` early, at most `SCAN_RESERVE_MAX_S` = 5 s, so the regions and the fit end within the limit; a region
+  not fitted by then gets `box: None`, `no_box` saying Morph ran out of time, and `stats.fit_timeout`
+  (`stats.regions_s` and `stats.fit_s` time the two steps). On
+  the review's desk scan (a 44 mm vase, 667 poses) the fit went from 4.3-7.2 s to 0.8-1.8 s and the whole check from
+  16.8-23.8 s (load 2-10) to 16.7-18.8 s (load 2-17), never past 20 s; at load 15-17 on 4 cores the measuring passes
+  stop at 15 s and the check says only part of the path was checked (before, it took 21-28 s there). Measured: within
   0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm
   over whole runs); a generated room of 998,664 triangles in 6.5-8.3 s at load 3-6 and 10.6 s at load 7-11
   (`MORPH_SLOW=1`).
@@ -1309,13 +1320,14 @@ field failure rate (section 0, honesty).
   `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
   (`_ADVICE["scan"]`). `POST /api/world/inspect` measures it when the world has `room.glb` and the revision was
   simulated in this room as it is now (else a skip saying so), kept in memory per (project, revision, world sha, room
-  file size and mtime), the last eight; it sends `world {stage: "scan", status: "start" | "done", text}` and an `agent`
+  file size and mtime), the last eight (R3: not when a box's fit ran out of time, so checking again tries again); it sends `world {stage: "scan", status: "start" | "done", text}` and an `agent`
   event (`feasibility`, `code`).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
   the box size, its distance from the path and whether it was trimmed, or why there is no box) and **Add box here**
   (only with a box): the box joins the world's grey boxes as `{id: region id (made unique), label,
-  center, half, yaw_deg, source: "auto"}`; *Save and simulate* then plans around it, and the next check measures the new
-  path. Browser test: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan`.
+  center, half, yaw_deg, source: "auto", covers?}` (`covers` when the region has one; `worlds.validate` keeps it as a
+  box, the simulation never sees it); a box equal to one the world holds (0.05 mm, 0.01 degree) isn't added again, the
+  row reading Added. *Save and simulate* then plans around it, and the next check measures the new path. Browser test: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan`.
 - **Under attack (B2-S4).** An adversarial review of the track; what other code relies on since:
   - `robust.StudyConflict` (a `StudyError`; the routes answer 409) for what can't run as asked: a revision with nothing
     to study (`robust.studyable(p, rev)`: the simulation stage failed or never ran, a preview-only build, no pick and

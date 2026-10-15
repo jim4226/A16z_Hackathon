@@ -218,7 +218,62 @@ def test_add_box_here_never_comes_closer_to_the_path_than_the_scan_and_is_not_of
     res2 = measure(room, {**ROOM, "obstacles": [obstacle]}, doc, rob.xml)
     assert res2["min_clearance_mm"] == res["min_clearance_mm"] and not res2["regions"] and res2["stats"]["covered"] == 1
     c = worlds.scan_check(res2)
-    assert c["status"] == "warn" and "Add box here" not in c["text"] and "next to a grey box already" in c["text"], c
+    assert c["status"] == "warn" and "Add box here" not in c["text"], c
+    assert "1 place closer than 10 mm has a grey box already, so it is not offered again." in c["text"], c
+
+
+TALL_VASE = ((POST["center"][0] + 40.0, POST["center"][1] - 20.0), 22.0, 170.0)   # its rim just under the carry path
+
+
+def corners(b):
+    return np.subtract(b["center"], b["half"]), np.add(b["center"], b["half"])
+
+
+def test_a_box_trimmed_off_a_vases_top_still_covers_the_near_miss_it_was_made_for(tmp_path):
+    """The review's case: the arm passes just over the rim of a tall vase. The box offered is trimmed off the top, so
+    it ends up further from the near miss at the rim than SCAN_COVER_MM. It keeps the place it was made for: saved
+    with it, that place is not offered again. The box alone (or the box moved elsewhere) does not cover it."""
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    rob, doc, met = simulated()
+    res = measure(room, ROOM, doc, rob.xml)
+    (g,) = res["regions"]
+    lo, hi = corners(g["box"])
+    assert g["trimmed"] and hi[2] < g["point"][2] - worlds.SCAN_COVER_MM, g          # trimmed away from the near miss
+    assert abs(lo[2]) < 0.2 and g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1, g
+    clo, chi = corners(g["covers"])
+    assert np.all(clo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= chi + 0.2), g      # over the near miss
+    assert chi[2] >= TALL_VASE[2] - 0.2 and np.all(clo <= lo + 0.05) and np.all(hi <= chi + 0.05), g
+    obstacle = {"id": g["id"], "label": g["label"], **g["box"], "covers": g["covers"], "source": "auto"}
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                         "obstacles": [obstacle]})
+    assert w["obstacles"][0]["covers"] == g["covers"] and worlds.sim_world(w)["obstacles"][0].keys() == {
+        "id", "label", "center", "half", "yaw_deg"}                              # the simulation sees the box only
+    res2 = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc, rob.xml)
+    assert res2["min_clearance_mm"] == res["min_clearance_mm"] and not res2["regions"] and res2["stats"]["covered"] == 1
+    c = worlds.scan_check(res2)
+    assert c["status"] == "warn" and "Add box here" not in c["text"], c
+    assert "1 place closer than 10 mm has a grey box already, so it is not offered again." in c["text"], c
+    # the box alone is too far from the near miss to own it, and a box moved elsewhere doesn't cover the old place
+    bare = {k: v for k, v in obstacle.items() if k != "covers"}
+    moved = {**obstacle, "center": [obstacle["center"][0] + 200.0, *obstacle["center"][1:]]}
+    for ob in (bare, moved):
+        again = measure(room, {**ROOM, "obstacles": [ob]}, doc, rob.xml)
+        assert [r["box"] for r in again["regions"]] == [g["box"]] and not again["stats"]["covered"], again
+
+
+def test_a_box_not_fitted_in_time_is_not_offered(tmp_path, nominal, monkeypatch):
+    """The boxes are fitted inside the check's time limit (the measuring passes leave them a share of it): a box that
+    isn't fitted in time could come closer to the path than the scan, so none is offered, and the row says why."""
+    rob, doc = nominal
+    room = boxes_glb(tmp_path / "room.glb", [SLAB, POST])
+    fit = worlds._fit_boxes
+    monkeypatch.setattr(worlds, "_fit_boxes", lambda *a: fit(*a[:11], time.monotonic() - 1.0, a[12]))
+    res = measure(room, ROOM, doc, rob.xml)
+    (g,) = res["regions"]
+    assert g["box"] is None and "ran out of time" in g["no_box"] and res["stats"]["fit_timeout"], g
+    assert not {k for k in g if k.startswith("_")}
+    assert "too close to the path for a box" in worlds.scan_check(res)["text"]
 
 
 def test_the_scan_check_warns_and_never_fails():
@@ -377,7 +432,8 @@ def test_acceptance_a_million_triangle_room_in_under_20_s(tmp_path):
     st = res["stats"]
     print(f"\n{st['faces']} triangles, {st['kept_faces']} near the arm, {st['samples']} scan points (rho {st['rho_mm']} mm), "
           f"{st['poses']} poses: {took:.2f} s (load {st['load_s']}, crop {st['crop_s']}, tree {st['tree_s']}, pass 1 "
-          f"{st['pass1_s']}, pass 2 {st['pass2_s']}); closest {res['min_clearance_mm']} mm at {res['at']}, "
+          f"{st['pass1_s']}, pass 2 {st['pass2_s']}, regions {st.get('regions_s')}, boxes {st.get('fit_s')}); closest "
+          f"{res['min_clearance_mm']} mm at {res['at']}, "
           f"{len(res['regions'])} near-miss regions")
     assert st["faces"] == faces and not st["truncated"] and res.get("skipped") is None
     assert took <= 20.0 and res["min_clearance_mm"] is not None and res["regions"]

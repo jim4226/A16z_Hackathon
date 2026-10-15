@@ -540,7 +540,10 @@ export class WorldView {
     w.scale = +(w.scale * k).toPrecision(6);
     w.mount.position = sc(w.mount.position);
     if (w.surface) { w.surface.center = sc(w.surface.center); w.surface.half = sc(w.surface.half); }
-    for (const o of w.obstacles || []) { o.center = sc(o.center); o.half = sc(o.half); }
+    for (const o of w.obstacles || []) {
+      o.center = sc(o.center); o.half = sc(o.half);
+      if (o.covers) { o.covers.center = sc(o.covers.center); o.covers.half = sc(o.covers.half); }
+    }
     for (const z of w.zones || []) { if (z.box) { z.box.center = sc(z.box.center); z.box.half = sc(z.box.half); } else { z.polygon = z.polygon.map(sc); z.z = z.z.map((x) => x * k); } }
     for (const c of w.candidates || []) c.position = sc(c.position);
     w.floor_z = r1((w.floor_z || 0) * k);
@@ -1690,16 +1693,28 @@ export class WorldPanel {
   }
 
   /** "Add box here": a place where the simulated path comes close to the room scan becomes a grey box, which the
-   * simulation keeps the arm clear of once the world is saved and simulated again. */
+   * simulation keeps the arm clear of once the world is saved and simulated again. A box trimmed to keep clear of the
+   * path keeps the place it was made for ("covers"), so the next check doesn't offer that place again; a box the world
+   * already holds is never added twice. */
   addScanBox(i) {
     const g = (this.state.result?.checks || []).find((c) => c.id === 'scan')?.regions?.[i], wv = this.wv;
     if (!g?.box || g.added || this.state.busy || !wv.world) return;
     const obs = wv.world.obstacles || (wv.world.obstacles = []);
+    const same = (a, b) => a.length === b.length && a.every((v, j) => Math.abs(v - b[j]) < 0.05);
+    const twin = obs.find((o) => same(o.center || [], g.box.center) && same(o.half || [], g.box.half)
+      && Math.abs((o.yaw_deg || 0) - (g.box.yaw_deg || 0)) < 0.01);
+    if (twin) {
+      g.added = true;
+      this.render();
+      return this.toast(`${twin.label} is this box already: Save and simulate to test the path against it`);
+    }
     if (obs.length >= 200) return this.toast('This world already has 200 grey boxes, the most it can hold');
     const ids = new Set(obs.map((o) => o.id));
     let id = g.id, k = 2;
     while (ids.has(id)) id = `${g.id}-${k++}`;
-    obs.push({ id, label: g.label, center: [...g.box.center], half: [...g.box.half], yaw_deg: g.box.yaw_deg, source: 'auto' });
+    const box = { id, label: g.label, center: [...g.box.center], half: [...g.box.half], yaw_deg: g.box.yaw_deg, source: 'auto' };
+    if (g.covers) box.covers = { center: [...g.covers.center], half: [...g.covers.half], yaw_deg: g.covers.yaw_deg };
+    obs.push(box);
     wv._buildBoxes(); wv.changed('boxes');
     g.added = true;
     this.toast(`${g.label} is a grey box now: Save and simulate to test the path against it`);

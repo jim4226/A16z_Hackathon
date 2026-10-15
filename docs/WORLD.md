@@ -61,10 +61,12 @@ the scan (standing on the surface when the scan under it does), added to the roo
 out at its corners, so the box is measured against the same path first and trimmed on the sides that face it until it
 is no closer to the path than the scan there (the row says how close it is, and "trimmed" when it was): adding it never
 makes the clearance worse. When a box that keeps clear would be thinner than 5 mm, none is offered: move the robot or
-the thing. *Save and simulate* then plans around it, and the next check measures the new path; a near miss within 10 mm
-of a grey box is that box's, so the same place is not offered again (the check says it is next to a grey box). The
-check takes up to 20 seconds on a large scan (7.5 seconds for a generated room of a million triangles on an idle 4-core
-computer, 11.5 on a busy one); its answer is kept until the room, the scan or the revision's simulation changes.
+the thing. *Save and simulate* then plans around it, and the next check measures the new path. A near miss within 10 mm
+of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box away from it
+(a vase's rim just under the arm): the same place is not offered again, and the check says it has a grey box already.
+The same box is never added twice. The check, the boxes' fit included, takes up to 20 seconds on a large scan (7.5
+seconds for a generated room of a million triangles on an idle 4-core computer, 11.5 on a busy one); its answer is
+kept until the room, the scan or the revision's simulation changes.
 
 - Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
   goes counts as a near miss.
