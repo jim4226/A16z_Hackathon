@@ -266,6 +266,37 @@ def test_a_first_build_the_studio_stopped_during_twice_waits_to_be_asked_for_aga
     assert "Building kb1's first design again." in texts(kb1)
 
 
+@pytest.mark.parametrize("ends", [KeyboardInterrupt(), None, MemoryError(), RuntimeError("accept loop")],
+                         ids=["ctrl-c", "returns", "memory-error", "error"])
+def test_only_a_clean_stop_of_serve_journals_its_first_builds_as_no_try(home, monkeypatch, ends):
+    """serve() calls Studio.stopping (a first build it cuts off is no try) on Ctrl+C and when serve_forever returns;
+    an error escaping serve_forever is no clean stop, so a first build it cut off still counts. Studies stop either
+    way (jobs.shutdown)."""
+    from morph.studio import capability
+    calls = []
+
+    class Server:
+        def __init__(self, address, handler):
+            pass
+
+        def serve_forever(self):
+            if ends is not None:
+                raise ends
+
+    monkeypatch.setattr(server, "_Server", Server)
+    monkeypatch.setattr(capability, "warm", lambda block=True: None)
+    monkeypatch.setattr(server.Studio, "stopping", lambda self: calls.append("stopping"))
+    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0: calls.append("studies stopped"))
+    run = lambda: server.serve(RobotProject(str(home / "egg")), port=0, home=str(home))  # noqa: E731
+    if isinstance(ends, Exception):
+        with pytest.raises(type(ends)):
+            run()
+        assert calls == ["studies stopped"]
+    else:
+        run()
+        assert calls == ["stopping", "studies stopped"]
+
+
 def test_clean_stops_during_a_first_build_are_no_tries(home, tmp_path, builds):
     """Ctrl+C (serve() returning) during a long first build, twice: a person closing the Studio is no sign the build
     stops it, so it is built again at each start and never waits to be asked for. A crash after that still counts."""
@@ -275,7 +306,7 @@ def test_clean_stops_during_a_first_build_are_no_tries(home, tmp_path, builds):
     jobs = [job]
     for n in range(1, 4):
         assert builds.started.wait(5)
-        st.stopping()                                                       # Ctrl+C: serve()'s finally
+        st.stopping()                                                       # Ctrl+C: what serve() calls
         after = tmp_path / f"after-clean-stop-{n}"
         shutil.copytree(where, after)
         builds.gate.set()

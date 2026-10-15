@@ -262,8 +262,9 @@ Morph Studio on this projects folder is still working on it"); otherwise every j
   building it again now."; features learn of it through `rooms.RESUMED` hooks `fn(studio, room, job, meta)` (New robot
   marks its brief built when it ends). Without a journal (an older Morph, `morph robot new` stopped in a terminal), the
   design of the first revision `tidy()` just set aside is used. Its `cut` counts the times a stop cut it off after it
-  had started; a clean stop (Ctrl+C, `serve()` returning) is no try: `Studio.stopping` journals the first build it
-  cuts off as `interrupted` (`JobQueue.stopping`), and only a crash, a kill or a power cut counts. At
+  had started; a clean stop (Ctrl+C, `serve_forever` returning) is no try: `serve()` calls `Studio.stopping`, which
+  journals the first build it cuts off as `interrupted` (`JobQueue.stopping`), and only a crash, a kill, a power cut
+  or an error escaping `serve_forever` counts. At
   `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
   at every start): it is kept in `<p>/.morph/first-build.json` (`projects.park_first_build`), the chat and the terminal
   say "The Studio stopped twice while building <project>'s first design, so Morph won't start it again on its own ...

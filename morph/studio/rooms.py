@@ -364,7 +364,7 @@ class JobQueue:
             self._log("started", job)
 
     def stopping(self):
-        """The Studio stops cleanly (Ctrl+C, serve() returning): a first build running now is cut off by that stop, not
+        """The Studio stops cleanly (Ctrl+C, serve_forever returning): a first build running now is cut off by that stop, not
         by anything in its design, so the journal says so ("interrupted") and the next start doesn't count it as a try
         (open_jobs). Never raises."""
         with self.cond:

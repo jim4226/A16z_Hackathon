@@ -407,9 +407,10 @@ class Studio:
         self._resumed(room, job)
 
     def stopping(self):
-        """The Studio stops cleanly (Ctrl+C, serve() returning): each room's queue journals a first build this stop
-        cuts off as "interrupted", so only stops that came from elsewhere (a crash, a kill, a power cut, the system
-        running out of memory) count towards FIRST_BUILD_TRIES. Never raises."""
+        """The Studio stops cleanly (Ctrl+C, serve_forever returning; serve() calls this, never for an error escaping
+        serve_forever): each room's queue journals a first build this stop cuts off as "interrupted", so only stops
+        that came from elsewhere (a crash, a kill, a power cut, the system running out of memory, an error) count
+        towards FIRST_BUILD_TRIES. Never raises."""
         for room in list(self.rooms.values()):
             try:
                 room.jobs.stopping()
@@ -1970,9 +1971,10 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        pass
+        studio.stopping()  # Ctrl+C: a first build this stop cuts off is no try (Studio._recover counts the others)
+    else:
+        studio.stopping()  # serve_forever returned (shutdown()): a clean stop too; an error escaping it is not
     finally:
-        studio.stopping()  # a first build this stop cuts off is no try (Studio._recover counts the others)
         from . import jobs
         jobs.shutdown(studio)  # robustness studies stop and keep their runs; the same settings carry on next time
 
