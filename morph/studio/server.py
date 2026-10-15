@@ -45,8 +45,8 @@ from ..services import durable
 from ..spec import diff
 from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
-from .rooms import (REQUESTER, RESUMED, STARTED, Hub, QueueFull, Room, UnknownProject,  # noqa: F401  (Hub: older code
-                    claim, journal_live, journals, open_jobs)  # imports it from here)
+from .rooms import (REQUESTER, RESUMED, STARTED, Hub, Job, QueueFull, Room, UnknownProject,  # noqa: F401  (Hub: older
+                    claim, journal_live, journals, open_jobs)  # code imports it from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
                        looks_like_secret, param_changes, project_name, secret_refused)
@@ -809,8 +809,17 @@ class Studio:
     # -- the queue: what /api/chat, /api/params and new projects use
     def queue_chat(self, room: Room, msg: str, *, base_rev: str | None = None, by: str | None = None, route: bool = True):
         """Queue a chat message; it is interpreted when its turn comes, against the newest design. The user's message
-        is shown at once. `route=False`: an edit of this project even if it reads like a new robot. Raises QueueFull."""
+        is shown at once. `route=False`: an edit of this project even if it reads like a new robot. "build it again"
+        (AGAIN) while the project's first build waits or runs is answered at once: queued, it would only run once that
+        build had ended, and then read as an edit. Raises QueueFull."""
         say = lambda job: room.hub.send({"type": "user", "text": msg, "job": job.id, **({"by": by} if by else {})})  # noqa: E731
+        if (self.AGAIN.fullmatch(msg.strip()) and room.latest() is None
+                and any(j.get("kind") == "build" for j in room.jobs.snapshot())):
+            job = Job("chat", None, by=by, label=msg)
+            say(job)
+            self._say(room, job, "noop", f"{room.name}'s first design is already being built.", noop=True)
+            job.end("noop")
+            return job
         return room.jobs.submit("chat", lambda job: self.chat(msg, room=room, job=job, route=route), by=by, label=msg,
                                 base_rev=base_rev or room.latest(), announce=say)
 

@@ -285,6 +285,11 @@ class Job:
         """True once the job has finished (whatever its status)."""
         return self._done.wait(timeout)
 
+    def end(self, status: str):
+        """A request answered at once, never queued (Studio.queue_chat): it is over, with `status`."""
+        self.status, self.finished = status, time.time()
+        self._done.set()
+
     def answer(self, status: str, successor: "Job | None" = None):
         """This conflict was answered: Apply queued `successor` ("resolved"), or it was dropped."""
         self.successor = successor

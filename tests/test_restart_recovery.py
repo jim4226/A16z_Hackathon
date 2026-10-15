@@ -299,6 +299,27 @@ def test_clean_stops_during_a_first_build_are_no_tries(home, tmp_path, builds):
     assert kb1.completed() == ["r001"]
 
 
+def test_build_it_again_while_it_builds_is_answered_at_once(home, builds):
+    """A second "build it again" sent while the first one's build runs is answered now ("already being built"); queued,
+    it ran after the build and was read as an edit ("I couldn't map that to a design parameter")."""
+    cut_off_first_build(home, cut=1)
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    kb1 = st.room("kb1")
+    assert not kb1.jobs.busy()                                              # parked
+    builds.gate = threading.Event()
+    finish(st.queue_chat(kb1, "build it again"))
+    assert builds.started.wait(5)
+    building = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    again = st.queue_chat(kb1, "Build it again!")
+    assert again.wait(0) and again.status == "noop"
+    assert texts(kb1)[-1] == "kb1's first design is already being built."
+    assert [j["id"] for j in kb1.jobs.snapshot()] == [b.id for b in building]   # nothing more queued
+    builds.gate.set()
+    finish(*building)
+    assert kb1.completed() == ["r001"]
+    assert not any("couldn't map" in t for t in texts(kb1))
+
+
 def test_the_parked_first_build_message_never_blames_the_design():
     for terminal in (False, True):
         text = server.Studio._parked_text("kb1", 2, terminal=terminal)

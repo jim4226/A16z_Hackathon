@@ -268,7 +268,9 @@ Morph Studio on this projects folder is still working on it"); otherwise every j
   send "build it again" here ... delete <project> from the project menu" (no more than that: it never says the design
   stopped the Studio), the terminal repeats it at every start, an
   edit is answered with how to go on, and the chat message "build it again" (`Studio.AGAIN`: also "try again",
-  "rebuild", "retry") queues it once more (`Studio._no_revision_yet`); the record goes once a first revision is built;
+  "rebuild", "retry") queues it once more (`Studio._no_revision_yet`); sent while a first build of the project waits
+  or runs, it is answered at once, never queued: "<project>'s first design is already being built."
+  (`Studio.queue_chat`); the record goes once a first revision is built;
 - every other open job gets one assistant line, "The Studio stopped before this was built: “<label>”. Send it again if
   you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own.
   A job whose revision was written before the stop took its `ended` line with it (one of the newest 12 finished
