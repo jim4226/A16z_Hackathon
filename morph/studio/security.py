@@ -23,7 +23,8 @@ WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10
 # - a Claude key starts sk-ant- and a Keewano personal access token kwpat-: the prefix is enough;
 # - any other sk- key (SubQ's) is sk- and a random run: 20 or more token characters with a digit among them, unless
 #   they read as a hyphenated phrase (_phrase), such as the part names sk-6x40-stainless-steel-screws or
-#   sk-thin-and-light; a key in groups (sk-live-4f8a-91bc-77de-12ab) never does;
+#   sk-thin-and-light; a key in groups (sk-live-4f8a-91bc-77de-12ab) almost never does, numbered names
+#   (servo1_servo2_servo3, left_knee_arm2) do;
 # - Morph Teams' codes, which act as a member, are random base64url (secrets.token_urlsafe): invite (mi_) and sign-in
 #   link (ml_) codes 22 characters long and script tokens (mt_) 43, each with a capital letter (teams.auth.new_code
 #   redraws the one draw in about 95,000 without), so TEAM_CODE knows every one. Any other mi_/ml_/mt_ run of 20 or
@@ -42,6 +43,7 @@ _CAMEL = re.compile(r"(?:[a-z]{2,}|[A-Z][a-z]{2,})(?:[A-Z][a-z]{2,})+")         
 _SAYABLE = re.compile(r"(?=.*[aeiouy])(?!.*[^aeiouy]{5})", re.I)               # a vowel, no 5 other letters in a row
 _MODEL = re.compile(r"(?=[a-z0-9]*[a-z]{3})[a-z][a-z0-9]*|(?=[A-Z0-9]*[A-Z]{3})[A-Z][A-Z0-9]*")  # stm32f405, NEMA17
 _RUNS = re.compile(r"[0-9]+|[A-Za-z]+")
+_NUMBERED = re.compile(r"(?:[a-z]{3,}|[A-Z][a-z]{2,}|[A-Z]{3,})[0-9]+")  # arm2, joint3, Servo1: a word and its number
 
 
 def _words(part: str) -> int:
@@ -53,6 +55,15 @@ def _words(part: str) -> int:
     return len(words) if all(_SAYABLE.match(w) for w in words) else 0
 
 
+def _series(a: str, b: str) -> bool:
+    """True when `b` follows `a` in a numbered series: one length, and only digits changed or one character changed
+    (servo1 servo2, m3x12 m4x12, xl430 xm430). Random groups of a key almost never do."""
+    if len(a) != len(b) or a == b:
+        return False
+    changed = [(x, y) for x, y in zip(a, b) if x != y]
+    return len(changed) == 1 or all(x.isdigit() and y.isdigit() for x, y in changed)
+
+
 def _phrase(body: str) -> bool:
     """True when the run after a key's prefix reads as words and part numbers, not a key's random run. Split on - and _,
     every part must be one of:
@@ -62,14 +73,23 @@ def _phrase(body: str) -> bool:
       and digits (stm32f405, esp32s3, resnet50, din912, NEMA17);
     - a short code: at most 7 letters and digits mixed, with no run of 3 letters (6x40, m3x12, v2, 500mm, 42x40mm,
       1N4148), which is also what a key's random groups look like (4f8a, 91bc).
+    Three or more parts in a row that make a series (_series: servo1_servo2_servo3, xl330_xl430_xm430) count as names.
     A phrase has 3 or more words and parts, one a word of 4 letters or more, and at most one short code more than it
-    has words and names. A key split into groups of one size (4f8a-91bc-77de-12ab, 1234-5678-90ab-cdef) is never a
-    phrase: three parts in a row of one length (3 or more), one of them mixing letters and digits.
-    Simulated on random keys and cut Teams codes, this misses fewer than the rule before it, and no grouped key."""
+    has words and names. A key split into groups of one size (4f8a-91bc-77de-12ab, 1234-5678-90ab-cdef) is not a
+    phrase: three parts in a row of one length (3 or more), one of them mixing letters and digits other than a
+    numbered word (_NUMBERED: arm2, joint3) or a part of a series. So left_knee_arm2 and joint1_joint2_joint3 pass.
+    The price, simulated on random keys: up to one in 40 keys written in groups of lower-case (or capital) letters and
+    digits reads as a phrase when every group with a digit looks like a numbered word (sk-live-jeta3-poni9-zijkw-dxb52),
+    and under 2 in 1,000 in groups of hex. Keys not in groups and cut Teams codes miss no more than with no numbered
+    words or series."""
     parts = [p for p in re.split(r"[-_]+", body) if p]
+    in_series = set()
+    for i in range(len(parts) - 2):
+        if _series(parts[i], parts[i + 1]) and _series(parts[i + 1], parts[i + 2]):
+            in_series.update((i, i + 1, i + 2))
     words = names = codes = numbers = 0
     long_word = False
-    for p in parts:
+    for i, p in enumerate(parts):
         n = _words(p)
         if n:
             words, long_word = words + n, long_word or len(p) >= 4
@@ -78,11 +98,15 @@ def _phrase(body: str) -> bool:
         elif _MODEL.fullmatch(p) and len(_RUNS.findall(p)) <= 4:
             names += 1
         elif len(p) <= 7 and p.isalnum() and not re.search(r"[A-Za-z]{3}", p):
-            codes += 1
+            if i in in_series:
+                names += 1  # xl330 in xl330_xl430_xm430, m3x12 in m3x12_m4x12_m5x12
+            else:
+                codes += 1
         else:
             return False  # a random run
-    mixed = [bool(re.search(r"[0-9]", p) and re.search(r"[A-Za-z]", p)) for p in parts]
-    grouped = any(len(parts[i]) >= 3 and len({len(q) for q in parts[i:i + 3]}) == 1 and any(mixed[i:i + 3])
+    keyish = [i not in in_series and bool(re.search(r"[0-9]", p) and re.search(r"[A-Za-z]", p))
+              and not _NUMBERED.fullmatch(p) for i, p in enumerate(parts)]
+    grouped = any(len(parts[i]) >= 3 and len({len(q) for q in parts[i:i + 3]}) == 1 and any(keyish[i:i + 3])
                   for i in range(len(parts) - 2))
     return (words + names + codes + numbers >= 3 and long_word and codes <= words + names + 1
             and not grouped)

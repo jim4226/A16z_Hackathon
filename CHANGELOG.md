@@ -258,7 +258,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   their random part, so snake_case names and part names that only share a prefix (`mt_shoulder_joint_torque_limit`,
   `ml_inference_pipeline_enabled`, `sk-6x40-stainless-steel-screws`) are no longer refused, and a key saved in the
   Keys dialog is refused whatever its shape. Chip, board and model names (`mt_stm32f405_firmware_build`,
-  `ml_resnet50_backbone_weights`) and camelCase names pass too, while a key written in groups
+  `ml_resnet50_backbone_weights`), numbered names (`mt_servo1_servo2_servo3_torque_limit`,
+  `mt_left_knee_arm2_torque_limit`) and camelCase names pass too, while a key written in groups
   (`sk-live-4f8a-91bc-77de-12ab`) is refused.
 - Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
   access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so

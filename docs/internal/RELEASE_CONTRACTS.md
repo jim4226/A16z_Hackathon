@@ -625,8 +625,10 @@ members; a member can hold several.
   One filter, `security.looks_like_secret(text)` (`holds_secret(value)` for every string of a structured value), covers
   Claude (`sk-ant-`) and Keewano (`kwpat-`) keys, other `sk-` keys (20 or more token characters with a digit, unless
   they read as words and part numbers such as `sk-6x40-stainless-steel-screws`: `security._phrase`, which counts
-  words, numbers, model names such as `stm32f405` and short codes such as `6x40` or `4f8a`, and never takes a key in
-  groups of one size such as `sk-live-4f8a-91bc-77de-12ab` for words), the value of any key
+  words, numbers, model names such as `stm32f405`, numbered names such as `arm2` or a series such as
+  `servo1_servo2_servo3` or `xl330_xl430_xm430`, and short codes such as `6x40` or `4f8a`; a key in groups of one size
+  such as `sk-live-4f8a-91bc-77de-12ab` is a key unless every group with a digit reads as a numbered word, up to one in
+  40 random keys of lower-case letters and digits in groups), the value of any key
   saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a manifest's key
   prefix that fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in codes. Teams
   codes are made by `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, always with a capital

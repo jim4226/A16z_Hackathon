@@ -45,7 +45,11 @@ ORDINARY = ("make it thin-and-light", "use an sk-thin-and-light finger", "format
             "mt_joint_limits_so101arm", "mt_dynamixel_xl330_m288_limits", "ml_PID_gains_for_joint3_wrist",
             "mt_shoulderJointTorqueLimit", "ml_InferencePipelineEnabled", "SKU sk-NEMA17-stepper-42x40mm",
             "sk-M3x12-DIN912-socket-head-cap", "order sk-2024-10-15-order-12345", "part sk-608zz-bearing-pack-of-10",
-            "sk-2x-M3-nylon-standoffs-20mm-long", "sk-0402-100nF-capacitors-reel", "sk-1N4148-diodes-x100")
+            "sk-2x-M3-nylon-standoffs-20mm-long", "sk-0402-100nF-capacitors-reel", "sk-1N4148-diodes-x100",
+            # numbered names: a series (servo1_servo2_servo3, xl330_xl430_xm430) or a word and its number (arm2)
+            "set mt_servo1_servo2_servo3_torque_limit", "ml_joint1_joint2_joint3_gains",
+            "mt_left_knee_arm2_torque_limit", "ml_pose_left_arm1_offset_deg", "mt_hip2_knee_gain_value",
+            "mt_xl330_xl430_xm430_limits", "mt_m3x12_m4x12_m5x12_screws", "mt_j1_j2_j3_j4_j5_j6_limits_deg")
 
 
 @pytest.fixture(autouse=True)
@@ -114,9 +118,13 @@ def test_an_sk_key_is_told_from_a_part_name_by_its_random_run():
     for _ in range(2000):  # a key in groups of one size, with or without a word in front, is never a phrase
         groups = "-".join("".join(random.choice(hexes) for _ in range(4)) for _ in range(5))
         assert security.has_key(f"sk-live-{groups}") and security.has_key(f"sk-{groups}"), groups
+    random, lowdig = __import__("random").Random(2), "abcdefghijklmnopqrstuvwxyz0123456789"
+    keys = ["sk-live-" + "-".join("".join(random.choice(lowdig) for _ in range(5)) for _ in range(4)) for _ in range(2000)]
+    missed = [key for key in keys if any(c.isdigit() for c in key) and not security.has_key(key)]
+    assert len(missed) <= 20, missed  # 14: every group with a digit reads as a numbered word (sk-live-ehro0-taky8-...)
     for name in ("sk-6x40-stainless-steel-screws", "sk-thin-and-light-but-strong", "sk-M6x40-DIN912-A2-70-stainless",
                  "sk-2020-aluminium-extrusion-500mm", "sk-short1", "sk-NEMA17-stepper-42x40mm", "sk-1N4148-diodes-x100",
-                 "sk-2020-2040-4040-extrusion-set"):
+                 "sk-2020-2040-4040-extrusion-set", "SKU sk-M3x10-M3x12-M3x16-screws"):
         assert not security.has_key(name), name
 
 
