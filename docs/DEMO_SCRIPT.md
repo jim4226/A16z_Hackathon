@@ -42,7 +42,7 @@ The caption is the script. Read it, or say it in your own words.
 | 9 | Keewano: the build memory | Simulation tab; the grip-force window in the right panel lights up, with the Keewano calibration line | |
 | 10 | The assembly manual writes itself | Assembly tab, autoplay | |
 | 11 | Import a real open-source robot | Switches to **so101** (Hugging Face SO-101 from its own URDF) | |
-| 12 | Edit someone else's robot | Types **Swap to Dynamixel servos**; holders that no longer fit turn orange | ~30 s |
+| 12 | Edit someone else's robot | Types **Swap to Dynamixel servos**: six XL430s on one 12 V supply, with a new supply, controller (OpenRB-150), wiring and firmware; all six holders turn orange and the robot shows 6 issues (not feasible) until they are redesigned | ~30 s |
 | 13 | Add a wrist camera | Types **Add a wrist camera** | ~30 s |
 | 14 | Time given back | Back to egg-picker; the **Time saved** card lights up: the last change (hours by hand vs minutes) and this session's total. The caption gives the whole-design number (241 h vs about 15 min) | |
 

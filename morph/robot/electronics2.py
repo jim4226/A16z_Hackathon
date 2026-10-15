@@ -35,7 +35,6 @@ from .schematic import Circuit
 G = 9.81
 FSR_K_OHM_N = 10_000.0          # FSR 402: R ~ K / F  (10 kOhm at ~1 N); calibrate on the bench
 FSR_MAX_N = 20.0
-GEAR_EFF = 0.6
 E12 = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2]
 
 FAMILY_BUS = {  # family -> (contract bus, protocol, baud)
@@ -119,22 +118,78 @@ def awg_ohm_m(g: int) -> float:
     return next(r for gg, _, r in AWG if gg == g)
 
 
-def grip_window(design, sizing: dict | None = None) -> dict:
-    """Grip-force window per finger: hold (slip) bound, damage bound, target and hard limit."""
-    o, e = design.object, design.electronics
-    sensor = design.finger.sensor if design.finger.sensor == "fsr402" else None
-    hold = o.mass_g / 1000.0 * G * design.safety_factor / (2.0 * max(o.friction, 0.05))
-    lo = hold * 1.5
-    hi = o.max_force_n / 1.5 if o.max_force_n > 0 else float("inf")
-    if sensor:
-        hi = min(hi, FSR_MAX_N * 0.8)
-    target = (sizing or {}).get("grip_target_n") or e.target_force_n or (
-        min(math.sqrt(lo * hi), 2.0 * lo) if hi != float("inf") else 1.3 * lo)
-    limit = min(o.max_force_n / 1.2 if o.max_force_n > 0 else 1e9, FSR_MAX_N * 0.95 if sensor else 1e9,
-                max(design.gripper.force_n, target * 1.2))
-    return {"hold_n": round(hold, 2), "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
-            "target_n": round(float(target), 2), "limit_n": round(float(limit), 2), "sensor": sensor or "none",
-            "ok": lo <= hi}
+def grip_window(design, sizing: dict | None = None, grip: dict | None = None) -> dict:
+    """The grip per finger the electronics, firmware and manual use: the slip and damage bounds (window_n), the target and
+    the firmware's hard limit, all from the gripper stage's force plan (`grip`, results.json gripper.force), which the
+    simulation uses too. A plan's own grip (this function's output) passes through. Without either, for callers that
+    plan electronics without a gripper stage, the same force plan without its grasp simulation
+    (pipeline2.gripper_stage(simulate=False)), keeping the target a partial plan or sizing["grip_target_n"] gives."""
+    if grip and "target_n" in grip:
+        return dict(grip)
+    if not grip or not grip.get("window_n") or grip["window_n"][0] is None or grip.get("limit_n") is None:
+        from .pipeline2 import gripper_stage   # a result saved before the stock jaws had a window comes here too
+
+        t = (grip or {}).get("target_force_n") or (sizing or {}).get("grip_target_n")
+        d = design.with_changes({"electronics.target_force_n": float(t)}) if t else design
+        grip = gripper_stage(d, sizing, simulate=False)["force"]
+    lo, hi = grip["window_n"]
+    target = float(grip["target_force_n"])
+    top = hi if hi is not None else float("inf")
+    jaw = grip.get("jaw") or ("revolute" if design.arm.source else "rack")
+    return {"hold_n": grip.get("hold_force_n"), "window_n": [lo, hi], "target_n": round(target, 2),
+            "limit_n": round(float(grip["limit_n"]), 2), "sensor": grip.get("sensor") or "none", "ok": lo <= top,
+            "object_limit_n": design.object.max_force_n or None, "jaw": jaw,
+            "lever_mm": float(grip.get("lever_mm") or (70.0 if jaw == "revolute" else design.electronics.pinion_radius_mm))}
+
+
+def has_torque_limit(gkey: str, family: str) -> bool:
+    """Whether the firmware can set this gripper servo's torque limit on the arm's bus (Feetech STS: register 48;
+    DYNAMIXEL: Goal PWM). A hobby PWM servo has none, nor has a servo whose protocol the bus doesn't speak."""
+    proto = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])[1]
+    return proto != "pca9685_pwm" and gkey in ACTUATORS and catalog.protocol(gkey) == SPEAKS[proto]
+
+
+def grip_torque_limit(grip: dict, gkey: str, servo_v: float, family: str) -> dict | None:
+    """The gripper servo's torque limit, where its protocol has one (Feetech STS: the torque limit register; DYNAMIXEL:
+    Goal PWM, which bounds the stall torque in position control). Without force sensors it is the grip: set for the
+    target at the jaw's lever (morph.electronics.jaw_torque: a rack-and-pinion jaw's one pinion drives both racks, per
+    finger F = torque x 0.6 / 2r; a stock revolute jaw F = torque / lever). With them it is a hard cap at the
+    firmware's force limit, in case the force loop fails, counted without gear losses so it never allows more. Hobby
+    PWM servos have none: None. {force_n, nm, fraction (of the stall torque at the rail, at most 1), per_n (fraction
+    per newton, for the F command), register, short (the servo can't reach it), stall_force_n (per finger at stall on
+    the rail, jaw_force)}."""
+    if not has_torque_limit(gkey, family):
+        return None
+    from ..electronics import jaw_force, jaw_torque
+
+    proto = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])[1]
+
+    sensor = grip["sensor"] == "fsr402"
+    force = float(grip["limit_n"] if sensor else grip["target_n"])
+    nm_per_n = jaw_torque(1.0, grip["lever_mm"], grip["jaw"], losses=not sensor)
+    stall = catalog.torque_at(gkey, servo_v)
+    return {"force_n": round(force, 2), "nm": round(min(force * nm_per_n, stall), 4),
+            "fraction": round(min(force * nm_per_n / stall, 1.0), 4), "per_n": round(nm_per_n / stall, 6),
+            "register": "feetech_torque_limit" if proto == "feetech_scs" else "dynamixel_goal_pwm",
+            "short": bool(force * nm_per_n > stall), "stall_force_n": round(jaw_force(stall, grip["lever_mm"], grip["jaw"]), 2)}
+
+
+def grip_problems(design, grip: dict) -> list:
+    """Plan issues for a grip the firmware would ship outside its own window or above its hard stop."""
+    lo, hi = grip["window_n"]
+    t, name = grip["target_n"], design.object.name or "object"
+    if not grip["ok"]:  # the same sentence as the gripper stage's own issue for it
+        from ..electronics import no_safe_grip
+        return [no_safe_grip(lo, hi, design.object, grip["sensor"] if grip["sensor"] != "none" else None, grip["jaw"])]
+    if t < lo:
+        return [f"grip target {t:g} N is below the {lo:g} N the {name} needs not to slip (window {lo:g}-"
+                f"{'' if hi is None else f'{hi:g} '}N): set the Grip force target inside the window, or 0 for Morph's"]
+    if hi is not None and t > hi:
+        return [f"grip target {t:g} N is above the {hi:g} N the {name} takes (window {lo:g}-{hi:g} N): set the Grip "
+                "force target inside the window, or 0 for Morph's"]
+    if t > grip["limit_n"]:
+        return [f"grip target {t:g} N is above the firmware's {grip['limit_n']:g} N hard stop"]
+    return []
 
 
 def _family_of(key: str) -> str:
@@ -205,7 +260,8 @@ def _actuator_currents(a: dict, design, grip: dict) -> tuple[float, float, float
     s = ACTUATORS[a["key"]]
     tau = s["torque_nm"]
     if a["joint"] == "gripper":
-        t_need = grip["target_n"] * design.electronics.pinion_radius_mm / 1000.0 / GEAR_EFF
+        from ..electronics import jaw_torque
+        t_need = jaw_torque(grip["target_n"], grip["lever_mm"], grip["jaw"])
         r_peak = min(1.0, max(t_need * 1.6 / tau, 0.35))
         r_avg = min(1.0, t_need / tau)
     else:
@@ -226,37 +282,113 @@ def _servo_voltage(acts: list) -> tuple[tuple, float, list]:
     return (lo, hi), nom, issues
 
 
-def _underpowered(acts: list, servo_v: float) -> list:
-    """A servo on a rail far below its rated voltage (a 12 V STS3215 beside 7.4 V ones) gives roughly that fraction of
-    the torque it was sized with: below 70 % the joint's sizing no longer holds, so say which servos and why."""
+def _derated(acts: list, servo_v: float, requested: bool = False) -> list:
+    """Warnings for servos the rail runs below their rated voltage: each gives torque_at(rail) of its rated stall torque,
+    which sizing already counts in every margin (a joint that falls short is a sizing issue). Below 70 % on a rail
+    nobody asked for, the servo is in the wrong voltage class (a 12 V STS3215 beside 7.4 V ones): say so."""
     low = {}
     for a in acts:
-        rated = ACTUATORS[a["key"]]["nominal_v"]
-        if servo_v < 0.7 * rated:
-            low.setdefault(a["key"], (rated, []))[1].append(a["joint"])
-    return [f"{', '.join(dict.fromkeys(joints))}: {key} is rated at {rated:g} V but the shared servo rail runs at {servo_v:g} V, "
-            f"so it gives roughly {servo_v / rated:.0%} of the torque it was sized with; put every servo on one voltage class"
-            for key, (rated, joints) in low.items()]
+        k = catalog.torque_at(a["key"], servo_v) / ACTUATORS[a["key"]]["torque_nm"]
+        if k < 0.995:
+            low.setdefault(a["key"], (k, []))[1].append(a["joint"])
+    out = []
+    for key, (k, joints) in low.items():
+        rated = ACTUATORS[key]["nominal_v"]
+        out.append(f"{', '.join(dict.fromkeys(joints))}: {key} is rated at {rated:g} V but the shared servo rail runs at "
+                   f"{servo_v:g} V, so it gives about {k:.0%} of its rated torque (the torque margins are worked out at "
+                   f"{servo_v:g} V)" + ("; put every servo on one voltage class to use all of it" if k < 0.7 and not requested
+                                        else ""))
+    return out
 
 
-def _pick_supply(vrange, nom, need_a) -> dict:
-    """Supply whose voltage sits inside the actuators' range (closest to nominal, enough current), else 12 V + buck."""
-    cands = []
-    for k, m in MODULES.items():
-        if m.get("role") != "supply" or not m.get("external") or "battery" in k:
-            continue
-        v, a = m["out_v"], m["out_a"]
-        if vrange[0] - 1e-6 <= v <= vrange[1] + 1e-6:
-            cands.append((a < need_a * 1.25, abs(v - nom) / nom > 0.15, abs(v - nom), catalog.price(k), k))  # enough current first
-    if cands:
-        cands.sort()
-        k = cands[0][-1]
+RAIL_MIN_TORQUE = 0.8   # a supply below the servos' rated voltage is used only while every servo keeps 80 % of its torque
+
+
+def _supplies() -> list:
+    return [(k, m) for k, m in MODULES.items() if m.get("role") == "supply" and m.get("external") and "battery" not in k]
+
+
+def _peak_estimate(acts: list) -> float:
+    """Servo-rail peak current (A) from the sizing alone (the gripper at its 35 % floor): the rail choice needs it before
+    the grip force is known."""
+    out = 0.0
+    for a in acts:
+        s = ACTUATORS[a["key"]]
+        need = a.get("torque_with_margin_nm") or 0.3 * s["torque_nm"]
+        out += s["idle_a"] + s["stall_a"] * min(1.0, max(need / s["torque_nm"], 0.35))
+    return out
+
+
+def servo_rail(acts: list, requested: float = 0.0) -> dict:
+    """The one servo rail's voltage for these actuators ([{key, joint, torque_with_margin_nm}], one per servo), decided
+    with the sizing (its margins and the simulation's efforts are worked out at it) and the same for every controller
+    choice. `requested` (electronics.servo_v) wins when every servo takes it. Otherwise the servos' rated voltage when a
+    catalogued supply gives it with the current; else the catalogued supply voltage nearest to it inside every servo's
+    range that keeps each at RAIL_MIN_TORQUE of its torque or more; else the rated voltage from a 12 V supply through
+    the adjustable servo buck. {v, rated_v, range, requested, note}: note says why a request was not taken."""
+    keys = list(dict.fromkeys(a["key"] for a in acts if a["key"] in ACTUATORS))
+    lo = max(ACTUATORS[k]["voltage"][0] for k in keys)
+    hi = min(ACTUATORS[k]["voltage"][1] for k in keys)
+    rated = max(ACTUATORS[k]["nominal_v"] for k in keys)
+    out = {"v": None, "rated_v": rated, "range": [lo, hi], "requested": requested or None, "note": None}
+    if lo > hi:   # no voltage suits them all: the plan says so and makes no wiring
+        out["v"] = min(max(min(ACTUATORS[k]["nominal_v"] for k in keys), lo), hi)
+        return out
+    if requested:
+        bad = [k for k in keys if not ACTUATORS[k]["voltage"][0] <= requested <= ACTUATORS[k]["voltage"][1]]
+        if not bad:
+            out["v"] = float(requested)
+            return out
+        out["note"] = (f"a {requested:g} V servo supply was asked for, but " + ", ".join(
+            f"the {k} takes {ACTUATORS[k]['voltage'][0]:g}-{ACTUATORS[k]['voltage'][1]:g} V" for k in bad))
+    target = min(rated, hi)
+    need = _peak_estimate([a for a in acts if a["key"] in ACTUATORS]) * 1.25
+    k_min = lambda v: min(catalog.torque_at(k, v) / ACTUATORS[k]["torque_nm"] for k in keys)  # noqa: E731
+    volts = sorted({m["out_v"] for _, m in _supplies() if m["out_a"] >= need})   # voltages a supply gives with the current
+    if any(abs(v - target) <= 0.03 * target for v in volts):
+        v = target
+    else:
+        near = [v for v in volts if lo - 1e-6 <= v <= hi + 1e-6 and k_min(v) >= RAIL_MIN_TORQUE]
+        v = min(near, key=lambda x: (abs(x - target), -x)) if near else target
+    out["v"] = float(v)
+    if out["note"]:
+        out["note"] += f": the servo rail stays at {v:g} V"
+    return out
+
+
+def _pick_supply(servo_v: float, need_a: float) -> dict:
+    """The supply for a servo rail of `servo_v`: the cheapest that gives that voltage itself (within 3 %) with enough
+    current; else, below 12 V, the cheapest 12 V supply with enough current and the adjustable servo buck; else the
+    strongest at that voltage (the power budget then says it is short)."""
+    at = sorted(((m["out_a"] < need_a * 1.25, catalog.price(k), k) for k, m in _supplies()
+                 if abs(m["out_v"] - servo_v) <= 0.03 * servo_v))
+    if at and not at[0][0]:
+        k = at[0][-1]
         return {"key": k, "v": MODULES[k]["out_v"], "a": MODULES[k]["out_a"], "servo_buck": False}
-    return {"key": "psu_12v", "v": 12.0, "a": 10.0, "servo_buck": True}
+    need_in = need_a * servo_v / (12.0 * 0.9)
+    twelve = sorted(((m["out_a"] < need_in * 1.25, catalog.price(k), k) for k, m in _supplies() if m["out_v"] == 12.0))
+    if twelve and servo_v < 11.5 and (not twelve[0][0] or not at):
+        k = twelve[0][-1]
+        return {"key": k, "v": 12.0, "a": MODULES[k]["out_a"], "servo_buck": True}
+    k = max(at, key=lambda c: MODULES[c[-1]]["out_a"])[-1] if at else "psu_12v"
+    return {"key": k, "v": MODULES[k]["out_v"], "a": MODULES[k]["out_a"], "servo_buck": False}
 
 
-def power_budget(design, acts: list, config: str, supply: dict, extras: list, ctrl: str) -> dict:
-    grip = grip_window(design)
+def rail_acts(sizing: dict) -> list:
+    """One entry per servo for servo_rail: sizing's joints (a dual joint counts twice) and its gripper."""
+    out = []
+    for j in sizing.get("joints", []):
+        n = max(int(j.get("count", 1) or 1), 1)
+        out += [{"key": j["actuator"], "joint": j["name"], "torque_with_margin_nm": (j.get("torque_with_margin_nm") or 0) / n}] * n
+    g = sizing.get("gripper") if isinstance(sizing.get("gripper"), dict) else {}
+    key = g.get("actuator") or sizing.get("gripper_actuator")
+    if key:
+        out.append({"key": key, "joint": "gripper", "torque_with_margin_nm": g.get("torque_with_margin_nm")})
+    return out
+
+
+def power_budget(design, acts: list, config: str, supply: dict, extras: list, ctrl: str, grip: dict | None = None) -> dict:
+    grip = grip_window(design, None, grip)
     peaks = [_actuator_currents(a, design, grip) for a in acts]
     servo_v = supply.get("servo_v", supply["v"])
     s_peak = sum(p[0] for p in peaks)
@@ -349,7 +481,9 @@ def board_size(design, family: str, n_act: int, extras: list) -> list:
     return [w, h]
 
 
-def plan(design, sizing: dict) -> dict:
+def plan(design, sizing: dict, grip: dict | None = None) -> dict:
+    """The electronics plan for a sized robot. `grip` is the gripper stage's force plan (results.json gripper.force); see
+    grip_window for callers without one."""
     config = design.electronics.config if design.electronics.config in ("modules", "custom_pcb") else "modules"
     family = design.arm.actuator_family if design.arm.actuator_family in FAMILY_BUS else "smart_bus"
     bus, proto, baud = FAMILY_BUS[family]
@@ -371,16 +505,20 @@ def plan(design, sizing: dict) -> dict:
 
     vrange, nom, w = _servo_voltage(acts)
     issues += w
-    grip = grip_window(design, sizing)
+    grip = grip_window(design, sizing, grip)
     rough_peak = sum(_actuator_currents(a, design, grip)[0] for a in acts)
-    supply = _pick_supply(vrange, nom, rough_peak)
-    servo_v = supply["v"] if not supply["servo_buck"] else min(max(nom, vrange[0]), vrange[1])
+    rail = sizing.get("servo_rail") if (sizing.get("servo_rail") or {}).get("v") else servo_rail(acts, design.electronics.servo_v)
+    servo_v = float(rail["v"])
+    supply = _pick_supply(servo_v, rough_peak)
     supply["servo_v"] = servo_v
-    issues += _underpowered(acts, servo_v)
+    if rail.get("note"):
+        warnings.append(rail["note"])
+    warnings += _derated(acts, servo_v, servo_v == rail.get("requested"))
     if config == "custom_pcb" and supply["servo_buck"]:
-        issues.append(f"no catalogued supply sits inside the servos' {vrange[0]:g}-{vrange[1]:g} V range; the custom PCB "
-                      "passes its input straight to the servo rail, so use the modules config (12 V + servo buck)")
-    pb = power_budget(design, acts, config, supply, extras, ctrl)
+        issues.append(f"no catalogued supply gives the servos' {servo_v:g} V; the custom PCB passes its input straight to "
+                      "the servo rail, so use the modules config (12 V + servo buck)")
+    issues += rail_problems(acts, {**supply, "servo_v": servo_v}, config)
+    pb = power_budget(design, acts, config, supply, extras, ctrl, grip)
     if not pb["supply_ok"]:
         issues.append(f"supply {supply['key']} ({supply['a']:g} A) has {pb['margin']:.2f}x margin over the "
                       f"{pb['input_peak_a']:.1f} A peak: pick a bigger supply or slower motion profiles")
@@ -391,8 +529,18 @@ def plan(design, sizing: dict) -> dict:
         warnings.append(f"{pb['input_peak_a']:.1f} A peak through the PCB power path: order 2 oz copper (JLCPCB option)")
     if config == "modules" and supply["v"] < 7.0 and ctrl != "openrb_150":
         warnings.append("buck_5v from a 6 V input runs near its dropout; verify the regulator's minimum input at 1 A")
-    if not grip["ok"]:
-        issues.append(f"no safe grip force: holding needs {grip['window_n'][0]} N but the object limit is {grip['window_n'][1]} N")
+    issues += grip_problems(design, grip)
+    gkey = next((a["key"] for a in acts if a["joint"] == "gripper"), None)
+    from ..electronics import jaw_force
+    # what the gripper servo squeezes at stall on this rail, per finger (the one jaw model): a sensorless hobby servo,
+    # which has no torque limit, squeezes with all of it
+    grip["stall_force_n"] = (round(jaw_force(catalog.torque_at(gkey, servo_v), grip["lever_mm"], grip["jaw"]), 2)
+                             if gkey in ACTUATORS else None)
+    grip["torque_limit"] = grip_torque_limit(grip, gkey, servo_v, family)
+    tl = grip["torque_limit"]
+    if tl and tl["short"] and grip["sensor"] != "fsr402":
+        issues.append(f"gripper: the {gkey} squeezes only {tl['stall_force_n']:g} N per finger on the {servo_v:g} V rail, "
+                      f"below the {grip['target_n']:g} N grip target")
 
     # modules: what physically goes in the base bay (arm.build places the non-external ones)
     mods = []
@@ -422,8 +570,20 @@ def plan(design, sizing: dict) -> dict:
     if grip["sensor"] == "fsr402":
         sensors += [{"ref": "S1", "key": "fsr402", "where": "jaw_left", "signal": "FSR_L"},
                     {"ref": "S2", "key": "fsr402", "where": "jaw_right", "signal": "FSR_R"}]
+        if not grip.get("torque_limit") and grip.get("stall_force_n") and design.object.max_force_n and \
+                grip["stall_force_n"] > design.object.max_force_n:
+            warnings.append(f"the hobby gripper servo has no torque limit to back up the force sensors: a sensor or lead "
+                            f"fault lets it squeeze with up to {grip['stall_force_n']:g} N per finger, above the "
+                            f"{design.object.max_force_n:g} N that damages the {design.object.name or 'object'}")
+    elif grip.get("torque_limit"):
+        warnings.append(f"no force sensors on the fingers: G closes the jaws past the object and the gripper servo's torque "
+                        f"limit sets the squeeze ({grip['torque_limit']['fraction'] * 100:.0f} % of its stall torque for "
+                        f"{grip['target_n']:g} N per finger), open loop: check it once with a kitchen scale")
     else:
-        warnings.append("no force sensor on the fingers: grip force is estimated from servo load (open loop for PWM servos)")
+        warnings.append("no force sensors on the fingers and no torque limit on the hobby gripper servo: G closes the jaws "
+                        "past the object with all its torque"
+                        + (f" (about {grip['stall_force_n']:g} N per finger), open loop" if grip.get("stall_force_n")
+                           else " (open loop)"))
     if "wrist_camera" in extras:
         sensors.append({"ref": "CAM1", "key": "wrist_camera", "where": "gripper_base", "signal": "USB to host"})
     if "imu" in extras:
@@ -929,7 +1089,7 @@ def build_harness(design, ep: dict, asm, pb: dict) -> tuple[list, list]:
     warns = []
     rows = []
     joints = [j.name for j in asm.joints] if asm is not None else []
-    grip = grip_window(design)
+    grip = ep["grip"]
     cur = {a["id"] if bus != "pwm" else a["channel"]: _actuator_currents(a, design, grip) for a in acts}
     servo_v = ep["supply"]["servo_v"]
     conn = BUS_CONNECTOR[proto]
@@ -1086,18 +1246,41 @@ FW_PROTOCOL = """//   J q1 .. qN       joint targets in radians (order below), c
 //   M i q            move joint i (0..N-1) to q radians
 //   V s              speed scale 0.05 .. 1.0
 //   W {grip_unit:<13}gripper target in {grip_unit} ({grip_origin})
-//   G                grip: close until the fingertip force reaches the target, then hold it
+//   G                {grip_g}
 //   O                open the gripper
-//   F n              grip force target in newtons (capped at GRIP_LIMIT_N)
+//   F n              {grip_f}
 //   H | R            move to the home | ready pose
 //   E | C            software e-stop (torque off) | clear the e-stop
 //   S1 | S0          start | stop 20 Hz telemetry: T,ms,state,q1..qN,grip_{grip_unit},force_n
 //   Q                print one status line
-//   Z grams          calibrate the force sensors with a known mass resting on one pad"""
+//   Z grams          {grip_z}"""
+
+
+def _grip_commands(fsr: bool, torque: bool) -> dict:
+    """What G, F and Z do in this firmware, for its header."""
+    if fsr:
+        return {"grip_g": "grip: close until the fingertip force reaches the target, then hold it (an object narrower "
+                          "than the gauge too, as far as GRIP_MIN; with no force reading by then, back to GRIP_CLOSED)",
+                "grip_f": "grip force target in newtons (capped at GRIP_LIMIT_N)",
+                "grip_z": "calibrate the force sensors with a known mass resting on the left pad"}
+    if torque:
+        return {"grip_g": "grip: close past the object towards GRIP_MIN; the gripper servo's torque limit sets the squeeze "
+                          "(no force sensors)",
+                "grip_f": "grip force in newtons: sets the gripper servo's torque limit (capped at GRIP_LIMIT_N)",
+                "grip_z": "calibrate force sensors (none are fitted: replies with the unchanged factor)"}
+    return {"grip_g": "grip: close past the object towards GRIP_MIN with all the servo's torque (no force sensors, and "
+                      "hobby servos have no torque limit)",
+            "grip_f": "grip force in newtons (kept for status: nothing here can regulate it)",
+            "grip_z": "calibrate force sensors (none are fitted: replies with the unchanged factor)"}
 
 
 def _c(v, nd=4):
     return f"{v:.{nd}f}f"
+
+
+def _window_text(grip: dict) -> str:
+    lo, hi = grip["window_n"]
+    return f"window {lo:g} - {hi:g} N" if hi is not None else f"at least {lo:g} N (no damage force)"
 
 
 def grip_motion(design, ep: dict, asm) -> dict:
@@ -1128,7 +1311,31 @@ def grip_motion(design, ep: dict, asm) -> dict:
         raise ValueError("the gripper joint needs a positive velocity limit")
     return {"kind": kind, "unit": "rad" if kind == "revolute" else "mm", "lo": lo, "hi": hi, "zero": zero,
             "per_unit": per_unit, "closed": max(lo, min(0.0, hi)), "close_speed": min(8.0 * scale, vmax),
-            "open_speed": min(25.0 * scale, vmax), "backoff": scale, "force_gain": 10.0 * scale}
+            "open_speed": min(25.0 * scale, vmax), "backoff": scale, "force_gain": 10.0 * scale,
+            # a force-sensing close looks for a reading all the way to the max-squeeze stop: an object narrower than the
+            # calibration gauge (an egg at 92 % of its nominal size) meets the jaws past GRIP_CLOSED
+            "probe": max(max(lo, min(0.0, hi)) - lo, 0.0)}
+
+
+def rail_problems(acts: list, supply: dict, config: str) -> list:
+    """One line per servo whose voltage range leaves out what its rail really gets: the servo rail, or on the custom PCB
+    (which passes its input straight to the servos) the supply's own voltage."""
+    volts = supply["v"] if config == "custom_pcb" else supply.get("servo_v", supply["v"])
+    out = {}
+    for a in acts:
+        lo, hi = ACTUATORS[a["key"]]["voltage"]
+        if not lo - 1e-6 <= volts <= hi + 1e-6:
+            out.setdefault(a["key"], (lo, hi, []))[2].append(a["joint"])
+    return [f"{', '.join(dict.fromkeys(j))}: {k} takes {lo:g}-{hi:g} V but its servo rail is {volts:g} V; no wiring or "
+            "firmware is made for it" for k, (lo, hi, j) in out.items()]
+
+
+def _one_rail(ep: dict):
+    """ValueError when a servo's rail is outside its voltage range (XL430s and XL330s on one rail, a custom PCB passing
+    12 V to 7.4 V servos): its harness and firmware would run servos off their rating, or not at all."""
+    problems = rail_problems(ep["actuators"], ep["supply"], ep["config"])
+    if problems:
+        raise ValueError(f"no wiring or firmware for a servo rail outside a servo's voltage range ({'; '.join(p.split(';')[0] for p in problems)})")
 
 
 def _one_protocol(ep: dict):
@@ -1141,6 +1348,7 @@ def _one_protocol(ep: dict):
 
 def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
     _one_protocol(ep)
+    _one_rail(ep)
     fam, proto, cfg, ctrl = ep["family"], ep["protocol"], ep["config"], ep["controller"]
     pins = ARDUINO_PIN[ctrl]
     acts = ep["actuators"]
@@ -1173,6 +1381,7 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
     motion = grip_motion(design, ep, asm)
     gu = motion["unit"]
     fsr = grip["sensor"] == "fsr402"
+    tl = grip.get("torque_limit")
     adc_bits = ADC_BITS[ctrl]
     vref = LOGIC_V[ctrl]
     wifi = "wifi" in ep["extras"] and ctrl in WIFI_MCUS
@@ -1193,7 +1402,7 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
            "// Do not edit by hand: change the design in Morph Studio and regenerate.",
            "//", "// Serial protocol (USB, 115200 baud, one command per line):",
            FW_PROTOCOL.format(grip_unit=gu, grip_origin="0 = the jaw's calibrated zero" if motion["kind"] == "revolute"
-                              else "0 = jaws touching the object"), ""]
+                              else "0 = jaws touching the object", **_grip_commands(fsr, bool(tl))), ""]
     L = hdr
     L.append("#include <Arduino.h>")
     if proto == "pca9685_pwm":
@@ -1256,15 +1465,30 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
           f"#define GRIP_{'CH' if bus == 'pwm' else 'ID'}          {ga['channel'] if bus == 'pwm' else ga['id']}",
           f"const float GRIP_PER_UNIT   = {_c(motion['per_unit'], 6)};   // {unit} per {gu}",
           f"float GRIP_ZERO             = {_c(motion['zero'], 1)};   // {unit} at {gu} = 0 (calibrate)",
-          f"const float GRIP_MIN        = {_c(motion['lo'], 6)};   // {gu}: max squeeze (joint and servo limit)",
+          f"const float GRIP_MIN        = {_c(motion['lo'], 6)};   // {gu}: max squeeze (joint and servo limit); G "
+          + ("closes towards it until the force reaches the target" if fsr else
+             "closes towards it, past the object, so the " + ("torque limit" if tl else "servo's full torque") + " sets the squeeze"),
           f"const float GRIP_MAX        = {_c(motion['hi'], 6)};   // {gu}: fully open",
-          f"const float GRIP_CLOSED     = {_c(motion['closed'], 6)};   // {gu}: close target without force sensors",
+          f"const float GRIP_CLOSED     = {_c(motion['closed'], 6)};   // {gu}: the calibrated zero ("
+          + ("jaw faces touching" if motion["kind"] == "revolute" else "jaws on the gauge") + ")"
+          + ("; a close with no force reading goes back here" if fsr else ""),
           f"const float GRIP_CLOSE_SPEED = {_c(motion['close_speed'], 6)};   // {gu}/s",
           f"const float GRIP_OPEN_SPEED = {_c(motion['open_speed'], 6)};   // {gu}/s",
           f"const float GRIP_BACKOFF    = {_c(motion['backoff'], 6)};   // {gu}: step back when the force limit trips",
           f"const float GRIP_FORCE_GAIN = {_c(motion['force_gain'], 6)};   // force loop gain, {gu} per N*s",
-          f"float GRIP_TARGET_N         = {_c(grip['target_n'], 2)};   // window {grip['window_n'][0]} - {grip['window_n'][1]} N for the {design.object.name}",
-          f"const float GRIP_LIMIT_N    = {_c(grip['limit_n'], 2)};   // hard stop (object damage / sensor range)",
+          f"float GRIP_TARGET_N         = {_c(grip['target_n'], 2)};   // {_window_text(grip)} for the {design.object.name}",
+          f"const float GRIP_LIMIT_N    = {_c(grip['limit_n'], 2)};   // hard stop and F's cap: the lowest of the object's "
+          "damage force / 1.2, the force sensor's range and the servo's stall force per finger",
+          "const float GRIP_SENSE_N    = 0.05f;   // N: any force reading at all (an FSR 402 reads nothing below about 0.2 N)",
+          f"const float GRIP_PROBE      = {_c(motion['probe'], 6)};   // {gu}: how far past GRIP_CLOSED the jaw may close before "
+          "a force sensor reads anything: to GRIP_MIN, so an object narrower than the gauge still gets gripped (the "
+          "torque limit caps the squeeze meanwhile)",
+          f"const float GRIP_TORQUE_PER_N = {_c(tl['per_n'] if tl else 0.0, 6)};   // gripper servo torque limit per N at the jaw, "
+          + (f"as a fraction of its stall torque on the {ep['supply']['servo_v']:g} V rail ({grip['lever_mm']:g} mm "
+             f"{'pinion' if grip['jaw'] == 'rack' else 'lever'})" if tl else "0: hobby PWM servos have no torque limit"),
+          f"float GRIP_TORQUE_N         = {_c(tl['force_n'] if tl else 0.0, 2)};   // N: the squeeze the torque limit allows "
+          + ("(none: no torque limit)" if not tl else "(the grip itself: no force sensors)" if not fsr
+             else "(a hard cap if the force loop fails)"),
           f"const float FSR_R_DIV       = {rd:.1f}f;   // divider resistor to GND, ohms",
           f"float FSR_K                 = {FSR_K_OHM_N:.1f}f;   // ohm*N: F = K / R_fsr (Z command calibrates)",
           ""]
@@ -1287,7 +1511,8 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
               "  for (uint8_t k = 0; k < n; k++) pca.writeMicroseconds(SERVO[k].ch, (uint16_t)constrain(pos[k], 500.0f, 2500.0f));",
               "  pca.writeMicroseconds(GRIP_CH, (uint16_t)constrain(grip, 500.0f, 2500.0f));",
               "}", "",
-              "bool busRead(uint8_t k, float *pos) { return false; }   // hobby servos have no position feedback", ""]
+              "bool busRead(uint8_t k, float *pos) { return false; }   // hobby servos have no position feedback", "",
+              "void gripTorque() {}   // hobby PWM servos have no torque limit", ""]
     elif proto == "feetech_scs":
         L += ["SMS_STS bus;", "", "void busBegin() {",
               "#if defined(ARDUINO_ARCH_ESP32)",
@@ -1310,7 +1535,12 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
               "}", "",
               "bool busRead(uint8_t k, float *pos) {",
               "  int p = bus.ReadPos(k < N_SERVOS ? SERVO[k].id : GRIP_ID);",
-              "  if (p < 0) return false;", "  *pos = (float)p;", "  return true;", "}", ""]
+              "  if (p < 0) return false;", "  *pos = (float)p;", "  return true;", "}", "",
+              "#define STS_TORQUE_LIMIT 48   // RAM torque limit, 0-1000 = 0-100 % of stall (back to the EEPROM maximum at power-up)",
+              "void gripTorque() {   // the gripper squeezes no harder than GRIP_TORQUE_N at the jaw",
+              "  if (GRIP_TORQUE_PER_N <= 0.0f) return;",
+              "  bus.writeWord(GRIP_ID, STS_TORQUE_LIMIT, (u16)(constrain(GRIP_TORQUE_N * GRIP_TORQUE_PER_N * 1000.0f, 10.0f, 1000.0f) + 0.5f));",
+              "}", ""]
     else:
         L += ["Dynamixel2Arduino dxl(BUS_SERIAL, PIN_BUS_DIR);", "using namespace ControlTableItem;", "",
               "void busBegin() {", "  dxl.begin(BUS_BAUD);",
@@ -1330,7 +1560,11 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
               "  dxl.setGoalPosition(GRIP_ID, constrain(grip, 0.0f, 4095.0f));", "}", "",
               "bool busRead(uint8_t k, float *pos) {",
               "  float p = dxl.getPresentPosition(k < N_SERVOS ? SERVO[k].id : GRIP_ID);",
-              "  if (p <= 0.0f) return false;", "  *pos = p;", "  return true;", "}", ""]
+              "  if (p <= 0.0f) return false;", "  *pos = p;", "  return true;", "}", "",
+              "void gripTorque() {   // Goal PWM caps the gripper's stall torque in position control (reset at power-up)",
+              "  if (GRIP_TORQUE_PER_N <= 0.0f) return;",
+              "  dxl.setGoalPWM(GRIP_ID, constrain(GRIP_TORQUE_N * GRIP_TORQUE_PER_N * 100.0f, 1.0f, 100.0f), UNIT_PERCENT);",
+              "}", ""]
     tmpl = r'''// ---------------------------------------------------------------- state
 enum State : uint8_t { ST_RUN, ST_ESTOP };
 enum Grip : uint8_t { G_POS, G_CLOSING, G_HOLD };
@@ -1340,7 +1574,7 @@ State state = ST_RUN;
 Grip gstate = G_POS;
 float qT[N_JOINTS], qC[N_JOINTS];      // target / commanded joint angle, rad
 float gT = GRIP_MAX, gC = GRIP_MAX;    // gripper target / commanded, $GRIP_UNIT
-float speedScale = 0.5f, force = 0.0f, gripI = 0.0f;
+float speedScale = 0.5f, force = 0.0f, gripI = 0.0f, gripSeen = 0.0f;   // gripSeen: the highest force of this close
 bool telemetry = false;
 uint32_t lastTick = 0, lastTele = 0, lowSince = 0;
 const uint16_t TICK_MS = 10;
@@ -1431,6 +1665,7 @@ void clearEstop() {
   lowSince = 0;
   resyncFromServos();
   busTorque(true);
+  gripTorque();                              // a servo that lost power restarts at its maximum torque limit
   state = ST_RUN;
   if (PIN_LED >= 0) digitalWrite(PIN_LED, LOW);
   out->println("OK estop cleared");
@@ -1466,9 +1701,13 @@ void command(char *s) {
       break;
     case 'V': if (n) speedScale = constrain(v[0], 0.05f, 1.0f); break;
     case 'W': if (n) { gstate = G_POS; gT = constrain(v[0], GRIP_MIN, GRIP_MAX); } break;
-    case 'G': gstate = (PIN_FSR_L >= 0 || PIN_FSR_R >= 0) ? G_CLOSING : G_POS; if (gstate == G_POS) gT = GRIP_CLOSED; gripI = 0; break;
+    case 'G':   // force sensors: close on the force loop; none: close past the object, the torque limit sets the squeeze
+      gstate = (PIN_FSR_L >= 0 || PIN_FSR_R >= 0) ? G_CLOSING : G_POS; if (gstate == G_POS) gT = GRIP_MIN; gripI = 0; gripSeen = 0.0f; break;
     case 'O': gstate = G_POS; gT = GRIP_MAX; break;
-    case 'F': if (n) GRIP_TARGET_N = constrain(v[0], 0.1f, GRIP_LIMIT_N); break;
+    case 'F':
+      if (n) GRIP_TARGET_N = constrain(v[0], 0.1f, GRIP_LIMIT_N);
+      if (n && PIN_FSR_L < 0 && PIN_FSR_R < 0) { GRIP_TORQUE_N = GRIP_TARGET_N; gripTorque(); }   // no sensors: the limit is the grip
+      break;
     case 'H': setPose(false); break;
     case 'R': setPose(true); break;
     case 'E': enterEstop("software"); return;
@@ -1504,13 +1743,21 @@ void gripControl(float dt) {
   force = readForce();
   if (force > GRIP_LIMIT_N) { gT = constrain(gC + GRIP_BACKOFF, GRIP_MIN, GRIP_MAX); gstate = G_HOLD; gripI = 0; }   // over the limit: back off
   else if (gstate == G_CLOSING) {
+    if (force > gripSeen) gripSeen = force;
     if (force >= GRIP_TARGET_N) { gstate = G_HOLD; gT = gC; }
     else gT = gC - GRIP_CLOSE_SPEED * dt;
+    if (gripSeen < GRIP_SENSE_N && gT <= GRIP_CLOSED - GRIP_PROBE) {   // nothing read all the way to GRIP_MIN: no object, or no sensor
+      gT = GRIP_CLOSED; gstate = G_POS;
+      out->println("!GRIP no force reading down to GRIP_MIN: back at GRIP_CLOSED instead of squeezing on (check the force sensors and their leads)");
+    }
     if (gT <= GRIP_MIN) { gT = GRIP_MIN; gstate = G_HOLD; }
   } else if (gstate == G_HOLD) {                                         // PI on the force error
-    float e = GRIP_TARGET_N - force;
-    gripI = constrain(gripI + e * dt, -2.0f, 2.0f);
-    gT = constrain(gT - (0.08f * e + 0.25f * gripI) * dt * GRIP_FORCE_GAIN, GRIP_MIN, GRIP_MAX);
+    if (force < GRIP_SENSE_N) { gripI = 0.0f; }                         // reading lost (sensor or object): hold still
+    else {
+      float e = GRIP_TARGET_N - force;
+      gripI = constrain(gripI + e * dt, -2.0f, 2.0f);
+      gT = constrain(gT - (0.08f * e + 0.25f * gripI) * dt * GRIP_FORCE_GAIN, GRIP_MIN, GRIP_MAX);
+    }
   }
   float step = (gT >= gC ? GRIP_OPEN_SPEED : GRIP_CLOSE_SPEED) * dt;    // slew limit in the gripper's own units
   gC = constrain(gC + constrain(gT - gC, -step, step), GRIP_MIN, GRIP_MAX);
@@ -1541,6 +1788,7 @@ void setup() {
   resyncFromServos();
   servoPower(true);
   delay(100);
+  gripTorque();
 #if MORPH_WIFI
   WiFi.softAP("morph-arm", "morph-arm-$PASS");   // or WiFi.begin(ssid, pass) for your network
   server.begin();
@@ -1683,11 +1931,11 @@ def sourcing_rows(design, ep: dict, circuit, harness: list, include_actuators=Tr
     return rows
 
 
-def configs_compare(design, sizing, asm) -> dict:
+def configs_compare(design, sizing, asm, grip: dict | None = None) -> dict:
     out = {}
     for cfg in ("modules", "custom_pcb"):
         d2 = design.with_changes({"electronics.config": cfg})
-        ep = plan(d2, sizing)
+        ep = plan(d2, sizing, grip)
         circ = custom_circuit(d2, ep) if cfg == "custom_pcb" else modules_circuit(d2, ep)
         har, _ = build_harness(d2, ep, asm, ep["power_budget"])
         rows = sourcing_rows(d2, ep, circ, har, include_actuators=False)
@@ -1736,6 +1984,7 @@ def _rev_of(outdir):
 def finalize(design, sizing: dict, eplan: dict, asm, outdir: str) -> dict:
     ep = eplan
     _one_protocol(ep)       # before anything is written: no harness, board or firmware for a mixed bus
+    _one_rail(ep)           # nor for servos on a rail outside their voltage range
     os.makedirs(outdir, exist_ok=True)
     issues, warnings = list(ep.get("issues", [])), list(ep.get("warnings", []))
     rev = _rev_of(outdir)
@@ -1778,7 +2027,7 @@ def finalize(design, sizing: dict, eplan: dict, asm, outdir: str) -> dict:
         wr.writerows(harness)
     fw = firmware(design, ep, asm, outdir, rev)
     sourcing = sourcing_rows(design, ep, circuit, harness)
-    configs = configs_compare(design, sizing, asm)
+    configs = configs_compare(design, sizing, asm, ep["grip"])
     result = {
         "config": ep["config"], "bus": ep["bus"], "protocol": ep["protocol"], "controller": ep["controller"],
         "schematic_svg": "schematic.svg", "schematic_json": "schematic.json", "sheet": sch["sheet"], "nets": sch["nets"],

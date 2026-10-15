@@ -214,6 +214,7 @@ DESIGN_LIMITS = {
     "finger.pad_height_mm": (0.5, 300), "finger.pad_depth_mm": (0.1, 100), "finger.mount_hole_d_mm": (0.5, 50),
     "finger.mount_hole_spacing_mm": (0, 200), "gripper.force_n": (0, 10_000), "gripper.stroke_mm": (1, 1000),
     "fab.tool_d_mm": (0.1, 50), "fab.quantity": (1, 1_000_000), "electronics.supply_v": (0.5, 1000),
+    "electronics.servo_v": (0, 1000),
     "electronics.pinion_radius_mm": (1, 200), "electronics.target_force_n": (0, 10_000), "arm.dof": (4, 6),
     "arm.reach_mm": (50, 2000), "arm.base_height_mm": (10, 1000), "arm.payload_margin": (0.1, 100),
     "task.pick_x_mm": (-2000, 2000), "task.pick_y_mm": (-2000, 2000), "task.place_x_mm": (-2000, 2000),

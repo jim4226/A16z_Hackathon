@@ -622,15 +622,19 @@ def create_proposal(root: str, by: str, title=None, changes=None, base_rev: str 
 
 def built_summary(root: str, p: dict) -> dict | None:
     """What an applied change request's revision actually built, next to its base revision: {rev, base_rev, feasible,
-    issues, min_torque_margin: [base, built], unit_cost: [base, built]}; None until it is built."""
+    issues, min_torque_margin: [base, built], unit_cost: [base, built], tooling_cost: [base, built], quantity: [base,
+    built]}; None until it is built. A unit cost includes its mold tooling spread over the build quantity."""
     rev, base = p.get("applied_rev"), p.get("base_rev")
     a = rev_info(root, rev) if rev else None
     if a is None:
         return None
-    s0, s1 = ((rev_info(root, base) or {}).get("summary") or {}) if base else {}, a["summary"]
+    i0 = (rev_info(root, base) or {}) if base else {}
+    s0, s1 = i0.get("summary") or {}, a["summary"]
     return {"rev": rev, "base_rev": base, "feasible": s1.get("feasible"), "issues": len(s1.get("issues") or []),
             "min_torque_margin": [s0.get("min_torque_margin"), s1.get("min_torque_margin")],
-            "unit_cost": [s0.get("unit_cost"), s1.get("unit_cost")]}
+            "unit_cost": [s0.get("unit_cost"), s1.get("unit_cost")],
+            "tooling_cost": [s0.get("tooling_cost"), s1.get("tooling_cost")],
+            "quantity": [(i0.get("flat") or {}).get("build.quantity"), (a.get("flat") or {}).get("build.quantity")]}
 
 
 def proposal_name(root: str, pid) -> str:
@@ -1045,6 +1049,7 @@ def release_gate(root: str, rev: str, members=None, policy=None) -> dict:
     g.update(rev=rev, design_sha256=info["design_sha256"],
              checklist={"feasible": s.get("feasible"), "issues": list(s.get("issues") or [])[:6],
                         "pick_place_success": s.get("pick_place_success"), "unit_cost": s.get("unit_cost"),
+                        "tooling_cost": s.get("tooling_cost"), "quantity": (info.get("flat") or {}).get("build.quantity"),
                         "min_torque_margin": s.get("min_torque_margin")},
              released=[r["tag"] for r in releases(root) if r.get("rev") == rev and r.get("design_sha256") == info["design_sha256"]])
     return g

@@ -70,7 +70,7 @@ the plan, the gains and the targets stay nominal: the host doesn't know about th
 
 ## How to read the result
 
-**The headline:** "Succeeds in 140 of 200 randomized runs (95% CI 63-76%); the nominal run succeeds." The interval is
+**The headline:** "Succeeds in 150 of 200 randomized runs (95% CI 68-81%); the nominal run succeeds." The interval is
 Wilson's 95 % score interval, rounded outward so the interval shown always contains the computed one. When every run
 succeeds, or none does, it is the exact (Clopper-Pearson) bound: "Succeeds in all 200 randomized runs (at least 98.1%
 with 95% confidence)". Few runs give wide intervals, and the card says so with numbers: 3 of 4 is 30-96 %, all of 6 is
@@ -80,7 +80,7 @@ with 95% confidence)". Few runs give wide intervals, and the card says so with n
 object away, dragged off the target, missed the grasp, dropped on the way, squeezed harder than the object can take, out
 of reach, or hit a box in the room during a named phase. Each group shows its share with its own interval and "Most
 likely when": the one tolerance range that best separates that group's runs from the rest (Youden's J over quantile cuts
-of each value, or of its distance from nominal), as "egg turned 3.4-9.4 deg: 49% fail this way vs 13% otherwise". A rule
+of each value, or of its distance from nominal), as "egg -4.7 to 1.5 mm along its length from its mark: 44% fail this way vs 14% otherwise". A rule
 is compared with what the same search finds on shuffled outcomes (the 95th percentile of 60 shuffles); below that it
 says "(could be chance)". A group that holds every counted run gets no rule: there is nothing left to separate it from.
 *Replay run N* plays the group's run closest to nominal in the 3D view.
@@ -98,7 +98,8 @@ never the "One nominal run" note.
 - *Its revision was replaced*: Reset demo (or a deleted revision) reused the name for another design. The study is not
   of what that revision is now; it can't be carried on or replayed.
 - *Simulated with other Morph code*: the robot rebuilt for the study differs from the one the revision was simulated
-  with.
+  with. Only what moves counts: a revision that changed the controller or the electronics build reuses its parent's
+  simulation, and the boards in the base (welded to the table) change nothing the study measures, so it isn't flagged.
 
 ## Model-sensitive results
 
@@ -113,9 +114,12 @@ The same check covers the successes: when at least 20 % (and 2) of the re-run su
 the card flags that the success rate itself depends on the simulator's settings. A study in which nothing failed can be
 as model-sensitive as one in which something did.
 
-The default egg-picker is the example: 58 of its 60 failures are the jaws staying shut at release with the egg turned
-3-9 degrees. At half the timestep 16 of 20 re-runs still jam; with `impratio=1` only 1 of 20 does. Whether the real
-gripper jams there needs a bench test: turn an egg 5 degrees on its mark and release it.
+The default egg-picker is the example: all 50 of its failures are the jaws staying shut at release, most often with the
+egg set down a few millimetres off its mark along its length (-4.7 to 1.5 mm) or turned a few degrees, which separate
+the jams about equally well. At half the timestep 16 of 20 re-runs still jam; with `impratio=1` none of 20 does. The
+count is sensitive to the grip as well: at 2.17 N instead of 2.34 N the same runs give 58 jams, best separated by the
+egg turned 3-9 degrees. Whether the real gripper jams there needs a bench test: set an egg 3 mm off its mark along its
+length, or turned 5 degrees, and release it.
 
 ## Reproducible, resumable
 
@@ -170,8 +174,8 @@ under 2 at the start), the cancel, restart and build timings beside other work (
 
 | What | Measured |
 |---|---|
-| The default egg-picker, 200 runs at 1 ms (seed 1) | 140 of 200 succeed (Wilson 63.3-75.9 %). 58 jams (23.2-35.6 %): "egg turned 3.4-9.4 deg: 49% fail this way vs 13% otherwise", model-sensitive (16 of 20 still jam at half the timestep, 1 of 20 with `impratio=1`); 2 drags |
-| Speed at 1 ms | 2.7 runs/s on 3 worker processes; 0.9 on 1, 1.6-1.8 on 2, 2.3-3.3 on 4. 200 runs and their 74 check runs: about 2 minutes (117-119 s) |
+| The default egg-picker, 200 runs at 1 ms (seed 1) | 150 of 200 succeed (Wilson 68.6-80.5 %). 50 jams (19.5-31.4 %): "egg -4.7 to 1.5 mm along its length from its mark: 44% fail this way vs 14% otherwise", model-sensitive (16 of 20 still jam at half the timestep, 0 of 20 with `impratio=1`); nothing else fails. With the 2.17 N grip the simulation used before the gripper stage's 2.34 N reached it, the same runs gave 140 of 200: 58 jams ("egg turned 3.4-9.4 deg"), 2 drags |
+| Speed at 1 ms | 2.7 runs/s on 3 worker processes; 0.9 on 1, 1.6-1.8 on 2, 2.3-3.3 on 4. 200 runs and their 70 to 74 check runs: about 2 minutes (117-119 s) |
 | First result | 5.6-6.1 s after the start (rebuilding the robot and its plan takes 3.7-3.9 s of it) |
 | Worker processes | Start in 0.3-0.4 s at 135 MB from a script; 0.7-0.8 s at 150 MB under `morph studio`, whose module each one imports again |
 | Cancel | 0.06-0.25 s in the engine at any moment of a start (rebuilding, loading, running); 0.55 s from the Studio's request to the study's end. No study process left |

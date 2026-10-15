@@ -26,10 +26,10 @@ ROBOT_SOURCES = ("so101",)  # imported robots a brief may target (shipped robots
 # Payload (g) at the default 2x torque margin on the reference robot: the largest of PAYLOAD_GRID that arm.size()
 # accepts with no issues (0 = not even 50 g). derive() recomputes it.
 PAYLOAD_GRID = (50, 100, 200, 300, 500, 750, 1000, 1500)
-PAYLOAD_G = {"hobby_pwm": {4: 200, 5: 100, 6: 0},
+PAYLOAD_G = {"hobby_pwm": {4: 100, 5: 100, 6: 0},   # the DS3218s run at 6 V (an SG90's top): 88 % of their torque
              "smart_bus": {4: 300, 5: 200, 6: 100},
              "dynamixel": {4: 500, 5: 300, 6: 200}}
-SO101_PAYLOAD_G = 150  # the stock SO-101 (STS3215 at 7.4 V) by imported.size(); 200 g fails its shoulder
+SO101_PAYLOAD_G = 100  # the stock SO-101 (7.4 V STS3215s on its 6 V rail) by imported.size(); 150 g fails its shoulder
 # Narrowest object (mm, 0.5 mm steps) the rack-and-pinion gripper closes on: arm._grip_plan() reports no issue.
 # The FSR 402 finger's thicker pad stack is what makes 26-38 mm round objects fit.
 MIN_WIDTH_MM = {("cylinder", "fsr402"): 26.0, ("sphere", "fsr402"): 26.0, ("box", "fsr402"): 21.5,
@@ -222,7 +222,8 @@ def _num(v):
 # sanity bounds for numeric keys PARAMS does not cover (inputs the generator accepts; the envelope check decides scope)
 _BOUNDS = {"object.diameter_mm": (5.0, 300.0), "object.length_mm": (5.0, 500.0), "object.friction": (0.1, 1.2),
            "finger.width_mm": (6.0, 20.0), "finger.pad_height_mm": (10.0, 60.0), "finger.pad_depth_mm": (2.0, 15.0),
-           "task.cycle_time_s": CYCLE_S, "electronics.supply_v": (5.0, 14.8), "gripper.force_n": (5.0, 60.0)}
+           "task.cycle_time_s": CYCLE_S, "electronics.supply_v": (5.0, 14.8),
+           "electronics.servo_v": (0.0, 14.8), "gripper.force_n": (5.0, 60.0)}
 _ENUMS = {"object.shape": SHAPES, "finger.pad": ("contour", "v", "flat"), "finger.sensor": ("none", "fsr402"),
           "finger.material": ("PLA", "PETG", "Nylon-CF", "Acrylic", "Delrin", "HDPE", "Al6061"),
           "fab.process": ("auto", "fdm_print", "laser_cut", "cnc_router"), "electronics.config": ("modules", "custom_pcb"),

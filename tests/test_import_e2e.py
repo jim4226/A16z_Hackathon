@@ -99,8 +99,12 @@ def test_actuator_family_matching_the_robot_is_not_swapped(home, tmp_path):
     plan = imported.actuator_plan(Design().with_changes({"arm.actuator_family": "dynamixel"}), prof)
     assert set(plan.values()) == {"xm430_w350"}                         # OMX keeps its XM430s
     so101 = imported.load_profile("so101")[0]
-    swapped = imported.actuator_plan(Design().with_changes({"arm.actuator_family": "dynamixel"}), so101)
-    assert swapped["shoulder_pan"] == "xl430_w250" and swapped["gripper"] == "xl330_m288"
+    need = {j: 0.3 for j in so101["actuators"]}
+    need["shoulder_lift"] = 1.32                                        # past an XL330: the whole arm on XL430s
+    swapped = imported.actuator_plan(Design().with_changes({"arm.actuator_family": "dynamixel"}), so101, need)
+    assert set(swapped.values()) == {"xl430_w250"}
+    light = imported.actuator_plan(Design().with_changes({"arm.actuator_family": "dynamixel"}), so101, {j: 0.3 for j in need})
+    assert set(light.values()) == {"xl330_m288"}
     same = imported.actuator_plan(Design().with_changes({"arm.actuator_family": "smart_bus"}), so101)
     assert set(same.values()) == {"sts3215_7v4"}
 

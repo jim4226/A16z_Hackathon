@@ -73,6 +73,7 @@ from . import catalog, components
 from .assembly import Assembly, Cable, Joint, Part, Step, rot, trans
 from .. import mechanism as _mech
 from ..design import FSR, build_profile, mount_dims
+from ..electronics import jaw_force
 from ..mechanism import object_center_v, pinion_profile, rack_teeth
 
 G = 9.81
@@ -679,14 +680,14 @@ class _Layout:
         return self.L1 + self.L2 + self.L3
 
 
-def _bay_height(design, eplan):
-    mods = [m["key"] for m in ((eplan or {}).get("modules") or [])]
-    hs = [float(catalog.MODULES[k]["dims"]["h"]) for k in mods if k in catalog.MODULES
-          and not catalog.MODULES[k].get("external") and catalog.MODULES[k].get("role") not in ("sensor", "safety")]
-    return max(hs + [22.0])
+# The electronics bay's clear height under the turntable deck (mm). Fixed, not taken from the electronics plan: sizing
+# lays the arm out before the plan exists and the build after it, and with a short turret the deck sets the shoulder's
+# height, so a deck that followed the boards would build (and simulate) another arm than the one sized, and the pipeline
+# reuses the simulation across controller and supply edits (GRAPH). A board taller than this is a build issue.
+BAY_CLEAR_MM = 22.0
 
 
-def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None, eplan=None) -> _Layout:
+def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None) -> _Layout:
     dof = int(design.arm.dof) if int(design.arm.dof) in (4, 5, 6) else 5
     names = arm_joint_names(dof)
     notes, issues = [], []
@@ -703,7 +704,7 @@ def _layout(design, keys: dict, counts: dict, gkey: str, L12=None, base_h=None, 
         y5.cup_D2 = min(y5.D2, max(abs(v) for v in y5.case_y) + WALL)
     # base: yaw actuator hangs below the turntable, electronics bay height
     foot, floor = 2.5, 3.5
-    bay_h = _bay_height(design, eplan)
+    bay_h = BAY_CLEAR_MM
     B = float(catalog.BEARINGS["lazy_susan_100"]["B"])
     z_j1_min = foot + floor + 1.5 + A1.overall
     z_deck = max(38.0, z_j1_min - B, foot + floor + 8.0 + bay_h + 4.0)
@@ -920,6 +921,15 @@ def size(design) -> dict:
     margin_f = max(float(a.payload_margin), 1.0)
     L12 = None
     lay = None
+
+    def rail_for(keys, counts, tau):
+        """The servo rail these picks share (electronics2.servo_rail): every torque below is worked out at it."""
+        from .electronics2 import servo_rail
+
+        acts = [{"key": keys[jn], "joint": jn, "torque_with_margin_nm": tau[jn] * margin_f / counts.get(jn, 1)}
+                for jn in names for _ in range(counts.get(jn, 1))]
+        return servo_rail(acts + [{"key": gkey, "joint": "gripper"}], float(design.electronics.servo_v or 0.0))
+
     for _ in range(6):
         lay = _layout(design, keys, counts, gkey, L12=None)
         L12_req = lay.L1 + lay.L2
@@ -927,15 +937,16 @@ def size(design) -> dict:
         L12 = max(L12_req, L12_task)
         lay = _layout(design, keys, counts, gkey, L12=L12)
         tau = _torques(design, lay, config)
+        rv = rail_for(keys, counts, tau)["v"]
         new_keys, new_counts = dict(keys), dict(counts)
         for jn in reversed(names):           # distal first: their masses load the proximal joints
             if _override_for(ov, jn):
                 continue
             need = tau[jn] * margin_f
-            pick = next((k for k in fam if catalog.ACTUATORS[k]["torque_nm"] >= need), None)
+            pick = next((k for k in fam if catalog.torque_at(k, rv) >= need), None)
             n_act = 1
             if pick is None and jn in ("j2_shoulder", "j3_elbow"):
-                pick = next((k for k in fam if 2 * 0.95 * catalog.ACTUATORS[k]["torque_nm"] >= need), None)
+                pick = next((k for k in fam if 2 * 0.95 * catalog.torque_at(k, rv) >= need), None)
                 n_act = 2 if pick else 1
             new_keys[jn] = pick or fam[-1]
             new_counts[jn] = n_act if pick else (2 if jn in ("j2_shoulder", "j3_elbow") else 1)
@@ -943,13 +954,15 @@ def size(design) -> dict:
             break
         keys, counts = new_keys, new_counts
     tau = _torques(design, lay, config)
+    rail = rail_for(keys, counts, tau)
+    rv = rail["v"]
     joints, issues = [], list(lay.issues) + _override_issues(design, names)
     for jn in names:
         key, n_act = keys[jn], counts.get(jn, 1)
-        avail = catalog.ACTUATORS[key]["torque_nm"] * (n_act * 0.95 if n_act > 1 else 1.0)
+        avail = catalog.torque_at(key, rv) * (n_act * 0.95 if n_act > 1 else 1.0)
         need = tau[jn] * margin_f
         if avail < need:
-            issues.append(f"{jn}: needs {need:.2f} N·m with margin, {n_act}× {key} gives {avail:.2f} N·m")
+            issues.append(f"{jn}: needs {need:.2f} N·m with margin, {n_act}× {key} gives {avail:.2f} N·m at {rv:g} V")
         joints.append({"name": jn, "actuator": key, "count": n_act, "torque_req_nm": round(tau[jn], 3),
                        "torque_with_margin_nm": round(need, 3), "torque_avail_nm": round(avail, 3),
                        "margin": round(avail / max(tau[jn], 1e-6), 2),
@@ -963,8 +976,7 @@ def size(design) -> dict:
                        f"{math.hypot(design.task.place_x_mm, design.task.place_y_mm):.0f} mm with a "
                        f"{lay.L3:.0f} mm wrist + hand")
         notes.append(f"reach raised from {req:.0f} to {lay.reach:.0f} mm: " + ("; ".join(why) or "minimum link lengths"))
-    gA = _act(gkey)
-    grip_force = gA.torque * 0.8 / (lay.grip["r"] / 1000.0)
+    grip_force = jaw_force(catalog.torque_at(gkey, rv), lay.grip["r"], "rack")   # per finger at stall, on the rail
     return {"links_mm": {"base_h": round(lay.base_h, 1), "L1": round(lay.L1, 1), "L2": round(lay.L2, 1),
                          "L3": round(lay.L3, 1), "wrist": round(lay.wl if dof != 6 else lay.d45 + lay.wl5, 1),
                          "hand": round(lay.tcp_z, 1)},
@@ -974,7 +986,7 @@ def size(design) -> dict:
                         "travel_mm": round(lay.grip["T"], 1), "overtravel_mm": lay.grip["overtravel"],
                         "stall_force_n": round(grip_force, 1)},
             "hand_mass_g": round(_hand_mass_g(lay, config, _hand_extras_g(design)), 1), "build_config": config,
-            "issues": issues, "notes": notes}
+            "servo_rail": rail, "issues": issues, "notes": notes}
 
 
 # ================================================================== build
@@ -1084,8 +1096,7 @@ class _Builder:
         gkey = sizing.get("gripper_actuator") or gripper_actuator(design)
         Lm = sizing.get("links_mm", {})
         L1, L2 = float(Lm.get("L1", 150.0)), float(Lm.get("L2", 140.0))
-        self.lay = _layout(design, keys, counts, gkey, L12=L1 + L2, base_h=float(Lm.get("base_h", design.arm.base_height_mm)),
-                           eplan=self.eplan)
+        self.lay = _layout(design, keys, counts, gkey, L12=L1 + L2, base_h=float(Lm.get("base_h", design.arm.base_height_mm)))
         self.lay.L1, self.lay.L2 = L1, L2
         self.asm = Assembly((design.name or "robot").replace("-", "_").replace(" ", "_").lower() or "robot")
         self.lex = {}
@@ -1608,10 +1619,13 @@ class _Builder:
         # ---- joints (kinematic contract)
         lim = self.limits()
         a = self.asm
+        rail_v = (self.sz.get("servo_rail") or {}).get("v")
+
         def J(name, typ, par, ch, origin, axis, lo, hi, act=""):
             A = catalog.ACTUATORS.get(act, {})
             cnt = L.counts.get(name, 1)
-            eff = float(A.get("torque_nm", 0.0)) * (cnt * 0.95 if cnt > 1 else 1.0)
+            tq = catalog.torque_at(act, rail_v) if A and rail_v else float(A.get("torque_nm", 0.0))   # at the servo rail
+            eff = tq * (cnt * 0.95 if cnt > 1 else 1.0)
             return a.add_joint(Joint(name, typ, par, ch, origin, axis, lo, hi, actuator=act, effort=round(eff, 3),
                                      velocity=float(A.get("speed_rad_s", 3.0)) if act else 3.0,
                                      meta={"count": cnt, "servo_sign": -1 if typ == "revolute" and name not in (
@@ -2160,7 +2174,7 @@ class _Builder:
         """Pack the electronics bay (behind the turntable). Returns placements and the base outline."""
         R_f = 72.0
         ep = self.eplan or {}
-        mods = []
+        mods, self.bay_issues = [], []
         custom = ep.get("custom_pcb") if (ep.get("config") == "custom_pcb" or ep.get("custom_pcb")) else None
         for m in ep.get("modules") or []:
             spec = catalog.MODULES.get(m.get("key"))
@@ -2177,6 +2191,9 @@ class _Builder:
             if custom and role in ("controller", "servo_driver", "power"):
                 continue
             d = spec["dims"]
+            if float(d["h"]) > BAY_CLEAR_MM:
+                self.bay_issues.append(f"{m.get('ref', m['key'])} ({spec.get('name', m['key'])}) is {float(d['h']):g} mm "
+                                       f"tall, more than the electronics bay's {BAY_CLEAR_MM:g} mm under the deck")
             mods.append(dict(ref=m.get("ref", m["key"]).lower(), key=m["key"], l=float(d["l"]), w=float(d["w"]),
                              h=float(d["h"]), custom=False))
         if custom:
@@ -2712,11 +2729,14 @@ class _Builder:
         a = self.asm
         A = g["A"]
         T, ot, r = g["T"], g["overtravel"], g["r"]
+        rail_v = (self.sz.get("servo_rail") or {}).get("v")
+        # the jaw's effort: what the gripper servo squeezes per finger at stall on its rail (one pinion, two racks)
+        stall = jaw_force(catalog.torque_at(A.key, rail_v) if rail_v else A.torque, r, "rack")
         a.add_joint(Joint("gripper", "prismatic", "gripper_base", "jaw_left", np.eye(4), (-1, 0, 0), -ot, round(T, 2),
-                          actuator=A.key, effort=float(self.d.gripper.force_n),
+                          actuator=A.key, effort=round(stall, 2),
                           velocity=round(float(A.spec.get("speed_rad_s", 4.0)) * r * 0.8, 1),
                           meta={"pitch_radius_mm": r, "teeth": g["n"], "module": _mech.MODULE, "servo_sign": -1,
-                                "stall_force_n": round(A.torque * 0.8 / (r / 1000.0), 1)}))
+                                "stall_force_n": round(stall, 1)}))
         a.add_joint(Joint("gripper_right", "prismatic", "gripper_base", "jaw_right", np.eye(4), (1, 0, 0), -ot, round(T, 2),
                           mimic={"joint": "gripper", "multiplier": 1.0}))
         a.add_joint(Joint("gripper_pinion", "revolute", "gripper_base", "pinion", trans(self.pinion_origin), (0, 1, 0),
@@ -3186,8 +3206,9 @@ def _steps(b):
          ["Move every joint through its full range by hand (power off) and check no cable is pinched or tight."]),
         ("final", "Covers, calibration and checks", "base",
          "Fit the remaining covers. Power up, " + ("assign servo IDs 1… in chain order, " if not pwm else "") +
-         "drive every joint to zero (arm straight up) and store the offsets, then run the gripper close/open test and the "
-         "force-sensor tare. Finally run the pick-and-place self test with the supplied egg-shaped gauge.",
+         "drive every joint to zero (arm straight up) and store the offsets, then run the gripper close/open test" +
+         (" and calibrate the force sensors" if sens else "") + ". Finally run the pick-and-place self test with the supplied "
+         "egg-shaped gauge.",
          ["Keep the e-stop within reach during the first power-up." if "estop" in b.extras else
           "Keep a hand on the power switch during the first power-up."]),
     ]
@@ -3344,9 +3365,26 @@ def build(design, sizing: dict | None = None, electronics_plan: dict | None = No
         "base": {"footprint_bounds": [round(v, 1) for v in b.footprint.bounds], "clamp_holes": [list(np.round(c, 1)) for c in b.clamps]},
         "notes": list(dict.fromkeys(list(sizing.get("notes", [])) + list(L.notes))),
         "warnings": list(b.issues),
-        "issues": [],
+        "issues": list(getattr(b, "bay_issues", [])),
+        **grip_meta(electronics_plan),
     })
     return a
+
+
+def grip_meta(eplan: dict | None) -> dict:
+    """The grip the firmware ships, for the simulation to grip with: its target (asm.meta["grip_target_n"]) and, for a
+    hinged jaw without force sensors, the torque limit that squeezes it (asm.meta["grip_torque_nm"]): the squeeze then
+    depends on where the object sits on the jaw, in the simulation as on the bench. A sensorless hobby servo has no
+    torque limit: its firmware closes past the object with all the servo's torque, so the simulation squeezes with the
+    stall force (asm.meta["grip_squeeze_n"])."""
+    g = (eplan or {}).get("grip") or {}
+    out = {"grip_target_n": g["target_n"]} if g.get("target_n") else {}
+    tl = g.get("torque_limit")
+    if tl and g.get("sensor") != "fsr402" and g.get("jaw") == "revolute":
+        out["grip_torque_nm"] = tl["nm"]
+    if not tl and g.get("sensor") != "fsr402" and g.get("stall_force_n"):
+        out["grip_squeeze_n"] = g["stall_force_n"]
+    return out
 
 
 # ================================================================== preview helpers

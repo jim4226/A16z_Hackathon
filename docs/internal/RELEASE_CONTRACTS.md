@@ -441,11 +441,11 @@ clamping.
 - **Robot:** one stationary tabletop arm, 4/5/6 DOF.
 - **Grasp:** a two-finger parallel gripper, top-down pick and place on the table plane.
 - **Object width:** about 26 to 75 mm.
-- **Payload at 2× torque margin:**
+- **Payload at 2× torque margin** (at the servo rail each arm gets, section 18; the stock SO-101 about 100 g):
 
   | | 4-DOF | 5-DOF | 6-DOF |
   |---|---|---|---|
-  | hobby_pwm | 200 g | 100 g | none |
+  | hobby_pwm | 100 g | 100 g | none |
   | smart_bus | 300 g | 200 g | 100 g |
   | dynamixel | 500 g | 300 g | 200 g |
 
@@ -477,7 +477,8 @@ Slot{value, source: user|inferred|default|memory|video|photo, confidence, eviden
   `layout` (pick/place), `throughput`, `environment`, `people_nearby`, `precision`, `budget`,
   `perception`, `connectivity`, `quantity`, `existing_hardware`.
 - **Mapping:** a deterministic `brief_to_changes()` maps slots to design keys. Object presets in
-  `intent.OBJECTS` win over model guesses: an egg is 25 N.
+  `intent.OBJECTS` win over model guesses: an egg is 25 N. A stated fragility ("fragile", "gently") gives a damage
+  force only to an object without one of its own (`brief.damage_force`, section 19).
 - **Questions:** at most 3 rounds, each with ≤3 questions of 2 to 4 chips. "Use sensible defaults" and
   "Build now" are always available.
 - **Harm:** a local keyword pre-filter plus SubQ's `harm` noul. Refuse when either fires; build nothing
@@ -1244,7 +1245,7 @@ field failure rate (section 0, honesty).
 - **Runs.** Run `i` of a study draws its world from `SeedSequence([seed, i])` only (every entry draws, also when
   switched off, so editing one range never moves the others): outcomes do not depend on the number of workers or the
   batch size, a deeper study extends a shallower one, and the default seed (1) reproduces the published egg-picker
-  study (140 of 200 at 1 ms). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
+  study (150 of 200 at 1 ms; 140 before the simulation gripped at the gripper stage's 2.34 N). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
   more than 45 mm off: the jaws stayed shut and carried it), `drag`, `missed_grasp` (not lifted half the hover height),
   `dropped` (more than 12 mm of slip in transit), `over_force` (the product's damage check), `unreachable`,
   `world_collision` grouped as `world_collision:<phase>` (the plan's phase at the first contact); `unstable` (MuJoCo's
@@ -1459,3 +1460,300 @@ The simulation track (section 16) and the tool broker (section 15) are merged in
 - **Known gaps:** a run that ended in a deleted project still lists in a new project of the same name, so its card
   (stopped, with no actions) shows there for half an hour after it ended, as every recent card does; deleting a
   project leaves the drafts of tools started from its cards (they belong to the owner's catalog, not the project).
+
+## 18. Grip force, servo rail and stock grippers (release review fixes, track E1)
+
+Fixes of the release review's engineering findings. What other code relies on since:
+
+- **The gripper actuator (ENG-15).** `pipeline2.gripper_actuator(design)` is `arm.gripper_actuator(design)`: the
+  actuator sizing picks and the CAD hand is built around, a `gripper=` entry in `arm.actuator_overrides` included. The
+  gripper stage (force plan, grasp simulation, the stall force shown) used the family's default servo while the CAD
+  hand and the electronics used the override. `morph.electronics.servo_spec(key)` gives any robot catalog actuator in
+  the shape of the gripper-only `SERVOS` table, so the gripper stage runs with an XL330 or a 7.4 V STS3215 too.
+- **One grip force (ENG-1, ENG-7).** The gripper stage's force plan (`results.json` `gripper.force`:
+  `window_n`, `target_force_n`, `limit_n`, `hold_force_n`, `sensor`) is the only place a grip force is decided.
+  `pipeline2.gripper_stage(design, sizing=None, n_trials=4, simulate=True)` computes it: for a generated arm the
+  gripper analysis, grasp simulation and `morph.electronics.plan`; for an imported robot `imported.gripper_summary`,
+  whose stock-jaw window uses the simulation's closed form for flat jaws (it slips below 1.5 x m g / 2 mu, is damaged
+  above `max_force_n` / 1.5; the target is the Grip force target when set, else the window's own with a 0.5 N floor,
+  at most 80 % of the servo's squeeze at the grasp lever, section 20). `morph.electronics.force_window(o, hold, sensor, target,
+  floor)` is that formula; nothing else computes a target. `electronics2.plan(design, sizing, grip=force)` copies the
+  plan into `eplan.grip` (a plan's own grip passes through; without one it runs `gripper_stage(simulate=False)`,
+  keeping a partial plan's or `sizing["grip_target_n"]`'s target) and adds an issue when the target is outside its
+  window or above its hard stop. The robot builders put `eplan.grip.target_n` in `asm.meta["grip_target_n"]`, so the
+  simulation grips with the firmware's target. The firmware comment, the summary and the manual (`manual.json`
+  calibration step: `grip_target_n`, `grip_window_n`, `grip_limit_n`; the text names the firmware's F and Z commands)
+  show the same numbers. The pipeline, `robust._assembly`, Teams' change-request preview and New robot's preflight all
+  pass the force plan; `brief.preflight` returns it as `grip`.
+- **The servo rail (ENG-6, ENG-9).** One voltage per arm, decided with the sizing by
+  `electronics2.servo_rail(acts, requested)` (`acts`: one `{key, joint, torque_with_margin_nm}` per servo,
+  `electronics2.rail_acts(sizing)` builds them): `design.electronics.servo_v` (new, default 0 = automatic; the
+  standalone gripper's `supply_v` does nothing on a robot) when every servo's range takes it; else the servos' rated
+  voltage when a catalogued supply gives it with the current; else the catalogued supply voltage nearest to it inside
+  every servo's range that keeps each at `RAIL_MIN_TORQUE` (80 %) of its stall torque; else the rated voltage from a
+  12 V supply through the adjustable servo buck. It doesn't depend on the controller choice (a custom PCB can't take
+  the buck and says so), so `electronics.config` still reruns only the electronics. `sizing.servo_rail` holds it;
+  `catalog.torque_at(key, volts)` (datasheet points in `torque_v`, in proportion below them, capped at the rating)
+  gives every `torque_avail_nm`, margin, actuator pick and sizing issue, the robot builders' joint efforts (so the
+  simulation's servos), and `summary.servo_rail_v`. `electronics2.plan` takes the rail from the sizing, picks the
+  supply for it, warns which servos it derates (below 70 % with the advice to use one voltage class), and warns when a
+  requested rail was not taken. `GRAPH`: `electronics.servo_v` reruns sizing (and so everything). The chat's "use a 5 V
+  supply" sets `electronics.servo_v` when every servo takes it and otherwise changes nothing and says which servo's
+  range rules it out; "use the rated supply voltage" sets it back to 0. A hand-written imported profile is still sized
+  at q = 0, now labelled: `sizing.basis` = "q = 0" (the Studio's margin row reads "at q = 0"), and `sizing.warnings`
+  names a joint whose margin over the whole joint range (the auto-import pose grid) falls below the payload margin;
+  the inspector lists sizing warnings.
+- **One voltage class per arm (ENG-5).** `catalog.FAMILY_GROUPS` (moved from `importers/autoprofile.py`) lists each
+  family's voltage groups; `catalog.pick_in_groups(need, family)` gives each joint the weakest actuator that holds
+  `need[joint]` (N·m with margin) on its group's servo rail, from the first group where every joint has one.
+  `imported.actuator_plan(design, prof, need)` swaps an imported robot to another family this way (the hard-coded
+  `FAMILY_SWAPS` list, which put XL430s and XL330s on one 6 V rail, is gone; `imported.size` passes the need), and so
+  does `autoprofile.size_for_family`. The SO-101 swapped to Dynamixel gets six XL430-W250s on 12 V (2.27x shoulder
+  margin, the six holder issues by design). `electronics2.rail_problems(acts, supply, config)` names every servo whose
+  voltage range leaves out the rail it really gets (the supply itself on a custom PCB, which passes its input to the
+  servos); those are plan issues, and `firmware()` and `finalize()` raise before writing anything, as for a mixed
+  protocol, so the wiring stage fails with the reason. Present step 12's caption and `docs/DEMO_SCRIPT.md` row 12 say
+  what the swap does (new supply, controller, wiring and firmware; six orange holders; not feasible until redesigned).
+- **Stock jaws and the gripper torque limit (ENG-2).** A robot that keeps its own jaws (`arm.source` set) has no
+  force sensors: `imported.gripper_summary` returns `sensor` "none" whatever `finger.sensor` says (a warning when it
+  asks for FSRs), so no FSR is bought, wired, programmed (`PIN_FSR_L/R` -1) or calibrated, and the templates, New
+  robot's SO-101 brief, the import session and the chat keep `finger.sensor` "none" for them. Force plans carry
+  `jaw` ("rack" or "revolute") and `lever_mm` (pinion radius, or the stock jaw's lever at the simulated grasp,
+  `imported.grasp_lever`; `JAW_LEVER_MM` / a profile's `jaw_lever_mm` only when that can't be worked out).
+  `electronics2.grip_torque_limit(grip, gkey, servo_v, family)` gives `eplan.grip.torque_limit` (`force_n`, `nm`,
+  `fraction` of the stall torque at the rail, `per_n`, `register`, `short`), None for hobby PWM: without force sensors
+  it is the grip (the target at the jaw's lever; a rack jaw per finger F = torque x 0.6 / 2r), with them a cap at the
+  firmware's hard stop. A sensorless grip the servo can't reach is an issue, and so is a hobby PWM gripper whose stall
+  force exceeds the object's limit. The firmware writes it at start-up and when the e-stop clears (`gripTorque()`:
+  Feetech register 48 in 0.1 %, DYNAMIXEL Goal PWM in percent) and F re-sets it on a sensorless gripper. A sensorless
+  revolute jaw is simulated with that torque (`asm.meta["grip_torque_nm"]`). Firmware with force sensors that read
+  under `GRIP_SENSE_N` through a whole close probes to `GRIP_MIN` (`GRIP_PROBE` is the whole overtravel past
+  `GRIP_CLOSED`, section 20), goes back to `GRIP_CLOSED` and prints `!GRIP no force reading down to GRIP_MIN`. `tests/fw_stubs/grip_harness.cpp` runs the
+  generated sketch's control loop on the host for the tests.
+
+## 19. Brief, inspector and pipeline (release review fixes, track E2)
+
+Fixes of the release review's brief, inspector and pipeline findings. What other code relies on since:
+
+- **Damage force (UX-1).** `brief.damage_force(b) -> (N, where)` is the object's damage force and where it comes from:
+  a measured value wins (Morph's preset or catalog object, or the object a video, a photo or a model described), and a
+  stated category (`FRAGILITY_N`: "fragile" 3 N, "care" 10 N) gives one only to an object without it. Saying an egg is
+  fragile once made it a 3 N strawberry while the card showed 25 N, and no grip both holds a 60 g egg and stays under
+  2 N, so the README's example built a robot that failed its own pick and place. `brief_to_changes`, the card's object
+  row and a new fragility assumption (its options are the other categories, as answers to the `fragility` slot) all use
+  it; `parse()` returns the words a slot came from in `said`, kept in the slot's evidence ("request: without cracking").
+  A grip issue on the confirm card ends with where the damage force came from (`brief.explain_issues`).
+  `morph.electronics.no_safe_grip(lo, hi, o, sensor, jaw)` is the one sentence for a window with no force in it (the
+  gripper stage's and the electronics plan's were two), and names what sets its top (`limit_source`: the object's
+  damage force / 1.5, or the force sensor's range).
+- **Build now (UX-1).** `POST /api/brief {action: "build", stop_on_issues: true}` on a brief that is still asking or out
+  of scope fills the defaults and, when the preflight then has issues, answers 200 `{ok, brief_id, busy: false, brief,
+  stopped: "preflight"}` without building; on a brief that is already ready it builds as before. New robot's Build now
+  sends it, so the confirm card shows the issues first ("Not built yet"), with Build anyway.
+- **Jobs inside a pick and place the gripper can't do (UX-3).** `brief.ADJUSTED` (`twisting`, `opening`, `assembly`)
+  and `brief.adjusted_kinds(text)` read unscrewing and twisting, opening jars, bottles, lids and packaging ("open" as a
+  verb only: "an open box" and "open-top bins" are not), and assembling, inserting and pressing; `parse()` returns them
+  in `adjusted`, `merge()` keeps them in `flags["adjusted"]`, and `assess_scope` puts their plain note first, so the
+  scope reads "Adjusted" and the robot is built for the moving part. Unscrewing says it all for an opening that
+  twists. An assembly request moves the parts (task `pick_place`, no sorting camera). `CATALOG` has a glass jar
+  (65 mm, 300 g) and a pill bottle (35 mm, 40 g), offered by the containers and small-parts archetypes only when the
+  request names them (`Archetype.more`).
+- **People the robot works for (UX-3).** `brief.PERSON_NEAR` (a grandparent, "my mum", "my dad", "my partner", "help
+  me", "for him" and the like) infers `people_nearby` "yes" for every archetype, so the robot gets an emergency stop
+  and the card says it was assumed; `HAND_TO_PERSON` ("pass my dad", "bring her") sets the task to hand-over. A
+  hand-over defaults to people next to it and a sorting archetype asked to hand things over gets no camera. Every
+  width in a note is `capability.min_width` for the shape (26 mm round, 21.5 mm flat-sided), and a preset outside the
+  band says which limit it breaks (`brief.unfit_note`: "too heavy", "too narrow", "too wide").
+- **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
+  at `test_reach_mm` (about 45 % of the egg-picker's reach), so the inspector's "Payload at full reach" overstated the
+  arm 2.4 to 3x. The sweep now also reports the arm stretched straight out (`simulate._stretch_pose`: the tool point at
+  shoulder height, as far along the pick direction as it reaches, position only): `stretch_reach_mm`,
+  `stretch_payload_g` (`_static_capacity` there: what holds with a servo at stall, statically) and
+  `stretch_limited_by`; nothing more is simulated and every other output is bit-identical. The summary adds
+  `payload_test_reach_mm`, `stretch_payload_g`, `stretch_reach_mm` and `top_down_reach_mm` (the top-down band's outer
+  edge; `workspace_reach_mm` stays the any-pose maximum). The inspector labels them "Max payload, top-down at
+  <r> mm", "Payload stretched out at <r> mm", "Top-down reach" and "Reach, any pose", with a note that payloads are at
+  stall, and Quick facts' "Payload" (the object's mass) is "Object mass"; New robot's done card says "Max payload" with
+  where it was measured. The egg-picker: 1,729 g top-down at 216 mm, 720 g stretched out at 476 mm (elbow-limited); the
+  SO-101: 732 g at 252 mm, 216 g at 465 mm (shoulder).
+- **Stage reuse follows every key a stage reads (ENG-4).** `GRAPH` adds `electronics.pinion_radius_mm` to sizing (the
+  hand's rack-and-pinion drive), `task.*` to the manual (it prints the target cycle time) and `build.config` to the
+  gripper stage, and drops `electronics.supply_v` from it. The gripper stage of a generated arm analyses
+  `pipeline2.gripper_design(design)`: the gripper actuator (its stall on the servo rail since section 21) and the
+  fingers the robot's CAD makes for its build config (`arm.LOOK`: printed PETG, machined Al6061, molded PC, the last in
+  `materials.MOLDED`), with no controller; it no longer reads `finger.material`, `fab.process` or `electronics.mcu`,
+  which the robot doesn't build with, and its force plan has no `mcu`, `wiring`, `parts` or `sensing` (the electronics
+  plan's, for a robot). So a controller change no longer reruns the gripper stage (the electronics, the CAD whose base bay holds the board, and
+  what follows them still rerun), a fabrication-process change reruns manufacturing, the BOM and the manual only (no
+  Mechanical review in Teams), and a cycle-time change reruns the manual and asks Documentation. New robot's preflight
+  analyses the same design.
+  `tests/test_robot_stage_reads.py` computes every stage on a design that records each key it reads and fails on any
+  key outside the stage's patterns and its upstream stages' (for the egg-picker and the SO-101); the simulation's only
+  allowed exception is the project name, robot.xml's model name.
+- **Print orientation fits the bed (ENG-10).** `Geo.pose_for(process)` picks the lowest-scoring print pose among those
+  whose height fits the process's bed (`manufacturing.BEDS`: FDM 250 x 210 x 220 mm, SLA, MJF) and whose footprint fits
+  either way round, and turns the part 90 degrees about z when its footprint only fits that way; the STL, 3MF, print
+  height and the FDM cost model use that pose. When no pose fits, the DFM check says "<x>x<y>x<z> mm (its best way up)
+  exceeds the ... build volume: split the part". The egg-picker's base shell prints "+y down", 244 x 38 x 144 mm (it
+  stood 244 mm tall).
+- **A study's model check compares what moves (ENG-8).** `robust.prepare` compares the rebuilt robot.xml with the
+  revision's after `_norm_xml`: the option time step and the inertial, geom and site elements of every world body with
+  no joint (the base welded to the table), with the mesh assets only they used, are left out. A controller or
+  `electronics.config` revision reuses its parent's simulation (`GRAPH`); its rebuilt base differs in mass and shapes
+  only, so `matches_revision` stays true. Any change to a moving body (a servo's torque, a link) still makes it false.
+- **What sizing changed is shown (ENG-11).** `summarize` adds `notes`: sizing's notes ("reach raised from 320 to 475
+  mm: top-down pick/place at 234 / 233 mm with a 175 mm wrist + hand", "shoulder height raised to 76 mm (...)"). The
+  inspector lists each under Issues & warnings as "Morph adjusted <note>" (an older revision's `sizing.notes` when its
+  summary has none) without counting it as an issue; the Parameters rows for Reach and Shoulder height say "built at
+  N mm" when the sized value differs from the asked one by 1 mm or more; New robot's done card and `morph robot`'s
+  summary ("adjusted: ...") list them.
+- **Software checks, not validation (ENG-12).** New robot's done view is titled "Your robot is designed"; a robot
+  whose summary is feasible (every simulated scenario included, section 20) gets the tag "Software checks pass" (never
+  "Feasible") and "Its software checks pass:
+  simulation, torque margins, DRC and DFM. Not bench-validated: build and test it before you rely on it."; the pipeline
+  agent line says "every software check passed". The Firmware pane opens with "Generated firmware, not bench-tested: it
+  hasn't been compiled for this board or run on the arm ..." (`electronics.firmware_validation` is unverified); the
+  Export button's title and toast say "not bench-validated", as the export manifest's `note` does.
+- **Manual, make files and BOM list the same parts (ENG-13).** `manufacturing.fabricated(part)` (a fabrication
+  process, and not a fastener, cable or "visual" part) decides both what gets make files and what the manual's parts
+  tables list as made: the upper arm's logo inlay is decoration in the CAD only (no print file, BOM line or manual row).
+  Every bought fastener and standoff in the BOM is in a step (the M3x6 brass standoffs in the Electronics bay step's
+  parts table). The first pick-and-place test names the project's object ("a stand-in for the strawberry (or a 30 mm
+  ball) ... then repeat with a real strawberry"); only an egg project uses a hard-boiled egg first.
+- **Mold tooling is shown apart from the unit cost (ENG-14).** The BOM tab's per-config panel is "Per unit at qty N":
+  each config's parts + purchased cost per unit at the build quantity (`manufacturing.configs[k].parts_cost +
+  purchased_cost`), with "+ $X tooling, once" under a config that needs molds; the unit-cost stat says "incl. $X tooling
+  over N units" when the current config has tooling. The Manufacturing tab's config cards show the same per-unit cost,
+  "+ tooling $X once" and "$Y each at qty N with tooling" (`unit_cost`, which adds tooling / quantity). The inspector's
+  Unit cost row reads "Unit cost (incl. $X tooling over N units)" when `summary.tooling_cost` is set. The data are
+  unchanged: `bom.totals.per_config` and `configs[k].unit_cost` still include tooling / quantity. The egg-picker in
+  production at quantity 1: $4,771 per unit + $72,971 tooling ($77,742 each with tooling).
+
+## 20. Grip physics and honest checks (release review fixes, track E3)
+
+Round 2 of the grip fixes: what round 1's single grip source got wrong, found by re-checking it. What other code
+relies on since:
+
+- **One jaw model (E-N7).** `morph.electronics.jaw_force(torque_nm, lever_mm, jaw)` is the per-finger squeeze of each
+  gripper type: a rack-and-pinion jaw's one pinion drives both racks, so each finger gets torque x `GEAR_EFF` (0.6) /
+  (2 x pitch radius); a stock revolute jaw on the servo's horn, torque / lever. `jaw_torque(force_n, lever_mm, jaw,
+  losses=True)` inverts it (`losses=False`: the torque that can never squeeze harder, the force-sensing gripper's cap).
+  Everything uses them: `servo_max_force` (the force plan's `servo_stall_force_n`, its `limit_n` for an object without
+  a damage force, so the firmware's `GRIP_LIMIT_N` and the F command's cap, and its "reaches only" issue), the
+  standalone gripper's `choose_servo` (the first hobby servo its printed mechanism mounts whose stall force is at
+  least twice the target), `sizing.gripper.stall_force_n` (at the rail), the generated arm's gripper joint `effort` (the
+  stall force per finger at the rail: the URDF, and the simulation's cap on the squeeze and its grip-limited payload),
+  `electronics2.grip_torque_limit`, the gripper's current estimate, `eplan.grip.stall_force_n` (new: per finger at
+  stall on the rail) and the stock jaw's `servo_stall_force_n`. The STS3215 12 V gripper on a 10.5 mm pinion gives
+  82.9 N per finger (the force plan said 165.9 N, sizing 221 N).
+- **The hold and the target (E-N1).** The force plan's `hold_force_n` is never below `static_hold_n`, the static
+  friction hold m g / (2 mu gain) (`morph.electronics.static_hold(o, gain)`, `gain` the pad's wedge gain, 1 for flat
+  stock jaws); the grasp simulation's bisection (`sim_hold_n`) only ever raises it. Its contour pads cradle a can at
+  2.34 N per finger that the robot's own fingers drop below 4.65 N. `force_window` gives an object without a damage
+  force twice its lower bound as the target (it gave 1.3x): three times the static hold, a 1.5x margin over the robot's
+  shake test, which loads the grip with about 1.9 g. An object with a damage force keeps min(sqrt(lo x hi), 2 x lo)
+  when a force sensor regulates the squeeze (`sensor` given); without one the squeeze is open loop (a torque limit, so
+  it varies with where the object sits, the gearbox's friction and the supply) and the target is the window's
+  geometric mean sqrt(lo x hi), as far from both ends as the window allows: the SO-101's egg 4.58 N (2.52 N before; its
+  shake test crept 5.01 mm with the squeeze exactly 2.52 N), its strawberry 0.7 N (0.5 N, 2 % of the servo's torque).
+  The simulation's closed form (`simulate._grip_force_target` without a shipped grip) and New robot's Keewano
+  preflight use `static_hold` too. The 370 g can: 4.56 N per finger before (its shake test dropped it), 13.94 N now.
+- **What G does (E-N2, E-N3).** `grip_motion()["probe"]` is the whole overtravel (`GRIP_CLOSED - GRIP_MIN`): a
+  force-sensing close looks for a reading as far as the max-squeeze stop, so an egg 8 % narrower than the calibration
+  gauge (1.76 mm per jaw) gets gripped; the torque limit, written at start-up as a cap at the force limit, bounds the
+  squeeze meanwhile; with no reading by `GRIP_MIN` it goes back to `GRIP_CLOSED` and says so. Without force sensors G
+  commands `GRIP_MIN`, past the object (it commanded `GRIP_CLOSED`, the gauge contact, where a torque limit has no
+  position error to act on): the torque limit sets the squeeze, or a hobby servo's whole torque. The simulation models
+  exactly that: its jaw is commanded past contact, force-limited at the torque limit's force, and a sensorless hobby
+  servo squeezes with its stall force (`arm.grip_meta` puts `eplan.grip.stall_force_n` in `asm.meta["grip_squeeze_n"]`).
+  The firmware header, the plan's warning ("G closes the jaws past the object and the gripper servo's torque limit
+  sets the squeeze") and the manual (`manual._grip_sentence`, with `GRIP_MIN` in the joint's unit) say the same. A
+  hobby PWM gripper with force sensors gets a warning when its stall force exceeds the object's damage force: nothing
+  backs the sensors up. `tests/fw_stubs/grip_harness.cpp` takes the object's contact offset as `argv[2]`.
+- **The stock jaw's lever (E-N6).** `imported.grasp_lever(design, sizing)` is the lever where the simulation grasps the
+  object (`simulate.grasp_lever(asm, design)`: `_describe(..., grasp_only=True)`, the hand's and the jaws' pieces
+  only), worked out on the robot's own jaws with sizing's servos and the object's shape and size, on the camera-free
+  URDF, memoized (about 2 s). `imported.gripper_summary` puts it in `lever_mm`, so the torque limit is set for the
+  target there and the simulated squeeze is the target: the SO-101 grasps the egg 62.2 mm from its pivot (it squeezed
+  2.83 N, 3.41 N peak, for a 2.52 N target with the limit set at 70 mm) and a strawberry 70.0 mm.
+- **Every simulated scenario counts (ENG-12).** `pipeline2.sim_issue(name, scenario)` is the summary's issue for a
+  scenario that failed, saying why ("shake test failed in simulation (object dropped (213 mm slip))"; `SIM_CHECKS`
+  names the four); `summarize` adds one for every failed scenario, not only the pick and place, and lists their names
+  in `summary.sim_failed`. So `feasible`, New robot's "Software checks pass" and "every software check passed", the
+  inspector's tag (which no longer lists a scenario the summary already counts), Teams' tag and "Built r002: software
+  checks pass" (it said "feasible"), Import's "Imported X: software checks pass" / "its software checks found issues"
+  (it said "isn't feasible yet") and `morph import`'s line all follow every check. `tests/test_grip_sweep.py`
+  (MORPH_SLOW) builds the two demo robots and 22 one-liners: every scenario passes or the build names it, and no
+  scenario that passed on 6c49545 fails.
+
+## 21. Stage dependencies, wording and supplies (release review fixes, track E4)
+
+Round 2 of the pipeline and wording fixes. What other code relies on since:
+
+- **A stage reruns when an upstream result it reads changes (E-N4).** `GRAPH["gripper"]` has `sizing` upstream: the
+  imported robot's gripper stage reads sizing's servo rail and servos (`imported.gripper_summary`), and a generated
+  arm's force plan works the gripper servo's stall torque out on sizing's rail (`pipeline2.gripper_stall_nm(ga,
+  sizing)`: `catalog.torque_at`, the catalog every other stage uses; `morph.electronics.plan(..., stall_nm=)`), so
+  `servo_stall_force_n`, `limit_n` (the firmware's `GRIP_LIMIT_N` for an object without a damage force) and the
+  "reaches only" issue are at the rail. An `electronics.servo_v` edit on the SO-101 used to keep the old grip limit
+  (GRIP_LIMIT_N 20.83 N against 19.29 N fresh). `pipeline2.gripper_inputs(design, sizing)` is the only part of sizing
+  the stage reads (the rail's voltage; for an imported robot also the servos), and `pipeline2.PARTIAL` declares it:
+  `RobotProject.run` reuses a stage that is dirty only because an upstream reran, when that part is unchanged, no key
+  of its own changed and the parent's own result for it is usable (an early cutoff; a failed one is computed again), so a wrist camera or a longer reach re-sizes the arm without rerunning the
+  grasp simulation (`provenance` "reused from rNNN"). `dirty_nodes` and Teams' `affected_stages` stay static: they
+  list the gripper stage for every sizing edit. Teams' change-request preview applies the same cutoff to its grip: it
+  re-plans the grip, and shows a "Grip" row, only when a gripper key or `gripper_inputs` changes. New robot's
+  preflight passes the same rail stall.
+- **The arm is laid out the same before and after the electronics plan.** `arm.BAY_CLEAR_MM` (22 mm) is the electronics
+  bay's clear height under the deck, fixed: the layout no longer takes it from the plan's boards (sizing laid the arm out
+  without them, the build with them, and with a short turret the deck sets the shoulder's height). A board taller than
+  that is a CAD issue. So the simulation, which grips with `eplan.grip` and welds the plan's boards into the base, still
+  doesn't depend on a controller or electronics-config edit, and reuses its result across them (section 19, ENG-8).
+- **The guard.** `tests/test_robot_stage_reads.py` also computes every stage on recording results that log each
+  upstream result (and key in it) a stage reads, and fails when it reads a stage that isn't upstream of it; the
+  simulation's reads of the electronics plan are the one declared exception (`FOREIGN`), checked by swapping every
+  design key the plan reads that the simulation doesn't rerun for (`OTHER`: controller, electronics config) and
+  comparing the simulated robot (`robust._norm_xml` of `simulate.build_mjcf`, and `asm.meta`'s grip). A stage in
+  `PARTIAL` must compute the same from that part alone.
+- **Wording that names a thing is not a job (E-N8).** `brief.ADJUSTED` reads verbs, not things: "open X" whose X is the
+  subject of a verb ("open boxes arrive on the left", "open jars are on the shelf") opens nothing; "twist" is a verb
+  only when not after a moving verb or determiner (`_DET`) and not "twist ties" or "twist-off"; "screw caps" after
+  `_DET` are caps; "insert" after `_DET` and plural "inserts" or "plugs" not done by a doer ("it", "that", "which",
+  "robot", "arm") are parts; "assembly line/station/area/..." is a place and "pre-assembled" an adjective.
+  `brief.HAND_TO_PERSON` needs a receiver: "hand/pass/give/bring" followed by a person (me, him, her, us, `_PERSON`), or
+  by up to four words and "to" a person ("give it back to her", "hand the cup to my mum"); "them" or "it" alone are the
+  things, so "pass them to the packing station" is a pick and place with no emergency stop. `PERSON_NEAR` uses it for
+  those verbs (help, assist and serve keep "them"). `tests/test_brief_answers.py` holds both ways' tables.
+- **No negative payload (E-N9).** The payload sweep's `stretch_payload_g` is the static capacity stretched straight
+  out, and stays as computed in the simulation's metrics (below zero: the deficit). The summary clamps it at 0 and adds
+  `stretch_holds_itself` (False when a servo can't hold even the arm's own weight out there; None without a sweep) and
+  `stretch_limited_by` (the joint). The inspector shows "none" for it with a note ("Stretched out at 465 mm the arm
+  can't hold even its own weight: its shoulder lift servo stalls. It carries payloads only closer in.") and `morph
+  robot`'s summary prints `stretch_payload_g=none` and the same sentence; both also read a revision saved with the
+  negative number. The SO-101 on Dynamixel servos at a 7.4 V rail is such an arm (-13 g, shoulder_lift).
+- **A battery request says what is built (E-N10).** Morph plans mains power only (no battery in the supply catalog).
+  `intent.BATTERY` (battery, LiPo, Li-ion, 18650, cordless, "2S pack") adds `intent.battery_note(design, volts)` to the
+  chat's reply, from the rules or after Claude's: the mains supply the build picks for that servo rail ("a 12 V 10 A
+  mains supply and the servo buck set to 7.4 V", or "... straight to its servos") and "no battery, charger or
+  low-voltage cutoff"; for a lithium pack's voltage (3.7 V a cell, `intent.CELLS` reads "2S") it names every servo whose
+  maximum is below the pack's full charge (4.2 V a cell: the SO-101's 7.4 V STS3215s and a charged 2S pack's 8.4 V).
+  The voltage is still the servo rail (`electronics.servo_v`) when every servo takes it; the chat tool's description
+  tells Claude the same.
+- **Teams prices mold tooling apart (ENG-14).** The change-request preview's cost (`teams/impact.py`) is per unit
+  without mold tooling, as the BOM tab's "Per unit at qty N": the base's unit cost and the per-level costs
+  (`bom.totals.per_config`) spread tooling over the build quantity, so `_base` also reads each level's
+  `manufacturing.configs[k].tooling_cost` and takes it out (tooling / the base's quantity). The tooling is a note, paid
+  once ("plus $72,971 of mold tooling, paid once", "and no mold tooling (it had $X, paid once)", or "plus the $X of
+  mold tooling" for a build that keeps its molds); `impact.cost` has `tooling: [before, after]` and `before`, `delta`,
+  `after` without it. A production switch at quantity 1 read "about +$73,374 per robot"; it reads "+$4,234 per robot
+  ...; plus $69,140 of mold tooling, paid once". `collab.built_summary` adds `tooling_cost` and `quantity` ([base,
+  built]) and `release_gate`'s checklist `tooling_cost` and `quantity`; Teams' "Built rNNN: ... per unit" line and the
+  checklist's unit cost say "incl. $X tooling over N units", as the inspector does.
+- **No "add force sensors" issue where a torque limit sets the squeeze.** `electronics2.has_torque_limit(gkey, family)`
+  (the firmware can set the gripper servo's torque limit on the arm's bus) is the one rule `grip_torque_limit` and the
+  gripper stage use: `pipeline2.gripper_drive(design, ga, sizing)` passes it with the rail stall to
+  `morph.electronics.plan(..., torque_limited=)`, which then raises no "can reach X N > object limit ... add
+  finger.sensor=fsr402" issue (the standalone gripper's rule for a servo with nothing to limit it). A generated arm set
+  to Force sensor: none was not feasible for that alone; the egg-picker now builds with its checks passing (torque
+  limit 5.3 % of stall for 4.42 N, the egg intact at 4.53 N peak). A hobby PWM gripper still gets the issue, as an
+  imported one does. New robot's preflight uses the same helper.

@@ -2,6 +2,7 @@
 the wording of questions, summaries and assumptions, and what the timeline says. Offline: no keys, no network."""
 
 import os
+import re
 
 import pytest
 
@@ -102,8 +103,10 @@ def test_a_named_preset_says_its_sizes_are_morphs():
     assert rows["object"]["text"].endswith("; sizes from Morph's preset") and rows["object"]["badge"] == "you said"
     rows = {r["slot"]: r for r in typed("help me sort socks", "they weigh 80 g").to_dict()["card"]}
     assert rows["object"]["text"].endswith("; width from Morph's preset")
+    rows = {r["slot"]: r for r in agents.run_turn(text="a robot that picks up 450 g candles").to_dict()["card"]}
+    assert rows["object"]["text"] == "Candles (Ø45 mm, 450 g); width assumed"
     rows = {r["slot"]: r for r in agents.run_turn(text="a robot that picks up 450 g jars").to_dict()["card"]}
-    assert rows["object"]["text"] == "Jars (Ø45 mm, 450 g); width assumed"
+    assert rows["object"]["text"] == "Glass jars (Ø65 mm, 450 g); width from Morph's preset"
 
 
 def test_the_timeline_never_says_zero_facts():
@@ -114,3 +117,130 @@ def test_the_timeline_never_says_zero_facts():
     events = []
     agents.run_turn(text="pick 60 g eggs every 5 s", on_event=events.append)
     assert next(e["text"] for e in events if e["role"] == "designer").startswith("Built-in rules: 2 facts from your words")
+
+
+@pytest.mark.parametrize("text", ["pick up a raw egg without cracking it", "Pick a raw egg and place it without cracking it.",
+                                  "pick up eggs without breaking them", "handle eggs gently, they crack easily"])
+def test_saying_an_egg_is_fragile_keeps_the_eggs_measured_damage_force(text):
+    # the README's example and the egg-picker's description: 'fragile' (3 N, a strawberry's) once overrode the egg's 25 N
+    # while the card showed 25 N; no grip both holds a 60 g egg and stays under 2 N, so that robot failed its pick and place
+    b = agents.run_turn(text=text)
+    if b.status == "asking":
+        b = agents.run_turn(b, action="defaults")
+    assert b.status == "ready" and b.changes["object.max_force_n"] == 25 and b.preflight["issues"] == []
+    assert "damaged above 25 N" in next(r["text"] for r in b.to_dict()["card"] if r["slot"] == "object")
+    assert B.damage_force(b) == (25, "Morph's preset for eggs")
+
+
+def test_a_stated_fragility_gives_an_object_without_one_its_damage_force_and_says_so():
+    b = agents.run_turn(agents.run_turn(text="pick up 200 g glass jars without breaking them"), action="defaults")
+    assert b.changes["object.max_force_n"] == 3.0
+    row = next(r["text"] for r in b.to_dict()["card"] if r["slot"] == "object")
+    assert "damaged above 3 N (Morph's reading of 'without breaking')" in row
+    a = next(a for a in b.assumptions if a.get("slot") == "fragility")
+    assert a["text"] == "I read 'without breaking' as fragile: damaged above about 3 N per finger."
+    assert [o["value"] for o in a["options"]] == ["robust", "care"]
+    # a 200 g jar slips below 2.6 N and is damaged above 3 / 1.5 N: the issue says where both numbers come from
+    issue, = b.preflight["issues"]
+    assert issue.startswith("no safe grip force: holding needs 2.60 N but the limit is 2.00 N (the glass jar's 3 N damage "
+                            "force / 1.5)") and issue.endswith("the 3 N damage force is Morph's reading of 'without breaking'")
+    b = agents.run_turn(b, answers={"fragility": "robust"})          # the card's option: it takes a firm squeeze
+    assert b.changes["object.max_force_n"] == 0.0 and b.preflight["issues"] == []
+
+
+@pytest.mark.parametrize("text, note, obj", [
+    ("help my grandma open jars", "Opening jars", "glass jar"), ("open jars", "Opening jars", "glass jar"),
+    ("twist the lids off jars", "Unscrewing", "glass jar"), ("unscrew bottle caps", "Unscrewing", "330 ml bottle"),
+    ("assemble lego", "Assembling", "Duplo-size brick"), ("insert 50 ml tubes into a rack", "Assembling", "50 ml centrifuge tube"),
+])
+def test_a_job_the_gripper_cant_do_reads_as_adjusted_with_a_plain_note(text, note, obj):
+    # these read "Inside what Morph builds" while the robot silently dropped the opening, twisting or assembling
+    b = agents.run_turn(text=text)
+    assert b.scope["status"] == "adjusted" and any(n.startswith(note) for n in b.scope["notes"]), b.scope
+    b = agents.run_turn(b, action="defaults")
+    assert b.status == "ready" and b.scope["status"] == "adjusted" and b.preflight["issues"] == []
+    assert b.changes["object.name"] == obj and any(a["kind"] == "scope" and a["text"].startswith(note) for a in b.assumptions)
+
+
+@pytest.mark.parametrize("text", ["move open-top bins to the left", "put the parts into an open box", "pick up open cans and move them",
+                                  "sort screws in bins", "pick strawberries into the open tray", "a robot that sorts socks",
+                                  # the open boxes are the subject of "arrive": they are open, nobody opens them
+                                  "open boxes arrive on the left; move the cans into them", "open jars are on the shelf",
+                                  # twist ties, screw caps, brass inserts and plugs are things to move; an assembly line is a place
+                                  "sort twist ties", "move twist-off caps to the tray", "sort screw caps",
+                                  "pick up screw caps", "sort brass inserts", "sort threaded inserts into bins",
+                                  "move the insert to the jig", "sort plugs into bins", "pick parts off the assembly line",
+                                  "move boxes to the assembly area", "move pre-assembled kits to the shelf"])
+def test_wording_that_opens_twists_or_assembles_nothing_stays_inside(text):
+    assert B.adjusted_kinds(text) == []
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("open jars", "opening"), ("help my grandma open jars", "opening"), ("open boxes and take out the parts", "opening"),
+    ("can it open bottles", "opening"), ("pry open paint tins", "opening"), ("take the lids off the tubs", "opening"),
+    ("twist the lids off jars", "twisting"), ("twist off bottle caps", "twisting"), ("unscrew bottle caps", "twisting"),
+    ("screw caps onto bottles", "twisting"), ("screw the lids on", "twisting"), ("tighten the bolts", "twisting"),
+    ("assemble lego", "assembly"), ("help with assembly", "assembly"), ("insert 50 ml tubes into a rack", "assembly"),
+    ("a robot that inserts pins into a board", "assembly"), ("plug cables into sockets", "assembly"),
+    ("press bearings into housings", "assembly"), ("snap them together", "assembly"),
+])
+def test_wording_that_opens_twists_or_assembles_something_reads_as_that_job(text, kind):
+    assert [k for k, _ in B.adjusted_kinds(text)] == [kind]
+
+
+@pytest.mark.parametrize("text, hand_over, near", [
+    # a person receives it: hand-over, with that person next to the robot
+    ("pass my dad his pills", True, True), ("bring me a can of soda", True, True), ("pass them to me", True, True),
+    ("give it back to her", True, True), ("hand the cup to my mum", True, True), ("bring the mugs over to us", True, True),
+    # "them" and "it" are the things, and a station, a line or a crate is no person: a pick and place
+    ("pick up cans and pass them to the packing station", False, False), ("give them to the sorting line", False, False),
+    ("bring it to the bin", False, False), ("pass the parts to the next station", False, False),
+])
+def test_a_hand_over_goes_to_a_person(text, hand_over, near):
+    assert bool(re.search(B.HAND_TO_PERSON, text)) is hand_over
+    assert bool(re.search(B.PERSON_NEAR, text)) is near
+
+
+@pytest.mark.parametrize("text, task, estop", [("pick up cans and pass them to the packing station", "pick_place", False),
+                                               ("pick up cans and pass them to me", "hand_over", True)])
+def test_passing_things_on_to_a_station_is_a_pick_and_place(text, task, estop):
+    # "pass them to the packing station" built a hand-over with an emergency stop, summarised as "hands over" cans
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "task") == task and ("estop" in b.changes["electronics.extras"]) is estop
+    assert ("hands over" in b.summary) is (task == "hand_over")
+
+
+@pytest.mark.parametrize("text", ["open boxes arrive on the left; move the cans into them", "sort twist ties"])
+def test_a_request_that_only_names_open_or_twisted_things_stays_inside(text):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert b.scope["status"] != "adjusted" and b.scope["notes"] == [], b.scope
+
+
+@pytest.mark.parametrize("text, estop", [("help my grandma open jars", True), ("help my grandma move her mugs", True),
+                                         ("pass my dad his pills", True), ("sort socks for me", True), ("sort socks", False),
+                                         ("open jars", False)])
+def test_a_person_the_robot_works_for_is_next_to_it_so_it_gets_an_emergency_stop(text, estop):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert ("estop" in b.changes["electronics.extras"]) is estop
+    people = next(a["text"] for a in b.assumptions if a["slot"] == "people_nearby")
+    assert people == ("I assumed people work next to it, so it has an emergency stop." if estop else
+                      "I assumed it works on its own, so there is no emergency stop.")
+
+
+def test_pass_my_dad_his_pills_hands_over_a_pill_bottle():
+    b = agents.run_turn(agents.run_turn(text="pass my dad his pills"), action="defaults")
+    assert b.scope["notes"] == ["Single pills (5 to 15 mm) are far smaller than the 26 mm this gripper closes on; the robot can "
+                                "move the pill bottle (35 mm) instead."]          # it said screws and nuts
+    assert (B.value(b, "task"), b.changes["object.name"]) == ("hand_over", "pill bottle")
+    assert b.changes["electronics.extras"] == "estop" and "hands over pill bottles" in b.summary   # no sorting camera
+
+
+def test_every_width_and_weight_note_gives_the_grippers_real_limit():
+    from morph.studio import capability as cap
+
+    lego = B.parse("assemble lego")["implicit"][0]["note"]
+    assert f"narrower than the {cap.min_width('box'):g} mm" in lego                      # a brick is flat-sided: 21.5 mm
+    for text in ("sort grapes", "move test tubes", "sort pills"):
+        assert f"the {cap.min_width('cylinder'):g} mm" in B.parse(text)["implicit"][0]["note"], text
+    assert B.unfit_note(B.object_value("water bottle")) == ("Water bottles (65 mm, 520 g) are too heavy: a desk arm here lifts "
+                                                            "500 g at most.")             # it said "outside 26 to 75 mm wide"

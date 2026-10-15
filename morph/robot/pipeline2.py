@@ -30,13 +30,17 @@ from . import catalog_extra  # noqa: F401  (imported robots' parts, needed even 
 GRAPH = {
     # arm.size() reads the build config (link materials set the masses), the task (reach) and the hand
     # (gripper/finger set the payload, a wrist camera or IMU in electronics.extras rides on it), so a pilot build
-    # re-sizes the joints instead of reusing prototype torques
-    "sizing": (["arm.*", "object.*", "electronics.servo", "electronics.extras", "build.*", "task.pick_*", "task.place_*",
-                "finger.*", "gripper.*"], [], None),
+    # re-sizes the joints instead of reusing prototype torques; and the servo rail every torque is worked out at
+    "sizing": (["arm.*", "object.*", "electronics.servo", "electronics.servo_v", "electronics.extras", "build.*",
+                "task.pick_*", "task.place_*", "finger.*", "gripper.*", "electronics.pinion_radius_mm"], [], None),
+    # the gripper stage analyses the fingers the build config makes (gripper_design), and leaves the controller and
+    # the supply to the electronics plan: a controller or process change never reruns it (nor asks Mechanical again).
+    # It reads sizing's servo rail (its stall forces are worked out on it) and, for an imported robot, the servos
+    # sizing chose; it reads nothing else of sizing (gripper_inputs), so a sizing rerun that leaves those alone reuses it
     "gripper": (["finger.*", "object.*", "gripper.*", "safety_factor", "electronics.target_force_n",
-                 "electronics.servo", "electronics.supply_v", "electronics.pinion_radius_mm", "arm.actuator_family",
-                 "arm.source", "arm.actuator_overrides"],
-                [], "gripper"),
+                 "electronics.servo", "electronics.pinion_radius_mm", "arm.actuator_family", "arm.source",
+                 "arm.actuator_overrides", "build.config"],
+                ["sizing"], "gripper"),
     "electronics": (["electronics.*"], ["sizing", "gripper"], None),
     "cad": (["finger.*", "object.shape", "object.diameter_mm", "object.length_mm", "build.*", "name", "arm.source"],
             ["sizing", "electronics"], "cad"),
@@ -48,9 +52,30 @@ GRAPH = {
     "wiring": ([], ["electronics", "cad"], "electronics"),
     "manufacturing": (["build.*", "fab.*"], ["cad", "wiring"], "mfg"),
     "bom": ([], ["manufacturing", "wiring"], None),
-    "manual": ([], ["cad", "manufacturing", "wiring"], "manual"),
+    "manual": (["task.*"], ["cad", "manufacturing", "wiring"], "manual"),   # it prints the cycle time and the task
 }
 ORDER = ["sizing", "gripper", "electronics", "cad", "sim", "wiring", "manufacturing", "bom", "manual"]
+
+
+def gripper_inputs(design: Design, sizing: dict | None) -> dict:
+    """The part of sizing's result the gripper stage reads, in sizing's own shape: the servo rail's voltage (the gripper
+    servo's stall force is worked out on it) and, for an imported robot, the servos sizing chose (its stock jaw's grasp
+    is worked out on the robot with them). gripper_stage computes from this alone, so a sizing rerun that leaves it as
+    the parent had it (a wrist camera, a longer reach) reuses the gripper stage instead of rerunning its grasp
+    simulation (PARTIAL)."""
+    sizing = sizing or {}
+    out = {"servo_rail": {"v": (sizing.get("servo_rail") or {}).get("v")}}
+    if design.arm.source:
+        g = sizing.get("gripper") if isinstance(sizing.get("gripper"), dict) else {}
+        out.update(gripper={"actuator": g.get("actuator")}, gripper_actuator=sizing.get("gripper_actuator"),
+                   joints=[{"name": j.get("name"), "actuator": j.get("actuator")} for j in sizing.get("joints") or []])
+    return out
+
+
+# What a stage reads of an upstream stage's result when it reads only part of it: {stage: {upstream: f(design, result)}}.
+# A rerun of that upstream that leaves f(...) as the parent revision had it reuses the stage (an early cutoff), as long
+# as no design key the stage itself reads changed. The stage must compute from f(...) alone (test_robot_stage_reads).
+PARTIAL = {"gripper": {"sizing": gripper_inputs}}
 LABELS = [("sizing", "Sizing"), ("gripper", "Gripper + grasp"), ("electronics", "Electronics plan"),
           ("cad", "Robot CAD"), ("sim", "Simulation"), ("wiring", "Schematic · PCB · FW"),
           ("manufacturing", "Manufacturing"), ("bom", "BOM + sourcing"), ("manual", "Assembly manual")]
@@ -105,15 +130,71 @@ def dirty_nodes(changed_keys) -> list:
     return [n for n in ORDER if n in dirty]
 
 
-HOBBY = ("sg90", "mg90s", "mg996r", "ds3218")
-
-
 def gripper_actuator(design: Design) -> str:
-    """The gripper uses the arm's actuator family (one bus, one spare-parts list)."""
-    fam, servo = design.arm.actuator_family, design.electronics.servo
-    if fam == "hobby_pwm":
-        return servo if servo in HOBBY else "mg996r"
-    return "sts3215" if fam == "smart_bus" else "xl430_w250"
+    """The gripper actuator of a Morph-generated arm: the one sizing picks and the CAD hand is built around (the arm's
+    family, or a gripper= override in arm.actuator_overrides), so the force plan and the grasp simulation use it too."""
+    from .arm import gripper_actuator as sized
+
+    return sized(design)
+
+
+def gripper_design(design: Design) -> tuple:
+    """(the design the gripper stage analyses, the gripper actuator) for a generated arm: the gripper actuator (its stall
+    force is worked out on the servo rail, gripper_drive), and the fingers the robot's CAD makes for its build config
+    (arm.LOOK: printed PETG for a prototype, machined aluminium for a pilot, molded polycarbonate for production), not
+    the standalone gripper's finger.material and fab.process, which the robot doesn't build with. A robot's controller
+    and supply are the electronics plan's (electronics2), so none is chosen here."""
+    from .arm import LOOK, _config
+    from .catalog import ACTUATORS
+
+    ga = gripper_actuator(design)
+    material, _, process, _ = LOOK[_config(design)]["finger"]
+    return design.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"],
+                                "electronics.mcu": "auto", "finger.material": material, "fab.process": process}), ga
+
+
+def gripper_stall_nm(ga: str, sizing: dict | None) -> float | None:
+    """The gripper servo's stall torque (N·m) on sizing's servo rail, from the actuator catalog every other stage uses
+    (catalog.torque_at); its rated torque when no rail is known. None for a servo the catalog lacks."""
+    from .catalog import ACTUATORS, torque_at
+
+    if ga not in ACTUATORS:
+        return None
+    rail_v = ((sizing or {}).get("servo_rail") or {}).get("v")
+    return torque_at(ga, rail_v or ACTUATORS[ga]["nominal_v"])
+
+
+def gripper_drive(design: Design, ga: str, sizing: dict | None) -> dict:
+    """How a generated arm's gripper servo is driven, for its force plan (morph.electronics.plan's keywords): its stall
+    torque on sizing's rail (gripper_stall_nm) and whether the firmware sets its torque limit (electronics2), which
+    then sets a sensorless squeeze."""
+    from .electronics2 import has_torque_limit
+
+    return {"stall_nm": gripper_stall_nm(ga, sizing), "torque_limited": has_torque_limit(ga, design.arm.actuator_family)}
+
+
+def gripper_stage(design: Design, sizing: dict | None = None, n_trials: int = 4, simulate: bool = True) -> dict:
+    """The gripper stage's result (results.json "gripper"). Its "force" plan is the grip's one source of truth: the
+    electronics plan, the firmware, the simulation and the manual take its window, target and limit. An imported robot
+    keeps its stock jaw (imported.gripper_summary, from `sizing` when given); a generated arm's gripper is analysed, its
+    grasp simulated (simulate=False: the closed-form holding force instead, as the force plan's own fallback) and its force
+    planned on gripper_design(design), with the gripper servo's stall torque on sizing's servo rail (catalog.torque_at;
+    its rated torque without a sizing). Of sizing it reads only gripper_inputs(design, sizing)."""
+    if design.arm.source:
+        from . import imported
+        sz = sizing if (sizing or {}).get("gripper") else imported.size(design)
+        return imported.gripper_summary(design, gripper_inputs(design, sz))
+    gd, ga = gripper_design(design)
+    geom = build_profile(gd)
+    a = grip_analysis.analyze(gd, geom)
+    s = grip_sim.simulate(gd, geom, n_trials) if simulate else None
+    force = grip_electronics.plan(gd, a, s, **gripper_drive(design, ga, gripper_inputs(design, sizing)))
+    for k in ("mcu", "wiring", "parts", "sensing"):   # the standalone gripper's controller, pins and parts list
+        force.pop(k, None)
+    out = {"actuator": ga, "analysis": a, "force": force}
+    if s is not None:
+        out["sim"] = {k: v for k, v in s.items() if k != "trials"}
+    return out
 
 
 # The morph/*.py modules the robot pipeline computes with (its import graph, without keewano.py and settings.py:
@@ -307,7 +388,7 @@ class RobotProject(Project):
 
         for node in ORDER:
             sub = GRAPH[node][2]
-            if node not in todo:
+            if node not in todo or (parent and self._cut_off(node, design, changes, res, prev, self.rev_dir(parent))):
                 for key in self._keys(node):
                     res[key] = prev.get(key)
                 # a failed, incomplete or preview-only stage stays that way: an unrelated edit never launders it
@@ -372,6 +453,26 @@ class RobotProject(Project):
         return rev
 
     @staticmethod
+    def _cut_off(node, design, changes, res, prev, parent_dir) -> bool:
+        """Early cutoff: a stage that is only dirty because an upstream stage reran is reused when that upstream left the
+        part of its result the stage reads (PARTIAL) as the parent had it, and every other upstream was reused. A key
+        the stage reads itself, an upstream it reads whole or one that failed now, or the parent's own result for the
+        stage being unusable, reruns it."""
+        part = PARTIAL.get(node)
+        if not part or any(fnmatch.fnmatch(k, p) for k in changes for p in GRAPH[node][0]):
+            return False
+        if stage_problem(prev, node) or artifact_problem(prev, node, parent_dir):
+            return False
+        for up in GRAPH[node][1]:
+            if res["stage_status"].get(up) == "reused":
+                continue
+            if up not in part or stage_problem(res, up) or stage_problem(prev, up):
+                return False
+            if part[up](design, res.get(OUTPUT_KEYS[up])) != part[up](design, prev.get(OUTPUT_KEYS[up])):
+                return False
+        return True
+
+    @staticmethod
     def _keys(node):
         return {"sizing": ["sizing"], "gripper": ["gripper"], "electronics": ["eplan"], "cad": ["cad"],
                 "sim": ["sims"], "wiring": ["electronics"], "manufacturing": ["manufacturing"], "bom": ["bom"],
@@ -419,24 +520,11 @@ class RobotProject(Project):
                     res["sizing"] = arm_stub.size(design)
                     res.setdefault("errors", {})["sizing"] = f"detailed sizing failed ({exc.__class__.__name__}: {exc}); " \
                                                              "the basic estimate is a preview only"
-        elif node == "gripper" and design.arm.source:
-            from . import imported
-            res["gripper"] = imported.gripper_summary(design, imported.size(design))
         elif node == "gripper":
-            from .catalog import ACTUATORS
-
-            ga = gripper_actuator(design)
-            gd = design.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"]})
-            geom = build_profile(gd)
-            a = grip_analysis.analyze(gd, geom)
-            s = grip_sim.simulate(gd, geom, n_trials)
-            res["gripper"] = {"actuator": ga, "analysis": a, "sim": {k: v for k, v in s.items() if k != "trials"},
-                              "force": grip_electronics.plan(gd, a, s)}
+            res["gripper"] = gripper_stage(design, res.get("sizing"), n_trials)
         elif node == "electronics":
             e2 = _mod("electronics2")
-            grip_t = ((res.get("gripper") or {}).get("force") or {}).get("target_force_n")
-            sz = {**res["sizing"], **({"grip_target_n": grip_t} if grip_t else {})}
-            res["eplan"] = e2.plan(design, sz) if e2 else None
+            res["eplan"] = e2.plan(design, res["sizing"], grip=(res.get("gripper") or {}).get("force")) if e2 else None
             return e2 is not None
         elif node == "cad":
             a = asm()
@@ -490,6 +578,44 @@ def _jsonable(o):
     return str(o)
 
 
+SIM_CHECKS = {"pick_place": "pick-and-place", "shake": "shake test", "payload_sweep": "payload test",
+              "workspace": "workspace check"}
+
+
+def sim_issue(name: str, scenario: dict) -> str | None:
+    """The summary's issue for a simulated scenario that failed (None when it passed), saying why in plain words:
+    every scenario the robot is simulated in counts, not only the pick and place."""
+    m = (scenario or {}).get("metrics") or {}
+    if m.get("success") is not False:
+        return None
+    what = SIM_CHECKS.get(name, str((scenario or {}).get("title") or name).lower())
+    slip = m.get("slip_mm", m.get("max_slip_mm"))
+    why = []
+    if m.get("error"):
+        why.append(f"it could not run: {m['error']}")
+    if m.get("failure"):
+        why.append(str(m["failure"]))
+    if m.get("intact") is False and m.get("damage_force_n"):
+        why.append(f"squeezed {m.get('grip_n_max', 0):g} N per finger, above the {m['damage_force_n']:g} N that damages it")
+    if m.get("dropped"):
+        why.append("object dropped" + (f" ({slip:g} mm slip)" if slip is not None else ""))
+    elif name == "shake" and slip is not None and slip >= 5.0:
+        why.append(f"object slipped {slip:g} mm in the jaws (5 mm allowed)")
+    if name == "pick_place" and not m.get("dropped") and (m.get("place_error_mm") or 0) > 15.0:
+        why.append(f"placed {m['place_error_mm']:g} mm from the target")
+    if name == "payload_sweep" and m.get("max_payload_g") is not None:
+        why.append(f"holds {m['max_payload_g']:g} g, less than the object's {m.get('rated_payload_g', 0):g} g")
+    if name == "workspace":
+        far = [p for p, k in (("pick", "pick_reachable"), ("place", "place_reachable")) if m.get(k) is False]
+        why.append(f"the {' and '.join(far)} point{'s are' if len(far) > 1 else ' is'} out of reach" if far else
+                   "no reachable workspace")
+    if m.get("note") and "reach" in str(m["note"]):
+        why.append(str(m["note"]))
+    if m.get("world_contacts") and not m.get("failure"):
+        why.append("the arm hits the room")
+    return f"{what} failed in simulation ({'; '.join(dict.fromkeys(why)) or 'object not delivered'})"
+
+
 def summarize(r: dict) -> dict:
     sz = r.get("sizing") or {}
     g = r.get("gripper") or {}
@@ -503,14 +629,19 @@ def summarize(r: dict) -> dict:
     bom = (r.get("bom") or {}).get("totals", {})
     man = r.get("manual") or {}
     joints = sz.get("joints", [])
+    stretch = pay.get("stretch_payload_g")
     issues = list(sz.get("issues", [])) + list(cad.get("issues", []) or []) + list((g.get("analysis") or {}).get("issues", [])) + \
         list((g.get("force") or {}).get("issues", [])) + list(cad.get("validate", []) or []) + \
         list((r.get("eplan") or {}).get("issues", []) or []) + list(el.get("issues", []) or []) + list(mfg.get("issues", []) or [])
     issues = list(dict.fromkeys(issues))   # the wiring stage repeats the plan's issues
     for node, err in (r.get("errors") or {}).items():
         issues.append(f"{node} stage error: {err}")
-    if pp.get("success") is False:
-        issues.append(f"pick-and-place failed in simulation ({pp.get('failure') or pp.get('reason') or 'object not delivered'})")
+    sim_failed = []
+    for name, sc in sims.items():          # every simulated scenario counts: a dropped can in the shake test is an issue
+        why = sim_issue(name, sc)
+        if why:
+            issues.append(why)
+            sim_failed.append(name)
     pending = [n for n in ORDER if stage_problem(r, n)]
     if pending:
         issues.append("not computed: " + ", ".join(pending))
@@ -520,11 +651,19 @@ def summarize(r: dict) -> dict:
         "dof": len(joints), "reach_mm": sz.get("reach_mm"), "payload_g": sz.get("payload_g"),
         "actuators": ", ".join(sorted({j["actuator"] for j in joints})),
         "min_torque_margin": min((j["margin"] for j in joints), default=None),
+        "torque_margin_basis": sz.get("basis"), "servo_rail_v": (sz.get("servo_rail") or {}).get("v"),
         "parts": cad.get("parts"), "robot_mass_kg": cad.get("mass_kg"),
         "grasp_hold_force_n": (g.get("sim") or {}).get("min_hold_force_n"),
         "grip_target_n": (g.get("force") or {}).get("target_force_n"),
         "pick_place_success": pp.get("success"), "cycle_time_s": pp.get("cycle_time_s"),
-        "max_payload_g": pay.get("max_payload_g"), "workspace_reach_mm": ws.get("reach_mm"),
+        # the payload sweep's measured maximum is top-down at payload_test_reach_mm from the base, not at full reach;
+        # stretch_payload_g is the static capacity stretched straight out (both with a servo at stall). Below zero the
+        # arm can't hold even its own weight out there: no payload (0 g), stretch_holds_itself False and the joint
+        "max_payload_g": pay.get("max_payload_g"), "payload_test_reach_mm": pay.get("test_reach_mm"),
+        "stretch_payload_g": None if stretch is None else max(stretch, 0.0), "stretch_reach_mm": pay.get("stretch_reach_mm"),
+        "stretch_holds_itself": None if stretch is None else stretch >= 0, "stretch_limited_by": pay.get("stretch_limited_by"),
+        "workspace_reach_mm": ws.get("reach_mm"),
+        "top_down_reach_mm": (ws.get("top_down_reach_mm") or [None, None])[1],
         "max_torque_pct": max((pp.get("max_torque_pct") or {}).values(), default=None),
         "electronics_config": el.get("config"), "bus": el.get("bus"),
         "pcb": bool(el.get("board")), "harness_wires": len(el.get("harness", []) or []),
@@ -532,5 +671,7 @@ def summarize(r: dict) -> dict:
         "unit_cost": bom.get("total"), "fab_lead_days": (mfg.get("totals") or {}).get("lead_days"),
         "tooling_cost": (mfg.get("totals") or {}).get("tooling_cost"),
         "assembly_steps": len(man.get("steps", []) or []), "assembly_time_min": man.get("time_min_total"),
-        "feasible": not issues, "issues": issues,
+        "feasible": not issues, "issues": issues, "sim_failed": sim_failed,
+        # what sizing changed from the request to make the arm buildable ("reach raised from 320 to 475 mm: ...")
+        "notes": list(sz.get("notes") or []),
     }

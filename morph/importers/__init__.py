@@ -110,7 +110,10 @@ def run_cli(a) -> int:
     r = out.get("result") or {}
     if out.get("project"):
         s = out.get("summary") or {}
-        say_line(f"Built {out['project']} {out.get('rev')}: feasible={s.get('feasible')} pick_place={s.get('pick_place_success')}")
+        n = len(s.get("issues") or [])
+        verdict = ("software checks pass (not bench-validated)" if s.get("feasible") else
+                   f"{n} issue{'' if n == 1 else 's'} from its software checks")
+        say_line(f"Built {out['project']} {out.get('rev')}: {verdict}; pick_place={s.get('pick_place_success')}")
         for i in (s.get("issues") or [])[:6]:
             say_line(f"  issue: {i}")
     elif r.get("kind") == "object":

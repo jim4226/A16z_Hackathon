@@ -251,7 +251,7 @@ function onDone(ev) {
   const s = st.done.summary || {};
   const errs = STAGES.filter(([k]) => st.stages[k] === 'error').length;
   st.agents.pipeline = { role: 'pipeline', provider: 'morph', status: errs ? 'error' : 'done', ms: ev.seconds ? Math.round(ev.seconds * 1000) : null,
-    text: s.feasible ? 'All nine stages built; every check passed' : `${(s.issues || []).length} issue(s) to look at` };
+    text: s.feasible ? 'All nine stages built; every software check passed' : `${(s.issues || []).length} issue(s) to look at` };
   st.view = 'done';
   if (alive()) render();
 }
@@ -266,7 +266,8 @@ function render() {
     clarify: ['A few questions', 'Pick an answer, or use sensible defaults and change anything later.'],
     confirm: ['Check the brief', 'This is what Morph will build. Every assumption can be changed now or after the build.'],
     building: [`Building ${st.project || st.name || 'your robot'}`, 'The whole pipeline runs from scratch: about 20 to 50 seconds.'],
-    done: ['Your robot is ready', st.done?.summary?.feasible === false ? 'Built, with issues to look at below.' : 'Built and checked. Open it to explore every stage.'],
+    done: ['Your robot is designed', st.done?.summary?.feasible === false ? 'Built, with issues to look at below.'
+      : 'Its software checks pass: simulation, torque margins, DRC and DFM. Not bench-validated: build and test it before you rely on it.'],
     oos: ["Morph can't build that as described", 'Here is why, and the nearest robot it can build.'],
     refused: ["Morph doesn't design that", ''],
   }[v] || ['New robot', ''];
@@ -486,6 +487,7 @@ function confirmView() {
   return `<div class="nr-two">
       <section class="nr-conv">
         ${requestBubble()}
+        ${st.notice && issues.length ? `<div class="nr-note warn nr-stopped">${I('alert', 'sm')}<div><b>Not built yet</b><p>${esc(st.notice)}</p></div></div>` : ''}
         <div class="nr-summary">${esc(b.summary || '')}</div>
         <div class="nr-facts">${facts(b)}</div>
         <div class="sec-t">Assumptions<span class="r">click an option to change it</span></div>
@@ -544,13 +546,15 @@ function progress() {
 
 function doneView() {
   const s = st.done?.summary || {};
-  const m = (k, v) => `<div class="nr-metric"><span>${esc(k)}</span><b class="num">${v}</b></div>`;
+  const m = (k, v, sub = '') => `<div class="nr-metric"><span>${esc(k)}</span><b class="num">${v}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
   const money = (v) => (v == null ? '–' : `$${Math.round(v).toLocaleString('en-US')}`);
   return `<div class="nr-done-h">${s.feasible === false ? `<span class="tag warn">${I('alert', 'sm')}${(s.issues || []).length} issue(s)</span>`
-      : `<span class="tag good">${I('check', 'sm')}Feasible</span>`}<span class="muted">${esc(st.project || st.name)} · ${esc(st.done?.rev || 'r001')}</span></div>
+      : `<span class="tag good">${I('check', 'sm')}Software checks pass</span>`}<span class="muted">${esc(st.project || st.name)} · ${esc(st.done?.rev || 'r001')}</span></div>
     <div class="nr-metrics">${m('Parts cost (est.)', money(s.unit_cost))}${m('Pick and place', s.pick_place_success == null ? '–' : s.pick_place_success ? 'succeeds' : 'fails')}
-      ${m('Cycle time', s.cycle_time_s ? `${(+s.cycle_time_s).toFixed(1)} s` : '–')}${m('Payload at full reach', s.max_payload_g ? `${Math.round(s.max_payload_g)} g` : '–')}</div>
+      ${m('Cycle time', s.cycle_time_s ? `${(+s.cycle_time_s).toFixed(1)} s` : '–')}${m('Max payload', s.max_payload_g ? `${Math.round(s.max_payload_g)} g` : '–',
+        s.payload_test_reach_mm ? `top-down at ${Math.round(s.payload_test_reach_mm)} mm, servos at stall` : '')}</div>
     ${(s.issues || []).length ? `<ul class="nr-issues">${s.issues.slice(0, 4).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${(s.notes || []).length ? `<ul class="nr-adjusted">${s.notes.map((x) => `<li><b>Morph adjusted</b> ${esc(x)}</li>`).join('')}</ul>` : ''}
     ${doneAssumptions()}
     ${timeline(['pipeline', 'sourcing', 'memory'])}`;
 }
@@ -662,7 +666,7 @@ async function act(a, el) {
     return;
   }
   if (a === 'defaults' || a === 'nearest') { await send({ action: 'defaults' }); return; }
-  if (a === 'buildnow' || a === 'build') { await build(); return; }
+  if (a === 'buildnow' || a === 'build') { await build(a === 'buildnow'); return; }
   if (a === 'restart' || a === 'rephrase') {
     stopTimers();
     const id = st.id;  // fire and forget: a failed cancel only leaves a draft that expires in 7 days
@@ -680,17 +684,23 @@ async function act(a, el) {
   }
 }
 
-async function build() {
+async function build(now = false) {
   if (st.busy || !st.id) return;
   st.busy = true;
   const req = (st.req = ++reqSeq);
   render();
   const body = { brief_id: st.id, action: 'build' };
   if (NAME_RE.test(st.name || '')) body.name = st.name;
+  if (now) body.stop_on_issues = true;  // Build now skips the questions, never the preflight's issues
   const out = await post(body);
   if (req !== st.req) return;
   st.busy = false;
   if (!out) return;
+  if (out.stopped) {
+    st.notice = 'The preflight found issues with the defaults. Check them below, change an assumption, or build anyway.';
+    update(out.brief);
+    return;
+  }
   st.build = out.build;
   st.name = out.build?.name || st.name;
   if (out.build?.brief) st.brief = out.build.brief;

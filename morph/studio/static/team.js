@@ -62,6 +62,8 @@ const VALUE = { hobby_pwm: 'Hobby PWM', smart_bus: 'Smart bus', dynamixel: 'Dyna
   prototype: 'Prototype', pilot: 'Pilot', production: 'Production', fsr402: 'FSR 402', esp32_devkit: 'ESP32 DevKit', esp32_s3_devkit: 'ESP32-S3 DevKit',
   arduino_nano: 'Arduino Nano', rp2040_pico: 'RP2040 Pico', v: 'V-groove', wrist_camera: 'wrist camera', estop: 'e-stop', imu: 'IMU' };
 const money = (v) => (v == null ? '' : `$${Number(v).toLocaleString('en-US', { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2 })}`);
+// a unit cost spreads the mold tooling (paid once) over the build quantity: say how much of it that is, as the inspector does
+const toolingNote = (t, q) => (t >= 0.5 ? `incl. ${money(t)} tooling over ${Number(q || 1).toLocaleString('en-US')} unit${Number(q || 1) === 1 ? '' : 's'}` : '');
 const andList = (n) => (n.length < 2 ? n.join('') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
 // a change request being written: what it changes, its words, the form's open state, the parameter being picked, and the
 // last preview (kept here, so a live update that redraws the tab never takes any of it away)
@@ -756,9 +758,9 @@ export class Team {
         <span class="tag ${g.ok ? 'good' : g.short.startsWith('changes') ? 'bad' : 'warn'}">${esc(released.length ? `released: ${released.map((r) => r.tag).join(', ')}` : g.short)}</span></div>
         <div class="tm-need">${esc(LEVEL[g.level])} builds need ${esc(need)}.</div>
         <div class="tm-grs">${rows}</div>
-        <div class="tm-ck">${ck.feasible === false ? `<span class="tag bad">${icon('alert')}${(ck.issues || []).length} issue${(ck.issues || []).length === 1 ? '' : 's'}</span>` : ck.feasible ? '<span class="tag good">feasible</span>' : ''}
+        <div class="tm-ck">${ck.feasible === false ? `<span class="tag bad">${icon('alert')}${(ck.issues || []).length} issue${(ck.issues || []).length === 1 ? '' : 's'}</span>` : ck.feasible ? '<span class="tag good" title="Simulation, torque margins, DRC and DFM pass; not bench-validated">software checks pass</span>' : ''}
           ${ck.pick_place_success === true ? '<span class="tag good">pick and place ok</span>' : ck.pick_place_success === false ? '<span class="tag bad">pick and place failed</span>' : ''}
-          ${ck.unit_cost != null ? `<span class="tag neutral">$${Number(ck.unit_cost).toFixed(0)} per unit (estimated)</span>` : ''}</div>
+          ${ck.unit_cost != null ? `<span class="tag neutral">$${Number(ck.unit_cost).toFixed(0)} per unit${toolingNote(ck.tooling_cost, ck.quantity) ? `, ${esc(toolingNote(ck.tooling_cost, ck.quantity))}` : ''} (estimated)</span>` : ''}</div>
         ${ck.feasible === false ? `<div class="tm-issues">${(ck.issues || []).slice(0, 3).map((i) => `<div>${esc(i)}</div>`).join('')}</div>` : ''}
         <div class="tm-row tm-gact">
           ${open && mine.length ? this.decideButtons(open, mine) : ''}
@@ -875,8 +877,8 @@ export class Team {
   builtHtml(b) {
     if (!b) return '';
     const [m0, m1] = b.min_torque_margin || [], [c0, c1] = b.unit_cost || [];
-    const bits = [m1 != null ? `weakest joint ${m0 != null ? `${m0}× → ` : ''}${m1}×` : '', c1 != null ? `${c0 != null ? `${money(c0)} → ` : ''}${money(c1)} per unit` : '',
-      b.feasible === false ? `${b.issues} issue${b.issues === 1 ? '' : 's'}` : b.feasible ? 'feasible' : ''].filter(Boolean);
+    const bits = [m1 != null ? `weakest joint ${m0 != null ? `${m0}× → ` : ''}${m1}×` : '', c1 != null ? `${c0 != null ? `${money(c0)} → ` : ''}${money(c1)} per unit${toolingNote((b.tooling_cost || [])[1], (b.quantity || [])[1]) ? ` (${toolingNote((b.tooling_cost || [])[1], (b.quantity || [])[1])})` : ''}` : '',
+      b.feasible === false ? `${b.issues} issue${b.issues === 1 ? '' : 's'}` : b.feasible ? 'software checks pass' : ''].filter(Boolean);
     return `<div class="tm-built ${b.feasible === false ? 'bad' : ''}">${icon(b.feasible === false ? 'alert' : 'check')}<span>Built ${this.esc(b.rev)}: ${this.esc(bits.join(', '))}</span></div>`;
   }
   previewHtml(r) {

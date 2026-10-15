@@ -121,6 +121,74 @@ def test_the_preview_flags_a_mixed_protocol_bus_before_it_builds_and_scopes_what
     assert impact.impact(str(tmp_path / "nowhere"), "r001", {"arm.dof": 6})["rows"] == []
 
 
+def _with_tooling(root, rev, per_config, tooling):
+    p = os.path.join(root, rev, "results.json")
+    with open(p, encoding="utf-8") as fh:
+        res = json.load(fh)
+    res["bom"]["totals"]["per_config"] = per_config
+    res["manufacturing"] = {"configs": {k: {"tooling_cost": v} for k, v in tooling.items()}}
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+
+
+def test_mold_tooling_is_priced_apart_from_the_cost_per_robot(tmp_path):
+    # a production switch at quantity 1 read "about +$77,000 per robot": the molds, paid once, spread over one robot
+    per = {"prototype": 300.0, "pilot": 540.0, "production": 4771.0 + 72971.0}
+    tooling = {"prototype": 0.0, "pilot": 0.0, "production": 72971.0}
+    root = str(tmp_path / "egg-picker")
+    real_base(root)
+    _with_tooling(root, "r001", per, tooling)
+    out = impact.impact(root, "r001", {"build.config": "production"})
+    cost, text = out["cost"], rows(out)["cost"]["text"]
+    assert cost["split"]["parts made"] == pytest.approx(4471.0) and cost["tooling"] == [0.0, 72971.0]
+    assert cost["before"] == 300.0 and cost["after"] == pytest.approx(300.0 + cost["delta"]) and cost["delta"] < 10000
+    assert "parts made +$4,471" in text and text.endswith("; plus $72,971 of mold tooling, paid once")
+    assert "$77," not in text and rows(out)["cost"]["tone"] == "bad"
+    # and back from production: the per-unit cost without the molds, and the molds it no longer needs
+    root2 = str(tmp_path / "egg-picker-production")
+    real_base(root2, changes={"build.config": "production"}, unit_cost=4771.0 + 72971.0)
+    _with_tooling(root2, "r001", per, tooling)
+    back = impact.impact(root2, "r001", {"build.config": "prototype"})
+    text = rows(back)["cost"]["text"]
+    assert back["cost"]["before"] == 4771.0 and back["cost"]["tooling"] == [72971.0, 0.0]
+    assert "parts made -$4,471" in text and "$4,771 → about $" in text
+    assert text.endswith("; and no mold tooling (it had $72,971, paid once)")
+    # a build that keeps its molds says the per-unit cost is without them, and that they are paid once
+    same = rows(impact.impact(root2, "r001", {"arm.actuator_family": "dynamixel"}))["cost"]["text"]
+    assert "$4,771 → about $" in same and same.endswith("; plus the $72,971 of mold tooling, paid once")
+
+
+def test_a_resize_that_keeps_the_grip_shows_no_grip_change(tmp_path):
+    # the gripper stage reads sizing's servo rail, so it is downstream of sizing: a reach or wrist-camera edit marked it
+    # affected, and the preview compared the built grip (from the grasp simulation) with New robot's closed form
+    root = str(tmp_path / "egg-picker")
+    _, res = real_base(root)
+    res["gripper"]["force"]["target_force_n"] = 2.34          # the egg-picker's grasp simulation gives 2.34 N
+    with open(os.path.join(root, "r001", "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    for change in ({"arm.reach_mm": 380.0}, {"electronics.extras": "wrist_camera"}):
+        out = impact.impact(root, "r001", change)
+        assert "grip" not in rows(out) and not out.get("error"), (change, rows(out).get("grip"))
+    heavier = rows(impact.impact(root, "r001", {"object.mass_g": 300.0}))
+    assert heavier["grip"]["text"].startswith("grip force target 2.34 → ")
+
+
+def test_teams_says_how_much_of_a_built_unit_cost_is_tooling(tmp_path):
+    root = str(tmp_path / "egg-picker")
+    real_base(root)
+    real_base(root, rev="r002", changes={"build.config": "production"}, unit_cost=4771.0 + 72971.0)
+    p = os.path.join(root, "r002", "results.json")
+    with open(p, encoding="utf-8") as fh:
+        res = json.load(fh)
+    res["summary"]["tooling_cost"] = 72971.0
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    built = collab.built_summary(root, {"applied_rev": "r002", "base_rev": "r001"})
+    assert built["unit_cost"] == [300.0, 77742.0] and built["tooling_cost"] == [None, 72971.0] and built["quantity"] == [1, 1]
+    ck = collab.release_gate(root, "r002")["checklist"]
+    assert (ck["unit_cost"], ck["tooling_cost"], ck["quantity"]) == (77742.0, 72971.0, 1)
+
+
 def test_preview_and_change_requests_carry_the_numbers_and_readable_values(tmp_path):
     home = tmp_path / "projects"
     root = str(home / "egg-picker")

@@ -73,18 +73,19 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   run (placed, jaws stayed shut, dragged, missed grasp, dropped, over-force, hit the room in a named phase) and reports
   the success rate with a Wilson 95 % interval, the rule that best isolates each failure group, and whether that failure
   holds at half the timestep and with softer friction ("model-sensitive: test it on the real robot"). The default
-  egg-picker succeeds in 140 of 200 runs (63-76 %); 58 of the 60 failures are the jaws staying shut at release (half the
-  runs with the egg turned 3-9 degrees end that way), and that failure changes with the solver's settings. Runs are
-  reproducible from the seed on any number of worker processes, saved as they finish and resumable (Ctrl+C keeps them):
-  `morph study egg-picker` (with `--runs 1000` or `--stress`). In the Studio, the **Robustness** card under the
-  Simulation tab's pick-and-place result runs a study of the revision on screen (50, 200 or 1,000 runs, or a stress
-  test with every range doubled), shows its progress live, stops it on request within seconds (the finished runs
-  stay, and it carries on later), says what the result means and what it doesn't, replays a failing run in the 3D view,
-  and lists every tolerance with where its range comes from. Editors start studies and change tolerances (a change
-  marks older studies outdated); every member of a team reads them. Studies run on the Studio's computer, so
-  `morph studio --remote` on a bigger machine is how a team brings its own compute; one study at a time per project, at
-  most 10,000 runs from the Studio. Where no study exists the card says so: one nominal run tests nothing around it.
-  Simulation, for the tolerances shown; not a field failure rate.
+  egg-picker succeeds in 150 of 200 runs (68-81 %); all 50 failures are the jaws staying shut at release (44 % of the
+  runs with the egg -4.7 to 1.5 mm off its mark along its length end that way), and that failure changes with the
+  solver's settings. Runs are reproducible from the seed on any number of worker processes, saved as they finish and
+  resumable (Ctrl+C keeps them):
+  `morph study egg-picker` (with `--runs 1000` or `--stress`). In the Studio, the **Robustness** card under the Simulation tab's
+  pick-and-place result runs a study of the revision on screen (50, 200 or 1,000 runs, or a stress test with every range
+  doubled), shows its progress live, stops it on request within seconds (the finished runs stay, and it carries on
+  later), says what the result means and what it doesn't, replays a failing run in the 3D view, and lists every
+  tolerance with where its range comes from. Editors start studies and change tolerances (a change marks older studies
+  outdated); every member of a team reads them. Studies run on the Studio's computer, so `morph studio --remote` on a
+  bigger machine is how a team brings its own compute; one study at a time per project, at most 10,000 runs from the
+  Studio. Where no study exists the card says so: one nominal run tests nothing around it. Simulation, for the
+  tolerances shown; not a field failure rate.
 - **World mode checks the whole path** (beta): every move of the pick and place (the approach, the descent to the
   object, the grasp, the lift, the carry, the set-down, the release, the rise and the way back to rest) is checked
   against the grey boxes every 10 ms, with the object while it is carried. A move that comes within 10 mm tries its
@@ -428,3 +429,135 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Stopping the Studio with Ctrl+C no longer ends now and then with "Segmentation fault" (exit code -11) after the
   launcher built a robot before serving: the stopped Studio's process ends without the interpreter's shutdown, whose
   clean-up of the 3D libraries crashed. Everything was already saved; nothing else changes.
+- A `gripper=` entry in `arm.actuator_overrides` reaches the gripper stage too: its force plan, grasp simulation and
+  the servo stall force it shows used the family's default servo while the CAD hand and the electronics used the
+  override. A hobby arm asked for an MG90S gripper servo (not in the robot catalog) gets the MG996R its hand is
+  built around in that stage too, instead of a gripper stage that stopped with KeyError 'mg90s'.
+- One grip force per robot, from the gripper stage to the firmware, the simulation and the manual. An imported SO-101
+  shipped firmware that squeezed at a quarter of its servo's force whatever it held (6.82 N for a strawberry that
+  bruises at 3 N, while its own comment gave a 0.49-2.0 N window), ignored the Grip force parameter, and was simulated
+  at another force; its grip now comes from the object (0.5 N for a strawberry, inside 0.25-2.0 N) and the parameter.
+  On generated arms the firmware's window disagreed with the gripper stage's (2.52-16 N against 1.17-16 N for the egg)
+  and the simulation used a third number (2.17 N against the 2.34 N shipped). The manual named a 12.5 N "grip force
+  limit" the firmware has no command for, and asked for a force-sensor curve and tare the firmware doesn't do; it now
+  gives the firmware's target, hard stop and window and its F and Z commands, and leaves the force-sensor steps out of
+  robots without force sensors. A grip target outside its window, or above the hard stop, is an issue.
+- Torque margins, actuator picks and the simulation's servos are worked out at the servo supply the robot gets, not at
+  the servos' rated voltage. The SO-101's 7.4 V servos run from 6 V (no catalogued supply gives 7.4 V, and 6 V keeps
+  85 % of their torque), so its shoulder margin is 2.45x, not 2.89x; a hobby arm's DS3218s (rated 6.8 V) on the
+  SG90's 6 V rail give 88 %. The SO-101's margins say they are at q = 0, the pose its profile is sized in, and a
+  warning gives what its shoulder needs over the whole joint range. Servos without a catalogued supply near their
+  rating get a 12 V supply and the servo buck set to it (a 12 V STS3215 beside 7.4 V ones now runs at 7.4 V, not 6 V).
+  So New robot now says the stock SO-101 lifts about 100 g with a 2x margin (it said 150 g), and a 4-joint hobby arm
+  100 g (it said 200 g). "Use a 7.4 V supply" runs the SO-101's servos at their rating.
+- Chat "use a 5 V supply" changes the robot's servo supply when every servo takes 5 V, and otherwise changes nothing
+  and says which servo's range rules it out (it used to answer "Changing servo supply → 5 V" and keep 12 V). "Use the
+  rated supply voltage" goes back to Morph's choice.
+- "Swap to Dynamixel servos" on the SO-101 (Present step 12) put XL430s (6.5-12 V) and XL330s (3.7-6 V) on one 6 V
+  rail: a build that wasn't feasible, a margin worked out at 12 V, and firmware and a parts list for a rail below the
+  XL430's minimum, while the caption said the electronics followed. A family swap now keeps one voltage class per arm
+  (six XL430s on 12 V for the SO-101), a servo whose range leaves out its rail is an issue and gets no wiring or
+  firmware, and the caption says what happens: the six printed holders are flagged until they are redesigned.
+- Robots that keep their stock jaws (the SO-101 and other imports) no longer buy, wire, program and calibrate two FSR
+  402 force sensors their jaws have no place for (finger.sensor is ignored for them, with a warning). Their grip is set
+  by the gripper servo's torque limit, which the firmware now writes (Feetech STS: the torque limit register; DYNAMIXEL:
+  Goal PWM) for the grip target at the jaw: 2 % of the SO-101 gripper's stall torque for a strawberry. A generated
+  gripper without force sensors grips the same way, and one with them gets the limit as a hard cap at its force stop.
+  A hobby PWM gripper servo has no torque limit; that is an issue when its stall force could crush the object.
+- Firmware with force sensors that get no reading through a whole close (a sensor missing, unplugged or dead) used to
+  squeeze on to the gripper's maximum-squeeze stop with nothing limiting it. The gripper servo's torque limit now caps
+  that squeeze at the firmware's force limit; with no reading by the stop the jaw goes back to the closed position and
+  the firmware prints "!GRIP no force reading" on the serial port; a reading lost while holding keeps the jaw where it is.
+- The manual's first pick-and-place test names the robot's own object (it asked for a hard-boiled egg and a raw one
+  whatever the robot picks), and a robot without force sensors is told what to watch instead of a grip-force readout.
+- New robot: saying an object is fragile ("pick up a raw egg without cracking it", the README's example, or the
+  egg-picker's own description) no longer lowers the damage force Morph has measured for it. The egg became a 3 N
+  strawberry while the card showed 25 N, and no grip both holds a 60 g egg and stays under 2 N, so the robot failed its
+  own pick and place; it now builds with the egg's 25 N and passes. A stated fragility still gives an object without a
+  damage force one (3 N for "fragile", 10 N for "gently"), and the card says so with the other readings to pick from. A
+  "no safe grip force" issue now says where both numbers come from, and Build now stops at the confirm card when the
+  preflight has issues instead of building straight away.
+- New robot: requests to open jars, unscrew caps, twist lids or assemble parts read as "Adjusted" with a plain note
+  that the gripper only picks and places, and the robot built moves the jars, bottles or parts (it said "Inside what
+  Morph builds" and quietly built a bottle mover). A person the robot works for ("help my grandma", "pass my dad his
+  pills", "for me") puts people next to it, so it gets an emergency stop. Pills get a pill-bottle robot with a note
+  about pills, not one about screws; every width note gives the gripper's real minimum for the shape, and a water
+  bottle is "too heavy", not "outside 26 to 75 mm".
+- The inspector's "Payload at full reach" was measured top-down at less than half the reach (216 of 475 mm on the
+  egg-picker) and overstated what the arm holds stretched out by 2.4 to 3x; "Top-down reach" showed the any-pose
+  maximum. They now read "Max payload, top-down at 216 mm" (1,729 g), "Payload stretched out at 476 mm" (720 g, a new
+  static check at full stretch), "Top-down reach" (280 mm) and "Reach, any pose" (475 mm), with a note that payloads are
+  what holds before a servo stalls. Quick facts' "Payload" was the object's mass and now says so, and New robot's done
+  card says where its payload was measured.
+- Revisions no longer reuse a stage that a change affects. A new cycle time left the manual saying the old one (and
+  Teams kept its Documentation approval); a new pinion radius left the sizing (gear teeth, grip force, hand mass) at the
+  old one under freshly built CAD and simulation; a new controller left the gripper stage's force plan with the old
+  board's pins. The gripper stage now analyses the fingers the build really makes (printed PETG for a prototype,
+  machined aluminium for a pilot, molded polycarbonate for production; it analysed printed PETG for every build) and
+  leaves the controller to the electronics, so a controller or fabrication-process change no longer reruns it. A test
+  reads every key each stage uses and checks that a change to it reruns the stage.
+- Print files stand inside the printer. The base shell's print file and 3MF stood it 244 mm tall on a 220 mm-tall bed,
+  and its manufacturing check, which compared sorted dimensions, said it fit. The print orientation is now the best one
+  that fits the process's build volume (turned 90 degrees on the bed when that is what fits), and a part that fits no way
+  up is told to split, with its size as it would stand.
+- A robustness study of a revision that only changed the controller or the electronics build no longer says it was
+  "simulated with other Morph code". Such a revision reuses its parent's simulation, and the study compared the whole
+  rebuilt model, including the boards' mass in the base welded to the table; it now compares what moves.
+- When sizing builds something other than what was asked, Morph says so. The egg-picker asks for a 320 mm reach and is
+  built at 475 mm (a top-down pick 234 mm out needs it); the Parameters panel showed 320 mm and nothing said why the
+  robot was bigger. The inspector now lists "Morph adjusted reach raised from 320 to 475 mm: ..." with the reason, the
+  Reach and Shoulder height parameters say "built at N mm", and New robot's done card and the terminal summary list the
+  same notes.
+- New robot no longer calls a design "Feasible" or "Built and checked": it says its software checks pass (simulation,
+  torque margins, DRC, DFM) and that it is not bench-validated. The Firmware pane and the Export button say the files
+  are generated and not bench-tested.
+- The assembly manual no longer asks you to fit an "Upper arm logo" that has no print file and isn't in the BOM: the
+  logo inlay is decoration in the 3D view only, and the manual's parts tables list exactly the parts with make files.
+- Production cost no longer reads as a per-unit price when it is mostly molds. At quantity 1 the BOM tab said
+  "Production $77,742"; it now says $4,771 per unit + $72,971 tooling, once, and the Manufacturing cards and the
+  inspector say how much of the unit cost is tooling spread over how many units.
+- Robots no longer drop what they carry in their own shake test while the build says every check passed. Round one's
+  single grip source took the holding force from the gripper stage's grasp simulation, whose contour pads cradle a can
+  at half the force the robot's own fingers need: a 370 g can was gripped at 4.56 N per finger and dropped (213 mm),
+  and so were bottles, a watering bottle and a cup of pet food, robots 6c49545 had built without trouble. The holding
+  force is now never below the static friction hold, m g / (2 mu gain); an object with no damage force is gripped at
+  three times it (13.9 N for the can), a 1.5x margin over the shake test's 1.9 g; and every simulated scenario that
+  fails is an issue that says why ("shake test failed in simulation (object dropped)"), so the robot no longer reads as
+  passing its software checks. Teams' tag and "Built r002: ..." line and Import's verdict say "software checks pass"
+  or how many issues the checks found, as New robot does, instead of "feasible".
+- One stall-force model per gripper: one pinion drives both racks of a generated gripper, so each finger gets the
+  servo's torque x 0.6 / (2 x pitch radius). Sizing, the gripper stage and the torque limit used three models: the
+  can-mover's firmware capped F at a 165.9 N "hard stop" its servo gives 82.9 N of. The firmware's limit, the
+  simulation's jaws and the standalone gripper's servo choice now use the honest figure.
+- Force-sensing grippers grip an object narrower than their calibration gauge: the close looked for a reading only
+  1 mm past the gauge and released an egg 2 mm narrower ("no force reading"); it now closes as far as the max-squeeze
+  stop under the torque limit's cap. Grippers without force sensors closed to the gauge position, where a torque limit
+  has nothing to push against; G now closes past the object, so the torque limit really sets the squeeze (a hobby servo,
+  which has none, squeezes with all its torque and is simulated that way), as the manual and the plan say.
+- Stock jaws (the SO-101): the torque limit was set for the grip 70 mm from the jaw's pivot, but the egg sits 62 mm
+  out, so the simulation squeezed 2.83 N (3.41 N peak) for a 2.52 N target. It is now set at the lever where the
+  simulation grasps the object. An open-loop grip (a torque limit, no force sensor) aims at the middle of the object's
+  window, since nothing measures it: the SO-101 grips an egg at 4.58 N and a strawberry at 0.7 N.
+- Changing the servo supply of an imported robot (chat "use a 5 V supply" on the SO-101) re-plans its grip: the
+  gripper stage kept the old servo rail's numbers and the firmware shipped a 20.83 N grip limit where a fresh build
+  says 19.29 N. A generated arm's grip limit and stall force are now worked out on the servo rail too (they were at the
+  servo's rated voltage). Adding a wrist camera or changing the reach still reuses the gripper's grasp simulation when
+  the servo rail stays the same. A test now checks that every stage reruns when a result it reads changes, not only a
+  setting.
+- New robot no longer reads a thing's name as a job. "Pick up cans and pass them to the packing station" built a
+  hand-over with an emergency stop ("hands over drink cans"); "open boxes arrive on the left" was read as opening boxes,
+  "sort twist ties" as twisting, and screw caps, brass inserts, plugs and an assembly line the same way. A hand-over
+  now needs a person to receive it ("give it back to her" and "hand the cup to my mum" count, which they didn't).
+- An arm that can't hold its own weight stretched out no longer shows a negative payload there ("Payload stretched out
+  at 465 mm -13 g" for the SO-101 on Dynamixel servos at 7.4 V). The inspector and `morph robot` say "none" and that
+  the shoulder servo can't hold the arm stretched out, so it carries payloads only closer in.
+- "Run it from a 7.4 V battery" no longer builds a mains supply in silence. Morph plans mains power only; the chat now
+  says what the robot gets (a 12 V mains supply and the servo buck set to 7.4 V, no battery, charger or low-voltage
+  cutoff), warns when a charged lithium pack would exceed the servos' maximum (2S reads 8.4 V; the SO-101's servos take
+  7.4 V), and understands "run it from a battery" and "a 2S LiPo".
+- Teams' change-request preview no longer prices the molds as a cost per robot: switching a robot to production at
+  quantity 1 read "about +$73,374 per robot"; it now reads "+$4,234 per robot ... plus $69,140 of mold tooling, paid
+  once". The "Built" line and the release checklist say how much of a unit cost is tooling, as the inspector does.
+- A robot set to Force sensor: none is no longer refused with "add finger.sensor=fsr402" when its gripper servo's torque
+  limit sets the squeeze (smart-bus and Dynamixel grippers): the egg-picker without force sensors now passes its
+  software checks, the egg intact. A hobby servo gripper, which has no torque limit, is still told.

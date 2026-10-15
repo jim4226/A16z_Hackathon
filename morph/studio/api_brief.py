@@ -6,9 +6,12 @@ the Studio loads its feature modules (studio_hooks below); register(route, ...) 
     from morph.studio import api_brief
     api_brief.register(route, create_project=...)   # or call api_brief.post / api_brief.get from your handlers
 
-POST {text?, brief_id?, answers?: {slot: value}, action?: "defaults" | "build" | "cancel", name?}
+POST {text?, brief_id?, answers?: {slot: value}, action?: "defaults" | "build" | "cancel", name?, stop_on_issues?}
   text alone starts a brief; answers and/or text with brief_id continue it; "defaults" fills every open slot (on an
   out-of-scope brief it accepts the nearest robot); "build" returns what the project service needs; "cancel" drops it.
+  "build" with stop_on_issues (New robot's Build now) on a brief nobody has confirmed yet fills the defaults and, when
+  the preflight then has issues, answers 200 {ok, brief_id, brief, stopped: "preflight"} instead of building, so the
+  person sees the issues on the confirm card first ("Build anyway" builds a confirmed brief as it is).
   Conversation turns run on a worker thread because SubQ and Claude can take seconds: the reply is 202
   {ok, brief_id, busy: true, brief}, the timeline streams as SSE `agent` events and the result as a `brief` event.
   GET /api/brief?id= re-reads a brief (after an SSE reconnect, or to poll).
@@ -176,7 +179,8 @@ def post(req, send=None, *, home: str | None = None, open_project: dict | None =
         return _err(409, "still working on the last answer")
     if action == "build":
         try:
-            return _build(b, home, name, send, create_project, revive)
+            return _build(b, home, name, send, create_project, revive,
+                          stop_on_issues=body.get("stop_on_issues") is True)
         finally:
             STORE.release(b.id)
 
@@ -203,18 +207,23 @@ def post(req, send=None, *, home: str | None = None, open_project: dict | None =
     return 202, {"ok": True, "brief_id": b.id, "busy": True, "brief": b.to_dict()}
 
 
-def _build(b: B.Brief, home, name, send, create_project, revive=None):
+def _build(b: B.Brief, home, name, send, create_project, revive=None, stop_on_issues: bool = False):
     if b.status == "building" and b.project and create_project is not None:  # asked again (a second click, a retry):
         if revive is None or revive(b.project, b.id):                       # the project it is building, never a second
             return 200, {"ok": True, "brief_id": b.id, "build": B.build_payload(b, None, home), "project": b.project,
                          "already": True}
         b.status, b.project = "ready", None  # its project is gone, or never got its first build (a stop): build anew
-    if b.status in ("asking", "out_of_scope"):
+    unseen = b.status in ("asking", "out_of_scope")
+    if unseen:
         agents.run_turn(b, action="build", on_event=send, home=home)   # code only: defaults (or the nearest robot), preflight
     if b.status not in ("ready", "building"):
         STORE.put(home, b)
         send(event(b))
         return _err(409, "this request can't be built" if b.status == "refused" else "the brief isn't ready to build")
+    if unseen and stop_on_issues and b.status == "ready" and (b.preflight or {}).get("issues"):
+        STORE.put(home, b)                 # the confirm card shows the issues; Build anyway builds it as it is
+        send(event(b))
+        return 200, {"ok": True, "brief_id": b.id, "busy": False, "brief": b.to_dict(), "stopped": "preflight"}
     try:
         payload = B.build_payload(b, name, home)
     except ValueError as exc:

@@ -406,19 +406,22 @@ def _object_surface(design, spacing=1.0, offset=0.0) -> np.ndarray:
     return np.vstack(out)
 
 
-def _grip_force_target(asm, design, override=None, generated_fingers=True) -> float:
-    """Per-finger clamp force the firmware regulates to (N). ``generated_fingers`` = Morph's own pads (contour
-    / V wedge gain and the FSR range apply); False for a stock gripper (flat jaws)."""
+def _grip_force_target(asm, design, override=None, generated_fingers=True, cap=None) -> float:
+    """Per-finger clamp force the firmware regulates to (N): the one it ships (asm.meta["grip_target_n"], which the robot
+    builders copy from the electronics plan, itself the gripper stage's force plan), else the Grip force target, else
+    that force plan's closed form (morph.electronics.force_window). A sensorless hobby servo regulates nothing: its
+    firmware squeezes with the servo's stall force (asm.meta["grip_squeeze_n"]). ``generated_fingers`` = Morph's own
+    pads (contour / V wedge gain and the FSR range apply); False for a stock gripper (flat jaws). ``cap``: the jaws'
+    own limit (the gripper joint's effort), else design.gripper.force_n."""
     o, f = design.object, design.finger
-    cap = max(design.gripper.force_n, 0.5)
-    for key in ("grip_target_n", "grip_force_n"):
+    cap = max(cap if cap else design.gripper.force_n, 0.5)
+    for key in ("grip_squeeze_n", "grip_target_n", "grip_force_n"):
         if asm.meta.get(key):
             override = override or asm.meta[key]
     if override:
         return float(min(override, cap))
     if design.electronics.target_force_n > 0:
         return float(min(design.electronics.target_force_n, cap))
-    # same closed form as morph.analysis / morph.electronics: hold x 1.5, below the crush limit
     gain = 1.0
     if generated_fingers:
         try:
@@ -428,13 +431,19 @@ def _grip_force_target(asm, design, override=None, generated_fingers=True) -> fl
             gain = wedge_gain(f.pad, build_profile(design).contact_half_angle_deg)
         except Exception:  # noqa: BLE001
             gain = 1.0
-    hold = o.mass_g / 1000.0 * G / (2.0 * max(o.friction, 0.05) * gain)
-    lo = 1.5 * hold
-    hi = o.max_force_n / 1.5 if o.max_force_n > 0 else float("inf")
-    if f.sensor == "fsr402" and generated_fingers:
-        hi = min(hi, 16.0)
-    target = min(math.sqrt(lo * hi), 2.0 * lo) if hi != float("inf") else 1.3 * lo
-    return float(min(max(target, 0.5), cap))
+    from ..electronics import force_window, static_hold
+
+    hold = static_hold(o, gain)
+    target = force_window(o, hold, "fsr402" if f.sensor == "fsr402" and generated_fingers else None, floor=0.5)[2]
+    return float(min(target, cap))
+
+
+def grasp_lever(asm, design) -> float:
+    """A hinged jaw's lever at the grasp the simulation makes (mm, hinge axis to the object's centre): where the object
+    sits against the fixed jaw, inside the fingers, reachable straight down with the jaw open (_describe). The
+    firmware's torque limit is set at this lever (imported.gripper_summary), so the simulated squeeze is the target.
+    1.0 for a parallel jaw (no hinge)."""
+    return float(_describe(asm, design, _opts(None), grasp_only=True)[0].lever_mm)
 
 
 def _effort(asm, j) -> float:
@@ -597,8 +606,9 @@ def _contact_value(jaw_c, tl, gname, pts, g_open, g_closed, iters=14) -> float:
     return float(a)
 
 
-def _describe(asm, design, opts: SimOptions):
-    """Collision geoms, contact groups, joints and the gripper's grasp geometry for the MJCF."""
+def _describe(asm, design, opts: SimOptions, grasp_only: bool = False):
+    """Collision geoms, contact groups, joints and the gripper's grasp geometry for the MJCF. grasp_only: only the
+    hand's and the jaws' pieces (all the grasp geometry reads), for grasp_lever; the result can't build a model."""
     meta = asm.meta or {}
     jnames = {j.name for j in asm.joints}
     gname = meta.get("gripper_joint", "gripper")
@@ -648,6 +658,8 @@ def _describe(asm, design, opts: SimOptions):
     for link, parts in by_link.items():
         jaw = link in jaw_links
         near = link in near_links
+        if grasp_only and not near:
+            continue
         group = "jaw" if jaw else ("prox" if link in prox_links else "arm")
         cl = []
         for p in parts:
@@ -824,7 +836,8 @@ def _describe(asm, design, opts: SimOptions):
                        _rgba(c.part.color), c.part.kind, (c.hv, c.hf)) for c in cands]
 
     # ---- gripper command values and force limits
-    gf = _grip_force_target(asm, design, opts.grip_force_n, generated_fingers=kind == "prismatic")
+    gf = _grip_force_target(asm, design, opts.grip_force_n, generated_fingers=kind == "prismatic",
+                            cap=(gj.effort if kind == "prismatic" and gj is not None and gj.effort else None))
     if kind == "prismatic":
         g_open = float(min(g_hi - 0.5, max(ready.get(gname, 12.0), contact + 8.0)))
         g_close = float(min(g_lo, contact - 2.5 * GRIP_SAT_MM))
@@ -842,6 +855,8 @@ def _describe(asm, design, opts: SimOptions):
         cap = (gj.effort or 1.0) / (lever * MM)
         gf = min(gf, cap)
         effort = gf * lever * MM
+        if (asm.meta or {}).get("grip_torque_nm") and opts.grip_force_n is None:
+            effort = min(float(asm.meta["grip_torque_nm"]), gj.effort or 1.0)   # the firmware's torque limit, as set
         fmax = cap
     else:
         g_open = g_close = 0.0
@@ -1622,6 +1637,8 @@ def _perturbed(rob, p):
     try:
         g, (shape, R, L) = rob.obj_geom, _object_dims(rob.design)
         s = p.get("size_scale")
+        if s == 1.0:   # nominal: the formulas below don't give the compiled bounds bit for bit, so leave them alone
+            s = None
         if s is not None:
             Ra, La = R * s, L * s
             if shape == "cylinder":
@@ -2385,6 +2402,27 @@ def _far_pose(rob, design):
     return q, np.r_[u[:2] * r, z], lo
 
 
+def _stretch_pose(rob, design):
+    """The arm stretched straight out: the tool point at shoulder height, as far out along the pick direction as the
+    arm reaches (position only), where every joint's lever is longest. (q, radius in mm), or (None, 0.0)."""
+    info = rob.info
+    pitch = [n for n in info.arm_joints if n != info.arm_joints[0]]
+    if not pitch:
+        return None, 0.0
+    a = math.atan2(design.task.pick_y_mm, design.task.pick_x_mm)
+    u = np.array([math.cos(a), math.sin(a), 0.0])
+    z = rob.asm.world_transforms({n: 0.0 for n in info.arm_joints})[rob.asm.joint(pitch[0]).child][2, 3]
+    lo, hi, best = 0.0, 1500.0, None
+    for _ in range(16):
+        r = 0.5 * (lo + hi)
+        q, ep, _ = rob.ik_robust(u * r + [0, 0, z], None, seeds=[best] if best is not None else [], iters=200, free=1.0)
+        if ep < 0.5:
+            lo, best = r, q
+        else:
+            hi = r
+    return best, lo
+
+
 def _static_capacity(rob, q):
     """Payload (kg) at the TCP each joint can hold statically at q: (effort - arm gravity torque) / lever."""
     mj, m, d = rob._mj, rob.model, rob.dik
@@ -2407,6 +2445,8 @@ def _payload_sweep(rob: _Robot, design, fast=False):
     info = rob.info
     q_far, p_far, _ = _far_pose(rob, design)
     cap, _ = _static_capacity(rob, q_far)
+    q_str, r_str = _stretch_pose(rob, design)       # statics on the same model: nothing more is simulated
+    cap_str = _static_capacity(rob, q_str)[0] if q_str is not None else None
     mobj = design.object.mass_g / 1000.0
     est = float(np.min(cap)) - mobj
     ramp_T = 3.0 if fast else 5.0
@@ -2496,6 +2536,10 @@ def _payload_sweep(rob: _Robot, design, fast=False):
         "grip_limited_payload_g": round(grip_cap, 0),
         "far_pose_mm": [round(float(v), 1) for v in p_far], "far_radius_mm": round(float(np.linalg.norm(p_far[:2])), 1),
         "test_reach_mm": round(float(np.linalg.norm(p_far[:2])), 1),
+        # stretched straight out (tool point at shoulder height, as far as it reaches): what holds at stall, statically
+        "stretch_reach_mm": round(float(r_str), 1) if cap_str is not None else None,
+        "stretch_payload_g": round(float(np.min(cap_str)) * 1000.0, 0) if cap_str is not None else None,
+        "stretch_limited_by": info.arm_joints[int(np.argmin(cap_str))] if cap_str is not None else None,
         "torque_margin": round(max_payload_g / max(design.object.mass_g, 1e-6), 2),
         "curve": curve, "max_torque_pct": run.stats["max_torque_pct"],
     }

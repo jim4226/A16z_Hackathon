@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 from .design import FingerGeometry
-from .materials import MATERIALS
+from .materials import MATERIALS, MOLDED
 from .spec import Design
 
 G = 9.81
@@ -27,7 +27,7 @@ def wedge_gain(pad: str, contact_half_angle_deg: float) -> float:
 
 def analyze(design: Design, geom: FingerGeometry) -> dict:
     f, o = design.finger, design.object
-    mat = MATERIALS[f.material]
+    mat = MATERIALS.get(f.material) or MOLDED[f.material]
     printed = "fdm_print" in mat.processes and design.fab.process in ("auto", "fdm_print")
     yield_mpa = mat.yield_mpa * (mat.print_derate if printed else 1.0)
 

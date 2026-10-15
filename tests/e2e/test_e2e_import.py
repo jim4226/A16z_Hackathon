@@ -148,7 +148,7 @@ def test_so101_with_the_suggested_servos_says_why_it_is_not_feasible(browser, st
     pg.pg.fill(f'{DIALOG} [data-k="name"]', "so101-as-named")
     pg.pg.click(f'{DIALOG} [data-a="commit"]')
     text = finished(pg)
-    assert "so101-as-named is built (r001), but it isn't feasible yet:" in text, text
+    assert "so101-as-named is built (r001), but its software checks found issues:" in text, text
     issues = pg.texts(f"{DIALOG} .imp-warn li")
     assert any("N·m with margin" in i for i in issues), issues
     assert "A joint needs a stronger servo" in pg.text(f"{DIALOG} .imp-note"), text

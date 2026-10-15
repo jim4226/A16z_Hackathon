@@ -11,10 +11,12 @@ or written. Every number that doesn't come from a finished build is labelled an 
 from __future__ import annotations
 
 import collections
+import fnmatch
 import os
 import threading
 import time
 
+from ...robot.pipeline2 import GRAPH, gripper_inputs
 from ...spec import Design, diff
 from .disciplines import affected_stages
 from .store import read_json
@@ -49,8 +51,12 @@ def _base(root: str, rev: str) -> dict | None:
     res, design = read_json(p, None), read_json(os.path.join(root, rev, "design.json"), None)
     if not isinstance(res, dict) or not isinstance(design, dict):
         return None
-    el, bom = res.get("electronics") or {}, res.get("bom") or {}
+    el, bom, mfg = res.get("electronics") or {}, res.get("bom") or {}, res.get("manufacturing") or {}
+    configs = mfg.get("configs") if isinstance(mfg, dict) and isinstance(mfg.get("configs"), dict) else {}
     out = {"design": design, "sizing": res.get("sizing") or {}, "eplan": res.get("eplan") or {},
+           # each build level's mold tooling (paid once): the per-level unit costs spread it over the build quantity
+           "tooling": {k: (v or {}).get("tooling_cost") for k, v in configs.items() if isinstance(v, dict)},
+           "grip": (res.get("gripper") or {}).get("force"),
            "grip_n": ((res.get("gripper") or {}).get("force") or {}).get("target_force_n"),
            "summary": res.get("summary") or {}, "bom_totals": bom.get("totals") or {} if isinstance(bom, dict) else {},
            "configs": {k: (v or {}).get("cost") for k, v in (el.get("configs") or {}).items()}}
@@ -69,7 +75,7 @@ def _size(design: Design) -> dict:
     from ...robot import imported
     a = design.arm
     key = (a.source, a.actuator_family, a.actuator_overrides, float(a.payload_margin), float(design.object.mass_g),
-           design.electronics.extras, design.build.config)
+           design.electronics.extras, design.build.config, float(design.electronics.servo_v))
     with _LOCK:
         hit = _SIZES.get(key)
     if hit is None:
@@ -197,10 +203,14 @@ def _impact(root: str, base_rev: str | None, changes: dict, stages) -> dict:
     sz0, ep0 = b["sizing"], b["eplan"]
     sz1 = _size(new) if "sizing" in st else sz0
     chk0, chk1 = (_checks(base), _checks(new)) if st & {"sizing", "gripper", "electronics"} else ({}, {})
-    grip1 = chk1.get("grip_target_n") if "gripper" in st else b["grip_n"]
+    # the grip changes when a key the gripper stage reads does, or the part of sizing it reads (the build's early cutoff,
+    # pipeline2.PARTIAL): a longer reach or a wrist camera re-sizes the arm and keeps the grip the base built
+    grip_dirty = "gripper" in st and (any(fnmatch.fnmatch(k, p) for k in keys for p in GRAPH["gripper"][0])
+                                      or gripper_inputs(new, sz1) != gripper_inputs(base, sz0))
+    grip1 = chk1.get("grip_target_n") if grip_dirty else b["grip_n"]
     if "electronics" in st:
         from ...robot import electronics2
-        ep1 = electronics2.plan(new, {**sz1, **({"grip_target_n": grip1} if grip1 else {})})
+        ep1 = electronics2.plan(new, sz1, grip=chk1.get("grip") if grip_dirty else b.get("grip"))
     else:
         ep1 = ep0
 
@@ -290,7 +300,7 @@ def _impact(root: str, base_rev: str | None, changes: dict, stages) -> dict:
             geo.append("the robot CAD and its printed parts are rebuilt" if "cad" in st else "the same geometry")
         _row(rows, "geometry", "Geometry", "; ".join(geo))
 
-    if "gripper" in st:
+    if grip_dirty:
         g0 = b["grip_n"]
         if isinstance(g0, (int, float)) and isinstance(grip1, (int, float)) and abs(g0 - grip1) >= 0.05:
             _row(rows, "grip", "Grip", f"grip force target {g0:g} → {grip1:g} N")
@@ -315,13 +325,29 @@ def _impact(root: str, base_rev: str | None, changes: dict, stages) -> dict:
             by["electronics"] = b["configs"][cfg1] - b["configs"][cfg0]  # the base build priced both electronics options
         elif cfg1 == "custom_pcb" and "electronics" in st:
             notes.append("the custom PCBA is quoted again when it builds")
+        # per unit without the mold tooling, which is paid once and shown apart (as the BOM tab does): the unit cost and
+        # the per-level costs spread it over the build quantity, so at quantity 1 a production switch read +$73k a robot
+        q0 = max(1, int(base.build.quantity or 1))
+        tool = b.get("tooling") or {}
+        t0 = float(tool.get(base.build.config) or 0.0)
+        t1 = t0
         unit0 = (b["summary"] or {}).get("unit_cost")
+        unit0 = round(unit0 - t0 / q0, 2) if isinstance(unit0, (int, float)) else unit0
         per = (b["bom_totals"] or {}).get("per_config") or {}
         if base.build.config != new.build.config and isinstance(per.get(base.build.config), (int, float)) \
                 and isinstance(per.get(new.build.config), (int, float)):
-            by["parts made"] = per[new.build.config] - per[base.build.config]
+            t1 = float(tool.get(new.build.config) or 0.0)
+            by["parts made"] = (per[new.build.config] - t1 / q0) - (per[base.build.config] - t0 / q0)
         elif "manufacturing" in st:
             notes.append("the parts made are priced again when it builds")
+        tdelta = round(t1 - t0, 2)
+        if tdelta >= 0.5:
+            notes.append(f"plus {_money(tdelta)} of mold tooling, paid once")
+        elif tdelta <= -0.5:
+            notes.append(f"and {_money(-tdelta)} less mold tooling, paid once" if t1 >= 0.5 else
+                         f"and no mold tooling (it had {_money(t0)}, paid once)")
+        elif t1 >= 0.5:
+            notes.append(f"plus the {_money(t1)} of mold tooling, paid once")
         delta = round(sum(by.values()), 2)
         parts = ", ".join(f"{k} {_money(v, True)}" for k, v in sorted(by.items(), key=lambda kv: -abs(kv[1])) if abs(v) >= 0.5)
         qty = base.build.quantity != new.build.quantity
@@ -334,9 +360,12 @@ def _impact(root: str, base_rev: str | None, changes: dict, stages) -> dict:
             text = f"about {_money(delta, True)} per robot" + (f" ({parts})" if parts else "")
             if after is not None:
                 text += f": {_money(unit0)} → about {_money(after)}"
+        big = 0.15 * max(1.0, unit0 or 0)
         _row(rows, "cost", "Cost", text + ("; " + "; ".join(notes) if notes else ""),
-             "bad" if delta >= 0.15 * max(1.0, unit0 or 0) else "", [])
-        out["cost"] = {"before": unit0, "delta": delta, "after": after, "split": {k: round(v, 2) for k, v in by.items()}}
+             "bad" if delta >= big or tdelta >= big * q0 else "", [])
+        # before, delta and after are per unit without the tooling; tooling is [before, after], paid once
+        out["cost"] = {"before": unit0, "delta": delta, "after": after, "split": {k: round(v, 2) for k, v in by.items()},
+                       "tooling": [round(t0, 2), round(t1, 2)]}
 
     # what the checks find before it builds (a check that crashed is not an issue of the design: the build decides)
     crash = [i for i in chk1.get("issues") or [] if i.startswith(CRASH)]

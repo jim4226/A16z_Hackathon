@@ -378,6 +378,15 @@ class _Facts:
         return None
 
     @property
+    def grip(self) -> dict:
+        """The grip the firmware ships (the wiring stage's copy of the electronics plan's grip)."""
+        return self.efinal.get("grip") or (self.efinal.get("plan") or {}).get("grip") or {}
+
+    @property
+    def sensor(self) -> bool:
+        return self.grip.get("sensor", "fsr402" if self.design.finger.sensor == "fsr402" else "none") == "fsr402"
+
+    @property
     def supply(self):
         for r in (self.efinal.get("power_budget") or {}).get("rails", []):
             src = str(r.get("source") or "")
@@ -455,7 +464,7 @@ def _mech_steps(F: _Facts):
                 continue
         table, sent, warn = OrderedDict(), [], []
         inst = [(k, e) for k, e in F.inst.items() if any(n in names for n in e["parts"])]
-        fab = [p for p in parts if p.process in mf.FAB_PROCESSES and p.kind not in ("fastener", "cable")]
+        fab = [p for p in parts if mf.fabricated(p)]    # the parts manufacturing makes files for, nothing else
         # parts table
         for k, e in inst:
             nm, src = _sku_name(e["sku"])
@@ -577,7 +586,8 @@ def _elec_steps(F: _Facts, start: int):
     if not F.folded["wiring"]:
         sent += ["Route each run along the link's cable channel and leave a 30 mm service loop at every joint so the cable "
                  "never pulls tight at the end of travel.",
-                 "Connect the force-sensor leads (if fitted) to their inputs, then fix the harness with cable ties every 60–80 mm."]
+                 ("Connect the two force-sensor leads to their inputs, then fix" if F.sensor else "Fix") +
+                 " the harness with cable ties every 60–80 mm."]
     sent.append("Plug the power lead into the inlet last; keep the supply unplugged.")
     n_ties = max(6, 2 * len(rows))
     w_parts = (W["parts"] if W else []) + [c.name for c in F.asm.cables]
@@ -635,8 +645,10 @@ def _elec_steps(F: _Facts, start: int):
                     "table, power-cycle, repeat. Two servos with the same ID corrupt the bus.")
     else:
         sent.append("Check each servo is on the PWM channel listed in the table.")
-    sent.append("Open the serial monitor at 115200 baud and power the servo supply: the boot log must list every servo "
-                "and both force-sensor channels.")
+    sent.append("Open the serial monitor at 115200 baud and power the servo supply: the firmware prints “# Morph arm ready”"
+                + (" and names any servo id that doesn't answer" if F.family == "dynamixel" else "") +
+                ". Send Q for a status line: state, gripper mode, every joint angle, the gripper, the "
+                + ("fingertip force" if F.sensor else "force reading (0 without force sensors)") + " and the servo rail voltage.")
     ids = [{"joint": jn, "label": _joint_label(jn) + (f" ({k + 1})" if sum(1 for a, _ in F.id_rows if a == jn) > 1 else ""),
             "id": sid, "actuator": next((j.actuator for j in F.asm.joints if j.name == jn), "")}
            for jn, sid, k in ((jn, sid, [x for x, _ in F.id_rows[:i]].count(jn)) for i, (jn, sid) in enumerate(F.id_rows))]
@@ -648,39 +660,75 @@ def _elec_steps(F: _Facts, start: int):
     idx += 1
     # ---------------------------------------------------------------- calibration
     obj = d.object
-    target = d.electronics.target_force_n or (obj.max_force_n / max(d.safety_factor, 1.0) if obj.max_force_n else 0.0)
+    grip = F.grip
+    target = grip.get("target_n")
+    revolute = (grip.get("motion") or {}).get("kind") == "revolute"
     sent = ["Joint zero: drive each joint to its alignment marks (arm straight up, wrist level), then store the encoder "
             "offsets as the zero pose.",
+            "Gripper zero: close the jaw until its faces just touch and store that as gripper = 0 rad." if revolute else
             f"Gripper zero: close the jaws on a {obj.diameter_mm:g} mm gauge (the {obj.name}'s diameter); store this as "
-            "gripper = 0 mm (contact).",
-            "Force sensors: rest 50 g, 100 g, 200 g and 500 g on each pad (pad facing up) and record the raw reading; the "
-            "firmware fits the curve from the table.",
-            (f"Set the grip force limit to {target:.1f} N per finger ({obj.name}: damage above {obj.max_force_n:g} N)."
-             if target else "Set the grip force limit for the object.")]
+            "gripper = 0 mm (contact)."]
+    if F.sensor:
+        sent.append("Force sensors: rest 200 g on the left pad (pad facing up) and send Z 200; the firmware scales its "
+                    "force reading from it. Check with 50 g and 500 g: Q should read about 0.5 N and 4.9 N.")
+    if target:
+        sent.append(_grip_sentence(grip, obj.name))
     for fo in F.folded["calibration"]:
         if any("zero" in x.lower() for x in fo["sentences"]):
             sent = [x for x in sent if not x.startswith("Joint zero")]
         sent = fo["sentences"] + sent
-    steps.append({"index": idx, "title": "Calibrate joints, gripper and force sensors", "kind": "calibration", "parts": [],
-                  "parts_table": [], "fasteners": [],
-                  "tools": _add_tools(["kitchen scale or calibration weights (50–500 g)", f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"],
+    gauge = [] if revolute else [f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"]
+    steps.append({"index": idx, "title": "Calibrate joints, gripper and force sensors" if F.sensor else "Calibrate joints and gripper",
+                  "kind": "calibration", "parts": [], "parts_table": [], "fasteners": [],
+                  "tools": _add_tools((["calibration weights or a kitchen scale (50–500 g)"] if F.sensor else []) + gauge,
                                       [t for fo in F.folded["calibration"] for t in fo["tools"]]),
-                  "instructions": " ".join(sent), "substeps": sent, "cal_weights_g": [50, 100, 200, 500],
-                  "grip_target_n": round(target, 2),
-                  "warnings": ["Re-run the force-sensor calibration after a 10 minute warm-up: FSR readings drift with temperature."],
-                  "time_min": 25})
+                  "instructions": " ".join(sent), "substeps": sent, "cal_weights_g": [50, 200, 500] if F.sensor else [],
+                  "grip_target_n": target, "grip_window_n": grip.get("window_n"), "grip_limit_n": grip.get("limit_n"),
+                  "warnings": ["Re-run the force-sensor calibration after a 10 minute warm-up: FSR readings drift with temperature."]
+                  if F.sensor else [],
+                  "time_min": 25 if F.sensor else 15})
     idx += 1
     # ---------------------------------------------------------------- first pick
     t = d.task
-    sent = [f"Place a hard-boiled egg (or a {obj.diameter_mm:g} mm ball) at the pick point x = {t.pick_x_mm:g} mm, "
+    egg = "egg" in (obj.name or "").lower()
+    stand_in = "a hard-boiled egg" if egg else f"a stand-in for the {obj.name or 'object'}"
+    sent = [f"Place {stand_in} (or a {obj.diameter_mm:g} mm ball) at the pick point x = {t.pick_x_mm:g} mm, "
             f"y = {t.pick_y_mm:g} mm from the base axis; mark the place point x = {t.place_x_mm:g}, y = {t.place_y_mm:g} mm.",
-            "Run the pick-and-place demo at 25 % speed; watch the grip-force readout stay below the limit.",
-            f"Raise the speed step by step to 100 % (target cycle {t.cycle_time_s:g} s), then repeat with a raw egg."]
+            "Run the pick-and-place demo at 25 % speed; " + ("watch the grip-force readout stay below the limit." if F.sensor else
+                                                            "watch that the object neither slips in the jaws nor dents."),
+            f"Raise the speed step by step to 100 % (target cycle {t.cycle_time_s:g} s), then repeat with "
+            + ("a raw egg." if egg else f"a real {obj.name or 'object'}.")]
     steps.append({"index": idx, "title": "First pick-and-place test", "kind": "test", "parts": [], "parts_table": [],
                   "fasteners": [], "tools": [], "instructions": " ".join(sent), "substeps": sent,
                   "warnings": ["Stand clear of the arm's reach while it runs; the e-stop / supply switch stays within reach."],
                   "time_min": 10})
     return steps
+
+
+def _grip_sentence(grip: dict, name: str) -> str:
+    """What the firmware does with the grip force, in its own commands and numbers (the electronics plan's grip)."""
+    lo, hi = grip.get("window_n") or [None, None]
+    t, lim = grip["target_n"], grip.get("limit_n")
+    window = f"{lo:g}–{hi:g} N" if lo is not None and hi is not None else f"at least {lo:g} N" if lo is not None else None
+    within = (f", within {window} for the {name}." if hi is not None else f" ({window} for the {name})." if window else ".")
+    if grip.get("sensor") == "fsr402":
+        out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
+        return out + "; to change the target send F followed by newtons" + within
+    motion = grip.get("motion") or {}
+    revolute = motion.get("kind") == "revolute"
+    stop = (f" (gripper = {motion['lo']:.2f} {motion.get('unit', '')}, its max-squeeze stop)" if motion.get("lo") is not None
+            else " (its max-squeeze stop)")
+    tl = grip.get("torque_limit")
+    if not tl:
+        stall = grip.get("stall_force_n")
+        return (f"This gripper has no force sensors and its hobby servo no torque limit: G closes it past the {name}"
+                f"{stop} with all the servo's torque" + (f", about {stall:g} N per finger" if stall else "")
+                + f". Morph's grip target for the {name} is {t:g} N per finger" + (f" (window: {window})." if window else "."))
+    where = (f"with the object {grip.get('lever_mm', 0):g} mm from the jaw's pivot (more nearer the pivot, less towards the tip)"
+             if revolute else f"through its {grip.get('lever_mm', 0):g} mm pinion")
+    return (f"This gripper has no force sensors: G closes it past the {name}{stop}, and the gripper servo's torque limit, "
+            f"{tl['fraction'] * 100:.0f} % of its stall torque, sets the squeeze: {t:g} N per finger {where}. Check it once with "
+            f"a kitchen scale between the jaws; to change it send F followed by newtons" + within)
 
 
 # ================================================================== illustrations
@@ -1017,7 +1065,9 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
     reach = sz.get("reach_mm") or d.arm.reach_mm
     mass = sum(asm.link_mass(l)[0] for l in asm.links)
     obj = d.object
-    grip = "Rack-and-pinion parallel jaws" + (", FSR 402 force sensing" if d.finger.sensor == "fsr402" else "")
+    revolute = (F.grip.get("motion") or {}).get("kind") == "revolute" or asm.meta.get("gripper_type") == "revolute_jaw"
+    grip = ("The robot's own servo-driven jaw" if revolute else "Rack-and-pinion parallel jaws") + \
+        (", FSR 402 force sensing" if F.sensor else "")
     cfg = mfg.get("config") or d.build.config
     cfgd = (mfg.get("configs") or {}).get(cfg, {})
     unit = (mfg.get("totals") or {}).get("unit_cost") or cfgd.get("unit_cost")
@@ -1032,7 +1082,7 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
     n_fab = sum(e.get("qty", 0) for e in mfg.get("parts", []) if e.get("process") in mf.FAB_PROCESSES)
     n_fast = sum(f["qty"] for s in steps for f in s["fasteners"])
     tiles = [(len(steps), "steps"), (_fmt_min(total_min), "build time"),
-             (n_fab or len({p.group or p.name for p in asm.parts if p.process in mf.FAB_PROCESSES}), "made parts"),
+             (n_fab or len({p.group or p.name for p in asm.parts if mf.fabricated(p)}), "made parts"),
              (n_fast, "fasteners")]
     if unit:
         tiles[3] = (f"${unit:,.0f}", "unit cost (est.)")
@@ -1251,7 +1301,7 @@ def build(design, asm, mfg, efinal, outdir, images: bool = True) -> dict:
             jobs = _image_jobs(F, steps)
             tsz = dict(view=(35.0, 28.0), size=(180, 130), pad=0.1, shadow=False)
             groups = list(F.mfg_by_group) or list(OrderedDict.fromkeys(
-                p.group or p.name for p in asm.parts if p.process in mf.FAB_PROCESSES))
+                p.group or p.name for p in asm.parts if mf.fabricated(p)))
             for g in groups:
                 p = next((p for p in asm.parts if (p.group or p.name) == g), None)
                 if p is not None:            # render frames the bounds itself: no copy needed

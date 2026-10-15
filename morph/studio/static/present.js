@@ -71,7 +71,7 @@ const STEPS = [
   },
   {
     title: 'Edit someone else’s robot', project: 'so101', chat: 'Swap to Dynamixel servos',
-    say: '“Swap to Dynamixel servos.” The new servos go in, the electronics and firmware follow, and the printed holders that no longer fit are flagged in orange for redesign.',
+    say: '“Swap to Dynamixel servos.” Six XL430s go in, all on one 12 V supply, so the supply, controller, wiring and firmware change with them and every torque margin is re-checked. Their bodies are wider than the stock servos, so the six printed holders are flagged in orange: the build stays not feasible until they are redesigned.',
     after: async (a) => { a.tab('robot'); },
   },
   {

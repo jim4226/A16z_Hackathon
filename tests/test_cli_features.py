@@ -173,3 +173,18 @@ def test_doctor_lists_every_feature(home, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "no ffmpeg" in out and "-m pip install imageio-ffmpeg" in out and "Teams (preview): team" in out
     assert "run_studio.sh --team" in out or "run_studio.bat --team" in out  # the launcher of this checkout
+
+
+@pytest.mark.parametrize("saved", [{"stretch_payload_g": 0.0, "stretch_holds_itself": False}, {"stretch_payload_g": -13.0}])
+def test_the_terminal_never_prints_a_negative_stretched_out_payload(tmp_path, capsys, saved):
+    # a revision saved before the summary clamped it holds the deficit (-13 g) itself
+    p = RobotProject(str(tmp_path / "so101"))
+    (tmp_path / "so101" / "r001").mkdir(parents=True)
+    summary = {"stretch_reach_mm": 465.4, "stretch_limited_by": "shoulder_lift", "max_payload_g": 265.0, "issues": [], **saved}
+    res = {"rev": "r001", "summary": summary, "stage_status": {n: "computed" for n in ORDER},
+           **{OUTPUT_KEYS[n]: {"ok": True} for n in ORDER}}
+    (tmp_path / "so101" / "r001" / "results.json").write_text(json.dumps(res), encoding="utf-8")
+    cli._robot_summary(p, "r001")
+    out = capsys.readouterr().out
+    assert "stretch_payload_g=none" in out and "-13" not in out
+    assert "stretched out at 465 mm the arm can't hold even its own weight (shoulder_lift stalls)" in out

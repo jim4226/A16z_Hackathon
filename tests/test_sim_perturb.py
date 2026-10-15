@@ -3,6 +3,7 @@ comes back bit for bit, every change reaches the model, the plan stays nominal, 
 the tech lead's independent yaw sweep (the product's own _run_one with only the egg's start yaw changed). Without
 perturb nothing changes at all: tests/test_sim_golden.py. MORPH_SLOW=1 adds the whole 61-angle sweeps."""
 
+import copy
 import json
 import math
 import os
@@ -35,6 +36,18 @@ def egg():
     d = template("egg-picker")
     sz = arm.size(d)
     return d, arm.build(d, sz, electronics2.plan(d, {**sz, "grip_target_n": 2.34}))
+
+
+@pytest.fixture(scope="module")
+def egg_sweep(egg):
+    """The egg-picker as the lead's sweep ran it: the simulation then gripped with its own closed form (2.17 N), not
+    with the 2.34 N the firmware ships (which it has gripped with since the grip force got one source); the sweep's
+    numbers are for 2.17 N."""
+    d, asm = egg
+    asm = copy.copy(asm)
+    asm.meta = dict(asm.meta)
+    assert asm.meta.pop("grip_target_n") == 2.34
+    return d, asm
 
 
 @pytest.fixture(scope="module")
@@ -145,10 +158,10 @@ def test_a_start_off_its_mark_is_measured_from_the_object_axis(egg, fast_robot):
     assert simulate._perturb_start(rob, {}, x0, y0, yaw) == (x0, y0, yaw, rob.R + 0.2)
 
 
-def test_the_egg_turned_alone_reproduces_the_independent_sweep(egg):
+def test_the_egg_turned_alone_reproduces_the_independent_sweep(egg_sweep):
     """The research case: the nominal plan jams at release when the egg starts turned 4 degrees (the egg is carried
     off), at 0 and 12 degrees it places. Same numbers as the tech lead's sweep, to the hundredth of a millimetre."""
-    d, asm = egg
+    d, asm = egg_sweep
     rob = simulate._make_robot(asm, d, False, {"timestep": 0.002})
     plan, at = simulate._plan_pick_place(rob, d, False)
     for yaw, (ok, err) in SWEEP_2MS.items():
@@ -174,10 +187,10 @@ def test_the_servo_model_at_nominal_settings_still_places(egg):
 
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 61-angle sweeps at 1 ms, with impratio=1 and at 2 ms (minutes)")
-def test_the_whole_sweeps_at_1_and_2_ms_and_with_softer_friction(egg):
+def test_the_whole_sweeps_at_1_and_2_ms_and_with_softer_friction(egg_sweep):
     """The jam band at 1 ms (runs alternating with impratio=1 on one model: a run leaves nothing behind), none with
     softer friction, and the lead's band exactly at 2 ms."""
-    d, asm = egg
+    d, asm = egg_sweep
     fails, soft, fails_2ms = [], [], []
     for opts, settings in (({}, (({}, fails), ({"impratio": 1.0}, soft))), ({"timestep": 0.002}, (({}, fails_2ms),))):
         rob = simulate._make_robot(asm, d, False, opts)

@@ -377,6 +377,31 @@ def test_a_replay_in_a_study_process_matches_one_in_this_process(project, prepar
         robust.replay(project, doc["id"], 1, cache={}, process=True, nice=0, timeout=0.05)
 
 
+@pytest.mark.parametrize("change", [{"electronics.mcu": "rp2040_pico"}, {"electronics.config": "custom_pcb"}])
+def test_an_electronics_only_revision_matches_the_simulation_it_reuses(tmp_path_factory, tmp_path, monkeypatch, change):
+    # a controller or custom-PCB edit reuses the simulation (the boards sit in the base, welded to the table): the
+    # rebuilt model differs only in the base's mass and shapes, so a study of it isn't "simulated with other Morph code"
+    import shutil
+
+    from morph.robot import catalog
+
+    root = egg_project(tmp_path_factory, tmp_path / "home", name="pcb-check")
+    r2 = os.path.join(root, "r002")
+    shutil.copytree(os.path.join(root, "r001"), r2)
+    with open(os.path.join(r2, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(projects.template("egg-picker").with_changes(change).dumps())
+    with open(os.path.join(r2, "results.json"), encoding="utf-8") as fh:
+        res = json.load(fh)
+    with open(os.path.join(r2, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump({**res, "rev": "r002", "parent": "r001", "provenance": {"sim": "reused from r001"},
+                   "stage_status": {"sim": "reused"}}, fh)
+    assert robust.prepare(root, "r002", 0.002)["matches_revision"] is True
+    # a change to what moves (here every servo 10 % weaker) is still told apart
+    torque = catalog.torque_at
+    monkeypatch.setattr(catalog, "torque_at", lambda key, volts: 0.9 * torque(key, volts))
+    assert robust.prepare(root, "r002", 0.002)["matches_revision"] is False
+
+
 def test_a_study_of_a_revision_that_now_holds_another_design_says_so(project, prepared):
     doc = robust.run_study(project, runs=1, workers=1, timestep=0.002, checks=False, seed=17, nice=0, cache=CACHE)
     assert robust.load(project, doc["id"])["rev_changed"] is False
@@ -399,8 +424,10 @@ def test_a_study_of_a_revision_that_now_holds_another_design_says_so(project, pr
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 200 runs at 1 ms plus the solver checks (minutes)")
 def test_acceptance_the_published_study(tmp_path):
-    """The egg-picker at default tolerances and 1 ms steps: 140 of 200 succeed (Wilson 63.3-75.9 %); the jam at
-    release is concentrated where the egg is turned a few degrees and the solver checks label it model-sensitive."""
+    """The egg-picker at default tolerances and 1 ms steps: 150 of 200 succeed (Wilson 68.6-80.5 %); the jam at
+    release is concentrated where the egg sits a few mm off its mark along its length (as good a separator as the egg
+    turned a few degrees) and the solver checks label it model-sensitive. At the 2.17 N grip the simulation used before
+    the grip came from the gripper stage (2.34 N), the same seed gave 140 of 200, 58 jams with the egg turned."""
     project = make_revision(tmp_path / "home", fast=False)
     events, t0 = [], time.time()
     doc = robust.run_study(project, runs=200, progress=events.append, nice=0)
@@ -408,11 +435,11 @@ def test_acceptance_the_published_study(tmp_path):
     print("\n" + robust.report(doc))
     print(json.dumps(doc["timing"], indent=1))
     assert doc["model"]["matches_revision"] is True and doc["model"]["nominal"]["success"] is True
-    assert (s["n"], s["successes"]) == (200, 140) and [round(v, 3) for v in s["wilson95"]] == [0.633, 0.759]
+    assert (s["n"], s["successes"]) == (200, 150) and [round(v, 3) for v in s["wilson95"]] == [0.686, 0.805]
     jam = s["groups"][0]
-    assert jam["id"] == "jam" and jam["count"] >= 50 and jam["model_sensitive"] is True
+    assert jam["id"] == "jam" and jam["count"] == 50 and jam["model_sensitive"] is True and len(s["groups"]) == 1
     r = jam["rule"]
-    assert r["param"] == "object_yaw_deg" and r["on"] == "deviation" and 2.0 <= r["lo"] <= 4.5 and 6.5 <= r["hi"] <= 10.0
+    assert r["param"] == "object_along_mm" and r["on"] == "value" and -6.0 <= r["lo"] <= -3.5 and 0.5 <= r["hi"] <= 2.5
     assert r["significant"] and jam["checks"]["impratio_1"]["still_fail"] <= 0.2 * jam["checks"]["impratio_1"]["runs"]
     assert doc["timing"]["first_result_s"] < 15 and time.time() - t0 < 900
 

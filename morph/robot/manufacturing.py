@@ -107,6 +107,7 @@ FDM_MATS = ("PLA", "PETG", "ABS", "ASA", "Nylon-CF", "TPU")
 FDM_BED = (250.0, 210.0, 220.0)        # Prusa MK4-class build volume
 MJF_BED = (380.0, 284.0, 380.0)
 SLA_BED = (200.0, 125.0, 210.0)
+BEDS = {"fdm_print": FDM_BED, "sla_print": SLA_BED, "mjf_print": MJF_BED}
 SHEET_GAUGES = (0.81, 1.02, 1.27, 1.6, 2.03, 2.29, 2.54, 3.18, 4.06, 4.83, 6.35)   # SendCutSend 5052 stock, mm
 PLATE_STOCK = (3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0, 25.0)
 
@@ -260,8 +261,14 @@ _GENERIC = {   # purchased bits generators use that are not catalog entries
 }
 
 
+def fabricated(p) -> bool:
+    """A part Morph writes make files for (printed, cut, machined, molded). Decoration ("visual": the upper arm's logo
+    inlay), fasteners and cables are not, so they have no print file, BOM line or place in the manual's parts tables."""
+    return p.process in FAB_PROCESSES and p.kind not in ("fastener", "cable", "visual")
+
+
 def _fab_parts(asm):
-    return [p for p in asm.parts if p.process in FAB_PROCESSES and p.kind not in ("fastener", "cable", "visual")]
+    return [p for p in asm.parts if fabricated(p)]
 
 
 def step_fasteners(asm) -> dict:
@@ -620,9 +627,13 @@ class Geo:
     # ---------------------------------------------------- printing pose + overhang analysis
     @property
     def print_pose(self):
-        return self._memo("pose", self._print_pose)
+        return self.pose_for("fdm_print")
 
-    def _print_pose(self):
+    def pose_for(self, proc: str):
+        """The print orientation for a process: the best-scoring pose that fits its build volume."""
+        return self._memo(("pose", proc), lambda: self._print_pose(BEDS.get(proc, FDM_BED)))
+
+    def _print_pose(self, bed=FDM_BED):
         m = self.mesh
         n = m.face_normals
         a = m.area_faces
@@ -639,8 +650,8 @@ class Geo:
                 cands.insert(0, ("profile flat on the bed", flat))
             except np.linalg.LinAlgError:
                 flat = None
-        best = None
-        prof = None
+        bx, by = sorted(bed[:2], reverse=True)
+        poses = []
         for label, R in cands:
             Rm = R[:3, :3]
             nz = n @ Rm[2]
@@ -654,17 +665,23 @@ class Geo:
             score = sup + 1.5 * h - 0.05 * contact - (25.0 if label.startswith("profile") else 0.0)
             # mean height of overhang above the bed ~ support column height
             sup_h = float(np.average(z[over] - z0, weights=a[over])) if over.any() else 0.0
-            cand = {"label": label, "R": R, "support_mm2": sup, "support_h": sup_h, "height": h,
-                    "contact_mm2": contact, "score": score}
-            if label.startswith("profile"):
-                prof = cand
-            if best is None or score < best["score"]:
-                best = cand
+            fx, fy = sorted((float(np.ptp(m.vertices @ Rm[0])), float(np.ptp(m.vertices @ Rm[1]))), reverse=True)
+            poses.append({"label": label, "R": R, "support_mm2": sup, "support_h": sup_h, "height": h,
+                          "contact_mm2": contact, "score": score, "fits": h <= bed[2] and fx <= bx and fy <= by})
+        # only poses inside the build volume (the footprint may turn 90° on the bed); none fits: the part needs splitting
+        fit = [c for c in poses if c["fits"]] or poses
+        best = min(fit, key=lambda c: c["score"])
+        prof = next((c for c in fit if c["label"].startswith("profile")), None)
         if prof is not None and prof["support_mm2"] <= max(25.0, best["support_mm2"] + 25.0):
             best = prof            # 2.5D parts print flat (profile on the bed) unless that needs real supports
         T = best["R"].copy()
         pm = m.copy()
         pm.apply_transform(T)
+        ext = pm.extents
+        if ext[0] > bed[0] or ext[1] > bed[1]:   # it fits turned 90° on the bed: turn it
+            T = trimesh.transformations.rotation_matrix(math.pi / 2, [0, 0, 1]) @ T
+            pm = m.copy()
+            pm.apply_transform(T)
         b = pm.bounds
         shift = trimesh.transformations.translation_matrix([-(b[0][0] + b[1][0]) / 2, -(b[0][1] + b[1][1]) / 2, -b[0][2]])
         best["T"] = shift @ T
@@ -1516,11 +1533,12 @@ def dfm_checks(entry: dict, g: Geo) -> list:
     proc = entry["process"]
     out = []
     if proc in PRINT_PROCESSES:
-        pose = g.print_pose
-        bed = {"fdm_print": FDM_BED, "sla_print": SLA_BED, "mjf_print": MJF_BED}[proc]
-        e = np.sort(pose["mesh"].extents)[::-1]
-        if any(a > b for a, b in zip(e, sorted(bed, reverse=True))):
-            out.append(f"{e[0]:.0f}×{e[1]:.0f}×{e[2]:.0f} mm exceeds the {bed[0]:.0f}×{bed[1]:.0f}×{bed[2]:.0f} mm build volume: split the part")
+        pose = g.pose_for(proc)
+        bed = BEDS[proc]
+        e = pose["mesh"].extents          # as it stands on the bed: footprint either way round, height against the bed's
+        if e[2] > bed[2] or max(e[:2]) > max(bed[:2]) or min(e[:2]) > min(bed[:2]):
+            out.append(f"{e[0]:.0f}×{e[1]:.0f}×{e[2]:.0f} mm (its best way up) exceeds the {bed[0]:.0f}×{bed[1]:.0f}×"
+                       f"{bed[2]:.0f} mm build volume: split the part")
         w = g.walls
         lim = {"fdm_print": 1.2, "sla_print": 0.6, "mjf_print": 0.8}[proc]
         if w and w["min"] < lim:
@@ -1667,7 +1685,7 @@ def write_files(entry: dict, g: Group, outdir: str, design, efinal=None) -> list
         return os.path.join(d, fn)
 
     if proc in PRINT_PROCESSES:
-        pose = geo.print_pose
+        pose = geo.pose_for(proc)
         pm = pose["mesh"]
         pm.export(rel(f"{key}.stl"))
         settings = {"fdm_print": {"layer_height_mm": 0.2 if g.cls != "gear" else 0.12, "perimeters": 4, "top_bottom_layers": 5,
@@ -1679,7 +1697,7 @@ def write_files(entry: dict, g: Group, outdir: str, design, efinal=None) -> list
         write_3mf(rel(f"{key}.3mf"), pm, qty=g.qty, title=entry["name"],
                   meta={"Designer": "Morph", "Description": f"{entry['material']} {PROC_LABEL[proc]} · orientation: {pose['label']}",
                         **{f"morph:{k}": v for k, v in settings.items()}},
-                  bed=FDM_BED if proc == "fdm_print" else MJF_BED)
+                  bed=BEDS[proc])
         entry["print"] = {"orientation": pose["label"], "height_mm": _r(pose["height"], 1),
                           "support_cm2": _r(pose["support_mm2"] / 100, 2), **settings}
         if proc == "fdm_print":

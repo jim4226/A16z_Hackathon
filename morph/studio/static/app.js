@@ -34,8 +34,9 @@ const DEFAULT_NODES = [['sizing', 'Sizing'], ['gripper', 'Gripper + grasp'], ['e
   ['sim', 'Simulation'], ['wiring', 'Schematic · PCB · FW'], ['manufacturing', 'Manufacturing'], ['bom', 'BOM + sourcing'], ['manual', 'Assembly manual']];
 const METRICS = [
   ['Unit cost', 'unit_cost', '$', 'lo'], ['Pick & place', 'pick_place_success', '', 'hi'], ['Cycle time', 'cycle_time_s', 's', 'lo'],
-  ['Payload at full reach', 'max_payload_g', 'g', 'hi'], ['Peak joint torque', 'max_torque_pct', '%', 'lo'],
-  ['Min torque margin', 'min_torque_margin', '×', 'hi'], ['Top-down reach', 'workspace_reach_mm', 'mm', 'hi'],
+  ['Max payload, top-down', 'max_payload_g', 'g', 'hi'], ['Payload stretched out', 'stretch_payload_g', 'g', 'hi'],
+  ['Peak joint torque', 'max_torque_pct', '%', 'lo'], ['Min torque margin', 'min_torque_margin', '×', 'hi'],
+  ['Top-down reach', 'top_down_reach_mm', 'mm', 'hi'], ['Reach, any pose', 'workspace_reach_mm', 'mm', 'hi'],
   ['Robot mass', 'robot_mass_kg', 'kg', 'lo'], ['Grip force target', 'grip_target_n', 'N', null], ['Harness wires', 'harness_wires', '', 'lo'],
   ['Fab lead time', 'fab_lead_days', 'd', 'lo'], ['Tooling', 'tooling_cost', '$', 'lo'], ['Assembly time', 'assembly_time_min', 'min', 'lo'],
   ['Part count', 'parts', '', null],
@@ -566,8 +567,14 @@ function renderParams(cur) {
     g.items.push(p);
   }
   const changed = cur?.changes || {};
+  // sizing may build a value other than the one asked for (reach raised to fit the pick and place): say so on its row
+  const built = { 'arm.reach_mm': cur?.sizing?.reach_mm ?? cur?.summary?.reach_mm, 'arm.base_height_mm': cur?.sizing?.links_mm?.base_h };
+  const hint = (p) => {
+    const b = built[p.key];
+    return b != null && typeof p.value === 'number' && Math.abs(b - p.value) >= 1 ? `built at ${Math.round(b)} ${p.unit || ''}`.trim() : '';
+  };
   $('#paramsBody').innerHTML = groups.map((g) => `<div class="pgroup"><div class="sec-t">${esc(g.name)}<span class="r">${g.items.length}</span></div>` +
-    g.items.map((p) => paramRow(p, p.key in changed)).join('') + '</div>').join('') ||
+    g.items.map((p) => paramRow(p, p.key in changed, hint(p))).join('') + '</div>').join('') ||
     `<div class="empty"><p>${cur ? 'No editable parameters in this revision.' : 'No finished revision yet.'}</p></div>`;
   $$('#paramsBody .prow').forEach((row) => {
     const p = params.find((x) => x.key === row.dataset.key);
@@ -588,8 +595,8 @@ function renderParams(cur) {
   });
   updateParamsBar();
 }
-function paramRow(p, regen) {
-  const lab = `<label title="${esc(p.key)}">${esc(p.label || p.key)}<small></small></label>`;
+function paramRow(p, regen, hint = '') {
+  const lab = `<label title="${esc(p.key)}">${esc(p.label || p.key)}<small></small>${hint ? `<em class="phint">${esc(hint)}</em>` : ''}</label>`;
   let ctl;
   if (p.type === 'select') {
     const opts = (p.options || []).map((o) => `<option value="${esc(o)}"${String(o) === String(p.value) ? ' selected' : ''}>${esc(pretty(o, true))}</option>`).join('');
@@ -676,7 +683,7 @@ function markTabs(cur) {
   const tot = nodesOf(cur).length;
   const secs = Object.values(cur?.timings || {}).reduce((a, b) => a + (+b || 0), 0);
   $('#tabsInfo').innerHTML = cur ? `<span class="chip mono">${esc(cur.rev)}</span><span title="${fmtSec(secs)} of compute">${n}/${tot} rebuilt</span>` +
-    (FIXTURE ? '' : `<button class="btn ghost xport" type="button" data-export="${esc(cur.rev)}" title="Download ${esc(cur.rev)} as a ZIP: CAD, simulations, electronics and firmware, manufacturing files and the manual, with a manifest of which stages completed">${I('download', 'sm')}Export</button>`) : '';
+    (FIXTURE ? '' : `<button class="btn ghost xport" type="button" data-export="${esc(cur.rev)}" title="Download ${esc(cur.rev)} as a ZIP: CAD, simulations, electronics and firmware, manufacturing files and the manual, with a manifest of which stages completed. Generated files, not bench-validated: review them before building or powering anything.">${I('download', 'sm')}Export</button>`) : '';
   return regen;
 }
 async function exportRev(rev) {  // ask first, so a refusal is a message rather than a broken download
@@ -688,7 +695,7 @@ async function exportRev(rev) {  // ask first, so a refusal is a message rather 
   document.body.appendChild(a);
   a.click();
   a.remove();
-  toast(`Downloading ${rev} as a ZIP`);
+  toast(`Downloading ${rev} as a ZIP: generated files, not bench-validated`);
 }
 
 // ------------------------------------------------------------------ inspector
@@ -696,14 +703,17 @@ function renderInspector(cur, prev) {
   if (!cur) return;
   const s = cur.summary || {}, ps = prev?.summary || {}, d = cur.design || {};
   const issues = [...(s.issues || [])];
+  // the summary already counts every failed scenario (sim_failed); one saved before that counted the pick and place only
+  const counted = new Set(s.sim_failed || ['pick_place']);
   for (const [name, sm] of Object.entries(cur.sims || {})) {
     const m = sm.metrics || {};
-    if (m.success === false) {
+    if (m.success === false && !counted.has(name)) {
       const why = [m.dropped && 'object dropped', m.place_error_mm != null && `place error ${fmt(m.place_error_mm, 'mm', 0)}`, (m.slip_mm ?? m.max_slip_mm) != null && `slip ${fmt(m.slip_mm ?? m.max_slip_mm, 'mm')}`].filter(Boolean).slice(0, 2).join(', ');
       issues.push(`Simulation · ${sm.title || name} failed${why ? ` (${why})` : ''}`);
     }
   }
-  const warns = [...(cur.electronics?.warnings || []), ...(cur.manufacturing?.warnings || [])];
+  const warns = [...(cur.sizing?.warnings || []), ...(cur.electronics?.warnings || []), ...(cur.manufacturing?.warnings || [])];
+  const adjusted = s.notes || cur.sizing?.notes || [];  // what sizing changed from the request ("reach raised from 320 to 475 mm")
   const errs = Object.entries(cur.errors || {});
   const prov = Object.values(cur.provenance || {});
   const nComp = prov.filter((p) => p === 'computed').length;
@@ -714,14 +724,21 @@ function renderInspector(cur, prev) {
   const nAct = (s.dof || +d['arm.dof'] || 0) + 1;
   const facts = [
     ['DOF', s.dof ?? d['arm.dof'], '', 'dof'], ['Reach', s.reach_mm ?? d['arm.reach_mm'], 'mm', 'reach_mm'],
-    ['Payload', s.payload_g ?? d['object.mass_g'], 'g', 'payload_g'],
+    ['Object mass', s.payload_g ?? d['object.mass_g'], 'g', 'payload_g'],
     ['Actuators', acts.length === 1 ? `${acts[0].toUpperCase()} <small>×${nAct}</small>` : acts.length ? `${acts.length} types <small>×${nAct}</small>` : '–', null, 'actuators'],
     ['Mass', s.robot_mass_kg != null ? (+s.robot_mass_kg).toFixed(2) : '–', 'kg', 'robot_mass_kg'],
     ['Unit cost', s.unit_cost != null ? money(s.unit_cost) : '–', null, 'unit_cost'],
   ];
+  // stretched straight out, an arm whose servo can't hold even its own weight has no payload there: never a negative one
+  const noStretch = (x) => x.stretch_holds_itself === false || (typeof x.stretch_payload_g === 'number' && x.stretch_payload_g < 0);
+  const stretchJoint = String(s.stretch_limited_by || '').replace(/^j\d+_/, '').replace(/_/g, ' ');
   const rows = [];
   for (const [label, k, unit, better] of METRICS) {
-    const v = s[k], pv = ps[k];
+    let v = s[k], pv = ps[k];
+    if (k === 'stretch_payload_g') {     // a revision saved before the summary clamped it may hold the deficit
+      if (typeof v === 'number' && v < 0) v = 0;
+      if (typeof pv === 'number' && pv < 0) pv = 0;
+    }
     if (v == null && pv == null) continue;
     let delta = '', fl = '';
     if (prev && pv != null && JSON.stringify(v) !== JSON.stringify(pv)) {
@@ -737,9 +754,16 @@ function renderInspector(cur, prev) {
       } else txt = `was ${pretty(pv, true)}`;
       delta = `<span class="delta ${cls}">${esc(txt)}</span>`;
     }
-    const val = typeof v === 'boolean' ? (v ? '<span class="tag good">pass</span>' : '<span class="tag bad">fail</span>')
+    const val = k === 'stretch_payload_g' && noStretch(s) ? '<span class="tag warn">none</span>'
+      : typeof v === 'boolean' ? (v ? '<span class="tag good">pass</span>' : '<span class="tag bad">fail</span>')
       : unit === '$' ? money(v) : fmt(v, unit);
-    rows.push(`<tr class="${fl.trim()}"><td>${esc(label)}</td><td class="v">${val}${delta}</td></tr>`);
+    // say where each payload was measured: the sweep's top-down pose, or stretched straight out
+    const at = { max_payload_g: s.payload_test_reach_mm, stretch_payload_g: s.stretch_reach_mm }[k];
+    const nq = +(d['build.quantity'] ?? 1) || 1;   // mold tooling is paid once: say how much of the unit cost it is
+    const lab = k === 'min_torque_margin' && s.torque_margin_basis ? `${label} (at ${s.torque_margin_basis})`
+      : k === 'unit_cost' && s.tooling_cost ? `${label} (incl. ${money(s.tooling_cost, false)} tooling over ${nq.toLocaleString('en-US')} unit${nq === 1 ? '' : 's'})`
+      : at ? `${label} at ${Math.round(at)} mm` : label;
+    rows.push(`<tr class="${fl.trim()}"><td>${esc(lab)}</td><td class="v">${val}${delta}</td></tr>`);
   }
   const force = cur.gripper?.force;
   $('#insp').innerHTML = `
@@ -754,12 +778,15 @@ function renderInspector(cur, prev) {
     <div class="isec"><div class="sec-t">What changed${prev ? `<span class="r">vs ${esc(prev.rev)}</span>` : ''}</div>
       ${changes.length ? `<div class="chg">${changes.map(([k, [a, b]]) => `<div class="c"><div class="k">${esc(k)}</div><div class="vv"><span class="o">${esc(pretty(a, true))}</span>${I('arrow', 'sm')}<span class="n">${esc(pretty(b, true))}</span></div></div>`).join('')}</div>`
         : `<div class="muted" style="font-size:12px">${cur.parent ? 'No parameter changes.' : 'First revision: everything was generated from the request.'}</div>`}</div>
-    <div class="isec"><div class="sec-t">Metrics${prev ? `<span class="r">Δ vs ${esc(prev.rev)}</span>` : ''}</div><table class="mt-table">${rows.join('')}</table></div>
+    <div class="isec"><div class="sec-t">Metrics${prev ? `<span class="r">Δ vs ${esc(prev.rev)}</span>` : ''}</div><table class="mt-table">${rows.join('')}</table>
+      ${s.max_payload_g != null || s.stretch_payload_g != null ? '<div class="mt-note">Payloads are the most the arm holds before a servo stalls, at that distance from the base axis: not a working load. Sizing keeps a torque margin over the object for that.</div>' : ''}
+      ${noStretch(s) ? `<div class="mt-note stretch-none">Stretched out${s.stretch_reach_mm != null ? ` at ${Math.round(s.stretch_reach_mm)} mm` : ''} the arm can't hold even its own weight${stretchJoint ? `: its ${esc(stretchJoint)} servo stalls` : ''}. It carries payloads only closer in.</div>` : ''}</div>
     ${force?.window_n && force.window_n[0] != null && force.window_n[1] != null ? `<div class="isec"><div class="sec-t">Grip force window<span class="r">per finger</span></div><div class="fw">${forceWindowSVG(force)}</div>${keewanoLine(cur)}</div>` : ''}
     <div class="isec"><div class="sec-t">Issues &amp; warnings</div>
       ${errs.map(([n, e]) => `<div class="issue bad">${I('x', 'sm')}<span><b>${esc(n)}</b>: ${esc(e)}</span></div>`).join('')}
       ${issues.map((t) => `<div class="issue bad">${I('x', 'sm')}<span>${esc(t)}</span></div>`).join('')}
       ${warns.map((t) => `<div class="issue warn">${I('alert', 'sm')}<span>${esc(t)}</span></div>`).join('')}
+      ${adjusted.map((t) => `<div class="issue info">${I('wrench', 'sm')}<span><b>Morph adjusted</b> ${esc(t)}</span></div>`).join('')}
       ${!issues.length && !warns.length && !errs.length ? `<div class="issue ok">${I('check', 'sm')}<span>No issues: torque margins, grasp force window, DRC and DFM checks pass.</span></div>` : ''}
     </div>`;
 }

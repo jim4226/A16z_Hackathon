@@ -145,9 +145,10 @@ def test_an_egg_stl_dropped_on_a_robust_object_arm_gets_the_force_sensing_finger
     assert plan["changes"]["finger.sensor"] == "fsr402" and plan["changes"]["object.friction"] == 0.35
 
 
-def test_a_servo_far_below_its_rated_voltage_is_an_issue():
-    # per-joint picks may put a 12 V STS3215 beside 7.4 V ones: their ranges overlap, so the shared rail runs at the
-    # 7.4 V servos' supply (6 V) and the stronger servo gives about half the torque it was sized with
+def test_a_servo_far_below_its_rated_voltage_is_said():
+    # per-joint picks may put a 12 V STS3215 beside 7.4 V ones: their ranges overlap up to 7.4 V, so the shared rail
+    # runs there (12 V through the servo buck: 6 V would leave the 12 V servo half its torque) and the stronger servo
+    # gives about 62 % of its rating. Sizing works every margin out at the rail; the plan says why it is low.
     from morph.cli import EGG_ROBOT
     from morph.robot import electronics2, imported
     from morph.spec import Design
@@ -159,11 +160,15 @@ def test_a_servo_far_below_its_rated_voltage_is_an_issue():
         return electronics2.plan(design, {"joints": [{"name": n, "actuator": shoulder if n == "shoulder_lift" else "sts3215_7v4"}
                                                      for n in joints], "gripper_actuator": "sts3215_7v4"})
     mixed = plan("sts3215")
-    assert mixed["supply"]["servo_v"] == 6.0 and mixed["issues"] == [
-        "shoulder_lift: sts3215 is rated at 12 V but the shared servo rail runs at 6 V, so it gives roughly 50% of the "
-        "torque it was sized with; put every servo on one voltage class"]
-    assert plan("sts3215_7v4")["issues"] == []                       # one voltage class: nothing to say
-    assert electronics2._underpowered([{"joint": "j2", "key": "ds3218"}, {"joint": "j3", "key": "sg90"}], 5.0) == []
+    assert mixed["supply"]["servo_v"] == 7.4 and mixed["supply"]["servo_buck"] and mixed["issues"] == []
+    assert "shoulder_lift: sts3215 is rated at 12 V but the shared servo rail runs at 7.4 V, so it gives about 62% of its " \
+        "rated torque (the torque margins are worked out at 7.4 V); put every servo on one voltage class to use all of it" \
+        in mixed["warnings"]
+    one = plan("sts3215_7v4")                                       # one voltage class: 6 V keeps 85 % of their torque
+    assert one["issues"] == [] and one["supply"]["servo_v"] == 6.0
+    assert electronics2._derated([{"joint": "j2", "key": "ds3218"}, {"joint": "j3", "key": "sg90"}], 5.0) == [
+        "j2: ds3218 is rated at 6.8 V but the shared servo rail runs at 5 V, so it gives about 74% of its rated torque "
+        "(the torque margins are worked out at 5 V)"]
 
 
 def test_a_link_that_fails_at_once_can_still_be_asked_about(home, monkeypatch):

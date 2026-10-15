@@ -56,7 +56,7 @@ Z95 = 1.959963984540054
 STALE_S = 30.0                      # a running study whose heartbeat is older than this was interrupted
 RISE_MM = 10.0                      # the object rose this far after the release: the jaws stayed shut on it,
 CARRIED_MM = 45.0                   # or it ended this far off the target (only closed jaws carry it that far)
-DEFAULT_SEED = 1                    # the seed of the published egg-picker study (140 of 200)
+DEFAULT_SEED = 1                    # the seed of the published egg-picker study (150 of 200)
 CHECK_RUNS, CHECK_SUCCESSES = 20, 15
 CACHED = 4                          # packed robots a long-running process keeps (about 5 MB each)
 NOTE = "Simulation, for the tolerances shown; not a field failure rate."
@@ -831,8 +831,7 @@ def _assembly(design, res: dict):
     from ..robot import arm, electronics2, imported
 
     sz = imported.size(design) if design.arm.source else arm.size(design)
-    grip = ((res.get("gripper") or {}).get("force") or {}).get("target_force_n")
-    ep = electronics2.plan(design, {**sz, **({"grip_target_n": grip} if grip else {})})
+    ep = electronics2.plan(design, sz, grip=(res.get("gripper") or {}).get("force"))
     return (imported.build if design.arm.source else arm.build)(design, sz, ep)
 
 
@@ -854,13 +853,37 @@ def studyable(p, rev: str) -> dict:
 
 
 def _norm_xml(xml: str) -> str:
-    return re.sub(r'timestep="[^"]*"', 'timestep=""', xml)
+    """What of a robot.xml the motion depends on: the time step is left out (a study picks its own), and so is the base
+    welded to the table (a body on the world with no joint): its mass and shapes change with the controller, supply
+    and boards inside it, which move nothing, and the pipeline reuses the simulation across those edits."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return re.sub(r'timestep="[^"]*"', 'timestep=""', xml)
+    for opt in root.iter("option"):
+        opt.attrib.pop("timestep", None)
+    world, meshes = root.find("worldbody"), set()
+    for body in (world.findall("body") if world is not None else []):
+        if body.find("joint") is not None or body.find("freejoint") is not None:
+            continue
+        for el in list(body):
+            if el.tag in ("inertial", "geom", "site"):
+                meshes.add(el.get("mesh"))
+                body.remove(el)
+    asset = root.find("asset")
+    for m in (list(asset) if asset is not None else []):
+        if m.tag == "mesh" and m.get("name") in meshes:
+            asset.remove(m)
+    return ET.tostring(root, encoding="unicode")
 
 
 def prepare(root: str, rev: str, timestep: float = 0.001) -> dict:
     """The revision's robot and its nominal pick-and-place plan, packed for the workers (pickled: it only ever travels
     between this study's own processes, never through a file). Checks the rebuilt model against the revision's
-    sim/robot.xml: `matches_revision` False means the revision was simulated with other Morph code."""
+    sim/robot.xml, the moving robot only (_norm_xml): `matches_revision` False means the revision was simulated with
+    other Morph code."""
     from ..robot import simulate as S
 
     t0 = time.time()

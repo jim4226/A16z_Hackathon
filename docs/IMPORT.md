@@ -51,17 +51,22 @@ A link is the only part of an import that uses the network ([PRIVACY.md](PRIVACY
 ## How sizing works for imported arms
 
 Morph sizes an auto-imported arm for its worst pose over the joint range, so the motors it suggests hold the load in
-every reachable pose. That is more conservative than the shipped SO-101 demo, which is sized in its stretched-out
-pose: an SO-101 imported from its own URDF reports its shoulder needing about 2.0 N·m with margin against the
-STS3215's 1.91 N·m, so it builds as not feasible until you choose stronger motors. The shipped demo is the same arm,
-sized the way it is used.
+every reachable pose. That is more conservative than the shipped SO-101 demo, which is sized at q = 0 (all joints at
+zero), and says so: its torque margin reads "at q = 0", and a warning gives what the shoulder needs over the whole
+joint range (about 1.0 N·m, a 1.6x margin on its 6 V supply). An SO-101 imported from its own URDF reports its
+shoulder needing about 2.0 N·m with margin against the STS3215's 1.91 N·m, so it builds as not feasible until you
+choose stronger motors.
+
+Every margin is worked out at the servo rail the robot gets, not at the servos' rated voltage: the SO-101's 7.4 V
+STS3215s run from a 6 V supply (no catalogued supply gives 7.4 V, and 6 V keeps 85 % of their torque: 16.5 of
+19.5 kg·cm), so its shoulder margin is 2.45x, and the simulation's servos are just as strong.
 
 Picking one motor family in the dialog (or `--family`) sizes every joint the same way, with the motors counted as
 bought parts as the build counts them, and keeps the arm on one supply voltage: the 7.4 V STS3215 on every joint while
 it holds them all, otherwise the 12 V STS3215 on all of them; XL330s never share a supply with XL430s and XM430s.
 The SO-101 with **Smart bus** picked builds as feasible on 12 V STS3215s. A motor picked per joint shares that one
-servo supply: a 12 V STS3215 beside 7.4 V ones would run at 6 V and give about half its rated torque, so the build
-flags it. When an imported robot builds but its own checks flag it, the dialog says so and lists why.
+servo supply: a 12 V STS3215 beside 7.4 V ones runs at 7.4 V there and gives about 62 % of its rated torque, which
+the margins count and the build says. When an imported robot builds but its own checks flag it, the dialog says so and lists why.
 
 The gripper, tool point and motors Morph derived are marked auto-calibrated: check them in the Robot tab before you
 trust the numbers.

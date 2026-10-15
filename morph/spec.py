@@ -43,7 +43,8 @@ class GripperSpec:
 class ElectronicsSpec:
     mcu: str = "auto"                # auto | arduino_nano | esp32_devkit | rp2040_pico
     servo: str = "auto"              # auto | sg90 | mg90s | mg996r | ds3218
-    supply_v: float = 6.0
+    supply_v: float = 6.0            # the standalone gripper's servo supply (morph demo)
+    servo_v: float = 0.0             # a robot arm's servo rail, V: 0 = the servos' rated voltage (electronics2.servo_rail)
     pinion_radius_mm: float = 10.5   # pitch radius of the printed pinion (module 1.5, 14 teeth)
     target_force_n: float = 0.0      # 0 = derive from simulation + object fragility
     config: str = "modules"          # modules (off-the-shelf boards) | custom_pcb (one controller PCBA)
