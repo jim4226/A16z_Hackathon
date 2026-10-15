@@ -535,10 +535,10 @@ class Clock:
 TOUCHING_VASE = ((264.2, 72.0), 22.0, 170.0)     # TALL_VASE 7.8 mm nearer the path: the gripper touches it (0.2 mm)
 
 
-@pytest.mark.parametrize("vase, limits", [
-    (TOUCHING_VASE, (8, 20, 60, 200, 560, 1300)),                 # the review's rD: the wrist touched, cut short
-    (TALL_VASE, (300, 545, 555, 560, 565, 570))])                 # 8.0 mm: cut in the second pass too
-def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nominal, monkeypatch, vase, limits):
+@pytest.mark.parametrize("vase, limits, past", [
+    (TOUCHING_VASE, (8, 20, 60, 200, 1300), ()),                  # the review's rD: the wrist touched, cut short
+    (TALL_VASE, (300,), range(4, 36, 2))])                        # 8.0 mm: and every 2 s past one a pose
+def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nominal, monkeypatch, vase, limits, past):
     """Cut short anywhere (the first pass, the second, or after the closest place was measured), the check reports the
     closest distance it measured, a real distance from a point of the robot to the scan, as "at most", and a lower
     bound only from poses it bounded: never "more than 50 mm" or "at least" where the arm comes closer. Uncut, the
@@ -550,7 +550,7 @@ def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nom
     true = full["min_clearance_mm"]
     assert not full["stats"]["truncated"] and true < worlds.SCAN_NEAR_MM, full
     seen = set()
-    for limit in limits:
+    for limit in [*limits, *(full["stats"]["unique_poses"] + s for s in past)]:     # past: into the second pass
         with monkeypatch.context() as mp:
             mp.setattr(worlds, "time", types.SimpleNamespace(monotonic=Clock().monotonic))
             res = worlds.scan_clearance(room, ROOM, doc, rob.xml, time_limit_s=float(limit))

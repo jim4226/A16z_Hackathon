@@ -1296,88 +1296,85 @@ field failure rate (section 0, honesty).
   (`data-f="preset"`, editors only); a room-only study's card carries `api_study.NOTES["room_only"]`. Measured: a carton
   wall 12 mm from the open jaws at the place spot, 200 runs at 1 ms, seed 3: 185 of 200 succeed (Wilson 88.0-95.4 %),
   15 `world_collision:release` (7.5 %, 4.6-12.0 %), rule "mount 4.5 to 10.0 mm off in y", not model-sensitive.
-- **Clearance to the room scan (B2-S3, H3; `morph/studio/worlds.py`).** `scan_clearance(glb_path, world, doc,
-  robot_xml, *, near_mm=10, floor_cut_mm=10, time_limit_s=20, max_faces=MAX_FACES, per_pose=False)`: the revision's
-  simulated frames (`sim_pick_place.json`, posed about every 10 ms) in its own collision model (`sim/robot.xml`, the
-  object while carried) against the uploaded scan. The scan is cropped to within `SCAN_CUT_MM` (50 mm) of a geom's
-  bounding sphere at some pose (64 mm cells), big triangles cut to the part near the arm, triangles rising no more
-  than `floor_cut_mm` above the mount surface dropped; each triangle is covered by its own points (`_scan_samples`:
-  rows along its longest edge at most `SCAN_SAMPLE_MM`/2 apart, points at most `SCAN_SAMPLE_MM` apart, so no point of
-  it is further than rho <= 1.41 mm from one) in a scipy cKDTree (sliding midpoint, no compact nodes, every query
-  bounded). Robot geoms (fixed ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine
-  samples (1 mm edges, 2 mm faces) are measured against the tree, and those that could be the closest get exact
-  point-triangle distances (`closest_on_triangles`) to every triangle with a point within their bound. Two passes:
-  every pose coarsely (bounds; R3: in `_spread` order, every 16th pose, then those halfway between and so on, so a
-  check cut short has looked along the whole path; R4: the bounding spheres tested by size class,
-  `SCAN_RBOUND_CLASSES_MM`, and the coarse samples by `SCAN_CELL_MM` = 24 mm cell, a cell skipped when its sphere is
-  beyond the samples' search bound: the same answers pose by pose, about 6-8 times faster), then the lowest bounds
-  first; found to `SCAN_TOL_MM` (0.05 mm); below `SCAN_TOUCH_MM` (0.5 mm) it touches. Returns `{min_clearance_mm (None
-  beyond 50 mm), at {t, link, point (world mm)}, regions,
-  stats, note}`, with `per_pose` also `poses [[t, mm|None]]`; never raises for a bad scan or model:
-  `{"skipped": reason, "note"}`. `regions` (at most `SCAN_MAX_REGIONS` = 8, the closest first): the near misses
-  (closer than `near_mm`) grouped by 30 mm, each `{id: "scan-k", label: "Scan near miss k", min_clearance_mm, t, link,
-  point, points, box {center, half, yaw_deg}}`: the scanned surface within 30 mm of them in the world frame along the
-  mount surface's axes, at least 20 mm thick (grown away from the arm), down to the surface when it or the scan under
-  it nearly reaches it (W3: then trimmed on the sides facing the swept path until no robot point at any pose comes
-  closer to it than the region's `min_clearance_mm`, `box_clearance_mm` and `trimmed` saying so; `box: None` with
-  `no_box` when that would leave it thinner than 5 mm; near misses within `SCAN_COVER_MM` = 10 mm of one of the world's
-  grey boxes are that box's, and a region of nothing else is left out, `stats.covered` counting them). R3: a trimmed
-  region also has `covers`, its box before trimming (it holds the region's near-miss points); an obstacle saved with
-  `covers` owns the near misses within `SCAN_COVER_MM` of that place too, while the box still lies inside it (+1 mm;
-  moved elsewhere it doesn't), so a box trimmed away from its near miss (a vase's top under the arm) isn't offered
-  again. R4: `covers` also carries `clearance_mm`, the distance the box was fitted to (the region's
-  `min_clearance_mm`), and `rev`, the revision whose path it was (set by the route), and reaches at most
-  `SCAN_COVERS_MAX_MM` = 50 mm past the trimmed box. Such a box and its place own a near miss only while it is no closer
-  than `clearance_mm` (less `SCAN_COVERS_TOL_MM` = 0.1 mm): a path that comes closer there gets the place offered again,
-  with a box fitted to the new path. A `covers` without `clearance_mm`, that the box doesn't lie inside, or that
-  reaches further than 50 mm past the box is ignored (`_covers`), and the box then owns, like any grey box, only the
-  near misses within 10 mm of itself. A region whose fitted box is a box the world holds already (`_same_box`: 0.05 mm,
-  0.01 degree) is left out and counted in `stats.covered`, the rest numbered again (`_already_boxed`): an API client
-  that saves boxes without `covers` can't get the same box offered twice. Measured on the review's desk with the
-  trimmed box and its place saved and the mount moved 15 mm in -x: the wrist comes within 2.2 mm, above the box, and
-  that place is offered with a box fitted to the new path, where 22bec48 said it had a grey box already.
-  `_fit_boxes` prunes each geom's fine samples by its coarse ones (as pass 2 does), keys points by 0.25 mm
-  cell, and drops points once clear of the shrinking box. R4: the measuring passes run to `time_limit_s` until there
-  is a near miss (a first-pass bound or a second-pass point closer than `near_mm`); from then on they stop early
-  enough for the regions and the fit, `SCAN_FIT_S_PER_POSE` (3 ms) a distinct pose, at least `SCAN_RESERVE_MIN_S`
-  (0.5 s) and at most `SCAN_RESERVE_SHARE` (25 %) of the limit (1.8 s for the desk scan's 607 distinct poses, whose
-  regions and fit took 1.3-1.8 s at load 11-13). A region not fitted by then gets `box: None`, `no_box` saying Morph
-  ran out of time, and `stats.fit_timeout`, and the check text says there wasn't time to fit a box (`stats.regions_s`
-  and `stats.fit_s` time the two steps). Cut short (`stats.truncated`), the answer never claims more room than was
-  measured: `min_clearance_mm` is the closest distance measured anywhere, pass 2's exact ones or pass 1's coarse robot
-  samples to the scan's points (a real distance: the arm comes at least that close; `at` names that sample's link,
-  time and scan point), `stats.lower_mm` a lower bound when every pose was bounded, `stats.poses_checked` of
-  `stats.unique_poses`, `stats.part_clear` when it looked at a pose and every one it looked at stays beyond 50 mm, and `stats.need_s` what the
-  whole check would take at this pace. A second pass cut short after the closest point is measured (every pose and
-  point left has a bound at or above it) is not truncated; `stats.unlisted_mm` then bounds the near misses not listed.
-  Measured on the review's desk scan (2,872 triangles near the arm, 667 poses, the 9.0 mm vase near miss), alternating
-  with 22bec48 at the default 20 s and load 11-13: 22bec48 took 16.4-17.8 s and was cut short in 2 of 4 runs; R4
-  took 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and was never cut short. The same scan with the mount moved
-  15 mm (the wrist touching the vase, 0.2 mm): 7.8-12.4 s at load 2-4 and 17.2 s at load 8, against 21-30 s at load
-  4-5 before, which a 20 s check always cut short. Per-pose distances, the closest point and the regions are identical
-  to 22bec48 on the desk scan's
-  three revisions (with and without the box, and moved). Measured: within 0.05 mm of `mj_geomDistance` on box
-  fixtures (54 and 106 poses; up to 0.21 mm over whole runs); a generated room of 998,664 triangles in 10.5 s at load
-  7.4 (pass 1 1.3 s; `MORPH_SLOW=1`).
-  `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer
-  than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured
-  against the scanned surface, which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it.
-  R4, cut short: "The wrist comes within at most 4.6 mm of the scanned surface at 1.4 s" (plus "(no closer than
-  3.0 mm)" with `lower_mm`), or "touches or passes through" below 0.5 mm; "In the part of the path checked (25% of
-  it, or less than 1% of it), the arm stays more than 50 mm ..." only with `part_clear`, else "There wasn't time to measure how close the arm
-  comes ..."; never "At least" or "more than 50 mm" otherwise. Then "Only part of the path was measured in the 20 s a
-  check has (a large scan or a busy computer)", followed by "checking again when the computer is less busy may measure
-  all of it" or, when `need_s` is more than `SCAN_RETRY_FACTOR` (2) times the limit, "at this pace, measuring all of
-  it would take more than twice that, so checking again helps only on a much less busy computer"; a near miss without
-  a region adds "There wasn't time to measure that place closely enough to offer a box for it."; `unlisted_mm` adds
-  "Time ran out before every place closer than 10 mm was listed; any other is at least X mm from the arm."
-  `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
-  (`_ADVICE["scan"]`). `POST /api/world/inspect` measures it when the world has `room.glb` and the revision was
-  simulated in this room as it is now (else a skip saying so), kept in memory per (project, revision, world sha, room
-  file size and mtime), the last eight (R3: not when the check was cut short or a box's fit ran out of time, so
-  checking again measures again; R4: an answer whose list of near misses alone was cut short, `unlisted_mm`, is kept);
-  it sends `world {stage: "scan", status: "start" | "done", text}` ("Closest to the scan: at most 4.6 mm ... (cut
-  short)" when cut short) and an `agent` event (`feasibility`, `code`).
+- **Clearance to the room scan (B2-S3, H3; `morph/studio/worlds.py`).** `scan_clearance(glb_path, world, doc, robot_xml,
+  *, near_mm=10, floor_cut_mm=10, time_limit_s=20, max_faces=MAX_FACES, per_pose=False)`: the revision's simulated
+  frames (`sim_pick_place.json`, posed about every 10 ms) in its own collision model (`sim/robot.xml`, the object while
+  carried) against the uploaded scan. The scan is cropped to within `SCAN_CUT_MM` (50 mm) of a geom's bounding sphere at
+  some pose (64 mm cells), big triangles cut to the part near the arm, triangles rising no more than `floor_cut_mm`
+  above the mount surface dropped; each triangle is covered by its own points (`_scan_samples`: rows along its longest
+  edge at most `SCAN_SAMPLE_MM`/2 apart, points at most `SCAN_SAMPLE_MM` apart, so no point of it is further than rho <=
+  1.41 mm from one) in a scipy cKDTree (sliding midpoint, no compact nodes, every query bounded). Robot geoms (fixed
+  ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine samples (1 mm edges, 2 mm faces)
+  are measured against the tree, and those that could be the closest get exact point-triangle distances
+  (`closest_on_triangles`) to every triangle with a point within their bound. Two passes: every pose coarsely (bounds;
+  R3: in `_spread` order, every 16th pose, then those halfway between and so on, so a check cut short has looked along
+  the whole path; R4: the bounding spheres tested by size class, `SCAN_RBOUND_CLASSES_MM`, and the coarse samples by
+  `SCAN_CELL_MM` = 24 mm cell, a cell skipped when its sphere is beyond the samples' search bound: the same answers pose
+  by pose, about 6-8 times faster), then the lowest bounds first; found to `SCAN_TOL_MM` (0.05 mm); below
+  `SCAN_TOUCH_MM` (0.5 mm) it touches. Returns `{min_clearance_mm (None beyond 50 mm), at {t, link, point (world mm)},
+  regions, stats, note}`, with `per_pose` also `poses [[t, mm|None]]`; never raises for a bad scan or model:
+  `{"skipped": reason, "note"}`. `regions` (at most `SCAN_MAX_REGIONS` = 8, the closest first): the near misses (closer
+  than `near_mm`) grouped by 30 mm, each `{id: "scan-k", label: "Scan near miss k", min_clearance_mm, t, link, point,
+  points, box {center, half, yaw_deg}}`: the scanned surface within 30 mm of them in the world frame along the mount
+  surface's axes, at least 20 mm thick (grown away from the arm), down to the surface when it or the scan under it
+  nearly reaches it (W3: then trimmed on the sides facing the swept path until no robot point at any pose comes closer
+  to it than the region's `min_clearance_mm`, `box_clearance_mm` and `trimmed` saying so; `box: None` with `no_box` when
+  that would leave it thinner than 5 mm; near misses within `SCAN_COVER_MM` = 10 mm of one of the world's grey boxes are
+  that box's, and a region of nothing else is left out, `stats.covered` counting them). R3: a trimmed region also has
+  `covers`, its box before trimming (it holds the region's near-miss points); an obstacle saved with `covers` owns the
+  near misses within `SCAN_COVER_MM` of that place too, while the box still lies inside it (+1 mm; moved elsewhere it
+  doesn't), so a box trimmed away from its near miss (a vase's top under the arm) isn't offered again. R4: `covers` also
+  carries `clearance_mm`, the distance the box was fitted to (the region's `min_clearance_mm`), and `rev`, the revision
+  whose path it was (set by the route), and reaches at most `SCAN_COVERS_MAX_MM` = 50 mm past the trimmed box. Such a
+  box and its place own a near miss only while it is no closer than `clearance_mm` (less `SCAN_COVERS_TOL_MM` = 0.1 mm):
+  a path that comes closer there gets the place offered again, with a box fitted to the new path. A `covers` without
+  `clearance_mm`, that the box doesn't lie inside, or that reaches further than 50 mm past the box is ignored
+  (`_covers`), and the box then owns, like any grey box, only the near misses within 10 mm of itself. A region whose
+  fitted box is a box the world holds already (`_same_box`: 0.05 mm, 0.01 degree) is left out and counted in
+  `stats.covered`, the rest numbered again (`_already_boxed`): an API client that saves boxes without `covers` can't get
+  the same box offered twice. Measured on the review's desk with the trimmed box and its place saved and the mount moved
+  15 mm in -x: the wrist comes within 2.2 mm, above the box, and that place is offered with a box fitted to the new
+  path, where 22bec48 said it had a grey box already. `_fit_boxes` prunes each geom's fine samples by its coarse ones
+  (as pass 2 does), keys points by 0.25 mm cell, and drops points once clear of the shrinking box. R4: the measuring
+  passes run to `time_limit_s` until there is a near miss (a first-pass bound or a second-pass point closer than
+  `near_mm`); from then on they stop early enough for the regions and the fit, `SCAN_FIT_S_PER_POSE` (4 ms) a distinct
+  pose, at least `SCAN_RESERVE_MIN_S` (0.5 s) and at most `SCAN_RESERVE_SHARE` (25 %) of the limit (2.4 s for the desk
+  scan's 607 distinct poses, whose regions and fit took 1.3-1.9 s at load 11-14). A region not fitted by then gets `box:
+  None`, `no_box` saying Morph ran out of time, and `stats.fit_timeout`, and the check text says there wasn't time to
+  fit a box (`stats.regions_s` and `stats.fit_s` time the two steps). Cut short (`stats.truncated`), the answer never
+  claims more room than was measured: `min_clearance_mm` is the closest distance measured anywhere, pass 2's exact ones
+  or pass 1's coarse robot samples to the scan's points (a real distance: the arm comes at least that close; `at` names
+  that sample's link, time and scan point), `stats.lower_mm` a lower bound when every pose was bounded,
+  `stats.poses_checked` of `stats.unique_poses`, `stats.part_clear` when it looked at a pose and every one it looked at
+  stays beyond 50 mm, and `stats.need_s` what the whole check would take at this pace. A second pass cut short after the
+  closest point is measured (every pose and point left has a bound at or above it) is not truncated; `stats.unlisted_mm`
+  then bounds the near misses not listed. Measured on the review's desk scan (2,872 triangles near the arm, 667 poses,
+  the 9.0 mm vase near miss), alternating with 22bec48 at the default 20 s and load 11-13: 22bec48 took 16.4-17.8 s and
+  was cut short in 2 of 4 runs; R4 took 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and was never cut short. The
+  same scan with the mount moved 15 mm (the wrist touching the vase, 0.2 mm): 7.8-12.4 s at load 2-4 and 17.2 s at load
+  8, against 21-30 s at load 4-5 before, which a 20 s check always cut short. Per-pose distances, the closest point and
+  the regions are identical to 22bec48 on the desk scan's three revisions (with and without the box, and moved).
+  Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm over whole runs); a
+  generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1 1.3 s; `MORPH_SLOW=1`). `scan_check(scan)` is the
+  check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer than 10 mm, touching, or
+  checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured against the scanned surface,
+  which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it. R4, cut short: "The wrist comes
+  within at most 4.6 mm of the scanned surface at 1.4 s" (plus "(no closer than 3.0 mm)" with `lower_mm`), or "touches
+  or passes through" below 0.5 mm; "In the part of the path checked (25% of it, or less than 1% of it), the arm stays
+  more than 50 mm ..." only with `part_clear`, else "There wasn't time to measure how close the arm comes ..."; never
+  "At least" or "more than 50 mm" otherwise. Then "Only part of the path was measured in the 20 s a check has (a large
+  scan or a busy computer)", followed by "checking again when the computer is less busy may measure all of it" or, when
+  `need_s` is more than `SCAN_RETRY_FACTOR` (2) times the limit, "at this pace, measuring all of it would take more than
+  twice that, so checking again helps only on a much less busy computer"; a near miss without a region adds "There
+  wasn't time to measure that place closely enough to offer a box for it."; `unlisted_mm` adds "Time ran out before
+  every place closer than 10 mm was listed; any other is at least X mm from the arm." `checks(..., scan=)` and
+  `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it (`_ADVICE["scan"]`). `POST
+  /api/world/inspect` measures it when the world has `room.glb` and the revision was simulated in this room as it is now
+  (else a skip saying so), kept in memory per (project, revision, world sha, room file size and mtime), the last eight
+  (R3: not when the check was cut short or a box's fit ran out of time, so checking again measures again; R4: an answer
+  whose list of near misses alone was cut short, `unlisted_mm`, is kept); it sends `world {stage: "scan", status:
+  "start" | "done", text}` ("Closest to the scan: at most 4.6 mm ... (cut short)" when cut short) and an `agent` event
+  (`feasibility`, `code`).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
   the box size, its distance from the path and whether it was trimmed, or why there is no box) and **Add box here**
   (only with a box): the box joins the world's grey boxes as `{id: region id (made unique), label,

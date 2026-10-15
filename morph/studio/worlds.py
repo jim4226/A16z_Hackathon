@@ -940,9 +940,10 @@ SCAN_COVERS_MAX_MM = 50.0    # the place a trimmed box was made for reaches at m
 SCAN_COVERS_TOL_MM = 0.1     # a near miss within this of its box's fit target (shown to 0.1 mm) is no closer than it
 SCAN_FIT_MIN_MM = 5.0        # a box trimmed to keep clear of the path thinner than this is no box (none is offered)
 SCAN_FIT_TOL_MM = 0.05
-# once there are near misses, the measuring passes leave the regions and their boxes about what the fit needs (it
-# poses the robot once per pose: about 1-1.5 ms a pose measured), with room to spare, and never more than a share
-SCAN_FIT_S_PER_POSE, SCAN_RESERVE_MIN_S, SCAN_RESERVE_SHARE = 0.003, 0.5, 0.25
+# once there are near misses, the measuring passes leave the regions and their boxes about what they need (the fit
+# poses the robot once per pose: regions and fit took 2.0-3.1 ms a distinct pose at load 11-14), with room to spare,
+# and never more than a share of the limit
+SCAN_FIT_S_PER_POSE, SCAN_RESERVE_MIN_S, SCAN_RESERVE_SHARE = 0.004, 0.5, 0.25
 SCAN_RETRY_FACTOR = 2.0      # a check cut short that needs more than this many times its limit: checking again won't do
 
 
