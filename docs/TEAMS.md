@@ -125,12 +125,16 @@ open and what they're looking at.
 - **Connections.** One address may hold at most 16 connections that haven't signed in, so someone without a link
   can't take every connection by opening idle ones. A connection counts only until its link or session is checked, so
   teammates behind one router don't run into it in normal use. Many addresses together still can fill the Studio's
-  64 connections: keep it on a network you trust.
+  64 connections: keep it on a network you trust. Behind a reverse proxy or tunnel on the Studio's own computer every
+  teammate arrives as 127.0.0.1, so this cap doesn't apply and wrong codes from any of them count together: give the
+  proxy its own limits (SECURITY.md).
 - **Links and sessions.** Invite codes (128-bit) and script tokens are stored hashed. Invites work once for 7 days;
   sign-in links once for 15 minutes. Sessions are signed cookies valid for 30 days; removing a member (Share, *Remove*,
   or `morph team revoke`) signs them out everywhere, and their open pages stop within seconds and say why. An address
-  that sends 10 wrong codes within 10 minutes has its further wrong codes refused until the oldest of them is 10
-  minutes old. Every code is random (128 bits or more), so a right invite, sign-in link or script token still works
+  that sends 10 wrong codes within 10 minutes has its further wrong codes refused until the oldest of its last 10 is 10
+  minutes old (only those 10 are remembered, however many more arrive). Every code is random (128 bits or more, and
+  always with a capital letter, which is how the key filter tells a pasted code from a name such as
+  `mt_shoulder_joint_torque_limit`), so a right invite, sign-in link or script token still works
   from that address: behind a tunnel everyone shares one address, and a script with a wrong token can't hold up
   anyone else's sign-in.
 - **What is logged.** The audit log (`projects/.team/audit.jsonl`, hash-chained) records sign-ins with IP addresses,
