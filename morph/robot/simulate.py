@@ -2525,7 +2525,10 @@ def _payload_sweep(rob: _Robot, design, fast=False):
     if st["fail_t"] is not None:
         plan.mark(f"{st['fail_joint']} saturates at {max_payload_g:.0f} g", st["fail_t"])
         plan.mark("payload removed", st["unload"])
-    grip_cap = 2 * design.object.friction * info.grip_force_max / G * 1000.0
+    # what friction holds at the most the firmware ever squeezes: its hard stop, GRIP_LIMIT_N (the F command's cap,
+    # asm.meta["grip_limit_n"]), not the jaws' stall force it never commands; that stall without a shipped plan
+    squeeze_max = min(info.grip_force_max, float((rob.asm.meta or {}).get("grip_limit_n") or info.grip_force_max))
+    grip_cap = 2 * design.object.friction * squeeze_max / G * 1000.0
     j_lim = info.arm_joints[int(np.argmin(cap))]
     lim = st["fail_joint"] or j_lim
     sh = info.arm_joints[1] if len(info.arm_joints) > 1 else info.arm_joints[0]
@@ -2549,7 +2552,7 @@ def _payload_sweep(rob: _Robot, design, fast=False):
         "static_estimate_g": round((est + mobj) * 1000.0, 0), "static_limiting_joint": j_lim,
         "rated_payload_g": design.object.mass_g,
         "payload_margin": round(max_payload_g / max(design.object.mass_g, 1e-6), 2),
-        "grip_limited_payload_g": round(grip_cap, 0),
+        "grip_limited_payload_g": round(grip_cap, 0), "grip_limit_n": round(squeeze_max, 2),
         "far_pose_mm": [round(float(v), 1) for v in p_far], "far_radius_mm": round(float(np.linalg.norm(p_far[:2])), 1),
         "test_reach_mm": round(float(np.linalg.norm(p_far[:2])), 1),
         # stretched straight out (tool point at shoulder height, as far as it reaches): what holds at stall, statically

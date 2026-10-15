@@ -1492,7 +1492,8 @@ relies on since:
   a damage force, so the firmware's `GRIP_LIMIT_N` and the F command's cap, and its "reaches only" issue), the
   standalone gripper's `choose_servo` (the first hobby servo its printed mechanism mounts whose stall force is at
   least twice the target), `sizing.gripper.stall_force_n` (at the rail), the generated arm's gripper joint `effort` (the
-  stall force per finger at the rail: the URDF, and the simulation's cap on the squeeze and its grip-limited payload),
+  stall force per finger at the rail: the URDF, and the simulation's cap on the squeeze; the grip-limited payload uses
+  the firmware's hard stop, section 22),
   `electronics2.grip_torque_limit`, the gripper's current estimate, `eplan.grip.stall_force_n` (new: per finger at
   stall on the rail) and the stock jaw's `servo_stall_force_n`. The STS3215 12 V gripper on a 10.5 mm pinion gives
   82.9 N per finger (the force plan said 165.9 N, sizing 221 N).
@@ -1666,3 +1667,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   Teams' activity read `recomputed`, so a wrist-camera or reach edit no longer counts the gripper stage it reused. The
   start event's `dirty` stays `dirty_nodes(changes)`: the stages the edit may rerun (the Studio's "N of 9 stages
   affected"); each stage's "node" event then says whether it was reused.
+- **The grip-limited payload is the firmware's.** `arm.grip_meta` puts the plan's `limit_n` (the firmware's
+  `GRIP_LIMIT_N`: its hard stop and the F command's cap) in `asm.meta["grip_limit_n"]`, and the payload sweep's
+  `grip_limited_payload_g` is 2 mu x min(the jaws' stall force, that limit) / g, with `grip_limit_n` in its metrics
+  (the jaws' stall force without a shipped plan). The egg-picker: 1,356 g at 19 N (it said 5,913 g at 82.9 N, a squeeze
+  its firmware never makes). Recorded in the simulation goldens (only `sim_payload_sweep.json` and `run_all` change).

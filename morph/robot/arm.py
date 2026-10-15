@@ -3377,9 +3377,12 @@ def grip_meta(eplan: dict | None) -> dict:
     depends on where the object sits on the jaw, in the simulation as on the bench. A sensorless hobby servo has no
     torque limit: its firmware closes it only part of the way to stall past the object (electronics2.open_loop_squeeze),
     so the simulation holds its jaw the same distance past contact (asm.meta["grip_squeeze_mm"]) with the servo's stall
-    force as its limit (asm.meta["grip_stall_n"]), and squeezes what that travel gives (asm.meta["grip_squeeze_n"])."""
+    force as its limit (asm.meta["grip_stall_n"]), and squeezes what that travel gives (asm.meta["grip_squeeze_n"]).
+    asm.meta["grip_limit_n"] is the firmware's hard stop (GRIP_LIMIT_N): the payload sweep's grip-limited payload."""
     g = (eplan or {}).get("grip") or {}
     out = {"grip_target_n": g["target_n"]} if g.get("target_n") else {}
+    if g.get("limit_n"):
+        out["grip_limit_n"] = g["limit_n"]          # the firmware's hard stop: the most it ever squeezes (GRIP_LIMIT_N)
     tl = g.get("torque_limit")
     if tl and g.get("sensor") != "fsr402" and g.get("jaw") == "revolute":
         out["grip_torque_nm"] = tl["nm"]

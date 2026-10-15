@@ -441,6 +441,21 @@ def test_no_hobby_servo_is_commanded_to_stall(tmp_path, name, design):
 
 # ------------------------------------------------------------------ the grip holds what the robot does with it
 
+def test_the_grip_limited_payload_is_what_the_firmwares_hard_stop_holds():
+    """The payload sweep's grip_limited_payload_g used the jaws' stall force: 5,913 g for the egg-picker at 82.9 N per
+    finger, a squeeze its firmware never makes (GRIP_LIMIT_N is 19 N: the force sensor's range). It is now what
+    friction holds at the firmware's hard stop, 1,356 g, and the sweep says which squeeze it counted."""
+    d = template("egg-picker")
+    sz = arm.size(d)
+    ep = electronics2.plan(d, {**sz, "grip_target_n": 2.34})
+    asm = arm.build(d, sz, ep)
+    assert asm.meta["grip_limit_n"] == ep["grip"]["limit_n"] == 19.0 < asm.joint("gripper").effort
+    m = simulate.run(asm, d, "payload_sweep", fast=True)["metrics"]
+    assert m["grip_limit_n"] == 19.0
+    assert m["grip_limited_payload_g"] == round(2 * d.object.friction * 19.0 / 9.81 * 1000) == 1356
+
+
+
 def test_the_grip_holds_a_heavy_robust_object_through_the_robots_own_shake_test(tmp_path):
     """A 370 g can (no damage force): the gripper stage's grasp simulation held it at 2.34 N per finger, half the static
     friction hold m g / (2 mu gain) = 4.65 N (its contour pads cradle the can; the robot's fingers don't), and the plan
