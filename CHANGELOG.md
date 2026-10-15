@@ -395,4 +395,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   switch is off, and the Keys dialog and `morph doctor` say why, until you set them again. Agent tools you turned off
   stay off when the tools' state file is damaged, and a damaged `tolerances.json` is reported instead of studies
   running on the defaults and the next edit writing over it.
+- Import: a Studio stopped during an upload no longer leaves the import session claiming a file it doesn't have (it
+  counted the whole file before it arrived, so Find said there was nothing to import and the size limit was used up);
+  a file counts once it is all there, and the half-written file is removed when the Studio starts again.
 

@@ -50,7 +50,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
 | `<p>/.team/comments.jsonl`, `reviews.jsonl`, `proposals.jsonl`, `branches.json`, `releases.json` | F4 | Teams |
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
-| `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h) |
+| `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h). An upload counts in `session.json` `files` only once it is all there; while it streams it is a reservation in `pending` (limits count both), and at startup `Session.tidy()` removes `*.part-*` files and reservations a stop left (W3) |
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
