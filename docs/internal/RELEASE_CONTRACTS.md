@@ -1551,8 +1551,8 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   of its own changed and the parent's own result for it is usable (an early cutoff; a failed one is computed again), so a wrist camera or a longer reach re-sizes the arm without rerunning the
   grasp simulation (`provenance` "reused from rNNN"). `dirty_nodes` and Teams' `affected_stages` stay static: they
   list the gripper stage for every sizing edit. Teams' change-request preview applies the same cutoff to its grip: it
-  re-plans the grip, and shows a "Grip" row, only when a gripper key or `gripper_inputs` changes. New robot's
-  preflight passes the same rail stall.
+  re-plans the grip, and shows a "Grip" row, only when a gripper key or `gripper_inputs` changes (section 22: and then
+  keeps the base's grip when the grasp is the same). New robot's preflight passes the same rail stall.
 - **The arm is laid out the same before and after the electronics plan.** `arm.BAY_CLEAR_MM` (22 mm) is the electronics
   bay's clear height under the deck, fixed: the layout no longer takes it from the plan's boards (sizing laid the arm out
   without them, the build with them, and with a short turret the deck sets the shoulder's height). A board taller than
@@ -1644,3 +1644,12 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   limit are the build's. Measured on the SO-101 (load 5-15, wall): preflight of a soda can 28.3 s -> 4.1 s (CPU 24.9 ->
   2.7 s, the rest is sizing for its new mass), each new egg diameter 2.8-8.9 s -> 0.0 s; Teams' preview of a soda-can
   change 39.5 s -> 11.5 s, of a 42 mm egg 15.9 s -> 3.2 s.
+- **Teams' preview keeps the built grip when the grasp is the same.** A generated arm's gripper stage gets its hold
+  from its grasp simulation, which New robot's closed form (the preflight) doesn't have: the egg-picker builds 2.34 N
+  where the closed form says 2.17 N. `impact._regrip` plans the new grip with the base's `hold_force_n` and
+  `target_force_n` on the new servo and rail (`morph.electronics.plan` with the target pinned and the hold as the
+  simulated one), so only the stall, the force limit and "reaches only" move, whenever `impact._grasp_inputs` (the
+  gripper_design's object.*, finger.*, gripper.*, safety_factor and the Grip force target; the finger material only
+  while Keewano calibration is on) is the same for base and edit: a servo rail, an actuator family or a build level.
+  The preview then shows no "Grip" row and plans the electronics with the base's target, as the build does. Any other
+  gripper edit (the object, the pads, a force sensor) takes the preflight's grip; a stock jaw always does.

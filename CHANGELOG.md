@@ -479,3 +479,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   sensors a close that reads nothing stops where a gauge-sized object gets the firmware's force limit (0.92 mm for an
   egg), not at the stop. The power budget, the plan's warning, the manual and the simulation use that squeeze, and a
   hold above the servo's rated torque is a warning.
+- Teams' change-request preview no longer shows a grip change the build won't make: a new servo supply, servo family
+  or build level on the egg-picker read "Grip: grip force target 2.34 → 2.17 N" (New robot's estimate without the
+  grasp simulation) and planned the electronics with it. The build keeps the 2.34 N its grasp simulation found, and
+  so does the preview now; an edit to the object or the fingers still shows the new grip.
