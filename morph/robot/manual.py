@@ -711,19 +711,33 @@ def _grip_sentence(grip: dict, name: str) -> str:
     t, lim = grip["target_n"], grip.get("limit_n")
     window = f"{lo:g}–{hi:g} N" if lo is not None and hi is not None else f"at least {lo:g} N" if lo is not None else None
     within = (f", within {window} for the {name}." if hi is not None else f" ({window} for the {name})." if window else ".")
+    ol = grip.get("open_loop") or {}
     if grip.get("sensor") == "fsr402":
         out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
-        return out + "; to change the target send F followed by newtons" + within
+        out += "; to change the target send F followed by newtons" + within
+        if ol.get("probe_mm"):
+            out += (f" Its hobby servo has no torque limit, so a close that reads no force stops {ol['probe_mm']:.2f} mm past "
+                    f"the calibration gauge (where a gauge-sized {name} gets about {lim:g} N) and opens again with "
+                    f"!GRIP: an object more than that narrower per jaw than the gauge isn't gripped.")
+        return out
     motion = grip.get("motion") or {}
     revolute = motion.get("kind") == "revolute"
     stop = (f" (gripper = {motion['lo']:.2f} {motion.get('unit', '')}, its max-squeeze stop)" if motion.get("lo") is not None
             else " (its max-squeeze stop)")
     tl = grip.get("torque_limit")
     if not tl:
-        stall = grip.get("stall_force_n")
-        return (f"This gripper has no force sensors and its hobby servo no torque limit: G closes it past the {name}"
-                f"{stop} with all the servo's torque" + (f", about {stall:g} N per finger" if stall else "")
-                + f". Morph's grip target for the {name} is {t:g} N per finger" + (f" (window: {window})." if window else "."))
+        stall, sq = grip.get("stall_force_n"), grip.get("squeeze_n") or t
+        if not ol.get("squeeze_mm"):
+            return (f"This gripper has no force sensors and its servo no torque limit: nothing sets the squeeze. Morph's "
+                    f"grip target for the {name} is {t:g} N per finger" + (f" (window: {window})." if window else "."))
+        at = (f" (gripper = {motion['closed'] - motion['squeeze']:.2f} {motion.get('unit', '')})"
+              if motion.get("squeeze") is not None and motion.get("closed") is not None else "")
+        return (f"This gripper has no force sensors and its hobby servo no torque limit, so G closes it only "
+                f"{ol['squeeze_mm']:.2f} mm past the {name}{at}, where the servo's own position loop squeezes about "
+                f"{sq:g} N per finger; it would reach its {stall:g} N stall about {ol['servo_band_mm']:g} mm past contact "
+                f"and, held there, overheat (hobby servos have no overload protection). Check the squeeze once with a "
+                f"kitchen scale between the jaws; to change it send F followed by newtons (it sets how far G closes), "
+                f"and lower it if the servo hums or warms while it holds" + within)
     where = (f"with the object {grip.get('lever_mm', 0):g} mm from the jaw's pivot (more nearer the pivot, less towards the tip)"
              if revolute else f"through its {grip.get('lever_mm', 0):g} mm pinion")
     return (f"This gripper has no force sensors: G closes it past the {name}{stop}, and the gripper servo's torque limit, "

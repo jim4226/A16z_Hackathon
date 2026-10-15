@@ -3375,15 +3375,17 @@ def grip_meta(eplan: dict | None) -> dict:
     """The grip the firmware ships, for the simulation to grip with: its target (asm.meta["grip_target_n"]) and, for a
     hinged jaw without force sensors, the torque limit that squeezes it (asm.meta["grip_torque_nm"]): the squeeze then
     depends on where the object sits on the jaw, in the simulation as on the bench. A sensorless hobby servo has no
-    torque limit: its firmware closes past the object with all the servo's torque, so the simulation squeezes with the
-    stall force (asm.meta["grip_squeeze_n"])."""
+    torque limit: its firmware closes it only part of the way to stall past the object (electronics2.open_loop_squeeze),
+    so the simulation holds its jaw the same distance past contact (asm.meta["grip_squeeze_mm"]) with the servo's stall
+    force as its limit (asm.meta["grip_stall_n"]), and squeezes what that travel gives (asm.meta["grip_squeeze_n"])."""
     g = (eplan or {}).get("grip") or {}
     out = {"grip_target_n": g["target_n"]} if g.get("target_n") else {}
     tl = g.get("torque_limit")
     if tl and g.get("sensor") != "fsr402" and g.get("jaw") == "revolute":
         out["grip_torque_nm"] = tl["nm"]
-    if not tl and g.get("sensor") != "fsr402" and g.get("stall_force_n"):
-        out["grip_squeeze_n"] = g["stall_force_n"]
+    ol = g.get("open_loop") or {}
+    if not tl and g.get("sensor") != "fsr402" and ol.get("squeeze_mm"):
+        out.update(grip_squeeze_n=ol["squeeze_n"], grip_squeeze_mm=ol["squeeze_mm"], grip_stall_n=g["stall_force_n"])
     return out
 
 

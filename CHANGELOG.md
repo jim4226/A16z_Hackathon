@@ -373,9 +373,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   gripper without force sensors grips the same way, and one with them gets the limit as a hard cap at its force stop.
   A hobby PWM gripper servo has no torque limit; that is an issue when its stall force could crush the object.
 - Firmware with force sensors that get no reading through a whole close (a sensor missing, unplugged or dead) used to
-  squeeze on to the gripper's maximum-squeeze stop with nothing limiting it. The gripper servo's torque limit now caps
-  that squeeze at the firmware's force limit; with no reading by the stop the jaw goes back to the closed position and
-  the firmware prints "!GRIP no force reading" on the serial port; a reading lost while holding keeps the jaw where it is.
+  squeeze on to the gripper's maximum-squeeze stop with nothing limiting it. A smart-bus or Dynamixel gripper servo's
+  torque limit now caps that squeeze at the firmware's force limit; a hobby PWM servo has no torque limit, so its close
+  stops where it would squeeze a gauge-sized object at that limit. With no reading by then the jaw goes back to the
+  closed position and the firmware prints "!GRIP no force reading" on the serial port; a reading lost while holding
+  keeps the jaw where it is.
 - The manual's first pick-and-place test names the robot's own object (it asked for a hard-boiled egg and a raw one
   whatever the robot picks), and a robot without force sensors is told what to watch instead of a grip-force readout.
 - New robot: saying an object is fragile ("pick up a raw egg without cracking it", the README's example, or the
@@ -439,9 +441,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   simulation's jaws and the standalone gripper's servo choice now use the honest figure.
 - Force-sensing grippers grip an object narrower than their calibration gauge: the close looked for a reading only
   1 mm past the gauge and released an egg 2 mm narrower ("no force reading"); it now closes as far as the max-squeeze
-  stop under the torque limit's cap. Grippers without force sensors closed to the gauge position, where a torque limit
-  has nothing to push against; G now closes past the object, so the torque limit really sets the squeeze (a hobby servo,
-  which has none, squeezes with all its torque and is simulated that way), as the manual and the plan say.
+  stop under the torque limit's cap (a hobby PWM gripper, which has none, only as far as its force limit allows; see
+  below). Grippers without force sensors closed to the gauge position, where a torque limit has nothing to push against;
+  G now closes past the object, so the torque limit really sets the squeeze, as the manual and the plan say.
 - Stock jaws (the SO-101): the torque limit was set for the grip 70 mm from the jaw's pivot, but the egg sits 62 mm
   out, so the simulation squeezed 2.83 N (3.41 N peak) for a 2.52 N target. It is now set at the lever where the
   simulation grasps the object. An open-loop grip (a torque limit, no force sensor) aims at the middle of the object's
@@ -469,3 +471,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - A robot set to Force sensor: none is no longer refused with "add finger.sensor=fsr402" when its gripper servo's torque
   limit sets the squeeze (smart-bus and Dynamixel grippers): the egg-picker without force sensors now passes its
   software checks, the egg intact. A hobby servo gripper, which has no torque limit, is still told.
+- A hobby PWM gripper servo (an MG996R) is never held at stall: without force sensors G closed it to its max-squeeze stop,
+  3 mm past a can, where it sat at its stall current (2.5 A) for the whole carry, and hobby servos have no overload
+  protection. G now closes it only as far past the object as its own position loop needs for the grip (0.68 mm for
+  the can's 13.94 N, 45 % of its stall); F sets that distance, never past what the servo holds continuously or the
+  grip Morph planned, whichever is more. With force
+  sensors a close that reads nothing stops where a gauge-sized object gets the firmware's force limit (0.92 mm for an
+  egg), not at the stop. The power budget, the plan's warning, the manual and the simulation use that squeeze, and a
+  hold above the servo's rated torque is a warning.

@@ -208,8 +208,10 @@ def test_the_gripper_torque_limit_comes_from_the_grip():
             "the squeeze (3 % of its stall torque for 0.7 N" in w]
     pwm = _plan_so101(**{"arm.actuator_family": "hobby_pwm"})
     assert pwm[2]["grip"]["torque_limit"] is None
-    assert [w for w in pwm[2]["warnings"] if "G closes the jaws past the object with all its torque" in w]
+    assert [w for w in pwm[2]["warnings"] if "G closes the jaws only" in w and "position loop squeezes" in w]
     assert any("no torque limit" in i for i in imported.gripper_summary(pwm[0], pwm[1])["force"]["issues"])
+    # on the stock jaw's 70 mm lever one PCA9685 count is 0.54 mm at the strawberry: no hobby close is gentle enough
+    assert [i for i in pwm[2]["issues"] if "the least it can close past the strawberry" in i]
 
 
 @pytest.mark.parametrize("obj", ["strawberry", "raw egg"])
@@ -229,20 +231,45 @@ def test_the_simulation_squeezes_a_stock_jaw_with_the_firmwares_torque_limit(obj
     assert info.grip_force_n == pytest.approx(ep["grip"]["target_n"])
 
 
-def test_a_sensorless_hobby_gripper_is_simulated_squeezing_with_all_its_torque():
-    """A hobby PWM servo has no torque limit: without force sensors its firmware closes past the object with all its
-    torque, so the simulation squeezes with the servo's stall force per finger, not the target it can't regulate."""
-    d = Design().with_changes({**EGG_ROBOT, **object_changes("soda can"), "finger.sensor": "none",
-                               "arm.actuator_family": "hobby_pwm"})
+HOBBY_CAN = Design().with_changes({**EGG_ROBOT, **object_changes("soda can"), "finger.sensor": "none",
+                                   "arm.actuator_family": "hobby_pwm"})
+
+
+def test_a_sensorless_hobby_gripper_closes_only_as_far_as_its_squeeze_and_is_simulated_so():
+    """A hobby PWM servo has no torque limit and no overload protection. Its firmware commanded GRIP_MIN, 3 mm past the
+    can, so the MG996R sat at stall (30.9 N per finger, its whole stall current) for every carry, while the power budget
+    counted the 13.94 N target. G now closes only as far past the object as the servo's own position loop needs for the
+    target (it reaches stall SERVO_BAND_MM past contact), and the budget, the simulation, the plan and the manual use
+    that squeeze."""
+    from morph import electronics
+    from morph.robot import catalog
+
+    d = HOBBY_CAN
     sz = arm.size(d)
     ep = electronics2.plan(d, sz, grip=pipeline2.gripper_stage(d, sz, simulate=False)["force"])
-    g = ep["grip"]
-    assert g["torque_limit"] is None and g["stall_force_n"] > g["target_n"]
+    g, ol = ep["grip"], ep["grip"]["open_loop"]
+    assert g["torque_limit"] is None and g["sensor"] == "none" and g["stall_force_n"] > g["target_n"]
+    assert ol["squeeze_mm"] == pytest.approx(electronics.SERVO_BAND_MM * g["target_n"] / g["stall_force_n"], abs=1e-4)
+    assert g["squeeze_n"] == g["target_n"] and ol["squeeze_mm"] < electronics.SERVO_BAND_MM
+    # the power budget counts the servo's share of stall at that squeeze, not a stall
+    s = catalog.ACTUATORS["mg996r"]
+    row = next(a for a in ep["power_budget"]["per_actuator"] if a["joint"] == "gripper")
+    share = electronics.jaw_torque(g["squeeze_n"], g["lever_mm"], g["jaw"]) / s["torque_nm"]
+    assert row["avg_a"] == pytest.approx(s["idle_a"] + s["stall_a"] * share * 0.5, abs=0.01)
+    assert row["avg_a"] < s["stall_a"] / 2
+    assert [w for w in ep["warnings"] if f"G closes the jaws only {ol['squeeze_mm']:.2f} mm past the object" in w
+            and f"stall about {electronics.SERVO_BAND_MM:g} mm past contact" in w]
+    assert [w for w in ep["warnings"] if "above the 32 % it is rated to hold continuously" in w]   # 45 % of stall
+    assert g["limit_n"] == g["target_n"]          # F can't hold it harder than that (its rated torque is less)
+    # the simulation holds the jaw the same distance past contact, with the servo's stall force as its limit
     asm = arm.build(d, sz, ep)
-    assert asm.meta["grip_squeeze_n"] == g["stall_force_n"]
+    assert (asm.meta["grip_squeeze_mm"], asm.meta["grip_stall_n"]) == (ol["squeeze_mm"], g["stall_force_n"])
     info, _ = simulate._describe(asm, d, simulate._opts(None))
-    assert info.grip_force_n == pytest.approx(min(g["stall_force_n"], asm.joint("gripper").effort))
-    assert [w for w in ep["warnings"] if f"about {g['stall_force_n']:g} N per finger" in w]
+    assert info.grip_open_loop and info.grip_contact - info.grip_close == pytest.approx(ol["squeeze_mm"], abs=1e-6)
+    assert info.grip_force_n == g["squeeze_n"]
+    assert info.grip_effort == pytest.approx(g["stall_force_n"] * len(info.jaw_joints))
+    m = simulate.run(asm, d, "shake", fast=True)["metrics"]
+    assert m["success"] and m["slip_mm"] < 5.0 and m["grip_n_max"] < 0.6 * g["stall_force_n"], m
 
 
 def _compile_firmware(tmp_path, d):
@@ -265,12 +292,14 @@ def _compile_firmware(tmp_path, d):
     return exe, ep
 
 
-def _run_exe(exe, newtons_per_unit, offset=0.0):
+def _run_exe(exe, newtons_per_unit, offset=0.0, f=None):
     """Run the compiled sketch's grip loop: a force sensor reading `newtons_per_unit` per unit closed past the object,
-    which meets the jaws `offset` units past the calibrated zero (an object narrower than the gauge)."""
+    which meets the jaws `offset` units past the calibrated zero (an object narrower than the gauge); `f`: an F command
+    (newtons) sent before G."""
     import subprocess
 
-    out = subprocess.run([str(exe), str(newtons_per_unit), str(offset)], capture_output=True, text=True, timeout=120).stdout
+    args = [str(exe), str(newtons_per_unit), str(offset)] + ([str(f)] if f is not None else [])
+    out = subprocess.run(args, capture_output=True, text=True, timeout=120).stdout
     fields = dict(kv.split("=") for kv in next(ln for ln in out.splitlines() if ln.startswith("RESULT")).split()[1:])
     return {k: (float(v) if k not in ("state",) else v) for k, v in fields.items()}, out
 
@@ -327,6 +356,43 @@ def test_sensorless_jaws_close_past_the_object_so_the_torque_limit_sets_the_sque
         info, _ = simulate._describe(asm, d, simulate._opts(None))
         assert info.grip_close < info.grip_contact                      # the simulated jaws are commanded past it too
         assert info.grip_force_n == pytest.approx(ep["grip"]["target_n"])   # and squeeze at the torque limit's force
+
+
+@pytest.mark.parametrize("name, design", [
+    ("can, no force sensors", lambda: HOBBY_CAN),
+    ("egg, force sensors", lambda: template("egg-picker").with_changes({"arm.actuator_family": "hobby_pwm"})),
+    ("strawberry, force sensors", lambda: template("egg-picker").with_changes({**STRAWBERRY,
+                                                                               "arm.actuator_family": "hobby_pwm"})),
+])
+def test_no_hobby_servo_is_commanded_to_stall(tmp_path, name, design):
+    """The compiled firmware of a hobby PWM gripper (no torque limit, no overload protection): its deepest command past
+    the gauge contact stays short of SERVO_BAND_MM, where its position loop would reach stall. Without force sensors G
+    holds GRIP_SQUEEZE past contact, also after F asks for far more; with them a close that reads nothing stops at
+    GRIP_PROBE (where a gauge-sized object gets about the hard limit) and opens again, saying so; a close that reads
+    the force stops at the target."""
+    from morph import electronics
+
+    d = design()
+    exe, ep = _compile_firmware(tmp_path, d)
+    g, ol, band = ep["grip"], ep["grip"]["open_loop"], electronics.SERVO_BAND_MM
+    fsr = g["sensor"] == "fsr402"
+    runs = [(0.0, 0.0, None), (20.0, 0.0, None)] + ([] if fsr else [(0.0, 0.0, 1000.0), (0.0, 0.0, 5.0)])
+    for k, off, f in runs:
+        r, out = _run_exe(exe, k, off, f)
+        deepest = r["closed"] - r["lowest"]                 # mm past the gauge contact (a rack-and-pinion jaw)
+        assert deepest < band, (name, k, f, r)
+        if not fsr:
+            want = min(f or g["target_n"], g["limit_n"]) * band / g["stall_force_n"]
+            assert r["final"] == r["lowest"] and deepest == pytest.approx(max(want, 2 * ol["step_mm"]), abs=1e-3), r
+            assert r["zero"] - r["pulse"] >= 2 * electronics2.PWM_STEP_US - 1, r       # the servo is sent past contact
+            assert g["stall_force_n"] * deepest / band <= g["limit_n"] + 0.01 and "!GRIP" not in out
+        elif k == 0.0:                                      # no force reading: stops at the probe, opens, says so
+            assert deepest <= ol["probe_mm"] + 0.081 and r["final"] == r["closed"] and r["state"] == "POS", r
+            assert "!GRIP no force reading down to GRIP_PROBE past GRIP_CLOSED" in out
+            assert g["stall_force_n"] * ol["probe_mm"] / band == pytest.approx(g["limit_n"], abs=0.01) or \
+                ol["probe_mm"] == pytest.approx(2 * ol["step_mm"], abs=1e-3)
+        else:
+            assert r["state"] == "HOLD" and abs(r["force"] - g["target_n"]) <= 0.15 * g["target_n"], r
 
 
 # ------------------------------------------------------------------ the grip holds what the robot does with it

@@ -89,6 +89,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from shapely.geometry import box as sbox
 
+from ..electronics import SERVO_BAND_MM
+
 MM = 1e-3
 G = 9.81
 FRAME_HZ = 30.0
@@ -125,7 +127,8 @@ ZETA = 0.9                         # damping ratio of each servo loop
 KI = 6.0                           # host-side integral gain (1/s), bounded to half the stall torque
 GRIP_SPEED_MM_S = 45.0             # jaw closing / opening speed (pinion at servo speed)
 GRIP_SLOW_MM = 3.0                 # the firmware slows the jaws to 1/4 speed this close to the expected contact
-GRIP_SAT_MM = 1.5                  # jaw position error at which the jaw servo reaches its force limit
+GRIP_SAT_MM = SERVO_BAND_MM        # jaw position error at which the jaw servo reaches its force limit (1.5 mm; the
+                                   # firmware closes a hobby servo with no torque limit only part of it past contact)
 JAW_ARMATURE_KG = 0.08             # reflected servo inertia seen at each jaw
 
 # hold / slip thresholds
@@ -325,6 +328,7 @@ class _Info:
     grip_speed: float = 45.0        # jaw speed in the joint's unit per second
     grip_effort: float = 0.0        # actuator limit on the gripper joint (N for a jaw pair, N*m for a hinge)
     grip_force_max: float = 0.0     # per-finger force at the gripper actuator's full effort (N)
+    grip_open_loop: bool = False    # a hobby servo held grip_close past contact: its position loop sets the squeeze
     excluded: list = field(default_factory=list)
     dropped_parts: list = field(default_factory=list)
     geoms: list = field(default_factory=list)
@@ -410,7 +414,9 @@ def _grip_force_target(asm, design, override=None, generated_fingers=True, cap=N
     """Per-finger clamp force the firmware regulates to (N): the one it ships (asm.meta["grip_target_n"], which the robot
     builders copy from the electronics plan, itself the gripper stage's force plan), else the Grip force target, else
     that force plan's closed form (morph.electronics.force_window). A sensorless hobby servo regulates nothing: its
-    firmware squeezes with the servo's stall force (asm.meta["grip_squeeze_n"]). ``generated_fingers`` = Morph's own
+    firmware closes it a set distance past the object (asm.meta["grip_squeeze_mm"]), where its own position loop squeezes
+    about asm.meta["grip_squeeze_n"] (_describe holds it there with the servo's stall force as its limit, so the
+    simulation squeezes what that travel gives). ``generated_fingers`` = Morph's own
     pads (contour / V wedge gain and the FSR range apply); False for a stock gripper (flat jaws). ``cap``: the jaws'
     own limit (the gripper joint's effort), else design.gripper.force_n."""
     o, f = design.object, design.finger
@@ -838,11 +844,15 @@ def _describe(asm, design, opts: SimOptions, grasp_only: bool = False):
     # ---- gripper command values and force limits
     gf = _grip_force_target(asm, design, opts.grip_force_n, generated_fingers=kind == "prismatic",
                             cap=(gj.effort if kind == "prismatic" and gj is not None and gj.effort else None))
+    # a hobby servo without force sensors or a torque limit: its firmware closes it only grip_squeeze_mm past the
+    # object, and its own position loop (full force GRIP_SAT_MM past contact, up to its stall) sets the squeeze
+    open_mm = float((asm.meta or {}).get("grip_squeeze_mm") or 0.0) if opts.grip_force_n is None else 0.0
+    stall_n = float((asm.meta or {}).get("grip_stall_n") or gf)
     if kind == "prismatic":
         g_open = float(min(g_hi - 0.5, max(ready.get(gname, 12.0), contact + 8.0)))
-        g_close = float(min(g_lo, contact - 2.5 * GRIP_SAT_MM))
+        g_close = float(contact - open_mm) if open_mm else float(min(g_lo, contact - 2.5 * GRIP_SAT_MM))
         speed = GRIP_SPEED_MM_S
-        effort = gf * (2.0 if len(jaw_joints) > 1 else 1.0)
+        effort = (min(stall_n, gj.effort or stall_n) if open_mm else gf) * (2.0 if len(jaw_joints) > 1 else 1.0)
         fmax = float(gj.effort or design.gripper.force_n)
     elif kind == "revolute":
         sgn = 1.0 if g_hi > g_lo else -1.0
@@ -851,10 +861,12 @@ def _describe(asm, design, opts: SimOptions, grasp_only: bool = False):
         g_close = float(g_lo)
         if (contact - g_close) * sgn < 2.5 * GRIP_SAT_MM / lever:
             g_close = contact - sgn * 2.5 * GRIP_SAT_MM / lever
+        if open_mm:
+            g_close = contact - sgn * open_mm / lever
         speed = GRIP_SPEED_MM_S / lever
         cap = (gj.effort or 1.0) / (lever * MM)
         gf = min(gf, cap)
-        effort = gf * lever * MM
+        effort = (min(stall_n, cap) if open_mm else gf) * lever * MM
         if (asm.meta or {}).get("grip_torque_nm") and opts.grip_force_n is None:
             effort = min(float(asm.meta["grip_torque_nm"]), gj.effort or 1.0)   # the firmware's torque limit, as set
         fmax = cap
@@ -872,7 +884,8 @@ def _describe(asm, design, opts: SimOptions, grasp_only: bool = False):
                          "mass_g": design.object.mass_g, "friction": design.object.friction,
                          "color": _object_color(design), "axis": "z"},
                  grip_kind=kind, grip_contact=float(contact), grasp_offset=offset, lever_mm=lever, grip_speed=speed,
-                 grip_effort=effort, grip_force_max=fmax, excluded=sorted(set(excluded)), dropped_parts=dropped, geoms=specs, notes=notes)
+                 grip_effort=effort, grip_force_max=fmax, grip_open_loop=bool(open_mm) and kind in ("prismatic", "revolute"),
+                 excluded=sorted(set(excluded)), dropped_parts=dropped, geoms=specs, notes=notes)
     return info, masses
 
 
@@ -1664,6 +1677,9 @@ def _perturbed(rob, p):
                 m.geom_friction[gi, 0] = keep["geom_friction"][gi, 0] * p["friction_scale"]
         if "grip_scale" in p and rob.g_act is not None:
             m.actuator_forcerange[rob.g_act] *= p["grip_scale"]
+            if rob.info.grip_open_loop:     # a weaker or stronger servo below its force limit: its position loop's gain
+                m.actuator_gainprm[rob.g_act, 0] *= p["grip_scale"]
+                m.actuator_biasprm[rob.g_act, 1] *= p["grip_scale"]
         if "torque_scale" in p:
             for a in rob.aid:
                 m.actuator_forcerange[a] *= p["torque_scale"]

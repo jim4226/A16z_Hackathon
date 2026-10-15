@@ -19,6 +19,10 @@ from .spec import Design
 
 G = 9.81
 GEAR_EFF = 0.6
+# How far past contact a position-controlled jaw servo closes before it squeezes with its whole stall force (mm at the
+# jaw): its position loop's proportional band plus the gear's and the jaw's give. A typical figure, the simulation's
+# jaw servo model (simulate.GRIP_SAT_MM); the bench calibrates the real servo (the firmware's F command).
+SERVO_BAND_MM = 1.5
 HOLD_MARGIN = 1.5
 CRUSH_MARGIN = 1.5
 FSR_K_OHM_N = 10_000.0   # FSR 402 roughly follows R ~ K / F (10 kOhm at ~1 N); calibrate on the bench

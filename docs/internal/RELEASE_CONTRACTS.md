@@ -1513,13 +1513,12 @@ relies on since:
   gauge (1.76 mm per jaw) gets gripped; the torque limit, written at start-up as a cap at the force limit, bounds the
   squeeze meanwhile; with no reading by `GRIP_MIN` it goes back to `GRIP_CLOSED` and says so. Without force sensors G
   commands `GRIP_MIN`, past the object (it commanded `GRIP_CLOSED`, the gauge contact, where a torque limit has no
-  position error to act on): the torque limit sets the squeeze, or a hobby servo's whole torque. The simulation models
-  exactly that: its jaw is commanded past contact, force-limited at the torque limit's force, and a sensorless hobby
-  servo squeezes with its stall force (`arm.grip_meta` puts `eplan.grip.stall_force_n` in `asm.meta["grip_squeeze_n"]`).
-  The firmware header, the plan's warning ("G closes the jaws past the object and the gripper servo's torque limit
-  sets the squeeze") and the manual (`manual._grip_sentence`, with `GRIP_MIN` in the joint's unit) say the same. A
-  hobby PWM gripper with force sensors gets a warning when its stall force exceeds the object's damage force: nothing
-  backs the sensors up. `tests/fw_stubs/grip_harness.cpp` takes the object's contact offset as `argv[2]`.
+  position error to act on): the torque limit sets the squeeze. The simulation models exactly that: its jaw is
+  commanded past contact, force-limited at the torque limit's force. The firmware header, the plan's warning ("G closes
+  the jaws past the object and the gripper servo's torque limit sets the squeeze") and the manual
+  (`manual._grip_sentence`, with `GRIP_MIN` in the joint's unit) say the same. A hobby PWM servo has no torque limit:
+  section 22 says how far its firmware closes it instead. `tests/fw_stubs/grip_harness.cpp` takes the object's contact
+  offset as `argv[2]`.
 - **The stock jaw's lever (E-N6).** `imported.grasp_lever(design, sizing)` is the lever where the simulation grasps the
   object (`simulate.grasp_lever(asm, design)`: `_describe(..., grasp_only=True)`, the hand's and the jaws' pieces
   only), worked out on the robot's own jaws with sizing's servos and the object's shape and size, on the camera-free
@@ -1607,3 +1606,31 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   to Force sensor: none was not feasible for that alone; the egg-picker now builds with its checks passing (torque
   limit 5.3 % of stall for 4.42 N, the egg intact at 4.53 N peak). A hobby PWM gripper still gets the issue, as an
   imported one does. New robot's preflight uses the same helper.
+
+## 22. Hobby grippers, preflight speed and honest records (release review fixes, track E5)
+
+Round 3 of the grip and pipeline fixes. What other code relies on since:
+
+- **No hobby servo is commanded to stall.** `morph.electronics.SERVO_BAND_MM` (1.5 mm) is how far past contact a
+  position-controlled jaw servo closes before it squeezes with its whole stall force (its position loop's proportional
+  band plus the gear's and the jaw's give); `simulate.GRIP_SAT_MM` is the same number. A gripper servo with no torque
+  limit (`electronics2.has_torque_limit` false: hobby PWM) gets `eplan.grip.open_loop` from
+  `electronics2.open_loop_squeeze(grip, gkey, family)`:
+  - without force sensors `squeeze_mm` = band x target / stall (at least two position commands, `step_mm` each: a
+    PCA9685 count, 4.88 us, at the jaw), and `squeeze_n` what that squeezes a gauge-sized object with (the target, more
+    when floored). The firmware's `GRIP_SQUEEZE` (in the joint's unit) is that distance and G commands
+    `GRIP_CLOSED - GRIP_SQUEEZE`, never `GRIP_MIN`; F sets it (`GRIP_SQUEEZE_PER_N` = band / stall, at least
+    `GRIP_SQUEEZE_LEAST`). `eplan.grip.limit_n` (`GRIP_LIMIT_N`, F's cap) is also capped at max(squeeze_n, the servo's
+    rated torque as a force), so no F command holds it at stall. A floored squeeze above the object's limit (a stock
+    jaw's 70 mm lever makes one count 0.54 mm at a strawberry) is a plan issue. Torque-limited and force-sensing grips
+    keep `GRIP_SQUEEZE` = the whole overtravel (G still commands `GRIP_MIN` without sensors);
+  - with force sensors `probe_mm` = band x `limit_n` / stall (None when the stall is below the limit): the firmware's
+    `GRIP_PROBE`, so a close that reads nothing stops where a gauge-sized object gets about the hard limit and opens
+    with "!GRIP no force reading down to GRIP_PROBE past GRIP_CLOSED". An object narrower than that per jaw isn't
+    gripped; the plan warns and the manual says so.
+  `eplan.grip.squeeze_n` (every grip: the target, or the open-loop squeeze) is what `_actuator_currents` budgets the
+  gripper's current from. A hold above the servo's rated (continuous) torque share is a plan warning. `arm.grip_meta`
+  puts `grip_squeeze_mm`, `grip_squeeze_n` and `grip_stall_n` in `asm.meta`; `simulate._describe` then commands the jaw
+  `grip_squeeze_mm` past contact with the stall force as its limit (`info.grip_open_loop`), and a robustness study's
+  `grip_scale` scales that servo's gain too. `tests/fw_stubs/grip_harness.cpp` also runs a PCA9685 sketch (`pulse`, the
+  gripper channel's last pulse) and takes an F before G as `argv[3]`.
