@@ -289,6 +289,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - A page opened or refreshed during a build follows the build and shows the new revision when it is done. When the
   server can't answer, the page keeps listening and retries instead of staying offline; after a server restart it
   reloads.
+- A Studio left running no longer grows with every build (about 1.2 GB after six builds, 1.5 GB at its peak): each
+  project's builds run on one thread and hand what they freed back to the system, so it stays at 300 to 600 MB between
+  builds. [docs/INSTALL.md](docs/INSTALL.md) says how much memory Morph needs.
 - Robots with a custom controller PCB print their base on a 250 mm bed again (it was 253 mm): the USB-C and power
   jacks sit higher, over the board's edge, so the bay behind the board is shorter.
 - Chat: a Claude call gives up after about a minute instead of holding the project's queue, and "gentler grip" scales

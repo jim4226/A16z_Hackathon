@@ -136,7 +136,9 @@ Open it on the laptop. That browser stays signed in (for 30 days, or until Morph
 code); anyone without the code gets a page asking for it. To keep the same link across restarts, put
 `MORPH_TOKEN=` and a code of your choice (8 or more letters and digits) in `.env`. Keys added with the
 **Keys** button are saved on the computer running Morph, and the header reads **Live on** that
-computer's name, so it is clear which machine does the work. `morph doctor` shows each machine's CPU cores.
+computer's name, so it is clear which machine does the work. `morph doctor` shows each machine's CPU cores. Give that
+computer about 1.5 GB of free memory for Morph: the Studio takes up to about 1.2 GB while it builds and keeps 300 to
+600 MB between builds, and a robustness study adds about 150 MB for each worker process (one per core by default).
 
 If the link doesn't open on the laptop, the stronger computer's firewall is the usual reason. On Windows, allow Python
 through Windows Defender Firewall for the network you are on (Windows Security, Firewall & network protection), or

@@ -9,9 +9,10 @@ Morph Studio runs on your own computer and opens in your browser. It works on:
   Python; older ones work once a newer Python is installed.
 
 You need **Python 3.10, 3.11, 3.12, 3.13 or 3.14** (3.13 recommended; 3.15 is too new for now), about 600 MB of
-disk to start (the packages and the two demo robots; each new revision adds 20 to 60 MB), and a browser. The app
-window uses Chrome or Edge when it finds them; any browser works at http://127.0.0.1:8765. No GPU is needed. API
-keys are optional.
+disk to start (the packages and the two demo robots; each new revision adds 20 to 60 MB), about 1.5 GB of free
+memory (the Studio takes up to about 1.2 GB while it builds a robot and keeps 300 to 600 MB between builds; a
+robustness study adds about 150 MB per worker process), and a browser. The app window uses Chrome or Edge when it finds
+them; any browser works at http://127.0.0.1:8765. No GPU is needed. API keys are optional.
 
 ## 1. Install Python
 

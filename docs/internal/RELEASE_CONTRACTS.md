@@ -169,6 +169,16 @@ A job applies its changes to the newest revision when its turn comes. If one of 
 `projects.create()` checks every value of a design it is given; a value no robot can have ends the job as `error`
 ("Couldn't apply that: ...") or raises ValueError. `projects.as_design()` refuses keys a Design doesn't have.
 
+A room's jobs run on one thread (`rooms.JobQueue`, W3): it starts with the first job, waits up to `IDLE_S` = 600 s for
+the next before it ends, and calls `memory.trim()` (glibc's `malloc_trim(0)`; nothing on other systems) after each
+job. `serve()` calls `memory.limit_arenas()` (glibc `mallopt(M_ARENA_MAX, 2)`) before the Studio starts its threads,
+and run_studio.sh exports `MALLOC_ARENA_MAX=2` unless it is set. Measured over six parameter edits alternating the two
+demo robots (Linux, 16 GB), the resident memory after each: before, 444, 706, 805, 971, 1058, 1242 MB (peak 1.5 GB;
+with `MALLOC_ARENA_MAX=2` alone still 484 to 1011 MB); after, 326, 520, 375, 550, 605, 500 MB from `morph studio`
+(peak 1.13 GB) and 322, 508, 355, 422, 469, 389 MB as run_studio.sh starts it (peak 1.01 GB).
+tests/test_studio_memory.py repeats it with MORPH_SLOW=1 (at most 800 MB after any build, and the last three no more
+than 200 MB above the first three on average).
+
 ## 3. Live events (SSE)
 
 - Every event carries `project`. With Teams on, events about a person's request (`user`, `assistant`, the

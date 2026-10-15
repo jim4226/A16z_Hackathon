@@ -1585,6 +1585,8 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers."""
     if not project.revs():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
+    from . import memory
+    memory.limit_arenas()  # before the Studio's threads: builds then share two malloc arenas (as MALLOC_ARENA_MAX=2)
     studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
     token = None if team else access_token(host, token)
     studio.remote = bool(token) or (team and not is_loopback(host))

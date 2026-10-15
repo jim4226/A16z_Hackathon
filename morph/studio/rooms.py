@@ -20,6 +20,7 @@ import time
 import traceback
 
 from ..robot.pipeline2 import RobotProject
+from . import memory
 
 
 class UnknownProject(LookupError):
@@ -162,11 +163,14 @@ class Job:
 
 
 class JobQueue:
-    """First in, first out, one job at a time per room. The worker thread starts with the first job and ends when the
-    queue is empty. Every change is published to the room as a `queue` event."""
+    """First in, first out, one job at a time per room. The worker thread starts with the first job and waits for the
+    next one for up to IDLE_S before it ends: one long-lived thread builds the room's revisions, so their memory stays
+    in one malloc arena, and after each job what it freed goes back to the system (memory.trim). Every change is
+    published to the room as a `queue` event."""
 
     MAX_QUEUED = 10
     KEEP = 50  # finished jobs remembered for wait/resolve
+    IDLE_S = 600.0
 
     def __init__(self, room: "Room"):
         self.room = room
@@ -195,6 +199,8 @@ class JobQueue:
             if self.worker is None or not self.worker.is_alive():
                 self.worker = threading.Thread(target=self._work, daemon=True, name=f"morph-room-{self.room.name}")
                 self.worker.start()
+            else:
+                self.cond.notify_all()                 # the worker waiting for its next job
         return job
 
     def get(self, job_id) -> Job | None:
@@ -237,6 +243,8 @@ class JobQueue:
         while True:
             with self.cond:
                 if not self.pending:
+                    self.cond.wait_for(lambda: self.pending, timeout=self.IDLE_S)
+                if not self.pending:
                     self.worker = None
                     return
                 job = self.pending.popleft()
@@ -258,6 +266,7 @@ class JobQueue:
                     self.running = None
                     self.publish(job)
                 job._done.set()
+                memory.trim()                          # what the build freed, back to the system
 
 
 class Room:

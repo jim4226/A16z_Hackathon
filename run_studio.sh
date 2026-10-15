@@ -133,6 +133,8 @@ main() {
   install_packages || return 1
   # shellcheck disable=SC1091
   . .venv/bin/activate
+  # glibc keeps a build's freed memory in one malloc arena per thread: two arenas keep the Studio near one build's needs
+  export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
   python -m morph.cli studio egg-picker --open ${args[@]+"${args[@]}"}
 }
 
