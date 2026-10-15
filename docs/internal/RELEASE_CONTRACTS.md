@@ -1099,7 +1099,9 @@ field failure rate (section 0, honesty).
   switched off, so editing one range never moves the others): outcomes do not depend on the number of workers or the
   batch size, a deeper study extends a shallower one, and the default seed (1) reproduces the published egg-picker
   study (150 of 200 at 1 ms; 140 before the simulation gripped at the gripper stage's 2.34 N). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
-  more than 45 mm off: the jaws stayed shut and carried it), `drag`, `missed_grasp` (not lifted half the hover height),
+  more than 45 mm off: the jaws stayed shut and carried it), `drag`, `no_force_reading` (a hobby gripper's
+  force-sensing close gave up on an object narrower than its probe: `metrics["grip_gave_up"]`, section 22),
+  `missed_grasp` (not lifted half the hover height),
   `dropped` (more than 12 mm of slip in transit), `over_force` (the product's damage check), `unreachable`,
   `world_collision` grouped as `world_collision:<phase>` (the plan's phase at the first contact); `unstable` (MuJoCo's
   BADQPOS, BADQVEL, BADQACC or BADCTRL warnings, after which MuJoCo restarts the run from its first frame, a full
@@ -1631,10 +1633,26 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     end, the force the object needs not to slip (`grip_problems`). A floored squeeze above the object's limit (a stock
     jaw's 70 mm lever makes one count 0.54 mm at a strawberry) is a plan issue. Torque-limited and force-sensing grips
     keep `GRIP_SQUEEZE` = the whole overtravel (G still commands `GRIP_MIN` without sensors);
-  - with force sensors `probe_mm` = band x `limit_n` / stall (None when the stall is below the limit): the firmware's
-    `GRIP_PROBE`, so a close that reads nothing stops where a gauge-sized object gets about the hard limit and opens
-    with "!GRIP no force reading down to GRIP_PROBE past GRIP_CLOSED". An object narrower than that per jaw isn't
-    gripped; the plan warns and the manual says so.
+  - with force sensors (`open_loop_squeeze(grip, gkey, family, width_mm)`) the firmware's `GRIP_PROBE` is `probe_mm`:
+    the close goes no further than that past the gauge without a force reading, reads there too, and then opens to
+    `GRIP_MAX` with "!GRIP no force reading down to GRIP_PROBE past GRIP_CLOSED: opened to GRIP_MAX ..." (it went
+    back to `GRIP_CLOSED`, where an object larger than the gauge stayed squeezed with no reading; a torque-limited
+    gripper still does that, its torque limit caps it). `spread_mm` = `morph.electronics.OBJECT_SIZE_SPREAD` (0.08, the
+    robustness study's default size band, which `robust.default_spec` reads) x the object's half-width;
+    `reach_mm` = spread + two position commands (a reading). When a gauge-sized object then gets at most
+    `PROBE_STALL_SHARE` (0.8) of the stall with a dead sensor, `covers` and `probe_mm` = max(reach, band x `limit_n` /
+    stall); otherwise `covers` is false, `probe_mm` = band x `limit_n` / stall (at least two commands, at most that
+    share), an object narrower than it per jaw isn't gripped, and the plan has an issue naming both distances and
+    recommending a smart-bus or Dynamixel gripper servo. On an MG996R egg-picker hand: a grape covers (0.96 mm, 0.80 mm
+    spread), an egg (1.92 mm needed) and a strawberry (1.44 mm) don't (0.92 and 0.16 mm). `probe_n` (stall x probe /
+    band) is what a gauge-sized object gets at the probe with a dead sensor until the jaw opens; the plan's warning, the
+    firmware's comment and the manual state it. `arm.grip_meta` puts `probe_mm` in `asm.meta["grip_probe_mm"]`
+    (`simulate._Info.grip_probe_mm`), and a pick-and-place trial (`simulate._run_pick_place`) whose object
+    (`size_scale`) is narrower than the gauge by more than that per jaw closes only to the probe and opens
+    (`_given_up`), fails, and names it: `metrics["grip_gave_up"]` {narrower_mm, probe_mm} and `metrics["failure"]`; a
+    robustness study counts it as `no_force_reading` ("Let go with !GRIP ..."). The firmware's first reading needs
+    `GRIP_SENSE_N` (0.05 N) of squeeze, a few hundredths of a millimetre, so the two agree to within that.
+    `tests/fw_stubs/grip_harness.cpp` prints `max` (`GRIP_MAX`) too.
   `eplan.grip.squeeze_n` (every grip: the target, or the open-loop squeeze) is what `_actuator_currents` budgets the
   gripper's current from. A hold above the servo's rated (continuous) torque share is a plan warning. `arm.grip_meta`
   puts `grip_squeeze_mm`, `grip_squeeze_n` and `grip_stall_n` in `asm.meta`; `simulate._describe` then commands the jaw

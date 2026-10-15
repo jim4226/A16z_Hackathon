@@ -74,8 +74,9 @@ with 95% confidence)". Few runs give wide intervals, and the card says so with n
 "at least 54.0%". Run more before you trust a difference between two designs whose intervals overlap.
 
 **Failure groups:** each failed run is labelled by what went wrong: the jaws stayed shut at release and carried the
-object away, dragged off the target, missed the grasp, dropped on the way, squeezed harder than the object can take, out
-of reach, or hit a box in the room during a named phase. Each group shows its share with its own interval and "Most
+object away, dragged off the target, missed the grasp, let go with !GRIP (a hobby gripper's force-sensing close gives
+up on an object narrower than it reaches, as its firmware does), dropped on the way, squeezed harder than the object
+can take, out of reach, or hit a box in the room during a named phase. Each group shows its share with its own interval and "Most
 likely when": the one tolerance range that best separates that group's runs from the rest (Youden's J over quantile cuts
 of each value, or of its distance from nominal), as "egg -4.7 to 1.5 mm along its length from its mark: 44% fail this way vs 14% otherwise". A rule
 is compared with what the same search finds on shuffled outcomes (the 95th percentile of 60 shuffles); below that it

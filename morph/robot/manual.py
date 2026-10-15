@@ -716,9 +716,12 @@ def _grip_sentence(grip: dict, name: str) -> str:
         out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
         out += "; to change the target send F followed by newtons" + within
         if ol.get("probe_mm"):
-            out += (f" Its hobby servo has no torque limit, so a close that reads no force stops {ol['probe_mm']:.2f} mm past "
-                    f"the calibration gauge (where a gauge-sized {name} gets about {lim:g} N) and opens again with "
-                    f"!GRIP: an object more than that narrower per jaw than the gauge isn't gripped.")
+            out += (f" Its hobby servo has no torque limit, so a close that has read no force by {ol['probe_mm']:.2f} mm "
+                    f"past the calibration gauge stops there and opens with !GRIP: a {name} up to that much narrower per "
+                    f"jaw than the gauge is still gripped"
+                    + (" (the small end of its size)" if ol.get("covers") else ", a narrower one isn't")
+                    + f"; with a dead sensor a gauge-sized {name} gets about {ol['probe_n']:g} N per finger there before "
+                    f"the jaw opens.")
         return out
     motion = grip.get("motion") or {}
     revolute = motion.get("kind") == "revolute"

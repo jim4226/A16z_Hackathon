@@ -80,6 +80,7 @@ Without a world nothing changes.
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import math
 import os
@@ -329,6 +330,8 @@ class _Info:
     grip_effort: float = 0.0        # actuator limit on the gripper joint (N for a jaw pair, N*m for a hinge)
     grip_force_max: float = 0.0     # per-finger force at the gripper actuator's full effort (N)
     grip_open_loop: bool = False    # a hobby servo held grip_close past contact: its position loop sets the squeeze
+    grip_probe_mm: float | None = None   # a hobby servo's force-sensing close reads no further past the gauge contact
+                                         # (mm at the jaw) than this, then gives up and opens (_probe_gives_up)
     excluded: list = field(default_factory=list)
     dropped_parts: list = field(default_factory=list)
     geoms: list = field(default_factory=list)
@@ -885,6 +888,8 @@ def _describe(asm, design, opts: SimOptions, grasp_only: bool = False):
                          "color": _object_color(design), "axis": "z"},
                  grip_kind=kind, grip_contact=float(contact), grasp_offset=offset, lever_mm=lever, grip_speed=speed,
                  grip_effort=effort, grip_force_max=fmax, grip_open_loop=bool(open_mm) and kind in ("prismatic", "revolute"),
+                 grip_probe_mm=(float(asm.meta["grip_probe_mm"]) if (asm.meta or {}).get("grip_probe_mm") is not None
+                                and opts.grip_force_n is None and kind in ("prismatic", "revolute") else None),
                  excluded=sorted(set(excluded)), dropped_parts=dropped, geoms=specs, notes=notes)
     return info, masses
 
@@ -2285,12 +2290,49 @@ def _plan_at(rob, design, fast, s, pick, place, ax_pick, ax_place, hover):
                   "t_release": t_release, "t_released": t_released}
 
 
+def _probe_gives_up(rob: _Robot, perturb) -> dict | None:
+    """A hobby servo with force sensors and no torque limit: its firmware closes looking for a force reading no further
+    than GRIP_PROBE past the gauge contact (electronics2.open_loop_squeeze; info.grip_probe_mm), reads there too, and
+    with none opens and prints "!GRIP no force reading". So a trial's object narrower than the gauge by more than that
+    per jaw is never gripped: {narrower_mm, probe_mm}, or None. (The bench's first reading takes a few hundredths of a
+    millimetre of squeeze more.)"""
+    probe = rob.info.grip_probe_mm
+    s = (perturb or {}).get("size_scale")
+    if probe is None or s is None:
+        return None
+    narrower = rob.R * (1.0 - float(s))
+    return {"narrower_mm": round(narrower, 3), "probe_mm": probe} if narrower > probe + 1e-9 else None
+
+
+def _given_up(rob: _Robot, plan, gave_up: dict):
+    """The plan as the firmware runs it when its force-sensing close gives up: the jaws close to GRIP_PROBE past the
+    gauge contact (short of the object) for as long as the grasp's close takes, then open for the rest of the run."""
+    info = rob.info
+    to = gave_up["probe_mm"] * (1.0 if info.grip_kind == "prismatic" else 1.0 / max(info.lever_mm, 1.0))
+    sgn = 1.0 if info.grip_open >= info.grip_contact else -1.0
+    g_probe = info.grip_contact - sgn * to
+    closing, _ = _grip_times(rob)
+    out, t0 = copy.copy(plan), None
+    g = []
+    for t, gi in zip(plan.t, plan.g):
+        if (gi - info.grip_contact) * sgn < 0:                          # the plan closes past the gauge contact
+            t0 = t if t0 is None else t0
+            g.append(g_probe if t < t0 + closing else info.grip_open)   # to the probe, then open: nothing read
+        else:
+            g.append(gi)
+    out.g = g
+    return out
+
+
 def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
     """Simulate a pick-and-place plan and measure it: (run, metrics). `perturb`: a robustness trial (_simulate; the
-    model changes come from _perturbed around this call); `on_step(t, data, phase)` also sees every step."""
+    model changes come from _perturbed around this call); `on_step(t, data, phase)` also sees every step. A hobby
+    servo's force-sensing close that would read nothing gives up and opens, as its firmware does (_probe_gives_up):
+    the run fails with that named."""
     info = rob.info
     pick, place, e1, e2 = at["pick"], at["place"], at["e1"], at["e2"]
     t_move, t_release, t_released = at["t_move"], at["t_release"], at["t_released"]
+    gave_up = _probe_gives_up(rob, perturb)
     # monitor in-hand slip between the end of the grasp and the release
     st = {"rel0": None, "slip": 0.0, "grip": [], "carry": False}
 
@@ -2302,7 +2344,8 @@ def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
             st["slip"] = max(st["slip"], float(np.linalg.norm(rel - st["rel0"])))
         return True if on_step is None else on_step(t, d, ph)
 
-    run = _simulate(rob, plan, obj_xy=pick[:2], on_step=monitor, perturb=perturb)
+    run = _simulate(rob, _given_up(rob, plan, gave_up) if gave_up else plan, obj_xy=pick[:2], on_step=monitor,
+                    perturb=perturb)
     _label_grip(plan, run)
     fr = run.frames
     carry = [f["grip_n"] for f in fr if f["phase"] in ("lift", "move")]
@@ -2337,6 +2380,14 @@ def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
                     "slip_mm": metrics["max_slip_mm"], "payload_g": design.object.mass_g, "reach_mm": _sized_reach(rob, design)})
     if not metrics["intact"]:
         metrics["success"] = False
+    if gave_up:
+        name = design.object.name or "object"
+        metrics.update(success=False, grip_gave_up=gave_up,
+                       failure=(f"the {name} is {gave_up['narrower_mm']:.2f} mm per jaw narrower than the calibration "
+                                f"gauge, past the {gave_up['probe_mm']:.2f} mm the hobby gripper's force-sensing close "
+                                f"reads to before it gives up (GRIP_PROBE): its firmware opens with !GRIP no force "
+                                f"reading and leaves the {name}"))
+        plan.mark("!GRIP no force reading: the jaws open", at["t_move"])
     if not len(rob.world_geoms) and rob.opts.world:      # a world without boxes: simulated there, nothing to hit
         W = rob.opts.world
         metrics.update({"world": W.get("id", ""), "world_sha": W.get("sha", ""), "world_contacts": [], "clearance_ok": True})

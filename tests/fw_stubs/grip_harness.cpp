@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
   char g[] = "G"; command(g);
   float lowest = gC;
   for (int i = 0; i < 3000; i++) { _ms += 10; tick(0.01f); if (gC < lowest) lowest = gC; }
-  printf("\nRESULT lowest=%.4f final=%.4f closed=%.4f min=%.4f state=%s force=%.3f torque_writes=%d torque=%u pulse=%u zero=%.1f\n",
-         lowest, gC, GRIP_CLOSED, GRIP_MIN, GRIP_NAME[gstate], force, torque_writes, last_torque, grip_pulse, GRIP_ZERO);
+  printf("\nRESULT lowest=%.4f final=%.4f closed=%.4f min=%.4f max=%.4f state=%s force=%.3f torque_writes=%d torque=%u pulse=%u zero=%.1f\n",
+         lowest, gC, GRIP_CLOSED, GRIP_MIN, GRIP_MAX, GRIP_NAME[gstate], force, torque_writes, last_torque, grip_pulse, GRIP_ZERO);
   return 0;
 }

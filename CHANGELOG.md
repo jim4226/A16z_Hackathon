@@ -477,9 +477,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   what the servo holds continuously (its rated torque): 0.49 mm for the can, 10 N against its 13.94 N target and the
   6.97 N it needs not to slip; a 900 g can's target, above the stall, is an issue. F sets that distance, up to the
   servo's rated torque or the object's limit, whichever is lower. With force
-  sensors a close that reads nothing stops where a gauge-sized object gets the firmware's force limit (0.92 mm for an
-  egg), not at the stop. The power budget, the plan's warning, the manual and the simulation use that squeeze, and a
-  hold above the servo's rated torque is a warning.
+  sensors a close that has read nothing by GRIP_PROBE stops there and opens (it went on to the stop): far enough to
+  reach the object at the small end of its size (8 % under nominal) where a dead sensor then stays under 80 % of the
+  stall (0.96 mm for a grape); otherwise (an egg would need 1.92 mm) it stops where a gauge-sized object gets the force
+  limit (0.92 mm), a narrower object isn't gripped, and the plan says so as an issue. The simulation and robustness
+  studies let such an object go too, as "Let go with !GRIP". The power budget, the plan's warning, the manual and the
+  simulation use that squeeze, and a hold above the servo's rated torque is a warning.
 - Teams' change-request preview no longer shows a grip change the build won't make: a new servo supply, servo family
   or build level on the egg-picker read "Grip: grip force target 2.34 → 2.17 N" (New robot's estimate without the
   grasp simulation) and planned the electronics with it. The build keeps the 2.34 N its grasp simulation found, and

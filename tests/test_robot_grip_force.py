@@ -467,12 +467,47 @@ def test_no_hobby_servo_is_commanded_to_stall(tmp_path, name, design):
             assert g["stall_force_n"] * deepest / band <= g["limit_n"] + 0.01 and "!GRIP" not in out
             assert deepest <= band * ol["rated_n"] / g["stall_force_n"] + 1e-3, r      # never past its rated torque
         elif k == 0.0:                                      # no force reading: stops at the probe, opens, says so
-            assert deepest <= ol["probe_mm"] + 0.081 and r["final"] == r["closed"] and r["state"] == "POS", r
-            assert "!GRIP no force reading down to GRIP_PROBE past GRIP_CLOSED" in out
-            assert g["stall_force_n"] * ol["probe_mm"] / band == pytest.approx(g["limit_n"], abs=0.01) or \
-                ol["probe_mm"] == pytest.approx(2 * ol["step_mm"], abs=1e-3)
+            assert deepest == pytest.approx(ol["probe_mm"], abs=1e-3) and r["final"] == r["max"], r
+            assert r["state"] == "POS" and "!GRIP no force reading down to GRIP_PROBE past GRIP_CLOSED: opened to GRIP_MAX" in out
+            assert ol["probe_mm"] <= electronics.PROBE_STALL_SHARE * band + 1e-9            # a fifth short of stall
+            assert ol["probe_n"] == pytest.approx(g["stall_force_n"] * ol["probe_mm"] / band, abs=0.01)
         else:
             assert r["state"] == "HOLD" and abs(r["force"] - g["target_n"]) <= 0.15 * g["target_n"], r
+
+
+@pytest.mark.parametrize("obj, covers", [("egg", False), ("grape", True)])
+def test_a_hobby_force_sensing_close_reaches_the_small_end_of_the_size_or_says_it_cant(tmp_path, obj, covers):
+    """A hobby PWM gripper with force sensors gave up any close that read nothing GRIP_PROBE past the gauge: 0.92 mm for
+    an egg (an egg 1.76 mm per jaw narrower, the robustness study's 92 %, was let go) and two PCA9685 counts for a
+    strawberry, while the simulation and the robustness trials gripped them, and the build read feasible. The probe now
+    reaches the small end of the object's size (OBJECT_SIZE_SPREAD) when a dead sensor then leaves a gauge-sized object
+    under PROBE_STALL_SHARE of the stall; when it can't (the egg would need 1.92 mm, past the stall) the plan says so
+    as an issue. The simulation lets go exactly the sizes the compiled firmware lets go."""
+    from morph import electronics
+
+    d = template("egg-picker").with_changes({**({} if obj == "egg" else object_changes(obj)),
+                                             "arm.actuator_family": "hobby_pwm"})
+    exe, ep = _compile_firmware(tmp_path, d)
+    ol = ep["grip"]["open_loop"]
+    R = d.object.diameter_mm / 2
+    spread = electronics.OBJECT_SIZE_SPREAD * R
+    assert ol["spread_mm"] == pytest.approx(spread, abs=1e-3) and ol["covers"] is covers
+    assert ol["probe_mm"] <= electronics.PROBE_STALL_SHARE * electronics.SERVO_BAND_MM + 1e-9
+    assert (ol["probe_mm"] > spread) is covers
+    told = [i for i in ep["issues"] if "no torque limit to back up the force sensors" in i]
+    assert bool(told) is not covers and (not told or "more than that narrower per jaw isn't gripped" in told[0])
+    sz = arm.size(d)
+    asm = arm.build(d, sz, ep)
+    assert asm.meta["grip_probe_mm"] == ol["probe_mm"]
+    for s in (0.98, 0.95, 0.92):
+        narrower = R * (1 - s)
+        r, out = _run_exe(exe, 20.0, narrower)
+        gripped = r["state"] == "HOLD" and "!GRIP" not in out
+        assert gripped is (narrower <= ol["probe_mm"]) and (gripped or covers is False), (s, r)
+        m = simulate.run(asm, d, "pick_place", perturb={"size_scale": s}, fast=True)["metrics"]
+        assert ("grip_gave_up" not in m) is gripped, (s, m.get("grip_gave_up"))
+        if not gripped:
+            assert not m["success"] and "opens with !GRIP no force reading" in m["failure"], m
 
 
 # ------------------------------------------------------------------ the grip holds what the robot does with it

@@ -3378,7 +3378,10 @@ def grip_meta(eplan: dict | None) -> dict:
     torque limit: its firmware closes it only part of the way to stall past the object (electronics2.open_loop_squeeze),
     so the simulation holds its jaw the same distance past contact (asm.meta["grip_squeeze_mm"]) with the servo's stall
     force as its limit (asm.meta["grip_stall_n"]), and squeezes what that travel gives (asm.meta["grip_squeeze_n"]).
-    asm.meta["grip_limit_n"] is the firmware's hard stop (GRIP_LIMIT_N): the payload sweep's grip-limited payload."""
+    asm.meta["grip_limit_n"] is the firmware's hard stop (GRIP_LIMIT_N): the payload sweep's grip-limited payload. A
+    hobby servo with force sensors gives up a close that has read nothing by GRIP_PROBE past the gauge contact
+    (asm.meta["grip_probe_mm"]) and opens, so a trial with an object narrower than that per jaw is let go, as on the
+    bench (simulate._probe_gives_up)."""
     g = (eplan or {}).get("grip") or {}
     out = {"grip_target_n": g["target_n"]} if g.get("target_n") else {}
     if g.get("limit_n"):
@@ -3389,6 +3392,8 @@ def grip_meta(eplan: dict | None) -> dict:
     ol = g.get("open_loop") or {}
     if not tl and g.get("sensor") != "fsr402" and ol.get("squeeze_mm"):
         out.update(grip_squeeze_n=ol["squeeze_n"], grip_squeeze_mm=ol["squeeze_mm"], grip_stall_n=g["stall_force_n"])
+    if not tl and g.get("sensor") == "fsr402" and ol.get("probe_mm") is not None:
+        out["grip_probe_mm"] = ol["probe_mm"]
     return out
 
 

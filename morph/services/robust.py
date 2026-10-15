@@ -47,6 +47,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from ..electronics import OBJECT_SIZE_SPREAD as SIZE_SPREAD
+
 VERSION = 1
 SCENARIO = "pick_place"
 STUDIES = ".studies"
@@ -161,7 +163,8 @@ def default_spec(design, world=None, preset: str = "standard") -> dict:
         _p("object_across_mm", -8, 8, 0, "assumed: the object is set down by hand"),
         _p("object_along_mm", -8, 8, 0, "assumed: the object is set down by hand"),
         _p("object_yaw_deg", -15, 15, 0, "assumed"),
-        _p("object_size", 0.92, 1.08, 1.0, "USDA egg weight classes, medium to jumbo" if egg else "assumed"),
+        _p("object_size", 1.0 - SIZE_SPREAD, 1.0 + SIZE_SPREAD, 1.0,
+           "USDA egg weight classes, medium to jumbo" if egg else "assumed"),
         _p("object_mass_g", 50 if egg else round(0.85 * m, 1), 72 if egg else round(1.15 * m, 1), m,
            "USDA egg weight classes, medium (50 g) to jumbo (72 g)" if egg else "assumed: +/-15 %"),
         _p("pad_friction", 0.7, 1.3, 1.0, "assumed"),
@@ -449,6 +452,7 @@ PHASES = {"approach": "the approach", "grasp": "the grasp", "lift": "the lift", 
           "place": "the set-down", "release": "the release", "retreat": "the way back"}
 LABELS = {"jam": "Jaws stayed shut at release: the {obj} was carried away", "drag": "Dragged off the target",
           "missed_grasp": "Missed the grasp", "dropped": "Dropped on the way",
+          "no_force_reading": "Let go with !GRIP: the {obj} was narrower than the force-sensing close reaches",
           "over_force": "Squeezed harder than the {obj} can take", "unreachable": "Out of reach",
           "world_collision": "Hit a box in the room during {phase}", "error": "The simulation stopped with an error",
           "unstable": "Numerically unstable (not counted)"}
@@ -1044,6 +1048,8 @@ class Runner:
         group = phase = None
         if any(warns[w] for w in UNSTABLE) or not np.all(np.isfinite(final)):
             outcome = "unstable"
+        elif met.get("grip_gave_up"):      # a hobby gripper's force-sensing close read nothing and opened (!GRIP)
+            outcome = "no_force_reading"
         elif ok:
             outcome = "placed"
         elif contacts:
