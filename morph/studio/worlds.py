@@ -1167,7 +1167,8 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     closest distance measured anywhere, the second pass's exact ones or the first pass's coarse robot samples to the
     scan's points (a real distance, so the arm comes at least that close), with stats["lower_mm"] a lower bound when
     every pose was bounded, ["poses_checked"] of ["unique_poses"], ["part_clear"] when every pose looked at stays
-    beyond SCAN_CUT_MM, and ["need_s"] the time the whole check would take at this pace. A second pass cut short
+    beyond SCAN_CUT_MM, and ["need_s"] about the time the whole check would take at this pace (cut in the first pass,
+    the second counted as long as the first). A second pass cut short
     after the closest point was measured (nothing left could come closer) is not truncated: stats["unlisted_mm"]
     then says how close the near misses not listed could be."""
     import mujoco
@@ -1501,8 +1502,8 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         stats["lower_mm"] = round(math.floor(lower * 10.0) / 10.0, 1) if lower > 0.0 else None
         stats["part_clear"] = bool(visited.any() and close["d"] >= SCAN_CUT_MM
                                    and float(lb[visited].min(initial=math.inf)) >= SCAN_CUT_MM)
-        if cut1:                                        # at this pace: pass 1 for every pose, pass 2 not counted
-            need = stats["prepare_s"] + stats["pass1_s"] * unique / max(1, int(visited.sum()))
+        if cut1:                                        # at this pace: pass 1 for every pose, and pass 2 as long
+            need = stats["prepare_s"] + 2.0 * stats["pass1_s"] * unique / max(1, int(visited.sum()))   # (it took 0.5-5x)
         else:
             todo = int(np.sum(lb < limit))
             need = stats["prepare_s"] + stats["pass1_s"] + stats["pass2_s"] * todo / max(1, refined)

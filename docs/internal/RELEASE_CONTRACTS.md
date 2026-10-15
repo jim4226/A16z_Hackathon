@@ -1346,35 +1346,36 @@ field failure rate (section 0, honesty).
   or pass 1's coarse robot samples to the scan's points (a real distance: the arm comes at least that close; `at` names
   that sample's link, time and scan point), `stats.lower_mm` a lower bound when every pose was bounded,
   `stats.poses_checked` of `stats.unique_poses`, `stats.part_clear` when it looked at a pose and every one it looked at
-  stays beyond 50 mm, and `stats.need_s` what the whole check would take at this pace. A second pass cut short after the
-  closest point is measured (every pose and point left has a bound at or above it) is not truncated; `stats.unlisted_mm`
-  then bounds the near misses not listed. Measured on the review's desk scan (2,872 triangles near the arm, 667 poses,
-  the 9.0 mm vase near miss), alternating with 22bec48 at the default 20 s and load 11-13: 22bec48 took 16.4-17.8 s and
-  was cut short in 2 of 4 runs; R4 took 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and was never cut short. The
-  same scan with the mount moved 15 mm (the wrist touching the vase, 0.2 mm): 7.8-12.4 s at load 2-4 and 17.2 s at load
-  8, against 21-30 s at load 4-5 before, which a 20 s check always cut short. Per-pose distances, the closest point and
-  the regions are identical to 22bec48 on the desk scan's three revisions (with and without the box, and moved).
-  Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm over whole runs); a
-  generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1 1.3 s; `MORPH_SLOW=1`). `scan_check(scan)` is the
-  check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer than 10 mm, touching, or
-  checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured against the scanned surface,
-  which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it. R4, cut short: "The wrist comes
-  within at most 4.6 mm of the scanned surface at 1.4 s" (plus "(no closer than 3.0 mm)" with `lower_mm`), or "touches
-  or passes through" below 0.5 mm; "In the part of the path checked (25% of it, or less than 1% of it), the arm stays
-  more than 50 mm ..." only with `part_clear`, else "There wasn't time to measure how close the arm comes ..."; never
-  "At least" or "more than 50 mm" otherwise. Then "Only part of the path was measured in the 20 s a check has (a large
-  scan or a busy computer)", followed by "checking again when the computer is less busy may measure all of it" or, when
-  `need_s` is more than `SCAN_RETRY_FACTOR` (2) times the limit, "at this pace, measuring all of it would take more than
-  twice that, so checking again helps only on a much less busy computer"; a near miss without a region adds "There
-  wasn't time to measure that place closely enough to offer a box for it."; `unlisted_mm` adds "Time ran out before
-  every place closer than 10 mm was listed; any other is at least X mm from the arm." `checks(..., scan=)` and
-  `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it (`_ADVICE["scan"]`). `POST
-  /api/world/inspect` measures it when the world has `room.glb` and the revision was simulated in this room as it is now
-  (else a skip saying so), kept in memory per (project, revision, world sha, room file size and mtime), the last eight
-  (R3: not when the check was cut short or a box's fit ran out of time, so checking again measures again; R4: an answer
-  whose list of near misses alone was cut short, `unlisted_mm`, is kept); it sends `world {stage: "scan", status:
-  "start" | "done", text}` ("Closest to the scan: at most 4.6 mm ... (cut short)" when cut short) and an `agent` event
-  (`feasibility`, `code`).
+  stays beyond 50 mm, and `stats.need_s` about what the whole check would take at this pace (cut in the first pass, the
+  second counted as long as the first: it took 0.5 to 5 times as long in the scans measured). A second pass cut short
+  after the closest point is measured (every pose and point left has a bound at or above it) is not truncated;
+  `stats.unlisted_mm` then bounds the near misses not listed. Measured on the review's desk scan (2,872 triangles near
+  the arm, 667 poses, the 9.0 mm vase near miss), alternating with 22bec48 at the default 20 s and load 11-13: 22bec48
+  took 16.4-17.8 s and was cut short in 2 of 4 runs; R4 took 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and was
+  never cut short. The same scan with the mount moved 15 mm (the wrist touching the vase, 0.2 mm): 7.8-12.4 s at load
+  2-4 and 17.2 s at load 8, against 21-30 s at load 4-5 before, which a 20 s check always cut short. Per-pose distances,
+  the closest point and the regions are identical to 22bec48 on the desk scan's three revisions (with and without the
+  box, and moved). Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm over
+  whole runs); a generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1 1.3 s; `MORPH_SLOW=1`).
+  `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer
+  than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured
+  against the scanned surface, which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it. R4,
+  cut short: "The wrist comes within at most 4.6 mm of the scanned surface at 1.4 s" (plus "(no closer than 3.0 mm)"
+  with `lower_mm`), or "touches or passes through" below 0.5 mm; "In the part of the path checked (25% of it, or less
+  than 1% of it), the arm stays more than 50 mm ..." only with `part_clear`, else "There wasn't time to measure how
+  close the arm comes ..."; never "At least" or "more than 50 mm" otherwise. Then "Only part of the path was measured in
+  the 20 s a check has (a large scan or a busy computer)", followed by "checking again when the computer is less busy
+  may measure all of it" or, when `need_s` is more than `SCAN_RETRY_FACTOR` (2) times the limit, "at this pace,
+  measuring all of it would take more than twice that, so checking again helps only on a much less busy computer"; a
+  near miss without a region adds "There wasn't time to measure that place closely enough to offer a box for it.";
+  `unlisted_mm` adds "Time ran out before every place closer than 10 mm was listed; any other is at least X mm from the
+  arm." `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
+  (`_ADVICE["scan"]`). `POST /api/world/inspect` measures it when the world has `room.glb` and the revision was
+  simulated in this room as it is now (else a skip saying so), kept in memory per (project, revision, world sha, room
+  file size and mtime), the last eight (R3: not when the check was cut short or a box's fit ran out of time, so checking
+  again measures again; R4: an answer whose list of near misses alone was cut short, `unlisted_mm`, is kept); it sends
+  `world {stage: "scan", status: "start" | "done", text}` ("Closest to the scan: at most 4.6 mm ... (cut short)" when
+  cut short) and an `agent` event (`feasibility`, `code`).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
   the box size, its distance from the path and whether it was trimmed, or why there is no box) and **Add box here**
   (only with a box): the box joins the world's grey boxes as `{id: region id (made unique), label,
