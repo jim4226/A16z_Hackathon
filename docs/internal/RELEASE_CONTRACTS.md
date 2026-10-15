@@ -1634,3 +1634,13 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   `grip_squeeze_mm` past contact with the stall force as its limit (`info.grip_open_loop`), and a robustness study's
   `grip_scale` scales that servo's gain too. `tests/fw_stubs/grip_harness.cpp` also runs a PCA9685 sketch (`pulse`, the
   gripper channel's last pulse) and takes an F before G as `argv[3]`.
+- **New robot's preflight and Teams' preview never run the stock jaw's seat search.** `imported.grasp_lever(design,
+  sizing, quick=True)` and `imported.gripper_summary(..., quick=True)` (what `brief.preflight`, and through it Teams'
+  `impact`, call) take the lever the build worked out for this object (`_LEVERS`, keyed by `_lever_key`), or for one of
+  its shape within `NEAR_MM` (2 mm) of its diameter and length, else the profile's `jaw_lever_mm` (`JAW_LEVER_MM`, 70 mm
+  mid-jaw), and mark the force plan `lever_estimated`. The build's gripper stage (`pipeline2.gripper_stage`) always
+  searches. The search puts the SO-101's objects 20-66 mm across 62.2-79.8 mm from the pivot, so the estimate's stall
+  force and stall-capped limit are within 15 % of the build's; the target (the object's window) and a damage-capped
+  limit are the build's. Measured on the SO-101 (load 5-15, wall): preflight of a soda can 28.3 s -> 4.1 s (CPU 24.9 ->
+  2.7 s, the rest is sizing for its new mass), each new egg diameter 2.8-8.9 s -> 0.0 s; Teams' preview of a soda-can
+  change 39.5 s -> 11.5 s, of a 42 mm egg 15.9 s -> 3.2 s.

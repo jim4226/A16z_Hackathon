@@ -214,6 +214,50 @@ def test_the_gripper_torque_limit_comes_from_the_grip():
     assert [i for i in pwm[2]["issues"] if "the least it can close past the strawberry" in i]
 
 
+def test_new_robot_and_teams_estimate_the_stock_jaws_lever_without_searching(tmp_path, monkeypatch):
+    """New robot's preflight and Teams' change-request preview ran the simulation's seat search for every new object
+    size on an imported robot, inside the request: 28 s for a soda can on the SO-101, 3-9 s for each egg size. They now
+    take the lever the build worked out for that object (or for one of its shape within 2 mm of its size), else the
+    jaw's mid-jaw lever (70 mm). The search itself puts the SO-101's objects 20-66 mm across 62-80 mm from the pivot,
+    so the estimate's stall force is within 15 % of the build's; the grip target comes from the object's window and
+    is the build's."""
+    from morph.robot.pipeline2 import ORDER, RobotProject
+    from morph.studio import brief
+    from morph.studio.teams import impact
+
+    egg = template("so101", "so101")
+    sz = imported.size(egg)
+    builds = {o: imported.gripper_summary(egg.with_changes(object_changes(o)), sz)["force"] for o in ("raw egg", "strawberry")}
+    monkeypatch.setattr(simulate, "grasp_lever", lambda *a, **k: pytest.fail("the seat search ran inside a request"))
+    for o, built in builds.items():                  # the build worked these out: the preflight takes them as they are
+        f = brief.preflight(egg.with_changes(object_changes(o)).flat())["grip"]
+        assert (f["lever_mm"], f["target_force_n"], f["limit_n"]) == (built["lever_mm"], built["target_force_n"],
+                                                                      built["limit_n"]) and "lever_estimated" not in f
+    near = brief.preflight(egg.with_changes({"object.diameter_mm": 43.0}).flat())["grip"]   # a 1 mm smaller egg
+    assert near["lever_mm"] == builds["raw egg"]["lever_mm"] and near["lever_estimated"]
+    can = brief.preflight(egg.with_changes(object_changes("soda can")).flat())
+    f = can["grip"]
+    assert f["lever_mm"] == imported.JAW_LEVER_MM and f["lever_estimated"] and can["ms"] < 20000
+    hold = 0.37 * 9.81 / (2 * 0.35)                   # the can's window: 3 x its static hold, whatever the lever
+    assert f["target_force_n"] == pytest.approx(3 * hold, abs=0.01)
+    for built in builds.values():
+        assert abs(imported.JAW_LEVER_MM / built["lever_mm"] - 1) < 0.15
+    # Teams' preview of an object change on a built SO-101 goes through the same preflight
+    root = tmp_path / "so101"
+    (root / "r001").mkdir(parents=True)
+    ep = electronics2.plan(egg, sz, grip=builds["raw egg"])
+    res = {"rev": "r001", "kind": "robot", "sizing": sz, "eplan": ep, "gripper": {"force": builds["raw egg"]},
+           "provenance": {s: "computed" for s in ORDER}, "summary": {"unit_cost": 300.0, "issues": []}}
+    for k in [k for s in ORDER for k in RobotProject._keys(s)]:
+        res.setdefault(k, {"computed_in": "r001"})
+    (root / "meta.json").write_text(json.dumps({"kind": "robot"}), encoding="utf-8")
+    (root / "r001" / "design.json").write_text(json.dumps(egg.to_dict()), encoding="utf-8")
+    (root / "r001" / "results.json").write_text(json.dumps(res), encoding="utf-8")
+    out = impact.impact(str(root), "r001", object_changes("soda can"))
+    grip = next(r for r in out["rows"] if r["key"] == "grip")
+    assert not out.get("error") and grip["text"] == f"grip force target 4.58 → {f['target_force_n']:g} N"
+
+
 @pytest.mark.parametrize("obj", ["strawberry", "raw egg"])
 def test_the_simulation_squeezes_a_stock_jaw_with_the_firmwares_torque_limit(obj):
     """The torque limit was set for the target 70 mm from the SO-101's pivot, but the simulation grasps the egg 62.2 mm

@@ -1324,7 +1324,7 @@ def preflight(changes: dict) -> dict:
         if d.arm.source:
             from ..robot import imported
             sz = _imported_size(d)
-            f = imported.gripper_summary(d, sz)["force"]
+            f = imported.gripper_summary(d, sz, quick=True)["force"]   # the stock jaw's lever estimated, never searched
         else:
             from ..robot import arm
             sz = arm.size(d)
