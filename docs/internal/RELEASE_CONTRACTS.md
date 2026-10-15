@@ -44,7 +44,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}`. `projects.create(meta=)` adds keys but never sets kind, created_utc, created_by, origin, demo or source (those come from its own arguments) |
 | `<p>/rNNN/` | pipeline | unchanged; names sort numerically (W0b) |
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
-| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs; `.morph/queue-<studio>.jsonl`: a Studio's queue journal for the room while jobs are open; `.morph/first-build.json`: a first build that waits to be asked for again (W3, section 2) |
+| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs; `.morph/queue-<studio>.jsonl`: a Studio's queue journal for the room while jobs are open; `.morph/first-build.json`: a first build that waits to be asked for again (W3, section 2); `.morph/first-build.lock`: the OS lock one Studio at a time holds while it decides whether to queue a first build (W3, section 2) |
 | `<p>/brief.json` | F1 | the final brief that created the project |
 | `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
 | `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
@@ -197,7 +197,7 @@ class Request:
 
 | Area | Routes |
 |---|---|
-| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds and for the start project) |
+| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, and for the start project) |
 | W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?, edit?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting; `edit: true` skips the chat routing of section 3); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
 | F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
@@ -279,7 +279,18 @@ Morph Studio on this projects folder is still working on it"); otherwise every j
   build ended with an error, so it has no revision yet. To try once more, send "build it again" ...", and "build it
   again" queues it once more. "Wait for its first build" is said only while one waits or runs; a project with no
   revision and nothing kept to build says "... Morph kept no design to build it again: delete the project from the
-  project menu and make it again.";
+  project menu and make it again.". Two Studios on one projects folder (`Studio._no_revision_yet`): while another
+  Studio that still runs has the project's first build queued or building (an open `build` in a live journal), an edit
+  and "build it again" are answered "Another Morph Studio on this projects folder is building <project>'s first
+  design; wait for it there." and nothing is queued; Delete project is refused (409) while any live journal of another
+  Studio is in the project (`Studio.held_elsewhere`). A first build that a Studio which stopped while this one ran
+  left open in its journal counts as kept (`Studio._kept_first`): "build it again" builds it from that design, sets
+  the stopped build's revision aside and removes that journal. Whether to queue a first build is decided by one
+  process at a time, under an OS lock on `<p>/.morph/first-build.lock` (`rooms.first_build_turn`, also taken by
+  `Studio._recover` for a project with journals), so two Studios asked at once queue it once. A delete in one Studio
+  and a job queued in another at the same instant are not serialised (the window is the time between the check and
+  the move to `.trash`). On a file system that can't lock, every other Studio's journal reads as a stopped one's, as
+  the start-up warning says;
 - every other open job gets one assistant line, "The Studio stopped before this was built: “<label>”. Send it again if
   you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own.
   A job whose revision was written before the stop took its `ended` line with it (one of the newest 12 finished
@@ -293,9 +304,10 @@ Morph Studio on this projects folder is still working on it"); otherwise every j
   `rooms.owner_live` leaves it to that Studio, as for the queue journals. A build that ends after its request was
   reopened anyway (a file system that can't lock) still records its revision: `done` with a revision makes an open
   request applied again (`collab._proposal_state`).
-New robot's Build on a brief that reads "building" answers `already: true` only while its project builds or has a
-finished revision (`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's
-own empty project goes to `.trash` first, so the name is kept).
+New robot's Build on a brief that reads "building" answers `already: true` only while its project builds (here, or
+in another Studio still running on the same projects folder: `Studio.held_elsewhere`) or has a finished revision
+(`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's own empty project
+goes to `.trash` first, so the name is kept).
 
 ## 3. Live events (SSE)
 

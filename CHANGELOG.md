@@ -404,7 +404,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Studio. "Build it again" sent again while that build runs is answered at once (it is already being built), not with
   "I couldn't map that" once it ends. A first build that ends with an error (not a stop) can be tried again too:
   "build it again" in its chat builds it once more (it was answered "Wait for its first build", for a build that would
-  never come).
+  never come). With two Studios on one projects folder, a project whose first build the other Studio is running is
+  answered "Another Morph Studio on this projects folder is building <project>'s first design; wait for it there." (it
+  was told Morph kept no design and to delete the project), "build it again" there queues nothing (two Studios could
+  each build a first revision, r001 and r002), Delete project is refused while the other Studio builds it or has
+  changes of it waiting (it moved the project to `.trash` mid-build), and New robot's Build on that project's brief no
+  longer moves it to `.trash` to make a second one. A first build left open by a Studio that stopped while this one
+  ran is built by "build it again" here (it read "Morph kept no design").
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

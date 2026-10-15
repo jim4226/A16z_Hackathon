@@ -10,6 +10,7 @@ pipeline builds run at once across rooms.
 from __future__ import annotations
 
 import collections
+import contextlib
 import contextvars
 import json
 import os
@@ -137,6 +138,26 @@ def journal_live(path: str, home: str) -> bool:
     """True when the Studio that writes the journal at `path` still runs (another Studio on the same projects folder:
     its jobs are its own). This process's own journal and an older one without an owner are never live."""
     return owner_live(home, journal_owner(path))
+
+
+FIRST_BUILD_TURN = os.path.join(".morph", "first-build.lock")
+
+
+@contextlib.contextmanager
+def first_build_turn(root: str, wait: float = 5.0):
+    """One process at a time decides whether project folder `root` gets its first build queued (Studio._recover_project
+    at a start, Studio._no_revision_yet on "build it again"): an OS lock on <root>/.morph/first-build.lock, held while
+    it reads the other Studios' journals and writes its own, so two Studios asked at once never both queue it. The file
+    stays (removing it would let two processes each lock a file of their own). After `wait` seconds (a process that
+    hangs holding it) it goes on without the lock."""
+    lock = durable.BuildLock(os.path.join(root, FIRST_BUILD_TURN))
+    end = time.monotonic() + wait
+    while not lock.acquire() and time.monotonic() < end:
+        time.sleep(0.01)
+    try:
+        yield
+    finally:
+        lock.release(remove=False)
 
 
 def open_jobs(path: str) -> list:

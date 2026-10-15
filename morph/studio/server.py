@@ -45,8 +45,9 @@ from ..services import durable
 from ..spec import diff
 from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
-from .rooms import (REQUESTER, RESUMED, STARTED, Hub, Job, QueueFull, Room, UnknownProject,  # noqa: F401  (Hub: older
-                    claim, journal_live, journals, open_jobs)  # code imports it from here)
+from .rooms import (OWNER, REQUESTER, RESUMED, STARTED, Hub, Job, QueueFull, Room,  # noqa: F401  (Hub: older code
+                    UnknownProject, claim, first_build_turn, journal_live, journal_owner, journals,  # imports it
+                    open_jobs)  # from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
                        looks_like_secret, param_changes, project_name, secret_refused)
@@ -316,6 +317,12 @@ class Studio:
 
     def _recover_project(self, name: str, set_aside: list):
         root = os.path.join(self.home, name)
+        if not journals(root):
+            return self._recover_open(name, root, set_aside)
+        with first_build_turn(root):  # a Studio running on this folder may be asked for the same first build right now
+            return self._recover_open(name, root, set_aside)
+
+    def _recover_open(self, name: str, root: str, set_aside: list):
         paths = journals(root)
         if any(journal_live(path, self.home) for path in paths):  # that Studio's lock is held: it still runs
             print(f"{name}: another Morph Studio on this projects folder is still working on it; leaving its queue alone")
@@ -467,29 +474,81 @@ class Studio:
 
     def _no_revision_yet(self, room: Room, job, msg: str | None = None):
         """A change asked of a project with no finished revision: there is nothing to change yet. A first build that
-        waits to be asked for again (_park) starts when the message is "build it again" (AGAIN)."""
-        parked = projects.parked_first_build(room.p.root) or room.first_build
-        if parked is None:
-            if any(j.get("kind") == "build" for j in room.jobs.snapshot()):
+        waits to be asked for again (_park, _failed_first, or one a Studio that stopped meanwhile left in its journal:
+        _kept_first) starts when the message is "build it again" (AGAIN). One that another Studio still running on this
+        projects folder builds is that Studio's: nothing is queued here, and nobody is told to delete the project it is
+        writing into."""
+        asked = msg is not None and self.AGAIN.fullmatch(msg.strip()) is not None
+        here = any(j.get("kind") == "build" for j in room.jobs.snapshot())
+        if not here and self._first_build_elsewhere(room.p.root):
+            return self._elsewhere(room, job, asked)
+        kept, stale = self._kept_first(room)
+        if kept is None:
+            if here:
                 return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing "
                                                      "to change. Wait for its first build.")
             return self._say(room, job, "error", f"{room.name} has no finished revision yet, its first build isn't "
                                                  "running and Morph kept no design to build it again: delete the "
                                                  "project from the project menu and make it again.")
-        if msg is None or not self.AGAIN.fullmatch(msg.strip()):
+        if not asked:
             return self._say(room, job, "error", f"{room.name} has no finished revision yet, and its first build isn't "
                                                  "running: send \"build it again\" to try it once more, or delete the "
                                                  "project from the project menu.")
-        if any(j.get("kind") == "build" for j in room.jobs.snapshot()):
+        if here:
             return self._say(room, job, "noop", f"{room.name}'s first design is already being built.", noop=True)
         try:
-            design = projects.as_design(parked["design"])
+            design = projects.as_design(kept["design"])
         except ValueError as exc:
             return self._say(room, job, "error", f"Its design can't be read ({exc}). Delete this project, or make it again.")
-        again = self.queue_build(room, design, label=str(parked.get("label") or "first design")[:48],
-                                 by=job.by if job is not None else None, cut=_count(parked.get("cut")))
+        label = str(kept.get("label") or "first design")
+        label = label[:-len(self.REBUILT)] if label.endswith(self.REBUILT) else label
+        with first_build_turn(room.p.root):  # another Studio asked at the same moment decides before or after this one
+            if self._first_build_elsewhere(room.p.root):
+                return self._elsewhere(room, job, asked)
+            if (rev := room.latest()) is not None:  # another Studio built it since this message was read
+                return self._say(room, job, "noop", f"{room.name}'s first design has just been built ({rev}).", noop=True)
+            if stale:  # a Studio that stopped mid-build: its cut-off revision goes aside, so this build takes the number
+                projects.set_aside_unfinished(room.p, say=print)
+            again = self.queue_build(room, design, label=label[:48], by=job.by if job is not None else None,
+                                     cut=_count(kept.get("cut")))
+            for path in stale:  # built here now: a later start doesn't build it a second time
+                _remove(path)
         self._resumed(room, again)
         return self._say(room, job, "noop", f"Building {room.name}'s first design again.", noop=True)
+
+    def _elsewhere(self, room: Room, job, asked: bool):
+        return self._say(room, job, "noop" if asked else "error", f"Another Morph Studio on this projects folder is "
+                         f"building {room.name}'s first design; wait for it there.", **({"noop": True} if asked else {}))
+
+    def _first_build_elsewhere(self, root: str) -> bool:
+        """Another Studio still running on this projects folder has the first build of project folder `root` queued or
+        building (its queue journal there is live, rooms.journal_live): that build is its own."""
+        return any(e.get("kind") == "build" for path in journals(root) if journal_live(path, self.home)
+                   for e in open_jobs(path))
+
+    def held_elsewhere(self, root: str) -> bool:
+        """Another Studio still running on this projects folder builds project folder `root` or has changes of it
+        waiting (a live queue journal there): the project is not this Studio's to delete."""
+        return any(journal_live(path, self.home) for path in journals(root))
+
+    def _kept_first(self, room: Room) -> tuple:
+        """(the first build `room` keeps to be asked for again, the stopped Studios' journals that building it here
+        settles). It is the parked or failed one (projects.FIRST_BUILD, or the room's record when the disk refused
+        the file), else one a Studio that stopped while this one ran left open in its queue journal (the next start
+        would build it again: Studio._recover). (None, []) when there is none."""
+        kept, stale = projects.parked_first_build(room.p.root) or room.first_build, []
+        for path in journals(room.p.root):
+            if journal_owner(path) == OWNER or journal_live(path, self.home):
+                continue
+            first = next((e for e in open_jobs(path) if e.get("kind") == "build" and isinstance(e.get("design"), dict)),
+                         None)
+            if first is None:
+                continue
+            stale.append(path)
+            if kept is None:
+                kept = {"design": first["design"], "label": first.get("label"), "by": first.get("by"),
+                        "cut": _count(first.get("cut")) + (1 if first.get("started") else 0)}
+        return kept, stale
 
     @property
     def p(self) -> RobotProject:
@@ -566,7 +625,8 @@ class Studio:
 
     def delete_project(self, name: str) -> str:
         """Move a project to MORPH_HOME/.trash (projects.delete) and close its room; tabs on it are told. Refused while
-        it builds or has changes waiting, and for the project the Studio started on."""
+        it builds or has changes waiting, here or in another Studio still running on this projects folder, and for the
+        project the Studio started on."""
         if name == self.start:
             raise Refused(f"{name} is the project this Studio started on; start the Studio on another project "
                                   "to delete it.")
@@ -577,6 +637,9 @@ class Studio:
         if room.jobs.busy() or not room.lock.acquire(blocking=False):
             raise Refused(f"{name} is building or has changes waiting: delete it when its queue is empty.")
         try:
+            if self.held_elsewhere(root):
+                raise Refused(f"Another Morph Studio on this projects folder is building {name} or has changes of it "
+                              "waiting: delete it there, or here once its queue there is empty.")
             from . import jobs
             jobs.stop(self, name)  # its robustness study first (finished runs are kept, in the trash with the project)
             _tools_gone(self, name)  # and its agent runs that wait or work: none continues in a project of that name

@@ -402,6 +402,108 @@ def test_an_empty_project_with_nothing_kept_to_build_says_so(home, builds):
     assert builds.built == [] and kb1.completed() == []
 
 
+ELSEWHERE = "Another Morph Studio on this projects folder is building kb1's first design; wait for it there."
+
+
+def test_a_first_build_another_running_studio_builds_is_left_to_it(home, builds):
+    """Two Studios on one projects folder: while the other one builds kb1's first design, this one says so to an edit
+    and to "build it again", queues no second first build, never advises deleting the project, and refuses Delete
+    project (it said "Morph kept no design ... delete the project", and deleting moved kb1 to .trash mid-build)."""
+    journal = cut_off_first_build(home, owner="feedfacecafebeef")          # its journal: queued, started
+    other = hold(home / ".studios" / "feedfacecafebeef.lock", RobotProject(str(home / "kb1")).build_lock("r001"))
+    try:
+        st = server.Studio(RobotProject(str(home / "egg")), str(home))
+        kb1 = st.room("kb1")
+        for ask in (lambda: st.queue_chat(kb1, "make it lighter"), lambda: st.queue_chat(kb1, "build it again"),
+                    lambda: st.queue_params(kb1, {"build.quantity": 4})):
+            finish(ask())
+            assert texts(kb1)[-1] == ELSEWHERE and not kb1.jobs.busy()
+        assert not any("delete" in t.lower() or "kept no design" in t for t in texts(kb1))
+        with pytest.raises(server.Refused, match="Another Morph Studio on this projects folder"):
+            st.delete_project("kb1")
+        assert journal.exists() and (home / "kb1" / "r001" / "design.json").exists() and not (home / ".trash").exists()
+        assert builds.built == []
+    finally:
+        other.stdin.close()
+        other.wait(10)
+
+
+def test_build_it_again_in_a_second_studio_while_the_first_rebuilds_queues_nothing(home, builds):
+    """kb1's first build ended with an error; Studio A got "build it again" and rebuilds it. Studio B getting "build
+    it again" too queued a second build: two parentless first revisions, r001 and r002."""
+    from morph.studio import projects
+    cut_off_first_build(home, owner="feedfacecafebeef")                    # A's rebuild, under way
+    projects.park_first_build(str(home / "kb1"), {"design": Design().to_dict(), "label": "first design", "by": None,
+                                                  "cut": 0, "error": "[Errno 13] Permission denied"})
+    other = hold(home / ".studios" / "feedfacecafebeef.lock", RobotProject(str(home / "kb1")).build_lock("r001"))
+    try:
+        st = server.Studio(RobotProject(str(home / "egg")), str(home))
+        kb1 = st.room("kb1")
+        for msg in ("build it again", "make it lighter"):
+            job = st.queue_chat(kb1, msg)
+            finish(job)
+            assert texts(kb1)[-1] == ELSEWHERE and not kb1.jobs.busy(), texts(kb1)
+        assert builds.built == [] and job.status == "error"
+    finally:
+        other.stdin.close()
+        other.wait(10)
+
+
+@pytest.mark.parametrize("meanwhile", ["queued", "built"])
+def test_two_studios_asked_to_build_it_again_at_once_build_it_once(home, builds, meanwhile):
+    """Whether to queue a first build is decided by one Studio at a time (an OS lock in the project): a Studio that
+    waited for it reads what the other one did meanwhile (queued the build, or even finished it) and queues nothing."""
+    from morph.studio import projects
+    root = home / "kb1"
+    (root / ".morph").mkdir(parents=True)
+    (root / "meta.json").write_text(json.dumps({"kind": "robot", "source": "", "need": "kb1"}), encoding="utf-8")
+    projects.park_first_build(str(root), {"design": Design().to_dict(), "label": "first design", "by": None, "cut": 0,
+                                          "error": "[Errno 13] Permission denied"})
+    deciding = hold(root / ".morph" / "first-build.lock")                   # the other Studio is deciding right now
+    other = None
+    try:
+        st = server.Studio(RobotProject(str(home / "egg")), str(home))
+        kb1 = st.room("kb1")
+        job = st.queue_chat(kb1, "build it again")
+        assert not job.wait(0.5)                                            # waits for its turn to decide
+        if meanwhile == "queued":                                           # ... the other one queued its build
+            entry = {"op": "queued", "id": "a1b2c3d4e5f6", "kind": "build", "label": "first design",
+                     "studio": "feedfacecafebeef", "ts": time.time(), "design": Design().to_dict()}
+            (root / ".morph" / "queue-feedfacecafebeef.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
+            other = hold(home / ".studios" / "feedfacecafebeef.lock")
+        else:                                                               # ... and even built it
+            make_project(home, "kb1")
+        deciding.stdin.close()
+        deciding.wait(10)
+        finish(job)
+        said = texts(kb1)[-1]
+        assert said == (ELSEWHERE if meanwhile == "queued" else "kb1's first design has just been built (r001).")
+        assert not kb1.jobs.busy() and builds.built == []
+    finally:
+        for proc in (deciding, other):
+            if proc is not None and proc.poll() is None:
+                proc.stdin.close()
+                proc.wait(10)
+
+
+def test_a_first_build_a_studio_that_stopped_meanwhile_left_is_built_here_when_asked(home, builds):
+    """The other Studio stopped (crashed) during kb1's first build while this one ran: its journal keeps the design, so
+    this Studio says "build it again" (not "Morph kept no design: delete the project") and builds it from there; the
+    stopped Studio's cut-off r001 is set aside and its journal goes (a later start doesn't build it a second time)."""
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    journal = cut_off_first_build(home, owner="feedfacecafebeef")          # after this Studio started: no recovery
+    kb1 = st.room("kb1")
+    finish(st.queue_chat(kb1, "make it lighter"))
+    said = texts(kb1)[-1]
+    assert 'send "build it again"' in said and "kept no design" not in said, said
+    finish(st.queue_chat(kb1, "build it again"))
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert "Building kb1's first design again." in texts(kb1)
+    assert kb1.completed() == ["r001"] and kb1.p.load_design("r001").build.quantity == 5
+    assert not journal.exists() and [n for n in os.listdir(home / "kb1") if n.startswith("r001.incomplete-")]
+    assert builds.built == [("kb1", "r001", None, "first design")]
+
+
 def test_the_parked_first_build_message_never_blames_the_design():
     for terminal in (False, True):
         text = server.Studio._parked_text("kb1", 2, terminal=terminal)
@@ -522,6 +624,31 @@ def test_build_again_on_a_brief_whose_project_never_got_a_build_makes_it_anew(ho
         time.sleep(0.05)
     settled()
     assert room.completed() == ["r001"] and os.path.exists(home / "berry-bot" / "brief.json")
+
+
+def test_build_on_a_brief_whose_project_another_studio_builds_never_trashes_it(home, builds, monkeypatch):
+    """Build asked again for a brief whose project another Studio on this projects folder is building: that project is
+    on its way. This Studio, seeing it empty and idle in its own queue, moved it to .trash and made a second one."""
+    monkeypatch.setenv("MORPH_OFFLINE", "1")
+    monkeypatch.setattr(api_brief, "STORE", api_brief.Store())
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    bid = _ready_brief(st.home)
+    b = B.load_draft(st.home, bid)
+    b.status, b.project = "building", "berry-bot"
+    B.save_draft(b, st.home)
+    cut_off_first_build(home, name="berry-bot", owner="feedfacecafebeef")
+    (home / "berry-bot" / "meta.json").write_text(json.dumps({"kind": "robot", "origin": "brief", "brief_id": bid}),
+                                                  encoding="utf-8")
+    other = hold(home / ".studios" / "feedfacecafebeef.lock")
+    try:
+        monkeypatch.setattr(api_brief, "STORE", api_brief.Store())
+        status, out = _build_brief(st, bid)
+        assert status == 200 and out.get("already") and out["project"] == "berry-bot", out
+        assert (home / "berry-bot" / "r001" / "design.json").exists() and not (home / ".trash").exists()
+        assert builds.built == [] and not os.path.exists(home / "berry-bot-2")
+    finally:
+        other.stdin.close()
+        other.wait(10)
 
 
 # ------------------------------------------------------------------ Teams
