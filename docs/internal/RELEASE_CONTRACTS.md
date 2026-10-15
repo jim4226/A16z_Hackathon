@@ -1563,3 +1563,12 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   design key the plan reads that the simulation doesn't rerun for (`OTHER`: controller, electronics config) and
   comparing the simulated robot (`robust._norm_xml` of `simulate.build_mjcf`, and `asm.meta`'s grip). A stage in
   `PARTIAL` must compute the same from that part alone.
+- **Wording that names a thing is not a job (E-N8).** `brief.ADJUSTED` reads verbs, not things: "open X" whose X is the
+  subject of a verb ("open boxes arrive on the left", "open jars are on the shelf") opens nothing; "twist" is a verb
+  only when not after a moving verb or determiner (`_DET`) and not "twist ties" or "twist-off"; "screw caps" after
+  `_DET` are caps; "insert" after `_DET` and plural "inserts" or "plugs" not done by a doer ("it", "that", "which",
+  "robot", "arm") are parts; "assembly line/station/area/..." is a place and "pre-assembled" an adjective.
+  `brief.HAND_TO_PERSON` needs a receiver: "hand/pass/give/bring" followed by a person (me, him, her, us, `_PERSON`), or
+  by up to four words and "to" a person ("give it back to her", "hand the cup to my mum"); "them" or "it" alone are the
+  things, so "pass them to the packing station" is a pick and place with no emergency stop. `PERSON_NEAR` uses it for
+  those verbs (help, assist and serve keep "them"). `tests/test_brief_answers.py` holds both ways' tables.

@@ -2,6 +2,7 @@
 the wording of questions, summaries and assumptions, and what the timeline says. Offline: no keys, no network."""
 
 import os
+import re
 
 import pytest
 
@@ -162,9 +163,57 @@ def test_a_job_the_gripper_cant_do_reads_as_adjusted_with_a_plain_note(text, not
 
 
 @pytest.mark.parametrize("text", ["move open-top bins to the left", "put the parts into an open box", "pick up open cans and move them",
-                                  "sort screws in bins", "pick strawberries into the open tray", "a robot that sorts socks"])
+                                  "sort screws in bins", "pick strawberries into the open tray", "a robot that sorts socks",
+                                  # the open boxes are the subject of "arrive": they are open, nobody opens them
+                                  "open boxes arrive on the left; move the cans into them", "open jars are on the shelf",
+                                  # twist ties, screw caps, brass inserts and plugs are things to move; an assembly line is a place
+                                  "sort twist ties", "move twist-off caps to the tray", "sort screw caps",
+                                  "pick up screw caps", "sort brass inserts", "sort threaded inserts into bins",
+                                  "move the insert to the jig", "sort plugs into bins", "pick parts off the assembly line",
+                                  "move boxes to the assembly area", "move pre-assembled kits to the shelf"])
 def test_wording_that_opens_twists_or_assembles_nothing_stays_inside(text):
     assert B.adjusted_kinds(text) == []
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("open jars", "opening"), ("help my grandma open jars", "opening"), ("open boxes and take out the parts", "opening"),
+    ("can it open bottles", "opening"), ("pry open paint tins", "opening"), ("take the lids off the tubs", "opening"),
+    ("twist the lids off jars", "twisting"), ("twist off bottle caps", "twisting"), ("unscrew bottle caps", "twisting"),
+    ("screw caps onto bottles", "twisting"), ("screw the lids on", "twisting"), ("tighten the bolts", "twisting"),
+    ("assemble lego", "assembly"), ("help with assembly", "assembly"), ("insert 50 ml tubes into a rack", "assembly"),
+    ("a robot that inserts pins into a board", "assembly"), ("plug cables into sockets", "assembly"),
+    ("press bearings into housings", "assembly"), ("snap them together", "assembly"),
+])
+def test_wording_that_opens_twists_or_assembles_something_reads_as_that_job(text, kind):
+    assert [k for k, _ in B.adjusted_kinds(text)] == [kind]
+
+
+@pytest.mark.parametrize("text, hand_over, near", [
+    # a person receives it: hand-over, with that person next to the robot
+    ("pass my dad his pills", True, True), ("bring me a can of soda", True, True), ("pass them to me", True, True),
+    ("give it back to her", True, True), ("hand the cup to my mum", True, True), ("bring the mugs over to us", True, True),
+    # "them" and "it" are the things, and a station, a line or a crate is no person: a pick and place
+    ("pick up cans and pass them to the packing station", False, False), ("give them to the sorting line", False, False),
+    ("bring it to the bin", False, False), ("pass the parts to the next station", False, False),
+])
+def test_a_hand_over_goes_to_a_person(text, hand_over, near):
+    assert bool(re.search(B.HAND_TO_PERSON, text)) is hand_over
+    assert bool(re.search(B.PERSON_NEAR, text)) is near
+
+
+@pytest.mark.parametrize("text, task, estop", [("pick up cans and pass them to the packing station", "pick_place", False),
+                                               ("pick up cans and pass them to me", "hand_over", True)])
+def test_passing_things_on_to_a_station_is_a_pick_and_place(text, task, estop):
+    # "pass them to the packing station" built a hand-over with an emergency stop, summarised as "hands over" cans
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "task") == task and ("estop" in b.changes["electronics.extras"]) is estop
+    assert ("hands over" in b.summary) is (task == "hand_over")
+
+
+@pytest.mark.parametrize("text", ["open boxes arrive on the left; move the cans into them", "sort twist ties"])
+def test_a_request_that_only_names_open_or_twisted_things_stays_inside(text):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert b.scope["status"] != "adjusted" and b.scope["notes"] == [], b.scope
 
 
 @pytest.mark.parametrize("text, estop", [("help my grandma open jars", True), ("help my grandma move her mugs", True),

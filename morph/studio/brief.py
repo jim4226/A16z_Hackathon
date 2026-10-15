@@ -210,26 +210,37 @@ IMPLICIT = (
      "(360 g) fits."),
 )
 # Jobs inside a pick and place that the gripper can't do: the robot is built for the moving part and the note says what
-# is left out, so the scope reads "Adjusted". Kept narrow ("open-top bins" and "an open box" are not opening anything).
+# is left out, so the scope reads "Adjusted". Kept narrow: a verb, never the thing ("open-top bins", "an open box" and
+# "open boxes arrive" open nothing; "twist ties", "screw caps", "brass inserts" and "plugs" are things to move; an
+# "assembly line" is a place).
 _DET = "".join(rf"(?<!\b{d} )" for d in ("a", "an", "the", "my", "her", "his", "its", "our", "their", "these", "those", "some",
                                           "up", "move", "moves", "carry", "carries", "grab", "grabs", "sort", "sorts", "hold",
                                           "holds", "lift", "lifts", "handle", "handles", "place", "of", "with", "in", "into", "on",
                                           "onto", "from"))
+# a plural that is also a verb ("inserts", "plugs") is the verb only after the one doing it: "a robot that inserts pins"
+_DOER = r"(?:\b(?:it|that|which|robot|arm)\s+)"
+# "open boxes arrive on the left": the boxes are the subject of a verb, so "open" describes them
+_SUBJECT = (r"(?!\s+(?:are|is|were|was|arriv\w*|come|comes|coming|sit|sits|sitting|lie|lies|lying|wait\w*|stand\w*|roll\w*|"
+            r"ride|rides|riding|travel\w*|go|goes|going|pile\w*|stack\w*|move|moves|moving|get|gets|show|shows)\b)")
 ADJUSTED = (
-    ("twisting", r"\b(?:unscrew\w*|twist\w*|screw(?:ing)? (?:on|off)\b|screw(?:ing)? (?:the |a |an )?(?:caps?|lids?|tops?|bulbs?)\b|"
+    ("twisting", r"\b(?:unscrew\w*|" + _DET + r"twist(?:s|ing)?\b(?![- ]?ties?\b|-)|" + _DET +
+                 r"screw(?:ing)? (?:on|off)\b|" + _DET + r"screw(?:ing)? (?:the |a |an )?(?:caps?|lids?|tops?|bulbs?)\b|"
                  r"turn(?:s|ing)? (?:the |a |an )?(?:caps?|lids?|knobs?|valves?|taps?)\b|tighten\w*|loosen\w*)",
      "Unscrewing, screwing on and twisting need a wrist that turns while it grips; this gripper only picks things up and sets "
      "them down, so the robot moves them without turning them."),
     # "open" as a verb only: "an open box" and "the open drawer" describe a thing, "open-top bins" never matches
     ("opening", _DET + r"\b(?:open(?:s|ing)?|prys?|pries|prying)\s+(?:up\s+)?(?:[\w']+\s+){0,3}?(?:jars?|bottles?|lids?|caps?|"
                 r"tins?|cans?|containers?|tubs?|packages?|packets?|"
-                r"parcels?|box(?:es)?|cartons?|bags?|envelopes?|letters?|mail|doors?|drawers?|cupboards?|cabinets?)\b|"
-                r"\b(?:take|pull)s?\s+(?:the |a )?(?:lids?|caps?|tops?)\s+off\b|\bremov\w*\s+(?:the |a )?(?:lids?|caps?)\b",
+                r"parcels?|box(?:es)?|cartons?|bags?|envelopes?|letters?|mail|doors?|drawers?|cupboards?|cabinets?)\b" + _SUBJECT +
+                r"|\b(?:take|pull)s?\s+(?:the |a )?(?:lids?|caps?|tops?)\s+off\b|\bremov\w*\s+(?:the |a )?(?:lids?|caps?)\b",
      "Opening jars, bottles, lids or packaging takes a twist or a pull this gripper can't make; it only picks things up and "
      "sets them down, so the robot moves them and the opening is left to a person."),
-    ("assembly", r"\b(?:assembl\w*|put(?:s|ting)? (?:\w+ )?together|snap(?:s|ping)? (?:\w+ )?(?:together|into)\b|"
-                 r"plug(?:s|ging)?\s+(?:\w+\s+){0,2}into\b|insert\w*|press(?:es|ing)? (?:\w+ )?(?:together|into)\b|"
-                 r"press[- ]fit\w*|build(?:s|ing)? (?:\w+ )?(?:with|out of) (?:lego|duplo|bricks?|blocks?))",
+    ("assembly", r"(?<!-)\bassembl(?:e|es|ing|y)\b(?!\s+(?:lines?|stations?|areas?|tables?|bench(?:es)?|cells?|floors?|plants?|"
+                 r"rooms?|jigs?|drawings?|instructions?|kits?|halls?|shops?)\b)|"
+                 r"\bput(?:s|ting)? (?:\w+ )?together|\bsnap(?:s|ping)? (?:\w+ )?(?:together|into)\b|"
+                 r"(?:" + _DET + r"\bplug(?:ging)?|" + _DOER + r"plugs)\s+(?:\w+\s+){0,2}into\b|"
+                 + _DET + r"\binsert(?:ing|ed)?\b|" + _DOER + r"inserts\b|\bpress(?:es|ing)? (?:\w+ )?(?:together|into)\b|"
+                 r"\bpress[- ]fit\w*|\bbuild(?:s|ing)? (?:\w+ )?(?:with|out of) (?:lego|duplo|bricks?|blocks?)",
      "Assembling, inserting and pressing parts together need force control and alignment this gripper and its simulator "
      "don't have; the robot moves the parts, it doesn't fit them together."),
 )
@@ -237,9 +248,12 @@ ADJUSTED = (
 _PERSON = (r"(?:grand(?:ma|pa|mother|father|parents?|mum|mom|dad)|granny|gran|nan(?:a|na)?|elderly \w+|"
            r"my (?:mum|mom|mother|dad|father|parents?|partner|wife|husband|boyfriend|girlfriend|roommate|flatmate|friend|"
            r"aunt|uncle|brother|sister|patient|client)s?)")
-PERSON_NEAR = (r"\b" + _PERSON + r"\b|\b(?:help|assist|serve|hand|pass|give|bring)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|"
-               r"\b(?:for|to)\s+(?:me|him|her)\b|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b")
-HAND_TO_PERSON = r"\b(?:hand|pass|give|bring)(?:s|es)?\s+(?:it\s+to\s+)?(?:me|him|her|us|them|" + _PERSON + r")\b"
+# a hand-over goes to a person: "hand me", "pass my dad his pills", "give it to her", "bring the cups back to us". "them" or
+# "it" alone are the things: "pass them to the packing station" is a pick and place
+_RECEIVER = r"(?:me|him|her|us|" + _PERSON + r")\b"
+HAND_TO_PERSON = r"\b(?:hand|pass|give|bring)(?:s|es|ing)?\s+(?:" + _RECEIVER + r"|(?:[\w']+\s+){0,4}?to\s+" + _RECEIVER + r")"
+PERSON_NEAR = (r"\b" + _PERSON + r"\b|\b(?:help|assist|serve)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|" + HAND_TO_PERSON +
+               r"|\b(?:for|to)\s+(?:me|him|her)\b|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b")
 OUT_OF_SCOPE = (  # (kind, regex, plain reason); the first kind found picks the nearest robot
     ("drone", r"\b(drones?|quadcopters?|multirotors?|uavs?|fly|flies|flying)\b", "Morph doesn't design drones or anything that flies."),
     ("humanoid", r"\b(humanoids?|androids?|bipeds?|robot butler|two arms|dual[- ]arm|bimanual|multi-?finger\w*|dexterous|robotic hand|"

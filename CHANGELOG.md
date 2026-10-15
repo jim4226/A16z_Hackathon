@@ -452,3 +452,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   servo's rated voltage). Adding a wrist camera or changing the reach still reuses the gripper's grasp simulation when
   the servo rail stays the same. A test now checks that every stage reruns when a result it reads changes, not only a
   setting.
+- New robot no longer reads a thing's name as a job. "Pick up cans and pass them to the packing station" built a
+  hand-over with an emergency stop ("hands over drink cans"); "open boxes arrive on the left" was read as opening boxes,
+  "sort twist ties" as twisting, and screw caps, brass inserts, plugs and an assembly line the same way. A hand-over
+  now needs a person to receive it ("give it back to her" and "hand the cup to my mum" count, which they didn't).
