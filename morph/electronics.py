@@ -103,18 +103,25 @@ def nearest_e12(ohms: float) -> float:
 def force_window(o, hold: float, sensor: str | None = None, target: float = 0.0, floor: float = 0.0) -> tuple:
     """(lo, hi, target) per finger, N: the force that holds the object (hold x HOLD_MARGIN), the force that damages it
     (/ CRUSH_MARGIN; inf for a robust object) capped at 80 % of the force sensor's range, and the target: `target` when
-    one is asked for, else the window's geometric mean but at most twice the lower bound (twice the lower bound for a
-    robust object, which has no top), raised to `floor` while that stays inside the window. Twice the lower bound is
-    three times the static hold, a 1.5x margin over the robot's own shake test, which loads the grip with about 1.9 g
-    (simulate._shake); a narrow window gets less, and the simulation says so when that slips. Every grip target Morph
-    ships comes from here."""
+    one is asked for, else
+      - an object without a damage force: twice the lower bound, three times the static hold: a 1.5x margin over the
+        robot's own shake test, which loads the grip with about 1.9 g (simulate._shake);
+      - with a force sensor (`sensor`), which regulates the squeeze: the window's geometric mean, but at most twice the
+        lower bound;
+      - without one (a torque limit sets the squeeze, open loop: it varies with where the object sits on the jaw, the
+        gearbox's friction and the supply): the window's geometric mean, as far from both ends as the window allows;
+    raised to `floor` while that stays inside the window. A narrow window gets less margin, and the simulation says so
+    when that slips. Every grip target Morph ships comes from here."""
     lo = hold * HOLD_MARGIN
     hi = (o.max_force_n / CRUSH_MARGIN) if o.max_force_n > 0 else float("inf")
     if sensor:
         hi = min(hi, FSR[sensor]["max_n"] * 0.8)
     if target:
         return lo, hi, float(target)
-    t = min(math.sqrt(lo * hi), lo * 2.0) if hi != float("inf") else lo * 2.0
+    if hi == float("inf"):
+        t = lo * 2.0
+    else:
+        t = min(math.sqrt(lo * hi), lo * 2.0) if sensor else math.sqrt(max(lo, 0.0) * hi)
     return lo, hi, max(t, min(floor, hi))
 
 

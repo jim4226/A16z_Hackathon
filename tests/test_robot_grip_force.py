@@ -68,8 +68,9 @@ def test_the_so101_strawberry_grip_comes_from_the_object_not_the_servo(tmp_path)
     """New robot 'use my SO-101 to pick strawberries' shipped GRIP_TARGET_N = 6.82 (a quarter of the servo's stall
     force) for a 3 N strawberry whose window is 0.25-2.0 N."""
     force, ep, code, _ = _shipped(_so101(), tmp_path)
-    assert force["window_n"] == [0.25, 2.0] and force["target_force_n"] == 0.5 and force["limit_n"] == 2.5
-    assert _firmware_grip(code)[0] == 0.5
+    # no force sensor on the stock jaws: the open-loop squeeze sits at the window's geometric mean, sqrt(0.25 x 2.0)
+    assert force["window_n"] == [0.25, 2.0] and force["target_force_n"] == 0.7 and force["limit_n"] == 2.5
+    assert _firmware_grip(code)[0] == 0.7
 
 
 def test_the_grip_force_parameter_reaches_the_firmware_of_an_imported_robot(tmp_path):
@@ -193,27 +194,38 @@ def test_the_gripper_torque_limit_comes_from_the_grip():
     d, sz, ep = _plan_so101()
     tl = ep["grip"]["torque_limit"]
     stall = 1.62                                   # sts3215_7v4 on the SO-101's 6 V rail
-    assert tl["register"] == "feetech_torque_limit" and tl["force_n"] == ep["grip"]["target_n"] == 0.5
-    assert tl["nm"] == pytest.approx(0.5 * 0.070, abs=1e-4) and tl["fraction"] == pytest.approx(0.035 / stall, abs=1e-4)
+    lever = ep["grip"]["lever_mm"]                 # where the simulation grasps the strawberry, from the jaw's pivot
+    assert lever == pytest.approx(70.0, abs=1.0)
+    assert tl["register"] == "feetech_torque_limit" and tl["force_n"] == ep["grip"]["target_n"] == 0.7
+    assert tl["nm"] == pytest.approx(0.7 * lever / 1000, abs=1e-4)
+    assert tl["fraction"] == pytest.approx(0.7 * lever / 1000 / stall, abs=1e-4)
     egg = template("egg-picker")                  # force sensors: a hard cap at the firmware's limit, no gear losses
     sz = arm.size(egg)
     g = electronics2.plan(egg, sz, grip=pipeline2.gripper_stage(egg, sz, simulate=False)["force"])["grip"]
     assert g["torque_limit"]["force_n"] == g["limit_n"] == 19.0
     assert g["torque_limit"]["nm"] == pytest.approx(19.0 * 2 * egg.electronics.pinion_radius_mm / 1000, abs=1e-4)
     assert [w for w in ep["warnings"] if "G closes the jaws past the object and the gripper servo's torque limit sets "
-            "the squeeze (2 % of its stall torque for 0.5 N" in w]
+            "the squeeze (3 % of its stall torque for 0.7 N" in w]
     pwm = _plan_so101(**{"arm.actuator_family": "hobby_pwm"})
     assert pwm[2]["grip"]["torque_limit"] is None
     assert [w for w in pwm[2]["warnings"] if "G closes the jaws past the object with all its torque" in w]
     assert any("no torque limit" in i for i in imported.gripper_summary(pwm[0], pwm[1])["force"]["issues"])
 
 
-def test_the_simulation_squeezes_a_stock_jaw_with_the_firmwares_torque_limit():
-    d, sz, ep = _plan_so101()
+@pytest.mark.parametrize("obj", ["strawberry", "raw egg"])
+def test_the_simulation_squeezes_a_stock_jaw_with_the_firmwares_torque_limit(obj):
+    """The torque limit was set for the target 70 mm from the SO-101's pivot, but the simulation grasps the egg 62.2 mm
+    from it: it squeezed 2.83 N (3.41 N peak) for a 2.52 N target. The limit is now set at the lever where the grasp
+    is, so the squeeze at the object is the target."""
+    d = template("so101", "so101") if obj == "raw egg" else _so101()
+    sz = imported.size(d)
+    ep = electronics2.plan(d, sz, grip=imported.gripper_summary(d, sz)["force"])
     asm = imported.build(d, sz, ep)
     assert asm.meta["grip_torque_nm"] == ep["grip"]["torque_limit"]["nm"]
     info, _ = simulate._describe(asm, d, simulate._opts(None))
+    assert ep["grip"]["lever_mm"] == pytest.approx(info.lever_mm, abs=0.01)
     assert info.grip_effort == pytest.approx(ep["grip"]["torque_limit"]["nm"])
+    assert info.grip_effort / (info.lever_mm / 1000) == pytest.approx(ep["grip"]["target_n"], rel=2e-3)
     assert info.grip_force_n == pytest.approx(ep["grip"]["target_n"])
 
 

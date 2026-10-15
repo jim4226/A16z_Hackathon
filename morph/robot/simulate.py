@@ -438,6 +438,14 @@ def _grip_force_target(asm, design, override=None, generated_fingers=True, cap=N
     return float(min(target, cap))
 
 
+def grasp_lever(asm, design) -> float:
+    """A hinged jaw's lever at the grasp the simulation makes (mm, hinge axis to the object's centre): where the object
+    sits against the fixed jaw, inside the fingers, reachable straight down with the jaw open (_describe). The
+    firmware's torque limit is set at this lever (imported.gripper_summary), so the simulated squeeze is the target.
+    1.0 for a parallel jaw (no hinge)."""
+    return float(_describe(asm, design, _opts(None), grasp_only=True)[0].lever_mm)
+
+
 def _effort(asm, j) -> float:
     if j.effort and j.effort > 0:
         return float(j.effort)
@@ -598,8 +606,9 @@ def _contact_value(jaw_c, tl, gname, pts, g_open, g_closed, iters=14) -> float:
     return float(a)
 
 
-def _describe(asm, design, opts: SimOptions):
-    """Collision geoms, contact groups, joints and the gripper's grasp geometry for the MJCF."""
+def _describe(asm, design, opts: SimOptions, grasp_only: bool = False):
+    """Collision geoms, contact groups, joints and the gripper's grasp geometry for the MJCF. grasp_only: only the
+    hand's and the jaws' pieces (all the grasp geometry reads), for grasp_lever; the result can't build a model."""
     meta = asm.meta or {}
     jnames = {j.name for j in asm.joints}
     gname = meta.get("gripper_joint", "gripper")
@@ -649,6 +658,8 @@ def _describe(asm, design, opts: SimOptions):
     for link, parts in by_link.items():
         jaw = link in jaw_links
         near = link in near_links
+        if grasp_only and not near:
+            continue
         group = "jaw" if jaw else ("prox" if link in prox_links else "arm")
         cl = []
         for p in parts:

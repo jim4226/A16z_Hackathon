@@ -220,7 +220,31 @@ def size(design) -> dict:
     return out
 
 
-JAW_LEVER_MM = 70.0   # a stock jaw's squeeze is quoted this far from its pivot (mid-jaw on the SO-101)
+JAW_LEVER_MM = 70.0   # a stock jaw's lever when the grasp can't be worked out (mid-jaw on the SO-101)
+_LEVERS: dict = {}
+
+
+def grasp_lever(design, sizing) -> float:
+    """The stock jaw's lever for this object (mm, from the jaw's pivot to the object's centre) where the simulation
+    grasps it (simulate.grasp_lever: against the fixed jaw, inside the fingers, reachable straight down): the egg sits
+    62 mm from the SO-101's pivot, a strawberry 70 mm. The firmware's torque limit is set for the target at this lever,
+    so the simulated squeeze is the target. Worked out on the robot's own jaws with the servos sizing chose (a swapped
+    gripper servo changes the hand) and the object's shape and size, on the camera-free URDF (a wrist camera rides
+    behind the jaws); memoized, as it takes about 2 s."""
+    from ..spec import Design
+    from . import simulate
+    from .pipeline2 import _bundle_hash
+
+    o, src = design.object, design.arm.source
+    acts = tuple(sorted((j["name"], j["actuator"]) for j in sizing["joints"])) + (("gripper", sizing["gripper_actuator"]),)
+    key = (src, _bundle_hash(src), acts, o.shape, float(o.diameter_mm), float(o.length_mm))
+    if key not in _LEVERS:
+        if len(_LEVERS) > 64:
+            _LEVERS.clear()
+        d = Design().with_changes({"name": "grasp", "arm.source": src, "object.shape": o.shape,
+                                   "object.diameter_mm": float(o.diameter_mm), "object.length_mm": float(o.length_mm)})
+        _LEVERS[key] = round(simulate.grasp_lever(build(d, sizing), d), 2)
+    return _LEVERS[key]
 
 
 def gripper_summary(design, sizing) -> dict:
@@ -231,13 +255,19 @@ def gripper_summary(design, sizing) -> dict:
     never more than 80 % of what the gripper servo squeezes at the jaw on its servo rail; the firmware's F command stops
     at limit_n.
     Stock jaws carry no force sensors (Morph makes no pads or mounts for them): the firmware squeezes with the gripper
-    servo's torque limit, set for the target at lever_mm from the jaw's pivot, and a hobby servo, which has none, is an
-    issue for an object it can damage."""
+    servo's torque limit, set for the target at lever_mm from the jaw's pivot (grasp_lever: where the simulation grasps
+    the object), and a hobby servo, which has none, is an issue for an object it can damage."""
     from .. import electronics as grip_electronics
 
     key = sizing["gripper"]["actuator"]
     prof = load_profile(design.arm.source)[0]
-    lever = float(prof.get("jaw_lever_mm") or JAW_LEVER_MM)
+    issues, warnings = [], []
+    try:
+        lever = grasp_lever(design, sizing)
+    except Exception as exc:  # noqa: BLE001  the grip still gets planned; the lever is the profile's estimate
+        lever = float(prof.get("jaw_lever_mm") or JAW_LEVER_MM)
+        warnings.append(f"the grasp on the stock jaws couldn't be worked out ({exc.__class__.__name__}); the torque limit "
+                        f"is set for the object {lever:g} mm from the jaw's pivot")
     o = design.object
     rail_v = (sizing.get("servo_rail") or {}).get("v")
     stall = grip_electronics.jaw_force(catalog.torque_at(key, rail_v) if rail_v else catalog.ACTUATORS[key]["torque_nm"],
@@ -246,7 +276,6 @@ def gripper_summary(design, sizing) -> dict:
     lo, hi, target = grip_electronics.force_window(o, hold, None, design.electronics.target_force_n, floor=0.5)
     target = min(target, 0.8 * stall, max(design.gripper.force_n, 0.5))
     limit = min(o.max_force_n / 1.2 if o.max_force_n > 0 else stall, stall)
-    issues, warnings = [], []
     if design.finger.sensor != "none":
         warnings.append("This robot keeps its stock jaws, which have no place for force sensors, so none are fitted "
                         "(finger.sensor is ignored): the gripper squeezes with its servo's torque limit")
