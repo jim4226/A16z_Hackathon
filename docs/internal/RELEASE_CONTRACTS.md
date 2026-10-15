@@ -80,6 +80,10 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   `audit.head` update didn't happen (a stop between the two writes) is chained on, not flagged. `verify()` answers ok
   with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line
   as before; `morph team audit --verify` prints the note.
+- `morph studio` (the command line: `main()` without argv) ends its process with `cli._leave` once `serve()` has
+  returned (Ctrl+C): study workers ended, stdout and stderr flushed, then `os._exit`. Interpreter shutdown added nothing
+  but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one stop in twelve. So every
+  record must be on disk when it is written (the rules here), never at exit.
 - Stopping never waits for the network: lookups run in parallel on `morph/services/background.DaemonPool` (Darwin
   `source`/`suggest`, `keys.check`, BoardRepo), whose daemon threads the interpreter doesn't join at exit, where
   `concurrent.futures` ran every queued lookup to its timeout first. New code that fans network calls out uses it.

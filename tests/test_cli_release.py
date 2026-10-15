@@ -229,3 +229,44 @@ def test_morph_study_refuses_before_it_announces_a_study(home, monkeypatch, caps
     assert cli.main(["study", "offl", "--runs", "2", "--workers", "1"]) == 1
     out = capsys.readouterr()
     assert out.err.startswith("offl: ") and "randomized run" not in out.out
+
+
+def test_a_stopped_studio_process_leaves_without_interpreter_shutdown(tmp_path, monkeypatch):
+    """`morph studio` (the command line, argv None) ends its process with _leave once serve() returns: interpreter
+    shutdown ran native finalizers that crashed now and then after an in-process build (exit code -11). Called with
+    argv (a script, a test), main() returns as usual."""
+    from morph.studio import server
+    _studio_home(tmp_path / "projects")
+    monkeypatch.setattr(cli, "HOME", str(tmp_path / "projects"))
+    monkeypatch.setattr(server, "serve", lambda *a, **k: None)
+    left = []
+    monkeypatch.setattr(cli, "_leave", left.append)
+    monkeypatch.setattr(sys, "argv", ["morph", "studio", "egg-picker", "--port", "1"])
+    cli.main()
+    assert left == [0]
+    cli.main(["studio", "egg-picker", "--port", "1"])
+    assert left == [0]
+
+
+def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
+    code = ("import multiprocessing as mp, sys, time\n"
+            "from morph import cli\n"
+            "if __name__ == '__main__':\n"
+            "    child = mp.get_context('spawn').Process(target=time.sleep, args=(600,), daemon=True)\n"
+            "    child.start()\n"
+            "    print(child.pid, end=' ')\n"
+            "    sys.stdout.write('saved')\n"
+            "    cli._leave(0)\n")
+    script = tmp_path / "leave.py"
+    script.write_text(code, encoding="utf-8")
+    out = subprocess.run([sys.executable, str(script)], cwd=CODE, env={**os.environ, "PYTHONPATH": CODE},
+                         capture_output=True, text=True, timeout=60)
+    pid, said = out.stdout.split()
+    assert out.returncode == 0 and said == "saved"
+    from morph.services.durable import process_alive
+    for _ in range(100):                                  # the worker was ended, not left behind
+        if not process_alive(int(pid)):
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("the study worker outlived the Studio")

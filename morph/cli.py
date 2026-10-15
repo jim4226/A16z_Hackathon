@@ -290,6 +290,27 @@ def cmd_studio(a):
 
 
 
+def _leave(rc: int):
+    """End a stopped Studio's process now, without the interpreter's shutdown. Everything the Studio keeps is written as
+    it happens (whole-file replaces and appended lines), and serve() has stopped its studies; what shutdown would add
+    is waiting for threads nothing needs any more and running native libraries' finalizers. After a build in this
+    process (the launcher's first robot), MuJoCo's and the OSMesa renderer's crashed now and then while shutdown
+    collected them ("Segmentation fault", exit code -11, after Ctrl+C). Study workers still running are ended, as the
+    multiprocessing exit handler would, and the terminal output is flushed first."""
+    try:
+        import multiprocessing
+        for child in multiprocessing.active_children():
+            child.terminate()
+    except Exception:  # noqa: BLE001  (leaving must not fail)
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001
+            pass
+    os._exit(rc)
+
+
 def _robot_summary(p, rev) -> list:
     """Print a revision's summary and issues; returns the stages that did not complete."""
     from .robot.pipeline2 import ORDER, stage_problem
@@ -1313,6 +1334,8 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     t0 = time.time()
     rc = a.fn(a)
+    if a.cmd == "studio" and argv is None:  # the Studio stopped (Ctrl+C) with everything saved: this process is done
+        _leave(rc if isinstance(rc, int) else 0)
     # every pipeline command's wall-clock goes into the time study
     if a.cmd in ("new", "explore", "change") and getattr(a, "name", None):
         _project(a.name).log({"type": "tool_time", "cmd": a.cmd, "seconds": round(time.time() - t0, 2)})

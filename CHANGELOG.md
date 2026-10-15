@@ -410,3 +410,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Ctrl+C stops the Studio at once while Darwin lookups hang (a server that accepts and never answers): the Studio
   waited for every queued lookup to time out in turn, about a minute for one Find agents, and ignored Ctrl+C meanwhile.
   Network lookups (Darwin, Test keys, BoardRepo) now run on threads the process never waits for when it stops.
+- Stopping the Studio with Ctrl+C no longer ends now and then with "Segmentation fault" (exit code -11) after the
+  launcher built a robot before serving: the stopped Studio's process ends without the interpreter's shutdown, whose
+  clean-up of the 3D libraries crashed. Everything was already saved; nothing else changes.
