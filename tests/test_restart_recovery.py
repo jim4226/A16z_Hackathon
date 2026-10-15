@@ -459,8 +459,8 @@ def test_two_studios_asked_to_build_it_again_at_once_build_it_once(home, builds,
     (root / "meta.json").write_text(json.dumps({"kind": "robot", "source": "", "need": "kb1"}), encoding="utf-8")
     projects.park_first_build(str(root), {"design": Design().to_dict(), "label": "first design", "by": None, "cut": 0,
                                           "error": "[Errno 13] Permission denied"})
-    deciding = hold(root / ".morph" / "first-build.lock")                   # the other Studio is deciding right now
-    other = None
+    other = hold(home / ".studios" / "feedfacecafebeef.lock")              # the other Studio runs ...
+    deciding = hold(root / ".morph" / "first-build.lock")                   # ... and is deciding right now
     try:
         st = server.Studio(RobotProject(str(home / "egg")), str(home))
         kb1 = st.room("kb1")
@@ -470,7 +470,6 @@ def test_two_studios_asked_to_build_it_again_at_once_build_it_once(home, builds,
             entry = {"op": "queued", "id": "a1b2c3d4e5f6", "kind": "build", "label": "first design",
                      "studio": "feedfacecafebeef", "ts": time.time(), "design": Design().to_dict()}
             (root / ".morph" / "queue-feedfacecafebeef.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf-8")
-            other = hold(home / ".studios" / "feedfacecafebeef.lock")
         else:                                                               # ... and even built it
             make_project(home, "kb1")
         deciding.stdin.close()

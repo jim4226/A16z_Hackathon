@@ -161,7 +161,7 @@ def test_every_code_morph_makes_reads_as_no_phrase(monkeypatch):
     the filter judges a run of an invite code's length by how random it reads, so a name such as
     ml_policyV1_final_weights passes, and every code Morph makes is still caught."""
     draws = iter(["policyV1_final_weights", "Xq3_Lp9ZbN2wV7aR5kT1mC"])
-    monkeypatch.setattr(auth.secrets, "token_urlsafe", lambda n: next(draws))
+    monkeypatch.setattr(auth, "secrets", type("Draws", (), {"token_urlsafe": staticmethod(lambda n: next(draws))}))
     code = auth.new_code("ml_", 16)
     assert code == "ml_Xq3_Lp9ZbN2wV7aR5kT1mC" and security.looks_like_secret(code)
     assert not security.looks_like_secret("ml_policyV1_final_weights")
