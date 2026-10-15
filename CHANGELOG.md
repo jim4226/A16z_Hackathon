@@ -394,7 +394,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Studio would crash it at every start): the chat and the terminal say so, and "build it again" in the project's chat
   tries once more. A team Studio starting while another one runs on the same projects folder leaves the change
   requests that one is building alone (it reopened them, told their people they weren't built, and the finished build
-  left its revision unrecorded).
+  left its revision unrecorded). Closing the Studio with Ctrl+C during a first build is no try: only a crash, a kill or
+  a power cut counts, and the chat no longer suggests the design stopped the Studio.
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

@@ -406,6 +406,16 @@ class Studio:
         job = self.queue_build(room, built_design, label=label[:48 - len(self.REBUILT)] + self.REBUILT, by=by, cut=cut)
         self._resumed(room, job)
 
+    def stopping(self):
+        """The Studio stops cleanly (Ctrl+C, serve() returning): each room's queue journals a first build this stop
+        cuts off as "interrupted", so only stops that came from elsewhere (a crash, a kill, a power cut, the system
+        running out of memory) count towards FIRST_BUILD_TRIES. Never raises."""
+        for room in list(self.rooms.values()):
+            try:
+                room.jobs.stopping()
+            except Exception:  # noqa: BLE001  (stopping must not fail)
+                traceback.print_exc()
+
     def _resumed(self, room: Room, job):
         """A first build queued again (after a stop, or asked for again): features learn of it (rooms.RESUMED; New
         robot marks its brief built when it ends)."""
@@ -418,8 +428,9 @@ class Studio:
 
     def _park(self, room: Room, design: dict, label: str, by, cut: int):
         """A first build the Studio stopped during `cut` times isn't started again on its own: if something in the
-        design stops the Studio (memory, a crash in a native library), it would stop it at every start. It waits in
-        projects.FIRST_BUILD until someone sends "build it again" in the project's chat (_no_revision_yet)."""
+        design stops the Studio (memory, a crash in a native library), it would stop it at every start. Clean stops
+        (Ctrl+C) don't count (stopping). It waits in projects.FIRST_BUILD until someone sends "build it again" in the
+        project's chat (_no_revision_yet). What people read says only what happened, not that the design did it."""
         projects.park_first_build(room.p.root, {"design": design, "label": label, "by": by, "cut": cut})
         room.hub.send({"type": "assistant", "noop": True, "text": self._parked_text(room.name, cut)})
         print(self._parked_text(room.name, cut, terminal=True))
@@ -433,8 +444,8 @@ class Studio:
                     f"on its own. To try once more, send \"build it again\" in {name}'s chat in the Studio; to give up "
                     f"on it, delete {name} from the project menu.")
         return (f"The Studio stopped {times} while building {name}'s first design, so Morph won't start it again on its "
-                "own: if something in this design stops the Studio, it would stop it at every start. To try once more, "
-                f"send \"build it again\" here. To give up on it, delete {name} from the project menu.")
+                f"own. To try once more, send \"build it again\" here. To give up on it, delete {name} from the project "
+                "menu.")
 
     def _no_revision_yet(self, room: Room, job, msg: str | None = None):
         """A change asked of a project with no finished revision: there is nothing to change yet. A first build that
@@ -1950,6 +1961,7 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     except KeyboardInterrupt:
         pass
     finally:
+        studio.stopping()  # a first build this stop cuts off is no try (Studio._recover counts the others)
         from . import jobs
         jobs.shutdown(studio)  # robustness studies stop and keep their runs; the same settings carry on next time
 

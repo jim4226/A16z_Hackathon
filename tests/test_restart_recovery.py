@@ -266,6 +266,46 @@ def test_a_first_build_the_studio_stopped_during_twice_waits_to_be_asked_for_aga
     assert "Building kb1's first design again." in texts(kb1)
 
 
+def test_clean_stops_during_a_first_build_are_no_tries(home, tmp_path, builds):
+    """Ctrl+C (serve() returning) during a long first build, twice: a person closing the Studio is no sign the build
+    stops it, so it is built again at each start and never waits to be asked for. A crash after that still counts."""
+    st, where = server.Studio(RobotProject(str(home / "egg")), str(home)), home
+    builds.gate = threading.Event()
+    room, job = st.create_project("kb1", need="a test")
+    jobs = [job]
+    for n in range(1, 4):
+        assert builds.started.wait(5)
+        st.stopping()                                                       # Ctrl+C: serve()'s finally
+        after = tmp_path / f"after-clean-stop-{n}"
+        shutil.copytree(where, after)
+        builds.gate.set()
+        finish(*jobs)
+        builds.gate, builds.started = threading.Event(), threading.Event()
+        st, where = server.Studio(RobotProject(str(after / "egg")), str(after)), after
+        kb1 = st.room("kb1")
+        jobs = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+        assert [j.label for j in jobs] == ["first design" + REBUILT], n     # built again, never parked
+        assert not (after / "kb1" / ".morph" / "first-build.json").exists()
+        assert "stopped twice" not in " ".join(texts(kb1))
+    assert builds.started.wait(5)
+    crashed = stopped(where, tmp_path, builds)                              # no stopping(): a crash, a kill
+    builds.gate.set()
+    finish(*jobs)
+    builds.gate = threading.Event()
+    kb1 = server.Studio(RobotProject(str(crashed / "egg")), str(crashed)).room("kb1")
+    assert len(kb1.jobs.snapshot()) == 1                                    # one cut: built again once more
+    builds.gate.set()
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert kb1.completed() == ["r001"]
+
+
+def test_the_parked_first_build_message_never_blames_the_design():
+    for terminal in (False, True):
+        text = server.Studio._parked_text("kb1", 2, terminal=terminal)
+        assert "stopped twice" in text and "build it again" in text
+        assert not any(w in text for w in ("in this design", "crash", "stops the Studio", "stop it at every start"))
+
+
 def test_a_rebuild_that_never_started_is_no_try(home, builds):
     """A Studio stopped while the rebuild still waited for the build slot didn't cut it off: it is built again."""
     journal = cut_off_first_build(home, cut=1)

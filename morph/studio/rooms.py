@@ -134,8 +134,8 @@ def journal_live(path: str, home: str) -> bool:
 def open_jobs(path: str) -> list:
     """The jobs a queue journal (JobQueue.journal) says were still open when its Studio stopped, in the order they were
     queued: the last line of each job, `op` "queued" (waiting or building) or "held" (a conflict waiting for an answer),
-    with `started: True` when its build had started (a first build cut off mid-build). Lines that don't parse are
-    skipped."""
+    with `started: True` when its build had started (a first build cut off mid-build) and no clean stop of the Studio
+    ended it ("interrupted": Ctrl+C is no sign the build stopped the Studio). Lines that don't parse are skipped."""
     last = collections.OrderedDict()
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -146,9 +146,9 @@ def open_jobs(path: str) -> list:
                     continue
                 if not isinstance(e, dict) or not isinstance(e.get("id"), str):
                     continue
-                if e.get("op") == "started":
+                if e.get("op") in ("started", "interrupted"):  # interrupted: a clean stop cut it off, no try
                     if e["id"] in last:
-                        last[e["id"]]["started"] = True
+                        last[e["id"]]["started"] = e["op"] == "started"
                 elif e.get("op") in ("queued", "held", "ended"):
                     last[e["id"]] = {**last.get(e["id"], {}), **e}  # what each line adds; the newest op wins
     except OSError:
@@ -328,6 +328,7 @@ class JobQueue:
         self.journal = os.path.join(p.root, ".morph", f"queue-{OWNER}.jsonl") if p is not None else None
         self.home = os.path.dirname(p.root) if p is not None else None
         self.claim = None  # this process's lock on the projects folder, taken before the first journal line
+        self.cuttable = set()  # ids of jobs journaled "started": a stop from then on cuts them off
 
     # -- the journal
     def _log(self, op: str, job: Job, **fields):
@@ -346,7 +347,17 @@ class JobQueue:
     def started(self, job: Job):
         """`job`'s build has the build slot and starts now (Studio.build): a stop from here on cut it off."""
         with self.cond:
+            self.cuttable.add(job.id)
             self._log("started", job)
+
+    def stopping(self):
+        """The Studio stops cleanly (Ctrl+C, serve() returning): a first build running now is cut off by that stop, not
+        by anything in its design, so the journal says so ("interrupted") and the next start doesn't count it as a try
+        (open_jobs). Never raises."""
+        with self.cond:
+            job = self.running
+            if job is not None and job.id in self.cuttable:
+                self._log("interrupted", job)
 
     def _ended(self, job: Job):
         self._log("ended", job, status=job.status)
@@ -519,6 +530,7 @@ class JobQueue:
                 job.after = ()  # read when it started; a chain of quick edits keeps no finished job alive through it
                 with self.cond:
                     self.running = None
+                    self.cuttable.discard(job.id)
                     if job.status != "conflict":  # a conflict stays open in the journal ("held") until it is answered
                         self._log("ended", job, status=job.status)
                     self._settle()
