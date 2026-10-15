@@ -112,7 +112,7 @@ def role_hook(req, role: str, member: dict | None = None) -> dict | None:
             return member
         allowed = authorize(member, req.method, req.path, declared=role, home=home)
     except TeamFileError as exc:  # team.json can't be read: nothing is allowed until it is fixed
-        raise HTTPError(503, str(exc)) from None
+        raise HTTPError(503, team_problem(exc)) from None
     if not allowed:
         if member is None:
             raise HTTPError(401, "Sign in first: open your invite link, or ask the team owner for a sign-in link.")
@@ -378,6 +378,19 @@ def _notify(req, ids, kind: str, text: str, ref: dict | None = None):
     return sent
 
 
+_TOLD = {"problem": None}
+
+
+def team_problem(exc) -> str:
+    """What a browser is told about a team.json that can't be read (TeamFileError.public: the file named from the
+    projects folder, never the server's own path); the terminal gets the full text once, when it changes."""
+    full = str(exc)
+    if _TOLD["problem"] != full:
+        _TOLD["problem"] = full
+        print(full, flush=True)
+    return getattr(exc, "public", None) or full
+
+
 def _safe(fn):
     def run(req, *a):
         try:
@@ -388,7 +401,7 @@ def _safe(fn):
                 out["gate"] = exc.gate
             return exc.status, out
         except TeamFileError as exc:  # team.json can't be read: nothing changes until it is fixed
-            return _err(503, str(exc))
+            return _err(503, team_problem(exc))
         except ValueError as exc:
             return _err(400, str(exc))
         except TimeoutError as exc:

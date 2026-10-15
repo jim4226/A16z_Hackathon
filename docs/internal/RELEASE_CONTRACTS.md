@@ -561,7 +561,10 @@ members; a member can hold several.
 - A team.json that doesn't parse is never read as "no team" (W3): `TeamStore.read()`/`update()` raise
   `teams.store.TeamFileError` (a ValueError naming the line and column and `team.json.bak`). Every `morph team` command
   exits with it, `morph team init` never writes over it, `morph studio --team` refuses to start with it, and a running
-  team Studio answers 503 with it to every request and page (nobody is signed in) until the file is fixed.
+  team Studio answers 503 with it to every request and page (nobody is signed in) until the file is fixed. Browsers
+  get `TeamFileError.public`, which names the file from the projects folder (`projects/.team/team.json`), never the
+  server's own path; the terminal gets the full text once (`api_team.team_problem`). Build errors in the chat name
+  files the same way (`durable.explain(exc, home)`).
 
 ## 9. Security rules for all features
 

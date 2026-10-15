@@ -679,7 +679,7 @@ class Studio:
                 return rev
             except Exception as exc:  # noqa: BLE001  (shown in the chat; the room keeps working)
                 traceback.print_exc()
-                self._say(room, job, "error", f"Error: {durable.explain(exc)}")
+                self._say(room, job, "error", f"Error: {durable.explain(exc, self.home)}")
                 return None
             finally:
                 room.live = None
@@ -762,7 +762,7 @@ class Studio:
                 return rev
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
-                self._say(room, job, "error", f"Error: {durable.explain(exc)}")
+                self._say(room, job, "error", f"Error: {durable.explain(exc, self.home)}")
                 return None
             finally:
                 room.live = None
@@ -1125,7 +1125,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 try:
                     self._member = team.authenticate(self, home=studio.home)
                 except ValueError as exc:  # team.json can't be read (TeamFileError): nobody is signed in until it is fixed
-                    self._team_problem = str(exc)
+                    self._team_problem = team.team_problem(exc)
                     return False
                 if self._member is not None:
                     self._counted_out()
@@ -1160,7 +1160,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 try:
                     status, page, ctype, csp = team.signed_out_page(home=studio.home, handler=self)
                 except ValueError as exc:  # team.json can't be read (TeamFileError)
-                    return self._error(503, str(exc))
+                    return self._error(503, team.team_problem(exc))
                 return self._send(status, page, ctype, csp=csp)
             note = (f'<p class="bad">{html.escape(wait_note)}</p>' if bad == "throttled" else
                     '<p class="bad">That access code did not match. Copy it again from the terminal.</p>' if bad else "")
@@ -1319,7 +1319,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                 if team is not None and team.landing(self, home=studio.home):  # /?invite= and /?link= pages, before sign-in
                     return None
             except ValueError as exc:  # team.json can't be read (TeamFileError)
-                return self._error(503, str(exc))
+                return self._error(503, team.team_problem(exc))
             if not self._signed_in():
                 if u.path in ("/", "/index.html"):
                     return self._sign_in_page(bad="throttled" if self._throttled else False)

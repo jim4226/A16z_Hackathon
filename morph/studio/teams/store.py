@@ -209,7 +209,13 @@ def exists(home: str | None = None) -> bool:
 
 
 class TeamFileError(ValueError):
-    """team.json is there but can't be read: Morph refuses to treat it as no team, or to write over it."""
+    """team.json is there but can't be read: Morph refuses to treat it as no team, or to write over it. str() names the
+    file by its full path (the terminal, `morph team`); `public` names it from the projects folder
+    (projects/.team/team.json), for browsers: where the server keeps its files is nobody else's business."""
+
+    def __init__(self, message: str, public: str | None = None):
+        super().__init__(message)
+        self.public = public or message
 
 
 def _team_json(path: str) -> dict:
@@ -228,10 +234,15 @@ def _team_json(path: str) -> dict:
     if isinstance(data, dict):
         return data
     bak = path + ".bak"
-    fix = (f"Fix it, or put back the copy Morph kept before its last change ({bak})" if os.path.isfile(bak) else
-           "Fix it, or restore it from a backup")
-    raise TeamFileError(f"{path} {why}. Morph won't use or overwrite it: no one can sign in and no team command works "
-                        f"until it is fixed. {fix}, then start again.")
+    shown = "/".join((os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(path)))) or "projects",
+                      os.path.basename(os.path.dirname(path)), os.path.basename(path)))  # projects/.team/team.json
+
+    def say(name, backup):
+        fix = (f"Fix it, or put back the copy Morph kept before its last change ({backup})" if os.path.isfile(bak) else
+               "Fix it, or restore it from a backup")
+        return (f"{name} {why}. Morph won't use or overwrite it: no one can sign in and no team command works until it "
+                f"is fixed. {fix}, then start again.")
+    raise TeamFileError(say(path, bak), public=say(shown, shown + ".bak"))
 
 
 class TeamStore:

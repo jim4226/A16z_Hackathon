@@ -132,9 +132,20 @@ def disk_full(exc) -> bool:
     return isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC))
 
 
-def explain(exc) -> str:
-    """What to tell a person about `exc`: DISK_FULL for a full disk (or quota), else the error's own text."""
-    return DISK_FULL if disk_full(exc) else str(exc) or exc.__class__.__name__
+def explain(exc, home: str | None = None) -> str:
+    """What to tell a person about `exc`: DISK_FULL for a full disk (or quota), else the error's own text, with the
+    projects folder `home` named by its own name (projects/kb1/r002/...) rather than the server's full path."""
+    text = DISK_FULL if disk_full(exc) else str(exc) or exc.__class__.__name__
+    return relative(text, home) if home else text
+
+
+def relative(text: str, home: str) -> str:
+    """`text` with the absolute path of projects folder `home` written from the folder's own name: what a browser is
+    told never says where the server keeps its files."""
+    name = os.path.basename(os.path.abspath(home)) or "projects"
+    for prefix in sorted({os.path.abspath(home), os.path.realpath(home)}, key=len, reverse=True):
+        text = text.replace(prefix + os.sep, name + "/").replace(prefix, name)
+    return text
 
 
 def process_alive(pid) -> bool:

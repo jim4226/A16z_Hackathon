@@ -78,7 +78,7 @@ def test_the_team_studio_refuses_to_start_with_the_reason(damaged, monkeypatch):
     assert "team.json can't be read at line" in str(exc.value)
 
 
-def test_a_running_team_studio_answers_503_with_the_reason_and_signs_nobody_in(tmp_path):
+def test_a_running_team_studio_answers_503_with_the_reason_and_signs_nobody_in(tmp_path, capsys):
     home = tmp_path / "projects"
     st = server.Studio(make_project(home, "egg-picker"), str(home), team=True)
     ids, cookies = make_team(str(home), (("Olivia", "owner", ["generalist"]), ("Vic", "viewer", [])))
@@ -99,9 +99,14 @@ def test_a_running_team_studio_answers_503_with_the_reason_and_signs_nobody_in(t
         assert get("/api/state", jar)[0] == 200
         path = home / ".team" / "team.json"
         path.write_bytes(path.read_bytes()[:200])
-        for p, cookie in (("/api/state", jar), ("/", jar), ("/", None), (link, None)):
+        capsys.readouterr()
+        for p, cookie in (("/api/state", jar), ("/", jar), ("/", None), (link, None), ("/?invite=mi_" + "Qx3" * 7 + "Q", None),
+                          ("/api/team", jar)):
             status, body = get(p, cookie)
-            assert status == 503 and "team.json can't be read" in body, (p, status, body[:300])
+            assert status == 503 and "projects/.team/team.json can't be read" in body, (p, status, body[:300])
+            assert str(tmp_path) not in body and "projects/.team/team.json.bak" in body  # never the server's own path
+        out = capsys.readouterr().out                                    # the terminal has the full path, once
+        assert out.count(f"{path} can't be read") == 1
     finally:
         httpd.shutdown()
     with pytest.raises(TeamFileError):

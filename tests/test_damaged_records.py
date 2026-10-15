@@ -281,3 +281,12 @@ def test_old_set_aside_builds_go_to_the_trash_and_deleted_leftovers_go(tmp_path)
     trash = os.listdir(home / ".trash")
     assert len(trash) == 1 and trash[0].startswith("egg-r002-")
     assert out["trashed"] == 1 and "to " in said[-1] and "empty it to free the space" in said[-1]
+
+
+def test_a_build_error_in_the_chat_names_files_from_the_projects_folder(tmp_path):
+    """A browser is told which file failed, never where the server keeps its files."""
+    home = tmp_path / "projects"
+    exc = PermissionError(13, "Permission denied", str(home / "kb1" / "r002" / "cad" / "base.stl"))
+    told = durable.explain(exc, str(home))
+    assert str(tmp_path) not in told and told.startswith("[Errno 13] Permission denied: 'projects/kb1")
+    assert durable.explain(OSError(28, "No space left on device"), str(home)) == durable.DISK_FULL
