@@ -1665,8 +1665,9 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   its shape within `NEAR_MM` (2 mm) of its diameter and length, else the profile's `jaw_lever_mm` (`JAW_LEVER_MM`, 70 mm
   mid-jaw), and mark the force plan `lever_estimated`. The build's gripper stage (`pipeline2.gripper_stage`) always
   searches. The search puts the SO-101's objects 20-66 mm across 62.2-79.8 mm from the pivot, so the estimate's stall
-  force and stall-capped limit are within 15 % of the build's; the target (the object's window) and a damage-capped
-  limit are the build's. Measured on the SO-101 (load 5-15, wall): preflight of a soda can 28.3 s -> 4.1 s (CPU 24.9 ->
+  force and stall-capped limit are within 15 % of the build's. A target the object's window sets and a damage-capped
+  limit are the build's; a target capped at 0.8 x the stall (`imported.gripper_summary`) moves with the stall and so
+  can differ from the build's within the same 15 % (the SO-101's water bottle: 18.51 N quick, 16.23 N built). Measured on the SO-101 (load 5-15, wall): preflight of a soda can 28.3 s -> 4.1 s (CPU 24.9 ->
   2.7 s, the rest is sizing for its new mass), each new egg diameter 2.8-8.9 s -> 0.0 s; Teams' preview of a soda-can
   change 39.5 s -> 11.5 s, of a 42 mm egg 15.9 s -> 3.2 s.
 - **Teams' preview keeps the built grip when the grasp is the same.** A generated arm's gripper stage gets its hold
@@ -1677,7 +1678,11 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   gripper_design's object.*, finger.*, gripper.*, safety_factor and the Grip force target; the finger material only
   while Keewano calibration is on) is the same for base and edit: a servo rail, an actuator family or a build level.
   The preview then shows no "Grip" row and plans the electronics with the base's target, as the build does. Any other
-  gripper edit (the object, the pads, a force sensor) takes the preflight's grip; a stock jaw always does.
+  gripper edit on a generated arm (the object, the fingers, the pads, a force sensor) gets the plan its gripper stage
+  will make: `impact._stage_grip` runs the grasp simulation's hold search (`morph.sim.min_hold_force`, the one number
+  of the simulation the plan reads; about 3 s, kept per gripper design in `impact._HOLDS`) and plans it on the new
+  servo and rail, so a 6 mm pad depth on the egg-picker keeps 2.34 N as its build does (it read 2.34 -> 2.17 N). A
+  stock jaw takes the preflight's grip, as its gripper stage is that closed form.
 - **A person's place is no person (E-N8); unsure is a hand-over.** `brief.HAND_TO_PERSON`'s "to <receiver>" form
   uses `_RECEIVER_TO`: "her" and "his" (`_HER_HIS`), and a `_PERSON` before 's (`_NOT_THEIR_PLACE`), own the place the
   things go to only before a place, a piece of furniture or a container (`_PLACE`: desk, room, bedroom, office,
