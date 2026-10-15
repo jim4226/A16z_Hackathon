@@ -491,5 +491,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   grasp simulation's hold, about 3 s more): a 6 mm pad depth keeps 2.34 N (it read 2.17 N).
 - "Bring the mail to her desk", "bring them to her room" and "give the parts to my dad's workshop" are no longer read as
   handing things to a person (with an emergency stop): a place that belongs to someone is a pick and place. Only a
-  place, furniture or a container counts as theirs; "bring the meds to her twice a day", "give the medicine to her
-  nurse" and "bring the remote to my dad's friend" stay hand-overs with an emergency stop.
+  place, furniture or a container that ends the phrase counts as theirs; "bring the meds to her twice a day", "give
+  the medicine to her nurse", "bring the remote to my dad's friend" and a place word that describes the person ("bring
+  the medicine to her home nurse", "to her office manager", "to my dad's room mate") stay hand-overs with an emergency
+  stop.

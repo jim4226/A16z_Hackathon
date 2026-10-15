@@ -1691,18 +1691,24 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   stock jaw takes the preflight's grip, as its gripper stage is that closed form.
 - **A person's place is no person (E-N8); unsure is a hand-over.** `brief.HAND_TO_PERSON`'s "to <receiver>" form
   uses `_RECEIVER_TO`: "her" and "his" (`_HER_HIS`), and a `_PERSON` before 's (`_NOT_THEIR_PLACE`), own the place the
-  things go to only before a place, a piece of furniture or a container (`_PLACE`: desk, room, bedroom, office,
-  workshop, kitchen, table, car, door, shed, shelf, drawer, bin, tray, station and the like), after at most two
-  describing words ("her bedside table", "my mum's kitchen table"). So "bring the mail to her desk", "bring them to her
-  room", "bring the cups to his office" and "give the parts to my dad's workshop" are pick and place. Before anything
-  else the person is the receiver, because a missed hand-over drops the emergency stop beside a person: "bring the
-  meds to her twice a day", "gives the medicine to her nurse", "bring breakfast to her bedside every day", "give it to
-  her husband", "bring the remote to my dad's friend" are hand-overs with people nearby and an e-stop (so is "give the
-  ball to her dog": the safe error). The direct form ("bring her the cup", "pass my dad his pills") keeps any "her"
-  but no receiver before 's ("pass my dad's pills to the tray" goes to the tray). `PERSON_NEAR` applies the same place
-  guard to its person mention and its "for/to her/his", so "pass my dad's pills to the tray" has people nearby. The
-  tables and a whole-brief test (`test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop`) are in
-  `tests/test_brief_answers.py`.
+  things go to only when a place, a piece of furniture or a container (`_PLACE`: desk, room, bedroom, office,
+  workshop, kitchen, table, car, door, shed, shelf, drawer, bin, tray, station, line, machine and the like), after at
+  most three describing words ("her bedside table", "my mum's kitchen table", "her old wooden kitchen table"), ends
+  the noun phrase: the text ends there, or punctuation, a number, a function word (`_NOT_DESCRIBING`: and, at, so,
+  every, please, ...) or an adverb (`_ADVERB`: twice, daily, tonight, upstairs, quickly, ...)
+  follows (`_PHRASE_END`). So "bring the mail to her desk", "bring them to her room", "bring the cups to his office",
+  "give the parts to my dad's workshop", "bring the meds to her bedroom twice a day" and "give the bolts to his
+  assembly line" are no hand-over. Otherwise the person is the receiver, because a missed hand-over drops the
+  emergency stop beside a person: after "her" or 's comes no place ("bring the meds to her twice a day", "gives the
+  medicine to her nurse", "bring breakfast to her bedside every day", "give it to her husband", "bring the remote to my
+  dad's friend"), or the place word only describes the person who follows it ("brings the medicine to her home nurse",
+  "to her care home nurse", "to my dad's room mate", "to her office manager", "to his lab partner"). These are
+  hand-overs with people nearby and an e-stop. The safe errors: "give the ball to her dog", and a place word followed
+  by a noun that isn't on the list ("bring the cup to her desk lamp"). The direct form ("bring her the cup", "pass my
+  dad his pills") keeps any "her" but no receiver before 's ("pass my dad's pills to the tray" goes to the tray).
+  `PERSON_NEAR` applies the same place guard to its person mention and its "for/to her/his", so "pass my dad's pills
+  to the tray" has people nearby. The tables and a whole-brief test
+  (`test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop`) are in `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
   order, failures included; not the ones it carried over or that were blocked), and `reused`: the stages whose
   `stage_status` is "reused", early cutoffs included. Keewano's `StageRecomputed` events (`keewano.events_for`) and

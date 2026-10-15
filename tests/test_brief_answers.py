@@ -211,6 +211,22 @@ def test_wording_that_opens_twists_or_assembles_something_reads_as_that_job(text
     ("a robot that gives the medicine to her nurse", True, True), ("bring breakfast to her bedside every day", True, True),
     ("give it to her husband", True, True), ("bring the remote to my dad's friend", True, True),
     ("give the medicine to his nurse", True, True), ("bring the cup to her at her desk", True, True),
+    # a place word in front of a person word describes the person: the place is hers only when it ends the noun phrase
+    ("a robot that brings the medicine to her home nurse", True, True), ("bring the pills to her care home nurse", True, True),
+    ("bring the tea to my dad's room mate", True, True), ("bring water to her kitchen helper", True, True),
+    ("hand the files to her office manager", True, True), ("bring the coffee to her desk neighbour", True, True),
+    ("bring the parcel to her house guest", True, True), ("give the keys to his van driver", True, True),
+    ("give the report to his lab partner", True, True), ("hand the tools to his workshop assistant", True, True),
+    ("give the meds to my mum's home carer", True, True), ("hand the cup to her table neighbour", True, True),
+    ("give the forms to his line manager", True, True), ("pass the tray to her machine operator", True, True),
+    # ... and the place is hers when nothing but a function word, a time or manner word, a number or punctuation follows
+    ("bring the cup to her old wooden kitchen table", False, False), ("bring the meds to her bedroom twice a day", False, False),
+    ("bring the medicine to her home", False, False), ("bring the cup to her room so she can drink it", False, False),
+    ("bring the mail to her desk downstairs", False, False), ("bring the mail to her desk drawer", False, False),
+    ("bring the post to her room's door", False, False), ("bring the tray to her room 12", False, False),
+    ("bring the mail to her desk daily", False, False), ("pass the cups to his kitchen counter.", False, False),
+    ("give the cans to his packing station", False, False), ("give the bolts to his assembly line", False, False),
+    ("pass the panels to his conveyor", False, False), ("bring the parts to his machine", False, False),
 ])
 def test_a_hand_over_goes_to_a_person(text, hand_over, near):
     assert bool(re.search(B.HAND_TO_PERSON, text)) is hand_over
@@ -236,10 +252,17 @@ def test_passing_things_on_to_a_station_is_a_pick_and_place(text, task, estop):
     "bring the remote to my dad's friend", "pass my dad his pills", "bring me a can of soda", "pass them to me",
     "give it back to her", "hand the cup to my mum", "bring the mugs over to us", "give it to her every morning",
     "bring the tea to her, please", "hand the tools to her when she asks", "bring her the cup",
-    "pick up cans and pass them to me"])
+    "pick up cans and pass them to me",
+    # a place word describing the person ("her home nurse") is no place of hers
+    "a robot that brings the medicine to her home nurse", "a robot that brings the pills to her care home nurse",
+    "a robot that brings the tea to my dad's room mate", "a robot that brings water to her kitchen helper",
+    "a robot that hands the files to her office manager", "a robot that brings the coffee to her desk neighbour",
+    "a robot that brings the parcel to her house guest", "a robot that gives the keys to his van driver",
+    "a robot that gives the report to his lab partner"])
 def test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop(text):
     # "to her twice a day", "to her nurse" and "to my dad's friend" built a pick and place with no e-stop: the possessive
-    # guard took any word after "her" for the place it owned
+    # guard took any word after "her" for the place it owned; then "to her home nurse", "to her care home nurse" and "to
+    # my dad's room mate" did: it took a place word in front of the person for her place
     b = agents.run_turn(agents.run_turn(text=text), action="defaults")
     assert B.value(b, "task") == "hand_over" and B.value(b, "people_nearby") == "yes"
     assert "estop" in b.changes["electronics.extras"] and re.search(r"\bhands (?:over|you)\b", b.summary), b.summary
