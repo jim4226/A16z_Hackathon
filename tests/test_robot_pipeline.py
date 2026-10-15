@@ -220,3 +220,23 @@ def test_a_stretched_out_payload_is_never_negative():
     s = summarize({"sims": {"scenarios": {"payload_sweep": sweep}}})
     assert (s["stretch_payload_g"], s["stretch_holds_itself"]) == (216.0, True)
     assert summarize({})["stretch_holds_itself"] is None
+
+
+def test_the_early_cutoff_never_carries_over_a_failed_gripper_stage(tmp_path):
+    # a stage that is dirty only because sizing reran is reused when the part of sizing it reads is unchanged, but never
+    # when the parent's own result for it is unusable: then it is computed again
+    import os
+
+    p = RobotProject(str(tmp_path / "egg"))
+    d = Design().with_changes(EGG_ROBOT)
+    r1 = p.run(d, n_trials=1, verbose=False, fast_sim=True)
+    path = os.path.join(p.rev_dir(r1), "results.json")
+    with open(path, encoding="utf-8") as fh:
+        res = json.load(fh)
+    res["errors"] = {"gripper": "grasp simulation crashed"}
+    res["stage_status"]["gripper"] = "error"
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    r2 = p.run(d.with_changes({"electronics.extras": "wrist_camera"}), parent=r1, n_trials=1, verbose=False, fast_sim=True)
+    b = p.load_results(r2)
+    assert b["stage_status"]["gripper"] == "computed" and "gripper" not in (b.get("errors") or {}), b.get("errors")

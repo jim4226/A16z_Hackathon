@@ -1429,11 +1429,11 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
 - **Stage reuse follows every key a stage reads (ENG-4).** `GRAPH` adds `electronics.pinion_radius_mm` to sizing (the
   hand's rack-and-pinion drive), `task.*` to the manual (it prints the target cycle time) and `build.config` to the
   gripper stage, and drops `electronics.supply_v` from it. The gripper stage of a generated arm analyses
-  `pipeline2.gripper_design(design)`: the gripper actuator at its rated voltage and the fingers the robot's CAD makes for
-  its build config (`arm.LOOK`: printed PETG, machined Al6061, molded PC, the last in `materials.MOLDED`), with no
-  controller; it no longer reads `finger.material`, `fab.process` or `electronics.mcu`, which the robot doesn't build
-  with, and its force plan has no `mcu`, `wiring`, `parts` or `sensing` (the electronics plan's, for a robot). So a
-  controller change no longer reruns the gripper stage (the electronics, the CAD whose base bay holds the board, and
+  `pipeline2.gripper_design(design)`: the gripper actuator (its stall on the servo rail since section 21) and the
+  fingers the robot's CAD makes for its build config (`arm.LOOK`: printed PETG, machined Al6061, molded PC, the last in
+  `materials.MOLDED`), with no controller; it no longer reads `finger.material`, `fab.process` or `electronics.mcu`,
+  which the robot doesn't build with, and its force plan has no `mcu`, `wiring`, `parts` or `sensing` (the electronics
+  plan's, for a robot). So a controller change no longer reruns the gripper stage (the electronics, the CAD whose base bay holds the board, and
   what follows them still rerun), a fabrication-process change reruns manufacturing, the BOM and the manual only (no
   Mechanical review in Teams), and a cycle-time change reruns the manual and asks Documentation. New robot's preflight
   analyses the same design.
@@ -1548,8 +1548,8 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   "reaches only" issue are at the rail. An `electronics.servo_v` edit on the SO-101 used to keep the old grip limit
   (GRIP_LIMIT_N 20.83 N against 19.29 N fresh). `pipeline2.gripper_inputs(design, sizing)` is the only part of sizing
   the stage reads (the rail's voltage; for an imported robot also the servos), and `pipeline2.PARTIAL` declares it:
-  `RobotProject.run` reuses a stage that is dirty only because an upstream reran, when that part is unchanged and no
-  key of its own changed (an early cutoff), so a wrist camera or a longer reach re-sizes the arm without rerunning the
+  `RobotProject.run` reuses a stage that is dirty only because an upstream reran, when that part is unchanged, no key
+  of its own changed and the parent's own result for it is usable (an early cutoff; a failed one is computed again), so a wrist camera or a longer reach re-sizes the arm without rerunning the
   grasp simulation (`provenance` "reused from rNNN"). `dirty_nodes` and Teams' `affected_stages` stay static: they
   list the gripper stage for every sizing edit. New robot's preflight passes the same rail stall.
 - **The arm is laid out the same before and after the electronics plan.** `arm.BAY_CLEAR_MM` (22 mm) is the electronics

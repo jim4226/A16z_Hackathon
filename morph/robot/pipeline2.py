@@ -369,7 +369,7 @@ class RobotProject(Project):
 
         for node in ORDER:
             sub = GRAPH[node][2]
-            if node not in todo or (parent and self._cut_off(node, design, changes, res, prev, parent)):
+            if node not in todo or (parent and self._cut_off(node, design, changes, res, prev, self.rev_dir(parent))):
                 for key in self._keys(node):
                     res[key] = prev.get(key)
                 # a failed, incomplete or preview-only stage stays that way: an unrelated edit never launders it
@@ -436,12 +436,15 @@ class RobotProject(Project):
         return rev
 
     @staticmethod
-    def _cut_off(node, design, changes, res, prev, parent) -> bool:
+    def _cut_off(node, design, changes, res, prev, parent_dir) -> bool:
         """Early cutoff: a stage that is only dirty because an upstream stage reran is reused when that upstream left the
         part of its result the stage reads (PARTIAL) as the parent had it, and every other upstream was reused. A key
-        the stage reads itself, an upstream it reads whole or one that failed now reruns it."""
+        the stage reads itself, an upstream it reads whole or one that failed now, or the parent's own result for the
+        stage being unusable, reruns it."""
         part = PARTIAL.get(node)
         if not part or any(fnmatch.fnmatch(k, p) for k in changes for p in GRAPH[node][0]):
+            return False
+        if stage_problem(prev, node) or artifact_problem(prev, node, parent_dir):
             return False
         for up in GRAPH[node][1]:
             if res["stage_status"].get(up) == "reused":
