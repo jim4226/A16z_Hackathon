@@ -789,7 +789,11 @@ loopback, link-local or metadata, shared, documentation, reserved, multicast, IP
 Teredo or NAT64 address) and the connection goes to the checked address (TLS still checks the name); no redirects; one
 deadline (a watchdog shuts a dripping socket); JSON answers only, capped, reduced to the declared fields and shortened;
 every known key (the tool's and every other `MORPH_TOOL_*`, Claude, SubQ, Keewano key) removed from answers and errors;
-a request that would carry a known key outside its own slot is refused; 401/403 with a key pause the run as `rejected`.
+a request that would carry a known key outside its own slot is refused; 401/403 with a key pause the run as `rejected`,
+and so does a JSON answer (2xx or 4xx) that matches the manifest's `response.auth_error` rule (`{pointer, match}`: the
+object at the pointer, or one in the list there, has every `match` field with that value, text compared without case;
+only for a tool with `auth`; checked by `check_tool`). Mouser's manifest has one: a wrong key gets HTTP 200 and
+`{"Errors": [{"PropertyName": "API Key", ...}]}` (tests/fixtures/tools/answers/mouser_wrong_key.json, recorded).
 Direct connections only: a Studio that must go through an HTTP proxy can't reach tool APIs yet.
 
 **What T3 wires** (nothing in T1 touches server.py): `studio.toolbox = Toolbox(studio.home, emit=...)` and `recover()` at

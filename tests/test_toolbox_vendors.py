@@ -6,7 +6,8 @@ what the runner sends and what it keeps from a recorded answer:
   (tests/fixtures/tools/answers/element14_keyword_medium.json);
 - Mouser: its Swagger document (api.mouser.com/api/docs/V1) has no example answer, so
   tests/fixtures/tools/answers/mouser_keyword.json follows its SearchResponseRoot model with made-up values, plus a line of
-  prompt injection in a field the manifest drops.
+  prompt injection in a field the manifest drops. tests/fixtures/tools/answers/mouser_wrong_key.json is Mouser's real
+  answer to a wrong key (a key of zeros, recorded on 2026-10-14): HTTP 200 with an Errors entry, not a 401.
 
 Neither has been tried with a real key: verified.live is null, which the Studio shows as "Not yet tried with a real key"."""
 
@@ -200,6 +201,30 @@ def test_element14_refuses_terms_and_stores_its_docs_dont_list(args):
 def test_a_refused_key_comes_back_as_rejected(name, args, secret, status):
     out = run(name, args, secret, Vendor(status))
     assert out["kind"] == "needs_credential" and out["need"]["reason"] == "rejected" and secret not in out["content"]
+
+
+class WrongKey(Vendor):
+    """Mouser's answer to a wrong key, as recorded: HTTP 200 (application/json) with an Errors list."""
+
+    def transport(self, r, ip, timeout, max_bytes):
+        self.requests.append(r)
+        return 200, {"content-type": "application/json; charset=utf-8"}, answer("mouser_wrong_key.json")
+
+
+@pytest.mark.parametrize("name,args", [("mouser_search_keyword", {"keyword": "30-81794"}),
+                                       ("mouser_search_part_number", {"part_numbers": "595-SN74HC595N"})])
+def test_mouser_refusing_the_key_with_200_comes_back_as_rejected(name, args):
+    """Mouser answers a wrong key with HTTP 200 and an Errors entry for the API Key: the manifest's auth_error rule
+    makes that the key card's "refused the key" (Replace key), as a 401 or 403 would."""
+    v = WrongKey()
+    out = run(name, args, MOUSER_KEY, v)
+    assert out["kind"] == "needs_credential" and out["need"] == {"env": "MORPH_TOOL_MOUSER_KEY", "reason": "rejected"}
+    assert json.loads(out["content"])["status"] == 200 and MOUSER_KEY not in out["content"] and len(v.requests) == 1
+    doc = json.loads(answer("mouser_wrong_key.json"))            # any other error stays part of the answer
+    doc["Errors"][0]["PropertyName"] = "SearchByKeywordRequest.keyword"
+    v.transport = lambda r, ip, timeout, max_bytes: (200, {"content-type": "application/json"}, json.dumps(doc).encode())
+    out = run(name, args, MOUSER_KEY, v)
+    assert out["kind"] == "ok" and json.loads(out["content"])["data"]["errors"][0]["Message"] == "Invalid unique identifier."
 
 
 # ------------------------------------------------------------------ in a run

@@ -33,7 +33,7 @@ Every run gets one card in the chat of its project, with a line for each tool it
 | Card | When | What you can do |
 |---|---|---|
 | **Key needed: *service*** | a tool needs a key that isn't set | **Add key** (opens Keys on that key), **Get a key** (the provider's page), **Skip** (the run carries on without it). The card says what the key is for, what it costs and exactly which host gets it. Once the key is saved the run continues by itself ("Key added, continuing...") |
-| ***service* refused the key** | the service answered 401 or 403 to the saved key | **Replace key**: it may be mistyped, expired or not enabled for that service |
+| ***service* refused the key** | the service answered 401 or 403 to the saved key, or an answer its manifest says means a refused key (Mouser answers a wrong key with 200 and an error for the API Key) | **Replace key**: it may be mistyped, expired or not enabled for that service |
 | **Allow *tool*?** | the first use of a read-only tool nobody has allowed yet, or of one that changed since it was allowed (Morph's own tools skip it once you save their key in Keys) | **Allow once**, **Always**, **Skip**. It shows what is sent, to which host, the cost and the call's arguments |
 | **Allow this call to *tool*?** | every call of a tool that writes or uploads | **Allow once** or **Skip**, every time |
 | **The agent needs a tool Morph doesn't have** | no tool covers the need | Darwin's suggestions; the owner can draft a tool |
@@ -153,7 +153,10 @@ a made-up distributor), cut to one tool:
 - `request`: `{name}` placeholders take the inputs, which are checked against `input_schema` (an object of plain
   values, nothing else allowed).
 - `response`: JSON only; `extract` keeps fields by JSON pointer and `max_items` caps lists. Everything else the
-  service answers is dropped before Claude sees it.
+  service answers is dropped before Claude sees it. A service that refuses a key without a 401 or 403 can say how
+  with `auth_error`, `{"pointer": "/Errors", "match": {"PropertyName": "API Key"}}`: an answer whose object at the
+  pointer (or an object in the list there) has every `match` field is a refused key, and the card offers **Replace
+  key**. Only a tool that sends a key may have one.
 - `limits`: at most 30 seconds and 2 MiB per call.
 
 Unknown fields are refused at every level. A manifest that breaks a rule isn't loaded; Keys lists it with the reason.
@@ -201,8 +204,9 @@ last control. Read the hosts and lookups before you approve.
 ## Not yet tried with real keys
 
 - Whether Mouser and element14 accept the requests as written, and whether their answers have the fields the
-  manifests keep. Their rate limits, and the answer to a wrong key: Morph assumes 401 or 403, which shows **Replace
-  key**; another status would show as a failed call.
+  manifests keep, and their rate limits. A wrong key was tried with made-up keys (2026-10-15): element14 answers 403
+  ("Developer Inactive") and Mouser 200 with an error for the API Key (its manifest's `auth_error` rule); both show
+  **Replace key**.
 - Real Claude finding the distributor tools through tool search, the prompt cache on a resumed run, the server-side
   fallback after a refusal, and Claude's web fetch staying on the documentation's site when it drafts a tool.
 - Prices: Morph keeps a price only from a tool that answered in the run and marks one it can't find in that answer
