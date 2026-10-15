@@ -537,14 +537,15 @@ def test_a_sensorless_hobby_grip_keeps_every_size_of_its_object_under_stall_or_s
     assert "grip_stalled" not in m, m
 
 
-@pytest.mark.parametrize("obj, covers", [("egg", False), ("grape", True)])
+@pytest.mark.parametrize("obj, covers", [("egg", False), ("grape", False), ("marker", True)])
 def test_a_hobby_force_sensing_close_reaches_the_small_end_of_the_size_or_says_it_cant(tmp_path, obj, covers):
     """A hobby PWM gripper with force sensors gave up any close that read nothing GRIP_PROBE past the gauge: 0.92 mm for
     an egg (an egg 1.76 mm per jaw narrower, the robustness study's 92 %, was let go) and two PCA9685 counts for a
     strawberry, while the simulation and the robustness trials gripped them, and the build read feasible. The probe now
     reaches the small end of the object's size (OBJECT_SIZE_SPREAD) when a dead sensor then leaves a gauge-sized object
-    under PROBE_STALL_SHARE of the stall; when it can't (the egg would need 1.92 mm, past the stall) the plan says so
-    as an issue. The simulation lets go exactly the sizes the compiled firmware lets go."""
+    under PROBE_STALL_SHARE of the stall and its damage force; when it can't (the egg would need 1.92 mm, past the
+    stall; a dead sensor at the grape's 0.96 mm would crush it) the plan says so as an issue. The simulation lets go
+    exactly the sizes the compiled firmware lets go."""
     from morph import electronics
 
     d = template("egg-picker").with_changes({**({} if obj == "egg" else object_changes(obj)),
@@ -570,6 +571,28 @@ def test_a_hobby_force_sensing_close_reaches_the_small_end_of_the_size_or_says_i
         assert ("grip_gave_up" not in m) is gripped, (s, m.get("grip_gave_up"))
         if not gripped:
             assert not m["success"] and "opens with !GRIP no force reading" in m["failure"], m
+
+
+def test_a_hobby_force_sensing_probe_is_no_reach_a_dead_sensor_would_crush_the_object_with(tmp_path):
+    """The hobby force-sensing probe reached a 20 mm grape at the small end of its size (0.96 mm past the gauge), so a
+    dead sensor put 19.77 N on a gauge-sized grape, ten times the 2 N that damages it, before the jaw opened, and the
+    plan called the grape covered. Reaching it is now an issue that says so, and the probe stays where a gauge-sized
+    grape gets the least the servo can be sent (two position commands, 3.31 N), as for the egg and the strawberry."""
+    from morph import electronics
+
+    d = template("egg-picker").with_changes({**object_changes("grape"), "arm.actuator_family": "hobby_pwm"})
+    exe, ep = _compile_firmware(tmp_path, d)
+    g, ol, band = ep["grip"], ep["grip"]["open_loop"], electronics.SERVO_BAND_MM
+    assert ol["reach_mm"] == pytest.approx(0.961, abs=1e-3) and not ol["covers"]
+    assert ol["probe_mm"] == pytest.approx(2 * ol["step_mm"], abs=1e-3) and ol["probe_n"] == pytest.approx(3.31, abs=0.01)
+    told = next(i for i in ep["issues"] if "no torque limit to back up the force sensors" in i)
+    assert ("where a dead sensor would put 19.77 N per finger, 64 % of its stall force, on a gauge-sized grape, above "
+            "the 2 N that damages it: the firmware gives up at 0.16 mm") in told, told
+    w = next(w for w in ep["warnings"] if "stops there and opens (!GRIP)" in w)
+    assert "a gauge-sized grape gets about 3.31 N per finger there" in w and "(above the 2 N that damages it)" in w
+    r, out = _run_exe(exe, 0.0, 0.0)                       # a dead sensor: the close stops at the probe and opens
+    assert r["closed"] - r["lowest"] == pytest.approx(ol["probe_mm"], abs=1e-3) and r["final"] == r["max"], r
+    assert g["stall_force_n"] * (r["closed"] - r["lowest"]) / band < 0.2 * g["stall_force_n"]
 
 
 # ------------------------------------------------------------------ the grip holds what the robot does with it

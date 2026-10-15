@@ -721,7 +721,9 @@ def _grip_sentence(grip: dict, name: str) -> str:
                     f"jaw than the gauge is still gripped"
                     + (" (the small end of its size)" if ol.get("covers") else ", a narrower one isn't")
                     + f"; with a dead sensor a gauge-sized {name} gets about {ol['probe_n']:g} N per finger there before "
-                    f"the jaw opens.")
+                    f"the jaw opens"
+                    + (f", above the {grip['object_limit_n']:g} N that damages it."
+                       if grip.get("object_limit_n") and ol["probe_n"] > grip["object_limit_n"] else "."))
         return out
     motion = grip.get("motion") or {}
     revolute = motion.get("kind") == "revolute"

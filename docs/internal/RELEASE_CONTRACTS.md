@@ -1661,15 +1661,22 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     back to `GRIP_CLOSED`, where an object larger than the gauge stayed squeezed with no reading; a torque-limited
     gripper still does that, its torque limit caps it). `spread_mm` = `morph.electronics.OBJECT_SIZE_SPREAD` (0.08, the
     robustness study's default size band, which `robust.default_spec` reads) x the object's half-width;
-    `reach_mm` = spread + two position commands (a reading). When a gauge-sized object then gets at most
-    `PROBE_STALL_SHARE` (0.8) of the stall with a dead sensor, `covers` and `probe_mm` = max(reach, band x `limit_n` /
-    stall); otherwise `covers` is false, `probe_mm` = band x `limit_n` / stall (at least two commands, at most that
-    share), an object narrower than it per jaw isn't gripped, and the plan has an issue naming both distances and
-    recommending a smart-bus or Dynamixel gripper servo (for a hobby PWM gripper servo; a bus servo on a bus that
-    can't set its torque limit has its own issue and gets no firmware). On an MG996R egg-picker hand: a grape covers (0.96 mm, 0.80 mm
-    spread), an egg (1.92 mm needed) and a strawberry (1.44 mm) don't (0.92 and 0.16 mm). `probe_n` (stall x probe /
-    band) is what a gauge-sized object gets at the probe with a dead sensor until the jaw opens; the plan's warning, the
-    firmware's comment and the manual state it. `arm.grip_meta` puts `probe_mm` in `asm.meta["grip_probe_mm"]`
+    `reach_mm` = spread + two position commands (a reading). When reach is at most `PROBE_STALL_SHARE` (0.8) x band
+    and a gauge-sized object at the probe below gets no more than its damage force with a dead sensor (stall x probe /
+    band), `covers` and `probe_mm` = min(max(reach, band x `limit_n` / stall), `PROBE_STALL_SHARE` x band) (an SG90
+    hand's 18 mm marker: band x `limit_n` / stall is 1.50 mm, the probe 1.20 mm); otherwise `covers` is false,
+    `probe_mm` = min(max(band x `limit_n` / stall, two commands), `PROBE_STALL_SHARE` x band), an object narrower
+    than it per jaw isn't gripped, and the plan has an issue naming both distances, what a dead sensor would put on a
+    gauge-sized object at the reach (and its damage force when that is above it) and recommending a smart-bus or
+    Dynamixel gripper servo (for a hobby PWM gripper servo; a bus servo on a bus that can't set its torque limit has
+    its own issue and gets no firmware). On an MG996R egg-picker hand an 18 mm marker covers (0.92 mm probe, 0.72 mm
+    spread); an egg (1.92 mm needed), a strawberry (1.36 mm), a ping pong ball (1.76 mm) and a tomato (2.76 mm)
+    don't (0.92, 0.16, 0.16 and 0.32 mm probes), nor does a 20 mm grape: its 0.96 mm reach is under the 1.2 mm share,
+    but a dead sensor there would put 19.77 N on a gauge-sized grape, ten times its 2 N damage force, so its probe is
+    two commands (0.16 mm), where a dead sensor still puts 3.31 N on it, the least the servo can be sent (the plan's
+    warning says so). `probe_n` (stall x probe / band) is what a gauge-sized object gets at the probe with a dead
+    sensor until the jaw opens; the plan's warning, the firmware's comment and the manual state it, and the warning
+    adds the damage force when `probe_n` is above it. `arm.grip_meta` puts `probe_mm` in `asm.meta["grip_probe_mm"]`
     (`simulate._Info.grip_probe_mm`), and a pick-and-place trial (`simulate._run_pick_place`) whose object
     (`size_scale`) is narrower than the gauge by more than that per jaw closes only to the probe and opens
     (`_given_up`), fails, and names it: `metrics["grip_gave_up"]` {narrower_mm, probe_mm} and `metrics["failure"]`; a

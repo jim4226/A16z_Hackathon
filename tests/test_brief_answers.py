@@ -269,6 +269,7 @@ def test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop(text)
 
 
 @pytest.mark.parametrize("text", ["a 4 dof arm with hobby servos to pick up ping pong balls",
+                                  "a 4 dof arm with hobby servos to pick grapes",   # a dead sensor would crush one
                                   "a 4 dof arm with hobby servos to move 40 g wooden blocks 50 mm wide"])
 def test_hobby_servos_that_cant_grip_the_object_safely_become_smart_bus_servos(text):
     # a hobby gripper servo has no torque limit: its force-sensing close can't reach a ping pong ball at the small end of

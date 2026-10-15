@@ -204,10 +204,11 @@ def open_loop_squeeze(grip: dict, gkey: str, family: str, width_mm: float | None
         reads there too and opens. The jaws are calibrated on a gauge of the object's nominal size (`width_mm`), and
         the object strays from it by OBJECT_SIZE_SPREAD each way: `spread_mm` per jaw at the small end. `reach_mm`, the
         spread plus two position commands (to get a reading), is the probe (`covers`; at least where a gauge-sized
-        object gets the hard limit) when a gauge-sized object then gets at most PROBE_STALL_SHARE of the stall with a
-        dead sensor. Otherwise (`covers` False: a plan issue) the probe stops where a gauge-sized object gets the hard
-        limit (at most that share), and an object narrower than it per jaw isn't gripped. `probe_n` is what a
-        gauge-sized object gets at the probe with a dead sensor, until the firmware opens.
+        object gets the hard limit, at most PROBE_STALL_SHARE x band) when a gauge-sized object then gets at most
+        PROBE_STALL_SHARE of the stall, and no more than its damage force, with a dead sensor. Otherwise (`covers` False:
+        a plan issue) the probe stops where a gauge-sized object gets the hard limit (at least two position commands,
+        at most that share), and an object narrower than it per jaw isn't gripped. `probe_n` is what a gauge-sized
+        object gets at the probe with a dead sensor, until the firmware opens.
     {servo_band_mm, step_mm, rated_n, squeeze_mm, squeeze_n, capped, spread_mm, room_mm, covers, band_capped, band_n,
     large_n} or {servo_band_mm, step_mm, rated_n, spread_mm, reach_mm, covers, probe_mm, probe_n}."""
     from ..electronics import OBJECT_SIZE_SPREAD, PROBE_STALL_SHARE, SERVO_BAND_MM
@@ -221,7 +222,10 @@ def open_loop_squeeze(grip: dict, gkey: str, family: str, width_mm: float | None
         spread = OBJECT_SIZE_SPREAD * float(width_mm or 0.0) / 2.0
         reach = spread + 2.0 * step
         at_limit = max(SERVO_BAND_MM * float(grip["limit_n"]) / stall, 2.0 * step)
-        covers = reach <= most + 1e-9
+        dmg = float(grip.get("object_limit_n") or 0.0)
+        # a dead sensor must leave a gauge-sized object under PROBE_STALL_SHARE of the stall and under its damage force
+        # (a 20 mm grape's 0.96 mm reach would put 19.77 N on a 2 N grape)
+        covers = reach <= most + 1e-9 and not (dmg > 0 and stall * min(max(reach, at_limit), most) / SERVO_BAND_MM > dmg)
         probe = round(min(max(reach, at_limit) if covers else at_limit, most), 3)
         return {**out, "spread_mm": round(spread, 3), "reach_mm": round(reach, 3), "covers": covers, "probe_mm": probe,
                 "probe_n": round(stall * probe / SERVO_BAND_MM, 2)}
@@ -690,13 +694,19 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
             if not ol["covers"] and ACTUATORS[gkey].get("interface") == "pwm":   # (a servo off its bus is an issue already)
                 from ..electronics import PROBE_STALL_SHARE
                 share = ol["reach_mm"] / ol["servo_band_mm"]
+                reach_n = grip["stall_force_n"] * min(share, 1.0)
                 issues.append(f"gripper: the {gkey} has no torque limit to back up the force sensors, and reaching {small}, "
                               f"means closing {ol['reach_mm']:.2f} mm past the gauge with no force reading, where a dead "
-                              f"sensor would put {'its whole stall force' if share >= 1 else f'{share * 100:.0f} % of its stall force'} "
-                              f"on a gauge-sized {name} (Morph's probe stops at {PROBE_STALL_SHARE * 100:.0f} %): the "
-                              f"firmware gives up at {ol['probe_mm']:.2f} mm, so a {name} more than that narrower per jaw "
-                              "isn't gripped; use a smart-bus or Dynamixel gripper servo, whose torque limit backs up the "
-                              "sensors")
+                              f"sensor would put "
+                              + ("its whole stall force" if share >= 1 else
+                                 f"{reach_n:.2f} N per finger, {share * 100:.0f} % of its stall force,")
+                              + f" on a gauge-sized {name}"
+                              + (f" (Morph's probe stops at {PROBE_STALL_SHARE * 100:.0f} %)"
+                                 if share > PROBE_STALL_SHARE + 1e-9 else "")
+                              + (f", above the {dmg:g} N that damages it" if dmg and reach_n > dmg else "")
+                              + f": the firmware gives up at {ol['probe_mm']:.2f} mm, so a {name} more than that narrower "
+                              "per jaw isn't gripped; use a smart-bus or Dynamixel gripper servo, whose torque limit backs "
+                              "up the sensors")
             warnings.append(f"the hobby gripper servo has no torque limit to back up the force sensors, so a close that has read "
                             f"no force by {ol['probe_mm']:.2f} mm past the calibration gauge stops there and opens (!GRIP)"
                             + (f", which reaches {small}" if ol["covers"] else "")
