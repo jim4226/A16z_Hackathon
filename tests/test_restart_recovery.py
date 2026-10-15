@@ -118,6 +118,25 @@ def test_queued_edits_are_named_in_the_chat_never_rerun(home, tmp_path, builds):
     assert sum(t.startswith("The Studio stopped") for t in texts(st3.room())) == 2
 
 
+def test_an_edit_whose_revision_was_written_just_before_the_stop_is_not_called_lost(home, tmp_path, builds):
+    """The revision is on disk, then the journal's "ended" line: a stop between the two must not say it wasn't built."""
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    egg = st.room()
+    job = st.queue_params(egg, {"object.mass_g": 70})
+    finish(job)
+    journal = home / "egg" / ".morph" / "queue.jsonl"
+    entry = {"op": "queued", "id": job.id, "kind": "params", "label": job.label, "by": None, "base_rev": "r001",
+             "ts": job.created, "pid": os.getpid(), "host": rooms.HOST}
+    journal.write_text(json.dumps(entry) + "\n", encoding="utf-8")         # as if "ended" never reached the disk
+    st2 = server.Studio(RobotProject(str(home / "egg")), str(home))
+    assert not any(t.startswith("The Studio stopped") for t in texts(st2.room())) and st2.room().completed() == ["r001", "r002"]
+    again = {**entry, "id": "j-again"}                                    # the same edit sent again, still waiting
+    journal.write_text(json.dumps(entry) + "\n" + json.dumps(again) + "\n", encoding="utf-8")
+    st3 = server.Studio(RobotProject(str(home / "egg")), str(home))
+    stopped = [t for t in texts(st3.room()) if t.startswith("The Studio stopped")]
+    assert len(stopped) == 1 and "Object mass" in stopped[0]              # one revision accounts for one job
+
+
 def test_a_conflict_waiting_for_an_answer_waits_again_after_a_restart(home, tmp_path, builds):
     st = server.Studio(RobotProject(str(home / "egg")), str(home))
     egg = st.room()

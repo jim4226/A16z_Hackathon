@@ -236,7 +236,10 @@ project whose journal has open jobs (`rooms.open_jobs`) and was not written by a
   marks its brief built when it ends). Without a journal (an older Morph, `morph robot new` stopped in a terminal), the
   design of the first revision `tidy()` just set aside is used;
 - every other open job gets one assistant line, "The Studio stopped before this was built: “<label>”. Send it again if
-  you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own;
+  you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own.
+  A job whose revision was written before the stop took its `ended` line with it (one of the newest 12 finished
+  revisions has its label, cut to 48 characters, and a results.json newer than the job; each revision accounts for one
+  job) is skipped: it was built;
 - a conflict waiting for an answer waits again (`JobQueue.restore`, same id: the page draws its Apply / Drop again);
 - then `rooms.STARTED` hooks `fn(studio)` run: a team Studio reopens every change request that is applied but has no
   revision (`api_team.reopen_stopped`, `last_error` "the Studio stopped before it finished. Apply it again") and tells

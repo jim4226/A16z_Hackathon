@@ -322,6 +322,21 @@ class Studio:
             os.remove(journal)  # its open jobs are handled here; what still waits is journaled again
         except OSError:
             pass
+        built = []  # (label, when) of the newest revisions: a job whose revision was written just before the stop
+        for rev in finished[-12:]:
+            try:
+                built.append((str(room.p.load_results(rev).get("label") or ""),
+                              os.path.getmtime(os.path.join(room.p.rev_dir(rev), "results.json"))))
+            except (OSError, ValueError, AttributeError):
+                continue
+
+        def built_by(e):  # the revision this job made, when the stop took its "ended" line (one revision, one job)
+            try:
+                ts = float(e.get("ts") or 0)
+            except (TypeError, ValueError):
+                return None
+            return next((b for b in built if b[0] == str(e.get("label") or "")[:48] and b[1] >= ts), None)
+
         first = None
         for e in entries:
             if e["op"] == "held":
@@ -329,6 +344,8 @@ class Studio:
             elif e.get("kind") == "build":
                 if not finished and first is None and isinstance(e.get("design"), dict):
                     first = e
+            elif (hit := built_by(e)) is not None:
+                built.remove(hit)  # it was built; only its journal line was lost with the stop
             else:
                 label = str(e.get("label") or e.get("kind"))
                 label = label[6:] if label.startswith("edit: ") else label  # a parameter edit: "Object mass → 70 g"
