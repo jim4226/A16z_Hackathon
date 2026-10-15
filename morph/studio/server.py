@@ -46,7 +46,7 @@ from ..spec import diff
 from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import (REQUESTER, RESUMED, STARTED, Hub, QueueFull, Room, UnknownProject,  # noqa: F401  (Hub: older code
-                    journal_live, open_jobs)  # imports it from here)
+                    claim, journal_live, journals, open_jobs)  # imports it from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
                        looks_like_secret, param_changes, project_name, secret_refused)
@@ -278,6 +278,10 @@ class Studio:
         self.rooms = {self.start: Room(self.start, project)}
         self._rooms = threading.Lock()
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
+        self.claim = claim(self.home)  # the lock that tells another Studio on this folder that this one runs
+        if not self.claim.real:
+            print(f"{self.home} can't hold file locks (a network folder?): run only one Morph Studio on it at a time, "
+                  "or one may take the other's unfinished work for a stopped Studio's.")
         tidied = projects.tidy(self.home, say=print)  # revisions a stop cut off or a power cut damaged: set aside
         _start_features(self.home)
         self.toolbox = None
@@ -286,14 +290,17 @@ class Studio:
 
     # -- a Studio that stopped with work open (Ctrl+C, a closed window, a crash)
     REBUILT = " (rebuilt after a stop)"
+    FIRST_BUILD_TRIES = 2  # a first build the Studio stopped during this often waits to be asked for again
+    AGAIN = re.compile(r"(?:please\s+)?(?:(?:build|try)(?:\s+it)?\s+again|rebuild(?:\s+it)?|retry)\s*[.!]*", re.I)
 
     def _recover(self, tidied: dict | None = None):
         """What the queue journals (rooms.JobQueue) say was open when the Studio stopped, project by project: a first
         build is queued again (a new project, an import or a fork stays empty for good otherwise), every other change
         is named in the chat so it can be sent again (it is never re-run: it may no longer be wanted), and a conflict
         waits for its answer again. A project with no finished revision and no journal, whose first build was set aside
-        just now (cut off under an older Morph, or in the CLI), is built again from that design. Then the features'
-        STARTED hooks run (Teams reopens change requests a stop left applied but unbuilt). Never raises."""
+        just now (cut off under an older Morph, or in the CLI), is built again from that design. A first build the
+        Studio stopped during FIRST_BUILD_TRIES times is not started again (_park). Then the features' STARTED hooks run
+        (Teams reopens change requests a stop left applied but unbuilt). Never raises."""
         aside = (tidied or {}).get("set_aside") or {}
         for info in projects.list_projects(self.home):
             name = info["name"]
@@ -309,19 +316,24 @@ class Studio:
 
     def _recover_project(self, name: str, set_aside: list):
         root = os.path.join(self.home, name)
-        journal = os.path.join(root, ".morph", "queue.jsonl")
-        entries = open_jobs(journal)
-        if entries and journal_live(entries):
+        paths = journals(root)
+        if any(journal_live(path, self.home) for path in paths):  # that Studio's lock is held: it still runs
             print(f"{name}: another Morph Studio on this projects folder is still working on it; leaving its queue alone")
             return
+        entries = [e for path in paths for e in open_jobs(path)]
         finished = RobotProject(root).finished()
+        parked = projects.parked_first_build(root)
+        if parked is not None and finished:
+            projects.unpark_first_build(root)  # built after all (by an older Morph, or by hand)
         if not entries and (finished or not set_aside):
+            for path in paths:  # nothing open in them (a stop just before the file went)
+                _remove(path)
+            if parked is not None and not finished:
+                print(self._parked_text(name, parked.get("cut"), terminal=True))
             return
         room = self.room(name)
-        try:
-            os.remove(journal)  # its open jobs are handled here; what still waits is journaled again
-        except OSError:
-            pass
+        for path in paths:  # their open jobs are handled here; what still waits is journaled again
+            _remove(path)
         built = []  # (label, when) of the newest revisions: a job whose revision was written just before the stop
         for rev in finished[-12:]:
             try:
@@ -358,9 +370,10 @@ class Studio:
                                        f"The Studio stopped before {what} was built. {again}"})
         if finished:
             return
-        design, label, by = None, "first design", None
+        design, label, by, cut = None, "first design", None, 0
         if first is not None:
             design, label, by = first["design"], first.get("label") or label, first.get("by")
+            cut = _count(first.get("cut")) + (1 if first.get("started") else 0)  # times a stop cut it off mid-build
         else:  # no journal (an older Morph, or the CLI): the design of the first revision set aside just now
             for rev in sorted(set_aside, key=lambda r: int(r[1:])):
                 path = next((os.path.join(root, n, "design.json") for n in sorted(os.listdir(root), reverse=True)
@@ -368,6 +381,7 @@ class Studio:
                 try:
                     with open(path, encoding="utf-8") as fh:
                         design = json.load(fh)
+                    cut = 1
                     break
                 except (OSError, TypeError, ValueError):
                     continue
@@ -378,21 +392,65 @@ class Studio:
                                "menu, or make it again."})
             return
         try:
-            design = projects.as_design(design)
+            built_design = projects.as_design(design)
         except ValueError as exc:
             room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
                            f"finished, and its design can't be read ({exc}). Delete this project, or make it again."})
             return
-        label = label[:48 - len(self.REBUILT)] + self.REBUILT if not label.endswith(self.REBUILT) else label
+        label = label[:-len(self.REBUILT)] if label.endswith(self.REBUILT) else label
+        if cut >= self.FIRST_BUILD_TRIES:
+            self._park(room, design, label, by, cut)
+            return
         room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
                        "finished: building it again now."})
-        job = self.queue_build(room, design, label=label, by=by)
+        job = self.queue_build(room, built_design, label=label[:48 - len(self.REBUILT)] + self.REBUILT, by=by, cut=cut)
         meta = projects.read_meta(root)
         for hook in list(RESUMED):
             try:
                 hook(self, room, job, meta)
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
+
+    def _park(self, room: Room, design: dict, label: str, by, cut: int):
+        """A first build the Studio stopped during `cut` times isn't started again on its own: if something in the
+        design stops the Studio (memory, a crash in a native library), it would stop it at every start. It waits in
+        projects.FIRST_BUILD until someone sends "build it again" in the project's chat (_no_revision_yet)."""
+        projects.park_first_build(room.p.root, {"design": design, "label": label, "by": by, "cut": cut})
+        room.hub.send({"type": "assistant", "noop": True, "text": self._parked_text(room.name, cut)})
+        print(self._parked_text(room.name, cut, terminal=True))
+
+    @staticmethod
+    def _parked_text(name: str, cut, terminal: bool = False) -> str:
+        n = _count(cut)
+        times = "twice" if n == 2 else f"{n} times" if n > 1 else "once"
+        if terminal:
+            return (f"{name}: the Studio stopped {times} while building its first design, so Morph won't start it again "
+                    f"on its own. To try once more, send \"build it again\" in {name}'s chat in the Studio; to give up "
+                    f"on it, delete {name} from the project menu.")
+        return (f"The Studio stopped {times} while building {name}'s first design, so Morph won't start it again on its "
+                "own: if something in this design stops the Studio, it would stop it at every start. To try once more, "
+                f"send \"build it again\" here. To give up on it, delete {name} from the project menu.")
+
+    def _no_revision_yet(self, room: Room, job, msg: str | None = None):
+        """A change asked of a project with no finished revision: there is nothing to change yet. A first build that
+        waits to be asked for again (_park) starts when the message is "build it again" (AGAIN)."""
+        parked = projects.parked_first_build(room.p.root)
+        if parked is None:
+            return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing to "
+                                                 "change. Wait for its first build.")
+        if msg is None or not self.AGAIN.fullmatch(msg.strip()):
+            return self._say(room, job, "error", f"{room.name} has no finished revision yet, and its first build isn't "
+                                                 "running: send \"build it again\" to try it once more, or delete the "
+                                                 "project from the project menu.")
+        if any(j.get("kind") == "build" for j in room.jobs.snapshot()):
+            return self._say(room, job, "noop", f"{room.name}'s first design is already being built.", noop=True)
+        try:
+            design = projects.as_design(parked["design"])
+        except ValueError as exc:
+            return self._say(room, job, "error", f"Its design can't be read ({exc}). Delete this project, or make it again.")
+        self.queue_build(room, design, label=str(parked.get("label") or "first design")[:48],
+                         by=job.by if job is not None else None, cut=_count(parked.get("cut")))
+        return self._say(room, job, "noop", f"Building {room.name}'s first design again.", noop=True)
 
     @property
     def p(self) -> RobotProject:
@@ -589,8 +647,7 @@ class Studio:
                     room.emit({"type": "user", "text": user_text})
                 base = room.latest()
                 if base is None:
-                    return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing "
-                                                         "to change. Wait for its first build.")
+                    return self._no_revision_yet(room, job)
                 cur = room.p.load_design(base)
                 changes = self._expand(changes)
                 try:
@@ -665,8 +722,7 @@ class Studio:
                     room.emit({"type": "user", "text": msg})
                 base = room.latest()
                 if base is None:
-                    return self._say(room, job, "error", "This project has no finished revision yet, so there is "
-                                                         "nothing to change. Wait for its first build.")
+                    return self._no_revision_yet(room, job, msg)
                 cur = room.p.load_design(base)
                 if route and self._offer(room, job, msg, cur):
                     return None
@@ -692,8 +748,11 @@ class Studio:
             try:
                 t0 = time.time()
                 with self.builds:
+                    if job is not None:
+                        room.jobs.started(job)  # a stop from here on cut it off (the journal counts it)
                     rev = room.p.run(design, parent=None, label=label[:48], verbose=False, on_event=room.emit,
                                      by=job.by if job is not None else None)
+                projects.unpark_first_build(room.p.root)
                 room.p.log({"type": "tool_time", "cmd": "studio", "seconds": round(time.time() - t0, 2)})
                 if job is not None:
                     job.result = rev
@@ -748,10 +807,11 @@ class Studio:
         return self.queue_changes(room, changes, label=f"edit: {desc}", reply=f"Parameter edit: {desc}.",
                                   base_rev=base_rev, by=by, kind="params")
 
-    def queue_build(self, room: Room, design, *, label: str = "first design", by: str | None = None):
+    def queue_build(self, room: Room, design, *, label: str = "first design", by: str | None = None, cut: int = 0):
         """Queue a parentless build of `design` (a new project's first revision). The journal keeps the design, so a
-        Studio that stops before it finishes builds it again when it starts. Raises QueueFull."""
-        record = {"design": design.to_dict() if hasattr(design, "to_dict") else design}
+        Studio that stops before it finishes builds it again when it starts; `cut`: how often a stop has cut this
+        build off already (Studio._recover). Raises QueueFull."""
+        record = {"design": design.to_dict() if hasattr(design, "to_dict") else design, **({"cut": cut} if cut else {})}
         return room.jobs.submit("build", lambda job: self.build(design, room=room, label=label, job=job), by=by,
                                 label=label, record=record)
 
@@ -966,6 +1026,18 @@ class Guesses:
                 del codes[next(iter(codes))]
             codes[h] = now
             self.wrong[ip] = codes
+
+
+def _count(value) -> int:
+    """A count from a journal or record line: 0 unless it is a whole number from 0 to 99."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 100 else 0
+
+
+def _remove(path: str):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None, *, chosen: bool = True):

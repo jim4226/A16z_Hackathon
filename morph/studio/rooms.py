@@ -14,11 +14,13 @@ import contextvars
 import json
 import os
 import queue
+import re
 import secrets
 import socket
 import threading
 import time
 import traceback
+import weakref
 
 from ..robot.pipeline2 import RobotProject
 from ..services import durable
@@ -35,24 +37,100 @@ RESUMED: list = []
 STARTED: list = []
 HOST = socket.gethostname()
 
+# Which Studio wrote a queue journal. Each Studio process has its own id (OWNER) and, while it runs, holds an OS lock on
+# <projects>/.studios/<OWNER>.lock (claim); the system frees that lock when the process ends, however it ends (Ctrl+C,
+# a crash, a kill, a power cut). So a journal whose Studio's lock is free was left by a stopped Studio, and one whose
+# lock is held belongs to a Studio still running on the same projects folder, whatever the pid or the computer's name
+# says (pids are reused after a reboot, and a Mac's name changes with its network).
+OWNER = secrets.token_hex(8)
+STUDIOS = ".studios"
+JOURNAL = re.compile(r"queue(?:-([0-9a-f]{16}))?\.jsonl")  # queue-<owner>.jsonl; plain queue.jsonl: no owner known
+_CLAIMS = weakref.WeakValueDictionary()  # realpath of a projects folder -> its Claim
+_CLAIMS_LOCK = threading.Lock()
+STALE_LOCK_S = 600  # another Studio's lock file nobody holds is removed once it is this old (never one just made)
 
-def journal_live(entries: list) -> bool:
-    """True when another Studio that is still running wrote these journal lines (two Studios on one projects folder):
-    its jobs are its own, not a stopped Studio's. A writer on another computer can't be checked, so it counts as
-    running."""
-    for e in entries:
-        if e.get("host") not in (None, HOST):
-            return True
-        pid = e.get("pid")
-        if isinstance(pid, int) and pid != os.getpid() and durable.process_alive(pid):
-            return True
-    return False
+
+def owner_lock(home: str, owner: str) -> str:
+    return os.path.join(home, STUDIOS, f"{owner}.lock")
+
+
+class Claim:
+    """This process's OS lock on <home>/.studios/<OWNER>.lock: held while anything of this process uses that projects
+    folder (a Studio keeps it, a JobQueue takes it before it writes its journal), released when the last of them is
+    gone, and by the system when the process ends, however it ends. `real`: the file system can lock (on one that
+    can't, a network share say, a second Studio on the same folder can't be told from a stopped one)."""
+
+    def __init__(self, home: str):
+        self.lock = durable.BuildLock(owner_lock(home, OWNER))
+        self.lock.acquire()
+        self.real = self.lock.real
+        weakref.finalize(self, self.lock.release)
+
+
+def claim(home: str) -> Claim:
+    """The Claim of projects folder `home` (taken once; lock files other Studios left behind are removed then)."""
+    key = os.path.realpath(home)
+    with _CLAIMS_LOCK:
+        held = _CLAIMS.get(key)
+        if held is None:
+            held = _CLAIMS[key] = Claim(home)
+            _sweep(home)
+        return held
+
+
+def _sweep(home: str):
+    folder, now = os.path.join(home, STUDIOS), time.time()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for n in names:
+        path = os.path.join(folder, n)
+        if n == f"{OWNER}.lock" or not n.endswith(".lock"):
+            continue
+        try:
+            if now - os.path.getmtime(path) < STALE_LOCK_S or durable.BuildLock.held(path):
+                continue
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def journal_owner(path: str) -> str | None:
+    """The Studio (OWNER) that wrote the queue journal at `path`, from its name; None for an older plain queue.jsonl."""
+    m = JOURNAL.fullmatch(os.path.basename(path))
+    return m.group(1) if m else None
+
+
+def journals(root: str) -> list:
+    """The queue journals in project folder `root` (<root>/.morph/queue-<owner>.jsonl, one per Studio that had jobs
+    open there), oldest first."""
+    folder = os.path.join(root, ".morph")
+    try:
+        names = [n for n in os.listdir(folder) if JOURNAL.fullmatch(n)]
+    except OSError:
+        return []
+    def when(path):
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return 0.0
+    return sorted((os.path.join(folder, n) for n in names), key=lambda path: (when(path), path))
+
+
+def journal_live(path: str, home: str) -> bool:
+    """True when the Studio that writes the journal at `path` still runs (another Studio on the same projects folder:
+    its jobs are its own): its lock (claim) is held. This process's own journal and an older one without an owner are
+    never live."""
+    owner = journal_owner(path)
+    return bool(owner) and owner != OWNER and durable.BuildLock.held(owner_lock(home, owner))
 
 
 def open_jobs(path: str) -> list:
     """The jobs a queue journal (JobQueue.journal) says were still open when its Studio stopped, in the order they were
-    queued: the last line of each job, `op` "queued" (waiting or building) or "held" (a conflict waiting for an answer).
-    Lines that don't parse are skipped."""
+    queued: the last line of each job, `op` "queued" (waiting or building) or "held" (a conflict waiting for an answer),
+    with `started: True` when its build had started (a first build cut off mid-build). Lines that don't parse are
+    skipped."""
     last = collections.OrderedDict()
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -61,7 +139,12 @@ def open_jobs(path: str) -> list:
                     e = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(e, dict) and isinstance(e.get("id"), str) and e.get("op") in ("queued", "held", "ended"):
+                if not isinstance(e, dict) or not isinstance(e.get("id"), str):
+                    continue
+                if e.get("op") == "started":
+                    if e["id"] in last:
+                        last[e["id"]]["started"] = True
+                elif e.get("op") in ("queued", "held", "ended"):
                     last[e["id"]] = {**last.get(e["id"], {}), **e}  # what each line adds; the newest op wins
     except OSError:
         return []
@@ -210,10 +293,11 @@ class JobQueue:
     queue is empty. Every change is published to the room as a `queue` event. A job that ended as a conflict waits for
     an answer (Apply or Drop) in `waiting` until someone gives one, however many jobs run meanwhile.
 
-    The queue is journaled in <project>/.morph/queue.jsonl (`journal`): a line when a job is queued (`record`: what it
-    takes to tell about it, or to build it again), when it ends as a conflict waiting for an answer, and when it ends
-    otherwise. The file goes once nothing waits or runs. A Studio that stopped with jobs open finds them there when it
-    starts (Studio._recover): a first build is built again, an edit is named in the chat, a conflict waits again."""
+    The queue is journaled in <project>/.morph/queue-<OWNER>.jsonl (`journal`, one file per Studio process): a line
+    when a job is queued (`record`: what it takes to tell about it, or to build it again), when a first build starts
+    building (started), when it ends as a conflict waiting for an answer, and when it ends otherwise. The file goes once
+    nothing waits or runs. A Studio that stopped with jobs open leaves it; the next Studio finds it when it starts
+    (Studio._recover): a first build is built again, an edit is named in the chat, a conflict waits again."""
 
     MAX_QUEUED = 10
     KEEP = 50            # finished jobs remembered for wait/resolve
@@ -228,7 +312,9 @@ class JobQueue:
         self.waiting = collections.OrderedDict()  # job id -> a conflict nobody has answered yet
         self.worker = None
         p = getattr(room, "p", None)
-        self.journal = os.path.join(p.root, ".morph", "queue.jsonl") if p is not None else None
+        self.journal = os.path.join(p.root, ".morph", f"queue-{OWNER}.jsonl") if p is not None else None
+        self.home = os.path.dirname(p.root) if p is not None else None
+        self.claim = None  # this process's lock on the projects folder, taken before the first journal line
 
     # -- the journal
     def _log(self, op: str, job: Job, **fields):
@@ -236,11 +322,18 @@ class JobQueue:
         if not self.journal:
             return
         try:
+            if self.claim is None:  # the lock that tells other Studios this journal's writer still runs
+                self.claim = claim(self.home)
             os.makedirs(os.path.dirname(self.journal), exist_ok=True)
-            durable.append_line(self.journal, json.dumps({"op": op, "id": job.id, "pid": os.getpid(), "host": HOST,
-                                                          **fields}, default=str))
+            durable.append_line(self.journal, json.dumps({"op": op, "id": job.id, "studio": OWNER, "pid": os.getpid(),
+                                                          "host": HOST, **fields}, default=str))
         except (OSError, TypeError, ValueError):
             traceback.print_exc()
+
+    def started(self, job: Job):
+        """`job`'s build has the build slot and starts now (Studio.build): a stop from here on cut it off."""
+        with self.cond:
+            self._log("started", job)
 
     def _ended(self, job: Job):
         self._log("ended", job, status=job.status)

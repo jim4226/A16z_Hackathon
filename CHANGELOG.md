@@ -385,7 +385,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   waiting or building are named in the chat so they can be sent again (they disappeared without a word); a change
   waiting for Apply or Drop waits again; a Teams change request that was applied but not built is open again, with
   why, for whoever applied it and its author (it read "applied" with no revision and could not be applied again or
-  closed); and a robustness study waiting for its turn is listed as stopped, to carry on (it vanished).
+  closed); and a robustness study waiting for its turn is listed as stopped, to carry on (it vanished). Whether
+  another Studio on the same projects folder still runs is told by a lock the system frees when it stops, so a
+  stopped Studio's work is never left alone because its process number was reused after a reboot or the computer's
+  name changed. A first build the Studio stopped during twice is not started again on its own (one that crashes the
+  Studio would crash it at every start): the chat and the terminal say so, and "build it again" in the project's chat
+  tries once more.
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

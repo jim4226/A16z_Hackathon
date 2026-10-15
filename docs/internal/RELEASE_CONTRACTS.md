@@ -44,7 +44,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}`. `projects.create(meta=)` adds keys but never sets kind, created_utc, created_by, origin, demo or source (those come from its own arguments) |
 | `<p>/rNNN/` | pipeline | unchanged; names sort numerically (W0b) |
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
-| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs; `.morph/queue.jsonl`: the room's queue journal while jobs are open (W3, section 2) |
+| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs; `.morph/queue-<studio>.jsonl`: a Studio's queue journal for the room while jobs are open; `.morph/first-build.json`: a first build that waits to be asked for again (W3, section 2) |
 | `<p>/brief.json` | F1 | the final brief that created the project |
 | `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
 | `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
@@ -54,6 +54,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
+| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; files nobody holds are removed after 10 minutes |
 | `.team/` | F4 | `team.json` (+ `team.json.bak`: the copy before its last change, 0600, W3), `secret` (0600), `audit.jsonl` |
 | `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
 | `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
@@ -228,18 +229,29 @@ r001, ..."); `conflict.keys` stays the raw keys. Every changed value
 `projects.create()` checks every value of a design it is given; a value no robot can have ends the job as `error`
 ("Couldn't apply that: ...") or raises ValueError. `projects.as_design()` refuses keys a Design doesn't have.
 
-**A Studio that stops with work open (W3).** Each room's queue is journaled in `<p>/.morph/queue.jsonl` (`JobQueue`,
-`durable.append_line`): `{op: "queued", id, kind, label, by, base_rev, pid, host, ...record}` when a job is queued (a
-first build's `design`, a change's `changes`), `{op: "held", ..., conflict, data}` when it ends as a conflict waiting
-for an answer, `{op: "ended", id, status}` otherwise (an answered conflict: `answered`). The file is removed whenever
-nothing waits, runs or waits for an answer. When a Studio starts (`Studio._recover`, after `projects.tidy`), for every
-project whose journal has open jobs (`rooms.open_jobs`) and was not written by another Studio that still runs
-(`rooms.journal_live`: another live process of this computer, or another computer):
+**A Studio that stops with work open (W3).** Each room's queue is journaled in `<p>/.morph/queue-<studio>.jsonl`, one
+file per Studio process (`JobQueue`, `durable.append_line`; `<studio>` is `rooms.OWNER`): `{op: "queued", id, kind,
+label, by, base_rev, studio, pid, host, ...record}` when a job is queued (a first build's `design` and `cut`, a change's
+`changes`), `{op: "started", id}` when a first build gets the build slot, `{op: "held", ..., conflict, data}` when a job
+ends as a conflict waiting for an answer, `{op: "ended", id, status}` otherwise (an answered conflict: `answered`). The
+file is removed whenever nothing waits, runs or waits for an answer. Which Studio still runs is told by an OS lock, not
+by pid or host name (a pid is reused after a reboot, a Mac's name changes with its network): every Studio process holds
+`projects/.studios/<studio>.lock` (`rooms.claim`, fcntl.flock / msvcrt.locking via `durable.BuildLock`) from its start
+until the system frees it when the process ends, however it ends. When a Studio starts (`Studio._recover`, after
+`projects.tidy`), a project with a journal whose Studio's lock is held (`rooms.journal_live`) is left alone ("another
+Morph Studio on this projects folder is still working on it"); otherwise every journal of the project is read
+(`rooms.journals`, `rooms.open_jobs`; an older plain `queue.jsonl` counts as a stopped Studio's) and removed, and:
 - a first build (`kind: "build"`) of a project with no finished revision is queued again from its design, labelled
   `"<label> (rebuilt after a stop)"`, and the chat says "The Studio stopped before <project>'s first build finished:
   building it again now."; features learn of it through `rooms.RESUMED` hooks `fn(studio, room, job, meta)` (New robot
   marks its brief built when it ends). Without a journal (an older Morph, `morph robot new` stopped in a terminal), the
-  design of the first revision `tidy()` just set aside is used;
+  design of the first revision `tidy()` just set aside is used. Its `cut` counts the times a stop cut it off after it
+  had started; at `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
+  at every start): it is kept in `<p>/.morph/first-build.json` (`projects.park_first_build`), the chat and the terminal
+  say "The Studio stopped twice while building <project>'s first design, so Morph won't start it again on its own ...
+  send "build it again" here ... delete <project> from the project menu", the terminal repeats it at every start, an
+  edit is answered with how to go on, and the chat message "build it again" (`Studio.AGAIN`: also "try again",
+  "rebuild", "retry") queues it once more (`Studio._no_revision_yet`); the record goes once a first revision is built;
 - every other open job gets one assistant line, "The Studio stopped before this was built: “<label>”. Send it again if
   you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own.
   A job whose revision was written before the stop took its `ended` line with it (one of the newest 12 finished

@@ -8,9 +8,10 @@ what every writer uses so that a cut never costs more than the record being writ
     write_text(path, text)       replace a file whole: a temp file beside it, fsync, os.replace, the folder synced
     write_json(path, obj)        the same for JSON
     readable_json(path)          the file holds a JSON object (cached by size and mtime): a finished record
-    BuildLock(path)              an OS lock held while a revision builds: the system frees it when the process ends
+    BuildLock(path)              an OS lock held while a revision builds (or a Studio runs: rooms.claim); the system
+                                 frees it when the process ends, however it ends
     disk_full(exc), explain(exc) "The disk is full" instead of "[Errno 28] No space left on device"
-    process_alive(pid)           whether a process of this computer still runs (a lock's or a journal's writer)
+    process_alive(pid)           whether a process of this computer still runs (a study's writer)
 
 Standard library only. Outside pipeline_version (morph/services/), so editing this file never rebuilds a robot.
 """
@@ -172,10 +173,11 @@ class BuildLock:
 
     def __init__(self, path: str):
         self.path, self.fd = path, None
+        self.real = False  # True once the OS really holds it (False where the file system can't lock)
 
     def acquire(self) -> bool:
         """True once held; False while another process (or another BuildLock in this one) holds it. Where the file
-        system can't lock at all, it counts as held by nobody: True."""
+        system can't lock at all, it counts as held by nobody: True (and `real` stays False)."""
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
@@ -188,6 +190,7 @@ class BuildLock:
             else:
                 import fcntl
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.real = True
         except OSError as exc:
             if exc.errno in (errno.EAGAIN, errno.EACCES, getattr(errno, "EWOULDBLOCK", errno.EAGAIN), errno.EDEADLK):
                 os.close(fd)

@@ -156,8 +156,9 @@ def set_aside_unfinished(p: RobotProject, say=None) -> list:
         d = p.rev_dir(rev)
         why = ("was cut off mid-build" if not os.path.isfile(os.path.join(d, "results.json")) else
                "has saved files that can't be read (a power cut or a crash while they were written, or a hand edit)")
+        aside = f"{d}.incomplete-{time.time_ns()}"  # ns: the same revision set aside twice in a second never collides
         try:
-            os.rename(d, f"{d}.incomplete-{int(time.time())}")
+            os.rename(d, aside)
         except OSError:
             break  # Windows: a file in it is open; next start
         try:
@@ -168,6 +169,33 @@ def set_aside_unfinished(p: RobotProject, say=None) -> list:
         if say:
             say(f"{os.path.basename(p.root)}: {rev} {why}; setting it aside")
     return out
+
+
+# A first build the Studio stopped during more than once (Studio._recover) isn't started again on its own: if something
+# in the design stops the Studio (memory, a crash in a native library), it would stop it at every start. It waits here
+# until someone asks for it again (chat "build it again") or the project is deleted.
+FIRST_BUILD = os.path.join(".morph", "first-build.json")
+
+
+def parked_first_build(root: str) -> dict | None:
+    """{design, label, by, cut, utc} of a first build that waits to be asked for again, or None."""
+    try:
+        with open(os.path.join(root, FIRST_BUILD), encoding="utf-8") as fh:
+            rec = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return rec if isinstance(rec, dict) and isinstance(rec.get("design"), dict) else None
+
+
+def park_first_build(root: str, record: dict):
+    durable.write_json(os.path.join(root, FIRST_BUILD), {**record, "utc": utc_now()})
+
+
+def unpark_first_build(root: str):
+    try:
+        os.remove(os.path.join(root, FIRST_BUILD))
+    except OSError:
+        pass
 
 
 def _folder_size(path: str) -> int:

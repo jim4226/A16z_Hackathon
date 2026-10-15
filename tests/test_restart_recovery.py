@@ -8,6 +8,8 @@ SIGINT."""
 import json
 import os
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -77,7 +79,7 @@ def test_a_new_projects_cut_off_first_build_is_built_again(home, tmp_path, build
     assert kb1.completed() == ["r001"] and RobotProject(str(after / "kb1")).load_results("r001")["label"] == "first design" + REBUILT
     assert "The Studio stopped before kb1's first build finished: building it again now." in texts(kb1)
     assert [n for n in os.listdir(after / "kb1") if n.startswith("r001.incomplete-")]   # the cut-off folder, set aside
-    assert not os.path.exists(after / "kb1" / ".morph" / "queue.jsonl")               # nothing open: no journal
+    assert not rooms.journals(str(after / "kb1"))                                     # nothing open: no journal
 
 
 def test_a_first_build_still_waiting_for_its_turn_is_built_too(home, tmp_path, builds):
@@ -155,15 +157,135 @@ def test_a_conflict_waiting_for_an_answer_waits_again_after_a_restart(home, tmp_
     assert new.status == "done" and egg2.p.load_design(egg2.latest()).arm.dof == 4 and not egg2.jobs.conflicts()
 
 
-def test_a_journal_another_running_studio_writes_is_left_alone(home, tmp_path, builds, capsys):
-    root = home / "so101"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def hold(*paths):
+    """Another process (another Studio) that holds the OS locks on `paths` until its stdin closes."""
+    code = ("import sys; from morph.services import durable; locks = [durable.BuildLock(a) for a in sys.argv[1:]]; "
+            "print('held' if all(k.acquire() and k.real for k in locks) else 'not held', flush=True); sys.stdin.read()")
+    proc = subprocess.Popen([sys.executable, "-c", code, *map(str, paths)], cwd=ROOT, stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE)
+    assert proc.stdout.readline().strip() == b"held"
+    return proc
+
+
+def cut_off_first_build(home, name="kb1", owner="0123456789abcdef", **line):
+    """What a Studio killed during `name`'s first build leaves: r001 with only its design, and its queue journal."""
+    root = home / name
+    (root / "r001").mkdir(parents=True)
     (root / ".morph").mkdir()
-    line = {"op": "queued", "id": "abc123abc123", "kind": "params", "label": "edit: Quantity → 9", "pid": os.getppid(),
-            "host": rooms.HOST}
-    (root / ".morph" / "queue.jsonl").write_text(json.dumps(line) + "\n", encoding="utf-8")
+    (root / "meta.json").write_text(json.dumps({"kind": "robot", "source": "", "need": name}), encoding="utf-8")
+    design = Design().with_changes({"build.quantity": 5})
+    (root / "r001" / "design.json").write_text(design.dumps(), encoding="utf-8")
+    entries = [{"op": "queued", "id": "a1b2c3d4e5f6", "kind": "build", "label": "first design", "studio": owner,
+                "pid": os.getpid(), "host": rooms.HOST, "ts": time.time(), "design": design.to_dict(), **line},
+               {"op": "started", "id": "a1b2c3d4e5f6", "studio": owner}]
+    journal = root / ".morph" / f"queue-{owner}.jsonl"
+    journal.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
+    return journal
+
+
+def test_a_journal_another_running_studio_writes_is_left_alone(home, tmp_path, builds, capsys):
+    """Two Studios on one projects folder: the other one holds its lock (rooms.claim), so its queue is its own; once
+    it has stopped, however it stopped, its lock is free and the next Studio picks its work up."""
+    journal = cut_off_first_build(home, owner="feedfacecafebeef")
+    other = hold(home / ".studios" / "feedfacecafebeef.lock", RobotProject(str(home / "kb1")).build_lock("r001"))
+    try:
+        st = server.Studio(RobotProject(str(home / "egg")), str(home))
+        assert "kb1: another Morph Studio on this projects folder is still working on it" in capsys.readouterr().out
+        assert not st.room("kb1").jobs.busy() and journal.exists()
+        assert os.path.isdir(home / "kb1" / "r001")                         # its build is its own (tidy: BuildLock)
+    finally:
+        other.stdin.close()
+        other.wait(10)
+    shutil.rmtree(home / "kb1" / "r001")                                    # what tidy() sets aside once it has stopped
+    st2 = server.Studio(RobotProject(str(home / "egg")), str(home))
+    kb1 = st2.room("kb1")
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert kb1.completed() == ["r001"] and not journal.exists()
+    assert not os.path.exists(home / ".studios" / "feedfacecafebeef.lock") or \
+        time.time() - os.path.getmtime(home / ".studios" / "feedfacecafebeef.lock") < rooms.STALE_LOCK_S
+
+
+@pytest.mark.parametrize("line", [{"host": "Johns-MacBook-Pro.local"},   # a Mac's name changes with its network
+                                  {"pid": os.getppid()},                   # its pid now belongs to a live process
+                                  {"pid": 1, "host": "another-computer"}])
+def test_a_stopped_studios_journal_is_recovered_whatever_its_pid_and_host_say(home, builds, capsys, line):
+    """Only the OS lock of the Studio that wrote a journal tells whether it still runs: after a reboot its pid may
+    belong to another process, and a computer's name can change; neither may leave a project empty for good."""
+    cut_off_first_build(home, **line)
+    builds.gate = threading.Event()
     st = server.Studio(RobotProject(str(home / "egg")), str(home))
-    assert "another Morph Studio on this projects folder is still working on it" in capsys.readouterr().out
-    assert not texts(st.room("so101")) and (root / ".morph" / "queue.jsonl").exists()
+    assert "still working on it" not in capsys.readouterr().out
+    kb1 = st.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert [j.label for j in queued] == ["first design" + REBUILT]
+    builds.gate.set()
+    finish(*queued)
+    assert kb1.completed() == ["r001"] and kb1.p.load_design("r001").build.quantity == 5
+
+
+def test_a_first_build_the_studio_stopped_during_twice_waits_to_be_asked_for_again(home, tmp_path, builds, capsys):
+    """A first build that itself stops the Studio (memory, a crash in a native library) must not stop it at every
+    start: it is built again once, and cut off a second time it waits until someone asks for it."""
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    builds.gate = threading.Event()
+    room, job = st.create_project("kb1", need="a test")
+    assert builds.started.wait(5)
+    after = stopped(home, tmp_path, builds)                               # cut off once
+    builds.gate.set()
+    finish(job)
+    builds.gate, builds.started = threading.Event(), threading.Event()
+    st2 = server.Studio(RobotProject(str(after / "egg")), str(after))
+    rebuilt = [st2.room("kb1").jobs.get(j["id"]) for j in st2.room("kb1").jobs.snapshot()]
+    assert [j.label for j in rebuilt] == ["first design" + REBUILT] and builds.started.wait(5)
+    again = tmp_path / "after-second-stop"
+    shutil.copytree(after, again)                                          # cut off again, mid-build
+    builds.gate.set()
+    finish(*rebuilt)
+    capsys.readouterr()
+    st3 = server.Studio(RobotProject(str(again / "egg")), str(again))
+    kb1 = st3.room("kb1")
+    assert not kb1.jobs.busy() and kb1.completed() == []                    # not started on its own
+    out = capsys.readouterr().out
+    assert "kb1: the Studio stopped twice while building its first design, so Morph won't start it again" in out
+    assert 'send "build it again" in kb1\'s chat' in out
+    said = texts(kb1)[-1]
+    assert said.startswith("The Studio stopped twice while building kb1's first design") and "delete kb1" in said
+    assert (again / "kb1" / ".morph" / "first-build.json").exists() and not rooms.journals(str(again / "kb1"))
+    finish(st3.queue_params(kb1, {"build.quantity": 4}))
+    assert 'send "build it again"' in texts(kb1)[-1]                        # an edit says how to go on
+    capsys.readouterr()
+    st4 = server.Studio(RobotProject(str(again / "egg")), str(again))      # every start says so in the terminal
+    assert "kb1: the Studio stopped twice" in capsys.readouterr().out and not st4.room("kb1").jobs.busy()
+    kb1 = st4.room("kb1")
+    finish(st4.queue_chat(kb1, "build it again"))
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert kb1.completed() == ["r001"] and not (again / "kb1" / ".morph" / "first-build.json").exists()
+    assert "Building kb1's first design again." in texts(kb1)
+
+
+def test_a_rebuild_that_never_started_is_no_try(home, builds):
+    """A Studio stopped while the rebuild still waited for the build slot didn't cut it off: it is built again."""
+    journal = cut_off_first_build(home, cut=1)
+    lines = journal.read_text(encoding="utf-8").splitlines()
+    journal.write_text(lines[0] + "\n", encoding="utf-8")                  # no "started" line
+    shutil.rmtree(home / "kb1" / "r001")                                    # nor a revision folder
+    builds.gate = threading.Event()
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    kb1 = st.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert len(queued) == 1
+    builds.gate.set()
+    finish(*queued)
+    assert kb1.completed() == ["r001"]
+
+
+def test_two_stops_of_a_journaled_first_build_park_it(home, builds):
+    cut_off_first_build(home, cut=1)                                       # its rebuild, started and cut off
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    assert not st.room("kb1").jobs.busy() and (home / "kb1" / ".morph" / "first-build.json").exists()
 
 
 def test_a_cut_off_first_build_without_a_journal_is_built_from_its_design(home, tmp_path, builds):
