@@ -232,11 +232,12 @@ def create_invite(by: str | None, role: str = "editor", tags=(), name_hint: str 
     if role not in ROLES:
         raise ValueError("Choose a role: viewer, editor or owner.")
     tags = disciplines.validate(tags)
+    _no_secret(str(name_hint or ""))  # a key in the name refuses the invite (it used to vanish from the hint unsaid)
     hint = ""
     if name_hint:
         try:
             hint = clean_name(name_hint)
-        except ValueError:
+        except ValueError:  # nothing printable left: no hint
             hint = ""
     days = min(max(float(days or INVITE_DAYS), 0.01), INVITE_DAYS)
     code = new_code("mi_", 16)

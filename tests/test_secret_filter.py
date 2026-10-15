@@ -309,7 +309,9 @@ def test_a_key_is_never_a_team_or_display_name(tmp_path):
     with pytest.raises(ValueError, match="Keys dialog"):
         auth.init_team(KEYS["subq"], "R Cubed", home=str(tmp_path))
     out = auth.init_team("Jim", "R Cubed", home=str(tmp_path))
-    inv = auth.create_invite(out["member"]["id"], "editor", [], KEYS["keewano"], home=str(tmp_path))
-    assert inv["invite"]["name_hint"] == ""                         # a hint that looks like a key is simply not kept
+    with pytest.raises(ValueError, match="Keys dialog"):           # a key as the invite's name hint is refused, said
+        auth.create_invite(out["member"]["id"], "editor", [], KEYS["keewano"], home=str(tmp_path))
+    inv = auth.create_invite(out["member"]["id"], "editor", [], "Ed", home=str(tmp_path))
+    assert inv["invite"]["name_hint"] == "Ed"
     with pytest.raises(ValueError, match="Keys dialog"):
         auth.redeem_invite(inv["code"], f"Ed {KEYS['claude']}", home=str(tmp_path))
