@@ -35,7 +35,6 @@ from .schematic import Circuit
 G = 9.81
 FSR_K_OHM_N = 10_000.0          # FSR 402: R ~ K / F  (10 kOhm at ~1 N); calibrate on the bench
 FSR_MAX_N = 20.0
-GEAR_EFF = 0.6
 E12 = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2]
 
 FAMILY_BUS = {  # family -> (contract bus, protocol, baud)
@@ -146,22 +145,25 @@ def grip_window(design, sizing: dict | None = None, grip: dict | None = None) ->
 def grip_torque_limit(grip: dict, gkey: str, servo_v: float, family: str) -> dict | None:
     """The gripper servo's torque limit, where its protocol has one (Feetech STS: the torque limit register; DYNAMIXEL:
     Goal PWM, which bounds the stall torque in position control). Without force sensors it is the grip: set for the
-    target at the jaw's lever (a rack-and-pinion jaw: one pinion drives both racks, per finger F = torque x 0.6 / 2r).
-    With them it is a hard cap at the firmware's force limit, in case the force loop fails, counted without gear
-    losses so it never allows more. Hobby PWM servos have none: None. {force_n, nm, fraction (of the stall torque at
-    the rail, at most 1), per_n (fraction per newton, for the F command), register, short (the servo can't reach it)}."""
+    target at the jaw's lever (morph.electronics.jaw_torque: a rack-and-pinion jaw's one pinion drives both racks, per
+    finger F = torque x 0.6 / 2r; a stock revolute jaw F = torque / lever). With them it is a hard cap at the
+    firmware's force limit, in case the force loop fails, counted without gear losses so it never allows more. Hobby
+    PWM servos have none: None. {force_n, nm, fraction (of the stall torque at the rail, at most 1), per_n (fraction
+    per newton, for the F command), register, short (the servo can't reach it), stall_force_n (per finger at stall on
+    the rail, jaw_force)}."""
     proto = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])[1]
     if proto == "pca9685_pwm" or gkey not in ACTUATORS or catalog.protocol(gkey) != SPEAKS[proto]:
         return None
+    from ..electronics import jaw_force, jaw_torque
+
     sensor = grip["sensor"] == "fsr402"
     force = float(grip["limit_n"] if sensor else grip["target_n"])
-    lever = grip["lever_mm"] / 1000.0
-    nm_per_n = 2.0 * lever / (1.0 if sensor else GEAR_EFF) if grip["jaw"] == "rack" else lever
+    nm_per_n = jaw_torque(1.0, grip["lever_mm"], grip["jaw"], losses=not sensor)
     stall = catalog.torque_at(gkey, servo_v)
     return {"force_n": round(force, 2), "nm": round(min(force * nm_per_n, stall), 4),
             "fraction": round(min(force * nm_per_n / stall, 1.0), 4), "per_n": round(nm_per_n / stall, 6),
             "register": "feetech_torque_limit" if proto == "feetech_scs" else "dynamixel_goal_pwm",
-            "short": bool(force * nm_per_n > stall), "stall_force_n": round(stall / nm_per_n, 2)}
+            "short": bool(force * nm_per_n > stall), "stall_force_n": round(jaw_force(stall, grip["lever_mm"], grip["jaw"]), 2)}
 
 
 def grip_problems(design, grip: dict) -> list:
@@ -250,7 +252,8 @@ def _actuator_currents(a: dict, design, grip: dict) -> tuple[float, float, float
     s = ACTUATORS[a["key"]]
     tau = s["torque_nm"]
     if a["joint"] == "gripper":
-        t_need = grip["target_n"] * design.electronics.pinion_radius_mm / 1000.0 / GEAR_EFF
+        from ..electronics import jaw_torque
+        t_need = jaw_torque(grip["target_n"], grip["lever_mm"], grip["jaw"])
         r_peak = min(1.0, max(t_need * 1.6 / tau, 0.35))
         r_avg = min(1.0, t_need / tau)
     else:
@@ -520,6 +523,11 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
         warnings.append("buck_5v from a 6 V input runs near its dropout; verify the regulator's minimum input at 1 A")
     issues += grip_problems(design, grip)
     gkey = next((a["key"] for a in acts if a["joint"] == "gripper"), None)
+    from ..electronics import jaw_force
+    # what the gripper servo squeezes at stall on this rail, per finger (the one jaw model): a sensorless hobby servo,
+    # which has no torque limit, squeezes with all of it
+    grip["stall_force_n"] = (round(jaw_force(catalog.torque_at(gkey, servo_v), grip["lever_mm"], grip["jaw"]), 2)
+                             if gkey in ACTUATORS else None)
     grip["torque_limit"] = grip_torque_limit(grip, gkey, servo_v, family)
     tl = grip["torque_limit"]
     if tl and tl["short"] and grip["sensor"] != "fsr402":

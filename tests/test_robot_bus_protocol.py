@@ -113,7 +113,8 @@ def test_the_gripper_force_plan_runs_with_any_catalog_actuator(key):
     d = _design("dynamixel" if key.startswith("x") else "smart_bus", f"gripper={key}")
     gd = d.with_changes({"electronics.servo": key, "electronics.supply_v": catalog.ACTUATORS[key]["nominal_v"]})
     f = electronics.plan(gd, analysis.analyze(gd, build_profile(gd)), None)
-    stall = catalog.ACTUATORS[key]["torque_nm"] * electronics.GEAR_EFF / (d.electronics.pinion_radius_mm / 1000.0)
+    # one pinion drives both racks: per finger, torque x efficiency / (2 x pitch radius)
+    stall = catalog.ACTUATORS[key]["torque_nm"] * electronics.GEAR_EFF / (2 * d.electronics.pinion_radius_mm / 1000.0)
     assert f["servo"] == key and f["servo_stall_force_n"] == pytest.approx(stall, abs=0.1)
 
 

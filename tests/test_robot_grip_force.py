@@ -250,3 +250,31 @@ def test_the_firmware_never_squeezes_blind_to_its_max_squeeze_stop(tmp_path):
     r, out, ep = _run_firmware(tmp_path / "so101", _so101(), 0.0)
     assert r["lowest"] == r["closed"] == 0.0 and r["state"] == "POS" and r["torque_writes"] == 1
     assert r["torque"] == round(max(ep["grip"]["torque_limit"]["fraction"] * 1000, 10))
+
+
+# ------------------------------------------------------------------ the grip holds what the robot does with it
+
+def test_the_grip_holds_a_heavy_robust_object_through_the_robots_own_shake_test(tmp_path):
+    """A 370 g can (no damage force): the gripper stage's grasp simulation held it at 2.34 N per finger, half the static
+    friction hold m g / (2 mu gain) = 4.65 N (its contour pads cradle the can; the robot's fingers don't), and the plan
+    shipped 1.3 x 1.5 x that: 4.56 N. The robot's own shake test then dropped the can (213 mm) while the build said
+    every check passed. The hold is now never below the static hold, and an object without a damage force is gripped
+    at twice its lower bound (3x the static hold: the shake test loads the grip with about 1.9 g)."""
+    from morph import electronics
+
+    d = Design().with_changes({**EGG_ROBOT, **object_changes("soda can"), "finger.sensor": "none"})
+    sz = arm.size(d)
+    force = pipeline2.gripper_stage(d, sz, n_trials=1)["force"]       # with its grasp simulation
+    static = force["static_hold_n"]
+    gain = pipeline2.gripper_stage(d, sz, simulate=False)["analysis"]["wedge_gain"]
+    assert static == pytest.approx(electronics.static_hold(d.object, gain), abs=1e-3)
+    assert force["sim_hold_n"] < static <= force["hold_force_n"]       # the grasp simulation only ever raises it
+    lo = force["window_n"][0]
+    assert lo == pytest.approx(1.5 * force["hold_force_n"], abs=0.01)
+    assert force["target_force_n"] == pytest.approx(2 * lo, abs=0.01) and force["window_n"][1] is None
+    ep = electronics2.plan(d, sz, grip=force)
+    asm = arm.build(d, sz, ep)
+    doc = simulate.run(asm, d, "shake", fast=True)
+    m = doc["metrics"]
+    assert m["grip_target_n"] == pytest.approx(force["target_force_n"], abs=0.01)
+    assert m["success"] and not m["dropped"] and m["slip_mm"] < 5.0, m

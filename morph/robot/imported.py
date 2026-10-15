@@ -240,8 +240,9 @@ def gripper_summary(design, sizing) -> dict:
     lever = float(prof.get("jaw_lever_mm") or JAW_LEVER_MM)
     o = design.object
     rail_v = (sizing.get("servo_rail") or {}).get("v")
-    stall = (catalog.torque_at(key, rail_v) if rail_v else catalog.ACTUATORS[key]["torque_nm"]) / (lever / 1000.0)
-    hold = o.mass_g / 1000.0 * float(-G[2]) / (2.0 * max(o.friction, 0.05))
+    stall = grip_electronics.jaw_force(catalog.torque_at(key, rail_v) if rail_v else catalog.ACTUATORS[key]["torque_nm"],
+                                       lever, "revolute")
+    hold = grip_electronics.static_hold(o)   # flat stock jaws: no wedge gain
     lo, hi, target = grip_electronics.force_window(o, hold, None, design.electronics.target_force_n, floor=0.5)
     target = min(target, 0.8 * stall, max(design.gripper.force_n, 0.5))
     limit = min(o.max_force_n / 1.2 if o.max_force_n > 0 else stall, stall)

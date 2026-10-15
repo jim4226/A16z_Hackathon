@@ -58,16 +58,35 @@ def servo_spec(servo: str) -> dict:
                 price=catalog.price(servo))
 
 
+def jaw_force(torque_nm: float, lever_mm: float, jaw: str = "rack") -> float:
+    """Per-finger squeeze (N) from the gripper servo's torque (N·m): the one model of each gripper type. A rack-and-pinion
+    jaw: one pinion drives both racks, so each finger gets torque x GEAR_EFF / (2 x the pinion's pitch radius). A revolute
+    stock jaw on the servo's own horn: torque / lever, the object's distance from the jaw's pivot."""
+    lever = max(float(lever_mm), 1e-6) / 1000.0
+    return torque_nm * GEAR_EFF / (2.0 * lever) if jaw == "rack" else torque_nm / lever
+
+
+def jaw_torque(force_n: float, lever_mm: float, jaw: str = "rack", losses: bool = True) -> float:
+    """The servo torque (N·m) for a per-finger squeeze of `force_n` (jaw_force inverted). losses=False leaves the rack's
+    gear losses out, which gives the torque that can never squeeze harder than `force_n` (a hard cap)."""
+    lever = max(float(lever_mm), 1e-6) / 1000.0
+    return force_n * 2.0 * lever / (GEAR_EFF if losses else 1.0) if jaw == "rack" else force_n * lever
+
+
 def servo_max_force(servo: str, pinion_radius_mm: float) -> float:
-    """Per-finger force at stall through the jaw drive."""
-    return servo_spec(servo)["torque"] * G * GEAR_EFF / (pinion_radius_mm / 10.0)
+    """Per-finger force at stall through the rack-and-pinion jaw drive (jaw_force)."""
+    return jaw_force(servo_spec(servo)["torque"] * G / 100.0, pinion_radius_mm, "rack")
 
 
 def choose_servo(design: Design, target: float) -> str:
+    """The standalone gripper's servo: the first hobby servo its printed mechanism mounts whose stall force per finger is
+    at least twice the target."""
+    from .mechanism import SERVOS as MOUNTS
+
     e = design.electronics
     if e.servo != "auto":
         return e.servo
-    fits = [k for k in SERVOS if servo_max_force(k, e.pinion_radius_mm) >= 2.0 * target]
+    fits = [k for k in SERVOS if k in MOUNTS and servo_max_force(k, e.pinion_radius_mm) >= 2.0 * target]
     return fits[0] if fits else "ds3218"
 
 
@@ -84,16 +103,25 @@ def nearest_e12(ohms: float) -> float:
 def force_window(o, hold: float, sensor: str | None = None, target: float = 0.0, floor: float = 0.0) -> tuple:
     """(lo, hi, target) per finger, N: the force that holds the object (hold x HOLD_MARGIN), the force that damages it
     (/ CRUSH_MARGIN; inf for a robust object) capped at 80 % of the force sensor's range, and the target: `target` when
-    one is asked for, else the window's geometric mean but at most twice the lower bound (1.3 x the lower bound for a
-    robust object), raised to `floor` while that stays inside the window. Every grip target Morph ships comes from here."""
+    one is asked for, else the window's geometric mean but at most twice the lower bound (twice the lower bound for a
+    robust object, which has no top), raised to `floor` while that stays inside the window. Twice the lower bound is
+    three times the static hold, a 1.5x margin over the robot's own shake test, which loads the grip with about 1.9 g
+    (simulate._shake); a narrow window gets less, and the simulation says so when that slips. Every grip target Morph
+    ships comes from here."""
     lo = hold * HOLD_MARGIN
     hi = (o.max_force_n / CRUSH_MARGIN) if o.max_force_n > 0 else float("inf")
     if sensor:
         hi = min(hi, FSR[sensor]["max_n"] * 0.8)
     if target:
         return lo, hi, float(target)
-    t = min(math.sqrt(lo * hi), lo * 2.0) if hi != float("inf") else lo * 1.3
+    t = min(math.sqrt(lo * hi), lo * 2.0) if hi != float("inf") else lo * 2.0
     return lo, hi, max(t, min(floor, hi))
+
+
+def static_hold(o, gain: float = 1.0) -> float:
+    """The per-finger squeeze that just holds the object against gravity by friction (N): m g / (2 mu gain), `gain` the
+    pad's wedge gain (analysis.wedge_gain; 1 for flat jaws)."""
+    return o.mass_g / 1000.0 * G / (2.0 * max(o.friction, 0.05) * max(gain, 1e-6))
 
 
 def limit_source(o, sensor: str | None = None) -> str:
@@ -115,10 +143,15 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
     issues, warnings = [], []
     sensor = f.sensor if f.sensor in FSR else None
 
-    hold = sim.get("min_hold_force_n") if sim else None
-    if hold is None or hold == float("inf"):
-        hold = analysis["required_grip_n"] / design.safety_factor  # closed-form fallback
+    # the hold: never below the static friction hold m g / (2 mu gain); the grasp simulation only ever raises it (its
+    # pads can cradle an object the robot's own fingers then drop)
+    static = static_hold(o, analysis["wedge_gain"])
+    sim_hold = sim.get("min_hold_force_n") if sim else None
+    if sim_hold is None or sim_hold == float("inf"):
+        hold = static
         warnings.append("no simulated holding force; using closed-form estimate")
+    else:
+        hold = max(static, float(sim_hold))
     calibration = None
     if not e.target_force_n:  # opt-in (Keys: Use Keewano calibration); None unless enough logged, non-synthetic builds
         calibration = keewano.hold_ratio(f.pad, f.material)
@@ -192,7 +225,8 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None) ->
     return {
         "open_deg": mech["servo_open_deg"] if mech else 20, "closed_deg": mech["servo_closed_deg"] if mech else 160,
         "mcu": mcu_key, "servo": servo, "sensor": sensor or "none", "jaw": "rack", "lever_mm": e.pinion_radius_mm,
-        "hold_force_n": round(hold, 3), "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
+        "hold_force_n": round(hold, 3), "static_hold_n": round(static, 3),
+        "sim_hold_n": None if sim_hold is None or sim_hold == float("inf") else sim_hold, "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
         "target_force_n": round(target, 2), "hold_calibration": calibration, "servo_stall_force_n": round(f_stall, 1),
         "limit_n": round(min(o.max_force_n / 1.2 if o.max_force_n > 0 else 1e9,
                              FSR[sensor]["max_n"] * 0.95 if sensor else 1e9, f_stall), 2),

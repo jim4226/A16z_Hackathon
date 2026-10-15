@@ -73,6 +73,7 @@ from . import catalog, components
 from .assembly import Assembly, Cable, Joint, Part, Step, rot, trans
 from .. import mechanism as _mech
 from ..design import FSR, build_profile, mount_dims
+from ..electronics import jaw_force
 from ..mechanism import object_center_v, pinion_profile, rack_teeth
 
 G = 9.81
@@ -975,7 +976,7 @@ def size(design) -> dict:
                        f"{math.hypot(design.task.place_x_mm, design.task.place_y_mm):.0f} mm with a "
                        f"{lay.L3:.0f} mm wrist + hand")
         notes.append(f"reach raised from {req:.0f} to {lay.reach:.0f} mm: " + ("; ".join(why) or "minimum link lengths"))
-    grip_force = catalog.torque_at(gkey, rv) * 0.8 / (lay.grip["r"] / 1000.0)
+    grip_force = jaw_force(catalog.torque_at(gkey, rv), lay.grip["r"], "rack")   # per finger at stall, on the rail
     return {"links_mm": {"base_h": round(lay.base_h, 1), "L1": round(lay.L1, 1), "L2": round(lay.L2, 1),
                          "L3": round(lay.L3, 1), "wrist": round(lay.wl if dof != 6 else lay.d45 + lay.wl5, 1),
                          "hand": round(lay.tcp_z, 1)},
@@ -2726,11 +2727,14 @@ class _Builder:
         a = self.asm
         A = g["A"]
         T, ot, r = g["T"], g["overtravel"], g["r"]
+        rail_v = (self.sz.get("servo_rail") or {}).get("v")
+        # the jaw's effort: what the gripper servo squeezes per finger at stall on its rail (one pinion, two racks)
+        stall = jaw_force(catalog.torque_at(A.key, rail_v) if rail_v else A.torque, r, "rack")
         a.add_joint(Joint("gripper", "prismatic", "gripper_base", "jaw_left", np.eye(4), (-1, 0, 0), -ot, round(T, 2),
-                          actuator=A.key, effort=float(self.d.gripper.force_n),
+                          actuator=A.key, effort=round(stall, 2),
                           velocity=round(float(A.spec.get("speed_rad_s", 4.0)) * r * 0.8, 1),
                           meta={"pitch_radius_mm": r, "teeth": g["n"], "module": _mech.MODULE, "servo_sign": -1,
-                                "stall_force_n": round(A.torque * 0.8 / (r / 1000.0), 1)}))
+                                "stall_force_n": round(stall, 1)}))
         a.add_joint(Joint("gripper_right", "prismatic", "gripper_base", "jaw_right", np.eye(4), (1, 0, 0), -ot, round(T, 2),
                           mimic={"joint": "gripper", "multiplier": 1.0}))
         a.add_joint(Joint("gripper_pinion", "revolute", "gripper_base", "pinion", trans(self.pinion_origin), (0, 1, 0),

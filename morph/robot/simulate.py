@@ -406,13 +406,14 @@ def _object_surface(design, spacing=1.0, offset=0.0) -> np.ndarray:
     return np.vstack(out)
 
 
-def _grip_force_target(asm, design, override=None, generated_fingers=True) -> float:
+def _grip_force_target(asm, design, override=None, generated_fingers=True, cap=None) -> float:
     """Per-finger clamp force the firmware regulates to (N): the one it ships (asm.meta["grip_target_n"], which the robot
     builders copy from the electronics plan, itself the gripper stage's force plan), else the Grip force target, else
     that force plan's closed form (morph.electronics.force_window). ``generated_fingers`` = Morph's own pads (contour /
-    V wedge gain and the FSR range apply); False for a stock gripper (flat jaws)."""
+    V wedge gain and the FSR range apply); False for a stock gripper (flat jaws). ``cap``: the jaws' own limit (the
+    gripper joint's effort), else design.gripper.force_n."""
     o, f = design.object, design.finger
-    cap = max(design.gripper.force_n, 0.5)
+    cap = max(cap if cap else design.gripper.force_n, 0.5)
     for key in ("grip_target_n", "grip_force_n"):
         if asm.meta.get(key):
             override = override or asm.meta[key]
@@ -429,9 +430,9 @@ def _grip_force_target(asm, design, override=None, generated_fingers=True) -> fl
             gain = wedge_gain(f.pad, build_profile(design).contact_half_angle_deg)
         except Exception:  # noqa: BLE001
             gain = 1.0
-    from ..electronics import force_window
+    from ..electronics import force_window, static_hold
 
-    hold = o.mass_g / 1000.0 * G / (2.0 * max(o.friction, 0.05) * gain)
+    hold = static_hold(o, gain)
     target = force_window(o, hold, "fsr402" if f.sensor == "fsr402" and generated_fingers else None, floor=0.5)[2]
     return float(min(target, cap))
 
@@ -823,7 +824,8 @@ def _describe(asm, design, opts: SimOptions):
                        _rgba(c.part.color), c.part.kind, (c.hv, c.hf)) for c in cands]
 
     # ---- gripper command values and force limits
-    gf = _grip_force_target(asm, design, opts.grip_force_n, generated_fingers=kind == "prismatic")
+    gf = _grip_force_target(asm, design, opts.grip_force_n, generated_fingers=kind == "prismatic",
+                            cap=(gj.effort if kind == "prismatic" and gj is not None and gj.effort else None))
     if kind == "prismatic":
         g_open = float(min(g_hi - 0.5, max(ready.get(gname, 12.0), contact + 8.0)))
         g_close = float(min(g_lo, contact - 2.5 * GRIP_SAT_MM))

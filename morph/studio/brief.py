@@ -1268,7 +1268,7 @@ def _grip_force(gd, a: dict) -> dict:
     configured = os.environ.get("KEEWANO_PAT") and os.environ.get("KEEWANO_PROJECT_ID")
     if not configured or pad_key in getattr(keewano, "_ratio_cache", {}) or gd.electronics.target_force_n:
         return electronics.plan(gd, a, None)
-    hold = a["required_grip_n"] / gd.safety_factor
+    hold = electronics.static_hold(gd.object, a["wedge_gain"])
     target = electronics.force_window(gd.object, hold, gd.finger.sensor if gd.finger.sensor in FSR else None)[2]
     return electronics.plan(gd.with_changes({"electronics.target_force_n": round(max(target, 0.01), 3)}), a, None)
 
