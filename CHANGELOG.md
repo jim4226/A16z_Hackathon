@@ -466,3 +466,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Teams' change-request preview no longer prices the molds as a cost per robot: switching a robot to production at
   quantity 1 read "about +$73,374 per robot"; it now reads "+$4,234 per robot ... plus $69,140 of mold tooling, paid
   once". The "Built" line and the release checklist say how much of a unit cost is tooling, as the inspector does.
+- A robot set to Force sensor: none is no longer refused with "add finger.sensor=fsr402" when its gripper servo's torque
+  limit sets the squeeze (smart-bus and Dynamixel grippers): the egg-picker without force sensors now passes its
+  software checks, the egg intact. A hobby servo gripper, which has no torque limit, is still told.

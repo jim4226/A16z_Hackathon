@@ -139,10 +139,10 @@ def gripper_actuator(design: Design) -> str:
 
 def gripper_design(design: Design) -> tuple:
     """(the design the gripper stage analyses, the gripper actuator) for a generated arm: the gripper actuator (its stall
-    force is worked out on the servo rail, gripper_stall_nm), and the fingers the robot's CAD makes for its build config (arm.LOOK: printed PETG for a prototype,
-    machined aluminium for a pilot, molded polycarbonate for production), not the standalone gripper's finger.material
-    and fab.process, which the robot doesn't build with. A robot's controller and supply are the electronics plan's
-    (electronics2), so none is chosen here."""
+    force is worked out on the servo rail, gripper_drive), and the fingers the robot's CAD makes for its build config
+    (arm.LOOK: printed PETG for a prototype, machined aluminium for a pilot, molded polycarbonate for production), not
+    the standalone gripper's finger.material and fab.process, which the robot doesn't build with. A robot's controller
+    and supply are the electronics plan's (electronics2), so none is chosen here."""
     from .arm import LOOK, _config
     from .catalog import ACTUATORS
 
@@ -163,6 +163,15 @@ def gripper_stall_nm(ga: str, sizing: dict | None) -> float | None:
     return torque_at(ga, rail_v or ACTUATORS[ga]["nominal_v"])
 
 
+def gripper_drive(design: Design, ga: str, sizing: dict | None) -> dict:
+    """How a generated arm's gripper servo is driven, for its force plan (morph.electronics.plan's keywords): its stall
+    torque on sizing's rail (gripper_stall_nm) and whether the firmware sets its torque limit (electronics2), which
+    then sets a sensorless squeeze."""
+    from .electronics2 import has_torque_limit
+
+    return {"stall_nm": gripper_stall_nm(ga, sizing), "torque_limited": has_torque_limit(ga, design.arm.actuator_family)}
+
+
 def gripper_stage(design: Design, sizing: dict | None = None, n_trials: int = 4, simulate: bool = True) -> dict:
     """The gripper stage's result (results.json "gripper"). Its "force" plan is the grip's one source of truth: the
     electronics plan, the firmware, the simulation and the manual take its window, target and limit. An imported robot
@@ -178,7 +187,7 @@ def gripper_stage(design: Design, sizing: dict | None = None, n_trials: int = 4,
     geom = build_profile(gd)
     a = grip_analysis.analyze(gd, geom)
     s = grip_sim.simulate(gd, geom, n_trials) if simulate else None
-    force = grip_electronics.plan(gd, a, s, stall_nm=gripper_stall_nm(ga, gripper_inputs(design, sizing)))
+    force = grip_electronics.plan(gd, a, s, **gripper_drive(design, ga, gripper_inputs(design, sizing)))
     for k in ("mcu", "wiring", "parts", "sensing"):   # the standalone gripper's controller, pins and parts list
         force.pop(k, None)
     out = {"actuator": ga, "analysis": a, "force": force}

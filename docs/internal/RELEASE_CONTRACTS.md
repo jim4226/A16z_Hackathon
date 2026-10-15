@@ -1597,3 +1597,11 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   ...; plus $69,140 of mold tooling, paid once". `collab.built_summary` adds `tooling_cost` and `quantity` ([base,
   built]) and `release_gate`'s checklist `tooling_cost` and `quantity`; Teams' "Built rNNN: ... per unit" line and the
   checklist's unit cost say "incl. $X tooling over N units", as the inspector does.
+- **No "add force sensors" issue where a torque limit sets the squeeze.** `electronics2.has_torque_limit(gkey, family)`
+  (the firmware can set the gripper servo's torque limit on the arm's bus) is the one rule `grip_torque_limit` and the
+  gripper stage use: `pipeline2.gripper_drive(design, ga, sizing)` passes it with the rail stall to
+  `morph.electronics.plan(..., torque_limited=)`, which then raises no "can reach X N > object limit ... add
+  finger.sensor=fsr402" issue (the standalone gripper's rule for a servo with nothing to limit it). A generated arm set
+  to Force sensor: none was not feasible for that alone; the egg-picker now builds with its checks passing (torque
+  limit 5.3 % of stall for 4.42 N, the egg intact at 4.53 N peak). A hobby PWM gripper still gets the issue, as an
+  imported one does. New robot's preflight uses the same helper.

@@ -1273,20 +1273,21 @@ def brief_to_changes(b: Brief) -> dict:
 
 
 # ------------------------------------------------------------------ preflight + repair
-def _grip_force(gd, a: dict, stall_nm: float | None = None) -> dict:
-    """electronics.plan without the Keewano hold-force query (preflight never waits on the network); `stall_nm` is the
-    gripper servo's stall torque on the servo rail, as the gripper stage plans it (pipeline2.gripper_stage)."""
+def _grip_force(gd, a: dict, **drive) -> dict:
+    """electronics.plan without the Keewano hold-force query (preflight never waits on the network); `drive` is how the
+    gripper servo is driven (pipeline2.gripper_drive: its stall on the servo rail, its torque limit), as the gripper
+    stage plans it."""
     from .. import electronics, keewano
     from ..design import FSR
 
     pad_key = (gd.finger.pad, gd.finger.material)
     configured = os.environ.get("KEEWANO_PAT") and os.environ.get("KEEWANO_PROJECT_ID")
     if not configured or pad_key in getattr(keewano, "_ratio_cache", {}) or gd.electronics.target_force_n:
-        return electronics.plan(gd, a, None, stall_nm=stall_nm)
+        return electronics.plan(gd, a, None, **drive)
     hold = electronics.static_hold(gd.object, a["wedge_gain"])
     target = electronics.force_window(gd.object, hold, gd.finger.sensor if gd.finger.sensor in FSR else None)[2]
     return electronics.plan(gd.with_changes({"electronics.target_force_n": round(max(target, 0.01), 3)}), a, None,
-                            stall_nm=stall_nm)
+                            **drive)
 
 
 _IMPORTED: dict = {}
@@ -1313,7 +1314,7 @@ def preflight(changes: dict) -> dict:
     from .. import analysis
     from ..design import build_profile
     from ..robot import electronics2
-    from ..robot.pipeline2 import gripper_design, gripper_stall_nm
+    from ..robot.pipeline2 import gripper_design, gripper_drive
     from ..spec import Design
 
     t0 = time.perf_counter()
@@ -1329,7 +1330,7 @@ def preflight(changes: dict) -> dict:
             sz = arm.size(d)
             gd, ga = gripper_design(d)   # the fingers and servo the gripper stage analyses, at the servo rail
             a = analysis.analyze(gd, build_profile(gd))
-            f = _grip_force(gd, a, gripper_stall_nm(ga, sz))
+            f = _grip_force(gd, a, **gripper_drive(d, ga, sz))
             issues += a["issues"]
             out["deflection_mm"] = a["tip_deflection_mm"]
         issues += f["issues"]

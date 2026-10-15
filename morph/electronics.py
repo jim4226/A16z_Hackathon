@@ -145,10 +145,12 @@ def no_safe_grip(lo: float, hi: float, o, sensor: str | None = None, jaw: str = 
     return f"no safe grip force: holding needs {lo:.2f} N but the limit is {hi:.2f} N ({limit_source(o, sensor)}); {fix}"
 
 
-def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None, stall_nm: float | None = None) -> dict:
+def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None, stall_nm: float | None = None,
+         torque_limited: bool = False) -> dict:
     """The grip's force plan: window, target, hard limit, the servo and its stall force per finger. `stall_nm` is the
     servo's stall torque on the supply it runs from (a robot's gripper stage passes it on the arm's servo rail); without
-    it, the servo's rated torque."""
+    it, the servo's rated torque. `torque_limited`: the firmware sets the servo's torque limit for the target (a robot's
+    smart-bus gripper), so without a force sensor its stall force can't crush the object and that is no issue."""
     e, o, f = design.electronics, design.object, design.finger
     issues, warnings = [], []
     sensor = f.sensor if f.sensor in FSR else None
@@ -181,7 +183,7 @@ def plan(design: Design, analysis: dict, sim: dict, mech: dict | None = None, st
     crush_open_loop = o.max_force_n > 0 and f_stall > o.max_force_n
     if f_stall < 1.5 * target:
         issues.append(f"{servo} reaches only {f_stall:.1f} N per finger (< 1.5 x target)")
-    if crush_open_loop and not sensor:
+    if crush_open_loop and not sensor and not torque_limited:
         issues.append(f"{servo} can reach {f_stall:.1f} N > object limit {o.max_force_n} N and there is no force "
                       f"sensor: add finger.sensor=fsr402")
     if not s["v"][0] <= e.supply_v <= s["v"][1]:

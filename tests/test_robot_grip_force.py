@@ -355,3 +355,21 @@ def test_the_grip_holds_a_heavy_robust_object_through_the_robots_own_shake_test(
     m = doc["metrics"]
     assert m["grip_target_n"] == pytest.approx(force["target_force_n"], abs=0.01)
     assert m["success"] and not m["dropped"] and m["slip_mm"] < 5.0, m
+
+
+@pytest.mark.parametrize("family, told", [("smart_bus", False), ("dynamixel", False), ("hobby_pwm", True)])
+def test_only_a_gripper_with_no_torque_limit_is_told_it_needs_force_sensors(family, told):
+    # an egg-picker set to Force sensor: none was "not feasible: sts3215 can reach 82.9 N > object limit 25 N and there is
+    # no force sensor: add finger.sensor=fsr402", while its firmware sets the servo's torque limit for the grip (5 % of
+    # its stall torque for 4.3 N) and the simulation squeezes with that. A hobby PWM servo has no torque limit: still told
+    from morph.studio import brief
+
+    d = template("egg-picker").with_changes({"finger.sensor": "none", "arm.actuator_family": family})
+    sz = arm.size(d)
+    force = pipeline2.gripper_stage(d, sz, simulate=False)["force"]
+    said = any("add finger.sensor=fsr402" in i for i in force["issues"])
+    assert said is told, force["issues"]
+    ep = electronics2.plan(d, sz, grip=force)
+    assert (ep["grip"]["torque_limit"] is None) is told
+    pre = brief.preflight(d.flat())["issues"]
+    assert any("add finger.sensor=fsr402" in i for i in pre) is told, pre

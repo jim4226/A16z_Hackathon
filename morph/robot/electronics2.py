@@ -142,6 +142,13 @@ def grip_window(design, sizing: dict | None = None, grip: dict | None = None) ->
             "lever_mm": float(grip.get("lever_mm") or (70.0 if jaw == "revolute" else design.electronics.pinion_radius_mm))}
 
 
+def has_torque_limit(gkey: str, family: str) -> bool:
+    """Whether the firmware can set this gripper servo's torque limit on the arm's bus (Feetech STS: register 48;
+    DYNAMIXEL: Goal PWM). A hobby PWM servo has none, nor has a servo whose protocol the bus doesn't speak."""
+    proto = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])[1]
+    return proto != "pca9685_pwm" and gkey in ACTUATORS and catalog.protocol(gkey) == SPEAKS[proto]
+
+
 def grip_torque_limit(grip: dict, gkey: str, servo_v: float, family: str) -> dict | None:
     """The gripper servo's torque limit, where its protocol has one (Feetech STS: the torque limit register; DYNAMIXEL:
     Goal PWM, which bounds the stall torque in position control). Without force sensors it is the grip: set for the
@@ -151,10 +158,11 @@ def grip_torque_limit(grip: dict, gkey: str, servo_v: float, family: str) -> dic
     PWM servos have none: None. {force_n, nm, fraction (of the stall torque at the rail, at most 1), per_n (fraction
     per newton, for the F command), register, short (the servo can't reach it), stall_force_n (per finger at stall on
     the rail, jaw_force)}."""
-    proto = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])[1]
-    if proto == "pca9685_pwm" or gkey not in ACTUATORS or catalog.protocol(gkey) != SPEAKS[proto]:
+    if not has_torque_limit(gkey, family):
         return None
     from ..electronics import jaw_force, jaw_torque
+
+    proto = FAMILY_BUS.get(family, FAMILY_BUS["smart_bus"])[1]
 
     sensor = grip["sensor"] == "fsr402"
     force = float(grip["limit_n"] if sensor else grip["target_n"])
