@@ -527,9 +527,10 @@ class JobQueue:
                 if job.status == "running":
                     job.status = "done"
             except Exception as exc:  # noqa: BLE001  (the room keeps working after a failed job)
-                traceback.print_exc()
-                job.status, job.error = "error", f"{exc.__class__.__name__}: {exc}"
-                self.room.hub.send({"type": "assistant", "text": f"Error: {exc}", "job": job.id})
+                traceback.print_exc()  # the terminal gets the whole error; tabs, the job and Teams its public text
+                why = durable.explain(exc, self.home)
+                job.status, job.error = "error", f"{exc.__class__.__name__}: {why}"
+                self.room.hub.send({"type": "assistant", "text": f"Error: {why}", "job": job.id})
             finally:
                 job.finished = time.time()
                 job.after = ()  # read when it started; a chain of quick edits keeps no finished job alive through it

@@ -291,3 +291,58 @@ def test_a_build_error_in_the_chat_names_files_from_the_projects_folder(tmp_path
     told = durable.explain(exc, str(home))
     assert str(tmp_path) not in told and told.startswith("[Errno 13] Permission denied: 'projects/kb1")
     assert durable.explain(OSError(28, "No space left on device"), str(home)) == durable.DISK_FULL
+
+
+def test_errors_a_browser_sees_name_files_from_the_projects_folder(tmp_path, monkeypatch, capsys):
+    """A job that raised, a chat message that couldn't be read, Find agents and a robustness study that failed with an
+    OSError, and a route that hit one, tell the browser which file (from the projects folder) and never where the
+    server keeps it; the terminal keeps the whole error."""
+    from morph import darwin
+    from morph.services import robust
+    from morph.studio import jobs, rooms
+    home = tmp_path / "projects"
+    robot(home, "egg")
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    egg, where = st.room("egg"), str(home / "egg" / "r001" / "bom.json")
+    oops = lambda *a, **k: (_ for _ in ()).throw(PermissionError(13, "Permission denied", where))  # noqa: E731
+    seen = []
+    monkeypatch.setattr(egg.hub, "send", lambda ev: seen.append(ev))
+
+    job = egg.jobs.submit("import", oops, label="an import")                   # a job that raised
+    finish(job)
+    monkeypatch.setattr(server, "interpret", oops)                               # a chat message
+    finish(st.queue_chat(egg, "make it lighter"))
+    monkeypatch.setattr(darwin, "source", oops)                                  # Find agents
+    st.source(room=egg)
+    told = [str(ev.get("text") or ev.get("error") or "") for ev in seen if ev.get("type") in ("assistant", "sourcing")]
+    told = [t for t in told if "Permission denied" in t]
+    assert len(told) == 3 and job.error.startswith("PermissionError: [Errno 13]"), told
+    for text in told + [job.error]:
+        assert "projects/egg/r001/bom.json" in text and str(tmp_path) not in text, text
+
+    sent = []                                                                    # a robustness study
+    hj = jobs.HeavyJobs(str(home), emit=lambda project, ev: sent.append(ev), max_running=1)
+    monkeypatch.setattr(robust, "new_study", lambda root, rev=None, runs=200, **kw: {
+        "version": robust.VERSION, "id": "a1b2c3d4e5f6", "project": "egg", "rev": "r001", "n": runs, "seed": 1,
+        "stress": False, "timestep": 0.001, "status": "queued", "done": 0})
+    monkeypatch.setattr(robust, "run_study", oops)
+    monkeypatch.setattr(robust, "active", lambda root: None)
+    hj.start_study("egg", runs=10)
+    for _ in range(200):
+        if any(e.get("status") == "error" for e in sent):
+            break
+        time.sleep(0.02)
+    err = next(e["error"] for e in sent if e.get("status") == "error")
+    assert "projects/egg/r001/bom.json" in err and str(tmp_path) not in err, err
+    hj.shutdown(timeout=1)
+
+    monkeypatch.setattr(rooms.JobQueue, "snapshot", oops)                       # a route that hit one
+    from test_studio_features import caller, start
+    httpd = start(st)
+    try:
+        status, out, _ = caller(httpd)("GET", "/api/jobs?project=egg")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert status == 500 and "projects/egg/r001/bom.json" in out["error"] and str(tmp_path) not in out["error"]
+    assert where in capsys.readouterr().err                                     # the terminal: the whole path

@@ -190,8 +190,8 @@ def rev_payload(p: RobotProject, rev: str, project: str | None = None) -> dict:
         tbase = timestudy2.load_baseline()
         time_card = {"revision": timestudy2.revision(res, tbase), "project": timestudy2.project(p, tbase),
                      "placeholder": "PLACEHOLDER" in str(tbase.get("status", ""))}
-    except Exception as exc:  # the time card must never break the payload
-        time_card = {"error": str(exc)}
+    except Exception as exc:  # the time card must never break the payload (the page shows none; its file is ours)
+        time_card = {"error": exc.__class__.__name__}
     return {
         "rev": rev, "label": res.get("label"), "parent": res.get("parent"), "changes": res.get("changes") or {},
         "provenance": res.get("provenance") or {}, "stage_status": res.get("stage_status") or {},
@@ -751,7 +751,7 @@ class Studio:
                     return self._say(room, job, "noop", it["reply"], noop=True)
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
-                return self._say(room, job, "error", f"Error: {exc}")
+                return self._say(room, job, "error", f"Error: {durable.explain(exc, self.home)}")
             return self.apply(it["changes"], msg, reply=it["reply"], source=it["source"], room=room, job=job)
 
     def params(self, changes: dict, room: Room | None = None, job=None) -> str | None:
@@ -893,7 +893,8 @@ class Studio:
             room.hub.send({"type": "sourcing", "status": "done", "rev": rev, "project": name, "sourcing": _sourcing(p, rev)})
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
-            room.hub.send({"type": "sourcing", "status": "error", "rev": rev, "project": name, "error": str(exc)})
+            room.hub.send({"type": "sourcing", "status": "error", "rev": rev, "project": name,
+                           "error": durable.explain(exc, self.home)})
         finally:
             room.sourcing.release()
 
@@ -1337,7 +1338,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
                     return None
                 if durable.disk_full(exc):
                     return self._error(507, durable.DISK_FULL)
-                return self._error(500, f"The Studio hit an error: {exc.__class__.__name__}: {exc}")
+                return self._error(500, "The Studio hit an error: "
+                                        f"{exc.__class__.__name__}: {durable.explain(exc, studio.home)}")
             if out is None:
                 return None
             if len(out) == 2:

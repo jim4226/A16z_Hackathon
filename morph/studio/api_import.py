@@ -27,6 +27,7 @@ import traceback
 
 from ..importers import ImportFailed, session as sess
 from ..importers.common import LIMITS, ledger_entry, set_home
+from ..services import durable
 from .security import holds_secret, secret_refused
 
 _busy: dict = {}
@@ -270,7 +271,7 @@ def commit(req, sid):
                          f"morph robot new NAME --source {src}" if plan["kind"] == "robot" and src
                          else "Import the file again to retry.")
                 ev({"type": "import", "id": sid, "stage": "build", "status": "error",
-                    "text": f"The build failed ({exc.__class__.__name__}: {str(exc)[:200]}). {retry}"})
+                    "text": f"The build failed ({exc.__class__.__name__}: {durable.explain(exc, home)[:200]}). {retry}"})
             finally:
                 _release(sid)
                 s.delete()

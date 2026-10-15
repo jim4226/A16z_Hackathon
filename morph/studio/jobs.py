@@ -31,7 +31,7 @@ import time
 import traceback
 from collections import deque
 
-from ..services import robust
+from ..services import durable, robust
 from ..services.robust import StudyBusy, StudyError  # noqa: F401  (callers catch them from here)
 from . import projects
 
@@ -219,7 +219,7 @@ class HeavyJobs:
         except Exception as exc:  # noqa: BLE001  (a failed study ends as an error event; the Studio keeps going)
             if not isinstance(exc, StudyError):
                 traceback.print_exc()
-            job.status, job.error = "error", str(exc)[:500] or exc.__class__.__name__
+            job.status, job.error = "error", durable.explain(exc, self.home)[:500]
             self._send(job, {**self._event(job, "error"), "error": job.error}, force=True)
         finally:
             job.ended = time.time()
