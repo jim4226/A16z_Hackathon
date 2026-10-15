@@ -278,7 +278,8 @@ def test_a_late_answer_never_takes_a_finished_card_back_to_working(browser, make
     assert not page.errors, page.errors
 
 
-def test_live_prices_starts_from_the_bom_tab_and_stops_from_its_card(browser, make_world):
+def test_live_prices_starts_from_the_bom_tab_and_stops_from_its_card(browser, make_world, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-ui-test-not-a-key")  # the page starts Live prices only with Claude ready
     w = make_world({"content": [{"type": "tool_use", "id": "toolu_bom", "name": "morph_bom_read", "input": {}}],
                     "stop_reason": "tool_use"}, search_and_call(OFFERS))
     w.studio.toolbox.builtins = None  # the registered core tools, Live prices' own
@@ -340,10 +341,11 @@ def test_without_claude_the_bom_button_says_so_and_opens_keys_on_the_anthropic_k
     assert page.pg.evaluate("window.lastToast || document.querySelector('#toast')?.innerText || ''").startswith("Live prices need Claude")
     assert w.call("GET", "/api/runs?project=egg-picker")[1]["runs"] == [] and page.pg.evaluate("document.querySelectorAll('.tl-run').length") == 0
     page.shot("no_claude")
-    assert [e for e in page.errors if "status of 503" not in e] == []  # the start's own 503 is the answer it reads
+    assert page.errors == []  # the page knew Claude isn't there: no start refused with a 503 in the console
 
 
-def test_prices_found_show_on_the_card_in_show_prices_and_on_the_bom_button(browser, make_world):
+def test_prices_found_show_on_the_card_in_show_prices_and_on_the_bom_button(browser, make_world, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-ui-test-not-a-key")
     import json
 
     def result(body):

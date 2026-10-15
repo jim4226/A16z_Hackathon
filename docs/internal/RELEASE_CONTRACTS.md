@@ -904,7 +904,9 @@ its first (or changed) use, whose answer is sent for every call it covers; a too
 card per call. Members who can't act see "Ask the owner to add the <key> in Keys." or
 "Ask the owner to allow it." (editors: "Or skip it"). The BOM tab's filters bar gets "Live prices (beta)" for editors
 (and for everyone once prices exist): it starts a run, says what a working run waits for, or opens the prices; without
-Claude (503) it says so and opens Keys on `ANTHROPIC_API_KEY`. The Keys dialog lists "Tools agents can use" with an
+Claude it says so and opens Keys on `ANTHROPIC_API_KEY`: when `GET /api/runs` last said `ready.claude: false` it asks
+again and, still false, sends no start (no refused request in the browser console); a start refused with 503 does the
+same. The Keys dialog lists "Tools agents can use" with an
 on/off switch per tool. New on the feature bus (section 4): app.js sends `{type: "connection", live: true, again}`
 whenever the page's event stream opens, so a feature can reload what a stream that opened late (after the 3 s wait
 before the first state load) or reopened after a drop may have missed; tools.js refreshes its cards then.

@@ -154,9 +154,18 @@ async function act(r, what, arg) {
   }
 }
 
+function needClaude() {
+  studio.toast(can.keys ? 'Live prices need Claude: add the Anthropic key in Keys.' : 'Live prices need the Anthropic key: ask the owner to add it in Keys.');
+  if (can.keys) window.dispatchEvent(new CustomEvent('morph:keys', { detail: { key: 'ANTHROPIC_API_KEY' } }));
+}
+
 export async function startPrices() {
   const rev = studio.S?.current?.rev;
   if (!can.start) { studio.toast('Only editors and the owner can start Live prices.'); return; }
+  if (ready.claude === false) {  // asked again first (a key may have been added since): no start the server would refuse
+    await refresh();
+    if (ready.claude === false) { needClaude(); bomButton(); return; }
+  }
   try {
     const out = await studio.api.post('/api/runs/start', { agent: 'price_check', rev });
     const r = runs.get(out.run.id) || { view: out.run, el: null, keyAdded: false, answer: null };
@@ -167,10 +176,8 @@ export async function startPrices() {
     if (out.already) r.el?.scrollIntoView({ block: 'end' });
   } catch (e) {
     const msg = e.body?.error || e.message || "Couldn't start Live prices";
-    if (e.status === 503) {
-      studio.toast(can.keys ? 'Live prices need Claude: add the Anthropic key in Keys.' : 'Live prices need the Anthropic key: ask the owner to add it in Keys.');
-      if (can.keys) window.dispatchEvent(new CustomEvent('morph:keys', { detail: { key: 'ANTHROPIC_API_KEY' } }));
-    } else studio.toast(msg);
+    if (e.status === 503) needClaude();
+    else studio.toast(msg);
   }
   bomButton();
 }
