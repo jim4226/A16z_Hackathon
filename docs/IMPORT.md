@@ -9,8 +9,8 @@ drop files anywhere on the page, or use `morph import` in a terminal.
 | You have | Morph reads | What happens |
 |---|---|---|
 | A robot | a folder or `.zip` with a URDF, a xacro file (needs the `xacro` and `PyYAML` packages: `morph doctor` gives the command) or MuJoCo XML, plus its meshes | Morph finds the gripper joint, the tool point, the base and a ready pose, asks only what the files can't tell (usually which motors drive the joints), saves the robot and builds it as a **new project** |
-| The object to grasp | an STL, OBJ, PLY, OFF, GLB or glTF mesh, or STEP with the `cascadio` package (`morph doctor` gives the command) | its size, shape and (with a density) mass become the open project's object: one new revision, like a parameter edit. An object Morph knows by name (an egg, a strawberry) brings its damage force and friction; a fragile one, or one narrower than the plain finger closes on, gets the force-sensing finger |
-| A parts list | CSV, TSV, XLSX or a Markdown table | the rows, the total and the parts Darwin can look up; the dialog offers them as a CSV. Nothing is changed |
+| The object to grasp | an STL, OBJ, PLY, OFF, GLB or glTF mesh, or STEP with the `cascadio` package (`morph doctor` gives the command) | its size, shape and (with a density) mass become the open project's object: one new revision, like a parameter edit. An object Morph knows by name (an egg, a strawberry) brings its damage force and friction; a fragile one, or one narrower than the plain finger closes on, gets the force-sensing finger; one whose grip would bend the fingers too far gets thicker finger beams, as New robot would make them |
+| A parts list | CSV, TSV, XLSX or a Markdown table | the rows, the total and the parts Darwin can look up; the dialog shows each line's MPN and description and offers them as a CSV. A line's part name, MPN and description together say which catalog motor it is (an STS3215 described as 12 V is the 12 V servo). Nothing is changed |
 | A board | a KiCad 6 or newer `.kicad_pcb` or `.kicad_sch` | its size, footprints and layers. Nothing is changed |
 | A Morph export | the ZIP from **Export** (or `morph export`) | its newest design is rebuilt as a new project; earlier designs are kept next to it for reference |
 | A link | `https://github.com/...`, `raw.githubusercontent.com`, `https://huggingface.co/...` | the files are downloaded (public repositories only), then imported as above |
@@ -61,7 +61,11 @@ bought parts as the build counts them, and keeps the arm on one supply voltage: 
 it holds them all, otherwise the 12 V STS3215 on all of them; XL330s never share a supply with XL430s and XM430s.
 The SO-101 with **Smart bus** picked builds as feasible on 12 V STS3215s. A motor picked per joint shares that one
 servo supply: a 12 V STS3215 beside 7.4 V ones would run at 6 V and give about half its rated torque, so the build
-flags it. When an imported robot builds but its own checks flag it, the dialog says so and lists why.
+flags it. When an imported robot builds but its own checks flag it, the dialog says so and lists why, and so does the
+new project's chat, with the fixes Morph can make as buttons (each builds a new revision): **Use 12 V STS3215 servos**
+on every joint for an arm on 7.4 V STS3215s that can't hold its load (the SO-101 above then builds as feasible),
+Dynamixel servos otherwise, and thicker fingers when they would bend too far. An object import whose build isn't
+feasible says why in the same way.
 
 The gripper, tool point and motors Morph derived are marked auto-calibrated: check them in the Robot tab before you
 trust the numbers.

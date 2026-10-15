@@ -31,7 +31,8 @@ FIELDS = [  # matched in this order, so "Part number" becomes the MPN before "Pa
     ("url", r"\b(buy|link|url|where\s*to\s*buy|purchase|shop|store\s*link|source)\b"),
     ("manufacturer", r"^(manufacturer|mfr|mfg|brand|maker)\b"),
     ("supplier", r"^(supplier|vendor|distributor|seller|store)\b"),
-    ("item", r"^(part|parts|item|items|description|component|components|name|product|designation|material|value)\b"),
+    ("item", r"^(part|parts|item|items|component|components|name|product|designation|material|value)\b"),
+    ("description", r"^(description|desc\.?|details|notes?|comments?|specs?|specification)\b"),  # the part name if there is no other
 ]
 CURRENCY = {"$": "USD", "us$": "USD", "usd": "USD", "€": "EUR", "eur": "EUR", "£": "GBP", "gbp": "GBP",
             "¥": "CNY", "￥": "CNY", "rmb": "CNY", "cny": "CNY", "jpy": "JPY", "yen": "JPY"}
@@ -89,11 +90,20 @@ def _qty(s: str) -> int | None:
 
 
 def _catalog_key(text: str) -> str | None:
+    """The catalog actuator a BOM line names, from its part name, MPN and description together: the most specific
+    pattern first, so "STS3215 ... 12V" in any of them is the 12 V servo, not the 7.4 V one."""
     from .autoprofile import TEXT_RX
     for rx, key in TEXT_RX:
         if rx.search(text):
             return key
     return None
+
+
+def _catalog_name(key: str | None) -> str | None:
+    if not key:
+        return None
+    from ..robot import catalog, catalog_extra  # noqa: F401  (catalog_extra adds the 7.4 V STS3215)
+    return (catalog.ACTUATORS.get(key) or {}).get("name")
 
 
 def _category(item: str, key: str | None) -> str:
@@ -135,6 +145,8 @@ def map_table(rows: list) -> tuple[list, dict, list]:
             idx = usd or idx
         cols[field] = idx[0]
         used.add(idx[0])
+    if "item" not in cols and "description" in cols:
+        cols["item"] = cols.pop("description")
     if "item" not in cols:
         cand = [i for i, h in enumerate(head) if i not in used and h]
         if "mpn" in cols and not cand:
@@ -166,13 +178,15 @@ def map_table(rows: list) -> tuple[list, dict, list]:
         if unit is None and ext is not None and q:
             unit = round(ext / q, 4)
         mpn = _cell(get("mpn"))[0] if "mpn" in cols else ""
-        key = _catalog_key(f"{item} {mpn}")
+        desc = _cell(get("description"))[0] if "description" in cols else ""
+        key = _catalog_key(" ".join(x for x in (item, mpn, desc) if x))
         out.append({"item": item[:200], "qty": q, "unit_price": unit, "ext_price": ext, "currency": cur or cur2,
                     "url": url if url and re.match(r"^https?://", url) else None, "mpn": mpn[:80] or None,
                     "manufacturer": _cell(get("manufacturer"))[0][:80] or None if "manufacturer" in cols else None,
                     "supplier": _cell(get("supplier"))[0][:80] or None if "supplier" in cols else None,
                     "ref": _cell(get("ref"))[0][:200] or None if "ref" in cols else None,
-                    "make_or_buy": "buy", "category": _category(item, key), "catalog": key, "source": "import"})
+                    "description": desc[:200] or None, "make_or_buy": "buy", "category": _category(item, key),
+                    "catalog": key, "catalog_name": _catalog_name(key), "source": "import"})
     return out, {f: rows[hi][i] if i < len(rows[hi]) else "" for f, i in cols.items()}, warns
 
 

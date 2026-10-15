@@ -30,7 +30,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   they came from; `morph import` does the same from a terminal, given a path or a link. Auto-imported arms are sized
   for their worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
   stretched-out pose). On a Studio other computers use, links are off unless it was started with
-  `--allow-url-import`.
+  `--allow-url-import`. A parts list line is matched to a catalog motor on its part name, MPN and description (a
+  "12V" STS3215 stays the 12 V servo), and the preview shows both. An object whose grip would bend the fingers gets the
+  thicker beam New robot would give it. An import whose build isn't feasible says why in its project's chat, with the
+  fixes Morph can build as buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).
 - **Show Morph the job** (beta): add a phone video or photos of the task done by hand. Morph picks still frames in
   your browser, estimates the object, the pick and place spots, the cycle time and safety needs, and lists every
   change before Apply. Only the chosen frames are sent, after you agree: to Claude, plus up to 4 to SubQ as an

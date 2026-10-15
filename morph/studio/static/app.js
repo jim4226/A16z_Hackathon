@@ -87,6 +87,7 @@ class ServerBackend {
   params(changes, base_rev) { return post(this.q('/api/params'), { changes, base_rev }); }
   source(rev) { return post(this.q('/api/source'), { rev }); }
   resolve(job, action) { return post(this.q('/api/jobs/resolve'), { job, action }); }
+  fix(id) { return post(this.q('/api/import/fixes'), { fix: id }); }
   async reset(rebuild) { const r = await send('POST', '/api/reset', { rebuild: !!rebuild }); return r.ok; }
   setProject(name) { this.name = name; return this.onEvent ? this.connect(this.onEvent, this.onStatus) : Promise.resolve(); }
   // Resolves once the stream is open (the server subscribes it before answering), or at the latest after 3 s or a
@@ -473,6 +474,7 @@ function addMsg(role, text, opts = {}) {
       el.lastElementChild.appendChild(c);
     }
     if (opts.offer && opts.live && backend?.chat) offerActs(el, opts.offer);
+    if (opts.fixes?.length && backend?.fix) fixActs(el, opts.fixes);
   } else if (role === 'system') {
     el.innerHTML = `<div class="b"><span class="spin"></span><span class="t"></span></div>`;
     $('.t', el).textContent = text;
@@ -484,6 +486,17 @@ function addMsg(role, text, opts = {}) {
   $('#messages').appendChild(el);
   scrollChat();
   return el;
+}
+// An import's build that isn't feasible: the fixes Morph can make, each built as a new revision when pressed (the
+// server holds each fix's changes; the page only names it).
+function fixActs(el, fixes) {
+  const c = h('div', 'qacts fixacts');
+  c.innerHTML = fixes.map((f) => `<button class="btn" type="button" data-fix="${esc(f.id)}">${I('spark', 'sm')}${esc(f.label)}</button>`).join('');
+  $$('button', c).forEach((b) => (b.onclick = async () => {
+    $$('button', c).forEach((x) => (x.disabled = true));
+    try { await backend.fix(b.dataset.fix); } catch (e) { toast(e.message || String(e)); $$('button', c).forEach((x) => (x.disabled = false)); }
+  }));
+  el.lastElementChild.appendChild(c);
 }
 // A message that read like another robot (or importing one) was not applied: offer that feature's dialog, or the edit
 // after all ({edit: true} skips the routing).

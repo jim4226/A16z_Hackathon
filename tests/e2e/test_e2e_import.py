@@ -5,7 +5,8 @@
   every joint; built with full simulations as a new project that passes its own checks; opened from the dialog, it is
   in the address and the project menu, marked imported (1600x900).
 - test_so101_with_the_suggested_servos_says_why_it_is_not_feasible: the same files with Morph's suggestion (the 7.4 V
-  STS3215 the files name): the dialog says the robot built but isn't feasible, why, and what to change (1280x720).
+  STS3215 the files name): the dialog says the robot built but isn't feasible, why, and what to change; the project's
+  chat says so too, and its "Use 12 V STS3215 servos" button builds a feasible revision (1280x720).
 - test_an_egg_mesh_becomes_the_object_with_its_handling: an egg STL dropped on box-picker: Morph's raw egg preset
   (its damage force) and force-sensing fingers, applied as a new revision the build calls feasible (910 px wide).
 - test_parts_lists_hostile_archives_and_links: a parts list read and given back as a CSV that a spreadsheet can't run;
@@ -151,11 +152,26 @@ def test_so101_with_the_suggested_servos_says_why_it_is_not_feasible(browser, st
     assert "so101-as-named is built (r001), but it isn't feasible yet:" in text, text
     issues = pg.texts(f"{DIALOG} .imp-warn li")
     assert any("N·m with margin" in i for i in issues), issues
-    assert "A joint needs a stronger servo" in pg.text(f"{DIALOG} .imp-note"), text
+    note = pg.text(f"{DIALOG} .imp-note")
+    assert "its chat says the same, with the fixes Morph can make (a stronger servo for every joint" in note, note
     pg.fits("Import, built but not feasible")
     pg.shot("e2e_imp_05_not_feasible_1280")
     rev, d, s = studio.latest("so101-as-named")
     assert s["feasible"] is False and issues == [i[:240] for i in s["issues"][:4]], (issues, s["issues"])  # the build's own
+
+    # its chat says why, with the fix Morph can make: one press builds it as a new revision, which is feasible
+    pg.pg.click(f'{DIALOG} [data-a="openp"]')
+    until(lambda: pg.project() == "so101-as-named" and pg.rev() == "r001", 60, "the imported robot to open")
+    chat = until(lambda: next((t for t in pg.texts("#messages .msg.assistant") if "isn't feasible yet" in t), None), 30,
+                 "the chat's explanation")
+    assert chat.startswith("The imported robot so101-as-named built r001, but it isn't feasible yet:") and issues[0] in chat, chat
+    assert pg.texts("#messages .fixacts button") == ["Use 12 V STS3215 servos"]
+    pg.fits("Import, the chat's fixes")
+    pg.shot("e2e_imp_05b_chat_fix_1280")
+    pg.pg.click("#messages .fixacts button")
+    until(lambda: pg.rev() == "r002" and not pg.ev("window.morph.state.busy"), 300, "the fix's revision")
+    rev, d, s = studio.latest("so101-as-named")
+    assert rev == "r002" and d.arm.actuator_overrides == "all=sts3215" and s["feasible"] is True, s.get("issues")
     pg.check()
     pg.close()
 
