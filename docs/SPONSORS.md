@@ -103,18 +103,9 @@ python --% -m morph.cli ask "SELECT \"PadStyle\", avg(\"HoldForceRatioPct\") FRO
 
 The commands read `.env` too.
 
-## Claude Code: Darwin and Keewano as MCP servers (for a live agent call or a judge's question)
+## Morph never pays
 
-Run in a terminal, not inside a Claude Code session:
-
-```shell
-claude mcp add --scope user --transport http darwin https://mcp.darwin.so/mcp
-claude mcp add --scope user --transport http keewano https://api.keewano.com/mcp --header "k-token: <your KEEWANO_PAT>"
-```
-- Darwin search works without signing in. Using an agent (Act) asks for a Darwin sign-in the first
-  time; `part-lookup` costs $0.04 per call, so add a payment method first.
-- Example asks: "use Darwin part-lookup to get live price and stock for the Feetech STS3215";
-  "in our Keewano project, which pad style needed the most extra holding force?"
-
-Ordering always stops at the shortlist: Darwin Act needs the user's own account and their approval
-of any payment, and Morph never claims an order was placed.
+Morph's Darwin calls are Darwin's free public Search: no Darwin account, no payment method, no paid tool. Ordering
+always stops at the shortlist: Darwin Act needs your own Darwin account and your approval of any payment, outside
+Morph, and Morph never claims an order was placed. (The hackathon's notes on using Darwin and Keewano from Claude Code,
+a separate tool, are in `docs/internal/MCP_SERVERS.md`; Morph doesn't need them.)

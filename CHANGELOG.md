@@ -376,3 +376,20 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   waiting for a key or still working, as it already stopped the project's robustness study: such a run could carry
   on later in a new project that took the same name, or for a revision Reset demo had removed, and price the parts
   of a robot it was never started for. Its card says why it stopped.
+- `morph new` and `morph demo` without an Anthropic key say they use the offline parser instead of "Claude unavailable:
+  TypeError".
+- Keys: the Anthropic key's section lists everything it powers (chat, New robot, Show Morph the job, World mode's AI
+  review, Live prices, New tool), once, and the dialog names the folder `.env` is in on every system.
+- A project opened while its first build runs shows the welcome and tips once that build is done, instead of keeping
+  "no finished revision yet".
+- Simulation tab: the player stays on screen in a narrow window (910 px), and Space plays and pauses even right after
+  clicking the tab.
+- Live prices: a wrong Mouser key, which Mouser answers with HTTP 200 and an error, reads "Mouser Electronics refused
+  the key" with Replace key instead of "no results"; without a Claude key, Live prices opens Keys without sending a
+  request the Studio refuses.
+- World mode: the World panel steps aside on every tab but Robot (still open), and a walk or a guided tour stops
+  there.
+- Docs: README lists all five privacy switches, says which keys Test keys tries and has a row for tool keys
+  (`MORPH_TOOL_*`); INSTALL names every key to revoke (tool keys included) and every end-to-end browser flow, and says
+  to close the Studio before `git pull` on Windows; SECURITY.md says what to do when GitHub's private reporting form
+  isn't available; SPONSORS no longer tells readers to add a payment method for Darwin: Morph never pays.

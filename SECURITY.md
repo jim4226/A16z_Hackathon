@@ -4,8 +4,12 @@
 
 Please report security problems privately, through GitHub's private vulnerability reporting:
 [**Report a vulnerability**](https://github.com/jim4226/A16z_Hackathon/security/advisories/new) (the Security tab of
-this repository). Don't open a public issue for it, and don't put API keys, exploit code or private designs in an
-issue, a screenshot or a log. If one of your keys was exposed, revoke it with its provider first.
+this repository). Don't describe the problem in a public issue, and don't put API keys, exploit code or private designs
+in an issue, a screenshot or a log. If one of your keys was exposed, revoke it with its provider first.
+
+If that form isn't available (the Security tab has no *Report a vulnerability* button), open a
+[public issue](https://github.com/jim4226/A16z_Hackathon/issues/new) titled "Security contact" that only says you have
+a security problem to report, with no details. A maintainer answers there with a private way to send them.
 
 We aim to reply within a week. Morph is a beta from a small team, and there is no bug bounty.
 

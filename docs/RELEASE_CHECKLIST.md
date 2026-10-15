@@ -7,6 +7,11 @@ line. A release ships only when every line is ticked or has a written reason in 
 
 - [ ] `morph/__init__.py` has the new version, and CHANGELOG.md has its section with every feature that ships (the
       placeholder lines replaced or removed).
+- [ ] CHANGELOG.md's heading for the release has the release date instead of "not yet tagged", for example
+      `## 0.2.0b1 (beta, YYYY-MM-DD)` with the day of the tag.
+- [ ] GitHub private vulnerability reporting is on, so SECURITY.md's *Report a vulnerability* link works:
+      `gh api repos/jim4226/A16z_Hackathon/private-vulnerability-reporting` prints `{"enabled":true}` (the owner turns it
+      on under Settings, Code security, or with `gh api -X PUT repos/jim4226/A16z_Hackathon/private-vulnerability-reporting`).
 - [ ] CI is green on the release commit: all 15 test cells (Windows, macOS, Linux; Python 3.10 to 3.14), lint, the
       package job on all three systems, and the launchers job (both launchers run for real, the Windows one from
       Command Prompt and both PowerShells; on Windows also the upgrade from a launcher that pulled on every start, with LF
@@ -22,8 +27,9 @@ line. A release ships only when every line is ticked or has a written reason in 
 - [ ] [SECURITY.md](../SECURITY.md) still describes what the release protects, and
       [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) covers every vendored file (`static/vendor/`, `robots/`,
       `data/`).
-- [ ] No secrets in the history: `git log --all -G "sk-ant-api|kwpat-|AIza" --oneline --name-only` lists only tests,
-      docs and the code that recognizes key formats, and none of their matching lines is a real key.
+- [ ] No secrets in the history: `git log --all -p -G "sk-[A-Za-z0-9_-]{20,}|kwpat-|AIza|ghp_|github_pat_|AKIA|xox[bp]-|(MORPH_TOOL_[A-Z0-9_]+|MORPH_TOKEN|[A-Z_]*API_KEY|[A-Z_]*_PAT)=[^ ]{8,}"`
+      shows only tests, docs and the code that recognizes key formats, and none of the matching lines is a real key.
+      Running [gitleaks](https://github.com/gitleaks/gitleaks) 8.19 or newer (`gitleaks git .`) as well is better still.
 - [ ] UI copy is honest: "estimated", "seeded demo data", "beta" and "not bench-validated" wherever they apply; no
       claim that an order was placed.
 - [ ] With `MORPH_SLOW=1` set, `python -m pytest -q tests/test_robust.py tests/test_robust_room.py

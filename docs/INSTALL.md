@@ -131,7 +131,8 @@ release's launcher opens it.
 
 1. Delete the Morph folder. Your projects, `.env` and `.venv` are inside it, so copy out any project you want to keep.
 2. Delete the cache of saved answers: `~/.cache/morph` (on Windows, `%USERPROFILE%\.cache\morph`).
-3. If you no longer use your API keys, revoke them with each provider (Anthropic, Keewano, SubQ).
+3. If you no longer use your API keys, revoke them with each provider: Anthropic, Keewano and SubQ, and for agent
+   tools Mouser, element14 (Farnell) and the service of any tool you drafted (the `MORPH_TOOL_*` keys in `.env`).
 
 If you installed Morph as a package with pip instead, run `pip uninstall morph` and delete its folders: settings and
 `.env` in `%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph` or `~/.config/morph`, and projects in
@@ -187,7 +188,8 @@ and Linux. `python -m build` makes a wheel that carries the robots, the Darwin c
 
 The end-to-end browser tests in `tests/e2e/` are skipped unless you ask for them. They start a real Studio (offline,
 no keys, full simulations) and drive Chromium through New robot, Import, Show Morph the job, a three-person Teams change
-request and World mode, so they take about 20 minutes on 4 cores and need Playwright and, for the video test, ffmpeg:
+request, World mode, a robustness study, Live prices and drafting a tool (the last two with a local stand-in for
+Claude), so they take about 20 minutes on 4 cores and need Playwright and, for the video test, ffmpeg:
 
 ```shell
 python -m pip install playwright

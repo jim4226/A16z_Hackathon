@@ -240,6 +240,52 @@ def test_shell_launcher_parses():
     assert subprocess.run(["bash", "-n", str(REPO / "run_studio.sh")], capture_output=True).returncode == 0
 
 
+# ------------------------------------------------------------------ what the README says about keys and switches
+
+def _keys_js_settings() -> list:
+    """The titles of the switches under Keys, Privacy and network (static/keys.js SETTINGS)."""
+    js = (STATIC / "keys.js").read_text(encoding="utf-8")
+    body = js[js.index("const SETTINGS = ["):js.index("];", js.index("const SETTINGS = ["))]
+    return re.findall(r"^\s*\['([a-z_]+)', '((?:[^'\\]|\\.)*)'", body, re.M)
+
+
+def test_the_readme_lists_every_privacy_switch_the_keys_dialog_has():
+    """README said "three switches" when the dialog had five; it names each one now, by the dialog's own title."""
+    from morph import settings
+    switches = _keys_js_settings()
+    assert [k for k, _ in switches] == [k for k in settings.DEFAULTS if k != "sourcing_enabled"]  # sourcing: Find agents
+    readme = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
+    para = readme[readme.index("**Privacy and network**"):readme.index("`MORPH_OFFLINE=1`")]
+    words = {3: "three", 4: "four", 5: "five", 6: "six"}
+    assert f"has {words[len(switches)]} switches" in para, para
+    for key, title in switches:
+        name = title.split(" (")[0]  # "Use Keewano calibration (demo data unless ...)": the name before its note
+        assert f"*{name}" in para, (key, name)
+    assert "*Allow network lookups (Darwin, SubQ, Claude)* is on" in para
+    assert "*Let agents use tools (beta)* is on" in para and "purchased parts* is off" in para
+
+
+def test_the_readme_says_what_test_keys_covers_and_lists_tool_keys():
+    from morph import keys
+    readme = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
+    checked = sorted({"Claude", "Keewano", "SubQ"})
+    src = (REPO / "morph" / "keys.py").read_text(encoding="utf-8")
+    body = src[src.index("def check("):src.index("if not jobs:", src.index("def check("))]
+    assert sorted(re.findall(r'jobs\["(\w+)"\]', body)) == checked  # what Test keys tries
+    assert "**Test keys** in the same dialog tries the Claude, Keewano and SubQ keys" in readme
+    assert "| `MORPH_TOOL_*` |" in readme and "docs/TOOLS.md" in readme
+    assert {k["service"] for k in keys.KEYS} <= {"Claude", "Keewano", "SubQ"}
+
+
+def test_no_doc_or_message_tells_people_to_pip_install_morph_with_extras():
+    """Installing "morph" with the video, cad or xacro extra from PyPI fetched an unrelated project called morph (and
+    zsh refused the brackets): commands name the packages themselves. Developer installs of this checkout are fine."""
+    bad = re.compile(r"pip3?\s+install\s+(-\S+\s+)*[\"']?morph\[(video|cad|xacro|machines|dev)")
+    hits = [str(p.relative_to(REPO)) for p, text in _shipped_text_files()
+            if p.suffix in (".md", ".py", ".js", ".html", ".bat", ".sh", ".txt", ".toml", ".in") and bad.search(text)]
+    assert hits == []
+
+
 # ------------------------------------------------------------------ constraints
 
 def _norm(name: str) -> str:

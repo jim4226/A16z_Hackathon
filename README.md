@@ -55,19 +55,23 @@ about two minutes).
 **API keys are optional.** Everything runs without them. Click **Keys** (top right of the Studio) to
 paste your own; they are saved only on your computer, in the git-ignored `.env` (created from
 `env.example` on first launch), and take effect immediately. **Test keys** in the same dialog tries
-each one, so a mistyped key shows up at once.
+the Claude, Keewano and SubQ keys, so a mistyped one shows up at once; a tool's key is tried the first time a tool
+uses it, and a refused one is reported in the chat with **Replace key**.
 
 | Key | What it adds | Where to get it |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Free-form chat requests, Claude reading a **New robot** request, the frame analysis in **Show Morph the job**, World mode's AI review, **Live prices** (beta) and drafting a tool (preview) (without it, the suggestion chips, common phrasings and built-in rules work, and you fill in the video cards yourself) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 | `SUBQ_API_KEY` | SubQ Snap: quick yes/no and multiple-choice decisions, shown as "SubQ Snap (AI)" ([SubQ Snap](#subq-snap-optional)) | [console.subq.ai](https://console.subq.ai) |
 | `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: revisions and measurements logged once event sending is on, and an optional grip-force calibration from that history (seeded demo data unless your project holds real bench results) | Keewano settings ([docs/SPONSORS.md](docs/SPONSORS.md)) |
+| `MORPH_TOOL_*` | Keys for agent tools (beta), such as Mouser's Search API key for **Live prices**: each is sent only to its own service, never to Claude, and the chat asks for it when a tool needs it ([docs/TOOLS.md](docs/TOOLS.md)) | The service's own page, linked next to the key in Keys |
 | Darwin | Nothing to add: Darwin Search is public | |
 
-**Privacy and network** (at the bottom of the Keys dialog) has three switches, saved in
+**Privacy and network** (at the bottom of the Keys dialog) has five switches, saved in
 `projects/.settings.json` (never any keys): *Allow network lookups (Darwin, SubQ, Claude)* is on; off keeps
 everything on this computer. *Send build events to Keewano* and *Use Keewano calibration* are off until you
-turn them on. `MORPH_OFFLINE=1` turns every network call off whatever the switches say. What each service
+turn them on. *Let agents use tools (beta)* is on, but an agent run (Live prices) starts only when someone presses
+its button; *Check live prices after a build changes the purchased parts* is off. `MORPH_OFFLINE=1` turns every
+network call off whatever the switches say. What each service
 receives, and when anything leaves your computer: [docs/PRIVACY.md](docs/PRIVACY.md). To report a security problem:
 [SECURITY.md](SECURITY.md).
 
