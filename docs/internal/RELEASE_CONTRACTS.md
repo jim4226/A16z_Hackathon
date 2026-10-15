@@ -1624,8 +1624,9 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     (continuous) torque as a force at the jaw (stall x `rated_nm` / `torque_nm`: 10 N on an MG996R egg-picker hand), at
     least two position commands (`step_mm` each: a PCA9685 count, 4.88 us, at the jaw), and `squeeze_n` what that
     squeezes a gauge-sized object with: the target, more when floored, `rated_n` when the target is above it
-    (`capped`; a 370 g can's 13.94 N target squeezes 10 N, 0.49 mm past contact; a 900-1400 g can's target above the
-    servo's stall no longer holds it at stall, 1.5 mm past contact). The firmware's `GRIP_SQUEEZE` (in the joint's
+    (`capped`; a 370 g can's 13.94 N target squeezes 10 N, 0.49 mm past contact; a 900-1400 g can, whose target is
+    above the servo's stall, no longer has it held at stall 1.5 mm past contact, and is an issue: 10 N is below the
+    16.95-26.37 N it needs not to slip). The firmware's `GRIP_SQUEEZE` (in the joint's
     unit) is that distance and G commands `GRIP_CLOSED - GRIP_SQUEEZE`, never `GRIP_MIN`; F sets it
     (`GRIP_SQUEEZE_PER_N` = band / stall, at least `GRIP_SQUEEZE_LEAST`). `eplan.grip.limit_n` (`GRIP_LIMIT_N`, F's
     cap) is min(the object's limit, `rated_n`): F raises a squeeze planned below that up to it (a servo softer than the
@@ -1644,7 +1645,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     `PROBE_STALL_SHARE` (0.8) of the stall with a dead sensor, `covers` and `probe_mm` = max(reach, band x `limit_n` /
     stall); otherwise `covers` is false, `probe_mm` = band x `limit_n` / stall (at least two commands, at most that
     share), an object narrower than it per jaw isn't gripped, and the plan has an issue naming both distances and
-    recommending a smart-bus or Dynamixel gripper servo. On an MG996R egg-picker hand: a grape covers (0.96 mm, 0.80 mm
+    recommending a smart-bus or Dynamixel gripper servo (for a hobby PWM gripper servo; a bus servo on a bus that
+    can't set its torque limit has its own issue and gets no firmware). On an MG996R egg-picker hand: a grape covers (0.96 mm, 0.80 mm
     spread), an egg (1.92 mm needed) and a strawberry (1.44 mm) don't (0.92 and 0.16 mm). `probe_n` (stall x probe /
     band) is what a gauge-sized object gets at the probe with a dead sensor until the jaw opens; the plan's warning, the
     firmware's comment and the manual state it. `arm.grip_meta` puts `probe_mm` in `asm.meta["grip_probe_mm"]`
