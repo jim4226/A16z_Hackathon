@@ -68,6 +68,19 @@ update() {  # 0: switched to the latest release; 1: keep the version that is her
   echo "Switched to Morph $latest."
 }
 
+platform_ok() {  # MuJoCo, Morph's physics engine, has builds for Macs with Apple silicon, not for Intel Macs
+  [ "$(uname -s 2>/dev/null)" = Darwin ] && [ "$(uname -m 2>/dev/null)" = x86_64 ] || return 0
+  if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
+    echo "This Terminal runs in Intel mode (Rosetta), where Morph's packages can't be installed. Nothing was installed."
+    echo "Start it as an Apple silicon program instead: arch -arm64 ./run_studio.sh"
+    echo "(or turn off \"Open using Rosetta\" in Terminal's Get Info window)."
+    return 1
+  fi
+  echo "Morph needs a Mac with Apple silicon (M1 or later): MuJoCo, its physics engine, has no build for Intel Macs."
+  echo "Nothing was installed. A Windows or Linux computer with an Intel or AMD processor works."
+  return 1
+}
+
 make_venv() {
   local py found
   if [ -d .venv ] && { [ ! -f .venv/bin/activate ] || ! supported .venv/bin/python; }; then
@@ -75,6 +88,7 @@ make_venv() {
     rm -rf .venv
   fi
   [ -d .venv ] && return 0
+  platform_ok || return 1
   if ! py=$(find_python); then
     found=$(python3 --version 2>/dev/null) && found=" (python3 here is $found)"
     echo "Morph needs Python 3.10, 3.11, 3.12, 3.13 or 3.14 and found none of them$found."
@@ -102,6 +116,8 @@ install_packages() {  # once, and again only when requirements.txt, constraints.
   if ! .venv/bin/python -m pip install -r requirements.txt -c constraints.txt -e .; then
     echo
     echo "Installing the packages failed (details above). Check the internet connection, then run this again."
+    echo "Morph's packages have builds for Windows on Intel or AMD processors, Macs with Apple silicon and 64-bit"
+    echo "Linux on Intel or AMD; on other computers this step fails."
     return 1
   fi
   echo "$want" > .venv/.morph-installed

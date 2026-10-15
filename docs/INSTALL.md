@@ -4,7 +4,8 @@ Morph Studio runs on your own computer and opens in your browser. It works on:
 
 - **Windows 10 or 11**, 64-bit (x64).
 - **macOS 12 or newer on Apple silicon** (M1 or later). Intel Macs aren't supported: MuJoCo, the physics engine,
-  no longer publishes builds for them.
+  no longer publishes builds for them. Neither are Windows on ARM and 32-bit Windows; on all three the launcher says
+  so before it installs anything.
 - **Linux x64** with glibc 2.28 or newer: Ubuntu 22.04, Debian 12, Fedora 36 and later come with a new enough
   Python; older ones work once a newer Python is installed.
 
@@ -97,6 +98,10 @@ folder and take effect at once. What each key adds, and what it sends where: [RE
   starts the version you have. To get the newest code of the branch your clone is on (a teammate's branch, or `main`
   after `git checkout main`), close Morph, run `git pull`, then start the launcher as usual; it reinstalls packages
   only if `requirements.txt`, `constraints.txt` or `pyproject.toml` changed.
+- **Close the Studio before `git pull` on Windows.** A Studio window started by a launcher older than this one reads
+  the rest of `run_studio.bat` when the Studio stops; if `git pull` replaced the file meanwhile, Windows reads the new
+  file from the middle of a line and prints errors such as "... is not recognized". Start the launcher again and it
+  runs normally.
 - Morph never updates itself when it starts.
 
 ### A clone made before v0.2
@@ -118,8 +123,8 @@ From then on the launcher never pulls: use `--update` to switch to each new rele
 above.
 
 **A clone of a pre-release branch on Windows** (a launcher from the weeks before v0.2.0b1 that already never pulls):
-its `--update` switches to the release and then stops with "... is not recognized" instead of starting it. Close
-Morph and run `git pull` once before your first `--update`, or start the launcher again after that message: the
+close Morph and run `git pull` once before your first `--update`. That launcher's `--update` switches to the release
+and then stops with "... is not recognized" instead of starting it; if that happened, start the launcher again: the
 release's launcher opens it.
 
 ## Uninstalling
@@ -140,6 +145,10 @@ If you installed Morph as a package with pip instead, run `pip uninstall morph` 
   `sudo apt install python3.12-venv`, then run the launcher again.
 - **Installing the packages failed:** check the internet connection (behind a proxy, set `HTTPS_PROXY`), then run
   the launcher again. To start from scratch, delete the `.venv` folder.
+- **"Morph needs a Mac with Apple silicon"** or **"Morph doesn't run on this computer yet"**: MuJoCo has no build for
+  Intel Macs, Windows on ARM or 32-bit Windows, so the launcher stops before making `.venv`. **"This Terminal runs in
+  Intel mode (Rosetta)"** on an Apple silicon Mac: start it with `arch -arm64 ./run_studio.sh`, or turn off *Open
+  using Rosetta* in Terminal's Get Info window.
 - **"Morph Studio is already running":** close the other terminal window, or start this one with `--port 8766`.
 - **The `--remote` link doesn't open on the other computer:** the Studio computer's firewall is the usual reason. On
   Windows, allow Python through Windows Defender Firewall for the network you are on (Windows Security, Firewall &

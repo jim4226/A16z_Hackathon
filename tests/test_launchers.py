@@ -216,6 +216,54 @@ def test_the_shell_launcher_starts_the_studio_without_the_comment(tmp_path):
     assert out.stdout.splitlines()[-1] == "python -m morph.cli studio egg-picker --open --remote --port 8766", out
 
 
+def _fake_system(folder: Path, system: str, machine: str, translated: str = "0") -> dict:
+    """An environment whose uname and sysctl answer like another computer's, and whose Python commands leave a mark."""
+    folder.mkdir()
+    tools = {"uname": f'case "$1" in -s) echo {system} ;; -m) echo {machine} ;; *) echo {system} ;; esac',
+             "sysctl": f"echo {translated}"}
+    tools.update({py: f'touch "{folder}/python-was-run"; exit 1' for py in
+                  ("python3.13", "python3.12", "python3.11", "python3.10", "python3.14", "python3")})
+    for name, body in tools.items():
+        (folder / name).write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        (folder / name).chmod(0o755)
+    return {**os.environ, "PATH": f"{folder}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+@needs_bash
+@pytest.mark.parametrize("translated,says", [("0", "Morph needs a Mac with Apple silicon (M1 or later)"),
+                                             ("1", "This Terminal runs in Intel mode (Rosetta)")])
+def test_an_intel_mac_is_told_why_before_anything_is_installed(tmp_path, translated, says):
+    """It used to make .venv, then fail in pip and blame the internet connection: MuJoCo has no Intel Mac build."""
+    work = tmp_path / "morph"
+    work.mkdir()
+    for name in ("run_studio.sh", "requirements.txt", "constraints.txt", "pyproject.toml"):
+        shutil.copy(REPO / name, work / name)
+    env = _fake_system(tmp_path / "bin", "Darwin", "x86_64", translated)
+    out = subprocess.run(["bash", str(work / "run_studio.sh"), "--help"], env=env, capture_output=True, text=True,
+                         timeout=60)
+    assert out.returncode == 1 and says in out.stdout and "Nothing was installed." in out.stdout, out
+    assert "internet connection" not in out.stdout and not (work / ".venv").exists(), out
+    assert not (tmp_path / "bin" / "python-was-run").exists()  # stopped before looking for Python
+    for system, machine in (("Darwin", "arm64"), ("Linux", "x86_64"), ("Linux", "aarch64")):  # these go on
+        env = _fake_system(tmp_path / f"bin-{system}-{machine}", system, machine)
+        ok = subprocess.run(["bash", "-c", f'source "{REPO / "run_studio.sh"}"; platform_ok; echo "rc=$?"'], env=env,
+                            capture_output=True, text=True, timeout=60)
+        assert ok.stdout == "rc=0\n", (system, machine, ok)
+
+
+def test_windows_on_arm_and_32_bit_windows_are_told_why_before_anything_is_installed():
+    lines = _bat_lines()
+    make = lines.index(":make_venv")
+    checks = lines[make + 1:lines.index("call :find_python", make)]
+    assert 'if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" goto unsupported' in checks
+    assert 'if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" goto unsupported' in checks  # a 32-bit cmd.exe on ARM
+    assert 'if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 goto unsupported' in checks
+    end = lines.index("goto fail", lines.index(":unsupported"))
+    text = " ".join(lines[lines.index(":unsupported"):end])
+    assert "not for Windows on ARM or 32-bit Windows. Nothing was" in text and "installed." in text
+    assert all("venv" not in ln for ln in checks)  # nothing is made before the check
+
+
 @needs_bash
 @pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 def test_bash_finishes_the_script_it_opened_when_git_replaces_it(tmp_path):

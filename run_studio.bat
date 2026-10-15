@@ -63,6 +63,11 @@ rmdir /s /q .venv
 if exist .venv goto venv_locked
 
 :make_venv
+REM MuJoCo, Morph's physics engine, and some of its other packages have builds for 64-bit Windows on Intel or AMD
+REM processors only: say so before anything is made or downloaded
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" goto unsupported
+if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" goto unsupported
+if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 goto unsupported
 call :find_python
 if not defined PY goto no_python
 echo Creating .venv with %PY%...
@@ -113,6 +118,15 @@ goto fail
 :install_failed
 echo.
 echo Installing the packages failed (details above). Check the internet connection, then run this again.
+echo Morph's packages have builds for Windows on Intel or AMD processors, Macs with Apple silicon and 64-bit Linux;
+echo on other computers this step fails.
+goto fail
+
+:unsupported
+echo.
+echo Morph doesn't run on this computer yet: MuJoCo, its physics engine, and some of its other packages have builds
+echo for 64-bit Windows on Intel or AMD processors only, not for Windows on ARM or 32-bit Windows. Nothing was
+echo installed. A Mac with Apple silicon, or a Windows or Linux computer with an Intel or AMD processor, works.
 goto fail
 
 :fail
