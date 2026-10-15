@@ -262,7 +262,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Wrong codes from one address no longer lock out the person there who has the link: Morph's own access code and
   every Teams invite, sign-in link and script token are random, so a right one is always checked and works (only a
   `MORPH_TOKEN` you chose still makes that address wait). A script's live updates no longer end when someone at the
-  same address mistypes links.
+  same address mistypes links. Each address keeps only its last 10 wrong codes, so a flood of them costs the Studio
+  no more memory or time per request than ten.
 
 ### Fixes
 

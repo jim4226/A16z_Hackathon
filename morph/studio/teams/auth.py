@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import base64
+import collections
 import hashlib
 import hmac
 import re
@@ -120,30 +121,37 @@ def _member(name: str, role: str, tags, members: dict, by=None, now=None) -> dic
 
 
 class Throttle:
-    """Per-address failure counter: `limit` wrong codes within `window` seconds block that address until the
-    oldest failure ages out. In memory only (a restart forgets it); bounded to `cap` addresses."""
+    """Per-address failure counter: `limit` wrong codes within `window` seconds block that address until the oldest
+    of its last `limit` failures ages out. Only those last `limit` are kept: a right code is always checked, so wrong
+    ones keep coming in while an address is blocked, and a flood from one address must cost the same memory and time
+    per request as ten wrong codes. In memory only (a restart forgets it); bounded to `cap` addresses, the one that
+    failed longest ago forgotten first."""
 
     def __init__(self, limit: int = 10, window: float = 600.0, cap: int = 4096):
         self.limit, self.window, self.cap = limit, window, cap
-        self.fails, self.lock = {}, threading.Lock()
+        self.fails, self.lock = {}, threading.Lock()  # address -> deque of its last `limit` failure times, oldest first
 
     def wait(self, ip, now=None) -> float:
         now = _now(now)
         with self.lock:
-            ts = [t for t in self.fails.get(ip or "?", []) if now - t < self.window]
-            if ts:
-                self.fails[ip or "?"] = ts
-            else:
+            ts = self.fails.get(ip or "?")
+            while ts and now - ts[0] >= self.window:
+                ts.popleft()
+            if not ts:
                 self.fails.pop(ip or "?", None)
+                return 0.0
             return max(0.0, ts[0] + self.window - now) if len(ts) >= self.limit else 0.0
 
     def fail(self, ip, now=None):
         now = _now(now)
         with self.lock:
-            if len(self.fails) >= self.cap and (ip or "?") not in self.fails:
-                oldest = min(self.fails, key=lambda k: self.fails[k][-1] if self.fails[k] else 0)
-                self.fails.pop(oldest, None)
-            self.fails.setdefault(ip or "?", []).append(now)
+            ts = self.fails.pop(ip or "?", None)  # put back last: the dict's order is when each address last failed
+            if ts is None:
+                if len(self.fails) >= self.cap:
+                    self.fails.pop(next(iter(self.fails)))
+                ts = collections.deque(maxlen=self.limit)
+            ts.append(now)
+            self.fails[ip or "?"] = ts
 
     def clear(self, ip=None):
         with self.lock:

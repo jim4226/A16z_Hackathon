@@ -501,6 +501,52 @@ def test_wrong_guesses_never_lock_out_the_code_morph_made(tmp_path, monkeypatch)
         httpd.server_close()
 
 
+
+def test_a_flood_of_wrong_codes_from_one_address_keeps_its_record_small(tmp_path, monkeypatch):
+    """The code Morph made is compared even while its address is blocked, so wrong codes keep arriving; the address
+    keeps only its last 10, so a flood costs the same memory and time per request as ten wrong codes, and the person
+    there with the link still signs in."""
+    g = server.Guesses()
+    for i in range(20000):  # what _code does for each wrong code: blocked() then failed()
+        g.blocked("192.0.2.2")
+        g.failed("192.0.2.2", f"wrong-{i}")
+    assert len(g.wrong["192.0.2.2"]) == g.LIMIT and g.blocked("192.0.2.2")
+    g.failed("192.0.2.2", "wrong-19999")  # the same code again moves to the end, still one entry
+    assert len(g.wrong["192.0.2.2"]) == g.LIMIT
+    for i in range(g.ADDRESSES + 50):  # many addresses: the ones that failed longest ago are forgotten first
+        g.failed(f"10.{i // 65536}.{i // 256 % 256}.{i % 256}", "x")
+    assert len(g.wrong) == g.ADDRESSES and "192.0.2.2" not in g.wrong and "10.0.16.49" in g.wrong
+    g.wrong.clear()
+    g.failed("192.0.2.9", "old")
+    monkeypatch.setattr(server.time, "monotonic", lambda real=time.monotonic: real() + g.WINDOW + 1)
+    assert not g.blocked("192.0.2.9") and "192.0.2.9" not in g.wrong  # aged out and forgotten
+
+    monkeypatch.undo()
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    st = server.Studio(make_project(tmp_path / "projects"), str(tmp_path / "projects"))
+    code = server.access_token("0.0.0.0")
+    handler = server.make_handler(st, None, code, chosen=False)
+    httpd = server._Server(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
+    try:
+        seen = set()
+        for i in range(300):  # one keep-alive connection, a different wrong code each time
+            conn.request("GET", "/api/projects", headers={"X-Morph-Token": f"wrong-{i}"})
+            res = conn.getresponse()
+            res.read()
+            seen.add(res.status)
+        assert seen == {401, 429} and len(handler.guesses.wrong["127.0.0.1"]) == server.Guesses.LIMIT
+        conn.request("GET", "/api/projects", headers={"X-Morph-Token": code})
+        res = conn.getresponse()
+        res.read()
+        assert res.status == 200
+    finally:
+        conn.close()
+        httpd.shutdown()
+        httpd.server_close()
+
+
 # ------------------------------------------------------------------ keys
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")

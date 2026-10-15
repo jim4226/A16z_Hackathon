@@ -206,6 +206,31 @@ def test_wrong_codes_are_throttled_per_address_and_never_lock_out_a_right_one(ho
     assert auth.THROTTLE.wait("10.0.0.9", now=time.time() + auth.THROTTLE.window + 1) == 0
 
 
+
+def test_a_flood_of_wrong_codes_keeps_each_address_record_small(home):
+    """A right code is checked even while its address is blocked, so wrong ones keep coming: each address keeps only
+    its last `limit` failures (memory and the time per check stay flat) and the block lasts while the flood does."""
+    owner = auth.init_team("Jim", home=home)["member"]["id"]
+    tok = auth.create_token(owner, "nightly", home=home)["token"]
+    for i in range(20000):
+        assert auth.verify_token(f"mt_{'w' * 20}{i:08d}x", ip="192.0.2.3", home=home) is None
+        with pytest.raises(auth.AuthError):
+            auth.redeem_link(f"ml_bad{i}", ip="192.0.2.4", home=home)
+    assert [len(auth.THROTTLE.fails[ip]) for ip in ("192.0.2.3", "192.0.2.4")] == [auth.THROTTLE.limit] * 2
+    t = time.time()
+    assert 0 < auth.THROTTLE.wait("192.0.2.3", now=t) <= auth.THROTTLE.window
+    assert auth.verify_token(tok, ip="192.0.2.3", home=home)["id"] == owner      # the right token still signs in
+    link = auth.create_link(owner, by=owner, home=home)["code"]
+    assert auth.redeem_link(link, ip="192.0.2.4", home=home)[0]["id"] == owner   # and so does a right link
+    assert auth.THROTTLE.wait("192.0.2.3", now=t + auth.THROTTLE.window + 1) == 0  # quiet for a window: unblocked
+    assert "192.0.2.3" not in auth.THROTTLE.fails
+    th = auth.Throttle(limit=3, window=60, cap=100)
+    for i in range(150):  # many addresses: the one that failed longest ago is forgotten first
+        th.fail(f"10.0.0.{i}")
+    th.fail("10.0.0.60")
+    assert len(th.fails) == 100 and "10.0.0.49" not in th.fails and list(th.fails)[-1] == "10.0.0.60"
+
+
 def test_the_team_always_keeps_an_owner(home):
     ids, _ = make_team(home)
     with pytest.raises(auth.AuthError):

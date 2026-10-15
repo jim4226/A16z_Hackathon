@@ -132,7 +132,10 @@ class Request:
   default) is not even compared; the code Morph made (`access_token()`, 96 random bits; `serve(token_chosen=False)`,
   which the CLI passes) is always compared, so the person at that address with the link still signs in.
   Teams codes are all random (`auth.Throttle`): past 10 wrong ones in 10 minutes an address's wrong codes are
-  answered 429, and a right invite, sign-in link or script token still works.
+  answered 429, and a right invite, sign-in link or script token still works. Since a right code is checked while its
+  address is blocked, wrong ones keep arriving: each address keeps only its last 10 (`Guesses`, `Throttle`; the block
+  lasts until the oldest of them ages out), and at most 4096 addresses are remembered, the one that failed longest ago
+  forgotten first, so a flood costs the same memory and time per request as ten wrong codes.
 - POST, PUT and DELETE also need the header `X-Morph-Client` (any non-empty value; 403 without it); `studio.api` sends
   it. Its value names the client: the page sends its tab's id (16 hex digits, kept in `sessionStorage` across reloads),
   and the server holds it in `rooms.REQUESTER` while a route runs, so the jobs that route queues know which tab asked.

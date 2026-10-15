@@ -930,25 +930,42 @@ class Guesses:
     (MORPH_TOKEN) is not even compared for that address until the window has passed, so a short one can't be found by
     trying many. The code Morph makes (96 random bits) can't be guessed, so it is always compared: wrong guesses from an
     address never lock out the person at that address who has the link. The same wrong code sent again (a tab left open
-    while the Studio restarted with a new code) counts once."""
+    while the Studio restarted with a new code) counts once. Each address keeps only its last LIMIT wrong codes, so a
+    flood of them (still compared, for the code Morph made) costs no more memory or time per request than ten."""
 
     LIMIT, WINDOW, ADDRESSES = 10, 900, 4096
 
     def __init__(self):
-        self.lock, self.wrong = threading.Lock(), {}  # address -> {sha256 of a wrong code: when}
+        # address -> {16 bytes of a wrong code's sha256: when}, oldest first; addresses in the order they last failed
+        self.lock, self.wrong = threading.Lock(), {}
+
+    def _live(self, ip: str, now: float) -> dict:
+        codes = self.wrong.get(ip)
+        if codes is None:
+            return {}
+        while codes and now - next(iter(codes.values())) > self.WINDOW:
+            del codes[next(iter(codes))]
+        if not codes:
+            del self.wrong[ip]
+        return codes
 
     def blocked(self, ip: str) -> bool:
         with self.lock:
-            now, codes = time.monotonic(), self.wrong.get(ip) or {}
-            for h in [h for h, t in codes.items() if now - t > self.WINDOW]:
-                del codes[h]
-            return len(codes) >= self.LIMIT
+            return len(self._live(ip, time.monotonic())) >= self.LIMIT
 
     def failed(self, ip: str, code: str):
         with self.lock:
-            if ip not in self.wrong and len(self.wrong) >= self.ADDRESSES:
+            now = time.monotonic()
+            codes = self._live(ip, now)
+            self.wrong.pop(ip, None)
+            if not codes and len(self.wrong) >= self.ADDRESSES:
                 self.wrong.pop(next(iter(self.wrong)))
-            self.wrong.setdefault(ip, {})[hashlib.sha256(code.encode()).hexdigest()] = time.monotonic()
+            h = hashlib.sha256(code.encode()).digest()[:16]
+            codes.pop(h, None)  # a code sent again moves to the end with its new time
+            while len(codes) >= self.LIMIT:
+                del codes[next(iter(codes))]
+            codes[h] = now
+            self.wrong[ip] = codes
 
 
 def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | None = None, *, chosen: bool = True):
@@ -1260,6 +1277,7 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
 
         do_POST = do_PUT = do_DELETE = _change
 
+    H.guesses = guesses  # tests read it
     return H
 
 
