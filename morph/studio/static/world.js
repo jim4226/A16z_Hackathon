@@ -108,6 +108,7 @@ function injectCSS() {
 .wv-walk.on{display:block}
 .wv-walk kbd{font:11px var(--mono,monospace);padding:1px 5px;border-radius:4px;border:1px solid var(--line3,#343b49);color:var(--ink,#e9ecf2)}
 .wv-panel.min{width:auto;padding-bottom:10px}.wv-panel.min>:not(h3){display:none}
+.wv-panel.away{display:none!important}   /* the 3D view shows another tab (the Simulation tab's replay): the panel waits */
 .wv-panel h3 .wv-min{margin-left:auto}.wv-panel h3 .wv-min+.wv-x{margin-left:0}
 .wv-status{margin-top:6px;padding:5px 8px;border-radius:7px;background:var(--bg2,#12151c);border:1px solid var(--line,#1c212b);font-size:11.5px;color:var(--ink2,#b9c0cd)}
 .wv-status.ok{border-color:rgba(61,214,140,.3)}.wv-status.bad{border-color:rgba(255,107,107,.35)}.wv-status.run{border-color:rgba(112,145,255,.35)}
@@ -1487,6 +1488,15 @@ export class WorldPanel {
   }
 
   get open() { return this.el.style.display !== 'none'; }
+
+  /** The shared 3D view moved to another tab (the Simulation tab's replay) or came back to the Robot tab. Away, the
+   * panel stays open but out of sight, and a walk or a guided tour stops: they belong to the Robot tab. */
+  setAway(away) {
+    this.away = !!away;
+    this.el.classList.toggle('away', this.away);
+    if (this.away) { this.wv.walk(false); this.wv.stopTour(); }
+    this.render();
+  }
   /** World mode is on: the newest revision simulates in a room, or a room was just saved for the next one. */
   get on() { const p = this.state.pending; return p ? !p.off : !!this.state.active?.id; }
 
@@ -1787,7 +1797,7 @@ export class WorldPanel {
   }
 
   render() {
-    document.body.classList.toggle('wv-open', !!(this.open && !this.state.min));
+    document.body.classList.toggle('wv-open', !!(this.open && !this.state.min && !this.away));
     if (!this.open) return;
     const f = document.activeElement;
     if (f && f !== document.body && this.el.contains(f) && f.matches('input:not([type]), input[type="text"], input[type="number"]')) {
@@ -1925,6 +1935,8 @@ export async function init(studio) {
     }
   };
   studio.on('done', sync);
+  studio.on('tab', (ev) => panel.setAway(ev.tab !== 'robot'));
+  if (studio.S?.tab && studio.S.tab !== 'robot') panel.setAway(true);
   studio.on('project', () => { wv.clear(); panel.reset(); sync(); });
   studio.on('queue', (ev) => {
     for (const j of ev.jobs || []) if (j.position == null && panel.jobEnded(j) && panel.open) panel.refresh();

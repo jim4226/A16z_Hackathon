@@ -247,6 +247,11 @@ studio = {
 - `init(studio)` runs after the first state load (and also when the server can't be reached).
 - When the tab switches projects (`openProject`), the bus gets `{type: "project", project, switched: true}` once the new
   project's state is loaded (I2b): world mode and Teams reload what they show, as for Reset demo's `project` event.
+- When the view tab changes (Robot, Simulation, ...), the bus gets `{type: "tab", tab, prev}` (W3): the World panel
+  (on the 3D view, which the Simulation tab borrows) steps aside on every tab but Robot, still open, and a walk or a
+  guided tour stops there.
+- A project opened before its first revision is finished says so in the chat; when that build is done (a `done` with
+  no parent, no message typed meanwhile) the message becomes the welcome and the feature tips follow (W3).
 - The page subscribes to events before it loads its state, retries `/api/state` with backoff (1, 2, 4, 8, then
   every 15 s, and at once when the stream connects) instead of staying offline, follows a build already running from
   `state.building` or from its `node` events, and reloads its state when the stream reconnects after a drop. A project

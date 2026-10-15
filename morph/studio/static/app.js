@@ -650,6 +650,7 @@ function showTab(name, { fromTour = false } = {}) {
   const slot = panels[name]?.slot;
   if (slot) { viewer?.attach(slot); }
   panels[name]?.onShow?.();
+  if (prev !== name) emitBus({ type: 'tab', tab: name, prev });  // feature modules: studio.on('tab', fn)
   try { history.replaceState(null, '', urlWith({ tab: name })); } catch (e) { /* file:// */ }
 }
 function urlWith(o) {

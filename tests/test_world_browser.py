@@ -208,6 +208,30 @@ def test_desk_world_place_walk_views_and_tour(server, browser):
     page.close()
 
 
+def test_the_panel_waits_on_the_other_tabs_and_a_walk_stops_there(server, browser):
+    """The World panel lives on the 3D view, which the Simulation tab borrows for its replay: on any tab but Robot the
+    panel steps aside (still open) and a walk stops, as WORLD.md says; back on Robot it is where it was."""
+    page = _page(browser)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{server}/tools/world_demo.html?studio=1", timeout=120000)
+    page.wait_for_function("window.ready === true", timeout=120000)
+    desk, doc, inspect = _desk_inputs()
+    page.evaluate("([w, d, i]) => window.demo.load(w, d, {starters: {desk: w}, inspect: i})", [desk, doc, inspect])
+    shown = "() => { const e = window.demo.panel.el; return window.demo.panel.open && !!e.offsetParent; }"
+    assert page.evaluate(shown) and page.evaluate("document.body.classList.contains('wv-open')")
+    page.evaluate("window.demo.wv.walk(true)")
+    page.wait_for_timeout(300)
+    assert page.evaluate("!!window.demo.wv.walking")
+    page.evaluate("window.demo.studio.emit('tab', {tab: 'sim', prev: 'robot'})")
+    assert not page.evaluate(shown) and page.evaluate("window.demo.panel.open")      # aside, not closed
+    assert page.evaluate("!window.demo.wv.walking && !document.body.classList.contains('wv-open')")
+    page.evaluate("window.demo.studio.emit('tab', {tab: 'robot', prev: 'sim'})")
+    assert page.evaluate(shown) and page.evaluate("document.body.classList.contains('wv-open')")
+    assert not errors, errors
+    page.close()
+
+
 def test_glb_room_scale_place_and_boxes(server, browser, tmp_path):
     """A scan that came in at half size: place the robot on the counter, measure the counter with the two-point tool
     and type its true length, then find boxes (the server's answer for the page's world), use the scanned surface,

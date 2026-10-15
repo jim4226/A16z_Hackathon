@@ -115,3 +115,17 @@ def test_the_player_fits_takes_clicks_and_space(studio, browser, w, h):
     assert "(Space)" in page.get_attribute(".sim .playbtn", "title")
     assert not errors, errors
     page.close()
+
+
+def test_feature_modules_hear_when_the_view_tab_changes(studio, browser):
+    """The page tells feature modules which view tab is on (studio.on('tab')): the World panel steps aside on the other
+    tabs and a walk stops there (tests/test_world_browser.py)."""
+    page = browser.new_page(viewport={"width": 1280, "height": 720})
+    page.goto(f"{studio}/?project=egg-picker&tour=0")
+    until(page, "() => !!(window.morph && window.morph.state.loaded)", what="the page")
+    page.evaluate("() => { window.seenTabs = []; window.morph.studio.on('tab', (e) => window.seenTabs.push([e.tab, e.prev])); }")
+    page.click("#tabs .tab[data-tab='sim']")
+    page.click("#tabs .tab[data-tab='sim']")                      # the same tab again: no event
+    page.keyboard.press("1")                                      # number keys switch tabs too
+    assert page.evaluate("() => window.seenTabs") == [["sim", "robot"], ["robot", "sim"]]
+    page.close()

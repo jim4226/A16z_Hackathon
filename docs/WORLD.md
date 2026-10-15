@@ -108,7 +108,8 @@ review: no pictures are rendered or sent. What Anthropic and SubQ keep: [PRIVACY
 - Walking collides with the boxes and with scans up to 400,000 triangles; larger scans walk against the boxes and the
   floor only, and the panel says so.
 - Smooth frame rates are not verified: it was measured only with software rendering. The view draws only while
-  something moves, and walking stops when you leave the Robot tab.
+  something moves, and walking stops when you leave the Robot tab. The World panel steps aside on the other tabs (the
+  Simulation tab replays in the room without it) and is back, as you left it, on the Robot tab.
 - One room per project: uploading a new scan replaces the old one before the world is saved.
 - Candidate mount positions (A, B, C) exist in the room format but have no buttons yet.
 - Needs MuJoCo 3.1.6 or newer (`morph doctor` says which you have).
