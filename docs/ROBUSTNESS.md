@@ -114,7 +114,7 @@ as model-sensitive as one in which something did.
 The default egg-picker is the example: all 50 of its failures are the jaws staying shut at release, most often with the
 egg set down a few millimetres off its mark along its length (-4.7 to 1.5 mm) or turned a few degrees, which separate
 the jams about equally well. At half the timestep 16 of 20 re-runs still jam; with `impratio=1` none of 20 does. The
-count is sensitive to the grip as well: at 2.17 N instead of 2.34 N the same runs give 58 jams, best separated by the
+count is sensitive to the grip as well: at 2.1715 N instead of 2.34 N the same runs give 58 jams, best separated by the
 egg turned 3-9 degrees. Whether the real gripper jams there needs a bench test: set an egg 3 mm off its mark along its
 length, or turned 5 degrees, and release it.
 
@@ -169,7 +169,7 @@ under 2 at the start), the cancel, restart and build timings beside other work (
 
 | What | Measured |
 |---|---|
-| The default egg-picker, 200 runs at 1 ms (seed 1) | 150 of 200 succeed (Wilson 68.6-80.5 %). 50 jams (19.5-31.4 %): "egg -4.7 to 1.5 mm along its length from its mark: 44% fail this way vs 14% otherwise", model-sensitive (16 of 20 still jam at half the timestep, 0 of 20 with `impratio=1`); nothing else fails. With the 2.17 N grip the simulation used before the gripper stage's 2.34 N reached it, the same runs gave 140 of 200: 58 jams ("egg turned 3.4-9.4 deg"), 2 drags |
+| The default egg-picker, 200 runs at 1 ms (seed 1) | 150 of 200 succeed (Wilson 68.6-80.5 %). 50 jams (19.5-31.4 %): "egg -4.7 to 1.5 mm along its length from its mark: 44% fail this way vs 14% otherwise", model-sensitive (16 of 20 still jam at half the timestep, 0 of 20 with `impratio=1`); nothing else fails. With the 2.1715 N grip the simulation used before the gripper stage's 2.34 N reached it, the same runs gave 140 of 200: 58 jams ("egg turned 3.4-9.4 deg"), 2 drags |
 | Speed at 1 ms | 2.7 runs/s on 3 worker processes; 0.9 on 1, 1.6-1.8 on 2, 2.3-3.3 on 4. 200 runs and their 70 to 74 check runs: about 2 minutes (117-119 s) |
 | First result | 5.6-6.1 s after the start (rebuilding the robot and its plan takes 3.7-3.9 s of it) |
 | Worker processes | Start in 0.3-0.4 s at 135 MB from a script; 0.7-0.8 s at 150 MB under `morph studio`, whose module each one imports again |

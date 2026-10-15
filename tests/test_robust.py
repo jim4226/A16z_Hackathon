@@ -426,7 +426,7 @@ def test_a_study_of_a_revision_that_now_holds_another_design_says_so(project, pr
 def test_acceptance_the_published_study(tmp_path):
     """The egg-picker at default tolerances and 1 ms steps: 150 of 200 succeed (Wilson 68.6-80.5 %); the jam at
     release is concentrated where the egg sits a few mm off its mark along its length (as good a separator as the egg
-    turned a few degrees) and the solver checks label it model-sensitive. At the 2.17 N grip the simulation used before
+    turned a few degrees) and the solver checks label it model-sensitive. At the 2.1715 N grip the simulation used before
     the grip came from the gripper stage (2.34 N), the same seed gave 140 of 200, 58 jams with the egg turned."""
     project = make_revision(tmp_path / "home", fast=False)
     events, t0 = [], time.time()

@@ -1595,8 +1595,8 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   `manufacturing.configs[k].tooling_cost` and takes it out (tooling / the base's quantity). The tooling is a note, paid
   once ("plus $72,971 of mold tooling, paid once", "and no mold tooling (it had $X, paid once)", or "plus the $X of
   mold tooling" for a build that keeps its molds); `impact.cost` has `tooling: [before, after]` and `before`, `delta`,
-  `after` without it. A production switch at quantity 1 read "about +$73,374 per robot"; it reads "+$4,234 per robot
-  ...; plus $69,140 of mold tooling, paid once". `collab.built_summary` adds `tooling_cost` and `quantity` ([base,
+  `after` without it. Switching the default egg-picker to production at quantity 1 read "about +$77,438 per robot"; it
+  reads "about +$4,466 per robot (parts made +$4,466): $305 → about $4,771; plus $72,971 of mold tooling, paid once". `collab.built_summary` adds `tooling_cost` and `quantity` ([base,
   built]) and `release_gate`'s checklist `tooling_cost` and `quantity`; Teams' "Built rNNN: ... per unit" line and the
   checklist's unit cost say "incl. $X tooling over N units", as the inspector does.
 - **No "add force sensors" issue where a torque limit sets the squeeze.** `electronics2.has_torque_limit(gkey, family)`
@@ -1672,3 +1672,10 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   `grip_limited_payload_g` is 2 mu x min(the jaws' stall force, that limit) / g, with `grip_limit_n` in its metrics
   (the jaws' stall force without a shipped plan). The egg-picker: 1,356 g at 19 N (it said 5,913 g at 82.9 N, a squeeze
   its firmware never makes). Recorded in the simulation goldens (only `sim_payload_sweep.json` and `run_all` change).
+- **The SO-101's shake margin is thin, and stays so.** The stock SO-101 holds its egg through the shake test with 4.74 mm
+  of slip (4.83 mm on Dynamixel servos, DEMO_SCRIPT step 12) of the 5 mm allowed. A firmer grip doesn't buy margin: the
+  egg creeps along the stock jaw as it seats (4.67 mm at 6 N, 4.53 mm at 11 N, 4.47 mm at 14 N, near the top of its
+  1.26-16.67 N window; 4.56 mm at 14 N on Dynamixel), so the open-loop grip stays at the window's geometric mean,
+  4.58 N. `tests/test_robot_grip_force.py::test_the_so101_demo_keeps_its_egg_through_the_shake_test_with_a_thin_margin`
+  pins both slips (within 0.05 mm) and fails, saying so, when the margin drops under 0.1 mm; DEMO_SCRIPT says what the
+  demo shows if it tips over (step 12: 7 issues, not 6).

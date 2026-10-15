@@ -465,9 +465,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   says what the robot gets (a 12 V mains supply and the servo buck set to 7.4 V, no battery, charger or low-voltage
   cutoff), warns when a charged lithium pack would exceed the servos' maximum (2S reads 8.4 V; the SO-101's servos take
   7.4 V), and understands "run it from a battery" and "a 2S LiPo".
-- Teams' change-request preview no longer prices the molds as a cost per robot: switching a robot to production at
-  quantity 1 read "about +$73,374 per robot"; it now reads "+$4,234 per robot ... plus $69,140 of mold tooling, paid
-  once". The "Built" line and the release checklist say how much of a unit cost is tooling, as the inspector does.
+- Teams' change-request preview no longer prices the molds as a cost per robot: switching the default egg-picker to
+  production at quantity 1 read "about +$77,438 per robot"; it now reads "about +$4,466 per robot ... plus $72,971 of
+  mold tooling, paid once". The "Built" line and the release checklist say how much of a unit cost is tooling, as the inspector does.
 - A robot set to Force sensor: none is no longer refused with "add finger.sensor=fsr402" when its gripper servo's torque
   limit sets the squeeze (smart-bus and Dynamixel grippers): the egg-picker without force sensors now passes its
   software checks, the egg intact. A hobby servo gripper, which has no torque limit, is still told.

@@ -37,7 +37,7 @@ The caption is the script. Read it, or say it in your own words.
 | 4 | Tested in physics simulation | Simulation tab, pick & place plays with live torque | |
 | 5 | Change it in one sentence | Types **Swap to Dynamixel servos**; new actuators touch everything, so all 9 stages regenerate; the auto-tour walks the changed tabs | ~30 s |
 | 6 | From modules to a custom PCB | Types **Use a custom PCB**; only 6 of 9 stages rerun (sizing, grasp and simulation are reused); the board places, routes and pours on screen | ~30 s |
-| 7 | Same robot, another way to build it | Switches the build to **Pilot** (CNC, sheet metal, MJF); heavier metal links re-size the joints (8 of 9 stages) | ~25 s |
+| 7 | Same robot, another way to build it | Switches the build to **Pilot** (CNC, sheet metal, MJF); heavier metal links re-size the joints and the fingers change material (all 9 stages) | ~25 s |
 | 8 | Darwin: who sells and who builds every part | BOM tab, **Darwin agents**: one search per purchased part and bulk material (filament, plate, sheet, wire), plus PCB fab, CNC, sheet metal and prints, stream in | ~20 s, keep talking |
 | 9 | Keewano: the build memory | Simulation tab; the grip-force window in the right panel lights up, with the Keewano calibration line | |
 | 10 | The assembly manual writes itself | Assembly tab, autoplay | |
@@ -58,6 +58,9 @@ it: the pipeline strip and the auto-tour are the visual.
 - Keewano isn't connected: the caption and the right panel both say so honestly. Add the keys with
   **Keys** (top right; see `docs/SPONSORS.md`), then **Reset demo and rebuild** before the next take.
 - The 3D view is slow: press → past the X-ray step, or turn **X-ray** and **Labels** off.
+- The SO-101 shows a shake issue (step 12 then reads 7 issues, not 6): its egg slips 4.7-4.8 mm of the 5 mm its shake
+  test allows, so a small change in the simulation can tip it over. Squeezing harder doesn't help (the egg creeps as it
+  seats in the stock jaws); say so, and move on.
 - Anything else: **Esc**, fix it by hand, **P**, then click the step's dot in the progress bar to
   jump back in.
 

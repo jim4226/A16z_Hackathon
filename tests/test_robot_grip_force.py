@@ -441,6 +441,26 @@ def test_no_hobby_servo_is_commanded_to_stall(tmp_path, name, design):
 
 # ------------------------------------------------------------------ the grip holds what the robot does with it
 
+@pytest.mark.parametrize("family, slip", [("", 4.74), ("dynamixel", 4.83)])
+def test_the_so101_demo_keeps_its_egg_through_the_shake_test_with_a_thin_margin(family, slip):
+    """The SO-101 demo (docs/DEMO_SCRIPT.md steps 11-13) holds its egg through the shake test with little to spare:
+    4.74 mm of slip, 4.83 mm on Dynamixel servos (step 12), against the 5 mm the test allows. A firmer grip doesn't buy
+    margin: the egg creeps along the stock jaw as it seats, 4.53 mm at 11 N and 4.47 mm at 14 N, near the top of its
+    1.26-16.67 N window, so the open-loop grip stays at the window's middle (4.58 N), as far from crushing as from
+    slipping. If this fails the demo robot gains a shake issue: step 12 shows 7 issues, not 6, and the stock SO-101 no
+    longer passes its software checks."""
+    d = template("so101", "so101")
+    if family:
+        d = d.with_changes({"arm.actuator_family": family})
+    sz = imported.size(d)
+    force = imported.gripper_summary(d, sz)["force"]
+    assert force["target_force_n"] == 4.58 and force["window_n"] == [1.26, 16.67]
+    asm = imported.build(d, sz, electronics2.plan(d, sz, grip=force))
+    m = simulate.run(asm, d, "shake")["metrics"]
+    assert m["success"] and m["slip_mm"] == pytest.approx(slip, abs=0.05), m
+    assert 5.0 - m["slip_mm"] > 0.1, f"the shake margin is down to {5.0 - m['slip_mm']:.2f} mm"
+
+
 def test_the_grip_limited_payload_is_what_the_firmwares_hard_stop_holds():
     """The payload sweep's grip_limited_payload_g used the jaws' stall force: 5,913 g for the egg-picker at 82.9 N per
     finger, a squeeze its firmware never makes (GRIP_LIMIT_N is 19 N: the force sensor's range). It is now what
