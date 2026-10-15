@@ -25,10 +25,15 @@ Morph Studio is a local app: a small web server on your computer, used from your
   scripts with the Studio's rights. The page loads nothing from other sites.
 - A connection gets 20 seconds in all to send its request line and headers, and the Studio serves at most 64
   connections at once, 48 of them live event streams. One address may hold at most 16 connections that haven't signed
-  in (with the access link or a team session; this computer's own addresses aside), and signed-in pages don't count
-  towards that. More get a "busy" answer (503) straight away, so one client without the access link can't tie the
-  server up. Many addresses together still can fill every slot, which is one more reason to use remote mode only on
-  a network you trust.
+  in (with the access link or a team session), and signed-in pages don't count towards that. More get a "busy" answer
+  (503) straight away, so one client without the access link can't tie the server up. Only loopback addresses
+  (127.x.x.x and ::1, the Studio's own computer talking to itself) have no such cap; the computer's network addresses
+  (its LAN address, say) are capped like any other. Many addresses together still can fill every slot, which is one
+  more reason to use remote mode only on a network you trust.
+- A reverse proxy or tunnel on the Studio's computer (to add HTTPS, say, or `ssh -L`) passes every client on from
+  127.0.0.1, so the Studio sees one loopback address: the 16-connection cap no longer applies to any of them (only the
+  64 in all do), and wrong access codes from any of them count against that one address. Give the proxy its own
+  per-client connection and rate limits.
 - API keys live in `.env`, readable by your user only on macOS and Linux. The Studio never sends a key back to the
   browser or prints it. Text you type anywhere else (chat, New robot, Show Morph the job, Teams comments and names)
   that looks like an API key or a Morph access code, or holds a key you saved, is refused before it is saved, shown or
