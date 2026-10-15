@@ -21,6 +21,21 @@ the public agent listings Darwin returned for it: names, ids, capabilities and l
 (https://darwin.so/terms) cover that content, not this repository's licence. Delete the folder to ship without it;
 the Studio then shows only live answers.
 
+## Test fixtures
+
+The source archive carries the tests and their fixtures. Two hold answers recorded from real services:
+
+| What | Where | Terms |
+|---|---|---|
+| Darwin Search answers, saved in October 2026: a search that asked a question back, and one capability's details | `tests/fixtures/darwin/` | Darwin's terms (https://darwin.so/terms), as for `data/darwin-cache/` |
+| Mouser's Search API answer to a wrong key (a key of zeros), recorded on 2026-10-14: an `Errors` entry and nothing else | `tests/fixtures/tools/answers/mouser_wrong_key.json` | Mouser's API terms (https://www.mouser.com/apihome/) |
+
+Every other fixture is Morph's own: the distributor answers in `tests/fixtures/tools/answers/` follow the documented
+answer shape with made-up products, prices and stock (no copy of a provider's documentation example);
+`tests/fixtures/tools/fixparts.json` describes a made-up distributor; `tests/fixtures/launchers/run_studio_v01.bat` is
+Morph's own launcher from before v0.2; `tests/fw_stubs/` holds minimal declarations, written for the tests, of the
+Arduino, Feetech, Dynamixel and Adafruit library functions the generated firmware calls.
+
 ## Python packages
 
 The launchers install Morph's dependencies from PyPI into `.venv`; neither the repository nor the wheel contains
@@ -38,11 +53,11 @@ them. Each comes under its own licence:
 | anthropic | MIT |
 | pillow | MIT-CMU |
 
-`constraints.txt` lists the exact versions, including the packages these depend on. The optional extras add more:
-`morph[video]` installs imageio-ffmpeg (BSD-2-Clause), whose platform wheels contain an FFmpeg executable under
-FFmpeg's own licence (LGPL or GPL, depending on the build); `morph[cad]` installs cascadio (MIT), which embeds
-Open CASCADE Technology (LGPL-2.1 with an exception); `morph[xacro]` installs xacro (BSD-3-Clause) and PyYAML (MIT).
-Morph doesn't ship any of them.
+`constraints.txt` lists the exact versions, including the packages these depend on. Optional packages, installed only
+when you add them (`morph doctor` gives the command; a wheel's extras `video`, `cad` and `xacro` name the same ones):
+imageio-ffmpeg (BSD-2-Clause), whose platform wheels contain an FFmpeg executable under FFmpeg's own licence (LGPL or
+GPL, depending on the build); cascadio (MIT), which embeds Open CASCADE Technology (LGPL-2.1 with an exception); xacro
+(BSD-3-Clause) and PyYAML (MIT). Morph doesn't ship any of them.
 
 ## What Morph generates
 

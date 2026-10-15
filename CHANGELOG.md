@@ -209,6 +209,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md), a [release checklist](docs/RELEASE_CHECKLIST.md), and one page each
   for [Teams](docs/TEAMS.md), [Import](docs/IMPORT.md) and [World mode](docs/WORLD.md). Internal planning docs moved
   to `docs/internal/`.
+- The source archive and the wheel carry what they say: NOTICE and THIRD_PARTY_NOTICES name the fonts, Darwin's saved
+  answers and the test fixtures recorded from real services (the others are made up), and no file names a folder of
+  the computer Morph was developed on (a browser test saved its screenshots there; it takes them only when
+  `MORPH_SHOTS` is set now). Building the wheel no longer prints a setuptools warning for each Studio folder, and CI
+  fails if one comes back.
 
 ### Privacy
 

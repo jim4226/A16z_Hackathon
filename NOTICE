@@ -3,7 +3,12 @@ Copyright 2026 jim4226 and Morph contributors.
 
 Licensed under the Apache License, Version 2.0 (see LICENSE).
 
-Third-party content:
+Third-party content (THIRD_PARTY_NOTICES.md lists each with its licence and source):
 - robots/so101/: SO-101 URDF, MJCF and meshes from TheRobotStudio/SO-ARM100
   (https://github.com/TheRobotStudio/SO-ARM100), Apache License 2.0.
 - morph/studio/static/vendor/: three.js r160 and example modules (MIT License, see THREE_LICENSE).
+- morph/studio/static/vendor/fonts/: Inter and JetBrains Mono, Latin subsets from Fontsource 5.3.0
+  (SIL Open Font License 1.1, see OFL-Inter.txt and OFL-JetBrainsMono.txt).
+- data/darwin-cache/ and tests/fixtures/darwin/: answers saved from Darwin's public Search API
+  (https://darwin.so), under Darwin's terms (https://darwin.so/terms), not this licence.
+- tests/fixtures/tools/answers/mouser_wrong_key.json: Mouser's Search API answer to a wrong key, as recorded.

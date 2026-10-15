@@ -27,6 +27,11 @@ decisions lives outside the repo; the essentials are summarized here.
   - Never claim an order was placed.
   - Never identify people in images.
 - **Security.** Treat every upload, URL, URDF, zip and model output as hostile (section 9).
+- **What ships (W3).** THIRD_PARTY_NOTICES (and NOTICE, briefly) names every vendored folder, robot bundle, saved
+  service answer and test fixture recorded from a real service; every other fixture is made up, never a copy of a
+  provider's documentation example (`tests/test_release.py` checks the list). No shipped file names a developer's
+  machine. The wheel lists its files (`include-package-data = false` with explicit package-data), and CI's package job
+  fails on setuptools' warning that a folder isn't a package.
 - **Style.**
   - Match the surrounding code: dense, few comments, plain English in UI copy, no emoji.
   - Tests go under `tests/` and must pass offline: no network, no keys.

@@ -283,3 +283,59 @@ def test_release_docs_exist_link_correctly_and_name_this_version():
                 assert (REPO / doc).parent.joinpath(path).resolve().exists(), (doc, link)
     assert not (REPO / "docs" / "HACKATHON_PLAN.md").exists() and (REPO / "docs" / "internal" / "HACKATHON_PLAN.md").exists()
     assert "github.com/jim4226/A16z_Hackathon/security/advisories/new" in (REPO / "SECURITY.md").read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------ what ships: licences, fixtures, paths, build
+
+RECORDED_FIXTURES = ("tests/fixtures/darwin", "tests/fixtures/tools/answers/mouser_wrong_key.json")  # from real services
+OWN_FIXTURES = ("tests/fixtures/tools/answers", "tests/fixtures/tools/fixparts.json", "tests/fixtures/launchers")  # made up
+
+
+def test_the_notices_name_every_vendored_folder_robot_and_recorded_fixture():
+    notices = (REPO / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    notice = (REPO / "NOTICE").read_text(encoding="utf-8")
+    vendor = STATIC / "vendor"
+    for folder in [vendor, *(p for p in sorted(vendor.rglob("*")) if p.is_dir())]:
+        rel = folder.relative_to(REPO).as_posix()
+        assert f"`{rel}/" in notices and f"{rel}/" in notice, rel
+    for robot in sorted(p for p in (REPO / "robots").iterdir() if p.is_dir()):
+        rel = robot.relative_to(REPO).as_posix()
+        assert f"`{rel}/`" in notices and f"{rel}/" in notice, rel
+    assert "`data/darwin-cache/`" in notices and "data/darwin-cache/" in notice and "THIRD_PARTY_NOTICES.md" in notice
+    for path in sorted(p for p in (REPO / "tests" / "fixtures").rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+        rel = path.relative_to(REPO).as_posix()
+        whose = next((k for k in RECORDED_FIXTURES + OWN_FIXTURES if rel == k or rel.startswith(k + "/")), None)
+        assert whose, f"{rel} is new: say in THIRD_PARTY_NOTICES whether it was recorded from a service or made up"
+        assert f"`{whose}" in notices, whose
+    for rel in RECORDED_FIXTURES:
+        assert rel in notice, rel
+
+
+def _shipped_text_files():
+    """Every text file of the repository (what a release zip or the source archive carries)."""
+    if shutil.which("git") and (REPO / ".git").exists():
+        out = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"], capture_output=True, check=True).stdout
+        paths = [REPO / p for p in out.decode("utf-8").split("\0") if p]
+    else:  # a source archive: no .git
+        skip = {".git", ".venv", "projects", "build", "dist", "__pycache__"}
+        paths = [p for p in REPO.rglob("*") if p.is_file() and not skip & set(p.relative_to(REPO).parts)]
+    for p in paths:
+        if p.is_file() and p.suffix not in (".stl", ".glb", ".zip", ".gif", ".png", ".woff2", ".jpg", ".npz"):
+            try:
+                yield p, p.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+
+
+def test_no_development_machine_paths_ship():
+    marker = "/tmp/" + "claude-0"  # split, so this file doesn't name it
+    assert [str(p.relative_to(REPO)) for p, text in _shipped_text_files() if marker in text] == []
+
+
+def test_the_wheel_lists_its_files_instead_of_taking_the_source_archives():
+    """include-package-data off: the package-data globs carry every Studio file (tools/package_smoke.py checks the
+    installed wheel), and setuptools no longer warns about each static/ folder that isn't a package."""
+    tool = _pyproject()["tool"]["setuptools"]
+    assert tool["include-package-data"] is False
+    assert tool["package-data"]["morph.studio"] == ["static/**/*"]
+    assert tool["package-data"]["morph.studio.toolbox"] == ["catalog/*.json"]

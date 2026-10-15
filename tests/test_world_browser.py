@@ -1,7 +1,7 @@
 """World mode in a real browser: tools/world_demo.html with the real RobotViewer, world.js and the fixture robot.
 Loads the desk starter through init(studio), places the robot by clicking the desk, walks (keys and drag-look),
 snapshots the six views and plays the guided tour; then a room scan (.glb) with the two-point scale tool and
-proposed boxes. Screenshots go to $MORPH_SHOTS (default: morph-shots in the temp folder), f5_*.png. Skipped without
+proposed boxes. With MORPH_SHOTS=<folder> set, screenshots go there (f5_*.png); none are taken without it. Skipped without
 Playwright or a Chromium it can start ($MORPH_CHROME, else Playwright's own). Software WebGL is slow: about two minutes."""
 
 import base64
@@ -11,7 +11,6 @@ import io
 import json
 import os
 import sys
-import tempfile
 import threading
 
 import pytest
@@ -29,7 +28,7 @@ from test_world_obstacles import counter_scene_glb  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHROME = os.environ.get("MORPH_CHROME") or next(
     (p for p in ("/opt/pw-browsers/chromium-1194/chrome-linux/chrome",) if os.path.exists(p)), None)
-SHOTS = os.environ.get("MORPH_SHOTS") or os.path.join(tempfile.gettempdir(), "morph-shots")
+SHOTS = os.environ.get("MORPH_SHOTS")  # a folder for the screenshots; none are taken without it
 ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]   # WebGL without a GPU
 
 
@@ -73,6 +72,8 @@ def _page(browser):
 
 
 def shot(page, name):
+    if not SHOTS:
+        return
     os.makedirs(SHOTS, exist_ok=True)
     page.screenshot(path=os.path.join(SHOTS, name))
 
@@ -163,13 +164,14 @@ def test_desk_world_place_walk_views_and_tour(server, browser):
     # ---- the six views, 1024 x 768 JPEG with labels drawn in
     views = page.evaluate("async () => (await window.demo.wv.snapshotViews(window.demo.wv._docCache)).map(v => ({name: v.name, b: v.jpeg_b64}))")
     assert [v["name"] for v in views] == list(worlds.VIEWS)
-    os.makedirs(SHOTS, exist_ok=True)
     for v in views:
         img = _image(v["b"])
         assert img.format == "JPEG" and img.size == (1024, 768)
         assert max(img.getpixel((4, 4))) < 80                              # the title bar is drawn over the render
         assert ImageStat.Stat(img.convert("L").crop((0, 40, 1024, 740))).stddev[0] > 8, v["name"]   # not blank
-        img.save(os.path.join(SHOTS, f"f5_view_{v['name']}.png"))
+        if SHOTS:
+            os.makedirs(SHOTS, exist_ok=True)
+            img.save(os.path.join(SHOTS, f"f5_view_{v['name']}.png"))
     assert worlds.clean_views([{"name": v["name"], "jpeg_b64": v["b"]} for v in views])     # the server accepts them
 
     # ---- check through the panel (it needs the world saved: the check uses its simulation), then the guided tour
@@ -202,8 +204,9 @@ def test_desk_world_place_walk_views_and_tour(server, browser):
     assert step() == n0
     page.click('.wv-cap [data-k="stop"]')
     assert not page.evaluate("document.querySelector('.wv-cap').classList.contains('on')")
-    with open(os.path.join(SHOTS, "f5_fps.json"), "w", encoding="utf-8") as fh:
-        json.dump({"walk_fps": fps, "page_fps": page.evaluate("window.demo.fps"), "renderer": "SwiftShader (software)"}, fh)
+    if SHOTS:
+        with open(os.path.join(SHOTS, "f5_fps.json"), "w", encoding="utf-8") as fh:
+            json.dump({"walk_fps": fps, "page_fps": page.evaluate("window.demo.fps"), "renderer": "SwiftShader (software)"}, fh)
     assert not errors, errors
     page.close()
 
@@ -307,6 +310,8 @@ def test_glb_room_scale_place_and_boxes(server, browser, tmp_path):
     for v in views:
         img = _image(v["b"])
         assert ImageStat.Stat(img.convert("L").crop((0, 40, 1024, 740))).stddev[0] > 8, v["name"]
-        img.save(os.path.join(SHOTS, f"f5_scan_{v['name']}.png"))
+        if SHOTS:
+            os.makedirs(SHOTS, exist_ok=True)
+            img.save(os.path.join(SHOTS, f"f5_scan_{v['name']}.png"))
     assert not errors, errors
     page.close()

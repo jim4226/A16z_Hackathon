@@ -95,10 +95,16 @@ jobs:
       - name: OSMesa for headless MuJoCo
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
-      - name: Build the sdist and the wheel
+      - name: Build the sdist and the wheel (and no setuptools warning that a folder isn't a package)
+        shell: bash
         run: |
           python -m pip install build -c constraints.txt
-          python -m build
+          python -m build 2>&1 | tee "$RUNNER_TEMP/build.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -q "is absent from the \`packages\` configuration" "$RUNNER_TEMP/build.log"; then
+            echo "::error::setuptools warns that a folder isn't a package: see the build output above"
+            exit 1
+          fi
       - name: Install the wheel into a fresh venv outside the checkout
         shell: bash
         run: |

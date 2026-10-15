@@ -50,6 +50,11 @@ Changelog = "https://github.com/jim4226/A16z_Hackathon/blob/main/CHANGELOG.md"
 [project.scripts]
 morph = "morph.cli:main"
 
+[tool.setuptools]
+# The package-data below lists every file the wheel carries. Left on, include-package-data would also take what
+# MANIFEST.in puts in the source archive and warn about each static/ folder that isn't a package.
+include-package-data = false
+
 [tool.setuptools.dynamic]
 version = { attr = "morph.__version__" }
 
