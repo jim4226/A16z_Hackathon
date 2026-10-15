@@ -199,10 +199,18 @@ def test_wording_that_opens_twists_or_assembles_something_reads_as_that_job(text
     ("bring the mail to her desk", False, False), ("move the books and bring them to her room", False, False),
     ("give the parts to my dad's workshop", False, False), ("pass the plates to my mum's kitchen table", False, False),
     ("bring the mail to my mum’s desk", False, False), ("bring the cups to his office", False, False),
-    ("pass my dad's pills to the tray", False, False),
-    # "her" is still the receiver before a word that isn't a noun, and the direct "bring her the cup"
+    ("bring the tray to her bedside table", False, False), ("bring the laundry to her bedroom", False, False),
+    # the pills are his and go to the tray, but they are his pills: he is next to the robot
+    ("pass my dad's pills to the tray", False, True),
+    # before anything that isn't a place, furniture or a container, "her", "his" and 's name the receiver: a missed
+    # hand-over drops the emergency stop beside a person
     ("give it to her every morning", True, True), ("bring the tea to her, please", True, True),
     ("hand the tools to her when she asks", True, True), ("bring her the cup", True, True),
+    ("a robot that brings the meds to her twice a day", True, True),
+    ("a robot that brings water to her because she can't walk", True, True),
+    ("a robot that gives the medicine to her nurse", True, True), ("bring breakfast to her bedside every day", True, True),
+    ("give it to her husband", True, True), ("bring the remote to my dad's friend", True, True),
+    ("give the medicine to his nurse", True, True), ("bring the cup to her at her desk", True, True),
 ])
 def test_a_hand_over_goes_to_a_person(text, hand_over, near):
     assert bool(re.search(B.HAND_TO_PERSON, text)) is hand_over
@@ -220,6 +228,21 @@ def test_passing_things_on_to_a_station_is_a_pick_and_place(text, task, estop):
     b = agents.run_turn(agents.run_turn(text=text), action="defaults")
     assert B.value(b, "task") == task and ("estop" in b.changes["electronics.extras"]) is estop
     assert ("hands over" in b.summary) is (task == "hand_over")
+
+
+@pytest.mark.parametrize("text", [
+    "a robot that brings the meds to her twice a day", "a robot that brings water to her because she can't walk",
+    "a robot that gives the medicine to her nurse", "bring breakfast to her bedside every day", "give it to her husband",
+    "bring the remote to my dad's friend", "pass my dad his pills", "bring me a can of soda", "pass them to me",
+    "give it back to her", "hand the cup to my mum", "bring the mugs over to us", "give it to her every morning",
+    "bring the tea to her, please", "hand the tools to her when she asks", "bring her the cup",
+    "pick up cans and pass them to me"])
+def test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop(text):
+    # "to her twice a day", "to her nurse" and "to my dad's friend" built a pick and place with no e-stop: the possessive
+    # guard took any word after "her" for the place it owned
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "task") == "hand_over" and B.value(b, "people_nearby") == "yes"
+    assert "estop" in b.changes["electronics.extras"] and re.search(r"\bhands (?:over|you)\b", b.summary), b.summary
 
 
 @pytest.mark.parametrize("text", ["open boxes arrive on the left; move the cans into them", "sort twist ties"])

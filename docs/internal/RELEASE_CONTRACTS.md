@@ -1654,12 +1654,19 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   while Keewano calibration is on) is the same for base and edit: a servo rail, an actuator family or a build level.
   The preview then shows no "Grip" row and plans the electronics with the base's target, as the build does. Any other
   gripper edit (the object, the pads, a force sensor) takes the preflight's grip; a stock jaw always does.
-- **A person's place is no person (E-N8).** `brief.HAND_TO_PERSON`'s "to <receiver>" form uses `_RECEIVER_TO`: "her"
-  counts only before the end, punctuation or a word that can follow an object pronoun (`_HER`: and, when, at, every,
-  please, ...), and no receiver counts before 's (`_NOT_THEIRS`), so "bring the mail to her desk", "bring them to her
-  room" and "give the parts to my dad's workshop" are pick and place, while "give it to her every morning" and "bring
-  the tea to her, please" stay hand-overs. The direct form ("bring her the cup", "pass my dad his pills") keeps any
-  "her" but not 's. `PERSON_NEAR` applies the same guards to its person mention and its "for/to her". The tables are in
+- **A person's place is no person (E-N8); unsure is a hand-over.** `brief.HAND_TO_PERSON`'s "to <receiver>" form
+  uses `_RECEIVER_TO`: "her" and "his" (`_HER_HIS`), and a `_PERSON` before 's (`_NOT_THEIR_PLACE`), own the place the
+  things go to only before a place, a piece of furniture or a container (`_PLACE`: desk, room, bedroom, office,
+  workshop, kitchen, table, car, door, shed, shelf, drawer, bin, tray, station and the like), after at most two
+  describing words ("her bedside table", "my mum's kitchen table"). So "bring the mail to her desk", "bring them to her
+  room", "bring the cups to his office" and "give the parts to my dad's workshop" are pick and place. Before anything
+  else the person is the receiver, because a missed hand-over drops the emergency stop beside a person: "bring the
+  meds to her twice a day", "gives the medicine to her nurse", "bring breakfast to her bedside every day", "give it to
+  her husband", "bring the remote to my dad's friend" are hand-overs with people nearby and an e-stop (so is "give the
+  ball to her dog": the safe error). The direct form ("bring her the cup", "pass my dad his pills") keeps any "her"
+  but no receiver before 's ("pass my dad's pills to the tray" goes to the tray). `PERSON_NEAR` applies the same place
+  guard to its person mention and its "for/to her/his", so "pass my dad's pills to the tray" has people nearby. The
+  tables and a whole-brief test (`test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop`) are in
   `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
   order, failures included; not the ones it carried over or that were blocked), and `reused`: the stages whose

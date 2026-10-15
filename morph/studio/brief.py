@@ -250,16 +250,26 @@ _PERSON = (r"(?:grand(?:ma|pa|mother|father|parents?|mum|mom|dad)|granny|gran|na
            r"aunt|uncle|brother|sister|patient|client)s?)")
 # a hand-over goes to a person: "hand me", "pass my dad his pills", "give it to her", "bring the cups back to us". "them" or
 # "it" alone are the things: "pass them to the packing station" is a pick and place. A person's place is no person either:
-# "to her desk", "to my dad's workshop" ('s, or "her" before a noun: only these words may follow an object "her")
-_NOT_THEIRS = r"(?![’']s\b)"
-_HER = (r"her\b(?!\s+(?!(?:and|or|but|so|then|when|whenever|while|if|as|at|in|on|by|with|from|for|after|before|during|"
-        r"until|once|every|each|please|now|too|again|back|safely|gently|carefully|quickly|slowly|later|today|tomorrow|"
-        r"tonight|daily|directly|right|here|there|first|instead|without)\b)[a-z])")
+# "to her desk", "to his office", "to my dad's workshop". "her", "his" and 's are read as owning a place only before a
+# place, a piece of furniture or a container (_PLACE, after at most two describing words: "her bedside table"); before
+# anything else ("to her nurse", "to her twice a day", "to her bedside", "to my dad's friend") the person is the receiver,
+# because a missed hand-over drops the emergency stop beside a person
+_PLACE = (r"(?:desk|room|bedroom|office|study|workshop|garage|shed|lab|studio|kitchen|pantry|bathroom|hall(?:way)?|"
+          r"house|home|flat|apartment|porch|garden|yard|car|van|truck|door|doorstep|mailbox|letterbox|"
+          r"table|bench|workbench|counter|shelf|shelves|bookshelf|bookcase|cupboard|cabinet|closet|wardrobe|dresser|"
+          r"drawer|nightstand|locker|rack|station|bin|box|basket|crate|tray|bowl|cart|trolley)s?")
+_NOT_DESCRIBING = (r"(?:a|an|the|and|or|but|so|then|when|whenever|while|if|as|at|in|on|by|with|from|for|to|of|after|"
+                   r"before|during|until|once|every|each|because|since|please|now|she|he|they|it|i|we|you|her|his|their|"
+                   r"my|is|was|can|will|would|could|should|who|that|which)")
+_A_PLACE = r"\s+(?:(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+\s+){0,2}?" + _PLACE + r"\b"   # " desk", " bedside table"
+_NOT_THEIRS = r"(?![’']s\b)"                                   # "pass my dad's pills": the pills are his, he isn't the receiver
+_NOT_THEIR_PLACE = r"(?![’']s" + _A_PLACE + r")"
+_HER_HIS = r"(?:her|his)\b(?!" + _A_PLACE + r")"
 _RECEIVER = r"(?:me|him|her|us|" + _PERSON + r")\b" + _NOT_THEIRS              # "bring her the cup": the thing follows
-_RECEIVER_TO = r"(?:me\b|him\b|" + _HER + r"|us\b|" + _PERSON + r"\b)" + _NOT_THEIRS
+_RECEIVER_TO = r"(?:me\b|him\b|us\b|" + _HER_HIS + r"|" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r")"
 HAND_TO_PERSON = r"\b(?:hand|pass|give|bring)(?:s|es|ing)?\s+(?:" + _RECEIVER + r"|(?:[\w']+\s+){0,4}?to\s+" + _RECEIVER_TO + r")"
-PERSON_NEAR = (r"\b" + _PERSON + r"\b" + _NOT_THEIRS + r"|\b(?:help|assist|serve)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|" +
-               HAND_TO_PERSON + r"|\b(?:for|to)\s+(?:me\b|him\b|" + _HER + r")" + _NOT_THEIRS +
+PERSON_NEAR = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist|serve)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|" +
+               HAND_TO_PERSON + r"|\b(?:for|to)\s+(?:me\b|him\b|" + _HER_HIS + r")" +
                r"|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b")
 OUT_OF_SCOPE = (  # (kind, regex, plain reason); the first kind found picks the nearest robot
     ("drone", r"\b(drones?|quadcopters?|multirotors?|uavs?|fly|flies|flying)\b", "Morph doesn't design drones or anything that flies."),

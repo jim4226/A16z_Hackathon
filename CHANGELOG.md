@@ -484,4 +484,6 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   grasp simulation) and planned the electronics with it. The build keeps the 2.34 N its grasp simulation found, and
   so does the preview now; an edit to the object or the fingers still shows the new grip.
 - "Bring the mail to her desk", "bring them to her room" and "give the parts to my dad's workshop" are no longer read as
-  handing things to a person (with an emergency stop): a place that belongs to someone is a pick and place.
+  handing things to a person (with an emergency stop): a place that belongs to someone is a pick and place. Only a
+  place, furniture or a container counts as theirs; "bring the meds to her twice a day", "give the medicine to her
+  nurse" and "bring the remote to my dad's friend" stay hand-overs with an emergency stop.
