@@ -118,12 +118,17 @@ def journals(root: str) -> list:
     return sorted((os.path.join(folder, n) for n in names), key=lambda path: (when(path), path))
 
 
+def owner_live(home: str, owner) -> bool:
+    """True when `owner` (rooms.OWNER of some process) is another process that still holds its lock on projects folder
+    `home` (claim): what it left there is still its own. This process, and anything unnamed, never is."""
+    return (isinstance(owner, str) and re.fullmatch(r"[0-9a-f]{16}", owner) is not None and owner != OWNER
+            and durable.BuildLock.held(owner_lock(home, owner)))
+
+
 def journal_live(path: str, home: str) -> bool:
     """True when the Studio that writes the journal at `path` still runs (another Studio on the same projects folder:
-    its jobs are its own): its lock (claim) is held. This process's own journal and an older one without an owner are
-    never live."""
-    owner = journal_owner(path)
-    return bool(owner) and owner != OWNER and durable.BuildLock.held(owner_lock(home, owner))
+    its jobs are its own). This process's own journal and an older one without an owner are never live."""
+    return owner_live(home, journal_owner(path))
 
 
 def open_jobs(path: str) -> list:

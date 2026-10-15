@@ -136,6 +136,8 @@ class Session:
         if length > LIMITS["upload_file"]:
             raise ImportFailed(f"{os.path.basename(rel)} is {length / MB:.0f} MB; the limit is {LIMITS['upload_file'] // MB} MB per file.")
         tok = secrets.token_hex(4)
+        from ..studio import rooms
+        claim = rooms.claim(self.home)  # noqa: F841  (held while this upload streams: another Studio's tidy() keeps it)
         with _lock(self.id):
             # what is being streamed is reserved under `pending`, never counted as a file before it is all there: a
             # Studio stopped mid-upload never leaves a session claiming a file it doesn't have
@@ -148,7 +150,7 @@ class Session:
             total = st["bytes"] - old + sum(p[1] for p in coming) + length
             if total > LIMITS["upload_total"]:
                 raise ImportFailed(f"{total / MB:.0f} MB is over the {LIMITS['upload_total'] // MB} MB limit for one import.")
-            pending[tok] = [rel, length]
+            pending[tok] = [rel, length, rooms.OWNER]
             st["status"] = "new"
             self._save(st)
         target = os.path.join(self.files, *rel.split("/"))
@@ -190,14 +192,19 @@ class Session:
         return {"path": rel, "size": got}
 
     def tidy(self) -> bool:
-        """What a stopped Studio left in this session (it starts again, so no upload is under way): the half-written
-        `*.part-*` files go, so do the reservations of uploads that never finished, and a file recorded before it
-        arrived (sessions from before uploads were reserved) is forgotten. True when something changed."""
+        """What a stopped Studio left in this session: the half-written `*.part-*` files go, so do the reservations of
+        uploads that never finished, and a file recorded before it arrived (sessions from before uploads were reserved)
+        is forgotten. An upload another Studio on the same projects folder is still streaming (its lock, rooms.claim,
+        is held) keeps its reservation and its part file. True when something changed."""
+        from ..studio import rooms
         changed, cut = False, set()
+        with _lock(self.id):
+            pending = self.state().get("pending") or {}
+        live = {tok for tok, p in pending.items() if isinstance(p, list) and len(p) > 2 and rooms.owner_live(self.home, p[2])}
         for folder, _, names in os.walk(self.files):
             for n in names:
-                m = re.fullmatch(r"(.+)\.part-[0-9a-f]{8}", n)
-                if m:
+                m = re.fullmatch(r"(.+)\.part-([0-9a-f]{8})", n)
+                if m and m.group(2) not in live:
                     try:
                         os.remove(os.path.join(folder, n))
                         changed = True
@@ -206,8 +213,11 @@ class Session:
                     cut.add(os.path.relpath(os.path.join(folder, m.group(1)), self.files).replace(os.sep, "/"))
         with _lock(self.id):
             st = self.state()
-            if st.pop("pending", None):
-                changed = True
+            kept = {tok: p for tok, p in (st.get("pending") or {}).items() if tok in live}
+            if (st.get("pending") or {}) != kept:
+                st["pending"], changed = kept, True
+            if not st.get("pending"):
+                st.pop("pending", None)
             gone = [rel for rel in cut if rel in st["files"] and not os.path.exists(os.path.join(self.files, *rel.split("/")))]
             for rel in gone:
                 st["files"].pop(rel)

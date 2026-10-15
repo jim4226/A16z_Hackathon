@@ -86,3 +86,26 @@ def test_reservations_still_count_against_the_limits(home, monkeypatch):
     s._save(st)
     with pytest.raises(ImportFailed, match="over the 10 MB limit"):
         s.add_file("b.stl", io.BytesIO(b"x" * (3 << 20)), 3 << 20)
+
+
+def test_an_upload_another_running_studio_streams_keeps_its_reservation(home, tmp_path):
+    """Two Studios on one projects folder: the one starting tidies the import sessions, but an upload the other one is
+    still streaming (its lock is held, rooms.claim) keeps its reservation and its part file; a stopped one's go."""
+    from test_restart_recovery import hold
+    s = sess.Session.create(home)
+    st = s.state()
+    st["pending"] = {"0badc0de": ["live.stl", 4 << 20, "feedfacecafebeef"],     # the other Studio, still running
+                     "deadbeef": ["dead.stl", 4 << 20, "0123456789abcdef"]}     # a Studio that has stopped
+    s._save(st)
+    for tok, name in (("0badc0de", "live.stl"), ("deadbeef", "dead.stl")):
+        with open(os.path.join(s.files, f"{name}.part-{tok}"), "wb") as fh:
+            fh.write(b"x" * 1000)
+    other = hold(os.path.join(home, ".studios", "feedfacecafebeef.lock"))
+    try:
+        sess.cleanup(home)
+        assert list(s.state()["pending"]) == ["0badc0de"] and os.listdir(s.files) == ["live.stl.part-0badc0de"]
+    finally:
+        other.stdin.close()
+        other.wait(10)
+    sess.cleanup(home)                                                       # it stopped too: now it goes
+    assert not s.state().get("pending") and os.listdir(s.files) == []
