@@ -195,6 +195,14 @@ def test_wording_that_opens_twists_or_assembles_something_reads_as_that_job(text
     # "them" and "it" are the things, and a station, a line or a crate is no person: a pick and place
     ("pick up cans and pass them to the packing station", False, False), ("give them to the sorting line", False, False),
     ("bring it to the bin", False, False), ("pass the parts to the next station", False, False),
+    # a person's place is no person: "her" before a noun, or 's, owns the place the things go to
+    ("bring the mail to her desk", False, False), ("move the books and bring them to her room", False, False),
+    ("give the parts to my dad's workshop", False, False), ("pass the plates to my mum's kitchen table", False, False),
+    ("bring the mail to my mum’s desk", False, False), ("bring the cups to his office", False, False),
+    ("pass my dad's pills to the tray", False, False),
+    # "her" is still the receiver before a word that isn't a noun, and the direct "bring her the cup"
+    ("give it to her every morning", True, True), ("bring the tea to her, please", True, True),
+    ("hand the tools to her when she asks", True, True), ("bring her the cup", True, True),
 ])
 def test_a_hand_over_goes_to_a_person(text, hand_over, near):
     assert bool(re.search(B.HAND_TO_PERSON, text)) is hand_over
@@ -202,9 +210,13 @@ def test_a_hand_over_goes_to_a_person(text, hand_over, near):
 
 
 @pytest.mark.parametrize("text, task, estop", [("pick up cans and pass them to the packing station", "pick_place", False),
-                                               ("pick up cans and pass them to me", "hand_over", True)])
+                                               ("pick up cans and pass them to me", "hand_over", True),
+                                               ("move the books and bring them to her room", "pick_place", False),
+                                               # a desk is an office, whose robots work beside people: its own e-stop
+                                               ("bring the mail to her desk", "pick_place", True)])
 def test_passing_things_on_to_a_station_is_a_pick_and_place(text, task, estop):
-    # "pass them to the packing station" built a hand-over with an emergency stop, summarised as "hands over" cans
+    # "pass them to the packing station" built a hand-over with an emergency stop, summarised as "hands over" cans; so did
+    # "bring them to her room" (her room is no person)
     b = agents.run_turn(agents.run_turn(text=text), action="defaults")
     assert B.value(b, "task") == task and ("estop" in b.changes["electronics.extras"]) is estop
     assert ("hands over" in b.summary) is (task == "hand_over")

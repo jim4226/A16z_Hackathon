@@ -483,3 +483,5 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   or build level on the egg-picker read "Grip: grip force target 2.34 → 2.17 N" (New robot's estimate without the
   grasp simulation) and planned the electronics with it. The build keeps the 2.34 N its grasp simulation found, and
   so does the preview now; an edit to the object or the fingers still shows the new grip.
+- "Bring the mail to her desk", "bring them to her room" and "give the parts to my dad's workshop" are no longer read as
+  handing things to a person (with an emergency stop): a place that belongs to someone is a pick and place.

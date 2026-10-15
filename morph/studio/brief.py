@@ -249,11 +249,18 @@ _PERSON = (r"(?:grand(?:ma|pa|mother|father|parents?|mum|mom|dad)|granny|gran|na
            r"my (?:mum|mom|mother|dad|father|parents?|partner|wife|husband|boyfriend|girlfriend|roommate|flatmate|friend|"
            r"aunt|uncle|brother|sister|patient|client)s?)")
 # a hand-over goes to a person: "hand me", "pass my dad his pills", "give it to her", "bring the cups back to us". "them" or
-# "it" alone are the things: "pass them to the packing station" is a pick and place
-_RECEIVER = r"(?:me|him|her|us|" + _PERSON + r")\b"
-HAND_TO_PERSON = r"\b(?:hand|pass|give|bring)(?:s|es|ing)?\s+(?:" + _RECEIVER + r"|(?:[\w']+\s+){0,4}?to\s+" + _RECEIVER + r")"
-PERSON_NEAR = (r"\b" + _PERSON + r"\b|\b(?:help|assist|serve)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|" + HAND_TO_PERSON +
-               r"|\b(?:for|to)\s+(?:me|him|her)\b|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b")
+# "it" alone are the things: "pass them to the packing station" is a pick and place. A person's place is no person either:
+# "to her desk", "to my dad's workshop" ('s, or "her" before a noun: only these words may follow an object "her")
+_NOT_THEIRS = r"(?![’']s\b)"
+_HER = (r"her\b(?!\s+(?!(?:and|or|but|so|then|when|whenever|while|if|as|at|in|on|by|with|from|for|after|before|during|"
+        r"until|once|every|each|please|now|too|again|back|safely|gently|carefully|quickly|slowly|later|today|tomorrow|"
+        r"tonight|daily|directly|right|here|there|first|instead|without)\b)[a-z])")
+_RECEIVER = r"(?:me|him|her|us|" + _PERSON + r")\b" + _NOT_THEIRS              # "bring her the cup": the thing follows
+_RECEIVER_TO = r"(?:me\b|him\b|" + _HER + r"|us\b|" + _PERSON + r"\b)" + _NOT_THEIRS
+HAND_TO_PERSON = r"\b(?:hand|pass|give|bring)(?:s|es|ing)?\s+(?:" + _RECEIVER + r"|(?:[\w']+\s+){0,4}?to\s+" + _RECEIVER_TO + r")"
+PERSON_NEAR = (r"\b" + _PERSON + r"\b" + _NOT_THEIRS + r"|\b(?:help|assist|serve)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|" +
+               HAND_TO_PERSON + r"|\b(?:for|to)\s+(?:me\b|him\b|" + _HER + r")" + _NOT_THEIRS +
+               r"|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b")
 OUT_OF_SCOPE = (  # (kind, regex, plain reason); the first kind found picks the nearest robot
     ("drone", r"\b(drones?|quadcopters?|multirotors?|uavs?|fly|flies|flying)\b", "Morph doesn't design drones or anything that flies."),
     ("humanoid", r"\b(humanoids?|androids?|bipeds?|robot butler|two arms|dual[- ]arm|bimanual|multi-?finger\w*|dexterous|robotic hand|"

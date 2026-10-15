@@ -1653,3 +1653,10 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   while Keewano calibration is on) is the same for base and edit: a servo rail, an actuator family or a build level.
   The preview then shows no "Grip" row and plans the electronics with the base's target, as the build does. Any other
   gripper edit (the object, the pads, a force sensor) takes the preflight's grip; a stock jaw always does.
+- **A person's place is no person (E-N8).** `brief.HAND_TO_PERSON`'s "to <receiver>" form uses `_RECEIVER_TO`: "her"
+  counts only before the end, punctuation or a word that can follow an object pronoun (`_HER`: and, when, at, every,
+  please, ...), and no receiver counts before 's (`_NOT_THEIRS`), so "bring the mail to her desk", "bring them to her
+  room" and "give the parts to my dad's workshop" are pick and place, while "give it to her every morning" and "bring
+  the tea to her, please" stay hand-overs. The direct form ("bring her the cup", "pass my dad his pills") keeps any
+  "her" but not 's. `PERSON_NEAR` applies the same guards to its person mention and its "for/to her". The tables are in
+  `tests/test_brief_answers.py`.
