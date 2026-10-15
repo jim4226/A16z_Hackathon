@@ -71,9 +71,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   run (placed, jaws stayed shut, dragged, missed grasp, dropped, over-force, hit the room in a named phase) and reports
   the success rate with a Wilson 95 % interval, the rule that best isolates each failure group, and whether that failure
   holds at half the timestep and with softer friction ("model-sensitive: test it on the real robot"). The default
-  egg-picker succeeds in 140 of 200 runs (63-76 %); 58 of the 60 failures are the jaws staying shut at release (half the
-  runs with the egg turned 3-9 degrees end that way), and that failure changes with the solver's settings. Runs are
-  reproducible from the seed on any number of worker processes, saved as they finish and resumable (Ctrl+C keeps them):
+  egg-picker succeeds in 150 of 200 runs (68-81 %); all 50 failures are the jaws staying shut at release (44 % of the
+  runs with the egg -4.7 to 1.5 mm off its mark along its length end that way), and that failure changes with the
+  solver's settings. Runs are reproducible from the seed on any number of worker processes, saved as they finish and
+  resumable (Ctrl+C keeps them):
   `morph study egg-picker [--runs N] [--stress]`. In the Studio, the **Robustness** card under the Simulation tab's
   pick-and-place result runs a study of the revision on screen (50, 200 or 1,000 runs, or a stress test with every range
   doubled), shows its progress live, stops it on request within seconds (the finished runs stay, and it carries on

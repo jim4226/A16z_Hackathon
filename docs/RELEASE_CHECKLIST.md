@@ -24,7 +24,7 @@ line. A release ships only when every line is ticked or has a written reason in 
       claim that an order was placed.
 - [ ] `MORPH_SLOW=1 python -m pytest -q tests/test_robust.py tests/test_robust_room.py tests/test_world_scan.py
       tests/test_sim_perturb.py -k "acceptance or sweeps"` passes on the release commit: the published egg-picker study
-      (140 of 200), the same runs on 1, 2 and 4 worker processes, the carton wall's collision rate, the million-triangle
+      (150 of 200), the same runs on 1, 2 and 4 worker processes, the carton wall's collision rate, the million-triangle
       scan in under 20 s and the yaw sweeps. Put the numbers in the release notes.
 - [ ] `tests/test_sim_golden.py` ran on the tagging machine instead of skipping. Its hashes are kept per environment: on
       a new one, record them with `MORPH_GOLDEN=record` on the previous release's commit, then run the test on the

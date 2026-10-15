@@ -3,8 +3,8 @@ GOLDEN = {
  "linux-x86_64 | Intel(R) Xeon(R) Processor @ 2.80GHz | mujoco 3.15.0 | numpy 2.2.6": {
   "egg-picker": {
    "robot.xml": "dc3b2c17ba433ee9b2417bc8b17efd243153fff48b266a2a87d3674fc33eedac",
-   "run_all": "8fb3015a0dac4a91e30766ad9ad23e9de996839460d0db0d4743cce717582eb2",
-   "sim_payload_sweep.json": "8e4c98e9e91fa928ed6ae3cec701bb3688528a73f19e4225e87cc41911573126",
+   "run_all": "02b8c170eff5434c5331fd5d3e9b5f3380c319da99cff5256df14e2556d3cc73",
+   "sim_payload_sweep.json": "0ff8e5a83bda8f7353e17ae86bc590287c84e903c939b1f95455f62fdadff425",
    "sim_pick_place.json": "3b2b2f2ee7b489b18c147881d4296051026e19e152a5c3b74d28eeb63ff32b4d",
    "sim_shake.json": "7054fea55f0aebfb821e33064cf58c37f609b38bbcafc91e6e2474ab8b878240",
    "sim_workspace.json": "be1db5b0e1ab1061960931cbc200b22bc08c0f2bb7dc279fd3e77c35b10084ce",
@@ -15,8 +15,8 @@ GOLDEN = {
   },
   "egg-picker-bin-world": {
    "robot.xml": "803f2e6df89359c6b8e07b7d9b0f8b442774fed94c87333f6bcea18c025260cf",
-   "run_all": "5ed875c84f3a1cd653d9b8231b04b03c8ebe8b73dffdccbc6092a29d44346761",
-   "sim_payload_sweep.json": "b2e0462ef9a374a6826e88e7163c2fe0db8401829b79bfb52996d78a865b840b",
+   "run_all": "a361f9d60a98e490b34402fb176c0c2ca087ff8eb06cf0116be7d412ea644604",
+   "sim_payload_sweep.json": "be757e3e4abc7335a8bc370b79e226ce0c9f6ba19a1eef38b4bd52f779e505ea",
    "sim_pick_place.json": "58fa64f00ff112837fe37690cf8204f524f5bf42c238557c135c015349f65520",
    "sim_shake.json": "10b882a874ae029a2c7230c8fa2a075cdccb941b604a47ae9a4ab7a03e59dee1",
    "sim_workspace.json": "d649cee1c17d02a267ec2beba08fcf749dacb46a492145b965815be7bf2de12c",
@@ -27,8 +27,8 @@ GOLDEN = {
   },
   "egg-picker-fast": {
    "robot.xml": "c3800299768412751d296922e76ee3cee33efb626585ae7c7b200b253771c4ce",
-   "run_all": "7285638089b9dc1525ef878228c9caaee6a829a78b463219a50735bbee7e3825",
-   "sim_payload_sweep.json": "206bbd68920d37d600ef9ab40649234e452901a6a54d6776c91f18a59a8aac8f",
+   "run_all": "93243f73cc3b629867da64c1055fb2615169adae4cd629dfc4717fcb17412b56",
+   "sim_payload_sweep.json": "2d099fb55d9a00757a73486d9ffe2c65458d64a4c021c7c6fd9bceedde35b4b7",
    "sim_pick_place.json": "e0c6245ddf346ae9e7d94d79905914283a87e6c5fa29af1a851f5e4668d780e1",
    "sim_shake.json": "9a711a3743d07c78fcacf6959be8b99afef8876480971b245fe7b40669e0263c",
    "sim_workspace.json": "9bc2fa1723c4ee7ea20901eb374e753b8fd26badc36cc34d23c5d440140ea322",
@@ -38,23 +38,23 @@ GOLDEN = {
    "state after workspace": "6c504be186c13a534a20bc8f37c05aa6bf49b2a70330a0b447f510e85a35c36d"
   },
   "so101": {
-   "robot.xml": "127c87d9a8bdc9b7053f7826dc14c1652b18c90d9446587c504bfc334f26d948",
-   "run_all": "4e9f491740cad84612d794574a74b126067569cb53fd0c3d80db0ba13eea0067",
-   "sim_payload_sweep.json": "b2fb3b366e84fb71672eed981e26edd0e1b49306953518b4af93ec4a0760f111",
-   "sim_pick_place.json": "9f56de8c999eb5f34bbb9388bc91df13e2877416e60fc35b2d6a3d1f57a71700",
-   "sim_shake.json": "cadc1de2db796094e816cece26762a9e2aa3196451554959a25067d45cedd274",
-   "sim_workspace.json": "896fd63d0c2f6f8601b794c916869a7a99ed59315b8f145a5ccf1d8016fbe037",
-   "state after payload_sweep": "68fd9d9fef87fc1fae8939aaccc6a08e553c388db36a68f49bfca0e50a31ade3",
-   "state after pick_place": "823e4c738740dccead764b2bfc8bc9cf1f7d8d6bbeef572b70a986033df7f140",
-   "state after shake": "8a8f2436a2a03781a0481ec39293eef09e481eeff35588d6d0ec6ed401cbeaab",
-   "state after workspace": "68fd9d9fef87fc1fae8939aaccc6a08e553c388db36a68f49bfca0e50a31ade3"
+   "robot.xml": "a19d12f055ef89d9abd07565fdda311191009ae0caf2128806a892a449819abd",
+   "run_all": "e2e24365e21d460acc6c534be1e0981c2a74250470cce73a7ee17b2e960e70be",
+   "sim_payload_sweep.json": "6721c946c23b248dc563f5d4d1f8c38b1edc6533d77e44925d7cea1c01002c28",
+   "sim_pick_place.json": "7293a1f9dac92bb1645864b35aa88232fcfcf197e26ada5b404d13faf1ec97f4",
+   "sim_shake.json": "b76db90e0765994a978737ccc00798a2580dd70272d9d75fee6a48ee082fd077",
+   "sim_workspace.json": "72139f74107f5660b9a2205852032a832d48150fbbb33640332e01bd0aaa9165",
+   "state after payload_sweep": "cebe7485cdcad31daf8182e4e6a4eef207ac0bdf303cc7112fafefa0c2e5abdd",
+   "state after pick_place": "1daa910ede5b0a9657f3cff2120be035b52e37fd1738846fc741440392af5266",
+   "state after shake": "20303bba0472f478da7b199fecf6406f1a83d730d2b6cb3ae9bfaacd9216b91d",
+   "state after workspace": "cebe7485cdcad31daf8182e4e6a4eef207ac0bdf303cc7112fafefa0c2e5abdd"
   }
  },
  "linux-x86_64 | Intel(R) Xeon(R) Processor @ 2.80GHz | mujoco 3.15.0 | numpy 2.5.4": {
   "egg-picker": {
    "robot.xml": "dc3b2c17ba433ee9b2417bc8b17efd243153fff48b266a2a87d3674fc33eedac",
-   "run_all": "8fb3015a0dac4a91e30766ad9ad23e9de996839460d0db0d4743cce717582eb2",
-   "sim_payload_sweep.json": "8e4c98e9e91fa928ed6ae3cec701bb3688528a73f19e4225e87cc41911573126",
+   "run_all": "02b8c170eff5434c5331fd5d3e9b5f3380c319da99cff5256df14e2556d3cc73",
+   "sim_payload_sweep.json": "0ff8e5a83bda8f7353e17ae86bc590287c84e903c939b1f95455f62fdadff425",
    "sim_pick_place.json": "3b2b2f2ee7b489b18c147881d4296051026e19e152a5c3b74d28eeb63ff32b4d",
    "sim_shake.json": "7054fea55f0aebfb821e33064cf58c37f609b38bbcafc91e6e2474ab8b878240",
    "sim_workspace.json": "be1db5b0e1ab1061960931cbc200b22bc08c0f2bb7dc279fd3e77c35b10084ce",
@@ -65,8 +65,8 @@ GOLDEN = {
   },
   "egg-picker-bin-world": {
    "robot.xml": "803f2e6df89359c6b8e07b7d9b0f8b442774fed94c87333f6bcea18c025260cf",
-   "run_all": "5ed875c84f3a1cd653d9b8231b04b03c8ebe8b73dffdccbc6092a29d44346761",
-   "sim_payload_sweep.json": "b2e0462ef9a374a6826e88e7163c2fe0db8401829b79bfb52996d78a865b840b",
+   "run_all": "a361f9d60a98e490b34402fb176c0c2ca087ff8eb06cf0116be7d412ea644604",
+   "sim_payload_sweep.json": "be757e3e4abc7335a8bc370b79e226ce0c9f6ba19a1eef38b4bd52f779e505ea",
    "sim_pick_place.json": "58fa64f00ff112837fe37690cf8204f524f5bf42c238557c135c015349f65520",
    "sim_shake.json": "10b882a874ae029a2c7230c8fa2a075cdccb941b604a47ae9a4ab7a03e59dee1",
    "sim_workspace.json": "d649cee1c17d02a267ec2beba08fcf749dacb46a492145b965815be7bf2de12c",
@@ -77,8 +77,8 @@ GOLDEN = {
   },
   "egg-picker-fast": {
    "robot.xml": "c3800299768412751d296922e76ee3cee33efb626585ae7c7b200b253771c4ce",
-   "run_all": "7285638089b9dc1525ef878228c9caaee6a829a78b463219a50735bbee7e3825",
-   "sim_payload_sweep.json": "206bbd68920d37d600ef9ab40649234e452901a6a54d6776c91f18a59a8aac8f",
+   "run_all": "93243f73cc3b629867da64c1055fb2615169adae4cd629dfc4717fcb17412b56",
+   "sim_payload_sweep.json": "2d099fb55d9a00757a73486d9ffe2c65458d64a4c021c7c6fd9bceedde35b4b7",
    "sim_pick_place.json": "e0c6245ddf346ae9e7d94d79905914283a87e6c5fa29af1a851f5e4668d780e1",
    "sim_shake.json": "9a711a3743d07c78fcacf6959be8b99afef8876480971b245fe7b40669e0263c",
    "sim_workspace.json": "9bc2fa1723c4ee7ea20901eb374e753b8fd26badc36cc34d23c5d440140ea322",
@@ -88,16 +88,16 @@ GOLDEN = {
    "state after workspace": "6c504be186c13a534a20bc8f37c05aa6bf49b2a70330a0b447f510e85a35c36d"
   },
   "so101": {
-   "robot.xml": "127c87d9a8bdc9b7053f7826dc14c1652b18c90d9446587c504bfc334f26d948",
-   "run_all": "4e9f491740cad84612d794574a74b126067569cb53fd0c3d80db0ba13eea0067",
-   "sim_payload_sweep.json": "b2fb3b366e84fb71672eed981e26edd0e1b49306953518b4af93ec4a0760f111",
-   "sim_pick_place.json": "9f56de8c999eb5f34bbb9388bc91df13e2877416e60fc35b2d6a3d1f57a71700",
-   "sim_shake.json": "cadc1de2db796094e816cece26762a9e2aa3196451554959a25067d45cedd274",
-   "sim_workspace.json": "896fd63d0c2f6f8601b794c916869a7a99ed59315b8f145a5ccf1d8016fbe037",
-   "state after payload_sweep": "68fd9d9fef87fc1fae8939aaccc6a08e553c388db36a68f49bfca0e50a31ade3",
-   "state after pick_place": "823e4c738740dccead764b2bfc8bc9cf1f7d8d6bbeef572b70a986033df7f140",
-   "state after shake": "8a8f2436a2a03781a0481ec39293eef09e481eeff35588d6d0ec6ed401cbeaab",
-   "state after workspace": "68fd9d9fef87fc1fae8939aaccc6a08e553c388db36a68f49bfca0e50a31ade3"
+   "robot.xml": "a19d12f055ef89d9abd07565fdda311191009ae0caf2128806a892a449819abd",
+   "run_all": "e2e24365e21d460acc6c534be1e0981c2a74250470cce73a7ee17b2e960e70be",
+   "sim_payload_sweep.json": "6721c946c23b248dc563f5d4d1f8c38b1edc6533d77e44925d7cea1c01002c28",
+   "sim_pick_place.json": "7293a1f9dac92bb1645864b35aa88232fcfcf197e26ada5b404d13faf1ec97f4",
+   "sim_shake.json": "b76db90e0765994a978737ccc00798a2580dd70272d9d75fee6a48ee082fd077",
+   "sim_workspace.json": "72139f74107f5660b9a2205852032a832d48150fbbb33640332e01bd0aaa9165",
+   "state after payload_sweep": "cebe7485cdcad31daf8182e4e6a4eef207ac0bdf303cc7112fafefa0c2e5abdd",
+   "state after pick_place": "1daa910ede5b0a9657f3cff2120be035b52e37fd1738846fc741440392af5266",
+   "state after shake": "20303bba0472f478da7b199fecf6406f1a83d730d2b6cb3ae9bfaacd9216b91d",
+   "state after workspace": "cebe7485cdcad31daf8182e4e6a4eef207ac0bdf303cc7112fafefa0c2e5abdd"
   }
  }
 }

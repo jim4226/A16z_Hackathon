@@ -1098,7 +1098,7 @@ field failure rate (section 0, honesty).
 - **Runs.** Run `i` of a study draws its world from `SeedSequence([seed, i])` only (every entry draws, also when
   switched off, so editing one range never moves the others): outcomes do not depend on the number of workers or the
   batch size, a deeper study extends a shallower one, and the default seed (1) reproduces the published egg-picker
-  study (140 of 200 at 1 ms). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
+  study (150 of 200 at 1 ms; 140 before the simulation gripped at the gripper stage's 2.34 N). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
   more than 45 mm off: the jaws stayed shut and carried it), `drag`, `missed_grasp` (not lifted half the hover height),
   `dropped` (more than 12 mm of slip in transit), `over_force` (the product's damage check), `unreachable`,
   `world_collision` grouped as `world_collision:<phase>` (the plan's phase at the first contact); `unstable` (MuJoCo's

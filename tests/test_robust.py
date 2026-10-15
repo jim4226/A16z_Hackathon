@@ -424,8 +424,10 @@ def test_a_study_of_a_revision_that_now_holds_another_design_says_so(project, pr
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 200 runs at 1 ms plus the solver checks (minutes)")
 def test_acceptance_the_published_study(tmp_path):
-    """The egg-picker at default tolerances and 1 ms steps: 140 of 200 succeed (Wilson 63.3-75.9 %); the jam at
-    release is concentrated where the egg is turned a few degrees and the solver checks label it model-sensitive."""
+    """The egg-picker at default tolerances and 1 ms steps: 150 of 200 succeed (Wilson 68.6-80.5 %); the jam at
+    release is concentrated where the egg sits a few mm off its mark along its length (as good a separator as the egg
+    turned a few degrees) and the solver checks label it model-sensitive. At the 2.17 N grip the simulation used before
+    the grip came from the gripper stage (2.34 N), the same seed gave 140 of 200, 58 jams with the egg turned."""
     project = make_revision(tmp_path / "home", fast=False)
     events, t0 = [], time.time()
     doc = robust.run_study(project, runs=200, progress=events.append, nice=0)
@@ -433,11 +435,11 @@ def test_acceptance_the_published_study(tmp_path):
     print("\n" + robust.report(doc))
     print(json.dumps(doc["timing"], indent=1))
     assert doc["model"]["matches_revision"] is True and doc["model"]["nominal"]["success"] is True
-    assert (s["n"], s["successes"]) == (200, 140) and [round(v, 3) for v in s["wilson95"]] == [0.633, 0.759]
+    assert (s["n"], s["successes"]) == (200, 150) and [round(v, 3) for v in s["wilson95"]] == [0.686, 0.805]
     jam = s["groups"][0]
-    assert jam["id"] == "jam" and jam["count"] >= 50 and jam["model_sensitive"] is True
+    assert jam["id"] == "jam" and jam["count"] == 50 and jam["model_sensitive"] is True and len(s["groups"]) == 1
     r = jam["rule"]
-    assert r["param"] == "object_yaw_deg" and r["on"] == "deviation" and 2.0 <= r["lo"] <= 4.5 and 6.5 <= r["hi"] <= 10.0
+    assert r["param"] == "object_along_mm" and r["on"] == "value" and -6.0 <= r["lo"] <= -3.5 and 0.5 <= r["hi"] <= 2.5
     assert r["significant"] and jam["checks"]["impratio_1"]["still_fail"] <= 0.2 * jam["checks"]["impratio_1"]["runs"]
     assert doc["timing"]["first_result_s"] < 15 and time.time() - t0 < 900
 
