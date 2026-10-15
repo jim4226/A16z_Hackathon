@@ -403,6 +403,9 @@ def test_the_scan_check_warns_and_never_fails():
               "warn", "In the part of the path checked (25% of it), the arm stays more than 50 mm from the scanned surface."),
              ({"min_clearance_mm": None, "at": None, "regions": [], "stats": {"truncated": True}}, "warn",
               "There wasn't time to measure how close the arm comes to the scanned surface. Only part of the path"),
+             ({"min_clearance_mm": None, "at": None, "regions": [], "stats": {"truncated": True, "part_clear": True,
+                                                                             "poses_checked": 2, "unique_poses": 600}},
+              "warn", "In the part of the path checked (less than 1% of it), the arm stays more than 50 mm"),
              # the closest is measured, but time ran out before every other near miss was listed
              ({"min_clearance_mm": 8.0, "at": at, "regions": [region], "stats": {"unlisted_mm": 8.3}}, "warn",
               "Time ran out before every place closer than 10 mm was listed; any other is at least 8.3 mm from the arm."),
@@ -565,6 +568,26 @@ def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nom
         if st.get("lower_mm") is not None:
             assert st["lower_mm"] <= true + 0.05 and f"no closer than {st['lower_mm']:.1f} mm" in c["text"], (limit, st)
     assert seen >= {"pass 1", "whole"} and (seen >= {"pass 2", "listed in part"} if vase is TALL_VASE else True), seen
+
+
+def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):
+    """Cut short before the first pose is measured (the clock runs out while the scan is prepared), the check has
+    measured nothing: it says there wasn't time, never that the part of the path checked is clear."""
+    rob, doc = nominal
+    room = boxes_glb(tmp_path / "room.glb", [SLAB, POST])
+    nothing = 0
+    for limit in range(1, 10):                          # the first seconds of the clock go to preparing the scan
+        with monkeypatch.context() as mp:
+            mp.setattr(worlds, "time", types.SimpleNamespace(monotonic=Clock().monotonic))
+            res = worlds.scan_clearance(room, ROOM, doc, rob.xml, time_limit_s=float(limit))
+        st = res["stats"]
+        if res.get("skipped") or st.get("poses_checked") != 0:
+            continue
+        nothing += 1
+        assert st["truncated"] and not st["part_clear"] and res["min_clearance_mm"] is None, st
+        text = worlds.scan_check(res)["text"]
+        assert text.startswith("There wasn't time to measure how close the arm comes") and "more than 50" not in text
+    assert nothing, "no limit left the check without a pose measured"
 
 
 # ------------------------------------------------------------------ a room of a million triangles

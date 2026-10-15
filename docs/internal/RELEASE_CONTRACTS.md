@@ -1347,7 +1347,7 @@ field failure rate (section 0, honesty).
   measured: `min_clearance_mm` is the closest distance measured anywhere, pass 2's exact ones or pass 1's coarse robot
   samples to the scan's points (a real distance: the arm comes at least that close; `at` names that sample's link,
   time and scan point), `stats.lower_mm` a lower bound when every pose was bounded, `stats.poses_checked` of
-  `stats.unique_poses`, `stats.part_clear` when every pose looked at stays beyond 50 mm, and `stats.need_s` what the
+  `stats.unique_poses`, `stats.part_clear` when it looked at a pose and every one it looked at stays beyond 50 mm, and `stats.need_s` what the
   whole check would take at this pace. A second pass cut short after the closest point is measured (every pose and
   point left has a bound at or above it) is not truncated; `stats.unlisted_mm` then bounds the near misses not listed.
   Measured on the review's desk scan (2,872 triangles near the arm, 667 poses, the 9.0 mm vase near miss), alternating
@@ -1364,7 +1364,7 @@ field failure rate (section 0, honesty).
   against the scanned surface, which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it.
   R4, cut short: "The wrist comes within at most 4.6 mm of the scanned surface at 1.4 s" (plus "(no closer than
   3.0 mm)" with `lower_mm`), or "touches or passes through" below 0.5 mm; "In the part of the path checked (25% of
-  it), the arm stays more than 50 mm ..." only with `part_clear`, else "There wasn't time to measure how close the arm
+  it, or less than 1% of it), the arm stays more than 50 mm ..." only with `part_clear`, else "There wasn't time to measure how close the arm
   comes ..."; never "At least" or "more than 50 mm" otherwise. Then "Only part of the path was measured in the 20 s a
   check has (a large scan or a busy computer)", followed by "checking again when the computer is less busy may measure
   all of it" or, when `need_s` is more than `SCAN_RETRY_FACTOR` (2) times the limit, "at this pace, measuring all of

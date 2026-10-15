@@ -1157,10 +1157,10 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     "covers" (its box before trimming, with "clearance_mm", the distance it was fitted to), which Add box here saves
     with it. Near misses within SCAN_COVER_MM of one of the world's grey boxes, or of the place a grey box was added
     for while they are no closer than it was fitted to, are left to that box, and so are regions whose box the world
-    holds already (stats["covered"] counts those regions): they are not offered again. Once there are near misses, the measuring passes stop early enough
-    for the regions and their boxes to be done within the limit (about SCAN_FIT_S_PER_POSE a pose, at least
-    SCAN_RESERVE_MIN_S, at most SCAN_RESERVE_SHARE of it); a box not fitted in time isn't offered
-    (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps.
+    holds already (stats["covered"] counts those regions): they are not offered again. Once there are near misses,
+    the measuring passes stop early enough for the regions and their boxes to be done within the limit (about
+    SCAN_FIT_S_PER_POSE a pose, at least SCAN_RESERVE_MIN_S, at most SCAN_RESERVE_SHARE of it); a box not fitted in
+    time isn't offered (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps.
 
     Cut short (stats["truncated"]), the answer never claims more room than was measured: "min_clearance_mm" is the
     closest distance measured anywhere, the second pass's exact ones or the first pass's coarse robot samples to the
@@ -1498,7 +1498,8 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             close = {"d": float(ubk[k]), "t": poses[k][0], "g": g, "q": S[j], "p": p}
         lower = 0.0 if cut1 else min(best["d"], rest)
         stats["lower_mm"] = round(math.floor(lower * 10.0) / 10.0, 1) if lower > 0.0 else None
-        stats["part_clear"] = bool(close["d"] >= SCAN_CUT_MM and float(lb[visited].min(initial=math.inf)) >= SCAN_CUT_MM)
+        stats["part_clear"] = bool(visited.any() and close["d"] >= SCAN_CUT_MM
+                                   and float(lb[visited].min(initial=math.inf)) >= SCAN_CUT_MM)
         if cut1:                                        # at this pace: pass 1 for every pose, pass 2 not counted
             need = stats["prepare_s"] + stats["pass1_s"] * unique / max(1, int(visited.sum()))
         else:
@@ -1730,7 +1731,8 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None) -
     at least SCAN_MIN_BOX_MM thick (grown away from the arm: a scan shows only the side facing it) and down to the
     surface when it, or the scan under it, nearly reaches it (a thing standing there). Near misses next to one of the
     world's grey boxes (SCAN_COVER_MM), or to the place one was added for, are that box's (one Add box here fitted
-    only while no closer than it was fitted to): a region of nothing else is left out (counted in stats["covered"]). Each region keeps its box in surface axes ("_lo", "_hi", "_R") for _fit_boxes."""
+    only while no closer than it was fitted to): a region of nothing else is left out (counted in stats["covered"]).
+    Each region keeps its box in surface axes ("_lo", "_hi", "_R") for _fit_boxes."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     from scipy.spatial import cKDTree
@@ -1894,8 +1896,8 @@ def scan_check(scan: dict) -> dict:
     cut = bool(stats.get("truncated"))
     lower = stats.get("lower_mm")
     if cut and mc is None:                              # cut short: only what was measured, never more room than that
-        part = (f" ({100.0 * stats['poses_checked'] / stats['unique_poses']:.0f}% of it)"
-                if stats.get("unique_poses") and stats.get("poses_checked") is not None else "")
+        share = 100.0 * (stats.get("poses_checked") or 0) / max(1, stats.get("unique_poses") or 1)
+        part = (f" ({share:.0f}% of it)" if share >= 1.0 else " (less than 1% of it)") if stats.get("unique_poses") else ""
         text = (f"In the part of the path checked{part}, the arm stays more than {SCAN_CUT_MM:.0f} mm from the "
                 "scanned surface." if stats.get("part_clear") else
                 "There wasn't time to measure how close the arm comes to the scanned surface.")
