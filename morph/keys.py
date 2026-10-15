@@ -25,9 +25,7 @@ TEMPLATE = resources.path("env.example")
 
 KEYS = [
     {"name": "ANTHROPIC_API_KEY", "service": "Claude", "label": "Anthropic API key",
-     "what": "Claude reads free-form chat requests and New robot requests, analyses the frames in Show Morph the job, "
-             "gives World mode's AI review, runs Live prices (beta) in the BOM tab and drafts tools (New tool, preview). "
-             "Without it the suggestion chips, common phrasings and built-in rules still work.",
+     "what": "One key for every Claude feature in this section, billed to your Anthropic account.",
      "where": "console.anthropic.com, Settings, API Keys", "url": "https://console.anthropic.com/settings/keys"},
     {"name": "KEEWANO_API_KEY", "service": "Keewano", "label": "Project key (type SDK)",
      "what": "Sends revisions, edits and bench measurements to your Keewano project, once Send build events to Keewano is on below.",

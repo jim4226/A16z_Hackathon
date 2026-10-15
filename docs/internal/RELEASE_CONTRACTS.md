@@ -127,7 +127,7 @@ class Request:
   git_ignored}`, where `folder` is "the Morph folder" in a clone or release zip (both launchers' folder, on every
   system) and the settings folder's path for an installed wheel. The Keys dialog names it, never a launcher; its
   Claude section lists everything the Anthropic key powers (free-form chat, New robot, Show Morph the job, World's AI
-  review, Live prices, New tool).
+  review, Live prices, New tool), once: the key's own line under its field says it is one key for all of them.
 
 | Area | Routes |
 |---|---|

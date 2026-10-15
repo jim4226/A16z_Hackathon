@@ -176,9 +176,7 @@ def test_the_keys_dialog_names_every_claude_feature_and_where_keys_are_saved(tmp
     pw = pytest.importorskip("playwright.sync_api")
     from morph import resources
     chrome = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
-    claude = next(k for k in keys.KEYS if k["name"] == "ANTHROPIC_API_KEY")["what"]
     features = ("free-form chat", "New robot", "Show Morph the job", "AI review", "Live prices", "New tool")
-    assert all(f in claude for f in features), claude
     assert keys.env_file() == {"file": ".env", "folder": str(tmp_path), "git_ignored": False}     # a wheel's settings folder
     with monkeypatch.context() as m:
         m.setattr(resources, "checkout", lambda: str(tmp_path))                                  # a clone or release zip
@@ -204,7 +202,7 @@ def test_the_keys_dialog_names_every_claude_feature_and_where_keys_are_saved(tmp
                 assert f"in the .env file in {folder}" in head and "run_studio" not in head, head
                 note = pg.evaluate("[...document.querySelectorAll('#keysDlg .ksec')].find((s) => s.querySelector('.ks-h b')"
                                    "?.textContent === 'Claude').innerText")
-                assert all(f in note for f in features), note
+                assert all(note.count(f) == 1 for f in features), note        # listed once: the key's line doesn't repeat it
                 pg.close()
         finally:
             browser.close()
