@@ -186,9 +186,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   `run_studio.bat` once the Studio starts, so a `git pull` in another window can't make it misread the new file. CI
   runs both launchers, from Command Prompt and PowerShell on Windows, the upgrade and `--update` included.
 - `--remote` says how to let the link through the firewall on Windows and macOS when another computer can't open it.
-- On an Intel Mac, Windows on ARM or 32-bit Windows, the launchers say that Morph doesn't run there (MuJoCo has no
-  build for them) before they make `.venv`, instead of failing in pip and blaming the internet connection; a Mac
-  Terminal running in Intel mode (Rosetta) is told how to start Morph natively.
+- Where MuJoCo has no build, the launchers say so before they make `.venv`, instead of failing in pip and blaming the
+  internet connection. What counts is the Python's own platform, since that is what pip installs for: an Intel Mac or
+  32-bit Windows is told at once; an ARM64 or 32-bit Python on Windows, an Intel Python on an Apple silicon Mac, or a
+  Mac Terminal in Intel mode (Rosetta) is named with the fix; an x64 Python on Windows 11 on ARM goes on, in x64
+  emulation.
 - `constraints.txt` pins tested versions with wheels for Python 3.10 to 3.14 on Windows x64, macOS 12+ on Apple
   silicon and Linux x64.
 - One version number, in `morph/__init__.py`. The package metadata now has the licence, project links, supported

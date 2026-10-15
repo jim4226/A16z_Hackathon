@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -216,52 +217,145 @@ def test_the_shell_launcher_starts_the_studio_without_the_comment(tmp_path):
     assert out.stdout.splitlines()[-1] == "python -m morph.cli studio egg-picker --open --remote --port 8766", out
 
 
-def _fake_system(folder: Path, system: str, machine: str, translated: str = "0") -> dict:
-    """An environment whose uname and sysctl answer like another computer's, and whose Python commands leave a mark."""
+def _fake_mac(folder: Path, system: str, machine: str, translated: str, py_machine: str) -> dict:
+    """An environment whose uname and sysctl answer like another computer's, and whose Pythons (3.13 down to python3)
+    are Python 3.13 running as `py_machine` (what platform.machine() says: arm64 natively on Apple silicon, x86_64 for
+    an Intel build or any build in Rosetta). Each Python run is logged; `-m venv` makes a stand-in .venv."""
     folder.mkdir()
     tools = {"uname": f'case "$1" in -s) echo {system} ;; -m) echo {machine} ;; *) echo {system} ;; esac',
-             "sysctl": f"echo {translated}"}
-    tools.update({py: f'touch "{folder}/python-was-run"; exit 1' for py in
-                  ("python3.13", "python3.12", "python3.11", "python3.10", "python3.14", "python3")})
+             "sysctl": f'case "$2" in sysctl.proc_translated) echo {translated} ;; *) echo 0 ;; esac'}
+    stub = (f'echo "$*" >> "{folder}/python-runs"\n'
+            'case "$1" in\n'
+            f'  -c) case "$2" in *platform.machine*) echo {py_machine} ;; esac ;;\n'
+            '  --version) echo "Python 3.13.0" ;;\n'
+            '  -m) mkdir -p .venv/bin && : > .venv/bin/activate ;;\n'
+            'esac\n')
+    for name in ("python3.13", "python3.12", "python3.11", "python3.10", "python3.14", "python3"):
+        tools[name] = stub
     for name, body in tools.items():
-        (folder / name).write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        (folder / name).write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
         (folder / name).chmod(0o755)
     return {**os.environ, "PATH": f"{folder}{os.pathsep}{os.environ.get('PATH', '')}"}
 
 
+MACS = [  # (computer, uname -s, uname -m, sysctl.proc_translated, the Python's platform.machine(), goes on, says)
+    ("Intel Mac", "Darwin", "x86_64", "0", "x86_64", False, "Morph needs a Mac with Apple silicon (M1 or later)"),
+    ("Rosetta Terminal, universal Python", "Darwin", "x86_64", "1", "x86_64", False,
+     "This Terminal runs in Intel mode (Rosetta), so python3.13 runs as an Intel program"),
+    ("Rosetta Terminal, Apple silicon Python", "Darwin", "x86_64", "1", "arm64", True, "Creating .venv with Python 3.13.0"),
+    ("Apple silicon, Intel Python", "Darwin", "arm64", "0", "x86_64", False, "is an Intel (x86_64) Python"),
+    ("Apple silicon", "Darwin", "arm64", "0", "arm64", True, "Creating .venv with Python 3.13.0"),
+    ("Linux x86_64", "Linux", "x86_64", "", "x86_64", True, "Creating .venv with Python 3.13.0"),
+    ("Linux aarch64", "Linux", "aarch64", "", "aarch64", True, "Creating .venv with Python 3.13.0"),
+]
+
+
 @needs_bash
-@pytest.mark.parametrize("translated,says", [("0", "Morph needs a Mac with Apple silicon (M1 or later)"),
-                                             ("1", "This Terminal runs in Intel mode (Rosetta)")])
-def test_an_intel_mac_is_told_why_before_anything_is_installed(tmp_path, translated, says):
+@pytest.mark.parametrize("computer,system,machine,translated,py_machine,goes_on,says", MACS, ids=[m[0] for m in MACS])
+def test_the_python_that_installs_decides_where_morph_runs(tmp_path, computer, system, machine, translated, py_machine,
+                                                           goes_on, says):
+    """pip fetches packages for the Python's own platform, and MuJoCo has Mac builds for Apple silicon only: an Intel Mac
+    is told before any Python runs; on Apple silicon, a Python that runs as an Intel program (an Intel build, or any build
+    in a Terminal in Intel mode) is named with the fix, and one that runs natively goes on, even from that Terminal."""
+    work = tmp_path / "morph"
+    work.mkdir()
+    env = _fake_mac(tmp_path / "bin", system, machine, translated, py_machine)
+    out = subprocess.run(["bash", "-c", f'source "{REPO / "run_studio.sh"}"; make_venv; echo "rc=$?"'], cwd=work,
+                         env=env, capture_output=True, text=True, timeout=60)
+    assert says in out.stdout and out.stdout.endswith("rc=0\n" if goes_on else "rc=1\n"), out
+    assert (work / ".venv").exists() == goes_on, out
+    runs = (tmp_path / "bin" / "python-runs").read_text() if (tmp_path / "bin" / "python-runs").exists() else ""
+    if computer == "Intel Mac":
+        assert runs == "" and "Nothing was installed." in out.stdout, runs  # stopped before looking for Python
+    if not goes_on and computer != "Intel Mac":
+        assert "Nothing was installed." in out.stdout and "internet connection" not in out.stdout
+    assert ("platform.machine" in runs) == (system == "Darwin" and computer != "Intel Mac"), runs  # Linux never asks
+
+
+@needs_bash
+def test_a_rosetta_terminal_keeps_a_working_venv_and_an_intel_venv_is_made_again(tmp_path):
+    """A .venv made natively on Apple silicon, started from a Terminal in Intel mode, looks like an Intel one: it is kept
+    and the Terminal is named. One made by an Intel Python never works there, so it is made again."""
+    work = tmp_path / "morph"
+    (work / ".venv" / "bin").mkdir(parents=True)
+    (work / ".venv" / "bin" / "activate").write_text("", encoding="utf-8")
+    venv_py = work / ".venv" / "bin" / "python"
+    venv_py.write_text('#!/bin/sh\ncase "$2" in *platform.machine*) echo x86_64 ;; esac\n', encoding="utf-8")
+    venv_py.chmod(0o755)
+    script = f'source "{REPO / "run_studio.sh"}"; make_venv; echo "rc=$?"'
+    env = _fake_mac(tmp_path / "rosetta", "Darwin", "x86_64", "1", "x86_64")
+    out = subprocess.run(["bash", "-c", script], cwd=work, env=env, capture_output=True, text=True, timeout=60)
+    assert "where .venv's packages, made for Apple silicon, don't load" in out.stdout and out.stdout.endswith("rc=1\n")
+    assert venv_py.exists() and "arch -arm64 ./run_studio.sh" in out.stdout, out
+    env = _fake_mac(tmp_path / "native", "Darwin", "arm64", "0", "arm64")
+    out = subprocess.run(["bash", "-c", script], cwd=work, env=env, capture_output=True, text=True, timeout=60)
+    assert "uses an unsupported Python: making a new one" in out.stdout and out.stdout.endswith("rc=0\n"), out
+    assert not venv_py.exists() and (work / ".venv" / "bin" / "activate").exists()
+
+
+@needs_bash
+def test_an_intel_mac_is_told_why_before_anything_is_installed(tmp_path):
     """It used to make .venv, then fail in pip and blame the internet connection: MuJoCo has no Intel Mac build."""
     work = tmp_path / "morph"
     work.mkdir()
     for name in ("run_studio.sh", "requirements.txt", "constraints.txt", "pyproject.toml"):
         shutil.copy(REPO / name, work / name)
-    env = _fake_system(tmp_path / "bin", "Darwin", "x86_64", translated)
+    env = _fake_mac(tmp_path / "bin", "Darwin", "x86_64", "0", "x86_64")
     out = subprocess.run(["bash", str(work / "run_studio.sh"), "--help"], env=env, capture_output=True, text=True,
                          timeout=60)
-    assert out.returncode == 1 and says in out.stdout and "Nothing was installed." in out.stdout, out
-    assert "internet connection" not in out.stdout and not (work / ".venv").exists(), out
-    assert not (tmp_path / "bin" / "python-was-run").exists()  # stopped before looking for Python
-    for system, machine in (("Darwin", "arm64"), ("Linux", "x86_64"), ("Linux", "aarch64")):  # these go on
-        env = _fake_system(tmp_path / f"bin-{system}-{machine}", system, machine)
-        ok = subprocess.run(["bash", "-c", f'source "{REPO / "run_studio.sh"}"; platform_ok; echo "rc=$?"'], env=env,
-                            capture_output=True, text=True, timeout=60)
-        assert ok.stdout == "rc=0\n", (system, machine, ok)
+    assert out.returncode == 1 and "Morph needs a Mac with Apple silicon" in out.stdout, out
+    assert "Nothing was installed." in out.stdout and "internet connection" not in out.stdout, out
+    assert not (work / ".venv").exists() and not (tmp_path / "bin" / "python-runs").exists()
 
 
-def test_windows_on_arm_and_32_bit_windows_are_told_why_before_anything_is_installed():
+def _pycode(name: str) -> str:
+    line = next(ln for ln in _bat_lines() if ln.startswith(f'set "{name}='))
+    return line[len(f'set "{name}='):-1]
+
+
+@pytest.mark.parametrize("platform,ok,arm", [("win-amd64", True, False), ("win-arm64", False, True),
+                                              ("win32", False, False), ("mingw_x86_64_ucrt", False, False)])
+def test_the_windows_launcher_asks_the_python_for_its_platform(platform, ok, arm):
+    """What pip fetches depends on the Python's own platform (sysconfig.get_platform()): the launcher's checks, run in
+    a Python that answers like each kind, accept only win-amd64 (an x64 Python, on Windows on ARM in emulation too)."""
+    for name, want in (("PYOK", ok), ("PYARM", arm)):
+        code = f"import sysconfig; sysconfig.get_platform = lambda: {platform!r}\n" + _pycode(name)
+        rc = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=60).returncode
+        assert (rc == 0) == want, (name, platform, rc)
+
+
+def test_windows_refuses_only_where_the_python_cant_install_morph():
+    """32-bit Windows is told before anything runs. Otherwise the Python decides: an x64 one goes on (on Windows on ARM
+    too, with a note about emulation); an ARM64 one or another build is named, with the Python to install instead.
+    Nothing is made before that; the .venv check asks the same of .venv's Python."""
     lines = _bat_lines()
+    bat = "\n".join(lines)
     make = lines.index(":make_venv")
-    checks = lines[make + 1:lines.index("call :find_python", make)]
-    assert 'if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" goto unsupported' in checks
-    assert 'if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" goto unsupported' in checks  # a 32-bit cmd.exe on ARM
-    assert 'if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 goto unsupported' in checks
-    end = lines.index("goto fail", lines.index(":unsupported"))
-    text = " ".join(lines[lines.index(":unsupported"):end])
-    assert "not for Windows on ARM or 32-bit Windows. Nothing was" in text and "installed." in text
-    assert all("venv" not in ln for ln in checks)  # nothing is made before the check
+    venv = lines.index("%PY% -m venv .venv", make)
+    block = lines[make + 1:venv]
+    assert 'if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 goto unsupported' in block
+    assert block.index('if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 goto unsupported') < \
+        block.index("call :find_python")
+    assert '"ARM64" goto unsupported' not in bat                    # an x64 Python on Windows on ARM goes on
+    assert block.index("call :find_python") < block.index("if not defined PY call :find_any_python") < \
+        block.index("if not defined PY goto no_python") < block.index('%PY% -c "%PYOK%" >nul 2>&1 || goto wrong_python')
+    notes = [ln for ln in block if '"ARM64" echo This is Windows on ARM' in ln]
+    assert len(notes) == 2 and all("x64 emulation" in ln for ln in notes)
+    assert all("venv" not in ln for ln in block if not ln.startswith("echo "))   # nothing is made before the checks
+    finder = lines[lines.index(":find_python"):lines.index(":find_any_python")]
+    assert sum('-c "%PYOK%"' in ln for ln in finder) == 2 and not any("PYCHECK" in ln for ln in finder)
+    assert '.venv\\Scripts\\python.exe -c "%PYOK%" >nul 2>&1 && goto venv_ready' in bat
+
+    def said(label):
+        i = lines.index(label)
+        return " ".join(ln[5:] for ln in lines[i:lines.index("goto fail", i)] if ln.startswith("echo "))
+    arm = said(":arm_python")
+    assert "is an ARM64 build" in arm and "Windows installer (64-bit)" in arm and "x64 emulation" in arm, arm
+    assert "Nothing was installed." in arm and "Windows 11 on ARM" in arm
+    other = said(":wrong_python")
+    assert "isn't a 64-bit (x64) Python" in other and "Windows installer (64-bit)" in other, other
+    assert lines[lines.index(":wrong_python") + 1] == '%PY% -c "%PYARM%" >nul 2>&1 && goto arm_python'
+    assert "Morph needs 64-bit Windows" in said(":unsupported") and "Windows on ARM" not in said(":unsupported")
 
 
 @needs_bash

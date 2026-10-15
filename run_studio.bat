@@ -25,6 +25,10 @@ set "PIP_DISABLE_PIP_VERSION_CHECK=1"
 REM probing for Python must never start an install from the Python install manager
 set "PYTHON_MANAGER_AUTOMATIC_INSTALL=false"
 set "PYCHECK=import sys; sys.exit(not ((3, 10) <= sys.version_info[:2] <= (3, 14)))"
+REM pip fetches packages for the Python's own platform: MuJoCo, Morph's physics engine, has Windows builds for 64-bit
+REM Intel or AMD (win-amd64) only, so that is the Python Morph needs, also on Windows on ARM (which runs it in emulation)
+set "PYOK=import sys, sysconfig; sys.exit(not ((3, 10) <= sys.version_info[:2] <= (3, 14) and sysconfig.get_platform() == 'win-amd64'))"
+set "PYARM=import sys, sysconfig; sys.exit(sysconfig.get_platform() != 'win-arm64')"
 set "UPDATE="
 set "ARGS="
 set "ARG="
@@ -56,20 +60,22 @@ call :update & if not errorlevel 1 call "%%SELF%%" %ARGS% & exit /b
 
 :start
 
-if exist .venv\Scripts\activate.bat .venv\Scripts\python.exe -c "%PYCHECK%" >nul 2>&1 && goto venv_ready
+if exist .venv\Scripts\activate.bat .venv\Scripts\python.exe -c "%PYOK%" >nul 2>&1 && goto venv_ready
 if not exist .venv goto make_venv
 echo The .venv folder is incomplete or uses an unsupported Python: making a new one.
 rmdir /s /q .venv
 if exist .venv goto venv_locked
 
 :make_venv
-REM MuJoCo, Morph's physics engine, and some of its other packages have builds for 64-bit Windows on Intel or AMD
-REM processors only: say so before anything is made or downloaded
-if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" goto unsupported
-if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" goto unsupported
+REM 32-bit Windows can't run a 64-bit Python at all: say so before anything is made or downloaded. Otherwise the
+REM Python decides (PYOK): a win-amd64 one goes on, on Windows on ARM too; another one is named, with what to install
 if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 goto unsupported
 call :find_python
+if not defined PY call :find_any_python
 if not defined PY goto no_python
+%PY% -c "%PYOK%" >nul 2>&1 || goto wrong_python
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" echo This is Windows on ARM: Morph runs with an x64 Python in Windows' x64 emulation, slower than natively.
+if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" echo This is Windows on ARM: Morph runs with an x64 Python in Windows' x64 emulation, slower than natively.
 echo Creating .venv with %PY%...
 %PY% -m venv .venv
 if errorlevel 1 goto venv_failed
@@ -93,6 +99,12 @@ python -m morph.cli studio egg-picker --open %ARGS% || pause & exit /b
 
 :find_python
 set "PY="
+for %%v in (3.13 3.12 3.11 3.10 3.14) do if not defined PY py -%%v -c "%PYOK%" >nul 2>&1 && set "PY=py -%%v"
+if not defined PY python -c "%PYOK%" >nul 2>&1 && set "PY=python"
+exit /b 0
+
+REM a Python 3.10 to 3.14 of any platform: one Morph can't use is named, with what to install instead
+:find_any_python
 for %%v in (3.13 3.12 3.11 3.10 3.14) do if not defined PY py -%%v -c "%PYCHECK%" >nul 2>&1 && set "PY=py -%%v"
 if not defined PY python -c "%PYCHECK%" >nul 2>&1 && set "PY=python"
 exit /b 0
@@ -118,15 +130,30 @@ goto fail
 :install_failed
 echo.
 echo Installing the packages failed (details above). Check the internet connection, then run this again.
-echo Morph's packages have builds for Windows on Intel or AMD processors, Macs with Apple silicon and 64-bit Linux;
-echo on other computers this step fails.
+echo Morph's packages have builds for 64-bit (x64) Python on Windows, Macs with Apple silicon and 64-bit Linux;
+echo with other Pythons this step fails.
 goto fail
 
 :unsupported
 echo.
-echo Morph doesn't run on this computer yet: MuJoCo, its physics engine, and some of its other packages have builds
-echo for 64-bit Windows on Intel or AMD processors only, not for Windows on ARM or 32-bit Windows. Nothing was
-echo installed. A Mac with Apple silicon, or a Windows or Linux computer with an Intel or AMD processor, works.
+echo Morph needs 64-bit Windows: MuJoCo, its physics engine, and some of its other packages have no builds for 32-bit
+echo Windows. Nothing was installed. A Mac with Apple silicon, or a 64-bit Windows or Linux computer, works.
+goto fail
+
+:wrong_python
+%PY% -c "%PYARM%" >nul 2>&1 && goto arm_python
+echo.
+echo The Python found (%PY%) isn't a 64-bit (x64) Python, the only one MuJoCo, Morph's physics engine, has Windows
+echo builds for (it is a 32-bit or another build). Nothing was installed. Install Python 3.13 from
+echo https://www.python.org/downloads/windows/ ("Windows installer (64-bit)"), then run this again.
+goto fail
+
+:arm_python
+echo.
+echo The Python found (%PY%) is an ARM64 build. MuJoCo, Morph's physics engine, has no Windows build for ARM64
+echo Python yet. Nothing was installed. Install Python 3.13 from https://www.python.org/downloads/windows/
+echo ("Windows installer (64-bit)", the x64 one), then run this again: Windows 11 on ARM runs it, and Morph with it,
+echo in x64 emulation (slower than natively).
 goto fail
 
 :fail

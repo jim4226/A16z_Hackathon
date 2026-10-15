@@ -2,10 +2,14 @@
 
 Morph Studio runs on your own computer and opens in your browser. It works on:
 
-- **Windows 10 or 11**, 64-bit (x64).
-- **macOS 12 or newer on Apple silicon** (M1 or later). Intel Macs aren't supported: MuJoCo, the physics engine,
-  no longer publishes builds for them. Neither are Windows on ARM and 32-bit Windows; on all three the launcher says
-  so before it installs anything.
+- **Windows 10 or 11**, 64-bit, with the 64-bit (x64) Python from python.org. On Windows 11 on ARM, that x64 Python
+  runs in Windows' x64 emulation and Morph with it (slower than natively; not tested on every ARM computer). MuJoCo,
+  the physics engine, has no build for an ARM64 or 32-bit Python, or for 32-bit Windows.
+- **macOS 12 or newer on Apple silicon** (M1 or later), with a Python that runs natively (python.org's, or
+  Homebrew's in `/opt/homebrew`). Intel Macs aren't supported: MuJoCo no longer publishes builds for them, nor for a
+  Python running in Intel mode (Rosetta).
+- On a computer or Python Morph can't use, the launcher says so, and what to install instead, before it installs
+  anything.
 - **Linux x64** with glibc 2.28 or newer: Ubuntu 22.04, Debian 12, Fedora 36 and later come with a new enough
   Python; older ones work once a newer Python is installed.
 
@@ -146,10 +150,13 @@ If you installed Morph as a package with pip instead, run `pip uninstall morph` 
   `sudo apt install python3.12-venv`, then run the launcher again.
 - **Installing the packages failed:** check the internet connection (behind a proxy, set `HTTPS_PROXY`), then run
   the launcher again. To start from scratch, delete the `.venv` folder.
-- **"Morph needs a Mac with Apple silicon"** or **"Morph doesn't run on this computer yet"**: MuJoCo has no build for
-  Intel Macs, Windows on ARM or 32-bit Windows, so the launcher stops before making `.venv`. **"This Terminal runs in
-  Intel mode (Rosetta)"** on an Apple silicon Mac: start it with `arch -arm64 ./run_studio.sh`, or turn off *Open
-  using Rosetta* in Terminal's Get Info window.
+- **"Morph needs a Mac with Apple silicon"** or **"Morph needs 64-bit Windows"**: MuJoCo has no build for Intel Macs
+  or 32-bit Windows, so the launcher stops before making `.venv`. **"The Python found ... is an ARM64 build"** or
+  **"isn't a 64-bit (x64) Python"** (Windows): install Python 3.13 from python.org with its "Windows installer
+  (64-bit)" and run the launcher again; on Windows 11 on ARM it runs in x64 emulation. **"This Terminal runs in Intel
+  mode (Rosetta)"** on an Apple silicon Mac: start it with `arch -arm64 ./run_studio.sh`, or turn off *Open using
+  Rosetta* in Terminal's Get Info window. **"... is an Intel (x86_64) Python"**: install Python 3.13 from python.org,
+  which runs natively on Apple silicon.
 - **"Morph Studio is already running":** close the other terminal window, or start this one with `--port 8766`.
 - **The `--remote` link doesn't open on the other computer:** the Studio computer's firewall is the usual reason. On
   Windows, allow Python through Windows Defender Firewall for the network you are on (Windows Security, Firewall &
