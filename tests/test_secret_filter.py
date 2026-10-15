@@ -49,7 +49,13 @@ ORDINARY = ("make it thin-and-light", "use an sk-thin-and-light finger", "format
             # numbered names: a series (servo1_servo2_servo3, xl330_xl430_xm430) or a word and its number (arm2)
             "set mt_servo1_servo2_servo3_torque_limit", "ml_joint1_joint2_joint3_gains",
             "mt_left_knee_arm2_torque_limit", "ml_pose_left_arm1_offset_deg", "mt_hip2_knee_gain_value",
-            "mt_xl330_xl430_xm430_limits", "mt_m3x12_m4x12_m5x12_screws", "mt_j1_j2_j3_j4_j5_j6_limits_deg")
+            "mt_xl330_xl430_xm430_limits", "mt_m3x12_m4x12_m5x12_screws", "mt_j1_j2_j3_j4_j5_j6_limits_deg",
+            # a part mixing capitals, small letters and a number: a version (yoloV8), camelCase words and a number
+            # (jointLimit2), a model and a word (so101Arm); ml_policyV1_final_weights is as long as an invite code
+            "ml_yoloV8_grasp_detector", "ml_resnetV2_backbone_weights", "ml_gripperV2_checkpoint_final",
+            "ml_policyV1_final_weights", "mt_so101Arm_follower_calib", "mt_servoID3_offset_degrees",
+            "ml_GraspNet1B_weights_file", "mt_jointLimit2_shoulder_gain", "use sk-GraspNet1B-weights-file-v2",
+            "mt_Servo1_torque_limit_value")
 
 
 @pytest.fixture(autouse=True)
@@ -126,6 +132,39 @@ def test_an_sk_key_is_told_from_a_part_name_by_its_random_run():
                  "sk-2020-aluminium-extrusion-500mm", "sk-short1", "sk-NEMA17-stepper-42x40mm", "sk-1N4148-diodes-x100",
                  "sk-2020-2040-4040-extrusion-set", "SKU sk-M3x10-M3x12-M3x16-screws"):
         assert not security.has_key(name), name
+
+
+def test_mixed_case_names_with_a_number_pass_and_keys_in_their_shape_are_still_caught():
+    """<word>V<n> and <word><Word><n> names were refused whole (a part mixing capitals, small letters and digits read
+    as a random run); keys whose groups happen to look like that are still caught."""
+    random = __import__("random").Random(3)
+    words = ("joint servo motor link wrist elbow shoulder gripper finger camera axis layer encoder sensor torque limit "
+             "gain offset speed current force threshold weights model config calib pose home left right base arm knee "
+             "policy detector backbone").split()
+    for _ in range(1500):
+        part = random.choice(words) + (f"V{random.randint(1, 9)}" if random.random() < 0.5
+                                       else random.choice(words).capitalize() + str(random.randint(1, 9)))
+        name = random.choice(("mt_", "ml_", "mi_")) + "_".join([part] + random.sample(words, 2))
+        assert not security.looks_like_secret(name), name
+    random, b64 = __import__("random").Random(4), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    alnum = b64[:-2]
+    keys = ["sk-live-" + "-".join("".join(random.choice(alnum) for _ in range(5)) for _ in range(4)) for _ in range(3000)]
+    keys += ["sk-" + "".join(random.choice(b64) for _ in range(24)) for _ in range(3000)]
+    missed = [key for key in keys if any(c.isdigit() for c in key) and not security.has_key(key)]
+    assert len(missed) <= 2, missed  # 0 when this was written: 0 of 100,000 of each in the simulation
+    for key in ("sk-live-AbcD1-EfgH2-IjkL3-MnoP4", "sk-live-Xq3Lp9-Ab7cD2-k9QzWm", "ml_pfuek3Ly-Novmd8ibockj-umcoithJ11"):
+        assert security.has_key(key), key  # a single capital before a number is no version, a word after it no camelCase
+
+
+def test_every_code_morph_makes_reads_as_no_phrase(monkeypatch):
+    """A Teams code is drawn again in the rare case it reads as a phrase (about 1 in 28,000 invite and sign-in codes):
+    the filter judges a run of an invite code's length by how random it reads, so a name such as
+    ml_policyV1_final_weights passes, and every code Morph makes is still caught."""
+    draws = iter(["policyV1_final_weights", "Xq3_Lp9ZbN2wV7aR5kT1mC"])
+    monkeypatch.setattr(auth.secrets, "token_urlsafe", lambda n: next(draws))
+    code = auth.new_code("ml_", 16)
+    assert code == "ml_Xq3_Lp9ZbN2wV7aR5kT1mC" and security.looks_like_secret(code)
+    assert not security.looks_like_secret("ml_policyV1_final_weights")
 
 
 def test_a_saved_key_is_refused_whatever_its_shape(monkeypatch):

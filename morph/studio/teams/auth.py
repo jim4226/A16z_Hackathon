@@ -24,7 +24,7 @@ import threading
 import time
 import unicodedata
 
-from ..security import TEAM_CODE, looks_like_secret, secret_refused
+from ..security import TEAM_CODE, has_key, looks_like_secret, secret_refused
 from . import audit, disciplines
 from .store import COLORS, POLICY, TeamStore, merged_policy, new_id, parse_ts, utc
 
@@ -48,11 +48,12 @@ class AuthError(Exception):
 
 def new_code(prefix: str, nbytes: int) -> str:
     """A Teams code: `prefix` and `nbytes` random bytes in base64url (secrets.token_urlsafe), drawn again in the rare
-    case it has no capital letter (one draw in about 95,000 for 16 bytes), so the key filter always knows it
-    (security.TEAM_CODE) while snake_case names such as mt_shoulder_joint_torque_limit pass."""
+    case it has no capital letter (one draw in about 95,000 for 16 bytes) or reads as a phrase to the key filter (about
+    one in 28,000 for 16 bytes, none seen in 500,000 for 32), so the filter catches every code Morph makes
+    (security.has_key) while names such as mt_shoulder_joint_torque_limit and ml_policyV1_final_weights pass."""
     while True:
         code = prefix + secrets.token_urlsafe(nbytes)
-        if TEAM_CODE.fullmatch(code):
+        if TEAM_CODE.fullmatch(code) and has_key(code):
             return code
 
 

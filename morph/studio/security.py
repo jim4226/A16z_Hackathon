@@ -24,13 +24,14 @@ WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10
 # - any other sk- key (SubQ's) is sk- and a random run: 20 or more token characters with a digit among them, unless
 #   they read as a hyphenated phrase (_phrase), such as the part names sk-6x40-stainless-steel-screws or
 #   sk-thin-and-light; a key in groups (sk-live-4f8a-91bc-77de-12ab) almost never does, numbered names
-#   (servo1_servo2_servo3, left_knee_arm2) do;
+#   (servo1_servo2_servo3, left_knee_arm2) and versioned ones (yoloV8, jointLimit2: _versioned) do;
 # - Morph Teams' codes, which act as a member, are random base64url (secrets.token_urlsafe): invite (mi_) and sign-in
-#   link (ml_) codes 22 characters long and script tokens (mt_) 43, each with a capital letter (teams.auth.new_code
-#   redraws the one draw in about 95,000 without), so TEAM_CODE knows every one. Any other mi_/ml_/mt_ run of 20 or
-#   more characters (part of a code, a code with more text stuck to it) counts too when it has a capital or a digit
-#   and doesn't read as a phrase: mt_shoulder_joint_torque_limit, ml_resnet50_backbone_weights and
-#   mt_shoulderJointTorqueLimit are names, not codes;
+#   link (ml_) codes 22 characters long and script tokens (mt_) 43, each with a capital letter (TEAM_CODE). Every
+#   mi_/ml_/mt_ run of 20 or more characters (a code, part of one, a code with more text stuck to it) counts when it
+#   has a capital or a digit and doesn't read as a phrase, and teams.auth.new_code draws again the rare code without
+#   a capital (one draw in about 95,000) or that reads as one (about one in 28,000 invite and sign-in codes), so every
+#   code Morph makes is caught: mt_shoulder_joint_torque_limit, ml_resnet50_backbone_weights,
+#   mt_shoulderJointTorqueLimit and ml_policyV1_final_weights (as long as an invite code) are names, not codes;
 # - the value of a key saved in the Keys dialog (SAVED_KEYS), whatever its shape.
 TEAM_CODE = re.compile(r"(?:m[il]_(?=[A-Za-z0-9_-]{0,21}[A-Z])[A-Za-z0-9_-]{22}"
                        r"|mt_(?=[A-Za-z0-9_-]{0,42}[A-Z])[A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])")
@@ -44,6 +45,7 @@ _SAYABLE = re.compile(r"(?=.*[aeiouy])(?!.*[^aeiouy]{5})", re.I)               #
 _MODEL = re.compile(r"(?=[a-z0-9]*[a-z]{3})[a-z][a-z0-9]*|(?=[A-Z0-9]*[A-Z]{3})[A-Z][A-Z0-9]*")  # stm32f405, NEMA17
 _RUNS = re.compile(r"[0-9]+|[A-Za-z]+")
 _NUMBERED = re.compile(r"(?:[a-z]{3,}|[A-Z][a-z]{2,}|[A-Z]{3,})[0-9]+")  # arm2, joint3, Servo1: a word and its number
+_PIECE = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+")                     # yoloV8: yolo V 8; GraspNet1B: Grasp Net 1 B
 
 
 def _words(part: str) -> int:
@@ -53,6 +55,33 @@ def _words(part: str) -> int:
         return 1
     words = re.findall(r"[A-Z]?[a-z]+", part) if _CAMEL.fullmatch(part) else []
     return len(words) if all(_SAYABLE.match(w) for w in words) else 0
+
+
+def _versioned(part: str) -> bool:
+    """True for a part mixing capitals, small letters and one number that reads as a name: a capitalized word and its
+    number (Servo1), a word and a version (yoloV8, gripperV2), a word and capitals with a number (servoID3), camelCase
+    words and a number (jointLimit2, GraspNet1B), a model and a word (so101Arm). In pieces (_PIECE): 2 to 4, a word
+    first; one number of up to 3 digits; at most one run of capitals, next to the number: V or 2-3 capitals before it,
+    or one capital after it when two words come first; every word sayable (_SAYABLE), the first 2 letters or more (3
+    when it is all but the number), the others capitalized and 3 or more. A key's random run rarely is all that
+    (pfuek3Ly, umcoithJ11 and Xq3Lp9 are not)."""
+    if not (part.isalnum() and re.search(r"[A-Z]", part) and re.search(r"[a-z]", part) and re.search(r"[0-9]", part)):
+        return False
+    pieces = _PIECE.findall(part)
+    if "".join(pieces) != part or not 2 <= len(pieces) <= 4 or not pieces[0][-1].islower():
+        return False
+    nums = [i for i, q in enumerate(pieces) if q.isdigit()]
+    caps = [i for i, q in enumerate(pieces) if q.isupper()]
+    if len(nums) != 1 or len(pieces[nums[0]]) > 3 or len(caps) > 1:
+        return False
+    n = nums[0]
+    words = [(i, q) for i, q in enumerate(pieces) if q[-1].islower()]
+    for i in caps:
+        if not ((i == n - 1 and (pieces[i] == "V" or 2 <= len(pieces[i]) <= 3))
+                or (i == n + 1 and len(pieces[i]) == 1 and sum(1 for j, _ in words if j < n) >= 2)):
+            return False
+    first = 3 if len(pieces) == 2 else 2
+    return all(_SAYABLE.match(q) and (len(q) >= first if i == 0 else (len(q) >= 3 and q[0].isupper())) for i, q in words)
 
 
 def _series(a: str, b: str) -> bool:
@@ -72,12 +101,14 @@ def _phrase(body: str) -> bool:
     - a model or part name: one case, starting with a letter, with a run of 3 letters and at most 4 runs of letters
       and digits (stm32f405, esp32s3, resnet50, din912, NEMA17);
     - a short code: at most 7 letters and digits mixed, with no run of 3 letters (6x40, m3x12, v2, 500mm, 42x40mm,
-      1N4148), which is also what a key's random groups look like (4f8a, 91bc).
+      1N4148), which is also what a key's random groups look like (4f8a, 91bc);
+    - a versioned name (_versioned: Servo1, yoloV8, jointLimit2, servoID3, so101Arm, GraspNet1B), counted as a name.
     Three or more parts in a row that make a series (_series: servo1_servo2_servo3, xl330_xl430_xm430) count as names.
     A phrase has 3 or more words and parts, one a word of 4 letters or more, and at most one short code more than it
     has words and names. A key split into groups of one size (4f8a-91bc-77de-12ab, 1234-5678-90ab-cdef) is not a
     phrase: three parts in a row of one length (3 or more), one of them mixing letters and digits other than a
-    numbered word (_NUMBERED: arm2, joint3) or a part of a series. So left_knee_arm2 and joint1_joint2_joint3 pass.
+    numbered word (_NUMBERED: arm2, joint3), a versioned name or a part of a series. So left_knee_arm2,
+    joint1_joint2_joint3 and baseV7_camera_torque pass.
     The price, simulated on random keys: up to one in 40 keys written in groups of lower-case (or capital) letters and
     digits reads as a phrase when every group with a digit looks like a numbered word (sk-live-jeta3-poni9-zijkw-dxb52),
     and under 2 in 1,000 in groups of hex. Keys not in groups and cut Teams codes miss no more than with no numbered
@@ -88,7 +119,7 @@ def _phrase(body: str) -> bool:
         if _series(parts[i], parts[i + 1]) and _series(parts[i + 1], parts[i + 2]):
             in_series.update((i, i + 1, i + 2))
     words = names = codes = numbers = 0
-    long_word = False
+    long_word, versioned = False, set()
     for i, p in enumerate(parts):
         n = _words(p)
         if n:
@@ -102,9 +133,12 @@ def _phrase(body: str) -> bool:
                 names += 1  # xl330 in xl330_xl430_xm430, m3x12 in m3x12_m4x12_m5x12
             else:
                 codes += 1
+        elif _versioned(p):
+            names += 1  # yoloV8, jointLimit2, so101Arm
+            versioned.add(i)
         else:
             return False  # a random run
-    keyish = [i not in in_series and bool(re.search(r"[0-9]", p) and re.search(r"[A-Za-z]", p))
+    keyish = [i not in in_series and i not in versioned and bool(re.search(r"[0-9]", p) and re.search(r"[A-Za-z]", p))
               and not _NUMBERED.fullmatch(p) for i, p in enumerate(parts)]
     grouped = any(len(parts[i]) >= 3 and len({len(q) for q in parts[i:i + 3]}) == 1 and any(keyish[i:i + 3])
                   for i in range(len(parts) - 2))
@@ -119,7 +153,9 @@ def _is_key(match) -> bool:
     body = token[3:]
     if token.startswith("sk-"):
         return any(c.isdigit() for c in body) and not _phrase(body)
-    return bool(TEAM_CODE.fullmatch(token)) or (re.search(r"[A-Z0-9]", body) is not None and not _phrase(body))
+    # a run as long as a Teams code is judged as any other: auth.new_code draws again the rare code that reads as a
+    # phrase, so every code Morph makes is caught and ml_policyV1_final_weights is a name
+    return re.search(r"[A-Z0-9]", body) is not None and not _phrase(body)
 
 
 def has_key(text: str) -> bool:

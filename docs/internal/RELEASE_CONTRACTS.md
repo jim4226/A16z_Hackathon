@@ -651,16 +651,19 @@ members; a member can hold several.
   Claude (`sk-ant-`) and Keewano (`kwpat-`) keys, other `sk-` keys (20 or more token characters with a digit, unless
   they read as words and part numbers such as `sk-6x40-stainless-steel-screws`: `security._phrase`, which counts
   words, numbers, model names such as `stm32f405`, numbered names such as `arm2` or a series such as
-  `servo1_servo2_servo3` or `xl330_xl430_xm430`, and short codes such as `6x40` or `4f8a`; a key in groups of one size
-  such as `sk-live-4f8a-91bc-77de-12ab` is a key unless every group with a digit reads as a numbered word, up to one in
-  40 random keys of lower-case letters and digits in groups), the value of any key
-  saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a manifest's key
-  prefix that fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in codes. Teams
-  codes are made by `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, always with a capital
-  letter), so `security.TEAM_CODE` knows each one; any other `mi_`/`ml_`/`mt_` run of 20 or more characters counts
-  when it has a capital or a digit and doesn't read as words and part numbers (`_phrase` again), so
-  `mt_shoulder_joint_torque_limit`, `ml_resnet50_backbone_weights` or `mt_shoulderJointTorqueLimit` pass. Both rules
-  are heuristics checked against tables of keys and names (`tests/test_secret_filter.py`, KEYS and ORDINARY). The tool runner redacts and refuses with the same shapes
+  `servo1_servo2_servo3` or `xl330_xl430_xm430`, versioned names such as `Servo1`, `yoloV8`, `jointLimit2`,
+  `servoID3`, `so101Arm` or `GraspNet1B` (`security._versioned`), and short codes such as `6x40` or `4f8a`; a key in
+  groups of one size such as `sk-live-4f8a-91bc-77de-12ab` is a key unless every group with a digit reads as a
+  numbered word), the
+  value of any key saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a
+  manifest's key prefix that fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in
+  codes. Every `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital or a digit and doesn't read
+  as words and part numbers (`_phrase` again), so `mt_shoulder_joint_torque_limit`, `ml_resnet50_backbone_weights`,
+  `mt_shoulderJointTorqueLimit` or `ml_policyV1_final_weights` (as long as an invite code) pass. Teams codes are made by
+  `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, `security.TEAM_CODE`), which draws again a
+  code with no capital letter or one `security.has_key` doesn't catch (it reads as a phrase), so every code Morph
+  makes is caught. Both rules are heuristics checked against tables of keys and names (`tests/test_secret_filter.py`,
+  KEYS and ORDINARY). The tool runner redacts and refuses with the same shapes
   (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the

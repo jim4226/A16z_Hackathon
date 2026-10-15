@@ -259,8 +259,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   `ml_inference_pipeline_enabled`, `sk-6x40-stainless-steel-screws`) are no longer refused, and a key saved in the
   Keys dialog is refused whatever its shape. Chip, board and model names (`mt_stm32f405_firmware_build`,
   `ml_resnet50_backbone_weights`), numbered names (`mt_servo1_servo2_servo3_torque_limit`,
-  `mt_left_knee_arm2_torque_limit`) and camelCase names pass too, while a key written in groups
-  (`sk-live-4f8a-91bc-77de-12ab`) is refused.
+  `mt_left_knee_arm2_torque_limit`), camelCase names (`mt_shoulderJointTorqueLimit`) and versioned names
+  (`ml_yoloV8_grasp_detector`, `ml_gripperV2_checkpoint_final`, `mt_servoID3_offset_degrees`,
+  `mt_so101Arm_follower_calib`, `ml_GraspNet1B_weights_file`, `mt_Servo1_torque_limit_value`; these were refused
+  whole) pass too, and so does a name as long as a Teams invite code (`ml_policyV1_final_weights`): Morph draws a
+  code again when it would read as words, so every code it makes is still refused. A key written in groups (`sk-live-4f8a-91bc-77de-12ab`) is refused.
 - Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
   access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
   teammates behind one router don't run into it in normal use. Many addresses together can still fill the slots
