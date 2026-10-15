@@ -256,8 +256,9 @@ def tidy(home: str, say=None, *, now: float | None = None) -> dict:
         except Exception:  # noqa: BLE001  (one odd project never stops the Studio)
             traceback.print_exc()
     if out["trashed"] and say:
+        size = f"{out['bytes'] / 1e6:.0f} MB" if out["bytes"] >= 0.5e6 else "<1 MB"
         say(f"Moved {out['trashed']} build{'s' if out['trashed'] != 1 else ''} the Studio had stopped part way, "
-            f"{out['bytes'] / 1e6:.0f} MB, to {os.path.join(home, TRASH)}: empty it to free the space.")
+            f"{size}, to {os.path.join(home, TRASH)}: empty it to free the space.")
     return out
 
 

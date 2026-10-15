@@ -34,8 +34,8 @@ def path() -> str:
     return os.path.join(home(), ".settings.json")
 
 
-PROBLEM = ("Morph couldn't read its settings file ({file}: damaged, or edited by hand), so every switch below is off, "
-           "network lookups included, until you set them again.")
+PROBLEM = ("Morph couldn't {verb} its settings file ({file}: {why}), so every switch {where} is off, network lookups "
+           "included, until you set them again.")
 
 
 def _raw():
@@ -50,21 +50,33 @@ def _raw():
     return raw if isinstance(raw, dict) else False
 
 
+def _not_a_switch(raw: dict) -> str | None:
+    """The first known setting whose value isn't true or false (a hand edit such as "yes"), or None."""
+    return next((k for k in DEFAULTS if k in raw and not isinstance(raw[k], bool)), None)
+
+
 def load() -> dict:
     """The saved settings over the defaults; unknown keys in the file are ignored. A file that is there but can't be
-    read turns every switch off (fail closed: a switch someone turned off must never come back on by itself), and so
-    does a value that isn't true or false. problem() says why for the Keys dialog."""
+    read, or that holds a value that isn't true or false, turns every switch off (fail closed: a switch someone turned
+    off must never come back on by itself, and Morph can't tell what such a file meant); problem() says why."""
     raw = _raw()
     if raw is None:
         return dict(DEFAULTS)
-    if raw is False:
+    if raw is False or _not_a_switch(raw):
         return {k: False for k in DEFAULTS}
-    return {k: (raw[k] if isinstance(raw[k], bool) else False) if k in raw else v for k, v in DEFAULTS.items()}
+    return {k: raw.get(k, v) for k, v in DEFAULTS.items()}
 
 
-def problem() -> str | None:
-    """Why the switches are all off although nobody turned them off (the settings file can't be read), or None."""
-    return PROBLEM.format(file=os.path.basename(path())) if _raw() is False else None
+def problem(terminal: bool = False) -> str | None:
+    """Why the switches are all off although nobody turned them off, or None: for the Keys dialog, whose switches are
+    below the note, or for a terminal (`morph doctor`) with `terminal`."""
+    raw = _raw()
+    bad = _not_a_switch(raw) if isinstance(raw, dict) else None
+    if raw is not False and bad is None:
+        return None
+    why = (f"{bad} is {json.dumps(raw[bad])[:40]}, not true or false" if bad else "damaged, or edited by hand")
+    return PROBLEM.format(verb="use" if bad else "read", file=os.path.basename(path()), why=why,
+                          where="in the Studio's Keys, Privacy and network" if terminal else "below")
 
 
 def save(changes) -> dict:
@@ -89,7 +101,7 @@ def describe(values: dict | None = None) -> str:
     the settings file can't be read)."""
     values = values or load()
     line = ", ".join(f"{LABELS[k]} {'on' if values[k] else 'off'}" for k in DEFAULTS)
-    why = problem()
+    why = problem(terminal=True)
     return f"{line} ({why})" if why else line
 
 

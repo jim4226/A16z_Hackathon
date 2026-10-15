@@ -281,6 +281,7 @@ def test_old_set_aside_builds_go_to_the_trash_and_deleted_leftovers_go(tmp_path)
     trash = os.listdir(home / ".trash")
     assert len(trash) == 1 and trash[0].startswith("egg-r002-")
     assert out["trashed"] == 1 and "to " in said[-1] and "empty it to free the space" in said[-1]
+    assert ", <1 MB, to " in said[-1] and "0 MB" not in said[-1]          # 1 kB: never "0 MB"
 
 
 def test_a_build_error_in_the_chat_names_files_from_the_projects_folder(tmp_path):

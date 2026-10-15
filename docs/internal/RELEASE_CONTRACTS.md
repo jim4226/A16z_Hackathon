@@ -69,7 +69,9 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   `read_rows`, `Hub._load`.
 - Switches fail closed: `settings.load()` turns every switch off when `.settings.json` is there but can't be read
   (or a value isn't true or false), `settings.problem()` says why, `/api/settings` and `/api/keys` carry it as
-  `settings_problem` (the Keys dialog shows it), and `morph doctor` prints it. Saving any switch writes them all.
+  `settings_problem` (the Keys dialog shows it), and `morph doctor` prints it in its terminal wording
+  (`problem(terminal=True)`: "every switch in the Studio's Keys, Privacy and network is off"). A value that isn't true
+  or false is named ("telemetry_enabled is "yes", not true or false"). Saving any switch writes them all.
 - The hash-chained audit logs (`.team/audit.jsonl`, `.tools/audit.jsonl`) share `morph/studio/chainlog.py`. The entry
   after a cut-off line carries `cut: {bytes, sha256}` of it and chains on from the last whole entry, and an entry whose
   `audit.head` update didn't happen (a stop between the two writes) is chained on, not flagged. `verify()` answers ok
