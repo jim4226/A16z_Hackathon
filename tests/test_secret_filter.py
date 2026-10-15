@@ -20,6 +20,9 @@ TOOL_VALUE = "a1b2c3d4e5f6g7h8"  # a saved MORPH_TOOL_* key with no prefix: foun
 KEYS = {
     "claude": "sk-ant-api03-ABCDEFGH012345",
     "subq": "sk-live-9f3kd02kfiq0alz7vnm4xq",
+    # keys in groups of one size: the word in front doesn't make them a phrase
+    "subq_grouped": "sk-live-4f8a-91bc-77de-12ab", "subq_grouped_digits": "sk-test-1234-5678-90ab-cdef",
+    "subq_grouped_pairs": "sk-subq-a1b2-c3d4-e5f6-a7b8-c9d0",
     "keewano": "kwpat-ABCDEFGH0123",
     "team_script_token": "mt_" + "Q" * 43,
     "team_invite": "mi_inviteCode0123456789ab",
@@ -35,7 +38,14 @@ ORDINARY = ("make it thin-and-light", "use an sk-thin-and-light finger", "format
             "the firmware flag ml_inference_pipeline_enabled is off", "set mi_gripper_force_threshold_value lower",
             "use sk-6x40-stainless-steel-screws", "order sk-m3x12-din912-a2-70-stainless-steel bolts",
             "mount it on sk-2020-aluminium-extrusion-500mm", "SO101 kit: sk-SO101-follower-arm-kit-v2",
-            "mt_servo2_torque_limit_value and ml_model_v2_inference_enabled", "mi_wrist_roll_offset_deg = 3")
+            "mt_servo2_torque_limit_value and ml_model_v2_inference_enabled", "mi_wrist_roll_offset_deg = 3",
+            # chip, board and model names, and camelCase
+            "flash mt_stm32f405_firmware_build to the board", "mi_esp32s3_wifi_module_config",
+            "load ml_resnet50_backbone_weights", "ml_yolov8n_grasp_detector_v2", "ml_mobilenetv3_small_quantized",
+            "mt_joint_limits_so101arm", "mt_dynamixel_xl330_m288_limits", "ml_PID_gains_for_joint3_wrist",
+            "mt_shoulderJointTorqueLimit", "ml_InferencePipelineEnabled", "SKU sk-NEMA17-stepper-42x40mm",
+            "sk-M3x12-DIN912-socket-head-cap", "order sk-2024-10-15-order-12345", "part sk-608zz-bearing-pack-of-10",
+            "sk-2x-M3-nylon-standoffs-20mm-long", "sk-0402-100nF-capacitors-reel", "sk-1N4148-diodes-x100")
 
 
 @pytest.fixture(autouse=True)
@@ -95,10 +105,18 @@ def test_every_code_morph_makes_is_caught_and_snake_case_names_are_not(tmp_path)
 def test_an_sk_key_is_told_from_a_part_name_by_its_random_run():
     for key in ("sk-live-9f3kd02kfiq0alz7vnm4xq", "sk-AbCdEf0123456789ghIJkl", "sk-test0123456789abcdefghij",
                 "sk-proj-Ab3_dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z-a5B7c9D1", "sk-" + "a1b2c3d4" * 4,
-                "sk-ant-api03-abcdefghijkl", "kwpat-ABCDEFGH0123"):
+                "sk-ant-api03-abcdefghijkl", "kwpat-ABCDEFGH0123", "sk-live-4f8a-91bc-77de-12ab",
+                "sk-test-1234-5678-90ab-cdef", "sk-subq-a1b2-c3d4-e5f6-a7b8-c9d0", "sk-123e4567-e89b-12d3-a456-426614174000",
+                "sk-live-k3f9-abqx-77de-zkfp", "sk-proj-5gzHO1-GcH-mropdskmtOkmw", "sk-cO-11pR4F4s_xyt-VLCB"):
         assert security.has_key(f"key: {key}") and security.looks_like_secret(key), key
+    random = __import__("random").Random(1)
+    hexes = "0123456789abcdef"
+    for _ in range(2000):  # a key in groups of one size, with or without a word in front, is never a phrase
+        groups = "-".join("".join(random.choice(hexes) for _ in range(4)) for _ in range(5))
+        assert security.has_key(f"sk-live-{groups}") and security.has_key(f"sk-{groups}"), groups
     for name in ("sk-6x40-stainless-steel-screws", "sk-thin-and-light-but-strong", "sk-M6x40-DIN912-A2-70-stainless",
-                 "sk-2020-aluminium-extrusion-500mm", "sk-short1"):
+                 "sk-2020-aluminium-extrusion-500mm", "sk-short1", "sk-NEMA17-stepper-42x40mm", "sk-1N4148-diodes-x100",
+                 "sk-2020-2040-4040-extrusion-set"):
         assert not security.has_key(name), name
 
 

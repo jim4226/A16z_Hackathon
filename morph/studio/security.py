@@ -23,13 +23,13 @@ WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10
 # - a Claude key starts sk-ant- and a Keewano personal access token kwpat-: the prefix is enough;
 # - any other sk- key (SubQ's) is sk- and a random run: 20 or more token characters with a digit among them, unless
 #   they read as a hyphenated phrase (_phrase), such as the part names sk-6x40-stainless-steel-screws or
-#   sk-thin-and-light;
+#   sk-thin-and-light; a key in groups (sk-live-4f8a-91bc-77de-12ab) never does;
 # - Morph Teams' codes, which act as a member, are random base64url (secrets.token_urlsafe): invite (mi_) and sign-in
 #   link (ml_) codes 22 characters long and script tokens (mt_) 43, each with a capital letter (teams.auth.new_code
 #   redraws the one draw in about 95,000 without), so TEAM_CODE knows every one. Any other mi_/ml_/mt_ run of 20 or
 #   more characters (part of a code, a code with more text stuck to it) counts too when it has a capital or a digit
-#   and doesn't read as a snake_case phrase: mt_shoulder_joint_torque_limit, ml_inference_pipeline_enabled and
-#   mt_servo2_torque_limit are names, not codes;
+#   and doesn't read as a phrase: mt_shoulder_joint_torque_limit, ml_resnet50_backbone_weights and
+#   mt_shoulderJointTorqueLimit are names, not codes;
 # - the value of a key saved in the Keys dialog (SAVED_KEYS), whatever its shape.
 TEAM_CODE = re.compile(r"(?:m[il]_(?=[A-Za-z0-9_-]{0,21}[A-Z])[A-Za-z0-9_-]{22}"
                        r"|mt_(?=[A-Za-z0-9_-]{0,42}[A-Z])[A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])")
@@ -37,16 +37,55 @@ TEAM_CODE = re.compile(r"(?:m[il]_(?=[A-Za-z0-9_-]{0,21}[A-Z])[A-Za-z0-9_-]{22}"
 SECRET = re.compile(r"\b(?:sk-ant-[A-Za-z0-9_-]{8,}|kwpat-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-]))"
                     r"|(?<![A-Za-z0-9])m[til]_[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])")
 SAVED_KEYS = ("ANTHROPIC_API_KEY", "SUBQ_API_KEY", "KEEWANO_API_KEY", "KEEWANO_PAT")  # keys.KEYS but the project id
-_WORD = re.compile(r"[a-z]+|[A-Z][a-z]*|[A-Z]+")
+_WORD = re.compile(r"[a-z]+|[A-Z][a-z]*|[A-Z]+")                                  # egg, Steel, DIN
+_CAMEL = re.compile(r"(?:[a-z]{2,}|[A-Z][a-z]{2,})(?:[A-Z][a-z]{2,})+")         # shoulderJointTorqueLimit
+_SAYABLE = re.compile(r"(?=.*[aeiouy])(?!.*[^aeiouy]{5})", re.I)               # a vowel, no 5 other letters in a row
+_MODEL = re.compile(r"(?=[a-z0-9]*[a-z]{3})[a-z][a-z0-9]*|(?=[A-Z0-9]*[A-Z]{3})[A-Z][A-Z0-9]*")  # stm32f405, NEMA17
+_RUNS = re.compile(r"[0-9]+|[A-Za-z]+")
+
+
+def _words(part: str) -> int:
+    """How many words `part` is: 1 for egg, Steel or DIN, one per word for camelCase words (shoulderJointTorqueLimit),
+    0 for anything else (a random run's xkolpvMlx is not camelCase words: they need a vowel each)."""
+    if _WORD.fullmatch(part):
+        return 1
+    words = re.findall(r"[A-Z]?[a-z]+", part) if _CAMEL.fullmatch(part) else []
+    return len(words) if all(_SAYABLE.match(w) for w in words) else 0
 
 
 def _phrase(body: str) -> bool:
-    """Three or more parts joined by - or _, each a word (lower case, Capitalised or CAPITALS) or at most 6 characters
-    (6x40, m3x12, din912, v2), and one a word of 4 letters or more: words and part numbers, not a key's random run.
-    A random 22-character code reads as one about once in 3,800 draws (TEAM_CODE catches it anyway)."""
+    """True when the run after a key's prefix reads as words and part numbers, not a key's random run. Split on - and _,
+    every part must be one of:
+    - a word: egg, Steel, DIN, or camelCase words (shoulderJointTorqueLimit counts as 4);
+    - a number: 2020;
+    - a model or part name: one case, starting with a letter, with a run of 3 letters and at most 4 runs of letters
+      and digits (stm32f405, esp32s3, resnet50, din912, NEMA17);
+    - a short code: at most 7 letters and digits mixed, with no run of 3 letters (6x40, m3x12, v2, 500mm, 42x40mm,
+      1N4148), which is also what a key's random groups look like (4f8a, 91bc).
+    A phrase has 3 or more words and parts, one a word of 4 letters or more, and at most one short code more than it
+    has words and names. A key split into groups of one size (4f8a-91bc-77de-12ab, 1234-5678-90ab-cdef) is never a
+    phrase: three parts in a row of one length (3 or more), one of them mixing letters and digits.
+    Simulated on random keys and cut Teams codes, this misses fewer than the rule before it, and no grouped key."""
     parts = [p for p in re.split(r"[-_]+", body) if p]
-    return (len(parts) >= 3 and all(len(p) <= 6 or _WORD.fullmatch(p) for p in parts)
-            and any(len(p) >= 4 and _WORD.fullmatch(p) for p in parts))
+    words = names = codes = numbers = 0
+    long_word = False
+    for p in parts:
+        n = _words(p)
+        if n:
+            words, long_word = words + n, long_word or len(p) >= 4
+        elif p.isdigit():
+            numbers += 1
+        elif _MODEL.fullmatch(p) and len(_RUNS.findall(p)) <= 4:
+            names += 1
+        elif len(p) <= 7 and p.isalnum() and not re.search(r"[A-Za-z]{3}", p):
+            codes += 1
+        else:
+            return False  # a random run
+    mixed = [bool(re.search(r"[0-9]", p) and re.search(r"[A-Za-z]", p)) for p in parts]
+    grouped = any(len(parts[i]) >= 3 and len({len(q) for q in parts[i:i + 3]}) == 1 and any(mixed[i:i + 3])
+                  for i in range(len(parts) - 2))
+    return (words + names + codes + numbers >= 3 and long_word and codes <= words + names + 1
+            and not grouped)
 
 
 def _is_key(match) -> bool:

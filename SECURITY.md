@@ -38,7 +38,9 @@ Morph Studio is a local app: a small web server on your computer, used from your
   browser or prints it. Text you type anywhere else (chat, New robot, Show Morph the job, Teams comments and names)
   that looks like an API key or a Morph access code, or holds a key you saved, is refused before it is saved, shown or
   sent. Keys and codes are random, so names that only share their prefix (`mt_shoulder_joint_torque_limit`,
-  `sk-6x40-stainless-steel-screws`) pass.
+  `ml_resnet50_backbone_weights`, `sk-6x40-stainless-steel-screws`) usually pass. The filter goes by how random the
+  text looks: a name that looks random enough is refused too (rephrase it), and a key that happens to read like words
+  and part numbers can get through, so don't rely on it to catch every key.
 - Every optional service (Claude, Keewano, Darwin, SubQ) can be switched off; [docs/PRIVACY.md](docs/PRIVACY.md)
   lists what each one receives.
 - Imports treat every file and link as hostile: archive limits (entries, sizes, compression ratio, no links or nested
