@@ -441,7 +441,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   simulation's jaws and the standalone gripper's servo choice now use the honest figure.
 - Force-sensing grippers grip an object narrower than their calibration gauge: the close looked for a reading only
   1 mm past the gauge and released an egg 2 mm narrower ("no force reading"); it now closes as far as the max-squeeze
-  stop under the torque limit's cap (a hobby PWM gripper, which has none, only as far as its force limit allows; see
+  stop under the torque limit's cap (a hobby PWM gripper, which has none, only as far as its probe, GRIP_PROBE; see
   below). Grippers without force sensors closed to the gauge position, where a torque limit has nothing to push against;
   G now closes past the object, so the torque limit really sets the squeeze, as the manual and the plan say.
 - Stock jaws (the SO-101): the torque limit was set for the grip 70 mm from the jaw's pivot, but the egg sits 62 mm
