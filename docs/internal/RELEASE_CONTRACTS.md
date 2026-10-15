@@ -1237,7 +1237,11 @@ field failure rate (section 0, honesty).
   (closer than `near_mm`) grouped by 30 mm, each `{id: "scan-k", label: "Scan near miss k", min_clearance_mm, t, link,
   point, points, box {center, half, yaw_deg}}`: the scanned surface within 30 mm of them in the world frame along the
   mount surface's axes, at least 20 mm thick (grown away from the arm), down to the surface when it or the scan under
-  it nearly reaches it. Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm
+  it nearly reaches it (W3: then trimmed on the sides facing the swept path until no robot point at any pose comes
+  closer to it than the region's `min_clearance_mm`, `box_clearance_mm` and `trimmed` saying so; `box: None` with
+  `no_box` when that would leave it thinner than 5 mm; near misses within `SCAN_COVER_MM` = 10 mm of one of the world's
+  grey boxes are that box's, and a region of nothing else is left out, `stats.covered` counting them). Measured: within
+  0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm
   over whole runs); a generated room of 998,664 triangles in 6.5-8.3 s at load 3-6 and 10.6 s at load 7-11
   (`MORPH_SLOW=1`).
   `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer
@@ -1249,7 +1253,8 @@ field failure rate (section 0, honesty).
   file size and mtime), the last eight; it sends `world {stage: "scan", status: "start" | "done", text}` and an `agent`
   event (`feasibility`, `code`).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
-  the box size) and **Add box here**: the box joins the world's grey boxes as `{id: region id (made unique), label,
+  the box size, its distance from the path and whether it was trimmed, or why there is no box) and **Add box here**
+  (only with a box): the box joins the world's grey boxes as `{id: region id (made unique), label,
   center, half, yaw_deg, source: "auto"}`; *Save and simulate* then plans around it, and the next check measures the new
   path. Browser test: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan`.
 - **Under attack (B2-S4).** An adversarial review of the track; what other code relies on since:

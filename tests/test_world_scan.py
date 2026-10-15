@@ -187,6 +187,40 @@ def test_add_box_here_turns_a_near_miss_into_a_box_the_simulation_keeps_clear_of
     assert worlds.scan_check(res2)["status"] == "pass"
 
 
+def vase_mesh(c, r=22.0, h=70.0):
+    v = trimesh.creation.cylinder(radius=r, height=h, sections=48)
+    v.apply_translation([c[0], c[1], h / 2.0])
+    return v
+
+
+def test_add_box_here_never_comes_closer_to_the_path_than_the_scan_and_is_not_offered_again(tmp_path):
+    """A round thing in the scan (a 44 mm vase) beside the carry path: a box drawn round it sticks out at its corners,
+    towards the arm (the review's 9.0 mm near miss became 1.3 mm to the box). The box offered is trimmed on the sides
+    facing the path until it is no closer to that path than the scan; once it is in the world, the same near miss is
+    the box's and isn't offered again."""
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(POST["center"][:2])])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    rob, doc, met = simulated()
+    res = measure(room, ROOM, doc, rob.xml)
+    assert res["min_clearance_mm"] < worlds.SCAN_NEAR_MM and len(res["regions"]) == 1, res
+    g = res["regions"][0]
+    obstacle = {"id": g["id"], "label": g["label"], **g["box"], "source": "auto"}
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb", "obstacles": [obstacle]})
+    rob_b, doc_b, met_b = simulated(tuple(worlds.sim_world(w)["obstacles"]))
+    same_path = float(np.nanmin(mujoco_clearance(rob_b, doc)))             # MuJoCo: the box against the scanned path
+    assert same_path >= g["min_clearance_mm"] - 1.0, (same_path, g)        # (MuJoCo's hulls and our samples: about 1 mm)
+    assert g["trimmed"] and g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1, g
+    lo, hi = np.subtract(g["box"]["center"], g["box"]["half"]), np.add(g["box"]["center"], g["box"]["half"])
+    assert abs(lo[2]) < 0.2 and hi[2] >= 60.0 and np.all(hi[:2] - lo[:2] >= 20.0), g["box"]       # still most of the vase
+    assert met_b["success"] and not met_b["world_contacts"]
+    assert met_b["min_clearance_mm"] >= g["min_clearance_mm"] - 1.0, met_b["min_clearance_mm"]     # simulated with it
+    # the same path, now with the box in the world: the near miss is still measured, but it is the box's
+    res2 = measure(room, {**ROOM, "obstacles": [obstacle]}, doc, rob.xml)
+    assert res2["min_clearance_mm"] == res["min_clearance_mm"] and not res2["regions"] and res2["stats"]["covered"] == 1
+    c = worlds.scan_check(res2)
+    assert c["status"] == "warn" and "Add box here" not in c["text"] and "next to a grey box already" in c["text"], c
+
+
 def test_the_scan_check_warns_and_never_fails():
     at = {"t": 4.25, "link": "jaw_left", "point": [1.0, 2.0, 3.0]}
     region = {"id": "scan-1", "label": "Scan near miss 1", "min_clearance_mm": 4.2, "box": {}}

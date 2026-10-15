@@ -97,7 +97,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path
   against the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can
   be noisy or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot
-  becomes a grey box, and the next simulation plans around it. A generated room of a million triangles is checked in 7
+  becomes a grey box, trimmed so it is no closer to the path than the scan, and the next simulation plans around it; a
+  place next to a grey box already isn't offered again. A generated room of a million triangles is checked in 7
   to 12 seconds.
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm

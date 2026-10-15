@@ -1683,7 +1683,7 @@ export class WorldPanel {
    * simulation keeps the arm clear of once the world is saved and simulated again. */
   addScanBox(i) {
     const g = (this.state.result?.checks || []).find((c) => c.id === 'scan')?.regions?.[i], wv = this.wv;
-    if (!g || g.added || this.state.busy || !wv.world) return;
+    if (!g?.box || g.added || this.state.busy || !wv.world) return;
     const obs = wv.world.obstacles || (wv.world.obstacles = []);
     if (obs.length >= 200) return this.toast('This world already has 200 grey boxes, the most it can hold');
     const ids = new Set(obs.map((o) => o.id));
@@ -1869,7 +1869,7 @@ export class WorldPanel {
         ${rv.skipped ? `<div class="wv-note warn">${esc(rv.skipped)}</div>` : ''}${rv.note ? `<div class="wv-note warn">${esc(rv.note)}</div>` : ''}${rv.error ? `<div class="wv-note warn">${esc(rv.error)}</div>` : ''}
         ${r.asked?.subq && !r.subq ? '<div class="wv-note warn">SubQ didn\'t answer (no SubQ key, it is paused, or it declined the pictures): only the checks above.</div>' : ''}
         <div style="margin-top:6px">${(r.checks || []).map((c) => `<div class="wv-check"><span class="st ${esc(c.status)}">${esc(c.status)}</span><span>${esc(c.text)}</span></div>`
-          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${(+g.min_clearance_mm).toFixed(1)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm</span>${B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: 'A grey box over this part of the scan: the simulation keeps the arm clear of it' })}</div>`).join('') : '')).join('')}</div>
+          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${(+g.min_clearance_mm).toFixed(1)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; ${g.box ? `box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm${g.box_clearance_mm != null ? `, ${(+g.box_clearance_mm).toFixed(1)} mm from the path` : ''}${g.trimmed ? ' (trimmed to keep clear of it)' : ''}` : esc(g.no_box || 'no box')}</span>${g.box ? B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: 'A grey box over this part of the scan, no closer to the path than the scan: the simulation keeps the arm clear of it' }) : ''}</div>`).join('') : '')).join('')}</div>
         ${rv.summary && rv.source === 'claude' ? `<div class="wv-note">${esc(SRC.claude)}: ${esc(rv.summary)}</div>` : ''}
         ${(rv.findings || []).length ? `<div style="margin-top:7px">${rv.findings.map((f) => `<div class="wv-find ${esc(f.severity)}"><span class="src">${esc(SRC[f.source] || f.source)} · ${esc(f.category)} · ${esc(VIEW_TITLE[f.viewpoint] || f.viewpoint)}</span>
           <div>${esc(f.evidence)}</div><div class="wv-note" style="margin-top:2px">${esc(f.recommendation)}</div></div>`).join('')}</div>` : ''}

@@ -57,10 +57,14 @@ scanned surface, which can be noisy or have holes. A warning, not a verdict." It
 time, and says *touches or passes through* below 0.5 mm.
 
 Each place where the arm comes within 10 mm of the scan is listed with **Add box here**: a grey box over that part of
-the scan (standing on the surface when the scan under it does), added to the room. *Save and simulate* then plans
-around it, and the next check measures the new path. The check takes up to 20 seconds on a large scan (7.5 seconds for
-a generated room of a million triangles on an idle 4-core computer, 11.5 on a busy one); its answer is kept until the
-room, the scan or the revision's simulation changes.
+the scan (standing on the surface when the scan under it does), added to the room. A box around a round thing sticks
+out at its corners, so the box is measured against the same path first and trimmed on the sides that face it until it
+is no closer to the path than the scan there (the row says how close it is, and "trimmed" when it was): adding it never
+makes the clearance worse. When a box that keeps clear would be thinner than 5 mm, none is offered: move the robot or
+the thing. *Save and simulate* then plans around it, and the next check measures the new path; a near miss within 10 mm
+of a grey box is that box's, so the same place is not offered again (the check says it is next to a grey box). The
+check takes up to 20 seconds on a large scan (7.5 seconds for a generated room of a million triangles on an idle 4-core
+computer, 11.5 on a busy one); its answer is kept until the room, the scan or the revision's simulation changes.
 
 - Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
   goes counts as a near miss.
