@@ -18,6 +18,8 @@ import hashlib
 import json
 import os
 
+from ..services import durable
+
 ZERO = "0" * 64
 CUT_NOTE = "cut off by a crash or a full disk while it was written; the event it held is lost"
 
@@ -77,8 +79,13 @@ def append(path: str, head_path: str, entry: dict, *, read_json, write_json, fin
     if finish is not None:
         text = finish(text)
     line = text.encode("utf-8")
+    new = not os.path.exists(path)
     with open(path, "ab") as fh:
         fh.write((b"\n" if ended else b"") + line + b"\n")  # one write: the cut-off line ends, then this entry
+        fh.flush()
+        os.fsync(fh.fileno())  # on the disk before the head names it: a power cut never leaves a head ahead of the log
+    if new:
+        durable.fsync_dir(os.path.dirname(os.path.abspath(path)))
     write_json(head_path, {"lines": n, "last": _sha(line), "ts": entry.get("ts")})
     return line
 

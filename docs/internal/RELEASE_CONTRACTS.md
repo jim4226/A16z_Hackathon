@@ -72,7 +72,9 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   `settings_problem` (the Keys dialog shows it), and `morph doctor` prints it in its terminal wording
   (`problem(terminal=True)`: "every switch in the Studio's Keys, Privacy and network is off"). A value that isn't true
   or false is named ("telemetry_enabled is "yes", not true or false"). Saving any switch writes them all.
-- The hash-chained audit logs (`.team/audit.jsonl`, `.tools/audit.jsonl`) share `morph/studio/chainlog.py`. The entry
+- The hash-chained audit logs (`.team/audit.jsonl`, `.tools/audit.jsonl`) share `morph/studio/chainlog.py`. Each entry
+  is flushed and fsynced (and a new log's folder synced) before `audit.head` is written, so a power cut never leaves a
+  head that names an entry the log lost. The entry
   after a cut-off line carries `cut: {bytes, sha256}` of it and chains on from the last whole entry, and an entry whose
   `audit.head` update didn't happen (a stop between the two writes) is chained on, not flagged. `verify()` answers ok
   with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line

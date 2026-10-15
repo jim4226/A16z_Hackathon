@@ -181,3 +181,31 @@ def test_the_tools_audit_log_handles_a_torn_line_the_same_way(tmp_path):
     assert not any(e.get("tamper") for e in tool_audit.entries(home))
     with open(tool_audit.path(home), encoding="utf-8") as fh:
         assert json.loads(fh.read().splitlines()[-1])["event"] == "run_done"
+
+
+def test_each_audit_entry_reaches_the_disk_before_audit_head_names_it(tmp_path, monkeypatch):
+    """audit.head is synced to the disk; the entry it names must be there first, or a power cut leaves a head ahead of
+    the log and `morph team audit --verify` calls it tampering ("the log ends early")."""
+    home = str(tmp_path / "projects")
+    _teams(home)
+    logs = {os.path.join(home, ".team", "audit.head"): os.path.join(home, ".team", "audit.jsonl"),
+            os.path.join(tmp_path, "tools", ".tools", "audit.head"): tool_audit.path(str(tmp_path / "tools"))}
+    synced, checked = set(), []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def fsync(fd):
+        st = os.fstat(fd)
+        synced.add((st.st_ino, st.st_size))
+        return real_fsync(fd)
+
+    def replace(src, dst, *a, **k):
+        if os.path.abspath(dst) in logs:
+            st = os.stat(logs[os.path.abspath(dst)])
+            checked.append((st.st_ino, st.st_size) in synced)  # the log as it is now was synced
+        return real_replace(src, dst, *a, **k)
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "replace", replace)
+    team_audit.append("sign_in", by="me90a1db897", home=home, via="link")
+    tool_audit.append("tool_call", home=str(tmp_path / "tools"), tool="t", ok=True)
+    tool_audit.append("run_done", home=str(tmp_path / "tools"), run="run_1")
+    assert checked == [True, True, True]
