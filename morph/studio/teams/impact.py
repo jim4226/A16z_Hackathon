@@ -11,10 +11,12 @@ or written. Every number that doesn't come from a finished build is labelled an 
 from __future__ import annotations
 
 import collections
+import fnmatch
 import os
 import threading
 import time
 
+from ...robot.pipeline2 import GRAPH, gripper_inputs
 from ...spec import Design, diff
 from .disciplines import affected_stages
 from .store import read_json
@@ -201,10 +203,14 @@ def _impact(root: str, base_rev: str | None, changes: dict, stages) -> dict:
     sz0, ep0 = b["sizing"], b["eplan"]
     sz1 = _size(new) if "sizing" in st else sz0
     chk0, chk1 = (_checks(base), _checks(new)) if st & {"sizing", "gripper", "electronics"} else ({}, {})
-    grip1 = chk1.get("grip_target_n") if "gripper" in st else b["grip_n"]
+    # the grip changes when a key the gripper stage reads does, or the part of sizing it reads (the build's early cutoff,
+    # pipeline2.PARTIAL): a longer reach or a wrist camera re-sizes the arm and keeps the grip the base built
+    grip_dirty = "gripper" in st and (any(fnmatch.fnmatch(k, p) for k in keys for p in GRAPH["gripper"][0])
+                                      or gripper_inputs(new, sz1) != gripper_inputs(base, sz0))
+    grip1 = chk1.get("grip_target_n") if grip_dirty else b["grip_n"]
     if "electronics" in st:
         from ...robot import electronics2
-        ep1 = electronics2.plan(new, sz1, grip=chk1.get("grip") if "gripper" in st else b.get("grip"))
+        ep1 = electronics2.plan(new, sz1, grip=chk1.get("grip") if grip_dirty else b.get("grip"))
     else:
         ep1 = ep0
 
@@ -294,7 +300,7 @@ def _impact(root: str, base_rev: str | None, changes: dict, stages) -> dict:
             geo.append("the robot CAD and its printed parts are rebuilt" if "cad" in st else "the same geometry")
         _row(rows, "geometry", "Geometry", "; ".join(geo))
 
-    if "gripper" in st:
+    if grip_dirty:
         g0 = b["grip_n"]
         if isinstance(g0, (int, float)) and isinstance(grip1, (int, float)) and abs(g0 - grip1) >= 0.05:
             _row(rows, "grip", "Grip", f"grip force target {g0:g} → {grip1:g} N")

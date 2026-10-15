@@ -158,6 +158,21 @@ def test_mold_tooling_is_priced_apart_from_the_cost_per_robot(tmp_path):
     assert "$4,771 → about $" in same and same.endswith("; plus the $72,971 of mold tooling, paid once")
 
 
+def test_a_resize_that_keeps_the_grip_shows_no_grip_change(tmp_path):
+    # the gripper stage reads sizing's servo rail, so it is downstream of sizing: a reach or wrist-camera edit marked it
+    # affected, and the preview compared the built grip (from the grasp simulation) with New robot's closed form
+    root = str(tmp_path / "egg-picker")
+    _, res = real_base(root)
+    res["gripper"]["force"]["target_force_n"] = 2.34          # the egg-picker's grasp simulation gives 2.34 N
+    with open(os.path.join(root, "r001", "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    for change in ({"arm.reach_mm": 380.0}, {"electronics.extras": "wrist_camera"}):
+        out = impact.impact(root, "r001", change)
+        assert "grip" not in rows(out) and not out.get("error"), (change, rows(out).get("grip"))
+    heavier = rows(impact.impact(root, "r001", {"object.mass_g": 300.0}))
+    assert heavier["grip"]["text"].startswith("grip force target 2.34 → ")
+
+
 def test_teams_says_how_much_of_a_built_unit_cost_is_tooling(tmp_path):
     root = str(tmp_path / "egg-picker")
     real_base(root)

@@ -1551,7 +1551,9 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   `RobotProject.run` reuses a stage that is dirty only because an upstream reran, when that part is unchanged, no key
   of its own changed and the parent's own result for it is usable (an early cutoff; a failed one is computed again), so a wrist camera or a longer reach re-sizes the arm without rerunning the
   grasp simulation (`provenance` "reused from rNNN"). `dirty_nodes` and Teams' `affected_stages` stay static: they
-  list the gripper stage for every sizing edit. New robot's preflight passes the same rail stall.
+  list the gripper stage for every sizing edit. Teams' change-request preview applies the same cutoff to its grip: it
+  re-plans the grip, and shows a "Grip" row, only when a gripper key or `gripper_inputs` changes. New robot's
+  preflight passes the same rail stall.
 - **The arm is laid out the same before and after the electronics plan.** `arm.BAY_CLEAR_MM` (22 mm) is the electronics
   bay's clear height under the deck, fixed: the layout no longer takes it from the plan's boards (sizing laid the arm out
   without them, the build with them, and with a short turret the deck sets the shoulder's height). A board taller than
