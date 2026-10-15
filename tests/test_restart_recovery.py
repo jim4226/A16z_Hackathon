@@ -401,6 +401,33 @@ def test_a_change_request_applied_but_never_built_is_open_again(home, tmp_path, 
     collab.apply_proposal(root, p["id"], ids["Ana"], members=members(home))   # and it can be applied again
 
 
+def test_a_change_request_another_running_studio_builds_is_left_alone(home, tmp_path, builds):
+    """Two team Studios on one projects folder: a change request applied in the other one, which still runs (its lock
+    is held), is that Studio's to build; a second Studio starting must neither reopen it nor tell its people it wasn't
+    built. Once that Studio has stopped, the next start reopens what it left unbuilt. A build that ends after a reopen
+    it shouldn't have had (a file system without locks) still records its revision."""
+    from test_team_util import make_team, members
+    ids, _ = make_team(str(home))
+    root = str(home / "egg")
+    p = collab.create_proposal(root, ids["Vic"], "Quantity to 77", {"build.quantity": 77}, members=members(home))
+    collab.apply_proposal(root, p["id"], ids["Ana"], members=members(home), studio="feedfacecafebeef")
+    other = hold(home / ".studios" / "feedfacecafebeef.lock")
+    try:
+        assert api_team.reopen_stopped(server.Studio(RobotProject(root), str(home), team=True)) == []
+        assert collab.get_proposal(root, p["id"])["status"] == "applied"
+        assert not any("wasn't built" in i["text"] for who in ("Ana", "Vic")
+                       for i in activity.inbox(str(home), ids[who])["items"])
+    finally:
+        other.stdin.close()
+        other.wait(10)
+    server.Studio(RobotProject(root), str(home), team=True)                 # that Studio stopped before building it
+    q = collab.get_proposal(root, p["id"])
+    assert q["status"] == "open" and q["last_error"] == api_team.STOPPED
+    collab.proposal_done(root, p["id"], rev="r002")                          # ... yet it was building it after all
+    q = collab.get_proposal(root, p["id"])
+    assert q["status"] == "applied" and q["applied_rev"] == "r002" and q["last_error"] is None
+
+
 # ------------------------------------------------------------------ robustness studies
 
 

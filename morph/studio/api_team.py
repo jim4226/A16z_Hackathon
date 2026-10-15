@@ -28,6 +28,7 @@ from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 from ..services import durable
+from . import rooms
 from .rooms import STARTED
 from .teams import activity, audit, auth, collab, roles
 from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing, watching
@@ -671,7 +672,8 @@ def _decorate_proposal(root: str, p: dict, members: dict, policy: dict, reviews=
     if rv is not None and member:
         rv = {**rv, "mine": collab.decision_scope(root, rv, members.get(member.get("id")) or member, members, policy)}
     conflicts = collab.head_conflicts(root, p) if p.get("status") == "open" else []
-    return {**p, "author": _author(members, p.get("by")), "routing": r, "review": rv, "conflicts": conflicts,
+    return {**{k: v for k, v in p.items() if k != "applied_in"}, "author": _author(members, p.get("by")), "routing": r,
+            "review": rv, "conflicts": conflicts,
             "shown": collab.shown_changes(p.get("diff")), "built": collab.built_summary(root, p)}
 
 
@@ -750,7 +752,7 @@ def _enqueue(req, job: dict) -> bool:
 @_safe
 def proposals_apply(req):
     m, b, root, members = _me(req), _body(req), _root(req), _members(req)
-    job = collab.apply_proposal(root, str(b.get("id") or ""), m["id"], members=members)
+    job = collab.apply_proposal(root, str(b.get("id") or ""), m["id"], members=members, studio=rooms.OWNER)
     try:
         queued = _enqueue(req, job)
     except Exception as exc:  # noqa: BLE001  (a full queue, a stopped room: reopen the request and say why)
@@ -785,8 +787,10 @@ STOPPED = "the Studio stopped before it finished. Apply it again"
 
 def reopen_stopped(studio) -> list:
     """When a team Studio starts: a change request that was applied but has no revision was being built (or waited to
-    be) when the Studio stopped, so nothing will finish it; it is opened again with why, and the person who applied it
-    and its author are told. No build of this Studio is running yet, so none is cut short. Returns [(project, id)]."""
+    be) when the Studio that applied it stopped, so nothing will finish it; it is opened again with why, and the person
+    who applied it and its author are told. No build of this Studio is running yet, so none is cut short. One applied in
+    another Studio that still runs on this projects folder (its lock is held: rooms.owner_live, as for the queue
+    journals) is that Studio's to finish and is left alone. Returns [(project, id)]."""
     if not getattr(studio, "team", False):
         return []
     from . import projects
@@ -794,7 +798,7 @@ def reopen_stopped(studio) -> list:
     for info in projects.list_projects(studio.home):
         root = os.path.join(studio.home, info["name"])
         for p in collab.proposals(root, status="applied"):
-            if p.get("applied_rev"):
+            if p.get("applied_rev") or rooms.owner_live(studio.home, p.get("applied_in")):
                 continue
             collab.proposal_done(root, p["id"], error=STOPPED)
             out.append((info["name"], p["id"]))

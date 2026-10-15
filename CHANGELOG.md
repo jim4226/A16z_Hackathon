@@ -392,7 +392,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   stopped Studio's work is never left alone because its process number was reused after a reboot or the computer's
   name changed. A first build the Studio stopped during twice is not started again on its own (one that crashes the
   Studio would crash it at every start): the chat and the terminal say so, and "build it again" in the project's chat
-  tries once more.
+  tries once more. A team Studio starting while another one runs on the same projects folder leaves the change
+  requests that one is building alone (it reopened them, told their people they weren't built, and the finished build
+  left its revision unrecorded).
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

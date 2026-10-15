@@ -274,7 +274,11 @@ Morph Studio on this projects folder is still working on it"); otherwise every j
 - a conflict waiting for an answer waits again (`JobQueue.restore`, same id: the page draws its Apply / Drop again);
 - then `rooms.STARTED` hooks `fn(studio)` run: a team Studio reopens every change request that is applied but has no
   revision (`api_team.reopen_stopped`, `last_error` "the Studio stopped before it finished. Apply it again") and tells
-  whoever applied it and its author in their inbox.
+  whoever applied it and its author in their inbox, except one applied in another Studio that still runs on the same
+  projects folder: the `apply` line names the Studio (`studio`: its `rooms.OWNER`, `applied_in` on the request) and
+  `rooms.owner_live` leaves it to that Studio, as for the queue journals. A build that ends after its request was
+  reopened anyway (a file system that can't lock) still records its revision: `done` with a revision makes an open
+  request applied again (`collab._proposal_state`).
 New robot's Build on a brief that reads "building" answers `already: true` only while its project builds or has a
 finished revision (`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's
 own empty project goes to `.trash` first, so the name is kept).
