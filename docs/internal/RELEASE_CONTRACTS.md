@@ -728,7 +728,10 @@ plus the anthropic SDK, imported only when a run calls Claude; not pipeline code
 Section 1's storage table and section 3's event list point here (added with the docs, B2-T4); this section is the
 reference.
 
-**Storage** (MORPH_HOME; every file 0600 and written atomically, folders 0700):
+**Storage** (MORPH_HOME; every file 0600 and written atomically, folders 0700; Windows ignores those modes, so
+`services.winacl.restrict(path)` gives the user full control and then drops the inherited permissions (icacls, the
+grant first) of each `.runs`, `.tools` and `.team` folder when Morph makes it and of `.env` each time `keys` saves it;
+it never raises, and where icacls fails the path stays as private as its folder (W3)):
 
 | Path | Contents |
 |---|---|

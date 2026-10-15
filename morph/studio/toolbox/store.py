@@ -47,7 +47,11 @@ def env_items(env) -> list:
 
 
 def ensure_dir(folder: str):
+    if os.path.isdir(folder):
+        return
     os.makedirs(folder, mode=0o700, exist_ok=True)
+    from ...services import winacl
+    winacl.restrict(folder)  # Windows ignores 0700: this user only, for the files made in it too
 
 
 def read_json(path: str, default=None):

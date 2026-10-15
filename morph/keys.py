@@ -110,6 +110,8 @@ def _write_private(path: str, text: str):
         os.chmod(path, 0o600)  # mkstemp already made it 0600; this also covers a umask or an older file
     except OSError:
         pass
+    from .services import winacl
+    winacl.restrict(path)  # Windows ignores 0600: this user only
 
 
 def ensure_env_file(path: str | None = None) -> bool:

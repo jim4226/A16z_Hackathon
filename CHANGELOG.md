@@ -243,8 +243,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   anything, caps and checks request bodies, bounds its event queues and sends security headers with a content
   security policy.
 - `arm.source` names a robot in a known folder; URDF meshes stay inside the robot's folder.
-- `.env` is written readable by your user only. Chat can't change the project name or the robot source, and a chat
+- `.env` is written readable by your user only (on Windows, as private as the Morph folder where Windows won't let
+  Morph limit it to your user; see below). Chat can't change the project name or the robot source, and a chat
   message that looks like an API key (Claude, SubQ or Keewano) is refused.
+- Windows ignores the 0600 mode Morph gives its private files, so they were as private as the folder they were in:
+  every user of the computer could read them in a folder such as C:\Morph. Morph now limits `.env` (each time it
+  saves it) and the `.runs`, `.tools` and `.team` folders (when it makes them) to your user, with Windows' own
+  permissions (icacls). Where that isn't possible, they stay as private as their folder: keep Morph in your own user
+  folder, such as Documents.
 - API keys are never sent on to another server when a service answers with a redirect (SubQ, Keewano). A `.env` from
   an older Morph that others could read is made private when the Studio starts.
 - Remote mode: after 10 different wrong access codes from one address, that address waits 15 minutes.
@@ -270,8 +276,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   from every answer). A tool's key (`MORPH_TOOL_*`) shows in the Keys dialog under its service, with where to get it,
   its cost and what is sent; it is checked against the tool's pattern when saved, sent only to that tool's hosts and
   never to Claude, and chat refuses it like any other key.
-  Agent runs that wait for a key, an approval or a restart are kept in `projects/.runs/` (private, deleted after 7
-  days); every tool decision and call goes into a hash-chained log, `projects/.tools/audit.jsonl`.
+  Agent runs that wait for a key, an approval or a restart are kept in `projects/.runs/` (readable by your user only
+  on macOS and Linux; on Windows, see below; deleted after 7 days); every tool decision and call goes into a
+  hash-chained log, `projects/.tools/audit.jsonl`.
 - A drafted tool (preview) is checked before the owner sees it: GET only, at most 4 lookups; every address HTTPS to a
   public DNS name that the documentation pages Claude read name outside any text aimed at AI agents, resolving to
   public addresses; its key a `MORPH_TOOL_*` name sent only to those hosts; no wording that addresses an AI; no clash

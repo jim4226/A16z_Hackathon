@@ -62,7 +62,7 @@ stop runs and may skip a key or a call. Viewers see the cards and are told whom 
 ## Keys
 
 A tool's key is saved in the Keys dialog under its service ("Tool keys"), in `.env` as `MORPH_TOOL_<NAME>`, like
-every other key: readable by your user only on macOS and Linux, never shown again, never sent back to the browser.
+every other key: readable by your user only (on Windows, see below), never shown again, never sent back to the browser.
 Morph checks it against the pattern the manifest gives before saving it, sends it **only to that tool's own hosts**,
 in the header or query parameter the manifest names, and **never to Claude**. A chat message that contains it is
 refused. Saving a key that a paused run waits for resumes that run once, however often it is saved.
@@ -92,12 +92,18 @@ off), or under "Keys no tool uses" (its manifest is gone), where it can only be 
 
 | What | Where (MORPH_HOME, by default `projects/` in the Morph folder) |
 |---|---|
-| Agent runs: the conversation with Claude, the tools' answers (reduced and without keys), what is pending | `.runs/<run id>.json`, private to your user, deleted 7 days after the last change |
+| Agent runs: the conversation with Claude, the tools' answers (reduced and without keys), what is pending | `.runs/<run id>.json`, readable by your user only (on Windows, see below), deleted 7 days after the last change |
 | The owner's own manifests, and drafted tools once approved | `.tools/catalog/*.json` |
 | Which tools are on, approvals, drafted tools' pins (sha256) | `.tools/state.json`, `.tools/approvals.json`, `.tools/pins.json` |
 | Drafts of a tool (never the documentation's text) | `.tools/drafts/`, deleted 7 days after the last change |
 | Needs no tool covered | `.tools/requests.jsonl` |
 | The log of every tool decision and call | `.tools/audit.jsonl` |
+
+On macOS and Linux these files are readable by your user only (0600, folders 0700). Windows ignores those modes, so
+there a file is as private as the folder it is in: when Morph makes `.runs` and `.tools` (and each time it saves `.env`)
+it gives your user full control and drops the permissions they would inherit (`icacls`), so what is in them is yours
+only. Where Windows won't allow that, they are as private as the folder they are in: keep Morph in your own user
+folder, such as Documents, not in a folder such as `C:\Morph` that every user of the computer can read.
 
 The log records names, hosts, outcomes, timings and costs, never a key, a tool's arguments or an answer. Each line
 carries the hash of the one before it, so an edited, removed or reordered line shows up; in a terminal set up as in

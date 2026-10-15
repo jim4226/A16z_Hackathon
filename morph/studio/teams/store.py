@@ -145,12 +145,16 @@ class locked:
 
 
 def ensure_dir(folder: str, private: bool = False):
+    new = private and not os.path.isdir(folder)
     os.makedirs(folder, exist_ok=True)
     if private and os.name != "nt":
         try:
             os.chmod(folder, 0o700)
         except OSError:
             pass
+    if new:  # Windows ignores 0700: this user only, for the files made in it too
+        from ...services.winacl import restrict
+        restrict(folder)
 
 
 def write_json(path: str, data, private: bool = False):

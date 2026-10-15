@@ -30,7 +30,9 @@ Morph Studio is a local app: a small web server on your computer, used from your
 - A connection gets 20 seconds in all to send its request line and headers, and the Studio serves at most 64
   connections at once, 48 of them live event streams. More get a "busy" answer (503) straight away, so slow or idle
   connections can't tie the server up.
-- API keys live in `.env`, readable by your user only on macOS and Linux. The Studio never sends a key back to the
+- API keys live in `.env`, readable by your user only: 0600 on macOS and Linux; on Windows, Morph limits it to your
+  user with Windows' own permissions each time it saves it, and where Windows won't allow that it is as private as
+  the Morph folder (keep Morph in your own user folder, such as Documents). The Studio never sends a key back to the
   browser or prints it.
 - Every optional service (Claude, Keewano, Darwin, SubQ) can be switched off; [docs/PRIVACY.md](docs/PRIVACY.md)
   lists what each one receives.
