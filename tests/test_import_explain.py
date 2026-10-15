@@ -3,6 +3,7 @@ description counts, and its MPN shows), an object whose grip would bend the fing
 would give it, and an import whose build isn't feasible says why in its project's chat, with the fixes Morph can make
 (the page names a fix; the changes are the server's own)."""
 
+import io
 import json
 import os
 import threading
@@ -36,6 +37,76 @@ def test_a_parts_list_line_for_a_12_v_sts3215_is_the_12_v_servo_with_its_mpn_and
     assert bearing["catalog"] is None and bearing["catalog_name"] is None and bearing["category"] == "purchased"
     assert res["columns"]["item"] == "Part" and res["columns"]["description"] == "Description"
     assert bom.actuator_keys(res["rows"]) == {"sts3215": 6, "sts3215_7v4": 1}
+
+
+LINES = [  # (header, line, catalog key): only the part name or MPN names a motor; the rest only picks its variant
+    (["Part", "MPN", "Description", "Qty"], ["STS3215 servo", "STS3215-C018", "Serial bus servo 12V 30 kg.cm", "6"],
+     "sts3215"),
+    (["Part", "MPN", "Description", "Qty"], ["STS3215 servo", "STS3215-C001", "Serial bus servo 7.4V", "1"],
+     "sts3215_7v4"),
+    (["Item", "Description", "Qty"], ["STS3215 Servo", "12V, 1/345 gear ratio", "6"], "sts3215"),
+    (["Description", "Qty"], ["Feetech STS3215 12V serial bus servo", "6"], "sts3215"),
+    (["Part", "Qty", "Notes"], ["Feetech STS3215 Serial Bus Servo motor (high torque version) - 12V", "6", ""], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215", "6", "use the 12V version"], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215 servo", "6", ""], "sts3215_7v4"),                 # no word on it: the 7.4 V
+    (["Part", "Description", "Qty"], ["STS3215", "7.4V 19 kg.cm", "6"], "sts3215_7v4"),
+    (["Part", "Description", "Qty"], ["STS3215 12V", "replaces the 7.4V one", "6"], "sts3215"),   # the name says
+    (["Part", "Description", "Qty"], ["Servo", "Feetech STS3215 12V", "6"], "sts3215"),      # a bare "Servo"
+    (["Part", "Description", "Qty"], ["Bus servo", "XL430-W250-T", "4"], "xl430_w250"),
+    (["Part", "Qty", "Specs"], ["XL430-W250-T", "4", "12V"], "xl430_w250"),                  # one variant only
+    # not motors, whatever their notes say
+    (["Part", "Qty", "Comments"], ["M3x8 screw", "20", "for the STS3215 12V horn"], None),
+    (["Part", "Qty", "Notes"], ["Waveshare bus servo driver board", "1", "drives the STS3215 12V servos"], None),
+    (["Part", "Qty", "Notes"], ["M2x6 screw", "40", "for the STS3215 horns (12V version)"], None),
+    (["Part", "Qty", "Details"], ["Servo horn", "6", "aluminium, fits STS3215"], None),
+    (["Part", "Qty", "Specs"], ["12 V 5 A power supply", "1", "enough for six STS3215 12V servos"], None),
+    (["Part", "Qty", "Description"], ["Servo driver board", "1", "for STS3215 12V"], None),
+]
+
+
+@pytest.mark.parametrize("header, line, key", LINES, ids=[" / ".join(x for x in r[1] if x)[:48] for r in LINES])
+def test_a_parts_list_lines_motor_comes_from_its_name_and_the_description_picks_only_the_variant(header, line, key):
+    rows, cols, _ = bom.map_table([header, line])
+    (row,) = rows
+    assert row["catalog"] == key
+    assert (row["category"] == "actuator") == (key is not None)
+    assert (row["catalog_name"] is None) == (key is None)
+
+
+def test_notes_on_a_driver_board_and_screws_dont_add_servos(tmp_path):
+    """The review's parts list: one servo line and two lines whose notes mention the 12 V servo they are for."""
+    p = tmp_path / "parts.csv"
+    p.write_text("Part,Qty,Unit price,Notes\n"
+                 "Feetech STS3215 servo C001,6,13.89,7.4V version\n"
+                 "Waveshare bus servo driver board,1,9.90,drives the STS3215 12V servos\n"
+                 "M2x6 screw,40,0.05,for the STS3215 horns (12V version)\n", encoding="utf-8")
+    res = bom.parse(str(p))
+    servo, board, screw = res["rows"]
+    assert (servo["catalog"], board["catalog"], screw["catalog"]) == ("sts3215_7v4", None, None)
+    assert (board["category"], screw["category"]) == ("electronics", "fastener")
+    assert bom.actuator_keys(res["rows"]) == {"sts3215_7v4": 6}
+    assert res["columns"]["description"] == "Notes" and board["description"] == "drives the STS3215 12V servos"
+
+
+def test_the_import_preview_tags_only_the_servo_line(tmp_path, monkeypatch):
+    """What the Import dialog shows for that list (session.detect's rows), and what reading it gives back."""
+    from morph.importers import common, session as sess
+
+    home = tmp_path / "projects"
+    home.mkdir()
+    monkeypatch.setenv("MORPH_HOME", str(home))
+    monkeypatch.setattr(common, "_HOME", None)
+    data = ("Part,Qty,Unit price,Notes\nFeetech STS3215 servo,6,15.99,12V version\n"
+            "Waveshare bus servo driver board,1,9.90,drives the STS3215 12V servos\n"
+            "M2x6 screw,40,0.05,for the STS3215 horns (12V version)\n").encode()
+    s = sess.Session.create(str(home))
+    s.add_file("parts.csv", io.BytesIO(data), len(data))
+    (c,) = s.detect()["candidates"]
+    assert c["kind"] == "bom" and c["ok"]
+    assert [(r["item"], r["catalog"], r["catalog_name"]) for r in c["rows"]] == [
+        ("Feetech STS3215 servo", "sts3215", "Feetech STS3215 serial bus servo (12 V, 30 kg·cm)"),
+        ("Waveshare bus servo driver board", None, None), ("M2x6 screw", None, None)]
+    assert s.commit(0)["actuators"] == {"sts3215": 6}
 
 
 def room_with(design, results=None, tmp_path=None):

@@ -676,8 +676,11 @@ in sections 3, 4 and 8. The rest that other code relies on:
   `capability.min_width(shape, "none")`, the force-sensing finger (`FSR_FINGER`). `GET /api/import/<id>` (the session's
   state, with `fetch {status, error}`) settles a link whose download ended before the page knew its id. An archive with
   nothing usable left says what was skipped; a link without `https://` to an allowed host gets it added.
-  W3: a parts list's line is matched to a catalog motor on its part name, MPN and description together
-  (`bom._catalog_key`; rows add `description` and `catalog_name`). An object import whose grip would bend the fingers
+  W3: a parts list's line is a catalog motor only when its part name or MPN names one (`bom._catalog_key`); its
+  description, notes, details or specs column then only picks that motor's variant when the name doesn't
+  (`autoprofile.VARIANT_RX`: "12V" is the 12 V STS3215, "7.4V" or C001/C044/C046 the 7.4 V one), so a screw or a
+  driver board whose notes name the servo stays a fastener or electronics. A line named only "Servo" (or "Bus servo",
+  "Motor") is what its description says. Rows add `description` and `catalog_name`. An object import whose grip would bend the fingers
   gets New robot's repair (`api_import._fit_fingers`: `brief.preflight`'s deflection check, the beam 1.5 mm thicker at
   a time up to 14 mm), said in its reply. When an import's build isn't feasible (a robot's first build, an object's
   revision), `api_import._explain` posts an assistant message in that project's chat (kept in its history) with up to

@@ -53,6 +53,11 @@ TEXT_RX = [  # README / BOM / package.xml mentions -> catalog key
     (re.compile(r"ds[\s_-]?3218", re.I), "ds3218"),
     (re.compile(r"\bsg[\s_-]?90\b", re.I), "sg90"),
 ]
+VARIANTS = {"sts3215_7v4": "sts3215", "sts3215": "sts3215"}  # catalog key -> the motor it is a variant of
+VARIANT_RX = [  # words anywhere in one parts-list line that pick a motor's variant (most specific first, as TEXT_RX)
+    (re.compile(r"7\.4\s?v|c0(?:01|44|46)(?!\d)", re.I), "sts3215_7v4"),
+    (re.compile(r"\b12(?:\.0)?\s?v(?:olts?)?\b", re.I), "sts3215"),
+]
 MOTOR_PART_RX = r"^(?!.*(holder|mount|bracket|plate|cover|case|adapter|clip|cap))" \
                 r".*(motor|servo|sts3215|st3215|xl430|xl330|xm430|dynamixel|mg996|ds3218|sg90)"
 STOCK_ELECTRONICS = {

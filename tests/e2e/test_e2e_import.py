@@ -9,7 +9,8 @@
   chat says so too, and its "Use 12 V STS3215 servos" button builds a feasible revision (1280x720).
 - test_an_egg_mesh_becomes_the_object_with_its_handling: an egg STL dropped on box-picker: Morph's raw egg preset
   (its damage force) and force-sensing fingers, applied as a new revision the build calls feasible (910 px wide).
-- test_parts_lists_hostile_archives_and_links: a parts list read and given back as a CSV that a spreadsheet can't run;
+- test_parts_lists_hostile_archives_and_links: a parts list read and given back as a CSV that a spreadsheet can't run
+  (only its servo line is tagged as a catalog motor, though the notes on its power supply and screws name the servo);
   a zip that climbs out of its folder, a zip of a symlink, a link to another site and a link while offline are all
   refused with a reason, and nothing is made.
 - test_an_export_comes_back_as_a_new_project: Export of box-picker from the Studio, imported again: rebuilt from
@@ -217,9 +218,10 @@ def _zip(path, entries):
 def test_parts_lists_hostile_archives_and_links(browser, studio, tmp_path):
     before = set(studio.projects())
     parts = tmp_path / "parts.csv"
-    parts.write_text("Part,Qty,Unit price,Link\nFeetech STS3215 servo,6,15.90,https://www.feetechrc.com/\n"
-                     "12 V 5 A power supply,1,12.50,https://www.digikey.com/\nM3 screw kit,1,8.00,\n"
-                     '"=HYPERLINK(""http://example.invalid"")",1,0.01,\n', encoding="utf-8")
+    parts.write_text("Part,Qty,Unit price,Link,Notes\nFeetech STS3215 servo,6,15.90,https://www.feetechrc.com/,12V version\n"
+                     "12 V 5 A power supply,1,12.50,https://www.digikey.com/,for the STS3215 12V servos\n"
+                     "M3 screw kit,1,8.00,,for the STS3215 horns (12V version)\n"
+                     '"=HYPERLINK(""http://example.invalid"")",1,0.01,,\n', encoding="utf-8")
     slip = _zip(tmp_path / "slip.zip", {"robot/robot.urdf": ('<robot name="x"><link name="a"/></robot>', False),
                                         "../../escaped.txt": ("escaped", False)})
     link = _zip(tmp_path / "link.zip", {"robot/link.urdf": ("/etc/passwd", True)})
@@ -232,6 +234,12 @@ def test_parts_lists_hostile_archives_and_links(browser, studio, tmp_path):
     reviewed(pg)
     assert pg.text(f'{DIALOG} [data-a="commit"]') == "Read this parts list"
     assert "a parts list doesn't change the robot" in pg.text(DIALOG)
+    # only the servo line is a catalog motor (its note picks the 12 V one); notes naming it on other lines don't count
+    tags = pg.ev(f"[...document.querySelectorAll('{DIALOG} .imp-table tbody tr')].map((r) => "
+                 "(r.querySelector('.tag.acc') || {}).textContent || '')")
+    assert tags == ["Feetech STS3215 serial bus servo (12 V, 30 kg·cm)", "", "", ""], tags
+    pg.fits("Import, a parts list")
+    pg.shot("e2e_imp_06b_parts_1600")
     pg.pg.click(f'{DIALOG} [data-a="commit"]')
     until(lambda: view(pg) == "done", 30, "the parts list to be read")
     assert "Read 4 parts totalling $115.91." in pg.text(DIALOG), pg.text(DIALOG)
@@ -239,6 +247,8 @@ def test_parts_lists_hostile_archives_and_links(browser, studio, tmp_path):
         pg.pg.click(f'{DIALOG} [data-a="csv"]')
     rows = list(csv.reader(io.StringIO(open(dl.value.path(), encoding="utf-8-sig").read())))
     assert rows[0][0] == "item" and len(rows) == 5, rows
+    cat = rows[0].index("category")
+    assert [r[cat] for r in rows[1:]] == ["actuator", "electronics", "fastener", "purchased"], rows
     assert not any(c.startswith(("=", "+", "-", "@")) for r in rows for c in r), rows   # a spreadsheet runs nothing
     pg.pg.click(f'{DIALOG} [data-a="close"]')
 

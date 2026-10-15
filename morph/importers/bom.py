@@ -89,14 +89,27 @@ def _qty(s: str) -> int | None:
         return None
 
 
-def _catalog_key(text: str) -> str | None:
-    """The catalog actuator a BOM line names, from its part name, MPN and description together: the most specific
-    pattern first, so "STS3215 ... 12V" in any of them is the 12 V servo, not the 7.4 V one."""
-    from .autoprofile import TEXT_RX
-    for rx, key in TEXT_RX:
-        if rx.search(text):
-            return key
-    return None
+GENERIC_MOTOR = re.compile(r"(?:(?:smart|serial|digital|bus|ttl|rc|hobby)\s+)*(?:servo|motor|actuator)(?:\s+motor)?s?",
+                           re.I)
+
+
+def _catalog_key(item: str, mpn: str = "", detail: str = "") -> str | None:
+    """The catalog actuator a BOM line names. Only its part name and MPN can name one: a screw or a driver board whose
+    notes mention the servo it is for is not a servo. The description, notes or specs (`detail`) then only pick the
+    variant of the motor the name already names, when the name doesn't say: "STS3215" with "12V" in its description
+    is the 12 V servo. A line named nothing but "Servo" (or "Bus servo", "Motor") is what its description says."""
+    from .autoprofile import TEXT_RX, VARIANT_RX, VARIANTS
+    name = " ".join(x for x in (item, mpn) if x)
+    if detail and GENERIC_MOTOR.fullmatch(item.strip()) and not any(rx.search(name) for rx, _ in TEXT_RX):
+        name = f"{name} {detail}"
+    key = next((k for rx, k in TEXT_RX if rx.search(name)), None)
+    motor = VARIANTS.get(key)
+    if motor:
+        for text in (name, detail):
+            pick = next((k for rx, k in VARIANT_RX if VARIANTS.get(k) == motor and rx.search(text)), None)
+            if pick:
+                return pick
+    return key
 
 
 def _catalog_name(key: str | None) -> str | None:
@@ -179,7 +192,7 @@ def map_table(rows: list) -> tuple[list, dict, list]:
             unit = round(ext / q, 4)
         mpn = _cell(get("mpn"))[0] if "mpn" in cols else ""
         desc = _cell(get("description"))[0] if "description" in cols else ""
-        key = _catalog_key(" ".join(x for x in (item, mpn, desc) if x))
+        key = _catalog_key(item, mpn, desc)
         out.append({"item": item[:200], "qty": q, "unit_price": unit, "ext_price": ext, "currency": cur or cur2,
                     "url": url if url and re.match(r"^https?://", url) else None, "mpn": mpn[:80] or None,
                     "manufacturer": _cell(get("manufacturer"))[0][:80] or None if "manufacturer" in cols else None,
