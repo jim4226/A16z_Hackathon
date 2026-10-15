@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from morph import analysis, design as cad, fab, sim
 from morph.agent import heuristic
 from morph.pipeline import Project, dirty_nodes
@@ -74,6 +76,28 @@ def test_without_a_key_morph_new_says_it_uses_the_offline_parser(capsys, monkeyp
     monkeypatch.setenv("MORPH_OFFLINE", "1")
     agent.propose("pick up a raw egg")
     assert "(network lookups are off: using the offline parser)" in capsys.readouterr().out
+
+
+def test_a_missing_anthropic_profile_or_sdk_is_named_as_such(capsys, monkeypatch, tmp_path):
+    """An ANTHROPIC_PROFILE whose config file is missing makes the SDK raise CredentialsError: Morph says that, not
+    "the Anthropic SDK isn't available"; a missing SDK is named as missing."""
+    import builtins
+
+    pytest.importorskip("anthropic")
+    from morph import agent
+
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "MORPH_OFFLINE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ANTHROPIC_PROFILE", "nosuch")
+    monkeypatch.setenv("ANTHROPIC_CONFIG_DIR", str(tmp_path / "anthropic"))
+    design, need, src = agent.propose("pick up a raw egg")
+    out = capsys.readouterr().out
+    assert src == "heuristic" and "the Anthropic profile 'nosuch' couldn't be loaded (CredentialsError" in out, out
+    assert "SDK" not in out and out.rstrip().endswith("using the offline parser)"), out
+    real = builtins.__import__
+    monkeypatch.setattr(builtins, "__import__", lambda name, *a, **k: (_ for _ in ()).throw(ImportError(name))
+                        if name == "anthropic" else real(name, *a, **k))
+    assert agent._client() is None and agent._client.why == "the Anthropic SDK isn't installed"
 
 
 def test_time_study_counts_human_time(tmp_path):

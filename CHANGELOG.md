@@ -386,7 +386,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   on later in a new project that took the same name, or for a revision Reset demo had removed, and price the parts
   of a robot it was never started for. Its card says why it stopped.
 - `morph new` and `morph demo` without an Anthropic key say they use the offline parser instead of "Claude unavailable:
-  TypeError".
+  TypeError". An `ANTHROPIC_PROFILE` whose config file is missing is named as that (the SDK's CredentialsError and the
+  file it looked for), not as a missing SDK.
 - Keys: the Anthropic key's section lists everything it powers (chat, New robot, Show Morph the job, World mode's AI
   review, Live prices, New tool), once, and the dialog names the folder `.env` is in on every system.
 - A project opened while its first build runs shows the welcome and tips once that build is done, instead of keeping
