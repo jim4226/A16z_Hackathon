@@ -265,6 +265,21 @@ def test_owner_sees_presence_comments_review_gate_changes_activity_and_share(dem
     ctx.close()
 
 
+def test_the_release_checklist_says_how_much_of_the_unit_cost_is_tooling(demo):
+    # a production revision at quantity 1 read "$77742 per unit": nearly all of it the molds, paid once
+    p = os.path.join(demo["root"], "r003", "results.json")
+    with open(p, encoding="utf-8") as fh:
+        res = json.load(fh)
+    res["summary"].update(unit_cost=77742.0, tooling_cost=72971.0)
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    ctx, page, errors = _signed_in(demo, "Jim")
+    page.click(".tm-tabs [data-tab=review]")
+    page.wait_for_selector(".tm-gate .tm-ck")
+    assert "$77742 per unit, incl. $72,971 tooling over 1 unit (estimated)" in page.inner_text(".tm-gate .tm-ck")
+    assert not errors, errors
+
+
 def test_a_viewer_proposes_a_change_and_sees_who_it_will_ask(demo):
     ctx, page, errors = _signed_in(demo, "Vic", w=1440, h=900)
     assert page.inner_text(".tm-role").lower() == "viewer"

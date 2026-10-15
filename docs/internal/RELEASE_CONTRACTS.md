@@ -1587,3 +1587,13 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   maximum is below the pack's full charge (4.2 V a cell: the SO-101's 7.4 V STS3215s and a charged 2S pack's 8.4 V).
   The voltage is still the servo rail (`electronics.servo_v`) when every servo takes it; the chat tool's description
   tells Claude the same.
+- **Teams prices mold tooling apart (ENG-14).** The change-request preview's cost (`teams/impact.py`) is per unit
+  without mold tooling, as the BOM tab's "Per unit at qty N": the base's unit cost and the per-level costs
+  (`bom.totals.per_config`) spread tooling over the build quantity, so `_base` also reads each level's
+  `manufacturing.configs[k].tooling_cost` and takes it out (tooling / the base's quantity). The tooling is a note, paid
+  once ("plus $72,971 of mold tooling, paid once", "and no mold tooling (it had $X, paid once)", or "plus the $X of
+  mold tooling" for a build that keeps its molds); `impact.cost` has `tooling: [before, after]` and `before`, `delta`,
+  `after` without it. A production switch at quantity 1 read "about +$73,374 per robot"; it reads "+$4,234 per robot
+  ...; plus $69,140 of mold tooling, paid once". `collab.built_summary` adds `tooling_cost` and `quantity` ([base,
+  built]) and `release_gate`'s checklist `tooling_cost` and `quantity`; Teams' "Built rNNN: ... per unit" line and the
+  checklist's unit cost say "incl. $X tooling over N units", as the inspector does.
