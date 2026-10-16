@@ -357,6 +357,27 @@ def test_sheet_dfm_catches_short_flange_and_missing_relief():
     assert "flange" in msgs and "relief" in msgs and "radius" in msgs and "distort" in msgs
 
 
+def test_sheet_dfm_never_rounds_a_short_flange_or_hole_up_to_its_minimum():
+    """A flange 7.96 mm long (the minimum is 8.0) and a hole 5.96 mm from the bend (the minimum is 6.0): the messages
+    round the measured length down, so they never read "8.0 mm, below the 8.0 mm minimum" (W3 R5)."""
+    import re
+    poly = box(0, 0, 40, 40).difference(Point(20, 7.96 + 5.96 + 1.7).buffer(1.7, quad_segs=64))
+    sheet = {"thickness": 2.0, "k_factor": 0.4, "material": "Al5052",
+             "bends": [{"line": [[0, 7.96], [40, 7.96]], "angle_deg": 90, "radius": 2.0}]}
+    p = Part("short_bracket", "base", components.trimesh_from_profile(poly, 2.0), profile=poly, profile_frame=np.eye(4),
+             thickness=2.0, process="sheet_metal", meta={"sheet": sheet})
+    msgs = manufacturing._sheet_dfm(manufacturing.Geo(p))
+    flange = [m for m in msgs if "press-brake minimum" in m]
+    hole = [m for m in msgs if "from the bend" in m]
+    assert flange and hole, msgs
+    for m in flange:
+        got, need = map(float, re.search(r"is ([0-9.]+) mm, below the ([0-9.]+) mm", m).groups())
+        assert got < need, m
+    for m in hole:
+        got, need = map(float, re.search(r"sits ([0-9.]+) mm from the bend \(min ([0-9.]+)\)", m).groups())
+        assert got < need, m
+
+
 def test_fastener_parsing():
     f = manufacturing.parse_fastener("M3x8_shcs")
     assert (f["size"], f["length"], f["kind"], f["torque_nm"]) == ("M3", 8.0, "shcs", catalog.FASTENER_TORQUE_NM["M3"])
