@@ -80,8 +80,9 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line
   as before; `morph team audit --verify` prints the note.
 - `morph studio` (the command line: `main()` without argv) ends its process with `cli._leave` once `serve()` has
-  returned (Ctrl+C): study workers ended, the process's `.studios/<id>.lock` files released and removed
-  (`rooms.release_claims`, what the Claims' finalizers did), stdout and stderr flushed, then `os._exit`. Interpreter
+  returned (Ctrl+C, a closed terminal window, SIGTERM: `server._Stop`): study workers ended, the process's
+  `.studios/<id>.lock` files released and removed (`rooms.release_claims`, what the Claims' finalizers did), stdout
+  and stderr flushed, then `os._exit`. Interpreter
   shutdown added nothing but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one
   stop in twelve. So every record must be on disk when it is written (the rules here), never at exit. A build still
   running is cut off at once (the interpreter used to wait for its helper threads): `serve()` journals a first build
@@ -266,9 +267,15 @@ and a stop in between leaves both journals, never neither. Then:
   building it again now."; features learn of it through `rooms.RESUMED` hooks `fn(studio, room, job, meta)` (New robot
   marks its brief built when it ends). Without a journal (an older Morph, `morph robot new` stopped in a terminal), the
   design of the first revision `tidy()` just set aside is used. Its `cut` counts the times a stop cut it off after it
-  had started; a clean stop (Ctrl+C, `serve_forever` returning) is no try: `serve()` calls `Studio.stopping`, which
-  journals the first build it cuts off as `interrupted` (`JobQueue.stopping`), and only a crash, a kill, a power cut
-  or an error escaping `serve_forever` counts. At
+  had started; a clean stop is no try: `serve()` calls `Studio.stopping`, which journals the first build it cuts off as
+  `interrupted` (`JobQueue.stopping`), and only a crash, a SIGKILL, a power cut or an error escaping `serve_forever`
+  (or the start-up) counts. A clean stop is one a person asks for: Ctrl+C (SIGINT), a closed terminal window
+  (SIGHUP), a logout, shutdown or `kill` (SIGTERM), Ctrl+Break (SIGBREAK) and, on Windows, a closed console window
+  (the console's close event journals the stop before Windows ends the process; written for Windows, not run there in
+  these tests). `server._Stop` handles them from before the start-up's recovery to the end of `serve()`: the first
+  ends `serve_forever` (or keeps it from starting), a second raises KeyboardInterrupt; a signal the process ignores
+  (nohup) stays ignored. `serve()` listens before the Studio's start-up recovers anything, so a start that can't
+  listen (a busy port, a mistyped `--host`) leaves every journal as it was. At
   `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
   at every start): it is kept in `<p>/.morph/first-build.json` (`projects.park_first_build`), the chat and the terminal
   say "The Studio stopped twice while building <project>'s first design, so Morph won't start it again on its own ...

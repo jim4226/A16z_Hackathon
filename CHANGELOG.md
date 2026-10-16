@@ -440,7 +440,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   rebuild and an error record the disk refused left only "delete the project" (the design survives now until it is
   written down again, and a first build that fails on a full disk stays journaled). "Build it again" also builds from
   a revision set aside unfinished when nothing else kept the design, and two Studios starting at once build a cut-off
-  first design once (they could build it twice, r001 and r002).
+  first design once (they could build it twice, r001 and r002). Closing the Studio's terminal window, a logout or a
+  `kill` (SIGTERM), and Ctrl+C during the start-up while it rebuilds a cut-off first build, are clean stops too: they
+  used to count as crashes (twice parked the design, "The Studio stopped twice ..."), and Ctrl+C there ended in a
+  traceback. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
+  failed starts are no tries either.
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

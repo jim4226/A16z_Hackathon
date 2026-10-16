@@ -922,3 +922,86 @@ def test_a_start_that_set_a_first_build_aside_recovers_it_under_the_lock(home, b
     finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
     assert kb1.completed() == ["r001"]
 
+
+# ------------------------------------------------------------------ stops during the start-up, and other ways to stop
+
+
+class _Listener:
+    """serve()'s server: binds nothing; serve_forever returns at once (or `fail` raises at bind time)."""
+    fail, served = None, []
+
+    def __init__(self, address, handler):
+        if self.fail:
+            raise self.fail
+
+    def serve_forever(self):
+        _Listener.served.append(True)
+
+    def shutdown(self):
+        pass
+
+
+@pytest.mark.parametrize("sig", ["SIGINT", "SIGTERM", "SIGHUP"])
+def test_a_stop_asked_for_during_the_start_up_is_a_clean_one(home, tmp_path, builds, monkeypatch, sig):
+    """Ctrl+C (or a closed window: SIGHUP, or SIGTERM) while the start-up rebuilds a cut-off first build, before the
+    Studio serves: it used to escape serve()'s handler (a KeyboardInterrupt traceback; SIGHUP and SIGTERM had no
+    handler at all), leave the rebuild journaled "started" and count as a try, so two such stops parked the design. The
+    stop is now a clean one, journaled "interrupted", and the next start builds it again."""
+    import signal
+    if threading.current_thread() is not threading.main_thread() or not hasattr(signal, sig):
+        pytest.skip("signals reach the main thread only")
+    from morph.studio import capability
+    cut_off_first_build(home)
+    builds.gate = threading.Event()
+    real = server.Studio._recover
+
+    def recover(self, *a, **k):
+        real(self, *a, **k)
+        assert builds.started.wait(5)                                       # the rebuild has started
+        os.kill(os.getpid(), getattr(signal, sig))
+
+    _Listener.fail, _Listener.served = None, []
+    monkeypatch.setattr(server, "_Server", _Listener)
+    monkeypatch.setattr(server.Studio, "_recover", recover)
+    monkeypatch.setattr(capability, "warm", lambda block=True: None)
+    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0: None)
+    def unhandled(signum, frame):  # what an unhandled stop would do, without ending the test run
+        raise RuntimeError(f"{sig} reached no handler of serve()")
+
+    before = signal.signal(getattr(signal, sig), unhandled)
+    try:
+        server.serve(RobotProject(str(home / "egg")), port=0, home=str(home))  # returns: no KeyboardInterrupt
+        assert _Listener.served == [] and signal.getsignal(getattr(signal, sig)) is unhandled
+    finally:
+        signal.signal(getattr(signal, sig), before)
+    ops = [json.loads(line)["op"] for path in rooms.journals(str(home / "kb1")) for line in open(path, encoding="utf-8")]
+    assert ops[-2:] == ["started", "interrupted"], ops
+    after = stopped(home, tmp_path, builds)                                 # the process ends here
+    monkeypatch.setattr(server.Studio, "_recover", real)
+    builds.gate.set()
+    builds.gate = threading.Event()
+    builds.gate.set()
+    st = server.Studio(RobotProject(str(after / "egg")), str(after))
+    kb1 = st.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert [j.label for j in queued] == ["first design" + REBUILT] and "stopped twice" not in " ".join(texts(kb1))
+    finish(*queued)
+
+
+def test_a_start_that_cant_listen_changes_no_journal(home, monkeypatch):
+    """A mistyped --host: serve() listened only after the start-up had rebuilt (and journaled "started") a cut-off first
+    build, so each failed start counted as a try. It now listens first."""
+    from morph.studio import capability
+    journal = cut_off_first_build(home)
+    before = journal.read_text(encoding="utf-8")
+    _Listener.fail = OSError(99, "Cannot assign requested address")
+    monkeypatch.setattr(server, "_Server", _Listener)
+    monkeypatch.setattr(capability, "warm", lambda block=True: None)
+    try:
+        with pytest.raises(SystemExit, match="couldn't listen"):
+            server.serve(RobotProject(str(home / "egg")), host="10.255.255.1", port=0, home=str(home))
+    finally:
+        _Listener.fail = None
+    assert journal.read_text(encoding="utf-8") == before and rooms.journals(str(home / "kb1")) == [str(journal)]
+    assert os.listdir(home / "kb1" / "r001") == ["design.json"]             # not even set aside
+

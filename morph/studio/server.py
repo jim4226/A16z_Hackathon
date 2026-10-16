@@ -29,6 +29,7 @@ import re
 import secrets
 import selectors
 import shutil
+import signal
 import socket
 import stat
 import sys
@@ -2046,34 +2047,114 @@ class _Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+class _Stop:
+    """How a Studio is asked to stop: Ctrl+C (SIGINT), a closed terminal window (SIGHUP), a logout, shutdown or `kill`
+    (SIGTERM), Ctrl+Break (SIGBREAK) or a closed console window on Windows. The first one ends serve_forever (or keeps
+    it from starting, during the start-up), so serve() journals a clean stop (Studio.stopping: a first build it cuts
+    off is no try) and returns; a second one stops at once (KeyboardInterrupt). A signal the process ignores (nohup)
+    stays ignored. Handlers are only set from the main thread, and put back afterwards."""
+    NAMES = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
+
+    def __init__(self, httpd):
+        self.httpd, self.requested, self.serving, self.studio, self.old, self.console = httpd, False, False, None, {}, None
+
+    def __call__(self, signum=None, frame=None):
+        if self.requested:
+            raise KeyboardInterrupt  # asked again: stop now
+        self.requested = True
+        if self.serving:  # shutdown() waits for serve_forever, which runs on this (the main) thread
+            threading.Thread(target=self.httpd.shutdown, daemon=True, name="morph-stop").start()
+
+    def __enter__(self):
+        if threading.current_thread() is not threading.main_thread():
+            return self
+        for name in self.NAMES:
+            sig = getattr(signal, name, None)
+            try:
+                if sig is not None and signal.getsignal(sig) is not signal.SIG_IGN:
+                    self.old[sig] = signal.signal(sig, self)
+            except (OSError, ValueError, RuntimeError):
+                pass
+        if sys.platform == "win32":  # a closed console window: Windows ends the process once the handlers return
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                def closed(kind):
+                    if kind in (2, 5, 6) and self.studio is not None:  # CTRL_CLOSE, CTRL_LOGOFF, CTRL_SHUTDOWN_EVENT
+                        self.studio.stopping()
+                    return False
+                self.console = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)(closed)
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(self.console, True)
+            except Exception:  # noqa: BLE001  (a console without the API: Ctrl+C still works)
+                self.console = None
+        return self
+
+    def __exit__(self, *exc):
+        for sig, old in self.old.items():
+            try:
+                signal.signal(sig, old)
+            except (OSError, ValueError, RuntimeError):
+                pass
+        if self.console is not None:
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(self.console, False)
+            except Exception:  # noqa: BLE001
+                pass
+        return False
+
+
 def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None, token: str | None = None, *,
           team: bool = False, allow_url_import: bool = False, link: str | None = None, token_chosen: bool | None = None):
     """Run the Studio. `team`: Morph Teams (members sign in with invite or sign-in links; MORPH_TOKEN plays no part),
     `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers.
     `token_chosen`: False when `token` is one access_token() made (the CLI makes it to print the link first), so wrong
-    guesses never lock out its address (Guesses); default: a given token is the person's own."""
+    guesses never lock out its address (Guesses); default: a given token is the person's own. It listens before the
+    Studio's start-up picks up work a stopped Studio left (a start that can't listen leaves every journal as it was),
+    and every stop it is asked for, from the start-up on, is a clean one (_Stop)."""
     if not project.finished():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
-    studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
     chosen = bool(token) if token_chosen is None else token_chosen
     token = None if team else access_token(host, token)
-    studio.remote = bool(token) or (team and not is_loopback(host))
-    if team:
-        from . import api_team
-        api_team.configure(home=studio.home, secure_cookies=False, enabled=True)
-    from . import capability
-    capability.warm(block=False)  # the brief's envelope from the generator, in the background
     # local Studio: requests must name this server (127.0.0.1/localhost); remote Studio: the access token decides; a team
     # Studio: the member's session decides, so a tunnel's or the LAN's address works too
     allowed = None if token or team else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}
     try:
-        httpd = _Server((host, port), make_handler(studio, allowed, token, chosen=chosen))
+        httpd = _Server((host, port), BaseHTTPRequestHandler)  # the Studio's handler once the Studio exists
     except OSError as exc:
         if exc.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", errno.EADDRINUSE)):
             raise SystemExit(f"Port {port} is busy ({exc}): Morph Studio is probably already running. Stop it "
                              "(Ctrl+C in its terminal, or close that window), then start again.") from None
         raise SystemExit(f"Morph Studio couldn't listen on {host}:{port} ({exc}).") from None
     httpd.daemon_threads = True
+    stop, studio = _Stop(httpd), None
+    try:
+        with stop:
+            studio = stop.studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
+            studio.remote = bool(token) or (team and not is_loopback(host))
+            if team:
+                from . import api_team
+                api_team.configure(home=studio.home, secure_cookies=False, enabled=True)
+            from . import capability
+            capability.warm(block=False)  # the brief's envelope from the generator, in the background
+            httpd.RequestHandlerClass = make_handler(studio, allowed, token, chosen=chosen)
+            _announce(project, host, port, token, team, link)
+            stop.serving = True
+            if not stop.requested:
+                httpd.serve_forever()
+    except KeyboardInterrupt:
+        if studio is not None:
+            studio.stopping()  # asked twice, or Ctrl+C where no handler could be set: still a person stopping it
+    else:
+        studio.stopping()  # serve_forever returned (asked to stop), or a stop came during the start-up: a clean stop;
+    finally:               # an error escaping is none (a first build it cut off counts as a try)
+        if studio is not None:
+            from . import jobs
+            jobs.shutdown(studio)  # robustness studies stop and keep their runs; the same settings carry on next time
+
+
+def _announce(project, host, port, token, team, link):
     if team:
         where = (lan_address() or socket.gethostname()) if host in ("0.0.0.0", "") else host
         print(f"Morph Studio (Teams preview) is running on {socket.gethostname()} at http://{where}:{port}"
@@ -2096,15 +2177,6 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
         sys.stdout.flush()  # into a log file or a pipe now, not when its buffer fills: the links are needed while it runs
     except (AttributeError, OSError, ValueError):
         pass
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        studio.stopping()  # Ctrl+C: a first build this stop cuts off is no try (Studio._recover counts the others)
-    else:
-        studio.stopping()  # serve_forever returned (shutdown()): a clean stop too; an error escaping it is not
-    finally:
-        from . import jobs
-        jobs.shutdown(studio)  # robustness studies stop and keep their runs; the same settings carry on next time
 
 
 FEATURE_ERRORS = {}  # feature module -> why it didn't load (its routes are off; the rest of the Studio works)
