@@ -595,6 +595,52 @@ def test_a_hobby_force_sensing_probe_is_no_reach_a_dead_sensor_would_crush_the_o
     assert g["stall_force_n"] * (r["closed"] - r["lowest"]) / band < 0.2 * g["stall_force_n"]
 
 
+@pytest.mark.parametrize("width, dmg", [(22.0, 25.0), (24.0, 30.0), (22.0, 0.0), (25.0, 0.0)])
+def test_a_dead_sensor_never_crushes_the_large_end_of_a_covered_hobby_grips_size(tmp_path, width, dmg):
+    """A hobby force-sensing gripper's probe was checked with a dead sensor on a gauge-sized object only. A 22 mm flat
+    part with a 25 N damage force read covered with no issue, while with a dead sensor the compiled firmware closed one
+    2 % over its size 1.26 mm past its contact (25.94 N) and one 4 % over to the MG996R's stall (30.86 N) before
+    opening. Covering the small end now also needs a dead sensor to leave the large end of the size under the damage
+    force; when it can't, the plan says so (an issue New robot repairs). An object with no damage force can briefly
+    reach the stall before the jaw opens, and the plan's warning says what the large end gets."""
+    from morph import electronics
+    from morph.studio import brief
+
+    d = template("egg-picker").with_changes({
+        **object_changes("marker"), "object.name": "tile", "object.shape": "box", "object.diameter_mm": width,
+        "object.length_mm": width, "object.mass_g": 30.0, "object.max_force_n": dmg, "object.friction": 0.5,
+        "finger.sensor": "fsr402", "arm.actuator_family": "hobby_pwm"})
+    exe, ep = _compile_firmware(tmp_path, d)
+    g, ol, band = ep["grip"], ep["grip"]["open_loop"], electronics.SERVO_BAND_MM
+    spread = electronics.OBJECT_SIZE_SPREAD * width / 2
+    worst = 0.0
+    for s in (1.0, 1.02, 1.04, 1.06, 1.08):
+        r, out = _run_exe(exe, 0.0, width / 2 * (1 - s))    # a dead sensor; the object wider than the gauge
+        past = r["closed"] - r["lowest"] - width / 2 * (1 - s)
+        worst = max(worst, g["stall_force_n"] * min(max(past, 0.0), band) / band)
+        assert r["final"] == r["max"] and "!GRIP no force reading" in out, (s, r)
+    assert ol["large_n"] == pytest.approx(worst, abs=0.02)
+    whole = "its whole stall force" if worst >= g["stall_force_n"] - 0.005 else None
+    code = open(next(tmp_path.rglob("morph_arm.ino")), encoding="utf-8").read()     # the firmware and the manual say so
+    assert f"one at the large end of its size, {spread:g} mm per jaw wider, {whole or f'about {worst:g} N'}, until it opens" in code
+    from morph.robot import manual
+    assert (f"one at the large end of its size, {spread:.2f} mm per jaw wider, {whole or f'about {worst:g} N'}"
+            in manual._grip_sentence(g, "tile"))
+    told = [i for i in ep["issues"] if "no torque limit to back up the force sensors" in i]
+    assert brief.classify(told) == ({"hobby_gripper"} if told else set())
+    if dmg and worst > dmg:          # crushed at the large end with a dead sensor: never without an issue
+        assert not ol["covers"] and told, (ol, ep["issues"])
+        assert (f"and {'its whole stall force' if worst >= g['stall_force_n'] - 0.005 else f'{worst:g} N per finger'} "
+                f"on a tile at the large end of its size, {spread:.2f} mm per jaw wider, above the {dmg:g} N that "
+                f"damages it") in told[0], told[0]
+    else:
+        assert ol["covers"] and not told, ep["issues"]
+        w = next(w for w in ep["warnings"] if "stops there and opens (!GRIP)" in w)
+        assert (f"a tile at the large end of its size, {spread:.2f} mm per jaw wider, gets "
+                + ("its whole stall force" if worst >= g["stall_force_n"] - 0.005 else f"about {worst:g} N per finger")
+                + " for that moment") in w, w
+
+
 # ------------------------------------------------------------------ the grip holds what the robot does with it
 
 @pytest.mark.parametrize("family, slip", [("", 4.74), ("dynamixel", 4.83)])

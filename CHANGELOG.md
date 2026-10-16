@@ -484,12 +484,17 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   at stall"); they counted a can 4 % over its size placed. F sets that distance, up to the servo's rated torque, the
   object's limit or what keeps the large end of its size under 80 % of the stall, whichever is lowest. With force
   sensors a close that has read nothing by GRIP_PROBE stops there and opens (it went on to the stop): far enough to
-  reach the object at the small end of its size (8 % under nominal) where a dead sensor then stays under 80 % of the
-  stall and under the object's damage force (0.92 mm for an 18 mm marker); otherwise (an egg would need 1.92 mm; a
-  dead sensor at a grape's 0.96 mm would put 19.77 N on a 2 N grape) it stops where a gauge-sized object gets the
-  force limit, or two position commands (0.92 mm for the egg, 0.16 mm for the grape), a narrower object isn't
-  gripped, and the plan says so as an issue. The simulation and robustness
-  studies let such an object go too, as "Let go with !GRIP"; New robot then uses smart-bus servos and says why. The
+  reach the object at the small end of its size (8 % under nominal) where a dead sensor then leaves a gauge-sized
+  object under 80 % of the stall and under its damage force, and one at the large end of its size (8 % over) under
+  its damage force (1.04 mm for a 22 mm flat part with no damage force, whose large end can reach the stall for the
+  moment before the jaw opens); otherwise (an egg would need 1.92 mm; a dead sensor at a grape's 0.96 mm would put
+  19.77 N on a 2 N grape, and at a 22 mm part's 1.04 mm the MG996R's whole 30.86 N stall on one 8 % over its size,
+  above its 25 N damage force) it stops where a gauge-sized object gets the force limit, or two position commands
+  (0.92 mm for the egg, 0.16 mm for the grape), a narrower object isn't gripped, and the plan says so as an issue.
+  On the generated MG996R hand that leaves force-sensing grips on flat-sided parts 21.5-25 mm wide with no damage
+  force as the only hobby grips without an issue; without force sensors none fits the fingers and covers its size.
+  The simulation and robustness studies let such an object go too, as "Let go with !GRIP"; New robot then uses
+  smart-bus servos and says why. The
   power budget, the plan's warning, the manual and the simulation use that squeeze, and a hold above the servo's
   rated torque is a warning.
 - Teams' change-request preview no longer shows a grip change the build won't make: a new servo supply, servo family

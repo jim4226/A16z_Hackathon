@@ -722,8 +722,14 @@ def _grip_sentence(grip: dict, name: str) -> str:
                     + (" (the small end of its size)" if ol.get("covers") else ", a narrower one isn't")
                     + f"; with a dead sensor a gauge-sized {name} gets about {ol['probe_n']:g} N per finger there before "
                     f"the jaw opens"
-                    + (f", above the {grip['object_limit_n']:g} N that damages it."
-                       if grip.get("object_limit_n") and ol["probe_n"] > grip["object_limit_n"] else "."))
+                    + (f", above the {grip['object_limit_n']:g} N that damages it"
+                       if grip.get("object_limit_n") and ol["probe_n"] > grip["object_limit_n"] else "")
+                    + (f", and one at the large end of its size, {ol['spread_mm']:.2f} mm per jaw wider, "
+                       + ("its whole stall force" if grip.get("stall_force_n") and
+                          ol["large_n"] >= grip["stall_force_n"] - 0.005 else f"about {ol['large_n']:g} N")
+                       + (f", above the {grip['object_limit_n']:g} N that damages it"
+                          if grip.get("object_limit_n") and ol["large_n"] > grip["object_limit_n"] else "")
+                       if ol.get("large_n") is not None and ol.get("spread_mm") is not None else "") + ".")
         return out
     motion = grip.get("motion") or {}
     revolute = motion.get("kind") == "revolute"
