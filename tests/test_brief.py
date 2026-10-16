@@ -218,6 +218,36 @@ def test_served_person_and_named_person_kept(text):
     assert B.value(b, "people_nearby") in ("yes", "children") and "estop" in (b.changes.get("electronics.extras") or [])
 
 
+@pytest.mark.parametrize("text,hw", [
+    ("I have an SO-101, can it sort strawberries?", "so101"), ("use my SO-101 to stack soda cans", "so101"),
+    ("my SO-101 is broken, build a new arm", "none"), ("my friend has an SO-101", "none"),
+    ("I used to have an SO-101", "none"), ("should I use my SO-101?", "none"), ("can it be like an SO-101?", "none"),
+])
+def test_so101_read_only_for_possession_or_use(text, hw):
+    b = B.start(text)
+    assert B.value(b, "existing_hardware") == hw
+
+
+@pytest.mark.parametrize("text", ["a robot that picks up a pound coin", "a robot that sorts one pound coins",
+                                  "a robot for a pound shop", "a robot that sorts two pound coins"])
+def test_a_pound_coin_is_not_a_mass(text):
+    o = B.parse(text)["slots"].get("object") or {}
+    assert o.get("mass_g") != pytest.approx(453.6) and o.get("mass_g") != pytest.approx(907.2)
+
+
+def test_an_object_is_not_named_weighing():
+    for t in ("use my SO-101 to move cylinders 30 to 50 mm wide weighing 50 g",
+              "a robot that moves cylinders 60 mm wide weighing 50 g", "move widgets weighing 90 g"):
+        assert B._noun(B.normalize_units(t.lower())) not in ("weighing", "wide", "weight")
+
+
+@pytest.mark.parametrize("text", ["use my SO-101 to move 20 mm boxes weighing 20 g", "use my SO-101 to move 10 mm boxes",
+                                  "use my SO-101 to move 25 mm round parts weighing 20 g"])
+def test_so101_below_its_minimum_gets_a_generated_arm(text):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert (b.changes or {}).get("arm.source") != "so101"
+
+
 @pytest.mark.parametrize("text", [
     "pick strawberries without hurting them", "sort bath bombs into boxes", "a glue gun holder", "an arm with a kill switch",
     "shoot photos of my products", "launch my small business with a sorting robot", "strawberry stalks into a bin",
@@ -631,8 +661,10 @@ def _so101_problem(row, offered, b) -> str | None:
                 return f"built {k}={v:g}, stated {row[k]:g}"
         return None
     wide = {"cylinder": 46.0, "sphere": 46.0, "box": 34.0}
-    fits = lambda s, w, g: w <= wide.get(s, 46.0) and g <= 100.0 and not (s == "box" and w < 22.5)   # noqa: E731
-    built_ok, said_ok = fits(shape, d, m), row["d"] <= wide[row["shape"]] and row["m"] <= 100.0
+    low = {"cylinder": 26.0, "sphere": 26.0, "box": 22.5}   # the SO-101's own usable minimum: below it, a generated arm
+    fits = lambda s, w, g: low.get(s, 26.0) <= w <= wide.get(s, 46.0) and g <= 100.0   # noqa: E731
+    built_ok = fits(shape, d, m)
+    said_ok = low[row["shape"]] <= row["d"] <= wide[row["shape"]] and row["m"] <= 100.0
     notes = [n for n in list((b.scope or {}).get("notes") or []) + [a.get("text", "") for a in b.assumptions] if "SO-101" in n]
     if kept and not built_ok:
         return f"kept with {shape} {d:g} mm {m:g} g"

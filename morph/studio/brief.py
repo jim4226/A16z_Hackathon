@@ -1562,7 +1562,8 @@ def _singular(w: str) -> str:
 _NOUN_STOP = {"each", "per", "and", "the", "for", "with", "from", "into", "onto", "that", "than", "less", "more", "max", "maximum",
               "minimum", "min", "object", "objects", "thing", "things", "item", "items", "stuff", "piece", "pieces", "part", "parts",
               "load", "loads", "payload", "weight", "weights", "every", "one", "ones", "robot", "arm", "gripper", "budget", "total",
-              "heavy", "light", "wide", "long", "tall", "high", "thick", "across", "diameter", "maybe", "about", "around"}
+              "heavy", "light", "wide", "long", "tall", "high", "thick", "across", "diameter", "maybe", "about", "around",
+              "weighing", "weigh", "weighs", "weighed", "weight", "dia", "deep", "depth", "big", "small", "large", "approx"}
 _MATERIAL = r"(?:glass |plastic |metal |wooden |paper )?"
 _NOUN_PATTERNS = (  # the thing a custom object is called: "450 g candles", "candles of 450 g", "picks up glass cups"
     r"\d(?:\.\d+)?\s*(?:g|mm)\s+(?:(?:heavy|light|wide|big|small|large|full|empty)\s+)?(" + _MATERIAL + r"[a-z][a-z-]{2,20})\b",
@@ -2128,11 +2129,36 @@ def parse(text: str) -> dict:
         s["quantity"] = 1000
     elif re.search(r"\b(small batch|a few of them|pilot run)\b", t):
         s["quantity"] = 10
-    # existing hardware
-    if re.search(r"\bso[- ]?10[01]\b|\ble ?robot\b", t):   # "I don't have an SO-101" is a new arm
-        s["existing_hardware"] = "none" if re.search(r"\b(?:no|not|don'?t|do not|doesn'?t|haven'?t|have not|without|instead "
-                                                     r"of|rather than|isn'?t|never)\b[^.;!?]{0,30}?\b(?:so[- ]?10[01]|le ?robot)\b",
-                                                     t) else "so101"
+    # existing hardware: read an SO-101 the user has or uses, not a past one, someone else's, a question, a comparison
+    # ("like an SO-101") or a request for a new arm ("my SO-101 is broken, build a new arm")
+    if re.search(r"\bso[- ]?10[01]\b|\ble ?robot\b", t):
+        none_ctx = re.search(r"\b(?:no|not|don'?t|do not|doesn'?t|haven'?t|have not|without|instead of|rather than|isn'?t|"
+                             r"never)\b[^.;!?]{0,30}?\b(?:so[- ]?10[01]|le ?robot)\b", t)
+        # it is not an SO-101 the user has to use now: broken or a new arm asked for, someone else's, past, a question,
+        # or a comparison ("like an SO-101", "SO-101 style")
+        not_mine = (re.search(r"\b(?:broken|broke|bust|busted|faulty|dead|died|knackered|stopped working|not working|"
+                              r"doesn'?t work|won'?t work|build (?:me )?a new|new arm|a different arm|another arm)\b", t) or
+                    re.search(r"\b(?:used to|previously|once had|no longer|a (?:friend|mate|colleague|neighbou?r)|"
+                              r"my (?:friend|mate|colleague|neighbou?r|brother|sister|dad|mum|cousin|boss)|his|her|their|"
+                              r"someone(?:'?s)?)\b[^.;!?]{0,30}?\b(?:so[- ]?10[01]|le ?robot)\b", t) or
+                    re.search(r"\b(?:like|similar to|such as|style|based on|akin to|modell?ed on)\s+(?:an?|the|my|it)?\s*"
+                              r"(?:so[- ]?10[01]|le ?robot)\b|(?:so[- ]?10[01]|le ?robot)[- ]?(?:style|like|ish)\b", t) or
+                    re.search(r"\bshould\s+i\b|\bshall\s+i\b|\bis\s+it\s+worth\b|\bwould\s+it\s+be\s+(?:better|worth)\b", t))
+        # possession or use: "I have / I've got / I own / use my / with my / my SO-101"
+        owned = (re.search(r"\b(?:i\s+(?:have|own|possess|use|run|operate)|we\s+(?:have|own|use)|i'?ve\s+(?:got|had)|"
+                           r"got\s+(?:an?|my|a)|use\s+(?:my|an?|the|our|this)|using\s+(?:my|an?|the|our|this)|"
+                           r"with\s+(?:my|an?|the|our|this)|on\s+(?:my|our)|(?:my|our)\s+own)\s+(?:[a-z-]+\s+){0,2}?"
+                           r"(?:so[- ]?10[01]|le ?robot)\b", t) or re.search(r"\b(?:my|our)\s+(?:[a-z-]+\s+){0,1}?so[- ]?10[01]\b", t))
+        if none_ctx or (not_mine and not none_ctx and re.search(r"\b(?:broken|broke|new arm|build (?:me )?a new|a new|"
+                                                                r"a different arm|another arm|not working|doesn'?t work)\b", t)):
+            s["existing_hardware"] = "none"
+        elif owned and not not_mine:
+            s["existing_hardware"] = "so101"
+        elif not_mine:
+            s["existing_hardware"] = "none"   # a question, a comparison, past, or someone else's: not the user's stock arm
+        if s.get("existing_hardware") == "none" and out["archetype"][0] == "so101":
+            # the SO-101 keyword chose the archetype, but it is not the user's arm: build a new one for the object
+            out["archetype"] = (_archetype_for_object(s.get("object")) or "generic_arm", out["archetype"][1])
     # tasks
     if re.search(r"\bsort(?:s|ing|er)?\b", t):
         s["task"] = "sort"
@@ -2461,6 +2487,20 @@ def _so101_misfit(o: dict | None) -> str | None:
     return None
 
 
+def _so101_below_min(o: dict | None) -> str | None:
+    """A stated object below the stock SO-101's own usable minimum (flat-sided under 22.5 mm, round under 26 mm): the
+    jaws drop it, so even with the user's SO-101 a Morph-generated arm is built, not the stock arm on a stand-in."""
+    if not o or "diameter_mm" not in (o.get("stated") or []):
+        return None   # only when the user stated the width (not a preset's default size)
+    d, shape = float(o.get("diameter_mm", 0) or 0), o.get("shape")
+    lo = cap.SO101_MIN_FLAT_MM if shape == "box" else cap.min_width("cylinder", "fsr402")
+    if d and d < lo:
+        kind = "flat-sided" if shape == "box" else "round"
+        return (f"In Morph's simulation the stock SO-101's jaws drop {kind} objects narrower than about {lo:g} mm; a "
+                f"{d:g} mm {o.get('name', 'object')} is below that, so it needs a Morph-generated arm.")
+    return None
+
+
 def assess_scope(b: Brief) -> dict:
     """{status: ok|adjusted|out_of_scope, notes, nearest}; nearest = {archetype, slots, summary} for out_of_scope."""
     a = _arch(b)
@@ -2481,7 +2521,10 @@ def assess_scope(b: Brief) -> dict:
         if near_obj and near_obj["mass_g"] > cap.payload_g("smart_bus", 4):
             slots["budget"] = 1500.0
         obj = sanitize_object(slots.get("object") or ARCHETYPES[arch].objects[0])
-        misfit = _so101_misfit(obj) if b.get("existing_hardware") == "so101" or arch == "so101" else None
+        so101_here = b.get("existing_hardware") == "so101" or arch == "so101"
+        # a stated object below the SO-101's own minimum gets a generated arm, not the stock arm on a bigger stand-in
+        below = _so101_below_min(b.get("object")) if so101_here else None
+        misfit = below or (_so101_misfit(obj) if so101_here else None)
         if misfit:   # the nearest robot gets the same SO-101 checks as a request inside scope
             notes.append(misfit)
             slots.update(existing_hardware="none", object=obj)

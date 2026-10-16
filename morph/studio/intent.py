@@ -45,7 +45,7 @@ ALIAS_PATTERNS = [
 _NUM = r"(\d+(?:\.\d+)?)"
 _UNITS = [  # every length becomes "<n> mm" and every mass "<n> g", so the rules below only parse mm and g
     (_NUM + r"\s*(?:kgs?|kilos?|kilograms?)\b", 1000.0, "g"),
-    (_NUM + r"\s*(?:lbs?|pounds?)\b", 453.592, "g"),
+    (_NUM + r"\s*(?:lbs?|pounds?)\b(?!\s*(?:coins?|notes?|shops?|stores?|signs?|symbols?|sterling)\b)", 453.592, "g"),
     (_NUM + r"\s*(?:oz|ounces?)\b", 28.3495, "g"),
     (_NUM + r"\s*(?:grams?|gr)\b", 1.0, "g"),
     (_NUM + r"\s*(?:cm|centimet(?:er|re)s?)\b", 10.0, "mm"),
@@ -95,8 +95,10 @@ def _plain_numbers(text: str) -> str:
     text = re.sub(r"(?<![\d.,])([1-9]\d{0,2})((?:\.000)+)(?![\d,]|\.\d)(?=\s*(?:grams?|gr|gms?|g)\b)",
                   lambda m: m.group(1) + m.group(2).replace(".", ""), text)
     text = re.sub(r"(?<![\w.])\.(\d+)" + _UNIT_AHEAD, r"0.\1", text)                     # ".3 kg"
-    text = re.sub(r"\bhalf\s+an?\s+(?=(?:kilo|kilogram|pound|lb)s?\b)", "0.5 ", text)
-    text = re.sub(r"\b(?:a|an|one)\s+(?=(?:kilo|kilogram|pound|ounce|inch)\b)", "1 ", text)
+    text = re.sub(r"\bhalf\s+an?\s+(?=(?:kilo|kilogram|pound|lb)s?\b(?!\s*(?:coins?|notes?|shops?|stores?)\b))", "0.5 ", text)
+    # "a pound of flour" is a mass, but "a pound coin", "one pound notes" and "a pound shop" are not
+    text = re.sub(r"\b(?:a|an|one)\s+(?=(?:kilos?|kilograms?|ounces?|inch(?:es)?)\b|"
+                  r"pounds?\b(?!\s*(?:coins?|notes?|shops?|stores?|signs?|symbols?|sterling)\b))", "1 ", text)
     text = re.sub(r"\b(" + _NUM_WORD + r"(?:[\s-]+(?:and[\s-]+)?" + _NUM_WORD + r"){0,7})" + _UNIT_AHEAD,
                   lambda m: f"{_words_value(m.group(1)):g}" if _words_value(m.group(1)) is not None else m.group(1), text)
     text = re.sub(r"(\d)\s*-\s*(?=(?:kgs?|kilos?|kilograms?|lbs?|pounds?|oz|ounces?|grams?|gms?|g|cm|centimet(?:er|re)s?|mm|"
