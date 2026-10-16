@@ -24,20 +24,20 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Chat edits understand units (mm, cm, in, g, kg, lb, oz) and whole-word object names, and questions such as "can it
   lift 2 kg?" no longer change the design.
 - **Import** (beta): drop a robot folder or zip (URDF, xacro, MuJoCo XML) or paste a GitHub or Hugging Face link; drop
-  an STL, OBJ or GLB of the object to grasp, a parts list (CSV, XLSX, Markdown), a KiCad board or a Morph export.
-  Morph finds the gripper, tool point, base and ready pose, asks only what the files can't tell (usually the motors)
-  and builds the robot as a new project. Imported robots are kept in `projects/.robots/` with their licence and where
-  they came from; `morph import` does the same from a terminal, given a path or a link. Auto-imported arms are sized
-  for their worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
-  stretched-out pose). On a Studio other computers use, links are off unless it was started with
-  `--allow-url-import`. A parts list line is a catalog motor when its part name or MPN names one, and its
-  description or notes pick the variant (a "12V" STS3215 stays the 12 V servo); notes that mention the servo on a
-  screw or a driver board don't make it one, and neither does a name like "STS3215 servo horn" or "12V power supply
-  for STS3215 servos"; what a servo comes with or is described by does ("STS3215 servo, horn included", "Feetech STS3215
-  Servo Motor 12V Metal Case", "Dynamixel XM430-W350-T built-in controller" are the servos). A line named "Feetech servo", "Gripper servo" or "Servo (x6)" is the motor its description
-  names. The preview shows the MPN and the description. An object whose grip would bend the fingers gets the
-  thicker beam New robot would give it. An import whose build isn't feasible says why in its project's chat, with the
-  fixes Morph can build as buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).
+  an STL, OBJ or GLB of the object to grasp, a parts list (CSV, XLSX, Markdown), a KiCad board or a Morph export. Morph
+  finds the gripper, tool point, base and ready pose, asks only what the files can't tell (usually the motors) and
+  builds the robot as a new project. Imported robots are kept in `projects/.robots/` with their licence and where they
+  came from; `morph import` does the same from a terminal, given a path or a link. Auto-imported arms are sized for
+  their worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
+  stretched-out pose). On a Studio other computers use, links are off unless it was started with `--allow-url-import`. A
+  parts list line is a catalog motor when its part name or MPN names one, and its description or notes pick the variant
+  (a "12V" STS3215 stays the 12 V servo); notes that mention the servo on a screw or a driver board don't make it one,
+  and neither does a name like "STS3215 servo horn" or "12V power supply for STS3215 servos"; what a servo comes with or
+  is described by does ("STS3215 servo, horn included", "Feetech STS3215 Servo Motor 12V Metal Case", "Dynamixel
+  XM430-W350-T built-in controller" are the servos). A line named "Feetech servo", "Gripper servo" or "Servo (x6)" is
+  the motor its description names. The preview shows the MPN and the description. An object whose grip would bend the
+  fingers gets the thicker beam New robot would give it. An import whose build isn't feasible says why in its project's
+  chat, with the fixes Morph can build as buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).
 - **Show Morph the job** (beta): add a phone video or photos of the task done by hand. Morph picks still frames in
   your browser, estimates the object, the pick and place spots, the cycle time and safety needs, and lists every
   change before Apply. Only the chosen frames are sent, after you agree: to Claude, plus up to 4 to SubQ as an
@@ -112,11 +112,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   20 seconds: the review's desk scan takes 7.5 to 8.5 seconds on a 4-core computer at load 4-7 (12 to 13 before) and 10
   to 11.5 at load 11-13, where it used to take 16 to 18 and was often cut short; a generated room of a million triangles
   takes 10.5 seconds at load 7. The boxes' share of the time is set aside only once the check has listed a near miss,
-  sized from what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm comes
-  within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the path
-  was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short, whose
-  box ran out of time to be fitted, or that ran out of time before every near miss was listed (they say so, and that
-  checking again may list them all), aren't kept, so Check placement measures them again.
+  sized from what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm
+  comes within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the
+  path was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short,
+  whose box ran out of time to be fitted, or that ran out of time before every near miss was listed (they say so, and
+  that checking again may list them all), aren't kept, so Check placement measures them again.
 - World mode's distances are rounded down, never up, wherever they are kept or shown (the room scan, the simulation's
   clearance, a near miss's row, the base's margin, the room above the arm, the World panel and `morph world`): to 0.1
   mm under 10 mm, to the millimetre from there. Before, 30.68 mm read "At least 31 mm", and a near miss of 9.96 mm was
