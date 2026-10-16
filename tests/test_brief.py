@@ -191,6 +191,34 @@ def test_broadened_hostile_phrasings_refused(text):
 
 
 @pytest.mark.parametrize("text", [
+    # a job step or a process word after "to" is not a person; a numbered bed/table/room in a greenhouse or workshop is
+    # a station, not someone served; a Title Case tagline word is not a name; an explicit "nobody around" beats "cobot"
+    "a robot that moves the parts to rework", "a robot that moves the parts to autoclave",
+    "a robot that moves the parts to quarantine", "a robot that moves the parts to decon",
+    "a robot that moves pots to bed 3", "a robot that moves the seedlings to table 4",
+    "a robot that moves the plants to room 2", "a robot that moves the trays to bed 6 of the greenhouse",
+    "A Robot That Sorts Lego For Fun", "A Robot That Works With Steel", "A Robot That Moves Parts With Care",
+    "A Robot That Helps Pack Boxes",
+    "a collaborative robot that runs overnight with nobody around",
+])
+def test_process_words_tables_and_cobot_are_not_people(text):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "people_nearby") not in ("yes", "children") and "estop" not in (b.changes.get("electronics.extras") or [])
+
+
+@pytest.mark.parametrize("text", [
+    # a numbered bed, table or room that IS a person served keeps the person and the e-stop
+    "a robot that takes the meds to bed 4", "a robot that brings the order to table 3",
+    "a robot that serves table 5 in the restaurant",
+    # a described person with "nobody around" keeps the person: safety wins over a contradiction
+    "the operator swaps the bins every hour, nobody near it",
+])
+def test_served_person_and_named_person_kept(text):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "people_nearby") in ("yes", "children") and "estop" in (b.changes.get("electronics.extras") or [])
+
+
+@pytest.mark.parametrize("text", [
     "pick strawberries without hurting them", "sort bath bombs into boxes", "a glue gun holder", "an arm with a kill switch",
     "shoot photos of my products", "launch my small business with a sorting robot", "strawberry stalks into a bin",
     "tie down the cables", "a robot that hands me a nail gun", "feed my cat without harming my cat",

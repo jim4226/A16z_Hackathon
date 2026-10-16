@@ -655,7 +655,15 @@ _NOT_NAMES = frozenset(("i", "monday", "tuesday", "wednesday", "thursday", "frid
                         "hr", "estates", "marketing", "sales", "payroll", "operations", "ops", "warehouse", "assembly",
                         "clinic", "pharmacy", "it", "ict", "unit", "block", "wing", "bay", "building",
                         "haas", "ups", "fedex", "dhl", "usps", "costco", "walmart", "tesco", "aldi", "lidl", "target", "apple",
-                        "google", "samsung", "bosch", "makita", "dewalt", "festool"))
+                        "google", "samsung", "bosch", "makita", "dewalt", "festool",
+                        # process and station words read as a name after "to" ("move the parts to rework")
+                        "rework", "quarantine", "autoclave", "decon", "decontamination", "cleanup", "rinse", "overflow",
+                        "backup", "archive", "salvage", "refurb", "refurbishment", "aoi", "smt", "litho", "lithography",
+                        "anneal", "degrease", "etch", "passivation", "teardown", "rebuild", "prep", "buffer", "kitting",
+                        "despatch", "spares", "tooling", "wip", "finishing", "plating", "anodising", "anodizing",
+                        # common words read as a name in a Title Case or SHOUTING tagline ("... For Fun", "... With Care")
+                        "fun", "steel", "care", "pack", "ease", "speed", "precision", "style", "class", "flair", "love",
+                        "pride", "joy", "confidence", "accuracy", "efficiency", "scale", "detail"))
 # a word that may be someone's name, after "to" or "help" at the end of its phrase ("bring the pills to siobhan", "a robot
 # that helps kwame at home"): not a thing, a place, a department, a job done, an animal or the robot
 _NOT_A_NAME = (r"(?:" + "|".join(sorted(_NOT_NAMES)) + r"|position|location|spot|side|front|back|top|bottom|left|right|centre|"
@@ -944,8 +952,13 @@ PEOPLE_AROUND = (_CLAUSE + _LEAD + r"(?:" + _WHO + ")" + _SUBJ_PP + r"\s+(?:" + 
                  r"\b(?:pass|send|slide|hand)\w*\s+(?:[\w'’-]+\s+){0,4}?(?:down|across|around|round|along)\s+the\s+table\b|"
                  r"\b(?:to|at)\s+the\s+other\s+end\s+of\s+the\s+table\b|\b(?:down|across|along)\s+to\s+the\s+other\s+end\b|"
                  r"\baround\s+the\s+room\b|"
-                 r"\b(?:to|for|at|serves?|bring\w*|tak\w*|deliver\w*)\s+(?:the\s+)?(?:table|bed|room|seat|cubicle)\s+"
-                 r"\d+[a-z]?\b|\bthe\s+tables\b(?=.*\b(?:restaurant|cafe|café|bistro|canteen|pub|bar)s?\b)|"
+                 # "serves table 3", "bring the bill to table 5", "take the meds to bed 4": a person served at a numbered
+                 # table, bed or room. Not a horticulture or workshop station ("moves the trays to bed 6 of the
+                 # greenhouse", "moves the seedlings to table 4"), which uses move/sort/place, not a serving verb
+                 r"\b(?:serves?|bring\w*|tak\w*|deliver\w*|wait\w*\s+on)\s+(?:[\w'’-]+\s+){0,4}?(?:the\s+|their\s+)?"
+                 r"(?:table|bed|room|seat|cubicle|booth|bay)\s+\d+[a-z]?\b(?!\s+of\s+(?:the\s+)?(?:greenhouse|garden|nursery|"
+                 r"workbench|bench|workshop|factory|warehouse|line|rack|shelf|polytunnel|plot|bed|allotment|cell|unit))|"
+                 r"\bthe\s+tables\b(?=.*\b(?:restaurant|cafe|café|bistro|canteen|pub|bar)s?\b)|"
                  r"\b(?:beside|next to|by|at)\s+(?:the|a|her|his|my|their)\s+(?:hospital\s+)?bed\b|"
                  r"\brobot(?:ic)?\s+(?:server|cashier|receptionist|nurse|carer|caregiver|companion|sous[- ]chef|chef|host|"
                  r"hostess|concierge|teacher|tutor|assistant|helper|attendant|valet|porter|bellhop)\b|"
@@ -975,6 +988,11 @@ ROBOT_ALONE = (r"\b(?:on its own|by itself|unattended|enclosed|fenced(?: off| in
 NOBODY_NEAR = (r"\b(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b(?!\s+else\b)(?:\s+\w+){0,3}?\s*" + _NEAR +
                r"\b(?!(?:\s+(?:it|the robot|the arm|this))?\s*[,;:-]?\s*(?:except|but|apart from|aside from|other than|"
                r"besides|save|bar|just|only|barring|excluding)\b)")
+# the "cobot"/"assistive"/"mobility" hints are what the filter reads as people when no one is named: unsure, not a
+# described person. An explicit "nobody around" beats these (see person_signals), but never a named person.
+_COBOT_UNSURE = (r"\b(?:cobots?|collaborative (?:robot|arm)s?|human[- ]robot|hrc|helping hands?|third hand|assistive|adl|"
+                 r"activities of daily living|daily living|independent living|power ?chairs?|mobility aids?|hospital beds?|"
+                 r"bed ?rails?|feeding (?:arm|robot|aid|assistant|device|tool)s?)\b")
 _KIDS = (r"\b(?:kids?(?!['’])|kiddos?|kiddies|children(?!['’]s)|schoolchildren|grandchildren|grandkids?|schoolkids?|child|toddlers?|bab(?:y|ies)|"
          r"infants?|newborns?|twins|teens?|teenagers?|tweens?|youngsters?|my son|my daughter|"
          r"(?:the|a|my|our|her|his|their|little|young) (?:boy|girl)s?|"
@@ -1824,9 +1842,19 @@ def person_signals(pt: str, t: str = "") -> dict:
     receiver = _rx(HAND_TO_PERSON).search(pt) or re.search(r"\bhand[- ]?(?:overs?|offs?)\b", pt)   # "a handover robot"
     school = re.search(r"\b(?:classrooms?|(?:primary|elementary|junior|infant|nursery|middle|high|secondary|grade|pre-?)\s*schools?|"
                        r"schools?\b(?!\s+of\b)|nurser(?:y|ies)|kindergartens?|daycares?|day care|playgroups?|creche)\b", pt)
+    # someone the robot helps, serves or works for is a person named; an unsure setting or "cobot" only leaves someone
+    # likely there. An explicit "nobody around" beats the unsure one ("a cobot that runs overnight with nobody around"),
+    # but never a person the request names.
+    for_someone = _rx(_FOR_SOMEONE).search(pt)
+    ambient = _rx(PEOPLE_AROUND).search(pt) or _rx(THEIR_PLACE).search(pt)
+    if ambient and not for_someone and (t or pt) and re.search(NOBODY_NEAR, t or pt):
+        # explicit "nobody around" beats a bare "cobot"/"assistive" hint, but never a person the request describes
+        # ("the operator swaps the bins, nobody near it" keeps the operator)
+        stripped = re.sub(_COBOT_UNSURE, " ", pt)
+        if not _rx(PEOPLE_AROUND).search(stripped) and not _rx(THEIR_PLACE).search(stripped):
+            ambient = None
     for kind, m in (("children", kids), ("beside", _rx(PEOPLE_BESIDE).search(pt) or _rx(PEOPLE_AT_IT).search(pt)),
-                    ("receiver", receiver), ("near", _rx(_FOR_SOMEONE).search(pt) or _rx(PEOPLE_AROUND).search(pt) or
-                                             _rx(THEIR_PLACE).search(pt)),
+                    ("receiver", receiver), ("near", for_someone or ambient),
                     ("school", school), ("else", re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t or pt))):
         if m:
             found[kind] = m.group(0).strip()
