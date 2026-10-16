@@ -52,6 +52,22 @@ const scanBoxTitle = (g) => g.trial?.ok
     : `comes no closer to it than ${mmDown(+g.trial.min_clearance_mm)} mm`}`
   : (g.touches ? 'A grey box over this part of the scan, where the arm touches it: the next simulation tries to plan round it, and may fail'
     : 'A grey box over this part of the scan, no closer to the path as it is than the scan: the next simulation may take another way, closer to it, or fail');
+// Add box here's id and label for a scan near miss: its own, unless the world holds that id or label already (a box added
+// for an earlier check's "Scan near miss 1"); then the next "Scan near miss k" past every one the world holds, so no two
+// boxes share a label (the simulation names the box it hits or comes closest to by its label)
+const scanBoxName = (obs, g) => {
+  const ids = new Set(obs.map((o) => o.id)), labels = new Set(obs.map((o) => o.label));
+  let { id, label } = g;
+  if (labels.has(label) || ids.has(id)) {
+    let k = 0;
+    for (const o of obs) {
+      const m = /^Scan near miss (\d+)$/.exec(o.label || '') || /^scan-(\d+)(?:-\d+)?$/.exec(o.id || '');
+      if (m) k = Math.max(k, +m[1]);
+    }
+    do { k += 1; id = `scan-${k}`; label = `Scan near miss ${k}`; } while (ids.has(id) || labels.has(label));
+  }
+  return { id, label };
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const uid = () => Math.random().toString(36).slice(2, 8);
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4();
@@ -1726,10 +1742,9 @@ export class WorldPanel {
       return this.toast(`${twin.label} is this box already: Save and simulate to test the path against it`);
     }
     if (obs.length >= 200) return this.toast('This world already has 200 grey boxes, the most it can hold');
-    const ids = new Set(obs.map((o) => o.id));
-    let id = g.id, k = 2;
-    while (ids.has(id)) id = `${g.id}-${k++}`;
-    const box = { id, label: g.label, center: [...g.box.center], half: [...g.box.half], yaw_deg: g.box.yaw_deg, source: 'auto' };
+    const { id, label } = scanBoxName(obs, g);
+    g.label = label;                                  // the row names the box as added
+    const box = { id, label, center: [...g.box.center], half: [...g.box.half], yaw_deg: g.box.yaw_deg, source: 'auto' };
     if (g.covers) box.covers = { ...g.covers, center: [...g.covers.center], half: [...g.covers.half] };
     obs.push(box);
     wv._buildBoxes(); wv.changed('boxes');

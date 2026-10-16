@@ -1444,7 +1444,13 @@ field failure rate (section 0, honesty).
   each box is added to the room as Add box here adds it (`validate`, `sim_world`), and the revision's robot, rebuilt
   from its design and its saved `sizing` and `eplan` as the pipeline builds it (`api_world._box_trial`, kept for the
   last two revisions), plans and simulates the pick and place there (`simulate.world_trials`: `_plan_pick_place` and
-  `_run_pick_place`, fast=False as the Studio's pipeline; `_Robot(described=...)` reuses the slow description). A box
+  `_run_pick_place`, fast=False as the Studio's pipeline; `_Robot(described=...)` reuses the slow description; the box
+  tried is the room's last, and `at_box`, `contact` and `blocked` are about it by its id, `_Robot.world_ids`, kept out
+  of the simulation's documents, so their golden hashes are unchanged: R8 compared labels, and Add box here could make
+  a second "Scan near miss 1", whose row then showed the other box's distance or whose offer the other box's contact
+  could refuse). A region's id and label are numbered on past the "Scan near miss k" labels and "scan-k" ids the world
+  holds (`worlds._number_regions`; world.js `scanBoxName` does the same for a box added to an unsaved world that
+  holds its label or id). A box
   the run touches, the plan passes into, or that fails a simulation the revision's own didn't (`baseline_ok`), loses its
   box and `covers`, with `trial` {ok: False, failure} and `no_box` "A simulation with a grey box here fails (<failure>),
   so none is offered: move the robot or the thing instead."; one it goes round keeps it, with `trial` {ok,

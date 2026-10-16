@@ -1088,6 +1088,53 @@ def test_boxes_not_tried_together_in_time_are_never_said_to_fail_together():
     assert _cached(res["stats"]), res["stats"]
 
 
+FAR_BOX = {"center": [-350.0, -450.0, 15.0], "half": [10.0, 10.0, 15.0], "yaw_deg": 0.0}   # on the bench, out of reach
+
+
+def test_a_near_miss_is_numbered_past_the_boxes_add_box_here_made_already(tmp_path, nominal):
+    """A world holding "Scan near miss 1" (added after an earlier check) lists its next near miss as "Scan near miss 2".
+    1f6b690 numbered every check from 1, so Add box here made a second "Scan near miss 1" (ids scan-1 and scan-1-2) and
+    the status said "closest 3.1 mm, to Scan near miss 1" of either."""
+    rob, doc = nominal
+    room = boxes_glb(tmp_path / "room.glb", [SLAB, POST])
+    old = {"id": "scan-1", "label": "Scan near miss 1", **FAR_BOX, "source": "auto"}
+    res = measure(room, worlds.validate({**BENCH, "obstacles": [old]}), doc, rob.xml)
+    (g,) = res["regions"]
+    assert (g["id"], g["label"]) == ("scan-2", "Scan near miss 2"), g
+    res = measure(room, worlds.validate({**BENCH, "obstacles": [{**old, "id": "scan-4-2", "label": "Shelf"}]}), doc, rob.xml)
+    assert (res["regions"][0]["id"], res["regions"][0]["label"]) == ("scan-5", "Scan near miss 5"), res["regions"][0]
+
+
+def test_a_box_tried_is_told_apart_from_another_with_its_label(nominal):
+    """try_boxes' trial (the next simulation, run here) names boxes by label, and two can share one (1f6b690's Add box
+    here made a second "Scan near miss 1"). The trial now tells the box tried apart by its id: a run that touches the
+    other box doesn't refuse this one for it, and a clearance measured to the other box is "at least" for this one (the
+    real Studio's row said "tried: the simulation keeps 3.1 mm from it": box 1's distance, not box 2's)."""
+    def region():
+        return {"id": "scan-1", "label": "Scan near miss 1", "min_clearance_mm": 6.0, "t": 1.0, "link": "wrist",
+                "point": FAR_BOX["center"], "box": dict(FAR_BOX), "box_clearance_mm": 6.0}
+    tip = finger_tip_at_the_grasp(*nominal)           # the other box: over the egg, where the jaws must go down
+    touched = {"id": "scan-1", "label": "Scan near miss 1", "center": [float(tip[0]), float(tip[1]), float(tip[2]) + 20.0],
+               "half": [6.0, 6.0, 6.0], "yaw_deg": 0.0, "source": "auto"}
+    w = worlds.validate({**BENCH, "obstacles": [touched]})
+    _, _, base = simulated(tuple(worlds.sim_world(w)["obstacles"]))
+    assert not base["success"] and base["world_contacts"][0]["obstacle"] == "Scan near miss 1", base.get("failure")
+    res = {"min_clearance_mm": 6.0, "regions": [region()], "stats": {}}
+    worlds.try_boxes(res, w, bench_trial(fast=True), time.monotonic() + 300.0, baseline_ok=False)
+    (g,) = res["regions"]
+    assert g["box"] == FAR_BOX and g["trial"]["ok"] and g["trial"]["at_box"] is False, g
+    assert g["trial"]["fails"] and "Scan near miss 1" in g["trial"]["fails"], g      # it fails on the other box
+    near = {**POST, "id": "scan-1", "label": "Scan near miss 1", "source": "auto"}  # the other box: beside the carry
+    w = worlds.validate({**BENCH, "obstacles": [near]})
+    _, _, base = simulated(tuple(worlds.sim_world(w)["obstacles"]))
+    assert base["success"] and base["min_clearance_at"]["obstacle"] == "Scan near miss 1", base.get("failure")
+    res = {"min_clearance_mm": 6.0, "regions": [region()], "stats": {}}
+    worlds.try_boxes(res, w, bench_trial(fast=True), time.monotonic() + 300.0, baseline_ok=True)
+    (g,) = res["regions"]
+    assert g["trial"]["ok"] and g["trial"]["at_box"] is False and g["trial"]["fails"] is None, g
+    assert g["trial"]["min_clearance_mm"] == base["min_clearance_mm"], (g["trial"], base["min_clearance_mm"])
+
+
 def test_the_scan_event_counts_every_place_not_only_the_listed_ones():
     """The check says 12 places (8 listed); the Studio's progress line said 8 near misses."""
     res = {"min_clearance_mm": 2.4, "regions": [{}] * 8, "stats": {"places": 12}}

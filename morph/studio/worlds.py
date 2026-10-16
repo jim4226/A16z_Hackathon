@@ -2411,8 +2411,10 @@ def try_boxes(res: dict, world: dict, trial, deadline: float, baseline_ok: bool 
     """Add box here's promise, tried rather than assumed: each box a region of scan_clearance() offers is added to the
     room on its own, as Add box here adds it, and the pick and place planned and simulated again as the next simulation
     would run it (`trial`(rooms, deadline) -> [result or None], simulate.world_trials on the revision's robot, each
-    room a sim_world()). A box the simulation goes round keeps its offer, with "trial" {ok, min_clearance_mm (the
-    simulation's own clearance, no more than its distance to this box), at_box (measured to this box), fails (when the
+    room a sim_world() whose last box is the one tried: its at_box, contact and blocked are about that box, told apart
+    by id from any other with its label). A box the simulation goes round keeps its offer, with "trial" {ok,
+    min_clearance_mm (the simulation's own clearance, no more than its distance to this box), at_box (measured to this
+    box), fails (when the
     revision's own simulation failed too, `baseline_ok` False: how this one fails, without touching the box)}. A box
     the run touches or the plan passes into, or with which the simulation fails where the revision's didn't, is
     offered no more: "trial" {ok False, failure} and "no_box" say how it fails. A box not tried before `deadline`
@@ -2454,7 +2456,7 @@ def try_boxes(res: dict, world: dict, trial, deadline: float, baseline_ok: bool 
             drop(r, f"A simulation with a grey box here fails ({how}), so none is offered: move the robot or the thing "
                     "instead.")
             continue
-        r["trial"] = {"ok": True, "min_clearance_mm": t["min_clearance_mm"], "at_box": t.get("closest") == r["label"],
+        r["trial"] = {"ok": True, "min_clearance_mm": t["min_clearance_mm"], "at_box": bool(t.get("at_box")),
                       "fails": None if t["success"] else t.get("failure")}
         kept.append(r)
     if len(kept) > 1 and baseline_ok is not False:
@@ -2512,9 +2514,22 @@ def _already_boxed(world, regions, stats) -> list:
         stats["covered"] = int(stats.get("covered") or 0) + len(regions) - len(keep)
         if "places" in stats:
             stats["places"] = max(len(keep), int(stats["places"]) - (len(regions) - len(keep)))
-        for i, r in enumerate(keep, 1):
-            r.update({"id": f"scan-{i}", "label": f"Scan near miss {i}"})
+    _number_regions(world, keep)
     return keep
+
+
+def _number_regions(world: dict, regions: list) -> None:
+    """Each region's id and label ("scan-k", "Scan near miss k"), numbered on past the boxes Add box here made already:
+    a world holding "Scan near miss 1" lists its next near misses as 2, 3 ..., so a box added for one never takes the
+    label of a box already there (the simulation names the box it hits or comes closest to by its label)."""
+    last = 0
+    for o in world.get("obstacles") or []:
+        for text, rx in ((o.get("label"), r"Scan near miss (\d+)"), (o.get("id"), r"scan-(\d+)(?:-\d+)?")):
+            m = re.fullmatch(rx, str(text or ""))
+            if m:
+                last = max(last, int(m.group(1)))
+    for i, r in enumerate(regions, last + 1):
+        r.update({"id": f"scan-{i}", "label": f"Scan near miss {i}"})
 
 
 def _world_box(world, R, lo, hi, yaw, rounding="near") -> dict:
@@ -2704,8 +2719,7 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None, r
                                 "half": [round(float(max(v, 1.0)), 1) for v in (hi_ - lo_) / 2.0], "yaw_deg": round(float(yaw), 2)},
                         "points": int(len(idx)), "_lo": lo_.copy(), "_hi": hi_.copy(), "_R": R})
     regions.sort(key=lambda r: r["_d"])                 # measured exactly, the closest first again
-    for i, r in enumerate(regions, 1):
-        r.update({"id": f"scan-{i}", "label": f"Scan near miss {i}"})
+    _number_regions(world, regions)
     return regions
 
 

@@ -74,18 +74,19 @@ verdict." It names the part of the arm and the time, and says *touches or passes
 
 Each place where the arm comes within 10 mm of the scan is listed with **Add box here**: a grey box over that part of
 the scan (standing on the surface when the scan under it does), added to the room. When more than eight places are that
-close, every one is counted and the eight closest are listed. A box around a round thing sticks out at its corners, so
-the box is measured against the same path first (MuJoCo's own distance to it at every pose, and the motion between them)
-and trimmed on the sides that face it until it is no closer to the path as it is than the scan there (the row says how
-close it is, "at most" unless it is the check's closest place measured along the whole path, and "trimmed" when it
-was). When a box that keeps clear would be thinner than 5 mm, none is offered: move the robot or the thing. Where the
-arm touches or passes through the scan no box can keep clear of the path, so the box there is a grey box over that part
-of the scan, untrimmed: at least 20 mm each way, so it can be much bigger than what was scanned (a speck gets a 20 mm
-box), and its row says it "touches the path" unless the whole path keeps at least 0.5 mm from it. Where such a box
-would come within 0.5 mm of what no plan can change (the arm's starting pose, the moves down to the object, the grasp
-and the lift, the set-down and the release, or where the object starts and ends), none is offered, and the row says the
-arm must reach there (and, when the scan holds the object itself where it is picked up, or something within 2 mm of
-it, says that). A trimmed box that would reach the object where it starts or ends isn't offered either.
+close, every one is counted and the eight closest are listed. Each place is numbered on past the "Scan near miss" boxes
+the world holds already, so a box added has a label no other box has. A box around a round thing sticks out at its
+corners, so the box is measured against the same path first (MuJoCo's own distance to it at every pose, and the motion
+between them) and trimmed on the sides that face it until it is no closer to the path as it is than the scan there (the
+row says how close it is, "at most" unless it is the check's closest place measured along the whole path, and "trimmed"
+when it was). When a box that keeps clear would be thinner than 5 mm, none is offered: move the robot or the thing.
+Where the arm touches or passes through the scan no box can keep clear of the path, so the box there is a grey box over
+that part of the scan, untrimmed: at least 20 mm each way, so it can be much bigger than what was scanned (a speck gets
+a 20 mm box), and its row says it "touches the path" unless the whole path keeps at least 0.5 mm from it. Where such a
+box would come within 0.5 mm of what no plan can change (the arm's starting pose, the moves down to the object, the
+grasp and the lift, the set-down and the release, or where the object starts and ends), none is offered, and the row
+says the arm must reach there (and, when the scan holds the object itself where it is picked up, or something within 2
+mm of it, says that). A trimmed box that would reach the object where it starts or ends isn't offered either.
 
 A box keeps clear of the path as it is, but the next simulation plans again with the box in the room: it can take
 another way for the approach, the carry, how far the hand opens to let go and the way back, and that way can come closer

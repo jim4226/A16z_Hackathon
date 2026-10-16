@@ -1189,6 +1189,11 @@ class _Robot:
         self.world_geoms = np.array([i for i in range(m.ngeom) if W is not None and m.geom(i).name.startswith("world_")], int)
         self.world_names = {int(g): str((W["obstacles"][int(m.geom(g).name[6:])]).get("label") or m.geom(g).name)
                             for g in self.world_geoms}
+        # which box, whatever its label (two can share one): kept here, not in the simulation's documents, for
+        # world_trials: the boxes the run touched, the one its closest approach is measured to, the one its plan is in
+        self.world_ids = {int(g): str((W["obstacles"][int(m.geom(g).name[6:])]).get("id") or m.geom(g).name)
+                          for g in self.world_geoms}
+        self.hit_ids, self.closest_id, self.blocked_id = set(), None, None
         links = {m.body(n).id for n in self.asm.links}
         self.robot_geoms = np.array([i for i in range(m.ngeom) if m.geom_bodyid[i] in links], int)
         from . import sweep
@@ -1511,6 +1516,7 @@ def _simulate(rob: _Robot, plan: _Plan, *, obj_xy=None, obj_yaw=None, obj_in_han
     mj.mj_forward(m, d)
 
     hits = {} if len(rob.world_geoms) else None   # world mode: first contact of each (link, obstacle) pair
+    rob.hit_ids = set()
     servo = _servo(perturb, dt, rob.n) if perturb else None
     integ = np.zeros(rob.n)
     imax = 0.5 * rob.eff
@@ -1709,6 +1715,7 @@ def _world_hits(rob: _Robot, d, t, hits: dict):
         h = hits.get((link, wg))
         if h is None:
             hits[(link, wg)] = {"t": round(float(t), 3), "link": link, "obstacle": rob.world_names.get(wg, ""), "depth_mm": depth}
+            rob.hit_ids.add(rob.world_ids.get(wg))
         elif depth > h["depth_mm"]:
             h["depth_mm"] = depth
 
@@ -2149,7 +2156,7 @@ def _check_path(rob, plan):
     clear of it)."""
     d = rob._mj.MjData(rob.model)
     ends = [i for _, i in plan.moves[1:]] + [len(plan.t)]
-    rob.path, rob.blocked = [], None
+    rob.path, rob.blocked, rob.blocked_id = [], None, None
     rob.path_lo = []
     for (name, i0), i1 in zip(plan.moves, ends):
         c, t, rg, wg, closest = _along(rob, d, plan, i0, i1, between=True)
@@ -2158,9 +2165,9 @@ def _check_path(rob, plan):
         if rg is not None and c < 500.0:
             e["at"] = {"t": round(float(t), 2), "link": rob.where(rg), "obstacle": rob.world_names.get(wg, "")}
         rob.path.append(e)
-        rob.path_lo.append((c, e.get("at")))
+        rob.path_lo.append((c, e.get("at"), wg))
         if closest < 0.0 and rob.blocked is None:      # measured into a box (not only a bound that might be)
-            rob.blocked = e
+            rob.blocked, rob.blocked_id = e, rob.world_ids.get(wg)
     carry = next((e for e in rob.path if e["move"] == "carry"), None)
     if isinstance(rob.arc, dict) and "min_clearance_mm" in rob.arc and carry is not None:
         rob.arc = {**rob.arc, "min_clearance_mm": min(rob.arc["min_clearance_mm"], carry["min_clearance_mm"]),
@@ -2189,9 +2196,10 @@ def _world_metrics(rob, design, run, plan) -> dict:
               "held": f["phase"] in CARRIED} for f in run.frames]
     lo, t, rg, wg, _ = _swept(rob, d, poses, pose)
     best = (lo, rg, wg, t)
-    for c, at in getattr(rob, "path_lo", []):          # the plan's own moves: the run follows them
+    for c, at, pwg in getattr(rob, "path_lo", []):     # the plan's own moves: the run follows them
         if c < best[0] and at:
-            best = (c, at, None, at["t"])
+            best = (c, at, pwg, at["t"])
+    rob.closest_id = rob.world_ids.get(best[2]) if best[1] is not None else None
     hits = run.stats.get("world_contacts") or []
     for h in hits:
         h["move"] = _move_at(plan, h["t"])
@@ -2938,10 +2946,12 @@ def _make_robot(asm, design, fast, opts, described=None):
 def world_trials(asm, design, rooms: list, *, fast: bool = False, deadline: float = math.inf, described=None) -> tuple:
     """World mode: the pick and place planned and simulated again as the next simulation would run it, in each of
     `rooms` (SimOptions.world dicts, robot base frame mm: the room with a box added, the box tried its last obstacle).
-    Returns (trials, described): one {success, failure, min_clearance_mm, closest, contact, blocked} a room, or None for
-    one not tried before `deadline` (time.monotonic()). `min_clearance_mm` is the simulation's own (the closest the run
-    and its plan come to any box, rounded down: no more than its distance to the box tried), `closest` the label of the
-    box it is measured to, `contact` whether the run touched the box tried, `blocked` whether its plan passes into it.
+    Returns (trials, described): one {success, failure, min_clearance_mm, closest, at_box, contact, blocked} a room, or
+    None for one not tried before `deadline` (time.monotonic()). `min_clearance_mm` is the simulation's own (the closest
+    the run and its plan come to any box, rounded down: no more than its distance to the box tried), `closest` the label
+    of the box it is measured to and `at_box` whether that is the box tried, `contact` whether the run touched the box
+    tried, `blocked` whether its plan passes into it: the box tried is the room's last, told apart from the others by
+    its id, never by its label (another box can have the same one).
     `described` (the robot's description, the slow part of building it) comes back for the next call on the same asm
     and design."""
     out = []
@@ -2953,12 +2963,11 @@ def world_trials(asm, design, rooms: list, *, fast: bool = False, deadline: floa
         described = rob.described
         plan, at = _plan_pick_place(rob, design, fast)
         _, met = _run_pick_place(rob, design, plan, at)
-        label = rob.world_names.get(int(rob.world_geoms[-1]), "")
+        tried = rob.world_ids.get(int(rob.world_geoms[-1]))
         out.append({"success": bool(met.get("success")), "failure": met.get("failure"),
                     "min_clearance_mm": met.get("min_clearance_mm"),
-                    "closest": (met.get("min_clearance_at") or {}).get("obstacle"),
-                    "contact": any(h.get("obstacle") == label for h in met.get("world_contacts") or []),
-                    "blocked": ((met.get("blocked") or {}).get("at") or {}).get("obstacle") == label})
+                    "closest": (met.get("min_clearance_at") or {}).get("obstacle"), "at_box": rob.closest_id == tried,
+                    "contact": tried in rob.hit_ids, "blocked": met.get("blocked") is not None and rob.blocked_id == tried})
     return out, described
 
 
