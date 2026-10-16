@@ -95,7 +95,9 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   "generating the first robot (about a minute)...", the project switcher's other demo, and either rebuilt for newer
   Morph code). Ctrl+C there, or SIGTERM, SIGHUP or SIGBREAK (`cli._stops_raise` makes them raise KeyboardInterrupt as
   Ctrl+C does), stops it in one line, "Stopped before the Studio started: <project> wasn't finished, and the next
-  start builds it again.", with exit status 130 (`cli._stopped_starting`, then `_leave`; stop signals are ignored
+  start builds it again." (for a rebuild for newer Morph code: "<project>'s rebuild with the latest Morph code was cut
+  off; its finished revision rNNN is kept, and the next start rebuilds it."), with exit status 130
+  (`cli._stopped_starting`, then `_leave`; stop signals are ignored
   from then on): the build in progress leaves no revision (`RobotProject.run` discards one it didn't finish), and a
   project folder this start made (none was there before it) that has no finished revision is removed, so the next
   start generates it again; nothing else is removed. Not covered: a SIGKILL, a power cut or a closed console window on

@@ -289,7 +289,8 @@ def cmd_studio(a):
 def _first_robots(a, other: str, building: list):
     """What `morph studio` does before the Studio starts: the .env file, and the robots it builds: `a.name`'s first one
     (generated when there is no such project yet), the project switcher's `other` one, and either rebuilt when the Morph
-    code changed since. `building` names the project being built meanwhile. Returns a.name's RobotProject."""
+    code changed since. `building` names the project being built meanwhile, followed by its finished revision when
+    the build is a rebuild for newer Morph code. Returns a.name's RobotProject."""
     from . import keys
     from .robot.pipeline2 import RobotProject, pipeline_version
     from .studio import projects
@@ -321,7 +322,7 @@ def _first_robots(a, other: str, building: list):
         last = proj.latest()
         if last and proj.load_results(last).get("pipeline_version") != pipeline_version(proj.load_design(last).arm.source):
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
-            building[:] = [os.path.basename(proj.root)]
+            building[:] = [os.path.basename(proj.root), last]
             proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
     building.clear()
     return p
@@ -330,7 +331,8 @@ def _first_robots(a, other: str, building: list):
 def _stopped_starting(fresh: list, building: list, last: bool) -> int:
     """Ctrl+C (or a closed terminal window, `kill`) while `morph studio` built a robot before the Studio started: one
     line instead of a traceback from inside MuJoCo, and exit status 130 (stopped). The build in progress left nothing
-    (RobotProject.run discards a revision it didn't finish). A project this start made (`fresh`) that has no finished
+    (RobotProject.run discards a revision it didn't finish); a rebuild for newer Morph code keeps the finished revision
+    it started from, and the line says so. A project this start made (`fresh`) that has no finished
     revision is removed: kept, a project named other than the demos would hold no design, and the next `morph studio`
     would refuse to start on it. So the next start builds it again. `last`: the process ends now (_leave), and a stop
     signal from here on is ignored (a second Ctrl+C changes nothing); a script calling main(argv) keeps its handlers."""
@@ -345,7 +347,11 @@ def _stopped_starting(fresh: list, building: list, last: bool) -> int:
                 shutil.rmtree(root)
         except OSError:
             pass
-    what = f": {building[0]} wasn't finished, and the next start builds it again" if building else ""
+    if len(building) > 1:  # a rebuild for newer Morph code: the project's finished revision is as it was
+        what = (f": {building[0]}'s rebuild with the latest Morph code was cut off; its finished revision {building[1]} "
+                "is kept, and the next start rebuilds it")
+    else:
+        what = f": {building[0]} wasn't finished, and the next start builds it again" if building else ""
     try:
         print(f"Stopped before the Studio started{what}.", flush=True)
     except (OSError, ValueError):  # the terminal window is gone

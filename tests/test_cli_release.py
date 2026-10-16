@@ -384,6 +384,68 @@ def test_a_stop_while_the_launcher_builds_the_first_robot_says_so_in_one_line(tm
     assert not (home / ".studios").exists() or os.listdir(home / ".studios") == []
 
 
+
+def _start_studio_script(tmp_path, script_text, name, preexec=None):
+    """`morph studio <name>` in a child process running `script_text` (a patched launcher); returns (proc, out lines)."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    script = tmp_path / "first.py"
+    script.write_text(script_text, encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": CODE, "MORPH_HOME": str(tmp_path / "projects"), "MORPH_OFFLINE": "1",
+           "PYTHONUNBUFFERED": "1"}
+    for k in ("MORPH_TOKEN", "DISPLAY", "WAYLAND_DISPLAY"):
+        env.pop(k, None)
+    proc = subprocess.Popen([sys.executable, str(script), name, str(port)], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env, cwd=str(tmp_path),
+                            preexec_fn=_signals_as_in_a_terminal)
+    out = []
+    threading.Thread(target=lambda: out.extend(iter(proc.stdout.readline, "")), daemon=True).start()
+    return proc, out
+
+
+def _stop_at(proc, out, mark, signals, seconds=30):
+    """Send `signals` once `mark` is printed; the exit status, or None when the child was still running after
+    `seconds` (it is killed then)."""
+    try:
+        deadline = time.time() + 120
+        while time.time() < deadline and mark not in out:
+            assert proc.poll() is None, (out, proc.stderr.read())
+            time.sleep(0.02)
+        assert mark in out, out
+        for sig in signals:
+            proc.send_signal(getattr(signal, sig))
+            time.sleep(0.2)
+        return proc.wait(seconds)
+    except subprocess.TimeoutExpired:
+        return None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(20)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from outside the process")
+def test_a_stop_while_the_launcher_rebuilds_for_newer_code_says_the_finished_revision_is_kept(tmp_path):
+    """Ctrl+C while `morph studio` rebuilt a project for newer Morph code ("rebuilding with the latest Morph code")
+    said "<project> wasn't finished, and the next start builds it again", but the project has a finished revision
+    and keeps it; only the rebuild was cut off."""
+    home = tmp_path / "projects"
+    _studio_home(home)
+    results = home / "egg-picker" / "r001" / "results.json"
+    results.write_text(json.dumps({**json.loads(results.read_text(encoding="utf-8")), "pipeline_version": "older"}),
+                       encoding="utf-8")
+    proc, out = _start_studio_script(tmp_path, _FIRST_ROBOT, "egg-picker")
+    rc = _stop_at(proc, out, "<building>\n", ["SIGINT"])
+    time.sleep(0.2)
+    err = proc.stderr.read()
+    assert rc == 130 and "Traceback" not in err, (rc, out, err)
+    assert out[out.index("<building>\n") + 1:] == [
+        "Stopped before the Studio started: egg-picker's rebuild with the latest Morph code was cut off; its finished "
+        "revision r001 is kept, and the next start rebuilds it.\n"], out
+    assert sorted(n for n in os.listdir(home / "egg-picker") if n.startswith("r0")) == ["r001"]
+    assert json.loads(results.read_text(encoding="utf-8"))["pipeline_version"] == "older"
+
 def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
     code = ("import multiprocessing as mp, sys, time\n"
             "from morph import cli\n"
