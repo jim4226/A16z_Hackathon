@@ -121,7 +121,8 @@ _MOTOR_BRAND = re.compile(r"(?:myactuator|cubemars|t-motor|steadywin|eaglepower)
 _KIND = re.compile(r"(?:serial|bus|ttl|rs|smart|digital|analog|analogue|high|torque|high-torque|speed|high-speed|"
                    r"magnetic|encoder|encoding|coreless|brushless|micro|mini|standard|waterproof|continuous|rotation|"
                    r"programmable|intelligent|series|x-series|half-duplex|duplex|full|large|big|dual|mg|hv|nema|"
-                   r"bipolar|unipolar|hybrid|closed|open|loop|closed-loop|open-loop|stroke|linear|pancake)", re.I)
+                   r"bipolar|unipolar|hybrid|closed|open|loop|closed-loop|open-loop|stroke|linear|pancake|"
+                   r"upgrade|upgraded)", re.I)              # "DS3218 Upgrade 20KG Full Metal Gear Digital Servo"
 # what a motor's listing says it is for, after the motor word: "MG996R Servo Motor RC Robot Arm" is a servo for a robot
 # arm (the "arm" of a robot, not a servo arm), "MG996R Servo Motor Metal Gear Dual Ball Bearing" one with ball bearings
 _USE = re.compile(r"(?:rc|robot|robots|robotic|robotics|car|cars|boat|boats|helicopter|helicopters|plane|planes|"
@@ -137,10 +138,13 @@ ACCESSORY = re.compile(r"(?:horns?|brackets?|mounts?|mounting|holders?|plates?|c
                        r"wires?|leads?|harness(?:es)?|hubs?|extensions?|testers?|chargers?|batter(?:y|ies))", re.I)
 # other parts named before the motor they fit or hold ("Frame XL430", "Idler STS3215", "Robot claw SG90", "Camera
 # gimbal SG90"), printed parts, and what a part does with a motor ("Gripper (uses SG90)", "Base (PLA, holds STS3215)",
-# "Gripper (with SG90)"): none is a motor's label
+# "Gripper (with SG90)"): none is a motor's label. A shop's "Upgrade" is a word of the servo's name ("DS3218 Upgrade
+# 20KG ... Servo") and "Drive servo" a servo (_part_verb): only "upgrade kit", "upgrade from/to" and "drive" before
+# anything but a motor word say what a part does
 _PART_VERB = re.compile(r"(?:uses?|using|used|requires?|required|needs?|needed|holds?|holding|houses?|takes?|accepts?|"
-                        r"carries|driven|drives?|mounted|attached|attaches|with|without|w|incl|inkl|by|from|upgrade|"
+                        r"carries|driven|drives?|mounted|attached|attaches|with|without|w|incl|inkl|by|from|"
                         r"alternative|instead|replaces)", re.I)
+_UPGRADE = re.compile(r"upgrades?|upgraded", re.I)
 _PART = re.compile(  # mechanical parts, then what _category files as electronics, cables, fasteners or material, tools
     r"(?:frames?|idlers?|gearbox(?:es)?|splines?|shafts?|axles?|couplers?|couplings?|collars?|bearings?|discs?|disks?|"
     r"flanges?|magnets?|stickers?|labels?|gaskets?|grommets?|potentiometers?|linkages?|rods?|pushrods?|levers?|savers?|"
@@ -280,7 +284,9 @@ def _qualifies(words: list, gloss: bool = False) -> bool:
     """Whether the words [(word, kind)] before a motor's model (or in a bracket before it) only qualify it: its maker,
     kind or a material's case or gear ("Feetech", "Metal gear"), or a label naming the joint, arm or motor
     (_label_words; "Shoulder", "Left master", "Motor ID 2") with no kit or set word ("Pan tilt kit SG90" is a bracket
-    kit)."""
+    kit) and no upgrade kit ("Upgrade kit MG996R")."""
+    if _upgrade_part(words):
+        return False
     named = []
     for i, (w, k) in enumerate(words):
         if k == "plain" and _descriptive_at(words, i):
@@ -293,6 +299,25 @@ def _qualifies(words: list, gloss: bool = False) -> bool:
     if any(k == "plain" and _KIT.fullmatch(w) for w, k in words):
         return False
     return _label_words(named, gloss=gloss)
+
+
+def _upgrade_part(words: list) -> bool:
+    """Whether words [(word, kind)] name an upgrade for a motor rather than the motor: "upgrade kit", "upgrade from" or
+    "upgrade to" ("MG996R upgrade kit", "Upgrade to MG996R"); a shop's "Upgrade" in a servo's name is not ("DS3218
+    Upgrade 20KG Full Metal Gear Digital Servo")."""
+    for i, (w, k) in enumerate(words):
+        nxt = words[i + 1][0] if i + 1 < len(words) else ""
+        if k == "plain" and _UPGRADE.fullmatch(w) and (_KIT.fullmatch(nxt) or nxt in ("from", "to")):
+            return True
+    return False
+
+
+def _part_verb(words: list, i: int) -> bool:
+    """Whether the plain word at i of words [(word, kind)] says what a part does with a motor (_PART_VERB: "Holds
+    STS3215 servo"), but not "drive" before a motor word ("Drive servo MG996R" is a servo)."""
+    w = words[i][0]
+    nxt = words[i + 1][0] if i + 1 < len(words) else ""
+    return bool(_PART_VERB.fullmatch(w)) and not (w in ("drive", "drives") and _MOTOR_WORD.fullmatch(nxt))
 
 
 def _joint_tail(plain: list, near: list = ()) -> bool:
@@ -408,6 +433,8 @@ def _is_motor_name(item: str) -> bool:
     words = _words(_head(item))
     if not words or any(k == "plain" and _STAND_IN.fullmatch(w) for w, k in words):
         return False                                   # "STS3215 dummy servo (3D printed spacer)"
+    if _upgrade_part(words):
+        return False                                   # "MG996R upgrade kit", "Servo upgrade kit MG996R"
     motors = [i for i, (w, k) in enumerate(words) if k == "plain" and _MOTOR_WORD.fullmatch(w)]
     model = next((i for i, (w, _) in enumerate(words) if w.startswith(_MODEL_MARK)), None)
     if not motors:
@@ -435,8 +462,10 @@ def _is_motor_name(item: str) -> bool:
     for i, w in enumerate(before):
         if ACCESSORY.fullmatch(w) and not (_BUILD.fullmatch(w) and i and _MATERIAL.fullmatch(before[i - 1])):
             return False
-        if _PART_VERB.fullmatch(w) or _COMPOUND_PART.fullmatch(w):
-            return False                               # "Holds STS3215 servo", "Servohalter SG90 Servo"
+    for i, (w, k) in enumerate(words[:motors[0]]):
+        if k == "plain" and (_part_verb(words, i) or _COMPOUND_PART.fullmatch(w)):
+            return False                               # "Holds STS3215 servo", "Servohalter SG90 Servo"; "Drive
+                                                       # servo MG996R" is a servo
     rest = words[motors[-1] + 1:]
     model = next((i for i, (w, _) in enumerate(rest) if w.startswith(_MODEL_MARK)), None)
     if model is not None:                              # "Servo ID 1 STS3215", "Servo shoulder pan STS3215": only which

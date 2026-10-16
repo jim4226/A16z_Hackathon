@@ -205,6 +205,29 @@ def test_no_part_noun_in_a_label_gains_a_motor():
     assert lines == 1800 and not bad, bad
 
 
+SHOP_TITLES = [  # a shop's "Upgrade" names the servo, and a drive servo is one (1f6b690: no motor; 0033630: these)
+    ("DSSERVO DS3218 Upgrade 20KG Full Metal Gear Digital Servo", "ds3218"),
+    ("DS3218 Upgrade 20KG Full Metal Gear Digital Servo", "ds3218"),
+    ("DS3218MG Upgrade 20KG Full Metal Gear Digital Servo", "ds3218"), ("MG996R Upgrade Metal Gear Servo", "mg996r"),
+    ("DS3218 Upgrade servo", "ds3218"), ("Drive servo MG996R", "mg996r"), ("DSSERVO DS3218 Upgrade", "ds3218"),
+    ("XM430-W350-T (upgrade from XL430-W250-T)", "xm430_w350")]
+UPGRADES = ["MG996R upgrade kit", "Upgrade kit for MG996R", "Servo upgrade kit MG996R", "Metal gear upgrade kit MG996R",
+            "Upgrade to MG996R", "DS3218 upgrade from MG996R", "Drive belt MG996R", "Servo drive MG996R"]
+
+
+@pytest.mark.parametrize("item, key", SHOP_TITLES, ids=[t[0] for t in SHOP_TITLES])
+def test_a_shops_upgrade_servo_and_a_drive_servo_are_servos(item, key):
+    (r,) = bom.map_table([["Part", "Qty", "Notes"], [item, "1", ""]])[0]
+    assert (r["catalog"], r["category"]) == (key, "actuator"), r
+
+
+@pytest.mark.parametrize("item", UPGRADES)
+def test_an_upgrade_kit_or_a_drive_part_is_no_servo(item):
+    """Only "upgrade kit", "upgrade from/to" and "drive" before anything but a motor word say what a part does."""
+    (r,) = bom.map_table([["Part", "Qty", "Notes"], [item, "1", ""]])[0]
+    assert r["catalog"] is None and r["category"] != "actuator", r
+
+
 @pytest.mark.parametrize("name, want", [
     ("aloha_bimanual.csv", {"xm430_w350": 16, "xl430_w250": 10}), ("motor_ids.csv", {"sts3215_7v4": 6}),
     ("lerobot_joint_names.csv", {"sts3215_7v4": 6}), ("lerobot_model_first.csv", {"sts3215": 6}),
