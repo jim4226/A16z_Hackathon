@@ -465,8 +465,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   is refused, and says why), a Studio no longer deletes the project another running Studio started on, a project
   another Studio deleted and made again under its name opens with its own chat and kept design (the deleted one's were
   shown, written into, and its kept design built as the new project's first revision), and a deleted project's chat no
-  longer makes its folder again. `morph studio <project>` on a project of your own whose first build was cut off or
-  failed says how to go on instead of building the default robot into it ("no project ... yet").
+  longer makes its folder again. `morph studio box-picker`, for a project of your own whose first build was cut off or
+  failed, says how to go on instead of building the default robot into it ("no project ... yet").
 - Teams: a change request applied in a Studio that stopped before building it no longer stays "applied" with no
   revision in another Studio that keeps running on the same projects folder (Apply and Close answered "already
   applied" until some Studio restarted): that Studio opens it again, with why, as soon as the requests are listed,
