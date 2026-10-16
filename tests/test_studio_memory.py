@@ -103,9 +103,11 @@ def test_the_start_up_builds_share_the_arenas_and_are_trimmed_before_the_studio_
     src = open(os.path.join(REPO, "morph", "cli.py"), encoding="utf-8").read()
     studio = src[src.index("def cmd_studio("):]
     studio = studio[:studio.index("\ndef ")]
-    first_build = min(studio.index("cmd_robot("), studio.index("proj.run("))
-    assert studio.index("memory.limit_arenas()") < first_build
-    assert first_build < studio.rindex("memory.trim()") < studio.rindex("serve(p, ")
+    builds = src[src.index("def _first_robots("):]          # the start-up builds, run by cmd_studio
+    builds = builds[:builds.index("\ndef ")]
+    first_build = min(builds.index("cmd_robot("), builds.index("proj.run("))
+    assert builds.index("memory.limit_arenas()") < first_build
+    assert studio.index("_first_robots(") < studio.rindex("memory.trim()") < studio.rindex("serve(p, ")
 
 
 def _call(port, method, path, body=None):

@@ -378,7 +378,8 @@ def test_release_docs_exist_link_correctly_and_name_this_version():
 # ------------------------------------------------------------------ what ships: licences, fixtures, paths, build
 
 RECORDED_FIXTURES = ("tests/fixtures/darwin", "tests/fixtures/tools/answers/mouser_wrong_key.json")  # from real services
-OWN_FIXTURES = ("tests/fixtures/tools/answers", "tests/fixtures/tools/fixparts.json", "tests/fixtures/launchers")  # made up
+OWN_FIXTURES = ("tests/fixtures/tools/answers", "tests/fixtures/tools/fixparts.json", "tests/fixtures/launchers",  # made up
+                "tests/fixtures/brief", "tests/fixtures/key_filter", "tests/fixtures/restart")
 
 
 def test_the_notices_name_every_vendored_folder_robot_and_recorded_fixture():

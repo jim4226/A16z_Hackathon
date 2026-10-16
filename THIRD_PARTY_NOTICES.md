@@ -33,7 +33,9 @@ The source archive carries the tests and their fixtures. Two hold answers record
 Every other fixture is Morph's own: the distributor answers in `tests/fixtures/tools/answers/` follow the documented
 answer shape with made-up products, prices and stock (no copy of a provider's documentation example);
 `tests/fixtures/tools/fixparts.json` describes a made-up distributor; `tests/fixtures/launchers/run_studio_v01.bat` is
-Morph's own launcher from before v0.2; `tests/fw_stubs/` holds minimal declarations, written for the tests, of the
+Morph's own launcher from before v0.2; `tests/fixtures/brief/` holds New robot requests written or generated for
+the tests (people, hand-over, harm and SO-101 tables), `tests/fixtures/key_filter/` made-up key shapes and names,
+and `tests/fixtures/restart/` made-up restart cases; `tests/fw_stubs/` holds minimal declarations, written for the tests, of the
 Arduino, Feetech, Dynamixel and Adafruit library functions the generated firmware calls.
 
 ## Python packages
