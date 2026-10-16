@@ -77,8 +77,10 @@ with 95% confidence)". Few runs give wide intervals, and the card says so with n
 object away, dragged off the target, missed the grasp, let go with !GRIP (a hobby gripper's force-sensing close gives
 up on an object narrower than it reaches, as its firmware does), held the gripper servo at stall (a hobby gripper
 without force sensors closes by position only, so an object wide enough is held at its servo's stall; the plan has
-an issue when one within 8 % of the nominal size gets near it), dropped on the way, squeezed harder than the object
-can take, out of reach, or hit a box in the room during a named phase. For a hobby gripper without force sensors the
+an issue when one within 8 % of the nominal size gets near it), knocked away by the arm before the grasp (the object
+moved more than 20 mm before the jaws began to close: the arm hit it on the way, which a real arm would do too, so it
+counts), dropped on the way, squeezed harder than the object can take, out of reach, or hit a box in the room during
+a named phase. For a hobby gripper without force sensors the
 stall and the squeeze come from the servo model its firmware closes by (how far past the object's contact the jaw is
 held, at the jaw that closes on it: both of a rack's jaws, a stock jaw's one moving jaw), not from the simulated
 contact force: MuJoCo's soft contact measures far less on a light or rigid object (a light bulb 2 % over its size:

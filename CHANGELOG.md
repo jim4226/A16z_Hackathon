@@ -507,6 +507,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   power budget, the plan's warning, the manual and the simulation use that squeeze, and a hold above the servo's
   rated torque is a warning, as is a force-sensing grip whose F can ask for more than that (up to 19 N for an egg,
   against the MG996R's 10 N).
+- A robustness study run whose object the arm hits before the grasp is now "Knocked away by the arm before the
+  grasp", not "Missed the grasp" (still counted: a real arm would hit it too). The default egg-picker's resting hand
+  is 1.07 mm from a 200 mm water bottle's end, so a bottle 1.5 % over its size is hit at the start and rolls off
+  the table; studies of it read those bottles as missed grasps.
 - Teams' change-request preview no longer shows a grip change the build won't make: a new servo supply, servo family
   or build level on the egg-picker read "Grip: grip force target 2.34 → 2.17 N" (New robot's estimate without the
   grasp simulation) and planned the electronics with it. The build keeps the 2.34 N its grasp simulation found, and

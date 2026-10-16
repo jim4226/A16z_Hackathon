@@ -1103,7 +1103,11 @@ field failure rate (section 0, honesty).
   more than 45 mm off: the jaws stayed shut and carried it), `drag`, `no_force_reading` (a hobby gripper's
   force-sensing close gave up on an object narrower than its probe: `metrics["grip_gave_up"]`, section 22),
   `stalled` (a sensorless hobby gripper's close held its servo at stall on an object wider than the gauge, the object
-  intact: `metrics["grip_stalled"]`, section 22), `missed_grasp` (not lifted half the hover height),
+  intact: `metrics["grip_stalled"]`, section 22), `knocked` (the object moved more than `robust.KNOCK_MM`, 20 mm,
+  before the grasp phase began: the arm hit it on the way, a real failure of the layout, so it counts; row
+  `knocked_mm`; the default egg-picker's resting hand sits 1.07 mm from a 200 mm water bottle's end, so one 1.5 %
+  over its size is hit and rolls off the table, which read `missed_grasp`), `missed_grasp` (not lifted half the
+  hover height),
   `dropped` (more than 12 mm of slip in transit), `over_force` (the product's damage check), `unreachable`,
   `world_collision` grouped as `world_collision:<phase>` (the plan's phase at the first contact); `unstable` (MuJoCo's
   BADQPOS, BADQVEL, BADQACC or BADCTRL warnings, after which MuJoCo restarts the run from its first frame, a full

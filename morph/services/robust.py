@@ -4,7 +4,7 @@ One nominal simulation says whether the design works once, exactly as drawn. A s
 plan (planned once, as the Studio's simulation plans it) many times in worlds drawn from the project's tolerance spec:
 the object off its mark and turned, its size and mass, pad friction, grip-force calibration, servo torque and gain,
 deadband, encoder noise, the host's set-point rate and, in World mode, the mount and every box. Each run is labelled
-(placed; jam, drag, missed grasp, dropped, over-force, out of reach, hit the room during a phase; numerically unstable
+(placed; jam, drag, knocked, missed grasp, dropped, over-force, out of reach, hit the room during a phase; numerically unstable
 runs are listed and never counted), the success rate gets a Wilson 95 % interval (Clopper-Pearson when no run, or
 every run, fails), each failure group gets the one-parameter rule that best isolates it (Youden's J, against what
 shuffled outcomes reach by chance) and is re-run at half the timestep and at impratio=1: a group whose outcome changes
@@ -58,6 +58,8 @@ Z95 = 1.959963984540054
 STALE_S = 30.0                      # a running study whose heartbeat is older than this was interrupted
 RISE_MM = 10.0                      # the object rose this far after the release: the jaws stayed shut on it,
 CARRIED_MM = 45.0                   # or it ended this far off the target (only closed jaws carry it that far)
+KNOCK_MM = 20.0                     # the object moved this far before the grasp began: the arm knocked it away (the
+                                    # resting hand sits 1.07 mm from a water bottle's end; one 1.5 % longer is hit)
 DEFAULT_SEED = 1                    # the seed of the published egg-picker study (150 of 200)
 CHECK_RUNS, CHECK_SUCCESSES = 20, 15
 CACHED = 4                          # packed robots a long-running process keeps (about 5 MB each)
@@ -452,6 +454,7 @@ PHASES = {"approach": "the approach", "grasp": "the grasp", "lift": "the lift", 
           "place": "the set-down", "release": "the release", "retreat": "the way back"}
 LABELS = {"jam": "Jaws stayed shut at release: the {obj} was carried away", "drag": "Dragged off the target",
           "missed_grasp": "Missed the grasp", "dropped": "Dropped on the way",
+          "knocked": "Knocked away by the arm before the grasp",
           "no_force_reading": "Let go with !GRIP: the {obj} was narrower than the force-sensing close reaches",
           "stalled": "Held the gripper servo at stall: the {obj} was wider than its position-only close allows",
           "over_force": "Squeezed harder than the {obj} can take", "unreachable": "Out of reach",
@@ -982,13 +985,14 @@ def _unpack(blob: bytes):
 
 
 class _Monitor:
-    """Per-step measurements a trial needs beyond the scenario's own: how far the object was pushed before the pads
-    touched it, how high it was at the end of the lift, and how far it rose after the release (a jam)."""
+    """Per-step measurements a trial needs beyond the scenario's own: how far the object moved before the grasp began
+    (the arm knocked it), how far it was pushed before the pads touched it, how high it was at the end of the lift,
+    and how far it rose after the release (a jam)."""
 
     def __init__(self, rob, at, dt, t_lift_end, t_grasp0):
         self.rob, self.dt, self.t_lift_end, self.t_grasp0 = rob, dt, t_lift_end, t_grasp0
         self.t_released = at["t_released"]
-        self.obj0, self.contact, self.lift, self.push, self.rise = None, None, None, 0.0, 0.0
+        self.obj0, self.contact, self.lift, self.push, self.rise, self.knock = None, None, None, 0.0, 0.0, 0.0
 
     def __call__(self, t, d, ph):
         rob, MM = self.rob, 1e-3
@@ -1001,6 +1005,8 @@ class _Monitor:
                 self.contact = (step - 1) * self.dt
         if self.contact is None:
             self.push = max(self.push, float(np.linalg.norm((x - self.obj0)[:2])) / MM)
+        if t < self.t_grasp0:
+            self.knock = max(self.knock, float(np.linalg.norm(x - self.obj0)) / MM)
         if self.lift is None and t >= self.t_lift_end:
             self.lift = float(x[2] - self.obj0[2]) / MM
         if t >= self.t_released:
@@ -1060,6 +1066,8 @@ class Runner:
             k = min(int(contacts[0]["t"] / S.PLAN_DT), len(self.plan.ph) - 1)
             phase = self.plan.ph[k]
             group = f"world_collision:{phase}"
+        elif mon.knock > KNOCK_MM:    # moved before the jaws closed: the arm hit it on the way (counted: a real one would)
+            outcome = "knocked"
         elif not met["intact"]:
             outcome = "over_force"
         elif not met["reachable"]:
@@ -1075,6 +1083,7 @@ class Runner:
         row.update({"outcome": outcome, "group": group or outcome, "success": outcome == "placed",
                     "place_error_mm": round(err, 2), "slip_mm": met["max_slip_mm"], "lift_mm": round(mon.lift or 0.0, 1),
                     "push_mm": round(mon.push, 2), "rise_mm": round(mon.rise, 1), "peak_grip_n": met["grip_n_max"],
+                    "knocked_mm": round(mon.knock, 1),
                     "max_torque_pct": max(met["max_torque_pct"].values()) if met["max_torque_pct"] else None})
         if contacts:
             row["world_contact"] = {**contacts[0], "phase": phase}

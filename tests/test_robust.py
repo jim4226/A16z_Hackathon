@@ -482,6 +482,38 @@ def test_a_sensorless_hobby_grip_that_would_crush_its_object_is_over_force_not_p
     assert row["outcome"] == "over_force" and not row["success"], row
 
 
+def test_an_object_the_resting_arm_knocks_away_is_knocked_not_a_missed_grasp(tmp_path):
+    """The default smart-bus egg-picker on a 520 g, 200 mm water bottle lying on its side: the resting hand's finger is
+    1.07 mm from the bottle's end, so one 1.5 % over its size touches it at the start, and the arm's first move
+    knocks it off the table (68.95 m of 'slip', with no floor). The study called that 'Missed the grasp'. It is a
+    real failure of this layout (the finger would touch a real bottle that size too), so it still counts, as
+    'Knocked away by the arm before the grasp'."""
+    from morph.robot import pipeline2
+    from morph.studio.intent import object_changes
+
+    d = projects.template("egg-picker").with_changes({**object_changes("water bottle"), "finger.sensor": "none"})
+    info = projects.create(str(tmp_path), "bottle", origin="default", demo=False, unique=False)
+    root, sz = info["root"], arm.size(d)
+    force = pipeline2.gripper_stage(d, sz, simulate=False)["force"]
+    ep = electronics2.plan(d, sz, grip=force)
+    rev = os.path.join(root, "r001")
+    os.makedirs(rev)
+    with open(os.path.join(rev, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(d.dumps())
+    doc = simulate.run(arm.build(d, sz, ep), d, "pick_place", os.path.join(rev, "sim"), fast=True)
+    res = {"rev": "r001", "kind": "robot", "stage_status": {"sim": "computed"}, "provenance": {"sim": "computed"},
+           "gripper": {"force": force}, "sims": {"mjcf": "robot.xml", "scenarios": {"pick_place": {
+               "file": "sim_pick_place.json", "title": "Pick and place", "metrics": doc["metrics"]}}}}
+    with open(os.path.join(rev, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    runner = robust.Runner(robust.prepare(root, "r001", 0.002)["blob"])
+    rows = {s: runner.run({"i": 0, "params": {"object_size": s}, "perturb": {"size_scale": s}}) for s in (1.0, 1.02)}
+    assert rows[1.0]["outcome"] == "placed", rows[1.0]
+    assert rows[1.02]["outcome"] == "knocked" and not rows[1.02]["success"], rows[1.02]
+    assert rows[1.02]["knocked_mm"] > robust.KNOCK_MM
+    assert robust.group_label("knocked", "bottle") == "Knocked away by the arm before the grasp"
+
+
 # ------------------------------------------------------------------ acceptance (MORPH_SLOW=1)
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 200 runs at 1 ms plus the solver checks (minutes)")
