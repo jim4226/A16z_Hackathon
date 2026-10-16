@@ -599,9 +599,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   "my dad fills its tray every morning" and "grandma loads its tray with pills" lost the person in this beta and
   have it again. Of the release review's round-6 hunt (3,033 requests whose readings were written down before it
   ran), 666 of the 2,739 that put a person next to the robot built it with no one nearby or without an emergency stop;
-  10 do now, the known misses: a place that belongs to someone ("put the parts into the operator's tray", "bring the
-  tea to her room", "place the pills on dad's bedside table") and the person's own things at a machine ("a robot that
-  grabs my printouts from the printer"). The other way round, a department ("bring the files to Legal"), a machine
+  2 do now, the known misses: "a robot that brings the tea to her room" ("her room" names no one) and the person's own
+  things at a machine ("a robot that grabs my printouts from the printer"). A place that belongs to someone named ("put
+  the parts into the operator's tray", "place the pills on dad's bedside table", "take the post to dad's study") is
+  still no hand-over, but now leaves them nearby, assumed, with an emergency stop; 6 of the hunt's requests with no one
+  near the robot get that extra emergency stop ("restock the nurses' station", "move the workers' lockers", "move the
+  doctor's bag to the car"). The other way round, a department ("bring the files to Legal"), a machine
   named like a job ("the spot welder", "the bender", "the case packer"), baby products ("move the baby monitor") and a
   workbench (a robot "on my workbench" was a tool hand-over) are no longer read as people. Of 609 requests that name
   no one near the robot, written to check this, two more read a person than before ("I want to mount it on the wall":

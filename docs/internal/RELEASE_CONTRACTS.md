@@ -1567,15 +1567,21 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   department ("Legal", "Housekeeping", "Ward 7"), a bender, a slitter, a seamer, a case packer, a spot welder, a vision
   inspector and a washer grader are no people. The round-6 hunt's table (`tests/fixtures/brief/people_hunt.json`:
   3,033 requests with the readings expected before the hunt ran, and the fixer's 1,202 probes: 593 people acting on
-  the robot, 609 no one near it) runs in `tests/test_brief_answers.py::test_the_people_hunt_table`. Of the 2,739 that
-  put a person next to the robot, 10 still have no one nearby and no emergency stop, on purpose: a place that belongs to
-  someone ("put the parts into the operator's tray", "bring the tea to her room", "fills my dad's pill organiser")
-  and the person's own things at a machine ("grabs my printouts from the printer"). Other known misses: a first name
+  the robot, 609 no one near it) runs in `tests/test_brief_answers.py::test_the_people_hunt_table`. A place that
+  belongs to someone named (`brief.THEIR_PLACE`: a family word, a role, a name, "someone" or "people" with 's or s'
+  before a place noun: "put the parts into the operator's tray", "fills my dad's pill organiser", "the nurses'
+  station") is no hand-over but a person nearby, assumed ("near"), so the robot gets an emergency stop; "her room" and
+  "his desk" name no one and stay no person (`test_passing_things_on_to_a_station_is_a_pick_and_place`). Of the 2,739
+  that put a person next to the robot, 2 still have no one nearby and no emergency stop, on purpose: "a robot that
+  brings the tea to her room" and the person's own things at a machine ("grabs my printouts from the printer"). Other
+  known misses: a first name
   on no list at the very start of a sentence ("Siobhan switches it on"), a person's age the words don't give (a niece,
   a nephew, a stepson: an adult with the e-stop, not children), and a request that sorts as well as hands over (a
   sort, with the person and the e-stop kept); known extra e-stops: a capitalised product name read as a name, someone
-  who mounts the robot, a ward or a theatre, a tester, a bagger or a loader, and "the teachers' lounge". The 47 rows
-  read otherwise on purpose are strict expected failures in that test, so the list above stays true.
+  who mounts the robot, a ward or a theatre, a tester, a bagger or a loader, "the teachers' lounge", and a place or a
+  thing a named person owns with no one said to be there ("restock the nurses' station", "move the workers' lockers",
+  "move the doctor's bag to the car", "move the farmer's market crates to the van"). The 45 rows read otherwise on
+  purpose are strict expected failures in that test, so the list above stays true.
 - **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
   at `test_reach_mm` (about 45 % of the egg-picker's reach), so the inspector's "Payload at full reach" overstated the
   arm 2.4 to 3x. The sweep now also reports the arm stretched straight out (`simulate._stretch_pose`: the tool point at

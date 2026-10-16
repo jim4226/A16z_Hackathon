@@ -911,6 +911,10 @@ _VERB_SHAPED = (r"(?=[a-z'’-]+(?:s|ed|ing)\b|(?:took|put|held|brought|gave|cam
 # waits tables", "a cobot for our packing line", "pass the salt down the table"), and someone in a clause of their own
 # ("if a customer wants a leaflet, it gives one", "the welder needs rods, the robot supplies them", "so the operators
 # don't have to bend"): unsure, so the person is there
+# a place that belongs to someone named ("put the parts into the operator's tray", "place the pills on dad's bedside
+# table") is no hand-over, but it leaves them likely nearby: unsure, so a person, assumed ("her room" stays no person)
+THEIR_PLACE = (r"\b(?:" + _KIN + "|" + _KIN_SLANG + "|" + _ROLES + "|" + _NAMES + r"|morphagents?|someone|somebody|person|"
+               r"people)" + _OWNS + _A_PLACE)
 PEOPLE_AROUND = (_CLAUSE + _LEAD + r"(?:" + _WHO + ")" + _SUBJ_PP + r"\s+(?:" + _AUX + r"{1,4}|" + _VERB_SHAPED +
                  r")(?!(?:" + _AWAY + "|" + _THINGS +
                  r"|" + _NOT_DESCRIBING + "|" + _PREPOSITION + "|" + _ADVERB + r"|nor|this|these|those|some|any|no|not|"
@@ -1623,7 +1627,7 @@ def warm(block: bool = True) -> None:
         try:
             for pat in (*HOSTILE, *HOSTILE_WITH_DANGER, *_H_NO_VERB, GUN_CONTEXT, _H_AIMED, _H_AIMED_AT, _H_DANGER_HERE,
                         _H_ANY_DANGER, HAND_TO_PERSON, PEOPLE_AT_IT, PEOPLE_BESIDE, PEOPLE_AROUND, _FOR_SOMEONE,
-                        ANIMAL_GETS):
+                        THEIR_PLACE, ANIMAL_GETS):
                 _rx(pat)
             for text in ("a robot that hands the operator a cup while I work next to it",
                          "the nurse loads its tray, my kids watch and it gives my dog a treat"):
@@ -1648,7 +1652,8 @@ def person_signals(pt: str, t: str = "") -> dict:
     school = re.search(r"\b(?:classrooms?|(?:primary|elementary|junior|infant|nursery|middle|high|secondary|grade|pre-?)\s*schools?|"
                        r"schools?\b(?!\s+of\b)|nurser(?:y|ies)|kindergartens?|daycares?|day care|playgroups?|creche)\b", pt)
     for kind, m in (("children", kids), ("beside", _rx(PEOPLE_BESIDE).search(pt) or _rx(PEOPLE_AT_IT).search(pt)),
-                    ("receiver", receiver), ("near", _rx(_FOR_SOMEONE).search(pt) or _rx(PEOPLE_AROUND).search(pt)),
+                    ("receiver", receiver), ("near", _rx(_FOR_SOMEONE).search(pt) or _rx(PEOPLE_AROUND).search(pt) or
+                                             _rx(THEIR_PLACE).search(pt)),
                     ("school", school), ("else", re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t or pt))):
         if m:
             found[kind] = m.group(0).strip()
