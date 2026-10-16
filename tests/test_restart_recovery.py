@@ -960,7 +960,7 @@ def test_a_stop_asked_for_during_the_start_up_is_a_clean_one(home, tmp_path, bui
     def recover(self, *a, **k):
         real(self, *a, **k)
         assert builds.started.wait(5)                                       # the rebuild has started
-        os.kill(os.getpid(), getattr(signal, sig))
+        signal.raise_signal(getattr(signal, sig))  # os.kill on Windows ends the process instead of signalling it
 
     _Listener.fail, _Listener.served = None, []
     monkeypatch.setattr(server, "_Server", _Listener)

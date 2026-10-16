@@ -345,7 +345,8 @@ def test_errors_a_browser_sees_name_files_from_the_projects_folder(tmp_path, mon
         httpd.shutdown()
         httpd.server_close()
     assert status == 500 and "projects/egg/r001/bom.json" in out["error"] and str(tmp_path) not in out["error"]
-    assert where in capsys.readouterr().err                                     # the terminal: the whole path
+    err = capsys.readouterr().err                                               # the terminal: the whole path
+    assert where in err or repr(where)[1:-1] in err, err  # an OSError's text doubles Windows' backslashes
 
 
 def test_other_error_texts_a_browser_sees_name_files_from_the_projects_folder(tmp_path, monkeypatch):
