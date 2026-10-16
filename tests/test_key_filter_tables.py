@@ -7,6 +7,7 @@ tool key with a manifest's prefix is found wherever it sits in the text."""
 import json
 import os
 import random
+import re
 import string
 
 import pytest
@@ -187,3 +188,26 @@ def test_a_short_key_in_groups_is_caught():
     assert len(missed) <= 10, missed  # 0.18% of 100,000 in tools/key_filter_rates.py
     for fine in ("sk-short1", "sk-2020-2040-4040", "sk-m3x8-m4x8-m5x8", "sk-608zz-bearing", "sk-6x40-steel-screws"):
         assert not security.looks_like_secret(fine), fine
+
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# (file, words before, words after, what the text says of the names between them)
+DOC_CLAIMS = [
+    ("SECURITY.md", "names that only share their prefix", "usually pass", "pass"),
+    ("SECURITY.md", "random enough is refused too", "rephrase it", "refused"),
+    ("CHANGELOG.md", "Chip, board and model names", "these were refused whole", "pass"),
+    ("CHANGELOG.md", "A key written in groups", "under the 20 characters", "refused"),
+]
+
+
+@pytest.mark.parametrize("doc,start,end,says", DOC_CLAIMS, ids=[f"{d}-{s}" for d, _, _, s in DOC_CLAIMS])
+def test_the_names_the_docs_give_as_examples_do_what_they_say(doc, start, end, says):
+    """SECURITY.md gave ml_ViT_B_16_weights as a name the filter refuses; it passes (16 characters after ml_, under the
+    20 a Teams code's run needs). Every name a sentence about the filter gives as an example does what it says."""
+    text = " ".join(open(os.path.join(ROOT, doc), encoding="utf-8").read().split())
+    i = text.index(start)
+    span = text[i:text.index(end, i)]
+    names = [n for n in re.findall(r"`([^`\s]+)`", span) if n[:3] in ("mt_", "ml_", "mi_", "sk-")]
+    assert names, span
+    wrong = [n for n in names if security.looks_like_secret(n) is not (says == "refused")]
+    assert wrong == [], (doc, says, wrong)
