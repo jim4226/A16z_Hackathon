@@ -182,6 +182,9 @@ def apply_triage(b: B.Brief, res: dict) -> str:
     elif arch in B.ARCHETYPES and (b.archetype.get("key") == "generic_arm" or b.archetype.get("confidence", 0) < ac):
         B.set_archetype(b, arch, ac, src)
     obj, oc = _pick(ans, "object")
+    says = _noul(ans, "says_object")
+    if says is not None:
+        b.flags["says_object"] = round(float(says), 2)   # SubQ read the object in the request's words (brief.filled)
     key = next((k for k in list(B.OBJECTS) + list(B.CATALOG) if _opt(k) == obj), None)
     if key:
         o = B.object_value(key)

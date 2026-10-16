@@ -433,6 +433,18 @@ Slot{value, source: user|inferred|default|memory|video|photo, confidence, eviden
     harmless corpora (benign1/2/3, the typed follow-ups, and 10,716 corpus requests each given a safety or people
     clause) it refuses 0, against 4 at bd19c43 (3 of them "a robot that hands me the glue gun by the fire", a staple
     gun to "fix the fence that guards the garden", and a temperature gun held at a forehead; 1 on the corpus set).
+  - On the round-7 hunters' tables it refuses 2,710 of 3,133 hostile phrasings (86.5%) and none of their harmless
+    requests: 1,727 general ones, 576 "cut, slice or carve someone some food" requests ("cuts me some cheese"), 146
+    care requests, 60 "puts them in my mum's hand" rows and 28 care conversations. The broadened verbs had refused 336
+    of the 576 and 25 of the others; the blade rule now fires only when the person or pet ends the phrase (a
+    preposition, an adverb, a time word or the end follows: "cuts my brother", "slashed my boss last week", not "cuts
+    my son cake"), everyday idioms are matched from the rule's own verb (`_H_BENIGN_IDIOM`: a message shot over,
+    whack-a-mole, a baby held in the bath, a warm towel or cloth put on a face, a necklace, a robot sitting on a
+    shoulder, play throws) and lose that exception when the same clause names harm (`_H_IDIOM_HARM`: hurt, hard,
+    under, drown, tight, press, force, boiling, rocks), a torch is a light on anyone's hands and at a mouth for the
+    dentist, and after a carrying verb (put, hold, drop, bring) "it" or "them" is a danger only when a dangerous thing
+    was named before it, while after aim, point, fire or swing it always is ("mount a bear trap on the arm and aim it
+    at my dad").
   - So the filter catches common hostile phrasings, not every one (livestock pricked with a needle and rarer framings
     are missed by design, so the harmless reading wins), and, very rarely, could refuse a harmless request that puts a
     tool or a blade next to a person. Of 5,547 adversarial 2,000-character inputs made of repeated harm words, the
@@ -1602,12 +1614,19 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   thing a named person owns with no one said to be there ("restock the nurses' station", "move the workers' lockers",
   "move the doctor's bag to the car", "move the farmer's market crates to the van"). The 45 rows read otherwise on
   purpose are strict expected failures in that test, so the list above stays true. Four former extra e-stops are now
-  built with no person: a job step or process word after "to" ("moves the parts to rework", also quarantine,
-  autoclave, decon, cleanup, rinse, overflow, backup, archive, salvage, refurb, aoi, smt, litho) is a station, not a
-  name; a numbered bed, table or room is a person only after a serving verb and not in a greenhouse or workshop
-  ("moves the seedlings to table 4"); a common word in a Title Case or SHOUTING tagline is not a name ("... For Fun",
-  "... With Steel", "... With Care"); and an explicit "nobody around" beats a bare "cobot"/"assistive" hint ("a
-  collaborative robot that runs overnight with nobody around"), though never a person the request describes.
+  built with no person: a lower-case job step or process word after "to" (`_PROCESS_WORDS`: "moves the parts to
+  rework", also quarantine, autoclave, decon, deburr, reflow and others) is a station, not a name, though a capital in
+  an ordinary sentence still is one ("hands the bolts to Buffer"); a numbered bed, table or room in a greenhouse or
+  workshop is a station (`_STATION_PLACE`: "moves the seedlings to table 4"), while one anywhere else is a person
+  whatever the verb ("carries the meds to bed 4"; "moves pots to bed 3" too, an extra e-stop kept on purpose); a common
+  word in a Title Case or SHOUTING tagline is not a name ("... For Fun", "... With Steel", "... With Care"), and a
+  given name is never one of those words (Joy, Love); and an explicit "nobody around" beats a bare "cobot",
+  "collaborative robot", "human-robot" or "HRC" hint (`_COBOT_UNSURE`), never a person the request describes and never
+  a robot whose user is at it by construction (power chair, hospital bed, bed rail, feeding, assistive, daily-living or
+  mobility robots, helping hands, a cobot barista). Someone served or cared for at arm's length is a person named
+  (`_SERVES_SOMEONE`): a double-object serving verb ("pours us coffee", "makes Tom a sandwich"), a drink topped up,
+  body care ("paints my nails", "puts in my eye drops", "ties my shoelaces", "puts the straw in her mouth"), visitors
+  greeted, the guests' glasses, "whose bin I empty"; "give me a robot" and "pass the guest towels to the shelf" are not.
 - **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
   at `test_reach_mm` (about 45 % of the egg-picker's reach), so the inspector's "Payload at full reach" overstated the
   arm 2.4 to 3x. The sweep now also reports the arm stretched straight out (`simulate._stretch_pose`: the tool point at

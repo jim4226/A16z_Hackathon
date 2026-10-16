@@ -680,20 +680,44 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   robot's own) and "beat my dad at chess" build, as does a reply read with the request ("plays chess", then "it should
   beat my dad"). It also catches more hostile phrasings: a blade used on a person or pet ("cuts my brother with a box
   cutter", "slices the cat"), something held over a face or forced under water, a ligature tightened around a neck,
-  and a hand pushed onto a hot surface. It catches common hostile phrasings, not every one, and can only very rarely
+  and a hand pushed onto a hot surface. Cutting, slicing or carving something for someone ("cuts me some cheese",
+  "carves us the turkey"), a torch shone on someone's hands or at a mouth for the dentist, "shoot me a message",
+  whack-a-mole at the fair, a baby held in the bath, a warm towel on a face before a shave, a chain (a necklace) put
+  around her neck, a robot that sits on a shoulder, water splashed or confetti thrown in play, and pills, gloves or
+  glasses put in or on someone's hand or face build too; the blade, smothering, drowning and ligature rules still
+  refuse the hostile forms ("cuts my brother", "holds his head under the water", "presses a pillow over her face",
+  "tightens a chain around his neck"). It catches common hostile phrasings, not every one, and can only very rarely
   refuse a harmless one: measured on sets kept aside while the rules were written, it refuses 152 of 205 held-out
   hostile phrasings (74%) and 0 of 292 held-out harmless ones; on the harm and people tables it builds no harmful
   request and refuses no harmless one (one weapon name, "hand me the flamethrower", stays refused by design).
-- "My SO-101" is read only when the request has it to use: "I have an SO-101", "use my SO-101". A past one ("I used to
-  have an SO-101"), someone else's ("my friend has an SO-101"), a question ("should I use my SO-101?"), a comparison
-  ("can it be like an SO-101?", "an SO-101 style arm") or a request for a new arm ("my SO-101 is broken, build a new
+- "My SO-101" (or SO-ARM101) is read only when the request has it to use: "I have an SO-101", "use my SO-101", "I'd
+  like my SO-101 to ...", "my dad bought me an SO-101". Each reason it isn't the user's to use is read from the words
+  next to the SO-101 itself, so "use my SO-101 to sort faulty parts" or "to pick dead batteries" still keeps it. A
+  past or sold one ("I used to have an SO-101", "I sold my SO-101"), someone else's ("my friend has an SO-101", "the
+  school's SO-101"), a question whether to use it ("should I use my SO-101?"), a comparison ("can it be like an
+  SO-101?", "an SO-101 style arm", "something cheaper than an SO-101", "an alternative to the SO-101"), a replacement
+  ("replace my SO-101") or a request for a new arm ("my SO-101 is broken, build a new arm"; not "don't build a new
   arm") no longer builds the stock SO-101.
 - "A pound coin", "one pound coins" and "a pound shop" are no longer read as 453.6 g objects (nor "2 pound coins" as
   907 g); "a pound of flour" and "half a pound" still convert. An object is no longer named "weighing" ("cylinders
-  30 to 50 mm wide weighing 50 g" is a cylinder).
-- New robot no longer invents a person next to it from a job step or process word after "to" ("moves the parts to
-  rework", quarantine, autoclave, decon, cleanup, rinse, overflow, backup, archive, salvage, refurb, aoi, smt,
-  litho), a numbered bench, bed or room in a greenhouse or workshop ("moves the seedlings to table 4"), a Title Case
-  tagline word ("A Robot That Sorts Lego For Fun", "... Works With Steel"), or a bare "cobot" when the request also
-  says nobody is around; a person the request names or describes, and a numbered table or bed a diner or patient is
-  served at, still keep the emergency stop.
+  30 to 50 mm wide weighing 50 g" is a cylinder). Masses written "150 grammes" or "150 grm", "1/4 lb" (113 g; it was
+  read as 4 lb) and "a quarter pound", and sizes written "1 1/2 inch", "3/4 inch", "1.2 in cubes", "0.03 m cubes" or
+  2'' are read: before, "use my SO-101 to move 30 mm cubes weighing 150 grammes" kept the stock SO-101 on an assumed
+  100 g, for an object it can't lift.
+- New robot no longer invents a person next to it from a lower-case job step or process word after "to" ("moves the
+  parts to rework", also quarantine, autoclave, decon, deburr, reflow and others), a numbered bench, bed or room in a
+  greenhouse or workshop ("moves the seedlings to table 4"), a Title Case tagline word ("A Robot That Sorts Lego For
+  Fun", "... Works With Steel"), or a bare "cobot", "collaborative robot" or "HRC" when the request also says nobody
+  is around. A person the request names or describes still keeps the emergency stop, and so do a numbered table, bed
+  or room whatever the verb ("carries the meds to bed 4", "hands the menus to table 2"), a given name that is also a
+  word ("brings tea to Joy") or a capitalised one ("hands the bolts to Buffer"), and a robot whose user is at it by
+  construction (a power chair, hospital bed, feeding, assistive, daily-living or mobility robot, a cobot barista),
+  even with "nobody near it".
+- New robot reads someone served or cared for at arm's length as a person next to the robot, with an emergency stop:
+  "pours us coffee", "delivers the nurse coffee", "makes Tom a sandwich", "tops up the guests' wine glasses",
+  "refills her glass", "paints my nails", "does her makeup", "puts in my eye drops", "puts the straw in her mouth",
+  "ties my shoelaces", "greets customers at the door", "a robot doorman", "a robot whose bin I empty every evening".
+- New robot asks what the robot will pick up when the request doesn't say ("I want a robot arm", "something to help
+  me in the kitchen"), with keys too: before, SubQ or Claude's guess (a raw egg) was taken as the answer and the
+  follow-up asked "Where does it pick up the eggs?" without asking. A guessed object counts only when the request's
+  words name it ("pills" for a pill bottle) or SubQ reads an object in them.

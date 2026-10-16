@@ -47,18 +47,20 @@ _UNITS = [  # every length becomes "<n> mm" and every mass "<n> g", so the rules
     (_NUM + r"\s*(?:kgs?|kilos?|kilograms?)\b", 1000.0, "g"),
     (_NUM + r"\s*(?:lbs?|pounds?)\b(?!\s*(?:coins?|notes?|shops?|stores?|signs?|symbols?|sterling)\b)", 453.592, "g"),
     (_NUM + r"\s*(?:oz|ounces?)\b", 28.3495, "g"),
-    (_NUM + r"\s*(?:grams?|gr)\b", 1.0, "g"),
+    (_NUM + r"\s*(?:grams?|grammes?|grm|gr)\b", 1.0, "g"),
     (_NUM + r"\s*(?:cm|centimet(?:er|re)s?)\b", 10.0, "mm"),
     (_NUM + r"\s*(?:millimet(?:er|re)s?)\b", 1.0, "mm"),
     (_NUM + r"\s*(?:met(?:er|re)s?)\b", 1000.0, "mm"),
+    (_NUM + r"\s*m\b(?=\s*(?:wide|long|tall|high|thick|across|diameter|cubes?|box(?:es)?|balls?|spheres?|cylinders?|tubes?|"
+             r"objects?|parts?|blocks?)\b)", 1000.0, "mm"),
     # "in" only when it cannot be the preposition: "2 in wide", "a 3 in cube", "2 inches"
-    (_NUM + r"\s*(?:inch(?:es)?\b|in\.?(?=\s*(?:wide|long|tall|high|thick|across|diameter|dia\b|cube|box|ball|sphere|"
-             r"cylinder|tube|object)\b|\s*(?:$|[,;)?!])))", 25.4, "mm"),
-    (_NUM + r'\s*(?:"|”)', 25.4, "mm"),
+    (_NUM + r"\s*(?:inch(?:es)?\b|in\.?(?=\s*(?:wide|long|tall|high|thick|across|diameter|dia\b|cubes?|box(?:es)?|balls?|"
+             r"spheres?|cylinders?|tubes?|objects?|parts?|blocks?)\b|\s*(?:$|[,;)?!])))", 25.4, "mm"),
+    (_NUM + r'\s*(?:"|”|\'\')', 25.4, "mm"),
 ]
 
 
-_UNIT_AHEAD = (r"(?=\s*-?\s*(?:kgs?|kilos?|kilograms?|lbs?|pounds?|oz|ounces?|grams?|gr|gms?|g|cm|centimet(?:er|re)s?|mm|"
+_UNIT_AHEAD = (r"(?=\s*-?\s*(?:kgs?|kilos?|kilograms?|lbs?|pounds?|oz|ounces?|grams?|grammes?|grm|gr|gms?|g|cm|centimet(?:er|re)s?|mm|"
                r"millimet(?:er|re)s?|inch(?:es)?|in)\b)")
 _ONES = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
                                     "fifteen sixteen seventeen eighteen nineteen".split())}
@@ -96,6 +98,13 @@ def _plain_numbers(text: str) -> str:
                   lambda m: m.group(1) + m.group(2).replace(".", ""), text)
     text = re.sub(r"(?<![\w.])\.(\d+)" + _UNIT_AHEAD, r"0.\1", text)                     # ".3 kg"
     text = re.sub(r"\bhalf\s+an?\s+(?=(?:kilo|kilogram|pound|lb)s?\b(?!\s*(?:coins?|notes?|shops?|stores?)\b))", "0.5 ", text)
+    text = re.sub(r"\ba\s+quarter(?:\s+of)?\s+(?:an?\s+)?(?=(?:kilo|kilogram|pound|lb)s?\b(?!\s*(?:coins?|notes?|shops?|stores?)\b))",
+                  "0.25 ", text)
+    # fractions before a unit: "1 1/2 inch" is 1.5, "1/4 lb" a quarter pound (not 4 lb)
+    text = re.sub(r"(?<![\d./])(\d+)\s+(\d+)\s*/\s*([1-9]\d?)(?![\d/])" + _UNIT_AHEAD,
+                  lambda m: f"{int(m.group(1)) + int(m.group(2)) / int(m.group(3)):g}", text)
+    text = re.sub(r"(?<![\d./])(\d+)\s*/\s*([1-9]\d?)(?![\d/])" + _UNIT_AHEAD,
+                  lambda m: f"{int(m.group(1)) / int(m.group(2)):g}", text)
     # "a pound of flour" is a mass, but "a pound coin", "one pound notes" and "a pound shop" are not
     text = re.sub(r"\b(?:a|an|one)\s+(?=(?:kilos?|kilograms?|ounces?|inch(?:es)?)\b|"
                   r"pounds?\b(?!\s*(?:coins?|notes?|shops?|stores?|signs?|symbols?|sterling)\b))", "1 ", text)

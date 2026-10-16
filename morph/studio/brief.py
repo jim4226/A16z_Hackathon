@@ -98,6 +98,10 @@ PRESET_INFO = {"raw egg": ("egg", "Eggs"), "strawberry": ("strawberry", "Strawbe
                "water bottle": ("bottle", "Water bottles")}
 
 
+# the SO-101 (also written SO-ARM101) or LeRobot arm, in a request
+_SO = r"(?:\bso[- ]?(?:arm[- ]?)?10[01]\b|\ble ?robot\b)"
+
+
 @dataclass(frozen=True)
 class Archetype:
     key: str
@@ -181,7 +185,7 @@ ARCHETYPES = {a.key: a for a in (
               object_q="Which toys will it pick up?", things="the toys", name="toy-tidier"),
     Archetype("generic_arm", "General pick and place", "pick_place", (), ("small_box", "strawberry", "raw egg", "empty_can"),
               ("task", "layout", "budget"), object_q="What will it pick up?"),
-    Archetype("so101", "Your SO-101 arm", "pick_place", ((r"\bso[- ]?10[01]\b", 6), (r"\ble ?robot\b", 6)),
+    Archetype("so101", "Your SO-101 arm", "pick_place", ((r"\bso[- ]?(?:arm[- ]?)?10[01]\b", 6), (r"\ble ?robot\b", 6)),
               ("raw egg", "strawberry", "ping pong ball"), ("layout",), object_q="What will your SO-101 pick up?",
               name="so101-{obj}-picker"),
 )}
@@ -656,17 +660,21 @@ _NOT_NAMES = frozenset(("i", "monday", "tuesday", "wednesday", "thursday", "frid
                         "clinic", "pharmacy", "it", "ict", "unit", "block", "wing", "bay", "building",
                         "haas", "ups", "fedex", "dhl", "usps", "costco", "walmart", "tesco", "aldi", "lidl", "target", "apple",
                         "google", "samsung", "bosch", "makita", "dewalt", "festool",
-                        # process and station words read as a name after "to" ("move the parts to rework")
-                        "rework", "quarantine", "autoclave", "decon", "decontamination", "cleanup", "rinse", "overflow",
-                        "backup", "archive", "salvage", "refurb", "refurbishment", "aoi", "smt", "litho", "lithography",
-                        "anneal", "degrease", "etch", "passivation", "teardown", "rebuild", "prep", "buffer", "kitting",
-                        "despatch", "spares", "tooling", "wip", "finishing", "plating", "anodising", "anodizing",
                         # common words read as a name in a Title Case or SHOUTING tagline ("... For Fun", "... With Care")
-                        "fun", "steel", "care", "pack", "ease", "speed", "precision", "style", "class", "flair", "love",
-                        "pride", "joy", "confidence", "accuracy", "efficiency", "scale", "detail"))
+                        "fun", "steel", "care", "pack", "ease", "speed", "precision", "style", "class", "flair",
+                        "confidence", "accuracy", "efficiency", "scale", "detail"))   # never a given name (Joy, Love)
 # a word that may be someone's name, after "to" or "help" at the end of its phrase ("bring the pills to siobhan", "a robot
 # that helps kwame at home"): not a thing, a place, a department, a job done, an animal or the robot
-_NOT_A_NAME = (r"(?:" + "|".join(sorted(_NOT_NAMES)) + r"|position|location|spot|side|front|back|top|bottom|left|right|centre|"
+# process and station words read as a name after "to" ("move the parts to rework"): not names in lower case or in a
+# Title Case request, but a capital in an ordinary sentence still is one ("hand the bolts to Buffer")
+_PROCESS_WORDS = frozenset((
+    "rework", "quarantine", "autoclave", "decon", "decontamination", "cleanup", "rinse", "overflow", "backup", "archive",
+    "salvage", "refurb", "refurbishment", "aoi", "smt", "litho", "lithography", "anneal", "degrease", "etch", "passivation",
+    "teardown", "rebuild", "prep", "buffer", "kitting", "despatch", "spares", "tooling", "wip", "finishing", "plating",
+    "anodising", "anodizing", "deburr", "deburring", "reflow", "triage", "metrology", "regrind", "packout", "putaway",
+    "compost", "retort", "cal", "calibration", "inspection", "qc", "qa", "test", "testing", "assembly", "packing",
+    "shipping", "receiving", "goods-in", "dispatch", "sterilisation", "sterilization", "wash", "drying", "curing"))
+_NOT_A_NAME = (r"(?:" + "|".join(sorted(_NOT_NAMES | _PROCESS_WORDS)) + r"|position|location|spot|side|front|back|top|bottom|left|right|centre|"
                r"center|middle|end|start|stock|waste|scrap|trash|rubbish|inventory|aisle|row|lane|level|floor|stage|unit|"
                r"platform|stack|pile|heap|output|input|outfeed|infeed|reject|rejects|bed|work|school|church|market|town|"
                r"city|lunch|dinner|breakfast|size|order|scale|spec|zero|completion|taste|plan|hand|hands|place|safety|"
@@ -952,16 +960,19 @@ PEOPLE_AROUND = (_CLAUSE + _LEAD + r"(?:" + _WHO + ")" + _SUBJ_PP + r"\s+(?:" + 
                  r"\b(?:pass|send|slide|hand)\w*\s+(?:[\w'’-]+\s+){0,4}?(?:down|across|around|round|along)\s+the\s+table\b|"
                  r"\b(?:to|at)\s+the\s+other\s+end\s+of\s+the\s+table\b|\b(?:down|across|along)\s+to\s+the\s+other\s+end\b|"
                  r"\baround\s+the\s+room\b|"
-                 # "serves table 3", "bring the bill to table 5", "take the meds to bed 4": a person served at a numbered
-                 # table, bed or room. Not a horticulture or workshop station ("moves the trays to bed 6 of the
-                 # greenhouse", "moves the seedlings to table 4"), which uses move/sort/place, not a serving verb
-                 r"\b(?:serves?|bring\w*|tak\w*|deliver\w*|wait\w*\s+on)\s+(?:[\w'’-]+\s+){0,4}?(?:the\s+|their\s+)?"
-                 r"(?:table|bed|room|seat|cubicle|booth|bay)\s+\d+[a-z]?\b(?!\s+of\s+(?:the\s+)?(?:greenhouse|garden|nursery|"
+                 # "serves table 3", "carries the soup to table 3", "take the meds to bed 4", "a robot for table 3": a person
+                 # served at a numbered table, bed or room, whatever the verb (when unsure, keep the person). Not one "of the
+                 # greenhouse" or other station; person_signals also drops it in a greenhouse or workshop (_STATION_PLACE)
+                 r"\b(?:(?:to|for|at)\s+(?:the\s+|their\s+)?(?:table|bed|room|seat|cubicle|booth)|(?:serves?|bring\w*|tak\w*|"
+                 r"deliver\w*|wait\w*\s+on)\s+(?:[\w'’-]+\s+){0,4}?(?:the\s+|their\s+)?(?:table|bed|room|seat|cubicle|booth|bay))"
+                 r"\s+\d+[a-z]?\b(?!\s+of\s+(?:the\s+)?(?:greenhouse|garden|nursery|"
                  r"workbench|bench|workshop|factory|warehouse|line|rack|shelf|polytunnel|plot|bed|allotment|cell|unit))|"
                  r"\bthe\s+tables\b(?=.*\b(?:restaurant|cafe|café|bistro|canteen|pub|bar)s?\b)|"
                  r"\b(?:beside|next to|by|at)\s+(?:the|a|her|his|my|their)\s+(?:hospital\s+)?bed\b|"
-                 r"\brobot(?:ic)?\s+(?:server|cashier|receptionist|nurse|carer|caregiver|companion|sous[- ]chef|chef|host|"
-                 r"hostess|concierge|teacher|tutor|assistant|helper|attendant|valet|porter|bellhop)\b|"
+                 r"\b(?:robot(?:ic)?|cobot)\s+(?:server|cashier|receptionist|nurse|carer|caregiver|companion|sous[- ]chef|chef|"
+                 r"host|hostess|concierge|teacher|tutor|assistant|helper|attendant|valet|porter|bellhop|baristas?|bartenders?|doorman|"
+                 r"doormen|greeters?|ushers?|bouncers?|"
+                 r"waiters?|waitress(?:es)?)\b|"
                  r"\b(?:cobots?|collaborative (?:robot|arm)s?|human[- ]robot|hrc|helping hands?|third hand|assistive|adl|"
                  r"activities of daily living|daily living|independent living|power ?chairs?|mobility aids?|hospital beds?|"
                  r"bed ?rails?|feeding (?:arm|robot|aid|assistant|device|tool)s?)\b|"
@@ -988,11 +999,49 @@ ROBOT_ALONE = (r"\b(?:on its own|by itself|unattended|enclosed|fenced(?: off| in
 NOBODY_NEAR = (r"\b(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b(?!\s+else\b)(?:\s+\w+){0,3}?\s*" + _NEAR +
                r"\b(?!(?:\s+(?:it|the robot|the arm|this))?\s*[,;:-]?\s*(?:except|but|apart from|aside from|other than|"
                r"besides|save|bar|just|only|barring|excluding)\b)")
-# the "cobot"/"assistive"/"mobility" hints are what the filter reads as people when no one is named: unsure, not a
-# described person. An explicit "nobody around" beats these (see person_signals), but never a named person.
-_COBOT_UNSURE = (r"\b(?:cobots?|collaborative (?:robot|arm)s?|human[- ]robot|hrc|helping hands?|third hand|assistive|adl|"
-                 r"activities of daily living|daily living|independent living|power ?chairs?|mobility aids?|hospital beds?|"
-                 r"bed ?rails?|feeding (?:arm|robot|aid|assistant|device|tool)s?)\b")
+# a bare "cobot"/"collaborative robot" hint is what the filter reads as people when no one is named: unsure, not a
+# described person. An explicit "nobody around" beats it (see person_signals), but never a named person, and never a
+# robot whose user is at it by construction (a power chair, hospital bed or feeding arm, assistive, ADL or mobility robot,
+# helping hands): those keep the person and the e-stop whatever else the request says.
+_COBOT_UNSURE = r"\b(?:cobots?|collaborative (?:robot|arm)s?|human[- ]robot|hrc)\b"
+# a numbered bed, table or room that is a station, not someone served: in a greenhouse, nursery or workshop
+# someone the robot serves or tends at arm's length, named by what it does to or for them: a double-object serving verb
+# ("pours us coffee", "makes Tom a sandwich"), a drink topped up, body care ("paints my nails", "puts in my eye drops",
+# "ties my shoelaces", "puts the straw in her mouth"), greeting visitors, their homework collected, or "whose bin I empty"
+_POSS_WHO = r"(?:my|his|her|their|your|our|someone['’]s|(?:the\s+)?[a-z]+['’]s|(?:the\s+)?[a-z]+s['’](?!s))"
+_SERVES_SOMEONE = (
+    r"\b(?:deliver|pour|make|makes|made|cook|fix|fetch|slide|serv(?:e|es|ed|ing)|bring|brings|brought|offer|pass|hand|"
+    r"give|gives|gave|get|gets|got)\w*\s+(?:(?:me|us|him|her|them|you|someone|the\s+(?:[a-z-]+\s+)?(?:" + _ROLES + r"|morphagents?))\s+"
+    r"(?:a|an|some|the|their|his|her|my|your|our|more|another|fresh|hot|cold|\d+)|(?:me|us|him|you|someone|the\s+"
+    r"(?:[a-z-]+\s+)?(?:" + _ROLES + r"|morphagents?))\s+(?!(?:to|for|at|in|into|on|onto|over|back|up|down|out|off|away|along|across|"
+    r"around|round|through|with|from|and|or|then|while|when|so|by|near)\b)(?![^.;!?]*\b(?:to|into|onto)\s+(?:the|a|its|their)\s))"
+    r"\s*(?!(?:shake|turn|go|try|look|rest|wipe|clean|spin|push|nudge|squeeze|tap|robot|robotic|arm|bot|cobot|machine|"
+    r"gripper|design|device|gadget|system|setup|plan|quote|list|way|idea|bom|estimate|price|summary|version|name|sketch|"
+    r"model|drawing|parts?\s+list|hand)s?\b)[a-z]{3,}"
+    r"|\b(?:top|tops|topping|topped)\s+up\s+" + _POSS_WHO + r"\s+(?:[a-z-]+\s+)?(?:glass|cup|mug|coffee|tea|drink|wine|water|"
+    r"plate|bowl)(?:s|es)?\b"
+    r"|\b(?:refill|fill)\w*\s+(?:up\s+)?" + _POSS_WHO + r"\s+(?:[a-z-]+\s+)?(?:glass|cup|mug|coffee|tea|drink|wine|water|"
+    r"plate|bowl)(?:s|es)?\b"
+    r"|\b(?:paint|polish|file|trim|brush|comb|wash|dry|dries|style|braid|plait|shav|massag|do|does|doing|appl)\w*\s+"
+    + _POSS_WHO + r"\s+(?:[a-z-]+\s+)?(?:nails?|fingernails?|toenails?|hair|teeth|makeup|make-up|face|lips|eyebrows?|lashes|"
+    r"beard|back|feet|eye\s?liner|lipstick)\b"
+    r"|\b(?:tie|ties|tying|tied|lace|laces|lacing|button|buttons|buttoning|zip|zips|zipping|fasten\w*|do\w*\s+up)\s+"
+    r"(?:up\s+)?" + _POSS_WHO + r"\s+(?:[a-z-]+\s+)?(?:shoelaces|laces|shoes|boots|buttons?|coat|jacket|shirt|bib|apron)\b"
+    r"|\bput\w*\s+(?:in|on)\s+" + _POSS_WHO + r"\s+(?:eye\s?drops|contacts?|contact\s+lenses|lenses|glasses|hearing\s+aids?|"
+    r"shoes|socks|gloves|coat|bib)\b"
+    r"|\bput\w*\s+(?:a|an|the|some|my|his|her|their)\s+(?:[a-z-]+\s+){0,2}?(?:in|into|on|onto|around|round)\s+" + _POSS_WHO +
+    r"\s+(?:mouth|head|neck|face|lap|feet|foot|ears?|eyes?|wrists?|hands?|arms?)\b"
+    r"|\b(?:greet|welcom|usher|seat|check\w*\s+in|receiv|meet|wave\w*\s+(?:at|to))\w*\s+(?:the\s+|our\s+|my\s+)?"
+    r"(?:[a-z-]+\s+)?(?:customers?|visitors?|guests?|patients?|people|everyone|staff|kids|children|students|pupils|diners|"
+    r"shoppers|passengers|delegates|callers|clients|members|residents)\b"
+    r"|\b(?:the|my|our|their)\s+(?:students|pupils|kids|children|guests|customers|patients|workers|staff|visitors|players|"
+    r"diners|residents|clients|passengers|shoppers)['’]\s+(?:[a-z-]+\s+){0,2}?(?:cups?|glass(?:es)?|mugs?|plates?|bowls?|"
+    r"drinks?|faces?|hands?|hair|nails?|homework|orders?|tickets?|coats?|trays?|meals?|lunch(?:es)?|food)\b"
+    r"|\bwhose\s+[a-z-]+\s+(?:i|we|you|he|she|they|someone)\s+(?:empty|empties|fill|fills|load|loads|refill|refills|clean|"
+    r"cleans|change|changes|swap|swaps|check|checks|feed|feeds|top)\b")
+_STATION_PLACE = (r"\b(?:greenhouses?|polytunnels?|allotments?|seedlings?|seed trays?|potting|hydroponics?|grow (?:room|tent)s?|"
+                  r"workshops?|workbench(?:es)?|kilns?|machine shop|cnc|lathes?|press shop)\b")
+_NUMBERED_PLACE = r"\b(?:table|bed|room|seat|cubicle|booth|bay)\s+\d+[a-z]?\b"
 _KIDS = (r"\b(?:kids?(?!['’])|kiddos?|kiddies|children(?!['’]s)|schoolchildren|grandchildren|grandkids?|schoolkids?|child|toddlers?|bab(?:y|ies)|"
          r"infants?|newborns?|twins|teens?|teenagers?|tweens?|youngsters?|my son|my daughter|"
          r"(?:the|a|my|our|her|his|their|little|young) (?:boy|girl)s?|"
@@ -1085,7 +1134,7 @@ def _title_name(word: str) -> bool:
     """Whether a capitalised word after "to", "for", "with" or "help" in a Title Case or SHOUTING request is a name: not
     a word for a person, a place, a thing, an animal, the robot, a department or a function word."""
     w = word.lower()
-    return not (w in _NOT_NAMES or re.fullmatch(r"(?:" + _ROLES + "|" + _KIN + "|" + _KIN_SLANG + "|" + _PLACE + "|" + _THINGS + "|" +
+    return not (w in _NOT_NAMES or w in _PROCESS_WORDS or re.fullmatch(r"(?:" + _ROLES + "|" + _KIN + "|" + _KIN_SLANG + "|" + _PLACE + "|" + _THINGS + "|" +
                                                  _ANIMAL + "|" + _ROBOT_WORD + "|" + _NOT_DESCRIBING + "|" + _ADVERB + "|" +
                                                  _PREPOSITION + r"|me|you|us|him|them|it|its|our|your|my|this|that|these|those|"
                                                  r"some|any|all|both|each|every|one|two|three|four|five|ten|home|work|school|"
@@ -1249,8 +1298,8 @@ _H_NEG = r"(?<!\bnever )(?<!\bnot )(?<!n't )(?<!\bwithout )(?<!\bavoid )(?<!\bav
 _H_VERB_USE = (r"(?<!\bthe )(?<!\ba )(?<!\ban )(?<!\bmy )(?<!\byour )(?<!\bhis )(?<!\bher )(?<!\btheir )(?<!\bour )"
              r"(?<!\bits )")         # a verb, not a noun ("the nail tech", "a tape measure")
 _H_CL = r"[^.;!?\n]"
-_H_AT = (r"(?:(?:at|on|onto|against|toward|towards|over|under|beneath|below)\s+|(?:in|into)\s+(?!(?:my|your|his|her|their|our|"
-       r"(?:the|a|an)\s+[a-z'’-]+['’]s?|[a-z'’-]+['’]s?)\s+(?:[a-z-]+\s+)?(?:hand|palm)s?\b))")
+_H_AT = (r"(?:(?:at|on|onto|against|toward|towards|over|under|beneath|below)\s+|(?:in|into)\s+(?!(?:(?:my|your|his|her|their|"
+       r"our|the|a|an)\s+)?(?:[a-z'’-]+['’]s?\s+){0,2}?(?:[a-z-]+\s+)?(?:hand|palm)s?\b))")
 _H_HURT = (r"(?:hurt|harm|injur|attack|punch|kick|stab|kill|slap|shoot|shot|zap|tase|taser|electrocut|chok|strangl|poison|"
          r"tortur|hit|beat|whip|smack|strik|struck|thump|batter|spank|burn|scald|maim|wound|bite|bull(?:y|ies|ied)|abus|"
          r"drown|suffocat|smother|trip|shock|sting|stung|pelt|stun|gas|mace|pepper-?spray|drug|sedat|terrori|"
@@ -1278,9 +1327,10 @@ HOSTILE = (
     # cutter", "slices the cat"), or a blade to someone's throat or wrist; grooming ("cut the cat's hair") and cooking
     # ("slices the ham") are not living targets and a benefactive ("cut me a slice") is excluded
     _H_NEG + r"\b(?:cut|slic|slash|saw|stab|jab|prick|slit|gash|gouge|lacerat|sever|skewer|impal|carv)\w*\s+(?:up\s+|open\s+)?"
-    + _H_PP + r"(?!\s+(?:a|an|another|some|the|his|her|its|their|my|your|our)\s+(?:slice|piece|bit|chunk|wedge|portion|"
-    r"serving|hunk|sandwich|lunch|snack|meal|cake|loaf|bread|some|path|lawn|hedge|rug|ribbon|hair|fringe|nails?|claws?|"
-    r"fur|coat|key|cord|cable|wire|rope))",
+    + _H_PP + r"(?=\s*(?:$|[.,;:!?)\]\"]|(?:with|using|by|in|into|on|onto|across|open|up|apart|again|twice|repeatedly|"
+    r"deep|hard|until|till|while|when|whenever|if|so|then|and|or|but|for|because|as|after|before|to|from|at|right|"
+    r"several|many|multiple|a\s+few|lots|badly|last|this|next|every|each|yesterday|today|tonight|tomorrow|now|once|"
+    r"always|sometimes|again|upstairs|downstairs|nearby|outside|inside|here|there|over|behind|down|out|off)\b|[a-z]+ly\b|\d))",
     _H_NEG + r"\b(?:cut|slic|slash|slit|stab|saw|open|gash|gouge|sever|sink\s+a\s+[a-z]+\s+into)\w*\s+(?:open\s+)?" + _H_POSS +
     _H_MOD + r"{0,1}?(?:throats?|necks?|wrists?|bell(?:y|ies)|guts?|stomachs?|skin|flesh|arter(?:y|ies)|jugular|eyes?|"
     r"arms?|legs?|fingers?|hands?|cheeks?|tongue)\b",
@@ -1660,7 +1710,9 @@ _H_AIM_OK = (  # the matched clause is one of these ordinary, body-care or illum
     r"|\b(?:curling\s+(?:irons?|tongs?|wands?)|flat\s+irons?)\b(?:(?!\bthroat\b|\bface\b|\beye).){0,24}?\b(?:hair|head|fringe|curls?)\b"
     r"|\bhot[- ]water[- ]?bottles?\b"
     r"|(?<!blow)(?<!blow[- ])\btorch(?:es)?\b(?:(?!\bface\b|\beyes?\b).){0,40}?\b(?:my|your|the|his|her|our|their)\s+"
-    r"(?:[a-z-]+\s+){0,2}?(?:hand|hands|workbench|bench|project|board|car|sink|desk|table|work|cake)s?\b"
+    r"(?:[a-z'’-]+\s+){0,2}?(?:hand|hands|workbench|bench|project|board|car|sink|desk|table|work|cake)s?\b"
+    r"|(?<!blow)(?<!blow[- ])\btorch(?:es)?\b(?:(?!\beyes?\b).){0,40}?\b(?:mouth|teeth|ear|ears|throat)\b"
+    r"(?:(?!\bburn|\bhurt).){0,40}?\b(?:dentist|doctor|nurse|gp|check\w*|see|look\w*|exam\w*)\b"
     r"|(?<!blow)(?<!blow[- ])\btorch(?:es)?\b(?:(?!\bface\b).){0,40}?\bwhile\s+(?:i|we|you|they|he|she)\b"
     r"|\b(?:temp|temperature|thermometer|infrared|ir)[- ]?guns?\b\s+(?:at|on|to|over|near|against)\s+(?:my|your|the|his|"
     r"her|their|a|each|every)\s+(?:[a-z-]+\s+){0,2}?(?:forehead|temple|wrist)s?\b"
@@ -1724,7 +1776,33 @@ def _benign_act(pt: str, m: "re.Match") -> bool:
     if re.match(r"beat\w*\b", seg) and re.search(_H_GAME, pt) and \
             not re.search(r"\b(?:up|down|senseless|unconscious|black\s+and\s+blue|to\s+a\s+pulp)\b|\bwith\s+a\b", seg):
         return True
-    return False
+    return bool(_rx(_H_BENIGN_IDIOM).search(seg)) and not _rx(_H_IDIOM_HARM).search(seg)
+
+
+# everyday idioms the hurt, smother, drown, ligature and sit-on rules would read as harm, matched from the rule's verb:
+# a message shot over, whack-a-mole, a baby held in the bath, a warm towel on a face, a necklace, a robot on a shoulder,
+# play throws and splashes. _H_IDIOM_HARM in the same clause keeps the refusal.
+_H_BENIGN_IDIOM = (
+    r"^shoot\w*\s+(?:me|him|her|us|them|you|[a-z]+)\s+(?:a|an|another)\s+(?:quick\s+|short\s+|brief\s+)?(?:message|text|"
+    r"email|e-mail|note|line|dm|ping|reply|update|alert|notification|sms|photo|picture|pic|link|look|glance|smile|wave)\b"
+    r"|^whack\w*\s+(?:the\s+)?moles?\b(?=.*\b(?:fair|game|arcade|carnival|funfair|kids|fun|play\w*)\b)"
+    r"|^(?:hold|holds|holding|held|dip|dips|dipped|dipping|lower\w*|put\w*|place\w*)\s+(?:[\w'’-]+\s+){0,3}?"
+    r"(?:in|into)\s+(?:the\s+|a\s+|her\s+|his\s+|their\s+)?(?:warm\s+)?(?:bath|tub|baby\s+bath|paddling\s+pool|basin)\b"
+    r"|^(?:put|puts|putting|place|places|placed|placing|lay|lays|laid|laying|rest\w*|drap\w*)\s+(?:a|an|the|my|his|her|"
+    r"some)\s+(?:[a-z-]+\s+){0,2}?(?:cloth|towel|flannel|washcloth|face\s?cloth|compress|rag|mask)s?\s+on\s+"
+    r"|^(?:put|puts|putting|place|places|placed|placing|hang\w*|fasten\w*|clasp\w*|do\w*\s+up)\s+(?:a|an|the|my|his|her|"
+    r"their)\s+(?:[a-z-]+\s+){0,2}?(?:chain|necklace|pendant|locket|lanyard|medal|scarf|collar|choker|beads)s?\s+"
+    r"(?:around|round|on)\b"
+    r"|^(?:sit|sits|sitting|sat|perch\w*|ride|rides|riding|rode|rest\w*|stand|stands|standing|lie|lies|lying)\s+on\s+"
+    r"(?:top\s+of\s+)?(?:my|your|his|her|their|our|the|a)\s+(?:[a-z'’-]+\s+){0,1}?(?:shoulders?|laps?|wrists?|forearms?|"
+    r"arms?|hands?|palms?|desks?|knees?)\b"
+    r"|^(?:splash\w*|throw\w*|threw|toss\w*|lob\w*|flick\w*|sprinkl\w*|shower\w*)\s+(?:a\s+|the\s+|some\s+)?"
+    r"(?:[a-z-]+\s+){0,1}?(?:water|confetti|petals?|rice|bubbles?|streamers?|glitter|balls?|beach\s?balls?|frisbees?|"
+    r"bean\s?bags?|balloons?|snow)\b(?=.*\b(?:play\w*|game|fun|gently|softly|pool|paddling|catch|fetch|wedding|bride|"
+    r"groom|party|celebrat\w*|birthday|beach)\b)(?!.*\b(?:face|eyes?|head)\b)")
+_H_IDIOM_HARM = (r"\b(?:hurt\w*|harm\w*|injur\w*|hard|harder|eyes?|under|beneath|drown\w*|until|struggl\w*|"
+                 r"breath\w*|tight\w*|pull\w*|chok\w*|press\w*|force\w*|hold\w*\s+down|boiling|scald\w*|hot\s+water|"
+                 r"rocks?|stones?|bricks?|knives|knife|acid|bleach)\b")
 
 
 def _negated(t: str, start: int) -> bool:
@@ -1741,6 +1819,7 @@ def _aimed_at(pt: str):
     aims = list(_rx(_H_AIMED).finditer(pt))
     if not aims:
         return
+    named = [m.start() for m in _rx(r"\b" + _H_DANGER).finditer(pt)]
     dangers = [(m.start(1), m.end(1)) for m in _rx(_H_DANGER_HERE).finditer(pt)]
     targets = [(m.start(1), m.end(1)) for m in _rx(_H_AIMED_AT).finditer(pt)]
     if not dangers or not targets:
@@ -1749,9 +1828,15 @@ def _aimed_at(pt: str):
     d_starts, t_starts = [d[0] for d in dangers], [t[0] for t in targets]
     for a in aims:
         stop = ends[bisect.bisect_left(ends, a.end())]          # the clause ends here
+        # "puts them in my mum's hand" (pills): after a carrying verb, "it"/"them" is a danger only when one was named
+        # before it; after aim, point, fire, swing and the like it always is ("mount a bear trap ... aim it at my dad")
+        carry = re.match(r"(?:put|hold|held|press|push|drop|bring|brought|move|touch|us(?:e|es|ed|ing)|tip|dump|pour)", a.group(0))
         k = bisect.bisect_left(d_starts, a.end())
         while k < len(dangers) and dangers[k][0] <= min(a.end() + 150, stop):
-            d_end = dangers[k][1]
+            d_start, d_end = dangers[k]
+            if carry and pt[d_start:d_end] in ("it", "them") and not (named and named[0] < d_start):
+                k += 1
+                continue
             n = bisect.bisect_left(t_starts, d_end)
             while n < len(targets) and targets[n][0] <= min(d_end + 150, stop):
                 yield pt[a.start():targets[n][1]]
@@ -1818,6 +1903,7 @@ def warm(block: bool = True) -> None:
     def run():
         try:
             for pat in (*HOSTILE, *HOSTILE_WITH_DANGER, *_H_NO_VERB, GUN_CONTEXT, _H_AIMED, _H_AIMED_AT, _H_DANGER_HERE,
+                        _SERVES_SOMEONE, _H_BENIGN_IDIOM, _H_IDIOM_HARM, r"\b" + _H_DANGER,
                         _H_ANY_DANGER, HAND_TO_PERSON, PEOPLE_AT_IT, PEOPLE_BESIDE, PEOPLE_AROUND, _FOR_SOMEONE,
                         THEIR_PLACE, ANIMAL_GETS):
                 _rx(pat)
@@ -1846,13 +1932,19 @@ def person_signals(pt: str, t: str = "") -> dict:
     # someone the robot helps, serves or works for is a person named; an unsure setting or "cobot" only leaves someone
     # likely there. An explicit "nobody around" beats the unsure one ("a cobot that runs overnight with nobody around"),
     # but never a person the request names.
-    for_someone = _rx(_FOR_SOMEONE).search(pt)
+    for_someone = (_rx(_FOR_SOMEONE).search(pt) or _rx(_SERVES_SOMEONE).search(pt) or   # "a robot doorman" greets people
+                   re.search(r"\b(?:robot(?:ic)?|cobot)\s+(?:doorman|doormen|greeters?|ushers?|bouncers?|baristas?|bartenders?|"
+                             r"waiters?|waitress(?:es)?|receptionists?|concierges?)\b", t or pt))
     ambient = _rx(PEOPLE_AROUND).search(pt) or _rx(THEIR_PLACE).search(pt)
+    if ambient and re.search(_NUMBERED_PLACE, ambient.group(0)) and re.search(_STATION_PLACE, t or pt):
+        # "moves the seedlings to table 4" in a greenhouse: a station; look again without it
+        rest = pt[:ambient.start()] + " " + pt[ambient.end():]
+        ambient = _rx(PEOPLE_AROUND).search(rest) or _rx(THEIR_PLACE).search(rest)
     if ambient and not for_someone and (t or pt) and re.search(NOBODY_NEAR, t or pt):
         # explicit "nobody around" beats a bare "cobot"/"assistive" hint, but never a person the request describes
         # ("the operator swaps the bins, nobody near it" keeps the operator)
-        stripped = re.sub(_COBOT_UNSURE, " ", pt)
-        if not _rx(PEOPLE_AROUND).search(stripped) and not _rx(THEIR_PLACE).search(stripped):
+        hits = list(_rx(PEOPLE_AROUND).finditer(pt)) + list(_rx(THEIR_PLACE).finditer(pt))
+        if all(re.fullmatch(_COBOT_UNSURE, h.group(0).strip()) for h in hits):   # "a cobot barista" serves someone
             ambient = None
     for kind, m in (("children", kids), ("beside", _rx(PEOPLE_BESIDE).search(pt) or _rx(PEOPLE_AT_IT).search(pt)),
                     ("receiver", receiver), ("near", for_someone or ambient),
@@ -2131,26 +2223,48 @@ def parse(text: str) -> dict:
         s["quantity"] = 10
     # existing hardware: read an SO-101 the user has or uses, not a past one, someone else's, a question, a comparison
     # ("like an SO-101") or a request for a new arm ("my SO-101 is broken, build a new arm")
-    if re.search(r"\bso[- ]?10[01]\b|\ble ?robot\b", t):
+    if re.search(_SO, t):
+        so = r"(?:an?\s+|the\s+|my\s+|our\s+)?" + _SO
         none_ctx = re.search(r"\b(?:no|not|don'?t|do not|doesn'?t|haven'?t|have not|without|instead of|rather than|isn'?t|"
-                             r"never)\b[^.;!?]{0,30}?\b(?:so[- ]?10[01]|le ?robot)\b", t)
-        # it is not an SO-101 the user has to use now: broken or a new arm asked for, someone else's, past, a question,
-        # or a comparison ("like an SO-101", "SO-101 style")
-        not_mine = (re.search(r"\b(?:broken|broke|bust|busted|faulty|dead|died|knackered|stopped working|not working|"
-                              r"doesn'?t work|won'?t work|build (?:me )?a new|new arm|a different arm|another arm)\b", t) or
-                    re.search(r"\b(?:used to|previously|once had|no longer|a (?:friend|mate|colleague|neighbou?r)|"
-                              r"my (?:friend|mate|colleague|neighbou?r|brother|sister|dad|mum|cousin|boss)|his|her|their|"
-                              r"someone(?:'?s)?)\b[^.;!?]{0,30}?\b(?:so[- ]?10[01]|le ?robot)\b", t) or
-                    re.search(r"\b(?:like|similar to|such as|style|based on|akin to|modell?ed on)\s+(?:an?|the|my|it)?\s*"
-                              r"(?:so[- ]?10[01]|le ?robot)\b|(?:so[- ]?10[01]|le ?robot)[- ]?(?:style|like|ish)\b", t) or
-                    re.search(r"\bshould\s+i\b|\bshall\s+i\b|\bis\s+it\s+worth\b|\bwould\s+it\s+be\s+(?:better|worth)\b", t))
-        # possession or use: "I have / I've got / I own / use my / with my / my SO-101"
+                             r"never)\s+(?:[a-z'’-]+\s+){0,2}?(?:an?\s+|the\s+|my\s+|any\s+)?" + _SO, t)
+        # it is not an SO-101 the user has to use now, each read from the words next to the SO-101 itself: broken (its own
+        # predicate, not "broken crayons"), a new arm asked for (not "don't build a new arm"), someone else's, past or sold,
+        # a question whether to use it, or a comparison ("like an SO-101", not "I'd like my SO-101")
+        broken = re.search(_SO + r"(?:['’]s(?:\s+[a-z-]+){0,2})?\s+(?:is|are|was|were|has|have|got|went|keeps|has been|"
+                           r"have been)\s+(?:[a-z-]+\s+){0,1}?(?:broken|broke|bust|busted|faulty|dead|died|knackered|"
+                           r"stopped working|not working|burnt out|burned out|fried)\b|"
+                           r"\b(?:broken|busted|faulty|dead|knackered|fried)\s+" + so +
+                           r"|" + _SO + r"(?:['’]s)?\s+(?:\w+\s+){0,2}?(?:doesn'?t|won'?t|does not|will not)\s+work\b", t)
+        new_arm = re.search(r"(?<!\bnot )(?<!\bno )(?<!n't )(?<!\bnever )(?<!\bto )(?<!\binto )(?<!\bonto )(?<!\bfrom )"
+                            r"(?<!\bwith )(?<!\bby )\b(?:build (?:me )?a new|a new arm|new arm|a different arm|another arm|"
+                            r"a replacement arm|design a replacement)\b", t)
+        new_arm = new_arm and not re.search(r"\b(?:don'?t|do not|no need to|not|never|without)\s+(?:\w+\s+){0,2}?" +
+                                            re.escape(new_arm.group(0)), t)
+        others = re.search(r"\b(?:a|my|our)\s+(?:friend|mate|colleague|neighbou?r|brother|sister|dad|mum|mom|cousin|boss|"
+                           r"school|lab|uni|teacher|club)\s+(?:has|have|had|owns|owned|got|lent|lends|is\s+lending)\s+(?:an?\s+|the\s+|"
+                           r"his\s+|her\s+|their\s+)?" + _SO, t) or \
+            re.search(r"\b(?:his|her|their|someone(?:['’]?s)?|somebody['’]?s|the\s+[a-z]+['’]s|a\s+(?:friend|mate|colleague|"
+                           r"neighbou?r)['’]?s|my\s+(?:friend|mate|colleague|neighbou?r|brother|sister|dad|mum|mom|cousin|"
+                           r"boss|school|lab|uni)['’]s)\s+(?:[a-z-]+\s+)?" + _SO, t)
+        past = re.search(r"\b(?:used to|previously|once had|no longer|sold|gave away|given away|lost|returned|replac\w+|"
+                         r"upgrad\w+ from|swap\w* out|thinking of buying|want to buy|might buy|should i buy)\s+(?:[a-z-]+\s+){0,2}?" +
+                         _SO, t)
+        compare = re.search(r"(?<!\bi'd )(?<!\bi )(?<!\bwe'd )(?<!\bwe )(?<!\bwould )(?<!\bwould really )"
+                            r"\b(?:like|similar to|such as|based on|akin to|modell?ed on|cheaper than|compared to|compared with|"
+                            r"versus|vs\.?|alternative to|inspired by|(?:a\s+)?(?:bigger|smaller|better|cheaper|stronger)\s+"
+                            r"version of|version of|instead of|better than|than)\s+(?:an?|the|my|it)?\s*" + _SO +
+                            r"|" + _SO + r"[- ]?(?:style|like|ish)\b|\bwhich is better\b[^.;!?]{0,40}" + _SO +
+                            r"|\bdo what an?\s+" + _SO, t)
+        question = re.search(r"\b(?:should|shall|could|can)\s+(?:i|we)\s+(?:use|try|reuse|repurpose)\s+" + so + r"[^.;!?]*\?", t)
+        not_mine = broken or new_arm or others or past or compare or question
+        # possession or use: "I have / I've got / I own / I bought / use my / with my / my SO-101 / the SO-101 on my desk"
         owned = (re.search(r"\b(?:i\s+(?:have|own|possess|use|run|operate)|we\s+(?:have|own|use)|i'?ve\s+(?:got|had)|"
+                           r"(?:i|we)\s+(?:just\s+)?(?:bought|got|built|assembled)|bought\s+(?:me|us)|"
                            r"got\s+(?:an?|my|a)|use\s+(?:my|an?|the|our|this)|using\s+(?:my|an?|the|our|this)|"
-                           r"with\s+(?:my|an?|the|our|this)|on\s+(?:my|our)|(?:my|our)\s+own)\s+(?:[a-z-]+\s+){0,2}?"
-                           r"(?:so[- ]?10[01]|le ?robot)\b", t) or re.search(r"\b(?:my|our)\s+(?:[a-z-]+\s+){0,1}?so[- ]?10[01]\b", t))
-        if none_ctx or (not_mine and not none_ctx and re.search(r"\b(?:broken|broke|new arm|build (?:me )?a new|a new|"
-                                                                r"a different arm|another arm|not working|doesn'?t work)\b", t)):
+                           r"with\s+(?:my|an?|the|our|this)|on\s+(?:my|our)|(?:my|our)\s+own)\s+(?:[a-z-]+\s+){0,2}?" + _SO, t)
+                 or re.search(r"\b(?:my|our)\s+(?:[a-z-]+\s+){0,1}?" + _SO, t)
+                 or re.search(r"\bthe\s+" + _SO + r"\s+(?:on|at|in)\s+(?:my|our)\b", t))
+        if none_ctx or (new_arm and not none_ctx) or broken:
             s["existing_hardware"] = "none"
         elif owned and not not_mine:
             s["existing_hardware"] = "so101"
@@ -2200,7 +2314,7 @@ def route_rules(text: str) -> dict:
     if re.search(r"\b(import|urdf|mjcf|github\.com|huggingface|koch|my own (?:arm|robot) design)\b", t):
         return {"value": "import_robot", "confidence": 0.7, "source": "rules"}
     if re.search(r"\b(new robot|a robot (?:that|to|for|which)|robot arm (?:that|to|for)|build (?:me )?a|make me a|i need a|i want a|design (?:me )?a|"
-                 r"something (?:to|that)|an? (?:arm|machine) (?:that|to|for)|so[- ]?10[01]|le ?robot|"
+                 r"something (?:to|that)|an? (?:arm|machine) (?:that|to|for)|so[- ]?(?:arm[- ]?)?10[01]|le ?robot|"
                  r"to (?:pick|sort|move|carry|hand|place|feed|water|load|stack)\b)", t):
         return {"value": "new_robot", "confidence": 0.8, "source": "rules"}
     if re.match(r"(?:can|could|does|do|is|are|what|how|why|which|will|would)\b", t) and t.endswith("?"):
@@ -2226,7 +2340,27 @@ def set_slot(b: Brief, name: str, value, source: str = "user", confidence: float
 
 def filled(b: Brief, name: str) -> bool:
     s = b.slots.get(name)
-    return s is not None and s.value is not None and s.source != "default" and (s.source != "inferred" or s.confidence >= 0.6)
+    if s is None or s.value is None or s.source == "default" or (s.source == "inferred" and s.confidence < 0.6):
+        return False
+    # an object a model guessed for a request that names none ("I want a robot arm" -> raw egg) is asked, not assumed:
+    # what the robot handles is the first thing to ask about an ambiguous request
+    return not (name == "object" and s.source == "inferred" and s.confidence < 0.9 and not _object_named(b, s.value) and
+                (b.flags.get("says_object") or 0) < 0.5)
+
+
+# adjectives and units in an object's name that don't name the thing ("raw egg", "small box", "330 ml bottle")
+_OBJECT_NAME_STOP = frozenset(("raw", "small", "large", "big", "ripe", "soft", "hard", "full", "empty", "plastic", "glass",
+                               "metal", "paper", "rolled", "folded", "wooden", "round", "flat", "the", "and", "with", "for"))
+
+
+def _object_named(b: Brief, obj) -> bool:
+    """Whether the person's own words name a model-guessed object: any word of its name ("pills" for a pill bottle)."""
+    if not isinstance(obj, dict):
+        return False
+    said = " ".join(str(t.get("text") or "") for t in b.turns if t.get("role") == "user").lower() or b.request.lower()
+    words = re.findall(r"[a-z]{3,}", f"{obj.get('name') or ''} {obj.get('key') or ''}".lower().replace("_", " "))
+    stems = {w[:-1] if w.endswith("s") and len(w) > 3 else w for w in words if w not in _OBJECT_NAME_STOP}
+    return any(re.search(r"\b" + re.escape(w), said) for w in stems)
 
 
 def coerce(name: str, value):
