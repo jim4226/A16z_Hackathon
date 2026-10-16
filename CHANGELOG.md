@@ -533,7 +533,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Morph assumed it; a hand-over always keeps its emergency stop, also when the answer or the designer model says it
   works on its own, and New robot doesn't ask about people on one. "Get me a robot that..." is no hand-over, a job
   title before a place ("the operator station", "the nurses' station") is a place, "bring her cup to the sink" moves
-  her cup, and the tool robot's "bring the tools to his workbench" is a pick and place. An animal it gives something
+  her cup (while "bring her tea in the garden", "bring her medicine on a tray" and "bring her tea to the garden" hand
+  it to her), and the tool robot's "bring the tools to his workbench" is a pick and place. An animal it gives something
   to is a pet nearby, with an emergency stop, not a person it hands things to: "hand the dog a bone", "give my parrot
   seeds" and "hand the horse a carrot" had no one nearby and no emergency stop, and "toss balls to my dog" and "pass
   the treats to my dog" were robots that "hand over" the things, as if to a person.

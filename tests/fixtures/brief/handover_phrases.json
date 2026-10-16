@@ -10186,6 +10186,141 @@
    "task": null,
    "people": "yes",
    "estop": true
+  },
+  {
+   "text": "bring her tea in the garden",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her medicine on a tray",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her tea on a tray",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her water in her room",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass her pills on the tray",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that brings her water in the kitchen",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her lunch in the kitchen",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her tea to the garden",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring his coffee in the office",
+   "family": "C-her-place",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring them tea in the garden",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the operator parts in the tray",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring him his tea in the garden",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand her the pills on a tray",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the nurse gauze on a tray",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my mum her tea in the living room",
+   "family": "C-her-place",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her shoes into the closet",
+   "family": "C-her-object",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "bring her plate back to the sink",
+   "family": "C-her-object",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "pass her bowl onto the shelf",
+   "family": "C-her-object",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "bring her coat to the hook",
+   "family": "C-her-object",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give his toys to the toy box in the corner",
+   "family": "C-her-object",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "bring her mug to the dishwasher",
+   "family": "C-her-object",
+   "task": "not_hand_over"
   }
  ]
 }

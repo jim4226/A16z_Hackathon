@@ -472,9 +472,20 @@ _THING = (_NO_THING + r"(?=\s+(?:" + _THING_DET + r"\b|(?!(?:" + _NOT_DESCRIBING
           r"(?<![a-z]{2}ing)))")
 _THING_DET_NEXT = _NO_THING + r"(?=\s+" + _THING_DET + r"\b)"
 # "bring her the cup" and "hand the operator parts", but not "bring her cup to the sink" or "pass the guest towels to the
-# shelf": a word that goes on to a place is the thing's, not the receiver
-_THEN_A_PLACE = (r"(?!\s+(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+(?:\s+[a-z-]+){0,2}?\s+(?:back\s+|over\s+)?(?:to|into|onto|in|on)"
-                 r"\s+(?:(?:the|a|an|my|her|his|their|our|your)\s+)?(?:[a-z-]+\s+){0,2}?" + _PLACE + r"\b)")
+# shelf": a word that goes on to a place things are put away in or on is the thing's, not the receiver. A room or an
+# area isn't such a place ("bring her tea to the garden": she may be there), and "in" or "on" says where the person is
+# or how the thing comes ("bring her tea in the garden", "pass her pills on the tray"): when unsure, the hand-over stays.
+_PUT_AWAY = (r"(?:cup ?holders?|car boot|desk|table|bench|workbench|workstation|worktable|workspace|counter|shelf|shelves|"
+             r"bookshelf|bookcase|cupboard|cabinet|closet|wardrobe|dresser|drawer|nightstand|locker|rack|station|bin|box|"
+             r"toolbox|basket|crate|tray|bowl|cart|trolley|organi[sz]er|coaster|placemat|mat|lamp|line|conveyor|belt|machine|"
+             r"robot|press|lathe|saw|printer|cnc|oven|fridge|freezer|microwave|dishwasher|sink|step|sill|windowsill|window|"
+             r"vise|cell|panel|console|hook|backpack|rucksack|tote|bucket|chest|jig|fixture|charger|pegboard|holder|trunk|bag|"
+             r"case|pouch|caddy|hopper|chute|pallet|dock|cradle|slot|mailbox|letterbox|garden beds?|flower beds?|raised beds?)s?")
+_THEN_A_PLACE = (r"(?!\s+(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+(?:\s+[a-z-]+){0,2}?\s+(?:back\s+|over\s+)?(?:to|into|onto)"
+                 r"\s+(?:(?:the|a|an|my|her|his|their|our|your)\s+)?(?:[a-z-]+\s+){0,2}?" + _PUT_AWAY + r"\b)")
+# an animal's thing that goes to any place, "in" or "on" one too, is the animal's: "bring the dog bowl to her porch"
+_THEN_ANY_PLACE = (r"(?!\s+(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+(?:\s+[a-z-]+){0,2}?\s+(?:back\s+|over\s+)?(?:to|into|onto|in|on)"
+                   r"\s+(?:(?:the|a|an|my|her|his|their|our|your)\s+)?(?:[a-z-]+\s+){0,2}?" + _PLACE + r"\b)")
 _HER_DIRECT = r"her\b" + _THEN_A_PLACE
 _YOU = r"(?:you|u|ya|y['’]?all|youse)"
 _THEM = r"(?:them|['’]em)"
@@ -557,7 +568,7 @@ _TO_A_PLACE = (r"\b" + _TAKE_TO + r"\s+" + _GAP + r"(?:to|for|into|onto)\s+"
                r"(?:(?:the|a|an|my|our|your|their|her|his|its)\s+|[a-z-]+['’]s\s+)*(?:[a-z-]+\s+){0,3}?" + _PLACE + r"\b")
 # "hand the dog a bone", "give my parrot seeds", "toss balls to my dog", "bring a toy for the puppy"; "the dog trainer the
 # clicker" is a person, who hands-over reading finds first
-ANIMAL_GETS = (r"\b" + _GIVE + r"\s+(?:" + _AN_ANIMAL + "|" + _ANIMAL_NP + _THEN_A_PLACE + _THING + r")|\b" + _TAKE_TO +
+ANIMAL_GETS = (r"\b" + _GIVE + r"\s+(?:" + _AN_ANIMAL + "|" + _ANIMAL_NP + _THEN_ANY_PLACE + _THING + r")|\b" + _TAKE_TO +
                r"\s+" + _GAP + r"(?:to|for)\s+" + _AN_ANIMAL)        # not "bring the hamster cage to the table"
 # Someone the robot works for, helps or gives something to is next to it: "help my grandma", "for me", "give the operator a
 # break" (a hand-over's receiver too: PERSON_NEAR)

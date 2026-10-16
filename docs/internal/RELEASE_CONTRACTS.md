@@ -1868,8 +1868,13 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   her room", "bring the cups to his office", "give the parts to my dad's workshop", "bring the pills to her nurses'
   station", "bring the meds to her bedroom twice a day" and "give the bolts to his assembly line" are no hand-over. A
   person word followed by a place word names the place ("pass the parts to the operator station", "the worker cell",
-  "the guest room"), and "her" or a person word whose next words go on to a place is the thing's ("bring her cup to
-  the sink", "pass the guest towels to the shelf"). The tool hand-over archetype's things going to a place are a pick
+  "the guest room"), and "her" or a person word whose next words go to, into or onto a place things are put away in
+  or on is the thing's (`_PUT_AWAY`: furniture, a container, a machine or a station, not a room or an area: "bring her
+  cup to the sink", "give her toys to the toy box", "bring her keys to the hook", "pass the guest towels to the
+  shelf"). "In" or "on" a place says where the person is or how the thing comes, and a room or an area may be where
+  the person is, so "bring her tea in the garden", "bring her medicine on a tray", "pass her pills on the tray",
+  "bring her tea to the garden", "bring them tea in the garden" and "give the operator parts in the tray" are
+  hand-overs (an animal's thing keeps the older guard, `_THEN_ANY_PLACE`: "bring the dog bowl to her porch"). The tool hand-over archetype's things going to a place are a pick
   and place (`_TO_A_PLACE`: "bring the tools to his workbench"; its workshop people keep the e-stop). Otherwise the
   person is the receiver, because a missed hand-over drops the emergency stop beside a person: after "her" or 's comes
   no place ("bring the meds to her twice a day", "gives the medicine to her nurse", "bring breakfast to her bedside
