@@ -164,7 +164,8 @@ ARCHETYPES = {a.key: a for a in (
               object_q="Which dishes will it move?", things="the dishes", name="cup-mover"),
     Archetype("tool_handover", "Tool hand-over", "hand_over",
               ((r"\b(?:hands?|pass(?:es)?|gives?|brings?)\s+(?:me\s+)?(?:the\s+|my\s+)?tools?\b", 4), (r"\bhand(?:s)? me\b", 3),
-               (r"\b(tools?|screwdrivers?|wrench(?:es)?|pliers|spanners?|hammers?|workbench|hex keys?|allen keys?)\b", 2)),
+               # a workbench is where the robot stands, not a tool it hands over ("palletises boxes on my workbench")
+               (r"\b(tools?|screwdrivers?|wrench(?:es)?|pliers|spanners?|hammers?|hex keys?|allen keys?)\b", 2)),
               ("screwdriver", "pliers", "hex_case"), ("layout", "people_nearby"), environment="workshop", people="yes",
               layout="side_to_side", object_q="Which tools will it hand you?", things="the tools", name="tool-helper"),
     Archetype("desk_items", "Desk items", "pick_place",
@@ -253,14 +254,25 @@ ADJUSTED = (
 _KIN = (r"(?:grand(?:ma|pa|mother|father|parents?|mum|mom|mummy|mommy|dad|daddy|ad|pop|pops)|grand-dad|"
         r"great[- ]grand(?:ma|pa|mother|father|parents?|mum|mom|dad|ad|-dad)|granny|grannie|gran|gramps|gram(?:ma|my|pa)|"
         r"gran(?:ma|pa)|meemaw|memaw|mawmaw|pop-?pop|nonn[ao]|abuel[ao]|nan(?:a|na|ny)?|mum(?:my)?|mom(?:my|ma)?|mam|mama|"
-        r"dad(?:dy)?|dada|papa|mother|father|auntie|aunty|uncle|baby)")
+        r"dad(?:dy)?|dada|papa|mother|father|auntie|aunty|uncle|baby|"
+        # family words from other languages and spellings ("a robot that helps my oma", "bring the tea to nonno")
+        r"grandmama|grandmamma|grandda|granda|grandpaw|grandmaw|granma|granpa|grampy|oma|opa|omi|opi|nanaji|nani|dadi|"
+        r"dadaji|ammi|abba|amma|appa|ammachi|achan|mami|papi|mamie|papie|mamá|papá|mamma|pappa|tita|tito|lolo|lola|"
+        r"halmeoni|harabeoji|obaachan|ojiichan|obaasan|ojiisan|baba|babushka|dedushka|zayde|zaide|zaida|zeyde|bubbe|"
+        r"bubby|bobe|babcia|dziadek|savta|saba|teta|jiddo|jaddah|nai ?nai|ye ?ye|po ?po|gong ?gong|lao ?lao|yiayia|yaya|"
+        r"pappou|papou|abuelita|abuelito|vovó|vovô|vovo|avó|avô|farfar|farmor|mormor|morfar|mémé|pépé|mamaw|papaw|nonno)")
 # ... and short ones that do only where a person is the one given something ("bring the tea to ma", "pass the salt to sis",
 # "my bestie"): "pa" and "ma" are also units and abbreviations elsewhere
 _KIN_SLANG = r"(?:ma|pa|pop|pops|sis|bro|bruv|hubby|wifey|missus|missis|bestie|roomie|kiddo|bf|gf|bae)"
 # Words for a person that need a determiner or a possessive ("to the surgeon", "to our packers", "hand my colleague the
 # stapler") or a plural ("serve coffee to customers"): care, work, shop and public, family, children
 _ROLE = (r"(?:nurse|doctor|doc|surgeon|dentist|vet|paramedic|medic|pharmacist|midwife|physio(?:therapist)?|therapist|carer|"
-         r"care ?giver|care (?:assistant|worker|aide)|aide|resident|patient|orderly|matron|"
+         r"care ?giver|care (?:assistant|worker|aide)|aide|resident|(?:in|out)?patient|orderly|matron|"
+         # abbreviated and short ones after a determiner ("to the RN", "the dr", "the GP", "the pt")
+         r"rn|lpn|lvn|cna|hca|gp|fy1|f1|odp|slp|pt|ot|dr|kp|"
+         # job titles that end like a machine or a container ("the hairdresser", "the pot washer", "the new starters")
+         r"hairdresser|scaffolder|(?:pot|window|car) washer|french polisher|new (?:starter|joiner|hire)|newcomer|"
+         r"(?:stone)?mason|family|household|landlord|landlady|ex|ex-(?:wife|husband|partner)|"
          r"operator|worker|packer|welder|assembler|inspector|technician|tech|machinist|engineer|mechanic|scientist|researcher|"
          r"postdoc|staffer|crew|team|member|colleague|co-?worker|teammate|boss|manager|supervisor|apprentice|trainee|intern|"
          r"associate|employee|(?:team|line|shift|tech|group|project|section|crew) lead|"
@@ -287,7 +299,13 @@ _ROLE = (r"(?:nurse|doctor|doc|surgeon|dentist|vet|paramedic|medic|pharmacist|mi
          r"person|guy|man|woman|lady|gentleman|folk|adult|elder|senior|pensioner|" + _KIN_SLANG + "|" + _KIN + r")")
 _PLURALS = (r"people|staff|crew|folks|children|schoolchildren|grandchildren|men|women|ladies|gentlemen|babies|midwives|wives|"
             r"passers-?by|bystanders|onlookers|pedestrians|spectators|commuters|tourists|fans|trick[- ]or[- ]treaters|"
-            r"carol+ers")
+            r"carol+ers|personnel|families|households|"
+            # groups named by how they are ("helps the elderly", "for the homeless", "hands the public leaflets")
+            r"elderly|disabled|sick|injured|wounded|blind|deaf|frail|infirm|aged|needy|homeless|poor|public|"
+            r"members of the public|visually impaired|hard of hearing|less able|lads|gents|oldies|regulars|gang|"
+            r"little ones|amputees|(?:para|quadri|tetra|hemi)plegics|diabetics|sufferers|survivors|"
+            # "the two of us", "both of them"
+            r"(?:the )?(?:two|three|four|both|all) of (?:us|them|you)")
 _ROLES = r"(?:" + _PLURALS + "|" + _ROLE + r"(?:s|es)?)"
 _ROLES_PL = r"(?:" + _PLURALS + "|" + _ROLE + r"(?:s|es))"
 _ANYONE = r"(?:someone|somebody|anyone|anybody|everyone|everybody|whoever|whomever)"
@@ -301,7 +319,7 @@ _PLACE = (r"(?:garden beds?|flower beds?|raised beds?|cup ?holders?|car boot|"
           r"organi[sz]er|coaster|placemat|mat|lamp|line|conveyor|belt|machine|robot|press|lathe|saw|printer|cnc|oven|fridge|"
           r"freezer|microwave|dishwasher|sink|step|sill|windowsill|window|vise|cell|panel|console|area|zone|bay|gate|"
           r"entrance|exit|hook|backpack|rucksack|tote|bucket|chest|jig|fixture|charger|pegboard|holder|trunk|bag|case|pouch|"
-          r"caddy|hopper|chute|pallet|dock|cradle|slot)s?")
+          r"caddy|hopper|chute|pallet|dock|cradle|slot|staffroom|break ?room)s?")
 _NOT_DESCRIBING = (r"(?:a|an|the|and|or|but|so|then|when|whenever|while|if|as|at|in|on|by|with|from|for|to|of|after|"
                    r"before|during|until|once|every|each|because|since|please|now|she|he|they|it|i|we|you|her|his|their|"
                    r"my|is|was|can|will|would|could|should|who|that|which)")
@@ -318,9 +336,19 @@ _A_PLACE = (r"\s+(?:(?:" + _PLACE + r"['’]s|(?!" + _NOT_DESCRIBING + r"\b)[a-z
             _PHRASE_END)
 _OWNS = r"(?:['’]s|(?<=s)['’])"                                # "the nurse's desk", "the nurses' station"
 _NOT_THEIRS = r"(?![’']s\b)"                                   # "pass my dad's pills": the pills are his, he isn't the receiver
-# a person's word is no person when it names or owns a place: "the operator station", "my dad's workshop"
-_NOT_THEIR_PLACE = (r"(?!" + _OWNS + _A_PLACE + r"|\s+(?:(?!(?:" + _NOT_DESCRIBING + "|" + _PREPOSITION + "|" + _ADVERB +
-                    r")\b)[a-z-]+\s+){0,2}?" + _PLACE + r"\b" + _PHRASE_END + r")")
+# a person's word is no person when it names or owns a place: "the operator station", "my dad's workshop"; the words
+# between them describe the place, so "its", a possessive or a verb ends them ("the operator fills its hopper", "my dad
+# swaps its tray", "workers fill trays")
+_VERB_BASE = (r"(?:fill|refill|load|unload|reload|empty|swap|change|use|take|put|drop|tip|stack|sort|pack|move|clean|check|"
+              r"carry|push|pull|pick|place|set|lay|hand|pass|give|bring|feed|stock|restock|top|open|close|lift|hold|grab|"
+              r"collect|fetch|get|wipe|tidy|clear|replace|add|remove|run|work|stand|sit|wait|watch|need|want|reach|lean|"
+              r"press|unjam|guide|train|operate|tend|mind|supervise|program|start|stop|reset|switch|turn|plug|charge|"
+              r"service|repair|fix|adjust|inspect|monitor|oversee|teach|help|assist|serve|share|keep|leave|come|go|walk|"
+              r"stop|look)")
+_NOT_THEIR_PLACE = (r"(?!" + _OWNS + _A_PLACE + r"|(?!\s+" + _VERB_BASE + r"\s+(?:the|a|an|it|its|their|our|his|her|my|your|this|"
+                    r"that|these|those|down|on|up|out|off)\b)\s+(?:(?!(?:" + _NOT_DESCRIBING + "|" + _PREPOSITION + "|" + _ADVERB +
+                    r"|its|our|your|me|us|them|him)\b)(?![a-z-]+(?:s|ed)\b)(?!" + _VERB_BASE + r"\b)[a-z-]+\s+){0,2}?" + _PLACE +
+                    r"\b" + _PHRASE_END + r")")
 # "to her", "to my cousin", "to their nanny", "to our cleaner": a possessive is the receiver unless it owns a place,
 # itself or through someone ("to her desk", "to my dad's workshop", "to her nurses' station", "to their bedroom shelf")
 _NO_PLACE_OF_THEIRS = r"(?!(?:\s+[a-z-]+" + _OWNS + r")?" + _A_PLACE + r")"
@@ -329,7 +357,8 @@ _HER_HIS = r"(?:her|his)\b" + _NO_PLACE_OF_THEIRS
 # over to; "my dog walker", "the dog trainer" and "my dog's sitter" are people
 _ANIMAL = (r"(?:dogs?|dogg(?:y|ie|ies|o)|pupp(?:y|ies)|pups?|cats?|kitt(?:y|ies|ens?)|pets?|rabbits?|bunn(?:y|ies)|"
            r"hamsters?|gerbils?|guinea pigs?|ferrets?|parrots?|budgies?|parakeets?|birds?|chickens?|hens?|ducks?|geese|"
-           r"goose|goats?|horses?|pon(?:y|ies)|tortoises?|turtles?|lizards?|geckos?|snakes?|goldfish|fish|animals?)")
+           r"goose|goats?|horses?|pon(?:y|ies)|tortoises?|turtles?|lizards?|geckos?|snakes?|goldfish|fish|animals?|"
+           r"lambs?|sheep|ewes?|cows?|cattle|calf|calves|pigs?|piglets?|donkeys?|alpacas?|llamas?|livestock)")
 _ANIMAL_NP = (r"(?:(?:the|a|an|my|our|your|their|her|his|this|that|these|those)\s+)?(?:(?!" + _NOT_DESCRIBING +
               r"\b)[a-z'’-]+\s+){0,2}?" + _ANIMAL + r"\b")
 _AN_ANIMAL = _ANIMAL_NP + r"(?:" + _PHRASE_END + r"|(?=\s+its\b))"
@@ -340,7 +369,22 @@ _AGENT_END = (r"(?:(?<!morphagent)(?<!morphagents)|" + _PHRASE_END + r"|(?=\s+(?
               r"any|[0-9]+)\b))")
 _PERSON = (r"(?:" + _KIN + r"|(?:elderly|disabled) [a-z]+|(?:my|our|your) (?:(?!" + _NOT_DESCRIBING + r"\b)[a-z0-9'’-]+ ){0,3}?"
            r"(?:" + _ROLES + r"|morphagents?)\b" + _AGENT_END + ")")
-_TITLED = r"(?:dr|mr|mrs|ms|miss|mx|prof)\.?\s+(?!" + _NOT_DESCRIBING + r"\b)[a-z'’-]+"
+_ROBOT_WORD = r"(?:robot|robotic|arm|bot|cobot|machine|gripper|design|device|gadget|system|setup)s?"
+# What can be given something without being a person: the things themselves, food, plants, places, the robot, animals
+_THINGS = (r"(?:things?|items?|objects?|stuff|parts?|pieces?|components?|products?|goods|samples?|specimens?|tubes?|vials?|"
+           r"cups?|mugs?|glass(?:es)?|plates?|bowls?|dish(?:es)?|cutlery|spoons?|forks?|knives|bottles?|cans?|jars?|tins?|"
+           r"box(?:es)?|cartons?|packages?|parcels?|bags?|trays?|bins?|blocks?|bricks?|toys?|balls?|tools?|screws?|bolts?|"
+           r"nuts|washers?|eggs?|fruits?|berr(?:y|ies)|strawberr(?:y|ies)|tomato(?:e?s)?|grapes?|apples?|oranges?|bananas?|"
+           r"vegetables?|veg|food|meals?|snacks?|drinks?|cookies?|pills?|tablets?|meds|medicines?|medications?|letters?|"
+           r"mail|post|papers?|files?|books?|pens?|pencils?|markers?|cards?|phones?|keys?|clothes|laundry|socks?|towels?|"
+           r"shirts?|shoes?|plants?|flowers?|seedlings?|herbs?|crops?|trees?|lawn|pots?|lids?|caps?|labels?|stickers?|"
+           r"pallets?|panels?|sheets?|boards?|pcbs?|chips?|coins?|beads?|marbles?|buttons?|pucks?|blanks?|rods?|pipes?|"
+           r"cables?|wires?|bars?|castings?|dough|bread|cakes?|pies?|bins?|baskets?|crates?)")
+_TITLED = (r"(?:(?:dr|mr|mrs|ms|miss|mx|prof)\.?|"
+           # a role before a name with no determiner ("give the chart to nurse kelly", "to doctor okafor"); not a thing
+           # ("a robot to nurse plants")
+           r"(?:nurse|doctor|doc|sister|matron|chef|coach|officer|captain|professor))\s+(?!(?:" + _NOT_DESCRIBING + "|" +
+           _THINGS + "|" + _PLACE + "|" + _ANIMAL + "|" + _ROBOT_WORD + r")\b)[a-z'’-]+")
 # "the surgeon", "a worker", "our packers", "the next worker", "the old man", "their kitchen helper"
 _NP_DET = (r"(?:the|a|an|my|our|your|their|her|his|this|that|these|those|each|every|any|some|another|both|all(?: the)?|"
            r"one|two|three|four|five|several|many|other)")
@@ -384,7 +428,11 @@ _NOT_AGENT_END = ("washer", "dryer", "drier", "mixer", "blender", "toaster", "ro
                   "pipett?or", "degasser", "desiccator", "ioni[sz]er", "strapper", "checkweigher", "embosser",
                   # machines no one is called ("move the trays to the denester", "pass the bottles to the corker"); a grader,
                   # a candler, a stacker or a deburrer may be a person, so they stay one
-                  "denester", "corker")
+                  "denester", "corker",
+                  # ... and a bender, a slitter, a bonder, a seamer or a destacker ("move the parts to the bender"); a
+                  # loader, a bagger or a tester may be a person, so they stay one
+                  "bender", "slitter", "bonder", "stepper", "uncoiler", "decoiler", "recoiler", "seamer", "dimensioner",
+                  "destacker", "unscrambler", "gluer", "blaster")
 _NOT_AGENT_WORD = ("holder", "maker", "tractor", "order", "matter", "character", "chapter", "summer", "winter", "october",
                    "november", "december", "september", "power", "river", "silver", "copper", "leather", "feather",
                    "weather", "powder", "solder", "plaster", "glitter", "clutter", "litter", "timber", "lumber", "polymer",
@@ -462,7 +510,7 @@ _NAMES = (r"(?:mary|john|sarah|james|david|michael|robert|william|richard|thomas
           r"zara|noor|sofia|lucia|carmen|rosa|ana|elena|marta|giulia|francesca|sara|ingrid|astrid|freya|ebony|kiara|"
           r"tyrone|darnell|jamal|malik|keisha|latoya|shanice)")
 _NOT_NO = r"(?<!\bno )(?<!\bnot )(?<!\bwithout )(?<!\bnever )(?<!\bnot any )(?<!n't any )"   # "no people around it" is no one
-_WHO = (r"(?:" + _ANYONE + "|" + _KIN + r"|(?:elderly|disabled) [a-z]+|" + _TITLED + "|" + _WHO_NP + "|(?:(?!(?:" +
+_WHO = (r"(?:" + _ANYONE + "|" + _KIN + "|" + _NAMES + r"|(?:elderly|disabled) [a-z]+|" + _TITLED + "|" + _WHO_NP + "|(?:(?!(?:" +
         _NOT_DESCRIBING + "|" + _PREPOSITION + r"|no|not|none|without)\b)[a-z'’-]+\s+){0,2}?" + _NOT_NO + r"(?:" + _ROLES_PL +
         r"|morphagents\b" + _AGENT_END +
         r"))\b" + _NOT_THEIR_PLACE)
@@ -474,7 +522,6 @@ _ACTION = (r"(?:shake|twist|tap|wipe|rinse|check|clean|spin|push|nudge|squeeze|l
            r"knead|count|once-over|feedback|priority|time|space|room|attention|warning|signal)")
 _THING_DET = (r"(?:the|a|an|some|his|her|their|my|your|our|its|this|that|these|those|one|two|three|four|five|six|another|"
               r"more|any|each|every|all|both|enough|[0-9]+)")
-_ROBOT_WORD = r"(?:robot|robotic|arm|bot|cobot|machine|gripper|design|device|gadget|system|setup)s?"
 # a robot asked for is no thing handed over ("give me a robot that sorts screws", "get me a design that packs boxes",
 # "give me robot arms": a robot word after a/an/some or none, said to the user, or before that, which or to and a verb);
 # the device, the gripper or the machine parts handed to someone are ("hand the nurse the device", "hand the nurse a
@@ -529,16 +576,6 @@ _YOU = r"(?:you|u|ya|y['’]?all|youse)"
 _THEM = r"(?:them|['’]em)"
 _GROUP_OF = r"(?:the\s+)?(?:two|three|four|five|both|all|each|some|either|one)\s+of\s+(?:us|you)"
 _GROUP_OF_THEM = r"(?:the\s+)?(?:two|three|four|five|both|all|each|some|either|one)\s+of\s+(?:us|you|them)"
-# What can be given something without being a person: the things themselves, food, plants, places, the robot, animals
-_THINGS = (r"(?:things?|items?|objects?|stuff|parts?|pieces?|components?|products?|goods|samples?|specimens?|tubes?|vials?|"
-           r"cups?|mugs?|glass(?:es)?|plates?|bowls?|dish(?:es)?|cutlery|spoons?|forks?|knives|bottles?|cans?|jars?|tins?|"
-           r"box(?:es)?|cartons?|packages?|parcels?|bags?|trays?|bins?|blocks?|bricks?|toys?|balls?|tools?|screws?|bolts?|"
-           r"nuts|washers?|eggs?|fruits?|berr(?:y|ies)|strawberr(?:y|ies)|tomato(?:e?s)?|grapes?|apples?|oranges?|bananas?|"
-           r"vegetables?|veg|food|meals?|snacks?|drinks?|cookies?|pills?|tablets?|meds|medicines?|medications?|letters?|"
-           r"mail|post|papers?|files?|books?|pens?|pencils?|markers?|cards?|phones?|keys?|clothes|laundry|socks?|towels?|"
-           r"shirts?|shoes?|plants?|flowers?|seedlings?|herbs?|crops?|trees?|lawn|pots?|lids?|caps?|labels?|stickers?|"
-           r"pallets?|panels?|sheets?|boards?|pcbs?|chips?|coins?|beads?|marbles?|buttons?|pucks?|blanks?|rods?|pipes?|"
-           r"cables?|wires?|bars?|castings?|dough|bread|cakes?|pies?|bins?|baskets?|crates?)")
 _NP1_HEAD_NOT = (r"(?:" + _THINGS + "|" + _PLACE + "|" + _ROBOT_WORD + "|" + _ANIMAL + "|" + _NOT_DESCRIBING + "|" + _ADVERB +
                  "|" + _PREPOSITION + r"|" + _NOT_AGENT + r"|it|its|them|me|him|us|you|this|these|those|one|ones|all|both|"
                  r"half|each|every|some|any|none|everything|something|anything|nothing|home|ready|together|apart|forward|"
@@ -551,7 +588,10 @@ _THEN_THING = (r"(?=\s+(?:the|a|an|his|her|their|my|your|our|some|this|that|thes
                r"(?!\s+(?:the|a|an)\s+(?:(?:same|other|right|wrong|long|short|quick|quickest|fastest|best|usual)\s+)?(?:way|"
                r"route|side|direction|end)\b)")
 _AFTER_NP1 = (r"(?:\s+(?:in|at|on|with|by|near|from|behind|beside)\s+(?:the|a|an|her|his|their|my|our|your)\s+"
-              r"(?:[a-z-]+\s+)?[a-z-]+(?=\s+(?:the|a|an|his|her|their|my|your|our)\b))?")
+              r"(?:[a-z-]+\s+)?[a-z-]+(?=\s+(?:the|a|an|his|her|their|my|your|our)\b)|"
+              r"\s+(?:on\s+(?:duty|shift|call|reception|the\s+desk|the\s+door)|in\s+charge|next\s+door|upstairs|downstairs|"
+              r"(?:in|at)\s+(?:bed|room|bay|seat|table|cubicle)\s+\d+[a-z]?|over\s+there)(?=\s+(?:the|a|an|his|her|their|my|"
+              r"your|our|some)\b))?")
 _ANY_NP1 = (r"(?:(?:the|a|an|my|our|your|their|this|that|these|those|each|every|both)\s+(?:(?!" + _NOT_DESCRIBING +
             r"\b)[a-z0-9'’-]+\s+){0,3}?|(?!(?:pick|wash|sort|label|stitch|sew|craft|make|paint|write|fold|load|place|put|"
             r"assemble|select|check|count|draw|tie|knit|crank|dry|clean|polish|press|cut|tighten|operate|lift|grip)\w*\b)"
@@ -561,12 +601,13 @@ _ANY_NP1 = (r"(?:(?:the|a|an|my|our|your|their|this|that|these|those|each|every|
 _RECEIVER = (r"(?:me|him|us|" + _HER_DIRECT + "|" + _PERSON + r")\b" + _NOT_THEIRS +
              _NOT_A_ROBOT + _NOT_REQUEST)
 _RECEIVER_THING = (r"(?:(?:me|him|us|" + _YOU + "|" + _GROUP_OF + "|" + _HER_DIRECT + "|" + _PERSON + "|" + _TITLED + "|" +
-                   _WHO_NP + "|" + _ROLES_PL + r")\b" + _NOT_THEIRS + _THEN_A_PLACE + _THING +
+                   _WHO_NP + "|(?:(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+\s+){0,2}?" + _ROLES_PL + r")\b" + _NOT_THEIRS + _THEN_A_PLACE +
+                   _AFTER_NP1 + _THING +
                    r"|(?:" + _THEM + r"|everyone|everybody|anybody|anyone|someone|somebody)\b(?!\s+(?:all|both|each|together|"
                    r"(?:one|two|three|four|five|six|[0-9]+)\s+(?:at a time|by|at once|or more)|clean|dry|wet|upright|level|"
                    r"flat|done|finished|sorted|straight|hot|cold|warm|safe|secure|tidy|neat|empty|full|open|closed|separate|"
                    r"aligned|lined up|in order)\b)" + _THEN_A_PLACE + _THING +
-                   r"|whoever(?:\s+[a-z]+){1,3}?" + _THING_DET_NEXT + "|" + _ANY_NP1 + ")")
+                   r"|whoever(?:['’]s)?(?:\s+[a-z]+){1,3}?" + _THING_DET_NEXT + "|" + _ANY_NP1 + ")")
 _RECEIVER_TO = (r"(?:(?:me|myself|him|himself|us|ourselves|" + _YOU + "|yourself|yourselves|them|themselves" +
                 r")\b|" + _GROUP_OF_THEM + r"\b|" + _POSS + "|" + _WHO + "|(?:" + _KIN_SLANG + "|" + _NAMES + r")\b" + _PHRASE_END + ")")
 _RECEIVER_FOR = (r"(?:(?:me|myself|him|us|" + _YOU + r")\b|her\b" + _PHRASE_END + "|" + _WHO + "|(?:" + _KIN_SLANG + "|" +
@@ -578,6 +619,7 @@ _GIVE = (r"(?:hand(?:s|ing)?|pass(?:es|ing)?|giv(?:e|es|ing)?|bring(?:s|ing)?|(?
 _GIVE_TO = (r"(?:hand(?:s|ed|ing)?|pass(?:es|ed|ing)?|giv(?:e|es|en|ing)?|gave|bring(?:s|ing)?|brought|fetch(?:es|ed|ing)?|"
             r"get(?:s|ting)?|got|grab(?:s|bed|bing)?|toss(?:es|ed|ing)?|throw(?:s|ing|n)?|threw|offer(?:s|ed|ing)?|"
             r"serv(?:e|es|ed|ing)|feed(?:s|ing)?|fed|chuck(?:s|ed|ing)?|lob(?:s|bed|bing)?|lend(?:s|ing)?|lent|loan(?:s|ed|ing)?|"
+            r"bung(?:s|ed|ing)?|sling(?:s|ing)?|slung|flick(?:s|ed|ing)?|"
             r"(?:tak(?:e|es|ing)|took)(?!\s+(?:\w+\s+)?(?:(?:a|an|one|two|three|four|five|ten|twenty|thirty|[0-9]+(?:\.[0-9]+)?|"
             r"about|around|over|under|nearly|almost|half|a few|several|many|more|less|longer|so|too|very)\s+)*(?:seconds?|"
             r"secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|while|moment|ages|forever|long|time|turns?|"
@@ -594,17 +636,81 @@ _TAKE_TO = (_GIVE_TO[:-1] + r"|deliver(?:s|ed|ing)?|tak(?:e|es|en|ing)|took|carr
 # ("pass the cup out of the box") or a part that gives out
 _HANDS_OUT = (r"(?:hand(?:s|ed|ing)?|pass(?:es|ed|ing)?|giv(?:e|es|en|ing)|gave|dish(?:es|ed|ing)?|dol(?:e|es|ed|ing)|"
               r"shar(?:e|es|ed|ing)|deal(?:s|t|ing)?)")
+# words that are capitalised for another reason than being someone's name
+_NOT_NAMES = frozenset(("i", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january",
+                        "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
+                        "december", "christmas", "easter", "lego", "duplo", "ikea", "coke", "pepsi", "morph", "claude",
+                        "arduino", "raspberry", "pi", "feetech", "dynamixel", "robotis", "lerobot", "so", "mg996r", "sg90",
+                        "ok", "okay", "hi", "hello", "hey", "thanks", "please", "dr", "mr", "mrs", "ms", "miss", "mx", "prof",
+                        "reception", "assembly", "shipping", "packing", "dispatch", "inspection", "storage", "maintenance",
+                        "pathology", "radiology", "pharmacy", "haematology", "hematology", "microbiology", "histology",
+                        "cytology", "virology", "immunology", "biochemistry", "oncology", "cardiology", "imaging", "recycling",
+                        "goods", "despatch", "stores", "purchasing", "procurement", "finance", "logistics", "production",
+                        "facilities", "catering", "laundry", "sterilisation", "sterilization", "outpatients", "admissions",
+                        "security", "admin", "accounts", "receiving", "returns", "quality", "qa", "qc", "starbucks", "amazon",
+                        "engineering", "sterile", "services", "theatres", "theatre", "theater", "medical", "records",
+                        "housekeeping", "fulfilment", "fulfillment", "legal", "compliance", "final", "phlebotomy", "ward",
+                        "hr", "estates", "marketing", "sales", "payroll", "operations", "ops", "warehouse", "assembly",
+                        "clinic", "pharmacy", "it", "ict", "unit", "block", "wing", "bay", "building",
+                        "haas", "ups", "fedex", "dhl", "usps", "costco", "walmart", "tesco", "aldi", "lidl", "target", "apple",
+                        "google", "samsung", "bosch", "makita", "dewalt", "festool"))
+# a word that may be someone's name, after "to" or "help" at the end of its phrase ("bring the pills to siobhan", "a robot
+# that helps kwame at home"): not a thing, a place, a department, a job done, an animal or the robot
+_NOT_A_NAME = (r"(?:" + "|".join(sorted(_NOT_NAMES)) + r"|position|location|spot|side|front|back|top|bottom|left|right|centre|"
+               r"center|middle|end|start|stock|waste|scrap|trash|rubbish|inventory|aisle|row|lane|level|floor|stage|unit|"
+               r"platform|stack|pile|heap|output|input|outfeed|infeed|reject|rejects|bed|work|school|church|market|town|"
+               r"city|lunch|dinner|breakfast|size|order|scale|spec|zero|completion|taste|plan|hand|hands|place|safety|"
+               r"shore|land|sea|port|camp|base|hq|life|rest|boil|cool|dry|heat|light|dark|sleep|bed|use|mind|bear|"
+               r"light|attention|account|court|trial|task|work|light|icu|hdu|nicu|picu|ccu|cssd|hr|ops|er|ed|or|ae|"
+               r"qa|qc|rd|pr|ict|cad|cam|lab|dept|mro|wip|fg|dc|nhs|outpatients|theatre|theatres|ward|wards|bay|"
+               r"cell|zone|line|area|dock|gate|door|desk|bench|counter|table|tray|bin|box|rack|shelf|truck|van|car|"
+               r"kitchen|garage|basement|attic|loft|upstairs|downstairs|outside|inside|indoors|outdoors|there|here|"
+               r"everyone|everybody|nobody|none|all|both|each|others|another|other|anywhere|somewhere|nowhere|"
+               r"sort|pick|move|carry|clean|fold|lift|stack|pack|load|unload|feed|water|cook|tidy|organi[sz]e|assemble|"
+               r"build|make|test|inspect|measure|weigh|label|wrap|cut|paint|glue|solder|weld|screw|drill|sand|polish|"
+               r"mix|pour|stir|chop|serve|deliver|transport|transfer|store|count|check|monitor|find|grab|hold|put|get|"
+               r"keep|manage|run|do|automate|speed|reduce|save|prevent|avoid|maintain|repair|fix|open|close|lock|"
+               r"push|pull|turn|press|hang|stand|sit|walk|eat|drink|dress|bathe|wash|shower|read|write|learn|play|"
+               r"see|hear|reach|grip|grasp|place|set|lay|lower|raise|level|stay|live|cope|manage|recover|heal|focus)")
+_A_NAME = (r"(?!" + _NP1_HEAD_NOT + r")(?!(?:" + _NOT_A_NAME + r")\b)(?![a-z]+(?:ing|ed|ly|tion|ment|ness|ity|s)\b)"
+           r"[a-z][a-z'’-]{1,14}\b(?![’'-])(?!\.[a-z])" + _PHRASE_END)
 _NOT_ROUND_A_PLACE = (r"(?!\s+(?:(?:the|a|an|this|that|its|my|your|her|his|their|our)\s+)?(?:[a-z-]+\s+){0,2}?(?:obstacles?|"
-                      r"corners?|edges?|bends?|sides?|backs?|fronts?|outside|" + _PLACE + r")\b)")
-HANDS_OUT = (r"\b" + _HANDS_OUT + r"\s+(?:out|around|round)\b(?!\s+(?:of|from)\b)" + _NOT_ROUND_A_PLACE + _THING + r"|\b" +
+                      r"corners?|edges?|bends?|sides?|backs?|fronts?|outside)\b)(?!\s+(?:the|a|an|this|that|its|my|your|her|his|"
+                      r"their|our)\s+(?:[a-z-]+\s+){0,2}?" + _PLACE + r"\b)")
+HANDS_OUT = (r"\b" + _HANDS_OUT + r"\s+(?:out|around|round|away)\b(?!\s+(?:of|from)\b)" + _NOT_ROUND_A_PLACE + _THING + r"|\b" +
              _HANDS_OUT + r"\s+(?:(?!(?:then|while|when|and|or|to|from|of)\b)[\w'’-]+\s+){1,4}?(?:out|around|round)\b"
              r"(?=\s*(?:$|[.,;:!?)]|(?:to|among|amongst|at|in|during|for|when|while|every|each|and|then)\b))")
 HAND_TO_PERSON = (r"\b" + _GIVE + r"\s+" + _RECEIVER + r"|\b" + _GIVE_TO + r"\s+" + _RECEIVER_THING +
-                  r"|\b" + _TAKE_TO + r"\s+" + _GAP + r"(?<!\bnext )(?<!\bclose )(?<!\bdue )(?<!\baccording )to\s+" + _RECEIVER_TO +
+                  r"|\b" + _TAKE_TO + r"\s+" + _GAP + r"(?<!\bnext )(?<!\bclose )(?<!\bdue )(?<!\baccording )to\s+(?:" + _RECEIVER_TO +
+                  "|" + _A_NAME + r"|next door\b)" +
+                  r"|\b(?:leav(?:e|es|ing)|left|drop(?:s|ped|ping)?\s+off|drop(?:s|ped|ping)?|deposit(?:s|ed|ing)?)\s+(?:[\w'’-]+\s+){0,5}?"
+                  r"(?:off\s+)?with\s+(?:(?:me|him|her|us|you)\b|" + _WHO + ")"
+                  r"|\b(?:sell(?:s|ing)?|sold|issu(?:e|es|ed|ing)|rent(?:s|ed|ing)?(?:\s+out)?|hir(?:e|es|ed|ing)\s+out|deal(?:s|t|ing)?)"
+                  r"\s+(?:[\w'’-]+\s+){0,5}?to\s+(?:(?:me|him|her|us|you|them)\b|" + _WHO + ")"
+                  r"|\b(?:pass|hand|give|carr(?:y|ie)|mov|slid|send|ferr(?:y|ie)|shuttl)\w*\s+(?:[\w'’-]+\s+){0,5}?between\s+(?:us\b|"
+                  r"me\s+and\b|(?:the\s+)?(?:two|three|four|both|all)\s+of\s+(?:us|you|them)\b|(?:" + _WHO + r")\s+and\b)"
+                  r"|\b(?:passing|delivery|deliveries|hand-?offs?|handing\s+over)\s+(?:of\s+)?(?:[\w'’-]+\s+){0,2}?(?:to|for)\s+(?:(?:me|him|"
+                  r"her|us|you|them)\b|" + _WHO + ")"
+                  r"|\bturn(?:s|ed|ing)?\s+(?:[\w'’-]+\s+){0,5}?over\s+to\s+" + _RECEIVER_TO +
+                  r"|\b(?:brought|handed|passed|given|fetched)\s+(?:over|across|to me|to us)\b"
+                  r"|\b(?:pour|scoop|ladl|plat|dish|serv|wrap|bag)\w*\s+(?:(?!(?:for|to)\b)[\w'’-]+\s+){1,6}?for\s+(?:" + _WHO +
+                  r"|(?:me|him|us|you)\b)"
+                  r"|\b(?:" + _WHO + r")\s+(?:needs?|wants?|asks?\s+for|calls?\s+for)\b[^.;!?]{0,50}?,?\s+(?:it|the\s+(?:robot|arm))\s+"
+                  r"(?:will\s+|then\s+|just\s+)?(?:hands?|pass(?:es)?|gives?|brings?|fetch(?:es)?)\s+(?:it|one|them|that|some)\b" +
+                  # "give bed 6 her meds", "bring table 3 the bill": the person in that bed or at that table
+                  r"|\b" + _GIVE_TO + r"\s+(?:bed|room|table|seat|booth|bay|cubicle)\s+\d+[a-z]?(?=\s+(?:the|a|an|his|her|their|"
+                  r"some|its)\b)" +
+                  # "give the runners water", "hand the players water bottles": a plural word for people takes a bare thing
+                  r"|\b" + _GIVE_TO + r"\s+(?:the|our|my|your|their|these|those|all(?:\s+the)?)\s+(?:(?!" + _NOT_DESCRIBING +
+                  r"\b)[a-z0-9'’-]+\s+){0,2}?(?:morphagents|" + _ROLES_PL + r")\b" + _NOT_THEIRS + _THEN_A_PLACE + _THING +
+                  # "hand it over", "I need parts handed over"; not "hand it over to the conveyor"
+                  r"|\bhand(?:s|ed|ing)?\s+(?:(?:it|them|this|that|one|those|these|everything|the\s+[a-z-]+|[a-z]+s)\s+)?over\b"
+                  r"(?!\s+(?:to|into|onto)\s+(?:the|a|an|its)\s+(?:[a-z-]+\s+){0,2}?" + _PLACE + r"\b)" +
                   r"|\b(?:fetch|get|grab|bring)\w*\s+" + _GAP + r"for\s+" + _RECEIVER_FOR +
                   # "supply the welder with rods", "keep the operator stocked with screws", "passes parts back and forth with
                   # a human"
-                  r"|\b(?:(?:suppl(?:y|ies|ying|ied)|provid(?:e|es|ing|ed)|equip(?:s|ped|ping)?)\s+(?=(?:[\w'’-]+\s+){1,5}?with\b)|"
+                  r"|\b(?:(?:suppl(?:y|ies|ying|ied)|provid(?:e|es|ing|ed)|equip(?:s|ped|ping)?|furnish(?:es|ed|ing)?)\s+"
+                  r"(?=(?:[\w'’-]+\s+){1,5}?with\b)|"
                   r"keep(?:s|ing)?\s+(?=(?:[\w'’-]+\s+){1,4}?(?:supplied|stocked|topped up)\s+with\b)|"
                   r"(?:hand|pass)(?:s|es|ing|ed)?\s+" + _GAP + r"(?:back and forth|to and fro)\s+with\s+)(?:(?:me|him|her|us|" +
                   _THEM + "|" + _YOU + r")\b|" + _WHO + ")" +
@@ -615,7 +721,7 @@ HAND_TO_PERSON = (r"\b" + _GIVE + r"\s+" + _RECEIVER + r"|\b" + _GIVE_TO + r"\s+
                   # the part into it"
                   r"|\b(?:in|into|onto|on)\s+(?:my|your|her|his|their|our|(?:(?:the|a|an|my|your|her|his|their|our|each|"
                   r"every)\s+(?:(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+\s+){0,2}?(?:" + _ROLES + r"|morphagents?|person|people)|"
-                  r"someone|somebody|" + _KIN + "|" + _KIN_SLANG + r")['’]s?)\s+"
+                  r"someone|somebody|" + _KIN + "|" + _KIN_SLANG + r"|" + _ROLES_PL + r"|morphagents)['’]s?)\s+"
                   r"(?:open\s+|outstretched\s+|waiting\s+)?(?:hand|palm)s?\b|\b(?:recogni[sz]es?|detects?|sees?|finds?|tracks?)\s+"
                   r"(?:my|your|her|his|their|a person['’]s|the person['’]s|someone['’]s)\s+hands?\b|" + HANDS_OUT)
 # "bring the tools to his workbench", "to grandpa's shed": the things go to a place
@@ -623,16 +729,26 @@ _TO_A_PLACE = (r"\b" + _TAKE_TO + r"\s+" + _GAP + r"(?:to|for|into|onto)\s+"
                r"(?:(?:the|a|an|my|our|your|their|her|his|its)\s+|[a-z-]+['’]s\s+)*(?:[a-z-]+\s+){0,3}?" + _PLACE + r"\b")
 # "hand the dog a bone", "give my parrot seeds", "toss balls to my dog", "bring a toy for the puppy"; "the dog trainer the
 # clicker" is a person, who hands-over reading finds first
-ANIMAL_GETS = (r"\b(?:brush|comb|wash|groom|bath|stroke|pet|scratch|dry|dries)\w*\s+" + _AN_ANIMAL + "|"   # "brushes the dog"
+ANIMAL_GETS = (r"\b(?:brush|comb|wash|groom|bath|stroke|pet|scratch|dry|dries|milk|shear|muck out)\w*\s+" + _AN_ANIMAL + "|"
+               # "plays with the cat", "collects eggs from the hens", "feeds the lambs with a bottle"
+               r"\bplay(?:s|ed|ing)?\s+(?:\w+\s+)?with\s+" + _AN_ANIMAL + r"|\b(?:collect|gather|take|fetch|pick)\w*\s+"
+               r"(?:[\w'’-]+\s+){0,3}?(?:from|under|out from under)\s+" + _AN_ANIMAL + r"|\bfeed(?:s|ing)?\s+" + _AN_ANIMAL +
+               r"|\bbottle[- ]?feed\w*\s+" + _AN_ANIMAL + "|"
                r"\b" + _GIVE + r"\s+(?:" + _AN_ANIMAL + "|" + _ANIMAL_NP + _THEN_ANY_PLACE + _THING + r")|\b" + _TAKE_TO +
                r"\s+" + _GAP + r"(?:to|for)\s+" + _AN_ANIMAL)        # not "bring the hamster cage to the table"
+_NOT_THEIR_THINGS = (r"(?!\s+(?:orders?|records?|files?|notes?|samples?|data|details|charts?|forms?|labels?|ids?|"
+                     r"numbers?|accounts?|returns?|feedback|requests?|enquiries|queries|complaints|lists?|database|info|"
+                     r"information|reviews?|surveys?|invoices?|payments?|names?|addresses?|photos?|wristbands?|manuals?|"
+                     r"guides?|uniforms?|lockers?|badges?|towels?|letters?|mail|post|parcels?|deliveries)\b)")
 # Someone the robot works for, helps or gives something to is next to it: "help my grandma", "for me", "give the operator a
 # break" (a hand-over's receiver too: PERSON_NEAR)
-_FOR_SOMEONE = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist|serve|support|accompan(?:y|ies))(?:s|es|ing|ed)?"
+_FOR_SOMEONE = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_THINGS + _NOT_THEIR_PLACE + r"|\b(?:help|assist|serve|support|accompan(?:y|ies))(?:s|es|ing|ed)?"
                 r"\s+them\b|\b(?:(?:help|assist|serve|support|accompan(?:y|ies))(?:s|es|ing|ed)?\s+|(?:for|to|with)\s+|" + _GIVE_TO +
                 r"\s+)(?:(?:me|him|us)\b|" + _HER_HIS + "|" + _WHO + r")" + _NOT_THEIRS + _THEN_A_PLACE + _NOT_A_ROBOT_FOR_ME +
+                _NOT_REQUEST + r"|\b(?:help|assist|serve|support|look after|care for|accompan(?:y|ies))(?:s|es|ing|ed)?\s+(?:"
+                + _YOU + r"\b|" + _A_NAME + ")" +
                 _NOT_REQUEST +
-                r"|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b" +
+                r"|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b" + _NOT_THEIR_THINGS +
                 # unsure, so someone is there: "pours me a coffee", "pass the salt over here", "bring that here", "pass the
                 # butter", "a robot barista in a busy cafe", "serves drinks at a bar"
                 r"|\b(?:pour|make|cook|fix|prepare|brew|mix|blend|cut|slice|peel|toast|warm|heat|open|unscrew)(?:s|es|ing)?\s+"
@@ -656,9 +772,13 @@ _FOR_SOMEONE = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist
                 r"beard|lips|eyes?|ears?|scalp|toes?)\b|\b(?:brush|comb|wash|massag|shav|bath|dress|undress|groom)\w*\s+"
                 r"(?:me|him|her|them|us)\b(?!\s+(?:a|an|the|some)\b)")
 PERSON_NEAR = _FOR_SOMEONE + "|" + HAND_TO_PERSON
-_NEAR = r"(?:near(?:by)?|next to|around|beside|alongside|close (?:by|to)|in front of|behind|opposite|across from|between)"
+_NEAR = (r"(?:near(?:by)?|next to|around|beside|alongside|close (?:by|to)|in front of|behind|opposite|across from|between|"
+         r"among|amongst|amid|amidst|adjacent(?: to)?|facing|within (?:(?:an? )?arm['’]?s?['’]? )?reach(?: of)?|"
+         r"(?:an? |one )?arm['’]?s?['’]? (?:length|reach) (?:from|of)|in (?:close )?proximity (?:to|of)|"
+         r"(?:a|one|two|three|half a|\d+(?:\.\d+)?)\s*(?:m|metres?|meters?|feet|foot|ft|cm|centimet(?:re|er)s?|inch(?:es)?)\s+"
+         r"(?:from|away from))")
 _SUBJECT_ME = r"(?:(?:i|we|he|she)(?:['’](?:m|ll|re|ve|d|s))?\b)"     # "I", "I'm", "we'll", "she's" ("you" and "they" can be things)
-_SOMEBODY = r"(?:" + _SUBJECT_ME + "|" + _WHO + ")"
+_SOMEBODY = r"(?:" + _SUBJECT_ME + r"|they['’](?:re|ll|d|ve)\b|" + _WHO + ")"
 _IT = r"(?:it|its\s+[a-z]+|the\s+(?:robot|arm|cobot|gripper|machine)|this\s+(?:robot|arm))\b"
 # people beside it in so many words: "people work next to it", "next to the operator", "a worker stands next to it",
 # "I'm next to it all day", "where customers pick up their coffee", "a bench shared with two workers", "a bin I fill by
@@ -666,10 +786,12 @@ _IT = r"(?:it|its\s+[a-z]+|the\s+(?:robot|arm|cobot|gripper|machine)|this\s+(?:r
 _MODAL = r"(?:(?:will|can|could|would|may|might|must|to|then|also|just)\s+)?"
 PEOPLE_BESIDE = (r"\b(?:next to me|beside me|near me|" + _NOT_NO + r"with people|" + _NOT_NO + r"around people|coworkers?|"
                  r"colleagues?|hands? me|pass(?:es)? me|while i work|" + _NOT_NO + r"people around)\b|" + _NOT_NO +
-                 r"\b(?:people|someone|staff|workers|operators|users|humans|others)\b(?:\s+\w+){0,3}?\s*" + _NEAR + r"\b|"
+                 r"\b(?:people|someone|staff|workers|operators|users|humans|others|morphagents|" + _ROLES_PL + r")\b(?:\s+\w+){0,3}?\s*" +
+                 _NEAR + r"\b|"
                  # "next to the operator", "between two packers", "no one near it but me"
                  r"\b(?:" + _NOT_NO + _NEAR + r"\s+(?:to\s+)?|(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b[^.;!?]{0,40}?"
-                 r"\b(?:except|but|apart from|aside from|other than|besides|save|bar|just|only)\s+(?:for\s+)?)"
+                 r"\b(?:except|but|apart from|aside from|other than|besides|save|bar|just|only)\s+(?:for\s+)?"
+                 r"(?:(?:when|while|if|whenever|once)\s+)?)"
                  r"(?:(?:people|staff|workers|operators|users|humans|others|me|us|him)\b|" + _HER_HIS + "|" + _WHO + ")|" +
                  # someone near it, taking from it, using, loading or feeding it: "I'm right next to it", "the operator takes
                  # the part from its gripper", "students will use it", "an operator loads the fixture", "workers load the
@@ -678,7 +800,7 @@ PEOPLE_BESIDE = (r"\b(?:next to me|beside me|near me|" + _NOT_NO + r"with people
                  r"|\s+" + _MODAL + r"(?:take|grab|remove|pick|collect|get|receive|pull|lift)(?:s|es|ed|ing)?\s+(?:[\w'’-]+\s+){0,4}?"
                  r"(?:from|out of|off)\s+" + _IT +
                  r"|\s+" + _MODAL + r"(?:use|touch|operate|tend|watch|supervise|program|teach|play with|work with|share|clean|"
-                 r"calibrate|maintain|service|repair|adjust|check|inspect|reset|restart|start|stop|empty|clear|fix|control|"
+                 r"calibrate|maintain|service|repair|adjust|check|inspect|reset|restart|start|stop|empt(?:y|ie)|clear|fix|control|"
                  r"mind|configure|monitor|oversee|refill|wipe|oil)(?:s|es|ed|d|ing)?\s+" + _IT +
                  r"|\s+" + _MODAL + r"(?:check|look|attend|set|switch|turn|keep an eye)(?:s|es|ed|ing)?\s+(?:on|after|to|up|off|"
                  r"over)\s+" + _IT +
@@ -700,6 +822,142 @@ PEOPLE_BESIDE = (r"\b(?:next to me|beside me|near me|" + _NOT_NO + r"with people
                  # "a bench shared with two workers", "the robot is used by my disabled son"
                  r"\b(?:shared?\s+with|(?:robot|arm|cobot|machine|it)\s+(?:that\s+)?(?:\w+\s+)?(?:is\s+|are\s+)?(?:used|operated|"
                  r"tended|loaded|fed)\s+by)\s+" + _SOMEBODY)
+# Someone who does something at the robot, read from how the sentence is built rather than from a list of verbs (the
+# round-6 hunt: 139 of 228 "<the operator|the nurse|I|my dad> <verb> it" were missed): a person at the start of a clause,
+# maybe with helping words ("is", "will", "keeps", "comes by to"), then a verb that isn't about wanting, owning, making,
+# telling or being away, and the robot ("it", "its tray", "the robot") within a few words: "the operator empties it",
+# "the nurse swaps its tray", "I hand it the parts and it sorts them", "staff come by to refill it", "customers walk
+# right up to it", "pickers drop the totes on its conveyor"
+_CLAUSE = (r"(?:^|[.,;:!?()\[\]]\s*|\s-+\s+|\b(?:and|but|so|then|while|whilst|when|whenever|if|as|because|that|which|who|"
+           r"what|whatever|everything|anything|"
+           r"where|until|after|before|once|since|though|although|unless|or|plus|also|think|thinks|know|knows|guess|hope|"
+           r"mean|said|says|believe|reckon|expect)\s+)")
+_LEAD = (r"(?:(?:in|at|on|during|every|each|after|before|once|by|around|about)\s+(?:the\s+|a\s+)?[a-z0-9]+(?:\s+[a-z]+)?,?\s+)?")
+_SUBJ_I = r"(?:(?:i|we|he|she)(?:['’](?:m|re|s|ve|ll|d))?|i\s+am|we\s+are)"
+_SUBJ_PP = (r"(?:\s+(?:on|at|in|from|of|by|with|behind|near|beside)\s+(?:(?:the|a|an|our|my|this|that|each|every|their|his|"
+            r"her)\s+)?[a-z-]+(?:\s+[a-z-]+)?)?")
+_NEGATED = r"(?!(?:\s+[\w'’]+){0,3}?\s+(?:not|never|no longer|[a-z]+n['’]t)\b)"
+_AUX = (r"(?:(?:will|would|can|could|may|might|must|should|shall|do|does|did|is|are|was|were|am|has|have|had|been|be|"
+        r"being|then|also|just|always|usually|often|sometimes|only|still|regularly|occasionally|now|later|first|even|"
+        r"really|normally|typically|generally|mostly|constantly|frequently|actually|probably|all|both|each|"
+        r"['’](?:m|re|s|ve|ll|d)|keeps?|kept|starts?|started|tries|try|tried|needs?\s+to|has\s+to|have\s+to|had\s+to|"
+        r"got\s+to|gotta|gets?\s+to|going\s+to|gonna|wants?\s+to|used\s+to|likes?\s+to|able\s+to|"
+        r"(?:do|does|did|is|are|was|were|has|have|had|would|could|should|wo|ca|must|need)n['’]t|cannot|not|never)\s+)")
+_WANT_OWN = (r"(?:want|need|like|love|hate|prefer|wish|hope|expect|think|thought|guess|know|knew|believe|imagine|suppose|plan|"
+             r"intend|mean|meant|build|built|make|made|design|print|3d|buy|bought|order|sell|sold|have|has|had|own|got|get|"
+             r"gets|find|found|call|name|see|saw|seen|describe|said|say|tell|told|ask|afford|pay|paid|fund|let|trust|"
+             r"am|is|are|was|were|be|been|being|do|does|did|can|could|will|would|shall|should|may|might|must|"
+             r"wonder|doubt|reckon|decide|choose|pick out|research|google|search|look for|wait for|assum|feel|felt|"
+             r"understand|understood|realis|realiz|notic|remember|forget|forgot|read|heard|hear|learn|learnt|worry|"
+             r"suspect|bet|figure|calculat|estimat|guarantee|promise|explain|mention|show|shown|seem|appear|consider)"
+             r"(?:s|es|ed|d|ing)?")
+_AWAY = (r"(?:leav(?:e|es|ing)|left|go|goes|going|went|gone|sleep(?:s|ing)?|slept|asleep|nap(?:s|ping)?|away|out|abroad|"
+         r"elsewhere|absent|travel\w*|commut\w*|at\s+(?:work|school|the office|church|the gym|the shops)|"
+         r"on\s+(?:holiday|vacation|leave|a trip|the road|nights|(?:a\s+|their\s+|his\s+|her\s+|my\s+|our\s+)?(?:lunch\s+)?break|"
+         r"lunch)|off\s+(?:duty|shift|work|sick)|not\s+(?:home|here|there|around|in))")
+_VERB = (r"(?!(?:" + _WANT_OWN + "|" + _AWAY + "|" + _NOT_DESCRIBING + "|" + _PREPOSITION + "|" + _ADVERB +
+         r"|nor|this|these|those|some|any|no|not|its|our|your|their|me|us|them|him)\b)[a-z][a-z'’-]*\b")
+_THE_ROBOT = (r"(?:it|its|itself|the\s+(?:robot|arm|cobot|machine|gripper|bot)s?|this\s+(?:robot|arm|machine|cobot)|"
+              r"the\s+robot['’]s)\b")
+_SUBJ = (r"(?!(?:that|which|this|these|those)\b)(?:" + _SUBJ_I + "|" + _WHO + r"|" + _NOT_NO + r"(?:(?:" + _NP_DET + r")\s+(?:(?!" + _NOT_DESCRIBING +
+         r"\b)[a-z0-9'’-]+\s+){0,2}?)?morphagents?\b)")
+PEOPLE_AT_IT = (_CLAUSE + _LEAD + _SUBJ + _SUBJ_PP + _NEGATED + r"\s+" + _AUX + r"{0,4}" + _VERB +
+                r"(?:\s+[\w'’-]+){0,8}?\s+" + _THE_ROBOT + "|" +
+                # "holds the board while I solder", "sorts mail while the receptionist answers the phone", "as the
+                # packers seal them"; not "while I sleep", "while we're out", "when I'm at work", "as I said"
+                r"\b(?:while|whilst|as|when|whenever|as soon as|each time|every time)\s+" + _SUBJ + _SUBJ_PP +
+                r"(?!(?:\s+[\w'’]+){0,2}?\s+(?:not|never|[a-z]+n['’]t)\s+(?:home|here|there|around|in|at|on|nearby|close|about)\b)"
+                r"\s+" + _AUX +
+                r"{0,3}(?!(?:" + _AWAY + r"|said|say|mentioned|explained|described|asked|wrote|know|knew|see|thought|"
+                r"expected|planned|wanted|needed|requested|promised|discussed|agreed|suggested|will|would|can|could|may|might|must|should|shall|do|does|did|is|are|was|were|am|has|have|had|been|be|being|"
+                r"['’](?:m|re|s|ve|ll|d))\b)[a-z][a-z'’-]*\b(?![^.;,!?]{0,40}?\b(?:in|from)\s+(?:the\s+other|another|a\s+different|"
+                r"the\s+next)\s+room\b)|"
+                # "a robot the nurses can use", "a robot that the technicians maintain", "a robot I can play catch with"
+                r"\b(?:robot|arm|cobot|machine|bot|one|gripper|device)s?\s+(?:that\s+|which\s+)?" + _SUBJ + _NEGATED + r"\s+" +
+                _AUX + r"{0,3}" + _VERB + "|" +
+                # "it'll be used by apprentices", "operated by students", "shared by the whole team"
+                r"\b(?:used|operated|run|shared|maintained|tended|loaded|unloaded|fed|filled|refilled|emptied|cleaned|"
+                r"supervised|watched|monitored|programmed|controlled|serviced|calibrated|checked|inspected|handled|touched|"
+                r"reset|restarted|cleared|stocked|restocked|guided|driven|pushed|moved|carried|held|attended|staffed|manned|"
+                r"accompanied|minded|overseen|set up|worked)\s+by\s+(?:me|us|him|her|" + _WHO + ")|" +
+                # the robot takes or collects things from someone: "takes the parcel from the postman", "collects the
+                # trays from the residents", "takes the phone from my hand", "takes the strain off my back"
+                r"\b(?:tak(?:e|es|ing|en)|took|collect\w*|receiv\w*|accept\w*|grab\w*|fetch\w*|retriev\w*|gather\w*|"
+                r"catch\w*|caught|get|gets|getting|pick(?:s|ed|ing)?\s+up)\s+(?:[\w'’-]+\s+){0,5}?(?:from|out of|off)\s+"
+                r"(?:(?:me|him|us|you)\b|" + _HER_HIS + "|" + _WHO + r"|(?<=from )them\b(?!\s+(?:all|both|each)\b)|"
+                r"(?:my|your|his|her|their|our|someone['’]s|a person['’]s|the person['’]s|people['’]s)\s+(?:[a-z-]+\s+)?"
+                r"(?:hands?|palms?|grip|fingers?|lap|back|arms?|shoulders?|mouth|plate)\b)|" +
+                # "I sit right there", "I'm in the same room", "on the same bench as the technician", "with 20 people"
+                r"\b" + _SUBJ_I + r"\s+(?:\w+\s+){0,2}?(?:sit|stand|work|stay|wait|be|am)\w*\s+(?:right\s+)?"
+                r"(?:there|here|nearby|close by|close)\b|\b" + _SUBJ_I + r"(?:\s+\w+){0,3}?\s+(?:in|at|on)\s+the\s+same\s+"
+                r"(?:room|space|bench|table|desk|workbench|line|area|cell|lab|workshop|kitchen|office|floor)\b|"
+                r"\b(?:in|on|at)\s+the\s+same\s+(?:room|space|bench|table|desk|workbench|line|area|cell|floor|counter)\s+as\s+"
+                r"(?:me|us|him|her|" + _WHO + r")|\b(?:by|at)\s+(?:my|your|his|her|their|our)\s+side\b|"
+                r"\b(?:with|alongside|among)\s+(?:\d+|two|three|four|five|six|ten|twenty|several|many|lots of|a few|dozens of|"
+                r"a team of)\s+(?:other\s+)?(?:people|morphagents|" + _ROLES_PL + r")\b|"
+                # someone it follows or shadows: "follows the nurse around", "shadows the technician"
+                r"\b(?:follow|shadow|accompan(?:y|ie)|tail|buddy up with|buddies up with|escort)\w*\s+(?:me|us|him|her|" + _WHO +
+                ")|(?<!made )(?<!built )(?<!designed )(?<!written )(?<!supplied )(?<!produced )(?<!created )(?<!invented )"
+                r"(?<!developed )(?<!owned )(?<!funded )(?<!approved )(?<!sold )(?<!shipped )(?<!printed )(?<!sent )"
+                r"\bby\s+(?:" + _HER_HIS + "|" + _WHO + ")" + _NOT_THEIRS)
+# the word after a person that is their verb: after a helping word, or one shaped like a verb ("needs", "asked", "took",
+# "swap"), never a noun the person word describes ("the machine operator manual goes in the drawer")
+_VERB_SHAPED = (r"(?=[a-z'’-]+(?:s|ed|ing)\b|(?:took|put|held|brought|gave|came|sat|stood|ran|got|fed|led|met|kept|caught|threw|"
+                r"drew|wrote|ate|drank|stuck|hung|swept|wore|" + _VERB_BASE + r"|shop|eat|drink|arrive|queue|order|pay|browse|"
+                r"line up|visit|play|cook|scan|tap|swipe|call|ask|bend|lift|carry|sit|stand|wait|watch|walk|come)\b)")
+# Places and jobs that leave people around it when the words name no one ("it works in a care home", "a robot that
+# waits tables", "a cobot for our packing line", "pass the salt down the table"), and someone in a clause of their own
+# ("if a customer wants a leaflet, it gives one", "the welder needs rods, the robot supplies them", "so the operators
+# don't have to bend"): unsure, so the person is there
+PEOPLE_AROUND = (_CLAUSE + _LEAD + r"(?:" + _WHO + ")" + _SUBJ_PP + r"\s+(?:" + _AUX + r"{1,4}|" + _VERB_SHAPED +
+                 r")(?!(?:" + _AWAY + "|" + _THINGS +
+                 r"|" + _NOT_DESCRIBING + "|" + _PREPOSITION + "|" + _ADVERB + r"|nor|this|these|those|some|any|no|not|"
+                 r"will|would|can|could|may|might|must|should|shall|do|does|did|is|are|was|were|am|has|have|had|been|be|"
+                 r"being|['’](?:m|re|s|ve|ll|d)"
+                 r"|orders|records|files|notes|forms|requests|returns|badges|charts|data|details|samples|meals|sharks|"
+                 r"lockers|rooms|areas|stations)\b)[a-z][a-z'’-]*\b|" +
+                 _CLAUSE + _LEAD + r"(?:" + _WHO + r")\s+(?:do|does|did|wo|ca|need)n['’]t\s+(?:have|need)\s+to\b|"
+                 r"\bso\s+(?:that\s+)?" + _SUBJ_I + r"\s+(?:don['’]t|do not|won['’]t|no longer|doesn['’]t|never)\s+(?:have|has|need|needs)"
+                 r"\s+to\s+(?:bend|lift|reach|stoop|kneel|climb|stretch|get up|stand up|walk|carry|strain)\b|"
+                 r"\b(?:care|nursing|retirement|residential|old people['’]?s|old folks['’]?) homes?\b|\bhospices?\b|\bpubs?\b|"
+                 r"\b(?:hair |nail |beauty )?salons?\b|\bbarber(?:s|shop)?\b|\brestaurants?\b|\b(?:operating )?theatres?\b|"
+                 r"\boperating (?:room|table)s?\b|\bwards?\b(?!\s+off)|\b(?:demo|exhibit\w*|trade ?show|expo|our|my|fair|event|"
+                 r"stand|ticket|information|info)\s+booths?\b|\b(?:science |trade |craft )?fairs?\b|"
+                 r"\bexpos?\b|\bexhibitions?\b|\bopen days?\b|"
+                 r"\bwait(?:s|ing)?\s+(?:on\s+(?!it\b)|tables?\b)|\btend(?:s|ing)?\s+(?:the\s+)?bar\b|"
+                 r"(?<!\bis )(?<!\bare )(?<!\bbe )(?<!\bwas )\bserv(?:e|es|ed|ing)\b(?!\s+(?:as|by|(?:a|an|its|the|no|two|one)\s+"
+                 r"(?:\w+\s+)?purpose|to\s+(?:hold|keep|stop|show|mark|separate)|(?:tray|spoon|plate|dish|bowl|platter|size|"
+                 r"suggestion|hatch|utensil|ladle|board)s?\b))|"
+                 r"\b(?:works?|working|man|mans|staff|staffs)\s+(?:the|a)\s+(?:till|counter|register|checkout|bar|door|"
+                 r"front desk|reception|kiosk|stall)\b|\b(?:at|behind)\s+the\s+(?:counter|bar|till|checkout|register|"
+                 r"reception|front desk)\b|\bdeal(?:s|t|ing)?\s+(?:out\s+)?(?:the\s+)?cards\b|\bcard[- ]dealing\b|"
+                 r"\bvending\b|\bsell(?:s|ing)?\s+(?!(?:for|at|under|over|out|well|online|fast|quickly|on)\b)[a-z]|\b(?:issu(?:e|es|ing)|distribut(?:e|es|ing|ion of))\s+(?:the\s+)?(?:post|mail|"
+                 r"leaflets?|flyers?|food|meals?|medicine|meds|medication|pills|drinks?|papers?|newspapers?|tickets?|badges?|"
+                 r"ppe|gloves|masks?|keys?|tools?|snacks?|samples?|towels?|uniforms?|blankets?|water)\b|\bhands?\s+back\b|"
+                 r"\bbag(?:s|ging)?\s+(?:the\s+)?groceries\b|\bcocktails?\b|\b(?:brings?|takes?|goes|go|pushes)\s+round\b|"
+                 r"\b(?:pass|send|slide|hand)\w*\s+(?:[\w'’-]+\s+){0,4}?(?:down|across|around|round|along)\s+the\s+table\b|"
+                 r"\b(?:to|at)\s+the\s+other\s+end\s+of\s+the\s+table\b|\b(?:down|across|along)\s+to\s+the\s+other\s+end\b|"
+                 r"\baround\s+the\s+room\b|"
+                 r"\b(?:to|for|at|serves?|bring\w*|tak\w*|deliver\w*)\s+(?:the\s+)?(?:table|bed|room|seat|cubicle)\s+"
+                 r"\d+[a-z]?\b|\bthe\s+tables\b(?=.*\b(?:restaurant|cafe|café|bistro|canteen|pub|bar)s?\b)|"
+                 r"\b(?:beside|next to|by|at)\s+(?:the|a|her|his|my|their)\s+(?:hospital\s+)?bed\b|"
+                 r"\brobot(?:ic)?\s+(?:server|cashier|receptionist|nurse|carer|caregiver|companion|sous[- ]chef|chef|host|"
+                 r"hostess|concierge|teacher|tutor|assistant|helper|attendant|valet|porter|bellhop)\b|"
+                 r"\b(?:cobots?|collaborative (?:robot|arm)s?|human[- ]robot|hrc|helping hands?|third hand|assistive|adl|"
+                 r"activities of daily living|daily living|independent living|power ?chairs?|mobility aids?|hospital beds?|"
+                 r"bed ?rails?|feeding (?:arm|robot|aid|assistant|device|tool)s?)\b|"
+                 r"\bplay(?:s|ing)?\s+(?:\w+\s+){0,2}?(?:with|against)\s+(?:me|us|him|her|you)\b|"
+                 r"\b(?:between|for|with|among)\s+(?:the\s+)?(?:two|three|four|both|all)\s+of\s+(?:us|you|them)\b|"
+                 r"\bfree(?:s|d|ing)?\s+up\s+(?:" + _WHO + "|me|us|him|her)|"
+                 r"\b(?:whoever|someone|somebody|anyone|anybody|everyone|everybody)['’]s\s+(?:there|here|around|nearby|in|at|on|"
+                 r"by|near|next|working|sitting|standing|using|waiting)\b|"
+                 # the robot sits, lives or is clamped on someone's bed, chair, tray table or desk: they are next to it ("it
+                 # sits on grandma's tray table", "it'll live on my bedside table", "a robot arm clamped to my bed rail")
+                 r"\b(?:sits?|sitting|sat|lives?|living|stands?|standing|stays?|mounted|clamped|fixed|attached|bolted|screwed|"
+                 r"goes|go|be|kept|placed)\s+(?:on|to|at|beside|next to|by|onto|over|on the side of)\s+(?:my|our|your|her|his|"
+                 r"their|(?:" + _KIN + "|" + _KIN_SLANG + r"|someone|(?:the|a)\s+(?:" + _ROLES + r"|morphagents?))['’]s?)\s+"
+                 r"(?:[a-z-]+\s+){0,2}?(?:bed|bedside table|tray table|over-?bed table|nightstand|bed ?rail|wheelchair|chair|"
+                 r"armchair|recliner|sofa|couch|desk|lap|dining table|kitchen table)s?\b")
 # "it works on its own", "an enclosed cell", "the robot runs alone": no one next to it, unless a person is named. "Alone"
 # said of a person ("she lives alone", "while he is alone") says nothing about the robot.
 ROBOT_ALONE = (r"\b(?:on its own|by itself|unattended|enclosed|fenced(?: off| in)?|caged|lights[- ]out)\b|"
@@ -711,32 +969,34 @@ ROBOT_ALONE = (r"\b(?:on its own|by itself|unattended|enclosed|fenced(?: off| in
 NOBODY_NEAR = (r"\b(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b(?!\s+else\b)(?:\s+\w+){0,3}?\s*" + _NEAR +
                r"\b(?!(?:\s+(?:it|the robot|the arm|this))?\s*[,;:-]?\s*(?:except|but|apart from|aside from|other than|"
                r"besides|save|bar|just|only|barring|excluding)\b)")
-_KIDS = (r"\b(?:kids?|kiddos?|kiddies|children|schoolchildren|grandchildren|grandkids?|schoolkids?|child|toddlers?|bab(?:y|ies)|"
+_KIDS = (r"\b(?:kids?(?!['’])|kiddos?|kiddies|children(?!['’]s)|schoolchildren|grandchildren|grandkids?|schoolkids?|child|toddlers?|bab(?:y|ies)|"
          r"infants?|newborns?|twins|teens?|teenagers?|tweens?|youngsters?|my son|my daughter|"
          r"(?:the|a|my|our|her|his|their|little|young) (?:boy|girl)s?|"
-         r"(?:my|our|her|his|their|the|a)\s+(?:[1-9]|1[0-2])\s*-?\s*(?:yo|y/o|yrs?[- ]old|years?[- ]old|year-olds?)"
+         r"grand(?:sons?|daughters?)|god(?:sons?|daughters?)|foster (?:sons?|daughters?|kids?|child(?:ren)?)|pupils|"
+         r"(?:my|our|her|his|their) (?:little|baby|younger|kid) (?:brother|sister)s?|"
+         r"(?:my|our|her|his|their) (?!(?:grown|adult|older|eldest|oldest|married|grown-up)\b)(?:[a-z-]+ ){1,2}"
+         r"(?:son|daughter)s?(?! in law\b)(?!-in-law)|(?:the|our|my|their|her|his) little ones|"
+         r"robot(?:ic)? (?:babysitter|nanny|childminder|playmate)|"
+         r"(?:my|our|her|his|their|the|a)\s+(?:[1-9]|1[0-2]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+         r"\s*-?\s*(?:yo|y/o|yrs?[- ]old|years?[- ]old|year-olds?)"
          r"(?!\s+(?:(?:" + _ANIMAL + r"|robot|arm|machine|design|car|house|tree)\b)))\b")
-# words that are capitalised for another reason than being someone's name
-_NOT_NAMES = frozenset(("i", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january",
-                        "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
-                        "december", "christmas", "easter", "lego", "duplo", "ikea", "coke", "pepsi", "morph", "claude",
-                        "arduino", "raspberry", "pi", "feetech", "dynamixel", "robotis", "lerobot", "so", "mg996r", "sg90",
-                        "ok", "okay", "hi", "hello", "hey", "thanks", "please", "dr", "mr", "mrs", "ms", "miss", "mx", "prof",
-                        "reception", "assembly", "shipping", "packing", "dispatch", "inspection", "storage", "maintenance",
-                        "pathology", "radiology", "pharmacy", "haematology", "hematology", "microbiology", "histology",
-                        "cytology", "virology", "immunology", "biochemistry", "oncology", "cardiology", "imaging", "recycling",
-                        "goods", "despatch", "stores", "purchasing", "procurement", "finance", "logistics", "production",
-                        "facilities", "catering", "laundry", "sterilisation", "sterilization", "outpatients", "admissions",
-                        "security", "admin", "accounts", "receiving", "returns", "quality", "qa", "qc", "starbucks", "amazon",
-                        "haas", "ups", "fedex", "dhl", "usps", "costco", "walmart", "tesco", "aldi", "lidl", "target", "apple",
-                        "google", "samsung", "bosch", "makita", "dewalt", "festool"))
 # a role or a title before a capitalised name is part of the name: "Nurse Jones", "Doctor Patel", "Chef Marco"
 _TITLE_WORDS = (r"(?:Nurse|Doctor|Doc|Dr|Chef|Professor|Prof|Father|Mother|Sister|Brother|Captain|Officer|Coach|Uncle|Aunt|"
                 r"Auntie|Aunty|Grandma|Grandpa|Granny|Nan|Nana|Gran|Mr|Mrs|Ms|Miss|Mx|Sir|Dame|Lady|Lord|Rev|Reverend|"
                 r"Pastor|Rabbi|Imam|Judge|Sergeant|Sgt|Detective|Inspector|Chief|Madam|Madame|Teacher|Coach|Agent|Pilot)")
 # a few misspellings common enough to matter: "teh nurse", "brng me a beer", "pas me the salt"
 _TYPOS = ((r"\bteh\b", "the"), (r"\bn(?:ures|ruse|usre|urce|ursse)(s?)\b", r"nurse\1"), (r"\bdoct(?:er|r)(s?)\b", r"doctor\1"), (r"\b(?:brng|brign|bribg)\b", "bring"), (r"\b(?:brngs|brigns)\b", "brings"),
-          (r"\bpas\b", "pass"), (r"\b(?:hnd|hadn|hnad)\b", "hand"), (r"\b(?:gve|giev)\b", "give"), (r"\bgimme\b", "give me"))
+          (r"\bpas\b", "pass"), (r"\b(?:hnd|hadn|hnad)\b", "hand"), (r"\b(?:gve|giev)\b", "give"), (r"\bgimme\b", "give me"),
+          (r"\bgivs\b", "gives"),
+          (r"\bop(?:ertor|rator|erater|perator|eratr)(s?)\b", r"operator\1"), (r"\basist(s?)\b", r"assist\1"),
+          # contractions typed without an apostrophe ("im next to it", "ive got to load it", "theyre beside it"); "ill",
+          # "id" and "were" are words too, so only where a person's verb or a place next to it follows
+          (r"\bi m\b", "i'm"), (r"\bim\b", "i'm"), (r"\bive\b", "i've"), (r"\bhes\b", "he's"), (r"\bshes\b", "she's"),
+          (r"\btheyre\b", "they're"), (r"\bwere(?=\s+(?:stood|standing|sat|sitting|working|always|right|next|beside|near|"
+                                      r"by|in front|there|here|going|gonna)\b)", "we're"),
+          (r"(?:^|(?<=[.,;:!?]\s))\bwere\b(?=\s+(?:all\s+)?[a-z]+ing\b)", "we're"),
+          (r"\bill(?=\s+(?:be|have|stand|sit|work|stay|load|use|watch|need|always|probably|just)\b)", "i'll"),
+          (r"\bid(?=\s+(?:be|have|stand|sit|work|stay|need|like|want|probably|just)\b)", "i'd"))
 
 
 @functools.lru_cache(maxsize=None)
@@ -753,14 +1013,21 @@ def people_text(raw: str) -> str:
     about names at all (unsure: a name read where there is none only adds a hand-over's emergency stop)."""
     raw = raw or ""
     words = re.findall(r"[A-Za-z][A-Za-z'’-]*", raw)
+    if words and sum(w[0].isupper() for w in words) * 2 <= len(words):   # "the IT guy", "hand IT the laptops"
+        raw = re.sub(r"\bIT\b(?!['’])", "tech", raw)
+    raw = re.sub(r"\b((?:the|an?|our|my|your|their|to|from)\s+)it(?=\s+(?:guy|guys|team|department|dept|techs?|person|people|"
+                 r"support|crew|staff|bloke|lady|manager|helpdesk|help desk)\b)", r"\1tech", raw, flags=re.I)
     if not words or sum(w[0].isupper() for w in words) * 2 > len(words):
-        out = raw.lower()
+        # Title Case or SHOUTING says nothing about names, except after to, for, with or help: "Bring The Pills To
+        # Siobhan", "A ROBOT THAT HELPS SIOBHAN"
+        out = re.sub(r"\b(to|for|with|helps?|helping|helped|assists?|assisting|from)\s+([A-Z][A-Za-z'’-]*)\b(?!['’])",
+                     lambda m: m.group(1) + " " + ("someone" if _title_name(m.group(2)) else m.group(2)), raw, flags=re.I).lower()
     else:
         raw = re.sub(r"\b" + _TITLE_WORDS + r"\.?\s+(?=[A-Z][a-z]+\b)", "", raw)
         parts, last = [], 0
         for m in re.finditer(r"\b[A-Z][a-z]+\b", raw):
             before, w = raw[:m.start()].rstrip(), m.group(0).lower()
-            if not before or before[-1] in ".!?:;\"“(\n" or w in _NOT_NAMES or \
+            if not before or before[-1] in ".!?:\"“(\n" or w in _NOT_NAMES or \
                     re.search(r"\b(?:the|a|an|this|that|these|those|its)$", before.lower()) or \
                     re.fullmatch(r"(?:" + _ROLES + "|" + _PLACE + "|" + _NOT_DESCRIBING + "|" + _ADVERB + "|" + _PREPOSITION +
                                  ")", w):
@@ -770,7 +1037,25 @@ def people_text(raw: str) -> str:
         out = "".join(parts + [raw[last:].lower()])
     for pat, rep in _TYPOS:
         out = re.sub(pat, rep, out)
+    out = re.sub(r"\bmason (jars?|lids?|bottles?)\b", r"glass \1", out)       # "the mason jars" are jars, "the mason" a person
+    out = re.sub(r"\b((?:case|carton|cartoning|tray|bag|box|vertical|horizontal|flow)\s+pack)ers?\b", r"\1ing machine", out)
+    out = re.sub(r"\b((?:spot|ultrasonic|laser|seam|arc|resistance|friction|projection|stud|mig|tig|robot)\s+weld)ers?\b",
+                 r"\1ing machine", out)
+    out = re.sub(r"\b((?:vision|x-?ray|optical|automated|camera|in-?line)\s+inspect)ors?\b", r"\1ion machine", out)
+    out = re.sub(r"\b((?:washer|egg|fruit|optical|weight)\s+grad)ers?\b", r"\1ing machine", out)
     return _agents(_baby_goods(out))
+
+
+def _title_name(word: str) -> bool:
+    """Whether a capitalised word after "to", "for", "with" or "help" in a Title Case or SHOUTING request is a name: not
+    a word for a person, a place, a thing, an animal, the robot, a department or a function word."""
+    w = word.lower()
+    return not (w in _NOT_NAMES or re.fullmatch(r"(?:" + _ROLES + "|" + _KIN + "|" + _KIN_SLANG + "|" + _PLACE + "|" + _THINGS + "|" +
+                                                 _ANIMAL + "|" + _ROBOT_WORD + "|" + _NOT_DESCRIBING + "|" + _ADVERB + "|" +
+                                                 _PREPOSITION + r"|me|you|us|him|them|it|its|our|your|my|this|that|these|those|"
+                                                 r"some|any|all|both|each|every|one|two|three|four|five|ten|home|work|school|"
+                                                 r"bed|size|order|scale|position|storage|stock|waste|scrap|trash|rubbish|"
+                                                 r"[a-z]+(?:ing|ed|ly|tion|ment|ness|ity|ies|es))", w))
 
 
 # baby and infant products are things, not children ("sorts baby food jars", "move the baby wipes", "dispenses infant
@@ -778,7 +1063,9 @@ def people_text(raw: str) -> str:
 # may be the one given something, so it stays ("feed the baby food", "give the baby carrots")
 _BABY_GOODS = (r"(?:carrots?|spinach|corn|sweetcorn|potato(?:es)?|tomato(?:es)?|leaf|leaves|greens|courgettes?|zucchinis?|"
                r"squash(?:es)?|beets?|beetroots?|aubergines?|kale|lettuces?|plum tomatoes|foods?|wipes?|oil|powder|lotion|"
-               r"shampoo|formula|cereal|rice|purees?|purées?|jars?|pouches?|bottles? of formula)")
+               r"shampoo|formula|cereal|rice|purees?|purées?|jars?|pouches?|bottles? of formula|monitors?|gates?|clothes|"
+               r"clothing|socks?|grows?|bouncers?|swings?|walkers?|wipes|blankets?|bibs?|toys?|books?|shoes?|hats?|"
+               r"mittens?|vests?|sleepsuits?|onesies?|bottles?|cups?|spoons?|bowls?|plates?)")
 
 
 def _baby_goods(text: str) -> str:
@@ -875,7 +1162,7 @@ HARM = (  # local pre-filter (SubQ's harm noul and the designer's flag catch the
 _TOOL_GUN = (r"\b(?:hot\s+)?(?:glue|heat|caulk|caulking|paint|spray|nail|staple|stapler|massage|label|labell?ing|tape|rivet|"
              r"grease|scan|scanner|scanning|barcode|bar[- ]code|solder|soldering|price|pricing|tag|tagging|temp|temperature|"
              r"thermometer|infrared|ir|impact|screw|foam|sealant|silicone|welding|mig|tig|cable[- ]tie|tie|radar|"
-             r"heat[- ]shrink|dispensing|grout|texture|air[- ]blow)[- ]guns?\b")
+             r"heat[- ]shrink|dispensing|grout|texture|air[- ]blow|wheel|lug|tyre|tire|torque)[- ]guns?\b")
 # ... and only while nothing turns it on someone: aimed, pointed, held, pressed or fired at or on a person, an animal or a
 # body part ("aims a rivet gun at people", "holds a grease gun to his head", "tapes people's mouths shut"), darts, a
 # turret, shooting, scaring or gagging. Then any gun is refused ("a robot that points the nail gun at my brother" was
@@ -1133,9 +1420,12 @@ def person_signals(pt: str, t: str = "") -> dict:
     ("no one else is around"). `pt` is people_text(request), `t` the request in lower case. Empty means no person."""
     found = {}
     kids = re.search(_KIDS, re.sub(r"\b(?:no|without|not any)\s+(?:kids|children|toddlers|babies)\b", " ", pt))
-    receiver = _rx(HAND_TO_PERSON).search(pt) or re.search(r"\bhand[- ]?overs?\b", pt)   # "a handover robot": someone takes it
-    for kind, m in (("children", kids), ("beside", _rx(PEOPLE_BESIDE).search(pt)), ("receiver", receiver),
-                    ("near", _rx(_FOR_SOMEONE).search(pt)), ("else", re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t or pt))):
+    receiver = _rx(HAND_TO_PERSON).search(pt) or re.search(r"\bhand[- ]?(?:overs?|offs?)\b", pt)   # "a handover robot"
+    school = re.search(r"\b(?:classrooms?|(?:primary|elementary|junior|infant|nursery|middle|high|secondary|grade|pre-?)\s*schools?|"
+                       r"schools?\b(?!\s+of\b)|nurser(?:y|ies)|kindergartens?|daycares?|day care|playgroups?|creche)\b", pt)
+    for kind, m in (("children", kids), ("beside", _rx(PEOPLE_BESIDE).search(pt) or _rx(PEOPLE_AT_IT).search(pt)),
+                    ("receiver", receiver), ("near", _rx(_FOR_SOMEONE).search(pt) or _rx(PEOPLE_AROUND).search(pt)),
+                    ("school", school), ("else", re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t or pt))):
         if m:
             found[kind] = m.group(0).strip()
     return found
@@ -1320,7 +1610,7 @@ def parse(text: str) -> dict:
     elif people:
         # "help my grandma", "pass my dad his pills", "for me": that person is next to it (and a toy robot's children; a
         # pet feeder's person is a person, not a pet: "hand the dog walker the dog food")
-        inf["people_nearby"] = "children" if ARCHETYPES[key].people == "children" else "yes"
+        inf["people_nearby"] = "children" if ARCHETYPES[key].people == "children" or people.get("school") else "yes"
     elif _rx(ANIMAL_GETS).search(pt):
         inf["people_nearby"] = "pets"   # "hand the dog a bone": the animal takes it from the gripper
     elif re.search(NOBODY_NEAR, t):
@@ -1366,7 +1656,7 @@ def parse(text: str) -> dict:
     # tasks
     if re.search(r"\bsort(?:s|ing|er)?\b", t):
         s["task"] = "sort"
-    elif re.search(r"\bhand[- ]?overs?\b", t) or hands:
+    elif re.search(r"\bhand[- ]?(?:overs?|offs?)\b", t) or hands:
         s["task"] = "hand_over"
     elif any(k == "assembly" for k, _ in out["adjusted"]):
         inf["task"] = "pick_place"    # the parts are moved to where they go, not sorted

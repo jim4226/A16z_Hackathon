@@ -596,3 +596,69 @@ def test_the_people_conversation_table(row):
     card = next(r for r in B.card(b) if r["slot"] == "people_nearby")["text"]
     got = (B.value(b, "task"), B.value(b, "people_nearby"), "estop" in b.changes["electronics.extras"], card)
     assert got == (row["task"], row["people"], row["estop"], row["card"])
+
+
+_PEOPLE_HUNT = json.loads((Path(__file__).parent / "fixtures" / "brief" / "people_hunt.json").read_text("utf-8"))["rows"]
+
+
+def _first_reading(text: str) -> dict:
+    """What agents.run_turn(text) then "Use sensible defaults" builds, for the task, the people and the emergency stop,
+    without the preflight (offline: the same parse, merge, nearest robot and slot mapping; checked against the full
+    path on a sample in test_the_people_hunt_table_reads_as_the_full_turn)."""
+    b = B.Brief(id=B.new_id(), request=text)
+    if B.harmful(text):
+        return {"status": "refused"}
+    p = B.parse(text)
+    B.set_archetype(b, *p["archetype"], "rules")
+    B.merge(b, p, "user", "request")
+    if b.get("existing_hardware") == "so101":
+        B.set_archetype(b, "so101", 0.9, "rules")
+    sc = B.assess_scope(b)
+    if sc["status"] == "out_of_scope" and sc.get("nearest"):
+        B.apply_nearest(b, sc["nearest"])
+    s = b.slots.get("people_nearby")
+    return {"status": "ready", "task": B.value(b, "task"), "people": B.value(b, "people_nearby"),
+            "source": s.source if s is not None else "default", "estop": "estop" in B.brief_to_changes(b)["electronics.extras"]}
+
+
+def _people_problem(expect: str, r: dict) -> str | None:
+    """The hunt's own judgement of a reading: why it misses the row's expectation, or None."""
+    if r["status"] != "ready":
+        return None if expect in ("X", "N", "NO") else r["status"]
+    near = r["people"] in ("yes", "children")
+    if expect in ("H", "HK", "P", "PK", "S"):
+        if not (near and r["estop"]):
+            return f"people {r['people']} ({r['source']}), estop {r['estop']}"
+        if expect in ("HK", "PK") and r["people"] != "children":
+            return "children read as an adult"
+        if expect in ("H", "HK") and r["task"] != "hand_over":
+            return f"task {r['task']}"
+    elif expect == "A" and not (r["estop"] and r["people"] in ("pets", "yes", "children")):
+        return f"people {r['people']}, estop {r['estop']}"
+    elif expect == "N" and (r["task"] == "hand_over" or (near and r["source"] in ("user", "inferred"))):
+        return f"task {r['task']}, people {r['people']} ({r['source']})"
+    elif expect == "NO" and r["people"] != "no":
+        return f"people {r['people']}"
+    return None
+
+
+@pytest.mark.parametrize("row", [pytest.param(r, marks=pytest.mark.xfail(strict=True, reason=r["known"])) if r.get("known")
+                                 else r for r in _PEOPLE_HUNT], ids=[r["text"] for r in _PEOPLE_HUNT])
+def test_the_people_hunt_table(row):
+    # the round-6 hunt: 601 of its 3,033 requests built a robot with no one nearby and no emergency stop although a
+    # person works at it ("the operator empties it", "im next to it", "while I solder"), receives from it, is served,
+    # helped or named in another language or abbreviation ("helps my oma", "to the RN", "helps the elderly"), or sits
+    # by it; "known" rows are read otherwise on purpose and listed in the docs as known misses
+    assert _people_problem(row["expect"], _first_reading(row["text"])) is None
+
+
+@pytest.mark.parametrize("row", _PEOPLE_HUNT[::40], ids=[r["text"] for r in _PEOPLE_HUNT[::40]])
+def test_the_people_hunt_table_reads_as_the_full_turn(row):
+    b = agents.run_turn(text=row["text"], deep=False)
+    if b.status == "refused":
+        assert _first_reading(row["text"])["status"] == "refused"
+        return
+    b = agents.run_turn(b, action="defaults", deep=False)
+    r = _first_reading(row["text"])
+    assert (B.value(b, "task"), B.value(b, "people_nearby"), "estop" in b.changes["electronics.extras"]) == \
+        (r["task"], r["people"], r["estop"])

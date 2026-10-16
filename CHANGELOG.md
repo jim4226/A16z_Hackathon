@@ -574,14 +574,38 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   my grandma eat her soup", "no people around it, it assists the surgeon", "nobody nearby, the nurse takes the tray
   from its gripper", "nobody near it, I stand next to it to load it", "no one near it; an operator loads the parts by
   hand" and "no people around, students will use it" were built with nobody nearby and no emergency stop (only a
-  person it hands things to beat "nobody"). New robot now reads every sign of a person first, apart from the task,
-  and says no one is near only when there is none. That person keeps the emergency stop also when an answer or a
+  person it hands things to beat "nobody"). New robot now reads the signs of a person it knows first, apart from the
+  task, and says no one is near only when it finds none. That person keeps the emergency stop also when an answer or a
   later message says it works on its own.
 - A person named in a typed reply is kept like one named in the first message: "a robot that sorts screws", then "the
   operator takes the bins from it", then "no one works near it" (or the chip "It works on its own") built a robot with
   nobody nearby and no emergency stop, and so did "a robot that sorts pills", "for my mum", "it works alone". 14 of
   the release review's 32 such conversations lost the emergency stop that the same words in one message keep; none
   does now (`tests/fixtures/brief/people_turns.json`).
+- New robot reads a person next to the robot from how the request is put together, not only from lists of verbs and
+  words: someone at the start of a clause who does something to the robot ("the operator empties it", "the nurse
+  swaps its tray", "I hand it the parts and it sorts them", "staff come by to refill it", "pickers drop the totes on
+  its conveyor"), someone working while it does its part ("holds the board while I solder", "sorts mail while the
+  receptionist answers the phone"), the robot taking something from someone ("takes the parcel from the postman",
+  "takes the phone from my hand"), a robot someone uses ("a robot the nurses can use", "it'll be used by
+  apprentices"), someone by, among, facing or within reach of it, and places and jobs that leave people around it ("it
+  works in a care home", "brings the food to table 5", "a cobot for our packing line", "a robot that waits tables").
+  It knows more words for people too: groups ("helps the elderly", "for the homeless", "hands the public leaflets",
+  "my family"), family words from other languages ("helps my oma", "bring the tea to nonno"), first names in lower
+  case after help, for, with or to ("helps sarah", "bring the pills to siobhan") and in Title Case or capitals, a role
+  before a name ("give the chart to nurse kelly"), abbreviations ("to the RN", "the GP", "the IT guy"), job titles
+  that end like a machine ("the hairdresser", "the pot washer"), "im", "ive" and "theyre" typed without an apostrophe,
+  and a child's age in words ("my five-year-old"). A person's verb before "its" no longer reads as a place they own:
+  "my dad fills its tray every morning" and "grandma loads its tray with pills" lost the person in this beta and
+  have it again. Of the release review's round-6 hunt (3,033 requests whose readings were written down before it
+  ran), 666 of the 2,739 that put a person next to the robot built it with no one nearby or without an emergency stop;
+  10 do now, the known misses: a place that belongs to someone ("put the parts into the operator's tray", "bring the
+  tea to her room", "place the pills on dad's bedside table") and the person's own things at a machine ("a robot that
+  grabs my printouts from the printer"). The other way round, a department ("bring the files to Legal"), a machine
+  named like a job ("the spot welder", "the bender", "the case packer"), baby products ("move the baby monitor") and a
+  workbench (a robot "on my workbench" was a tool hand-over) are no longer read as people. Of 609 requests that name
+  no one near the robot, written to check this, two more read a person than before ("I want to mount it on the wall":
+  an extra emergency stop) (`tests/fixtures/brief/people_hunt.json`).
 - More people keep their place next to the robot, and its emergency stop. A robot word in the thing handed over
   ("hand the nurse the device", "pass the surgeon the system", "hand the operator the gripper", "a robot that hands
   the operator the machine parts"; "give me a robot that sorts screws" is still a request for a robot), handing

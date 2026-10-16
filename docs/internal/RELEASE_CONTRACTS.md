@@ -1495,6 +1495,48 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   archetype asked to hand things over gets no camera. Every
   width in a note is `capability.min_width` for the shape (26 mm round, 21.5 mm flat-sided), and a preset outside the
   band says which limit it breaks (`brief.unfit_note`: "too heavy", "too narrow", "too wide").
+- **A person read from how the request is built (round 6).** Besides the lists, `person_signals` reads
+  `brief.PEOPLE_AT_IT` as someone beside the robot: a person at the start of a clause (`_CLAUSE`: the start, after
+  punctuation or a joining word; "I", "we", "he", "she" and their contractions, a word for people with or without a
+  determiner, a name, "someone", a word for someone by what they do, maybe followed by "on the line" or "from
+  maintenance"), helping words ("is", "will", "keeps", "comes by to"), a verb that isn't about wanting, owning, making,
+  telling or being away (`_WANT_OWN`, `_AWAY`, never a function word) and the robot ("it", "its tray", "the robot")
+  within eight words, with no "not" or "n't" in the first three; someone in a "while", "as" or "when" clause who isn't
+  away ("while I solder"; not "while I sleep", "when I'm at work", "while the staff are on break", "while I watch tv in
+  the other room"); a robot someone does something to ("a robot the nurses can use"); a person after "used by",
+  "operated by", "shared by" and the like; the robot taking something from someone or out of their hand; "I sit right
+  there", "in the same room", "on the same bench as the technician", "with 20 people"; following or shadowing
+  someone; and "by" before a person (not "made by", "sold by" and the like, nor "by the operator's bench"). And
+  `brief.PEOPLE_AROUND` as someone around, assumed: a person at the start of a clause with a helping word or a verb
+  that looks like one ("if a customer wants a leaflet", "the welder needs rods"; not "the machine operator manual"),
+  "so I don't have to bend", and places and jobs that leave people around it (care and nursing homes, hospices, pubs,
+  salons, restaurants, operating theatres, wards, fairs and booths, table, bed or room numbers, waiting tables, serving,
+  tending bar, working a till or a counter, dealing cards, selling, handing back change, passing things down a table,
+  a robot receptionist, nurse or carer, cobots, assistive and daily-living robots, power chairs and bed rails, the
+  robot sitting on someone's bed, chair, tray table or desk). A classroom, a school or a nursery infers children. The
+  words between a person and a place noun describe the place only when none of them is "its", a possessive or a verb
+  (`_NOT_THEIR_PLACE`, `_VERB_BASE`: "the operator fills its hopper" keeps the operator, "the operator station" is a
+  place, and "staff press the stop button on it" reads "press" as the verb). People words: groups ("the elderly", "the
+  public", "the homeless", "the lads", "amputees", "the two of us"), family words from other languages and spellings
+  (`_KIN`, 83 more: oma, opa, nonno, babcia, yiayia, abuelita and the like), a landlord, an ex, the RN, LPN, CNA, HCA, GP, KP, the dr,
+  hairdressers, scaffolders, pot and window washers, new starters; a lower-case first name (`_NAMES`) after help, for
+  or with, and a word that may be a name after "to" or "help" at the end of its phrase (`_A_NAME`: not a thing, a
+  place, a department, a job done, an animal or the robot); a capitalised word after to, for, with or help in Title
+  Case or capitals (`people_text`); a role before a name without a determiner ("nurse kelly", `_TITLED`); "IT guy";
+  "im", "ive", "hes", "shes", "theyre" and, before a person's verb, "ill", "id" and "were". The other way round, the
+  people words before records, files, samples, orders and the like describe them ("sort the patient records"), and a
+  department ("Legal", "Housekeeping", "Ward 7"), a bender, a slitter, a seamer, a case packer, a spot welder, a vision
+  inspector and a washer grader are no people. The round-6 hunt's table (`tests/fixtures/brief/people_hunt.json`:
+  3,033 requests with the readings expected before the hunt ran, and the fixer's 1,202 probes: 593 people acting on
+  the robot, 609 no one near it) runs in `tests/test_brief_answers.py::test_the_people_hunt_table`. Of the 2,739 that
+  put a person next to the robot, 10 still have no one nearby and no emergency stop, on purpose: a place that belongs to
+  someone ("put the parts into the operator's tray", "bring the tea to her room", "fills my dad's pill organiser")
+  and the person's own things at a machine ("grabs my printouts from the printer"). Other known misses: a first name
+  on no list at the very start of a sentence ("Siobhan switches it on"), a person's age the words don't give (a niece,
+  a nephew, a stepson: an adult with the e-stop, not children), and a request that sorts as well as hands over (a
+  sort, with the person and the e-stop kept); known extra e-stops: a capitalised product name read as a name, someone
+  who mounts the robot, a ward or a theatre, a tester, a bagger or a loader, and "the teachers' lounge". The 47 rows
+  read otherwise on purpose are strict expected failures in that test, so the list above stays true.
 - **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
   at `test_reach_mm` (about 45 % of the egg-picker's reach), so the inspector's "Payload at full reach" overstated the
   arm 2.4 to 3x. The sweep now also reports the arm stretched straight out (`simulate._stretch_pose`: the tool point at
@@ -1919,11 +1961,10 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   "to her office manager", "to his lab partner"). These are hand-overs with people nearby and an e-stop, also when
   the request says the person is alone or the robot works on its own ("bring the meds to her twice a day, she lives
   alone"). The safe errors: "to her sofa", "to her bed" and "to her armchair" (someone sits or lies there), "bring the
-  cup to my left" and "to her side", a capitalised word that is no name and on no list ("bring the tea to Costa"), and
-  "give the baby bottles to the sink" (children nearby, no hand-over). Known misses: a person word on no list, with
-  none of the endings above, after "to" ("pass the bricks to the mason": "the mason jars" are jars), a word for
-  someone by what they do with a bare thing after it ("hand the shelf painter cans"), and misspelt person words other
-  than the few above. A place named after people
+  cup to my left" and "to her side", and a capitalised word that is no name and on no list ("bring the tea to
+  Costa"). Known misses: a singular word for someone by what they do with a bare thing after it ("hand the shelf
+  painter cans"; a plural one takes it: "give the runners water"), and misspelt person words other than the few
+  above. A place named after people
   infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
   place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
   nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,613
