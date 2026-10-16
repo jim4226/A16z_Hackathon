@@ -641,6 +641,42 @@ def test_a_dead_sensor_never_crushes_the_large_end_of_a_covered_hobby_grips_size
                 + " for that moment") in w, w
 
 
+@pytest.mark.parametrize("obj", ["raw egg", "soda can"])
+def test_hobby_servos_on_the_stock_jaws_say_their_least_close_squeezes_past_what_they_hold(tmp_path, obj):
+    """The SO-101's stock jaw on hobby PWM servos: one PCA9685 count is about 0.48 mm at its 62-80 mm lever, so the least
+    G can close past the object (two commands) squeezed an egg with 11.04 N, twice the 5.62 N the servo holds
+    continuously and above F's own cap, and F couldn't lower it. The plan raised no issue for it, the firmware called
+    a can's 11.05 N 'below Morph's 10.82 N target' and the manual told F to lower it. It is now an issue (the kind New
+    robot and "make it cheaper" read), and the firmware and manual say the squeeze is two commands, more than the
+    target. The jaw is calibrated on a gauge of the object's size against the fixed jaw, as G's squeeze assumes, and
+    the one moving jaw takes the object's whole size spread (8 % of its width), not half of it."""
+    from morph import electronics
+    from morph.robot import manual
+    from morph.studio import brief
+
+    d = template("so101", source="so101").with_changes({**{k: v for k, v in object_changes(obj).items()
+                                                           if k.startswith("object.")}, "arm.actuator_family": "hobby_pwm"})
+    exe, ep = _compile_firmware(tmp_path, d)
+    g, ol = ep["grip"], ep["grip"]["open_loop"]
+    assert g["jaw"] == "revolute"
+    assert ol["spread_mm"] == pytest.approx(electronics.OBJECT_SIZE_SPREAD * d.object.diameter_mm, abs=1e-3)
+    assert g["squeeze_n"] > ol["rated_n"] and g["squeeze_n"] > g["limit_n"] and g["squeeze_n"] > g["target_n"]
+    told = [i for i in ep["issues"] if "the least it can close past" in i]
+    assert len(told) == 1 and brief.classify(told) == {"hobby_gripper"}, ep["issues"]
+    assert (f"squeezes about {g['squeeze_n']:g} N per finger, above the {ol['rated_n']:g} N it holds continuously (its "
+            f"rated torque)") in told[0], told[0]
+    code = open(next(tmp_path.rglob("morph_arm.ino")), encoding="utf-8").read()
+    line = next(ln for ln in code.splitlines() if "float GRIP_TARGET_N" in ln)
+    assert "two position commands, the least G can close past" in line and "more than Morph's" in line, line
+    assert "below Morph's" not in line
+    assert "the calibrated zero (jaw on the gauge)" in code
+    sent = manual._grip_sentence(g, d.object.name)
+    assert (f"(more than Morph's {g['target_n']:g} N target: two position commands are the least it can close past it)"
+            in sent and "F can't lower it" in sent and "lower it if the servo hums" not in sent), sent
+    r, out = _run_exe(exe, 0.0, 0.0)                         # G alone: two commands past the gauge contact
+    assert (r["closed"] - r["lowest"]) * g["lever_mm"] == pytest.approx(ol["squeeze_mm"], abs=0.005), r   # (4-place rad)
+
+
 # ------------------------------------------------------------------ the grip holds what the robot does with it
 
 @pytest.mark.parametrize("family, slip", [("", 4.74), ("dynamixel", 4.83)])

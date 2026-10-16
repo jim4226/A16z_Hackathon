@@ -2309,14 +2309,15 @@ def _probe_gives_up(rob: _Robot, perturb) -> dict | None:
 def _open_loop_stalls(rob: _Robot, perturb) -> dict | None:
     """A hobby servo without force sensors or a torque limit: its firmware closes it grip_squeeze_mm past the gauge
     contact (electronics2.open_loop_squeeze), and its own position loop reaches its stall force GRIP_SAT_MM past the
-    object's contact. So a trial's object wider than the gauge by the rest of that per jaw holds the servo at stall,
-    drawing its stall current for the whole carry with no overload protection: {wider_mm, squeeze_mm}, or None. (The
-    plan keeps every size of the object in its band under PROBE_STALL_SHARE of the stall, or says it can't.)"""
+    object's contact. So a trial's object wider than the gauge by the rest of that per jaw (a stock jaw's one moving
+    jaw, closing on it against the fixed jaw, by the whole of its width) holds the servo at stall, drawing its stall
+    current for the whole carry with no overload protection: {wider_mm, squeeze_mm}, or None. (The plan keeps every
+    size of the object in its band under PROBE_STALL_SHARE of the stall, or says it can't.)"""
     info = rob.info
     s = (perturb or {}).get("size_scale")
     if not info.grip_open_loop or s is None:
         return None
-    wider = rob.R * (float(s) - 1.0)
+    wider = rob.R * (float(s) - 1.0) * (2.0 if info.grip_kind == "revolute" else 1.0)
     if info.grip_squeeze_mm + wider < GRIP_SAT_MM - 1e-9:
         return None
     return {"wider_mm": round(wider, 3), "squeeze_mm": round(info.grip_squeeze_mm, 4)}
@@ -2410,7 +2411,8 @@ def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
     if stalled:
         name = design.object.name or "object"
         metrics.update(success=False, grip_stalled=stalled)
-        metrics.setdefault("failure", f"the {name} is {stalled['wider_mm']:.2f} mm per jaw wider than the calibration "
+        where = "wider at the moving jaw" if info.grip_kind == "revolute" else "per jaw wider"
+        metrics.setdefault("failure", f"the {name} is {stalled['wider_mm']:.2f} mm {where} than the calibration "
                                       f"gauge, and the hobby gripper servo, closed {stalled['squeeze_mm']:.2f} mm past "
                                       f"the gauge, is held at its stall (its whole stall force and current) for the "
                                       f"whole carry, with no overload protection")

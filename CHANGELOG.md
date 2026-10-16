@@ -475,7 +475,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   max-squeeze stop, 3 mm past a can, where it sat at its stall current (2.5 A) for the whole carry, and hobby servos
   have no overload protection. G now closes it only as far past the calibration gauge as its own position loop needs
   for the grip, never past what the servo holds continuously (its rated torque): 0.49 mm for the can, 10 N against
-  its 13.94 N target and the 6.97 N it needs not to slip; a 900 g can's target, above the stall, is an issue. An
+  its 13.94 N target and the 6.97 N it needs not to slip; a 900 g can's target, above the stall, is an issue, and so
+  is a grip where two position commands, the least it can close, already squeeze more: the SO-101's stock jaw on
+  hobby servos (one count is 0.48 mm at its 62 mm lever) put 11.04 N on an egg, twice the 5.62 N the servo holds
+  there, with no issue, and its firmware and manual called a can's 11.05 N "below" its 10.82 N target. The manual
+  had a stock jaw on hobby servos calibrated with its faces touching, so G's close past that zero would hold the
+  servo at stall on any object; it is now calibrated on a gauge of the object held against the fixed jaw, and its one
+  moving jaw takes the object's whole size spread, not half. An
   object larger than the gauge is held further past its own contact, so G also closes no further than keeps one at
   the large end of its size (8 % over nominal) under 80 % of the stall and under its damage force; where no close
   can (a can at the large end is 2.64 mm per jaw over and would be held at stall, as would an egg or a water bottle)

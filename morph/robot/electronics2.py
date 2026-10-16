@@ -220,10 +220,14 @@ def open_loop_squeeze(grip: dict, gkey: str, family: str, width_mm: float | None
     stall = float(grip["stall_force_n"])
     step = _command_step_mm(gkey, grip, family)
     rated = stall * ACTUATORS[gkey]["rated_nm"] / ACTUATORS[gkey]["torque_nm"]
-    out = {"servo_band_mm": SERVO_BAND_MM, "step_mm": round(step, 4), "rated_n": round(rated, 2)}
+    # a rack's two jaws share an object's size spread; a stock jaw's one moving jaw, closing on the object against the
+    # fixed jaw, takes all of it
+    per_jaw = 1.0 if grip.get("jaw") == "revolute" else 0.5
+    out = {"servo_band_mm": SERVO_BAND_MM, "step_mm": round(step, 4), "rated_n": round(rated, 2),
+           "per": "at the moving jaw" if per_jaw == 1.0 else "per jaw"}
     if grip["sensor"] == "fsr402":
         most = PROBE_STALL_SHARE * SERVO_BAND_MM
-        spread = OBJECT_SIZE_SPREAD * float(width_mm or 0.0) / 2.0
+        spread = OBJECT_SIZE_SPREAD * float(width_mm or 0.0) * per_jaw
         reach = spread + 2.0 * step
         at_limit = max(SERVO_BAND_MM * float(grip["limit_n"]) / stall, 2.0 * step)
         dmg = float(grip.get("object_limit_n") or 0.0)
@@ -241,7 +245,7 @@ def open_loop_squeeze(grip: dict, gkey: str, family: str, width_mm: float | None
                 "reach_large_n": round(stall * min(reach + spread, SERVO_BAND_MM) / SERVO_BAND_MM, 2)}
     want = SERVO_BAND_MM * min(float(grip["target_n"]), rated) / stall
     sq = max(want, 2.0 * step)
-    spread = OBJECT_SIZE_SPREAD * float(width_mm or 0.0) / 2.0
+    spread = OBJECT_SIZE_SPREAD * float(width_mm or 0.0) * per_jaw
     dmg = float(grip.get("object_limit_n") or 0.0)
     room = min(PROBE_STALL_SHARE * SERVO_BAND_MM, SERVO_BAND_MM * dmg / stall if dmg > 0 else float("inf"))
     covers = room - spread >= 2.0 * step - 1e-9
@@ -253,6 +257,13 @@ def open_loop_squeeze(grip: dict, gkey: str, family: str, width_mm: float | None
             "spread_mm": round(spread, 3), "room_mm": round(room, 3), "covers": covers, "band_capped": band_capped,
             "band_n": round(stall * (room - spread) / SERVO_BAND_MM, 2) if covers else None,
             "large_n": round(stall * min(sq + spread, SERVO_BAND_MM) / SERVO_BAND_MM, 2)}
+
+
+def size_off(ol: dict, word: str = "wider", nd: int | None = 2) -> str:
+    """How far the large (or small) end of an object's size is from the calibration gauge where the jaw closes on it:
+    "0.88 mm per jaw wider" (a rack's two jaws), "3.52 mm wider at the moving jaw" (a stock jaw)."""
+    v = f"{ol['spread_mm']:.{nd}f}" if nd is not None else f"{ol['spread_mm']:g}"
+    return f"{v} mm {word} at the moving jaw" if ol.get("per") == "at the moving jaw" else f"{v} mm per jaw {word}"
 
 
 def grip_problems(design, grip: dict) -> list:
@@ -273,7 +284,7 @@ def grip_problems(design, grip: dict) -> list:
         from ..electronics import OBJECT_SIZE_SPREAD, PROBE_STALL_SHARE
 
         out, dmg = [], grip.get("object_limit_n")
-        large = f"a {name} at the large end of its size, {ol['spread_mm']:.2f} mm per jaw wider than the calibration gauge"
+        large = f"a {name} at the large end of its size, {size_off(ol)} than the calibration gauge"
         keep = (f"under {PROBE_STALL_SHARE * 100:.0f} % of the servo's stall force"
                 + (f" and the {dmg:g} N that damages it" if dmg else ""))
         if not ol["covers"]:
@@ -631,18 +642,24 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
                          if not tl and grip["stall_force_n"] else None)
     grip["squeeze_n"] = (grip["open_loop"] or {}).get("squeeze_n") or grip["target_n"]
     if (grip["open_loop"] or {}).get("squeeze_mm"):
-        if grip["squeeze_n"] > grip["limit_n"] + 0.005:   # a long lever: one position command already squeezes hard
-            name = design.object.name or "object"
-            issues.append(f"gripper: the {gkey} has no torque limit, and the least it can close past the {name} (two "
-                          f"position commands, {grip['open_loop']['squeeze_mm']:.2f} mm at the jaw) squeezes about "
-                          f"{grip['squeeze_n']:g} N per finger, above the {grip['limit_n']:g} N limit for the {name}: add "
-                          "force sensors, or use a bus servo whose torque limit sets the squeeze")
         # F moves a hobby servo's open-loop squeeze, up to the object's limit, what the servo holds continuously (its
         # rated torque) or what keeps the object at the large end of its size under PROBE_STALL_SHARE of the stall and
         # its damage force, whichever is lowest: no F command holds a gauge-sized object past its rated torque, nor one
-        # of the object's sizes near stall
+        # of the object's sizes near stall. The least it can close (two position commands) can squeeze more than that
+        # (a stock jaw's long lever makes one command 0.48 mm): an issue, which names the lowest of the three
         ol = grip["open_loop"]
-        grip["limit_n"] = round(min(grip["limit_n"], ol["rated_n"], ol["band_n"] if ol["covers"] else float("inf")), 2)
+        own, cap = grip["limit_n"], min(grip["limit_n"], ol["rated_n"], ol["band_n"] if ol["covers"] else float("inf"))
+        if grip["squeeze_n"] > cap + 0.005:
+            name = design.object.name or "object"
+            which = (f"the {own:g} N limit for the {name}" if own <= cap + 0.005 else
+                     f"the {ol['rated_n']:g} N it holds continuously (its rated torque)" if ol["rated_n"] <= cap + 0.005 else
+                     f"the {cap:g} N that keeps a {name} at the large end of its size under the stall share and its "
+                     "damage force")
+            issues.append(f"gripper: the {gkey} has no torque limit, and the least it can close past the {name} (two "
+                          f"position commands, {ol['squeeze_mm']:.2f} mm at the jaw) squeezes about "
+                          f"{grip['squeeze_n']:g} N per finger, above {which}: add force sensors, or use a bus servo whose "
+                          "torque limit sets the squeeze")
+        grip["limit_n"] = round(cap, 2)
     rough_peak = sum(_actuator_currents(a, design, grip)[0] for a in acts)
     supply = _pick_supply(servo_v, rough_peak)
     supply["servo_v"] = servo_v
@@ -751,7 +768,7 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
         dmg = design.object.max_force_n
         under = (f"under {PROBE_STALL_SHARE * 100:.0f} % of the stall"
                  + (f" and its {dmg:g} N damage force" if dmg else ""))
-        large = f"a {name} at the large end of its size, {ol['spread_mm']:.2f} mm per jaw wider than the gauge,"
+        large = f"a {name} at the large end of its size, {size_off(ol)} than the gauge,"
         why = (f" (more than the {grip['target_n']:g} N target: two position commands are the least it can close past it)"
                if grip["squeeze_n"] > grip["target_n"] + 0.005 else
                f" (less than the {grip['target_n']:g} N target: the most that keeps one at the large end of its size "
@@ -1695,15 +1712,22 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
              "closes only GRIP_SQUEEZE past GRIP_CLOSED, never to here: a hobby servo held here would sit at stall"),
           f"const float GRIP_MAX        = {_c(motion['hi'], 6)};   // {gu}: fully open",
           f"const float GRIP_CLOSED     = {_c(motion['closed'], 6)};   // {gu}: the calibrated zero ("
-          + ("jaw faces touching" if motion["kind"] == "revolute" else "jaws on the gauge") + ")"
+          + ("jaw faces touching" if motion["kind"] == "revolute" and not ol.get("squeeze_mm") else
+             "jaw on the gauge" if motion["kind"] == "revolute" else "jaws on the gauge") + ")"
           + ("; a close with no force reading goes back here" if fsr and give_up == "GRIP_CLOSED" else ""),
           f"const float GRIP_CLOSE_SPEED = {_c(motion['close_speed'], 6)};   // {gu}/s",
           f"const float GRIP_OPEN_SPEED = {_c(motion['open_speed'], 6)};   // {gu}/s",
           f"const float GRIP_BACKOFF    = {_c(motion['backoff'], 6)};   // {gu}: step back when the force limit trips",
           f"const float GRIP_FORCE_GAIN = {_c(motion['force_gain'], 6)};   // force loop gain, {gu} per N*s",
           (f"float GRIP_TARGET_N         = {_c(grip['squeeze_n'], 2)};   // what G squeezes on a gauge-sized "
-           f"{design.object.name}, the most that keeps one at the large end of its size ({ol['spread_mm']:g} mm per jaw "
-           f"wider) {under}: below Morph's {grip['target_n']:g} N "
+           f"{design.object.name}: two position commands, the least G can close past it, more than Morph's "
+           f"{grip['target_n']:g} N target ({_window_text(grip)})"
+           + (f" and the {ol['rated_n']:g} N the hobby servo holds continuously (its rated torque)"
+              if grip["squeeze_n"] > ol["rated_n"] + 0.005 else "")
+           if ol.get("squeeze_mm") and grip["squeeze_n"] > grip["target_n"] + 0.005 else
+           f"float GRIP_TARGET_N         = {_c(grip['squeeze_n'], 2)};   // what G squeezes on a gauge-sized "
+           f"{design.object.name}, the most that keeps one at the large end of its size ({size_off(ol, nd=None)}) "
+           f"{under}: below Morph's {grip['target_n']:g} N "
            f"target ({_window_text(grip)})" if ol.get("band_capped") else
            f"float GRIP_TARGET_N         = {_c(grip['squeeze_n'], 2)};   // what G squeezes, the most the hobby servo holds "
            f"continuously (its rated torque): below Morph's {grip['target_n']:g} N target ({_window_text(grip)} for the "
@@ -1732,8 +1756,8 @@ def firmware(design, ep: dict, asm, outdir: str, rev: str = "") -> str:
           + ("sensors (unused: the force loop closes)" if fsr else
              "sensors: to GRIP_MIN, the torque limit sets the squeeze" if tl else
              f"sensors: where the hobby servo's own position loop squeezes a gauge-sized object about "
-             f"{grip['squeeze_n']:g} N per finger and one at the large end of its size, {ol['spread_mm']:g} mm per jaw "
-             f"wider, about {ol['large_n']:g} N (it reaches its {grip['stall_force_n']:g} N stall about "
+             f"{grip['squeeze_n']:g} N per finger and one at the large end of its size, {size_off(ol, nd=None)}, "
+             f"about {ol['large_n']:g} N (it reaches its {grip['stall_force_n']:g} N stall about "
              f"{ol['servo_band_mm']:g} mm past contact)"),
           f"const float GRIP_SQUEEZE_PER_N = {_c(motion['squeeze_per_n'], 6)};   // {gu} per N: F sets GRIP_SQUEEZE "
           + ("(0: not used here)" if fsr or tl else "(no torque limit: the travel past contact sets the squeeze)"),
