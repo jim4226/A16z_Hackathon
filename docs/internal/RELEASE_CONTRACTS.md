@@ -1388,7 +1388,11 @@ field failure rate (section 0, honesty).
   20 mm thick (grown away from the arm), down to the surface when it or the scan under it nearly reaches it (W3: then
   trimmed on the sides facing the swept path until no robot point at any pose comes closer to it than the region's
   `min_clearance_mm` (R6: until MuJoCo's distance from it to the path, between the poses too, is no less),
-  `box_clearance_mm` and `trimmed` saying so; `box: None` with `no_box` when that would leave it thinner than 5 mm; near
+  `box_clearance_mm` and `trimmed` saying so; `box: None` with `no_box` when that would leave it thinner than 5 mm; R7:
+  a region the arm touches or passes through (distance under `SCAN_TOUCH_MM`) gets its box untrimmed, `touches` true and
+  `box_clearance_mm` MuJoCo's lower bound (0.0 when it reaches into the path), the check saying "Add box here turns it
+  into a grey box, the thing as scanned, and the next simulation plans round it" (R6 trimmed it against MuJoCo's
+  negative distances until nothing was left, so the Studio's e2e post the jaw passes 7 mm into got no box); near
   misses within `SCAN_COVER_MM` = 10 mm of one of the world's grey boxes are that box's, and a
   region of nothing else is left out, `stats.covered` counting them). R3: a trimmed region also has `covers`, its box
   before trimming (it holds the region's near-miss points); an obstacle saved with `covers` owns the near misses within

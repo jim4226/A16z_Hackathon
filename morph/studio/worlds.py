@@ -2241,6 +2241,26 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
         if len(P):                                       # one point per quarter-millimetre cell
             P = P[np.unique(_cell_keys(np.round(P / 0.25).astype(np.int64)), return_index=True)[1]]
         yaw = r["box"]["yaw_deg"]
+        if target < SCAN_TOUCH_MM:                      # the arm touches or passes through the scan here: no box keeps
+            saved = _world_box(world, R, lo0, hi0, yaw, rounding="in")    # clear of it, so the box is the thing as
+            lo_b = None                                 # scanned, untrimmed, and the next simulation plans round it
+            if verify is not None:
+                b = box_to_base(world, saved, nd=4)
+                lo_b, _ = verify(np.asarray(b["center"], float), np.asarray(b["half"], float),
+                                 _rz(float(b["yaw_deg"])), target, deadline)
+                if lo_b is None:
+                    late = True
+                    r["box"] = None
+                    r["no_box"] = ("Morph ran out of time to fit a box here that keeps clear of the path: checking again "
+                                   "when the computer is less busy may fit one.")
+                    continue
+            r["box"], r["trimmed"], r["touches"] = saved, False, True
+            if verify is not None:
+                r["box_clearance_mm"] = floor_mm(max(0.0, lo_b)) if lo_b < SCAN_CUT_MM else None
+            else:
+                dd = _box_dist(P, lo0, hi0)
+                r["box_clearance_mm"] = floor_mm(dd.min()) if len(dd) else None
+            continue
         fit, lo_b = _trim_box(P, lo0, hi0, target), None
         for _ in range(SCAN_FIT_ROUNDS if fit is not None else 0):
             saved = _world_box(world, R, *fit, yaw, rounding="in")
@@ -2665,9 +2685,14 @@ def scan_check(scan: dict) -> dict:
         text += f" {places} place{'s' if places != 1 else ''} closer than {SCAN_NEAR_MM:.0f} mm"
         if places > n:
             text += f" (the {n} closest are listed)"
-        if boxed:
+        touch = sum(1 for r in regions if r.get("box") is not None and r.get("touches"))
+        if boxed and touch == boxed:                    # where the arm touches the scan, the box is the thing as scanned
+            text += (f": Add box here turns {'one' if places != 1 else 'it'} into a grey box, the thing as scanned, and "
+                     "the next simulation plans round it.")
+        elif boxed:
             text += (f": Add box here turns {'one' if places != 1 else 'it'} into a grey box the simulation keeps clear "
-                     "of, trimmed so it is no closer to the path than the scan.")
+                     "of, trimmed so it is no closer to the path than the scan"
+                     + (" (where the arm touches the scan, the box is the thing as scanned)." if touch else "."))
         elif stats.get("fit_timeout"):
             text += ": there wasn't time to fit a box that keeps clear of the path."
         elif any(r.get("boxed") for r in regions):

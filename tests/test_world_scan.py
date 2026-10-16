@@ -717,6 +717,32 @@ def test_the_checks_closest_distance_is_never_more_than_one_of_its_rows(tmp_path
     assert "touches or passes through" in worlds.scan_check(res)["text"]
 
 
+def test_a_thing_the_arm_passes_through_gets_its_box_as_scanned(tmp_path, nominal):
+    """Where the arm passes through the scan (the touching vase 10 mm into the path), no box can keep clear of the path,
+    so the box offered is the thing as scanned, untrimmed: added, the next simulation plans round it. R6 trimmed it
+    against MuJoCo's own (negative) distances until nothing was left ("too close to the path for a box"), so the
+    Studio's e2e post the jaw passes 7 mm into on its way back got no box (R5 offered it)."""
+    rob, doc = nominal
+    (cx, cy), r, h = TOUCHING_VASE
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh((cx, cy - 10.0), r, h)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    res = measure(room, ROOM, doc, rob.xml)
+    (g,) = res["regions"]
+    assert g["min_clearance_mm"] < worlds.SCAN_TOUCH_MM and g["box"] is not None and g["touches"], g
+    assert not g["trimmed"] and g["box_clearance_mm"] == 0.0 and "covers" not in g, g
+    lo, hi = corners(g["box"])
+    assert np.all(lo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= hi + 0.2), g      # over the touch
+    c = worlds.scan_check(res)
+    assert "touches or passes through" in c["text"] and "a grey box, the thing as scanned, and the next simulation " \
+        "plans round it" in c["text"], c["text"]
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                         "obstacles": [{"id": g["id"], "label": g["label"], **g["box"], "source": "auto"}]})
+    rob2, doc2, met2 = simulated(tuple(worlds.sim_world(w)["obstacles"]))
+    assert met2["success"] and not met2["world_contacts"] and not met2.get("blocked"), met2.get("failure")
+    res2 = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc2, rob2.xml)
+    assert res2["min_clearance_mm"] is None or res2["min_clearance_mm"] >= worlds.SCAN_TOUCH_MM, res2
+
+
 def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):
     """Cut short before the first pose is measured (the clock runs out while the scan is prepared), the check has
     measured nothing: it says there wasn't time, never that the part of the path checked is clear."""

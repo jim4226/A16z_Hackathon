@@ -146,7 +146,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   boxes, and wherever the arm could come closer between two poses than the closest it found, the move is measured in
   between, so the distance kept is never more than the closest approach anywhere along the path and at most 0.1 mm
   under it before rounding down (the moves the check left alone count with their bounds): those now read 9.8 mm and
-  touching. A box from Add box here is measured against the path
+  touching. Where the arm touches or passes through the scan, Add box here offers that part of the scan as it is,
+  untrimmed, and the next simulation plans round it. A box from Add box here is measured against the path
   with MuJoCo's own distances, between the poses too, and its row says how close the path comes to it. More than eight
   places closer than 10 mm are all counted ("12 places closer than 10 mm (the 8 closest are listed)"; it said 8), and a
   check cut short after 606 of 607 poses says "99% of it", not 100%. A grey box's place counts only with a distance of

@@ -77,7 +77,9 @@ the box is measured against the same path first (MuJoCo's own distance to it at 
 and trimmed on the sides that face it until it is no closer to the path than the scan there (the row says how close it
 is, "at most" unless it is the check's closest place measured along the whole path, and "trimmed" when it was): adding
 it never makes the clearance worse. When a box that keeps clear would be thinner than 5 mm, none is offered: move the
-robot or the thing. *Save and simulate* then plans around it, and the next check measures the new path. A near miss
+robot or the thing. Where the arm touches or passes through the scan no box can keep clear of the path, so the box
+offered there is that part of the scan as it is, untrimmed (its row says "0.0 mm from the path"). *Save and simulate*
+then plans around it, and the next check measures the new path. A near miss
 within 10 mm of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box away
 from it (a vase's rim just under the arm), as long as the box itself stands about as near the path (no further from it
 than the near miss's distance plus 10 mm): the same place is not offered again, and the check says it has a grey box
