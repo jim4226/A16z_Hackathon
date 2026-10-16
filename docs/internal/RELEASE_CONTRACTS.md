@@ -566,7 +566,37 @@ clamping.
 
 - **Robot:** one stationary tabletop arm, 4/5/6 DOF.
 - **Grasp:** a two-finger parallel gripper, top-down pick and place on the table plane.
-- **Object width:** about 26 to 75 mm.
+- **Object width:** about 26 to 75 mm. The stock SO-101's jaws are narrower in Morph's own simulation (a 30 g object at
+  its nominal size, `capability.SO101_MAX_WIDTH_MM`): the cylinders tried from 30 to 46 mm and spheres from 40 to 46 mm
+  are placed, those from 47 to 60 mm and spheres of 48, 52 and 60 mm (a light bulb) slip out; boxes of 30, 32 and 34 mm
+  are placed, boxes of 36, 40, 44 and 48 mm slip out and a 38 mm one is placed with 9.6 mm of slip. So New robot
+  builds a Morph-generated arm, with a note saying why, for a round object over 46 mm or a flat-sided one over 34 mm
+  on "my SO-101" (`brief.assess_scope`, `brief._so101_misfit`), as it does for one above its payload, also for the
+  nearest robot it offers when the request is out of scope in another way ("use my SO-101 to stack soda cans"). The
+  narrow end: a 21.5 mm box drops out of the stock jaws (at 30 g and at 100 g), a 22 mm one slips 11 mm at 30 g, and
+  boxes of 22.5, 23, 24, 25, 28, 30 and 34 mm slip 0.5 to 0.7 mm (`capability.SO101_MIN_FLAT_MM`), so a stated
+  flat-sided object under 22.5 mm, or a round one under 26 mm, gets the generated arm too, not the stock arm kept on a
+  bigger stand-in (`brief._so101_below_min`, reached on the in-scope and the out-of-scope paths; the test's
+  `_so101_problem.said_ok` carries the same lower bound). The generated arm's own sensing fingers close on 21.5 mm
+  flat and 26 mm round, so an object stated below that is below Morph's gripper range: the generated arm is sized
+  around a 25 mm (or 30 mm round) stand-in and the note names the SO-101's limit. A described object whose shape the request
+  doesn't give (`brief._shape_said`: "40 mm wide containers") is held to the flat-sided 34 mm, and the note says that
+  saying it is round keeps the SO-101 ("they are round" in a reply does). The nearest robot for an out-of-scope
+  request carries the person's own object when they gave one and it fits a generated arm ("use my SO-101 to pour out
+  30 mm cylinders weighing 50 g" keeps the SO-101 with them; "... to cook 300 g steaks" gets a generated arm for 300 g),
+  and its stand-in otherwise ("fold towels": folded washcloths). An SO-101 named in a typed reply ("I have an SO-101")
+  is used like one in the request, and "I don't have an SO-101" is a new arm. The request's sizes are read in more
+  forms (`brief._sizes`, after `intent.normalize_units`): "50 mm, 30 g tubes", "50mm/30g", "(50 mm)", "tubes of 50 mm",
+  "measuring 50 mm", "50 mm oranges", "two-inch", "50-mm", "half a kilo", "a pound", "300 gm", "three hundred grams",
+  "1,050 g", "1 000 g" and "1.000 g" (thousands; a dot only before grams and "000"), and the largest of several
+  ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach. In
+  the round-6 hunt's sweep of 18,753 SO-101 conversations, graded by its own rules, 3,169 were wrong at bd19c43 (a
+  generated arm blamed on a stand-in, the SO-101 kept for a stand-in or for a size it didn't read, a typed SO-101
+  ignored), 90 of them only because the sweep's SO-101 chip was never offered (the request was already out of scope);
+  those 90 are the only ones now. `tests/fixtures/brief/so101_hunt.json` (`test_the_so101_hunt_table`) holds a sample of
+  2,859 of the sweep's conversations, graded the same way, and 159 rows of the hunt's phrasing, shape and thousands
+  lists and the fixer's probes. Chat edits and imports of the SO-101 don't apply the limit; its build's simulation
+  reports the miss.
 - **Payload at 2× torque margin** (at the servo rail each arm gets, section 18; the stock SO-101 about 100 g):
 
   | | 4-DOF | 5-DOF | 6-DOF |
@@ -607,8 +637,69 @@ Slot{value, source: user|inferred|default|memory|video|photo, confidence, eviden
   force only to an object without one of its own (`brief.damage_force`, section 19).
 - **Questions:** at most 3 rounds, each with ≤3 questions of 2 to 4 chips. "Use sensible defaults" and
   "Build now" are always available.
-- **Harm:** a local keyword pre-filter plus SubQ's `harm` noul. Refuse when either fires; build nothing
-  and send nothing further.
+- **Harm:** a local pre-filter (`brief.harmful`, offline, before anything is sent anywhere) plus SubQ's `harm` noul.
+  Refuse when either fires; build nothing and send nothing further. A later message is read with the request and the
+  replies before it (`brief.conversation`; a reply that goes on with the last one, such as "on the cat" or "only at
+  people", as the same sentence), so a tool held in one message and turned on someone in the next is refused. The
+  pre-filter reads what is done to whom: a weapon by name (`WEAPONS`: firearms, a stun gun, a crossbow, a
+  flamethrower, explosives, nerve agents and the like, whatever the request does with it) and spying (`SPY`);
+  something that can hurt (`_H_DANGER`: any gun, a blade, heat, a chemical, a rock or a stick) aimed, pointed, held,
+  pressed, swung, fired, thrown or poured at or on someone or something alive or a body part, with or without a verb
+  ("a knife to his throat"), and someone hurt, tied, taped, locked up or drugged, whatever the tense (`HOSTILE`,
+  `_aimed_at`); with something that can hurt in the request, an only-there target ("only at people"), a purpose turned
+  on someone ("to shut my brother up", "to keep the cat off the counter") or someone sealed in (`HOSTILE_WITH_DANGER`).
+  Any gun with a weapon's context is refused (`GUN_CONTEXT`: darts, a turret, a sentry, a place defended or guarded,
+  intruders or burglars, shooting or firing that is not nails, staples or the like into a thing, scaring, threatening,
+  gagging, "as a weapon"), and so is a gun that is no tool (an air gun, a toy gun, a gun on its own). A tool gun the
+  filter always let through (`_H_OLD_TOOL_GUN`: glue, heat, caulk, paint, spray, nail, staple, massage, label,
+  confetti and similar) is built unless a rule above fires; one it refused before this beta (`_H_NEW_TOOL_GUN`: tape,
+  rivet, grease, scan, barcode, solder, price, tag, temperature, impact, screw, foam, sealant, silicone, welding,
+  cable-tie, radar, heat-shrink, air blow, wheel, lug, torque and similar) only in a harmless use the request names
+  (`_gun_harmless`: handed over, held, cleaned, loaded, stored or sorted, used on a thing, or named as a thing's
+  part). Pointed at a thing ("point the scan gun at the barcode", "aim the paint gun at the screw heads"), held out to
+  someone, put in a hand or kept away from a face, a tool gun is a tool, and a massage gun on the requester's own body
+  is a massage. The filter is a first line, not the last: it must never refuse a safety-minded request (a robot that
+  stops, slows, switches off, or keeps people or hands away) or an everyday one whose danger word is the tool's
+  ordinary use. So a danger word must be the object of a hostile verb in its own clause, not anywhere in the request:
+  "switches off when someone comes near", "keeps the kids away from the nail gun", "hands me the knife when my mum
+  comes home", "cuts the cake", "trims the cat's claws", "wraps the baby in a blanket", "straps the baby into the car
+  seat", "pins my hair up", "a heat gun on the arm" (the robot's own) and "beat my dad at chess" all build; a hurt or
+  restraint verb on a person or pet needs a hostile framing, a blade or cut is harm only on a living target (a person
+  or a pet, never food or a haircut), and a tool at a body part is read as hands-care, warming or illumination
+  (`_benign_act`, `_benign_aim`, `_H_AIM_OK`). The hostile verbs also reach more phrasings now: a blade on a person or
+  pet ("cuts my brother with a box cutter", "slices the cat"), something held over a face or forced under water, a
+  ligature tightened around a neck, and a hand pushed onto a hot surface.
+  Measured, offline:
+  - On the round-6 hunt's table (`tests/fixtures/brief/harm_hunt.json`, `test_the_harm_hunt_table`: 1,106 harmful
+    one-liners and 3,205 harmless ones, most of those a tool gun used on a thing named with a body word), the filter
+    at bd19c43 built 583 harmful and refused 1,878 harmless; it now builds none and refuses none (one harmless row
+    kept as a known refusal, "a robot that hands me the flamethrower", because a weapon's name is refused whatever the
+    request does with it). On the 5,848 harmless people-table requests it refuses none.
+  - The rules are written against those tables, so they say what it holds, not how often a new phrasing is caught or a
+    new harmless one is spared. On hand-written sets kept aside while the rules were written (30% held out, untouched):
+    of 205 held-out hostile phrasings it refuses 152 (74%), and of 292 held-out harmless requests it refuses 0. On the
+    skeptic's 101 new hostile phrasings (`t/hostile1.txt`) it refuses 53, against 9 at bd19c43. On the skeptic's
+    harmless corpora (benign1/2/3, the typed follow-ups, and 10,716 corpus requests each given a safety or people
+    clause) it refuses 0, against 4 at bd19c43 (3 of them "a robot that hands me the glue gun by the fire", a staple
+    gun to "fix the fence that guards the garden", and a temperature gun held at a forehead; 1 on the corpus set).
+  - On the round-7 hunters' tables it refuses 2,710 of 3,133 hostile phrasings (86.5%) and none of their harmless
+    requests: 1,727 general ones, 576 "cut, slice or carve someone some food" requests ("cuts me some cheese"), 146
+    care requests, 60 "puts them in my mum's hand" rows and 28 care conversations. The broadened verbs had refused 336
+    of the 576 and 25 of the others; the blade rule now fires only when the person or pet ends the phrase (a
+    preposition, an adverb, a time word or the end follows: "cuts my brother", "slashed my boss last week", not "cuts
+    my son cake"), everyday idioms are matched from the rule's own verb (`_H_BENIGN_IDIOM`: a message shot over,
+    whack-a-mole, a baby held in the bath, a warm towel or cloth put on a face, a necklace, a robot sitting on a
+    shoulder, play throws) and lose that exception when the same clause names harm (`_H_IDIOM_HARM`: hurt, hard,
+    under, drown, tight, press, force, boiling, rocks), a torch is a light on anyone's hands and at a mouth for the
+    dentist, and after a carrying verb (put, hold, drop, bring) "it" or "them" is a danger only when a dangerous thing
+    was named before it, while after aim, point, fire or swing it always is ("mount a bear trap on the arm and aim it
+    at my dad").
+  - So the filter catches common hostile phrasings, not every one (livestock pricked with a needle and rarer framings
+    are missed by design, so the harmless reading wins), and, very rarely, could refuse a harmless request that puts a
+    tool or a blade next to a person. Of 5,547 adversarial 2,000-character inputs made of repeated harm words, the
+    slowest `harmful()` took about 60 ms once the patterns were compiled.
+  - Known over-read kept: a weapon's name is refused even when it is only handed over ("hand me the flamethrower"),
+    because a request Claude will also see should not slip a named weapon through on wording alone.
 - **Video and photos** (F3) produce slot values with `source: video|photo`. They go through the same
   brief and confirm card, or through `/api/video/apply` when editing an existing robot.
 
@@ -951,7 +1042,10 @@ The five feature branches are merged into the release branch and live in the Stu
   `project_created` goes to every tab. When that build ends, `api_brief.on_built` writes `<project>/brief.json` and
   deletes the draft, then `agents.after_build` runs Darwin sourcing (network and sourcing on) and Keewano (its events
   on) on the new room's timeline. The dialog switches its tab to the new project. `capability.warm(block=False)` runs
-  at Studio start. The brief's Claude calls are off while network lookups are off.
+  at Studio start, and so does `brief.warm(block=False)`, which compiles the brief's long request patterns (about 2 s
+  on a 4-core machine) that the first New robot message would otherwise wait for; after it, a first request compiles
+  none of its own (`test_warm_up_leaves_no_long_pattern_for_the_first_requests`). The brief's Claude calls are off
+  while network lookups are off.
 - **Import (F2):** a robot or a Morph export becomes a project through `studio.create_project(origin="import")`; an
   object is a room job (`queue_changes(source="import")`). The importers' home is the Studio's projects folder, set
   at start with the 24 h session cleanup. `morph studio --allow-url-import` keeps links on for a Studio others use.
@@ -1024,7 +1118,8 @@ in sections 3, 4 and 8. The rest that other code relies on:
 - **New robot and chat:** typed answers keep the object being discussed (`brief._typed_answer`); `LAYOUTS` has the
   typed-only `left_to_right`; an archetype's `place` ("plant", "feeding spot") replaces the bin in its layout's words.
   Without Claude, `intent.cost_down` steps "cheaper" down the cost ladder only while the arm still lifts the object at
-  2x margin (`capability.payload_g`), "faster"/"slower" scale the cycle time within `capability.CYCLE_S`, and a
+  2x margin (`capability.payload_g`), and to hobby PWM servos only while their gripper still grips it safely
+  (`intent._hobby_grips`: no `hobby_gripper` issue, section 22; the egg-picker stops at smart-bus), "faster"/"slower" scale the cycle time within `capability.CYCLE_S`, and a
   `said` entry starting with `intent.NOTE` reports a change that is already there instead of making one.
   `agents.after_build(no_source=)` says why sourcing was skipped.
 - **World mode:** `GET /api/world` adds `ai {claude, subq}` (which reviewers would answer now) and, for the newest
@@ -1478,7 +1573,14 @@ field failure rate (section 0, honesty).
   switched off, so editing one range never moves the others): outcomes do not depend on the number of workers or the
   batch size, a deeper study extends a shallower one, and the default seed (1) reproduces the published egg-picker
   study (150 of 200 at 1 ms; 140 before the simulation gripped at the gripper stage's 2.34 N). Outcomes: `placed`; `jam` (the object rose more than 10 mm after the release or ended
-  more than 45 mm off: the jaws stayed shut and carried it), `drag`, `missed_grasp` (not lifted half the hover height),
+  more than 45 mm off: the jaws stayed shut and carried it), `drag`, `no_force_reading` (a hobby gripper's
+  force-sensing close gave up on an object narrower than its probe: `metrics["grip_gave_up"]`, section 22),
+  `stalled` (a sensorless hobby gripper's close held its servo at stall on an object wider than the gauge, the object
+  intact: `metrics["grip_stalled"]`, section 22), `knocked` (the object moved more than `robust.KNOCK_MM`, 20 mm,
+  before the grasp phase began: the arm hit it on the way, a real failure of the layout, so it counts; row
+  `knocked_mm`; the default egg-picker's resting hand sits 1.07 mm from a 200 mm water bottle's end, so one 1.5 %
+  over its size is hit and rolls off the table, which read `missed_grasp`), `missed_grasp` (not lifted half the
+  hover height),
   `dropped` (more than 12 mm of slip in transit), `over_force` (the product's damage check), `unreachable`,
   `world_collision` grouped as `world_collision:<phase>` (the plan's phase at the first contact); `unstable` (MuJoCo's
   BADQPOS, BADQVEL, BADQACC or BADCTRL warnings, after which MuJoCo restarts the run from its first frame, a full
@@ -1767,7 +1869,12 @@ Fixes of the release review's engineering findings. What other code relies on si
   it is the grip (the target at the jaw's lever; a rack jaw per finger F = torque x 0.6 / 2r), with them a cap at the
   firmware's hard stop. A sensorless grip the servo can't reach is an issue, and so is a hobby PWM gripper whose stall
   force exceeds the object's limit. The firmware writes it at start-up and when the e-stop clears (`gripTorque()`:
-  Feetech register 48 in 0.1 %, DYNAMIXEL Goal PWM in percent) and F re-sets it on a sensorless gripper. A sensorless
+  Feetech register 48 in 0.1 %, DYNAMIXEL Goal PWM in percent) and F re-sets it on a sensorless gripper, up to
+  `GRIP_LIMIT_N`: for an object with no damage force that is the jaws' stall force, so F 1000 writes the whole stall
+  torque (register 1000 on the sensorless egg-picker hand with a soda can) and the bus servo holds it for the carry; F is the
+  person's choice there, and the servo's own torque register is what stops it. A hobby force-sensing gripper's F
+  raises the loop's target up to `GRIP_LIMIT_N` too (19 N on the egg-picker hand's egg), above the 10 N its MG996R
+  holds continuously: the plan's warning and the manual say it then runs warm on long carries. A sensorless
   revolute jaw is simulated with that torque (`asm.meta["grip_torque_nm"]`). Firmware with force sensors that read
   under `GRIP_SENSE_N` through a whole close probes to `GRIP_MIN` (`GRIP_PROBE` is the whole overtravel past
   `GRIP_CLOSED`, section 20), goes back to `GRIP_CLOSED` and prints `!GRIP no force reading down to GRIP_MIN`. `tests/fw_stubs/grip_harness.cpp` runs the
@@ -1800,12 +1907,118 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   twists. An assembly request moves the parts (task `pick_place`, no sorting camera). `CATALOG` has a glass jar
   (65 mm, 300 g) and a pill bottle (35 mm, 40 g), offered by the containers and small-parts archetypes only when the
   request names them (`Archetype.more`).
-- **People the robot works for (UX-3).** `brief.PERSON_NEAR` (a grandparent, "my mum", "my dad", "my partner", "help
-  me", "for him" and the like) infers `people_nearby` "yes" for every archetype, so the robot gets an emergency stop
-  and the card says it was assumed; `HAND_TO_PERSON` ("pass my dad", "bring her") sets the task to hand-over. A
-  hand-over defaults to people next to it and a sorting archetype asked to hand things over gets no camera. Every
+- **People the robot works for (UX-3).** `brief.parse` reads `people_nearby` from the person signals first
+  (`brief.person_signals(people_text, text)`: children, someone beside it, someone it hands things to, someone it
+  helps, serves or works for, "no one else"; the person patterns run on `brief.people_text(request)`, E-N8), apart
+  from the task; someone who collects from it, checks on, calibrates, services or empties it is beside it ("customers
+  collect their orders from the tray", "a technician calibrates it daily", "a nurse checks on it"), and someone else
+  given a robot works with it ("give the operator a system that sorts parts", "get my grandma a robot arm"; only the
+  user asking for one, "give me a robot that sorts screws", is no person). The word hand-over ("a handover robot")
+  and "the robot and I share a workbench" are person signals too, and "gimme" is "give me". A robot that works on
+  someone's body is next to them ("a robot that brushes my hair", "washes grandma's feet", "dresses him"); one that
+  grooms an animal has a pet next to it ("brushes the dog"); a laser engraver and a case erector are machines. Any
+  person signal puts a person next to it; "Nobody nearby", "no one works next to it" (`brief.NOBODY_NEAR`; not "no one else", nor followed by except, but, apart from, other than, besides, just or only:
+  "no one near it but me", "no kids near it, just me") says "no" only when the request has none of them and gives
+  nothing to an animal ("no one is around, it helps my grandma eat her soup", "nobody nearby, the nurse takes the tray
+  from its gripper" and "no people around, students will use it" keep the person). A person word right after "no",
+  "not" or "without" is no person ("no humans next to it", "no workers near it"). `merge()` keeps the signals in
+  `flags["person"]`, those of a typed reply too (`answer()` passes its `person` signals through `merge()`, so "a robot
+  that sorts screws", then "the operator takes the bins from it", then "no one works near it" keeps the operator): a
+  later message's "nobody near it" doesn't take that person away, and `brief_to_changes` keeps the
+  emergency stop beside them whatever the people answer is (an answer "It works on its own" gets the assumption "Your
+  request puts a person next to it (...), so it has an emergency stop even though no one else works next to it." and
+  the card row "Only the person your request names"). Kids, children, toddlers, babies,
+  infants, twins, teens, tweens, youngsters, grandkids, schoolkids, "my son", "my daughter", "the girl" and a child's
+  age ("my 5yo", "my 3 year old": 1 to 12, not before an animal, a robot, a car, a house or a tree) (not "no kids")
+  say "children". People
+  beside it in so many words (`brief.PEOPLE_BESIDE`: "people work next to it", "next to the operator", "between two
+  packers", "a worker stands next to it", "I'm right next to it", "we'll be working beside it", "customers stand in
+  front of it", "where customers pick up their coffee", "the table I work at", "shared with two workers", "a bin I fill
+  by hand", "the operator takes the part from its gripper", "an operator feeds it parts", "an operator loads the
+  fixture", "students will use it", "no one near it but me") say "yes". A hand-over (`HAND_TO_PERSON`), a person the
+  robot works for, helps or gives something to (`brief.PERSON_NEAR`: a grandparent, "my mum", "my colleague", "help
+  me", "assists the surgeon", "help a blind person", "for him", "for the nurse", "give the operator a break" and the
+  like), a request that leaves it unsure whether someone is there ("pours me a coffee", "makes me a sandwich", "pass
+  the salt over here", "bring that here", "pass the butter" as the whole request, "a busy cafe", "serves drinks", "a
+  robot barista") or "no one else" infer "yes" for every archetype (a toy archetype keeps its children; a pet
+  archetype's person is a person: "hand the dog walker the dog food"), so the robot gets an emergency stop and the
+  card says it was assumed. An animal it gives something to (`brief.ANIMAL_GETS`: "hand the dog a bone", "give
+  my parrot seeds", "toss balls to my dog", "bring a toy for the puppy"; not "bring the hamster cage to the table")
+  infers "pets", with the same emergency stop; an animal is never the person of a hand-over ("to my dog" is no "to my
+  cousin"), while "my dog walker" and "my dog's sitter" are people. Only then does "nobody nearby" say "no", and only
+  then do "on its own", "by itself", "unattended", "enclosed", "fenced" and the
+  robot working alone (`brief.ROBOT_ALONE`; "she lives alone" and "while he is alone" say nothing about the robot)
+  infer "no", shown as an assumption ("assumed"), never as "you said". A designer model's "no" never takes away a
+  person the words put next to it (`agents.apply_update`). `HAND_TO_PERSON` ("pass my dad", "bring her") and the word hand-over ("does
+  hand-overs to nurses") set the task to hand-over. A hand-over has people next to it (its default is "yes" on an archetype whose default is "no" or "pets") and
+  always an emergency stop (`brief_to_changes`): the people
+  question isn't asked on one, and an answer or a model that says it works on its own keeps the e-stop, with the
+  assumption "It hands things to a person, who takes them from the gripper within its reach, so it has an emergency
+  stop even though no one else works next to it." and the card row "Only the person it hands things to". A sorting
+  archetype asked to hand things over gets no camera. Every
   width in a note is `capability.min_width` for the shape (26 mm round, 21.5 mm flat-sided), and a preset outside the
   band says which limit it breaks (`brief.unfit_note`: "too heavy", "too narrow", "too wide").
+- **A person read from how the request is built (round 6).** Besides the lists, `person_signals` reads
+  `brief.PEOPLE_AT_IT` as someone beside the robot: a person at the start of a clause (`_CLAUSE`: the start, after
+  punctuation or a joining word; "I", "we", "he", "she" and their contractions, a word for people with or without a
+  determiner, a name, "someone", a word for someone by what they do, maybe followed by "on the line" or "from
+  maintenance"), helping words ("is", "will", "keeps", "comes by to"), a verb that isn't about wanting, owning, making,
+  telling or being away (`_WANT_OWN`, `_AWAY`, never a function word) and the robot ("it", "its tray", "the robot")
+  within eight words, with no "not" or "n't" in the first three; someone in a "while", "as" or "when" clause who isn't
+  away ("while I solder"; not "while I sleep", "when I'm at work", "while the staff are on break", "while I watch tv in
+  the other room"); a robot someone does something to ("a robot the nurses can use"); a person after "used by",
+  "operated by", "shared by" and the like; the robot taking something from someone or out of their hand; "I sit right
+  there", "in the same room", "on the same bench as the technician", "with 20 people"; following or shadowing
+  someone; and "by" before a person (not "made by", "sold by" and the like, nor "by the operator's bench"). And
+  `brief.PEOPLE_AROUND` as someone around, assumed: a person at the start of a clause with a helping word or a verb
+  that looks like one ("if a customer wants a leaflet", "the welder needs rods"; not "the machine operator manual"),
+  "so I don't have to bend", and places and jobs that leave people around it (care and nursing homes, hospices, pubs,
+  salons, restaurants, operating theatres, wards, fairs and booths, table, bed or room numbers, waiting tables, serving,
+  tending bar, working a till or a counter, dealing cards, selling, handing back change, passing things down a table,
+  a robot receptionist, nurse or carer, cobots, assistive and daily-living robots, power chairs and bed rails, the
+  robot sitting on someone's bed, chair, tray table or desk). A classroom, a school or a nursery infers children. The
+  words between a person and a place noun describe the place only when none of them is "its", a possessive or a verb
+  (`_NOT_THEIR_PLACE`, `_VERB_BASE`: "the operator fills its hopper" keeps the operator, "the operator station" is a
+  place, and "staff press the stop button on it" reads "press" as the verb). People words: groups ("the elderly", "the
+  public", "the homeless", "the lads", "amputees", "the two of us"), family words from other languages and spellings
+  (`_KIN`, 83 more: oma, opa, nonno, babcia, yiayia, abuelita and the like), a landlord, an ex, the RN, LPN, CNA, HCA, GP, KP, the dr,
+  hairdressers, scaffolders, pot and window washers, new starters; a lower-case first name (`_NAMES`) after help, for
+  or with, and a word that may be a name after "to" or "help" at the end of its phrase (`_A_NAME`: not a thing, a
+  place, a department, a job done, an animal or the robot); a capitalised word after to, for, with or help in Title
+  Case or capitals (`people_text`); a role before a name without a determiner ("nurse kelly", `_TITLED`); "IT guy";
+  "im", "ive", "hes", "shes", "theyre" and, before a person's verb, "ill", "id" and "were". The other way round, the
+  people words before records, files, samples, orders and the like describe them ("sort the patient records"), and a
+  department ("Legal", "Housekeeping", "Ward 7"), a bender, a slitter, a seamer, a case packer, a spot welder, a vision
+  inspector and a washer grader are no people. The round-6 hunt's table (`tests/fixtures/brief/people_hunt.json`:
+  3,033 requests with the readings expected before the hunt ran, and the fixer's 1,202 probes: 593 people acting on
+  the robot, 609 no one near it) runs in `tests/test_brief_answers.py::test_the_people_hunt_table`. A place that
+  belongs to someone named (`brief.THEIR_PLACE`: a family word, a role, a name, "someone" or "people" with 's or s'
+  before a place noun: "put the parts into the operator's tray", "fills my dad's pill organiser", "the nurses'
+  station") is no hand-over but a person nearby, assumed ("near"), so the robot gets an emergency stop; "her room" and
+  "his desk" name no one and stay no person (`test_passing_things_on_to_a_station_is_a_pick_and_place`). Of the 2,739
+  that put a person next to the robot, 2 still have no one nearby and no emergency stop, on purpose: "a robot that
+  brings the tea to her room" and the person's own things at a machine ("grabs my printouts from the printer"). Other
+  known misses: a first name
+  on no list at the very start of a sentence ("Siobhan switches it on"), a person's age the words don't give (a niece,
+  a nephew, a stepson: an adult with the e-stop, not children), and a request that sorts as well as hands over (a
+  sort, with the person and the e-stop kept); known extra e-stops: a capitalised product name read as a name, someone
+  who mounts the robot, a ward or a theatre, a tester, a bagger or a loader, "the teachers' lounge", and a place or a
+  thing a named person owns with no one said to be there ("restock the nurses' station", "move the workers' lockers",
+  "move the doctor's bag to the car", "move the farmer's market crates to the van"). The 45 rows read otherwise on
+  purpose are strict expected failures in that test, so the list above stays true. Four former extra e-stops are now
+  built with no person: a lower-case job step or process word after "to" (`_PROCESS_WORDS`: "moves the parts to
+  rework", also quarantine, autoclave, decon, deburr, reflow and others) is a station, not a name, though a capital in
+  an ordinary sentence still is one ("hands the bolts to Buffer"); a numbered bed, table or room in a greenhouse or
+  workshop is a station (`_STATION_PLACE`: "moves the seedlings to table 4"), while one anywhere else is a person
+  whatever the verb ("carries the meds to bed 4"; "moves pots to bed 3" too, an extra e-stop kept on purpose); a common
+  word in a Title Case or SHOUTING tagline is not a name ("... For Fun", "... With Steel", "... With Care"), and a
+  given name is never one of those words (Joy, Love); and an explicit "nobody around" beats a bare "cobot",
+  "collaborative robot", "human-robot" or "HRC" hint (`_COBOT_UNSURE`), never a person the request describes and never
+  a robot whose user is at it by construction (power chair, hospital bed, bed rail, feeding, assistive, daily-living or
+  mobility robots, helping hands, a cobot barista). Someone served or cared for at arm's length is a person named
+  (`_SERVES_SOMEONE`): a double-object serving verb ("pours us coffee", "makes Tom a sandwich"), a drink topped up,
+  body care ("paints my nails", "puts in my eye drops", "ties my shoelaces", "puts the straw in her mouth"), visitors
+  greeted, the guests' glasses, "whose bin I empty"; "give me a robot" and "pass the guest towels to the shelf" are not.
 - **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
   at `test_reach_mm` (about 45 % of the egg-picker's reach), so the inspector's "Payload at full reach" overstated the
   arm 2.4 to 3x. The sweep now also reports the arm stretched straight out (`simulate._stretch_pose`: the tool point at
@@ -1884,7 +2097,8 @@ relies on since:
   a damage force, so the firmware's `GRIP_LIMIT_N` and the F command's cap, and its "reaches only" issue), the
   standalone gripper's `choose_servo` (the first hobby servo its printed mechanism mounts whose stall force is at
   least twice the target), `sizing.gripper.stall_force_n` (at the rail), the generated arm's gripper joint `effort` (the
-  stall force per finger at the rail: the URDF, and the simulation's cap on the squeeze and its grip-limited payload),
+  stall force per finger at the rail: the URDF, and the simulation's cap on the squeeze; the grip-limited payload uses
+  the firmware's hard stop, section 22),
   `electronics2.grip_torque_limit`, the gripper's current estimate, `eplan.grip.stall_force_n` (new: per finger at
   stall on the rail) and the stock jaw's `servo_stall_force_n`. The STS3215 12 V gripper on a 10.5 mm pinion gives
   82.9 N per finger (the force plan said 165.9 N, sizing 221 N).
@@ -1905,13 +2119,12 @@ relies on since:
   gauge (1.76 mm per jaw) gets gripped; the torque limit, written at start-up as a cap at the force limit, bounds the
   squeeze meanwhile; with no reading by `GRIP_MIN` it goes back to `GRIP_CLOSED` and says so. Without force sensors G
   commands `GRIP_MIN`, past the object (it commanded `GRIP_CLOSED`, the gauge contact, where a torque limit has no
-  position error to act on): the torque limit sets the squeeze, or a hobby servo's whole torque. The simulation models
-  exactly that: its jaw is commanded past contact, force-limited at the torque limit's force, and a sensorless hobby
-  servo squeezes with its stall force (`arm.grip_meta` puts `eplan.grip.stall_force_n` in `asm.meta["grip_squeeze_n"]`).
-  The firmware header, the plan's warning ("G closes the jaws past the object and the gripper servo's torque limit
-  sets the squeeze") and the manual (`manual._grip_sentence`, with `GRIP_MIN` in the joint's unit) say the same. A
-  hobby PWM gripper with force sensors gets a warning when its stall force exceeds the object's damage force: nothing
-  backs the sensors up. `tests/fw_stubs/grip_harness.cpp` takes the object's contact offset as `argv[2]`.
+  position error to act on): the torque limit sets the squeeze. The simulation models exactly that: its jaw is
+  commanded past contact, force-limited at the torque limit's force. The firmware header, the plan's warning ("G closes
+  the jaws past the object and the gripper servo's torque limit sets the squeeze") and the manual
+  (`manual._grip_sentence`, with `GRIP_MIN` in the joint's unit) say the same. A hobby PWM servo has no torque limit:
+  section 22 says how far its firmware closes it instead. `tests/fw_stubs/grip_harness.cpp` takes the object's contact
+  offset as `argv[2]`.
 - **The stock jaw's lever (E-N6).** `imported.grasp_lever(design, sizing)` is the lever where the simulation grasps the
   object (`simulate.grasp_lever(asm, design)`: `_describe(..., grasp_only=True)`, the hand's and the jaws' pieces
   only), worked out on the robot's own jaws with sizing's servos and the object's shape and size, on the camera-free
@@ -1944,8 +2157,8 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   of its own changed and the parent's own result for it is usable (an early cutoff; a failed one is computed again), so a wrist camera or a longer reach re-sizes the arm without rerunning the
   grasp simulation (`provenance` "reused from rNNN"). `dirty_nodes` and Teams' `affected_stages` stay static: they
   list the gripper stage for every sizing edit. Teams' change-request preview applies the same cutoff to its grip: it
-  re-plans the grip, and shows a "Grip" row, only when a gripper key or `gripper_inputs` changes. New robot's
-  preflight passes the same rail stall.
+  re-plans the grip, and shows a "Grip" row, only when a gripper key or `gripper_inputs` changes (section 22: and then
+  keeps the base's grip when the grasp is the same). New robot's preflight passes the same rail stall.
 - **The arm is laid out the same before and after the electronics plan.** `arm.BAY_CLEAR_MM` (22 mm) is the electronics
   bay's clear height under the deck, fixed: the layout no longer takes it from the plan's boards (sizing laid the arm out
   without them, the build with them, and with a short turret the deck sets the shoulder's height). A board taller than
@@ -1962,10 +2175,9 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   only when not after a moving verb or determiner (`_DET`) and not "twist ties" or "twist-off"; "screw caps" after
   `_DET` are caps; "insert" after `_DET` and plural "inserts" or "plugs" not done by a doer ("it", "that", "which",
   "robot", "arm") are parts; "assembly line/station/area/..." is a place and "pre-assembled" an adjective.
-  `brief.HAND_TO_PERSON` needs a receiver: "hand/pass/give/bring" followed by a person (me, him, her, us, `_PERSON`), or
-  by up to four words and "to" a person ("give it back to her", "hand the cup to my mum"); "them" or "it" alone are the
-  things, so "pass them to the packing station" is a pick and place with no emergency stop. `PERSON_NEAR` uses it for
-  those verbs (help, assist and serve keep "them"). `tests/test_brief_answers.py` holds both ways' tables.
+  `brief.HAND_TO_PERSON` needs a receiver (see "Who receives a hand-over" below): "them" or "it" alone are the things,
+  so "pass them to the packing station" is a pick and place with no emergency stop. `PERSON_NEAR` uses it (help, assist
+  and serve keep "them"). `tests/test_brief_answers.py` holds both ways' tables.
 - **No negative payload (E-N9).** The payload sweep's `stretch_payload_g` is the static capacity stretched straight
   out, and stays as computed in the simulation's metrics (below zero: the deficit). The summary clamps it at 0 and adds
   `stretch_holds_itself` (False when a servo can't hold even the arm's own weight out there; None without a sweep) and
@@ -1987,8 +2199,8 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   `manufacturing.configs[k].tooling_cost` and takes it out (tooling / the base's quantity). The tooling is a note, paid
   once ("plus $72,971 of mold tooling, paid once", "and no mold tooling (it had $X, paid once)", or "plus the $X of
   mold tooling" for a build that keeps its molds); `impact.cost` has `tooling: [before, after]` and `before`, `delta`,
-  `after` without it. A production switch at quantity 1 read "about +$73,374 per robot"; it reads "+$4,234 per robot
-  ...; plus $69,140 of mold tooling, paid once". `collab.built_summary` adds `tooling_cost` and `quantity` ([base,
+  `after` without it. Switching the default egg-picker to production at quantity 1 read "about +$77,438 per robot"; it
+  reads "about +$4,466 per robot (parts made +$4,466): $305 → about $4,771; plus $72,971 of mold tooling, paid once". `collab.built_summary` adds `tooling_cost` and `quantity` ([base,
   built]) and `release_gate`'s checklist `tooling_cost` and `quantity`; Teams' "Built rNNN: ... per unit" line and the
   checklist's unit cost say "incl. $X tooling over N units", as the inspector does.
 - **No "add force sensors" issue where a torque limit sets the squeeze.** `electronics2.has_torque_limit(gkey, family)`
@@ -1999,3 +2211,263 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   to Force sensor: none was not feasible for that alone; the egg-picker now builds with its checks passing (torque
   limit 5.3 % of stall for 4.42 N, the egg intact at 4.53 N peak). A hobby PWM gripper still gets the issue, as an
   imported one does. New robot's preflight uses the same helper.
+
+## 22. Hobby grippers, preflight speed and honest records (release review fixes, track E5)
+
+Round 3 of the grip and pipeline fixes. What other code relies on since:
+
+- **No hobby servo is commanded to stall.** `morph.electronics.SERVO_BAND_MM` (1.5 mm) is how far past contact a
+  position-controlled jaw servo closes before it squeezes with its whole stall force (its position loop's proportional
+  band plus the gear's and the jaw's give); `simulate.GRIP_SAT_MM` is the same number. A gripper servo with no torque
+  limit (`electronics2.has_torque_limit` false: hobby PWM) gets `eplan.grip.open_loop` from
+  `electronics2.open_loop_squeeze(grip, gkey, family)`:
+  - without force sensors `squeeze_mm` = band x min(target, `rated_n`) / stall, where `rated_n` is the servo's rated
+    (continuous) torque as a force at the jaw (stall x `rated_nm` / `torque_nm`: 10 N on an MG996R egg-picker hand), at
+    least two position commands (`step_mm` each: a PCA9685 count, 4.88 us, at the jaw), and `squeeze_n` what that
+    squeezes a gauge-sized object with: the target, more when floored, `rated_n` when the target is above it
+    (`capped`; a 370 g can's 13.94 N target squeezes 10 N, 0.49 mm past contact; a 900-1400 g can, whose target is
+    above the servo's stall, no longer has it held at stall 1.5 mm past contact, and is an issue: 10 N is below the
+    16.95-26.37 N it needs not to slip). The jaws are calibrated on a gauge of the object's nominal size and the object
+    strays from it by `OBJECT_SIZE_SPREAD` (below) each way, so one at the large end of its size is held `spread_mm`
+    (that share of its half-width for a rack's two jaws; of its whole width for a stock jaw, whose one moving jaw
+    closes on the object against the fixed jaw: `open_loop.per` "at the moving jaw", and the manual then calibrates
+    the stock jaw's zero on a gauge held against the fixed jaw instead of with its faces touching, and the firmware's
+    `GRIP_CLOSED` comment says "jaw on the gauge") further past its own contact. `room_mm` = min(`PROBE_STALL_SHARE` x band, band x
+    the object's damage force / stall) is how far past its contact that object may be held; `covers` is whether two
+    position commands fit in `room_mm - spread_mm`, and then `squeeze_mm` is at most that (`band_capped` when this
+    lowers it; `band_n`, stall x (room - spread) / band, is what that squeezes a gauge-sized object with). `large_n`
+    is what the large end gets. Without `covers` the squeeze stays as above and the plan has an issue
+    (`grip_problems`: "... closes by position only, so a <object> at the large end of its size, <spread> mm per jaw
+    wider than the calibration gauge ... is held <squeeze + spread> mm past its contact, with <its whole stall force
+    | N, x % of it> ..."); with `band_capped` a squeeze below the window's low end is an issue too. On an MG996R
+    egg-picker hand (1.2 mm room): a 370 g soda can (2.64 mm spread) and a water bottle (2.60 mm) get the issue, an
+    egg too (1.76 mm; it also has the gripper stage's "add finger.sensor=fsr402"), an 18 mm marker (0.72 mm) covers
+    (0.16 mm squeeze, 18.13 N at its large end, above the 10 N rated torque: a warning) but is too small for the
+    fingers (a `too_small` issue): without force sensors no object both covers and fits them (below). The firmware's
+    `GRIP_SQUEEZE` (in the joint's unit) is that distance and G commands `GRIP_CLOSED - GRIP_SQUEEZE`, never
+    `GRIP_MIN`; F sets it (`GRIP_SQUEEZE_PER_N` = band / stall, at least `GRIP_SQUEEZE_LEAST`).
+    `eplan.grip.limit_n` (`GRIP_LIMIT_N`, F's cap) is min(the object's limit, `rated_n`, and `band_n` when `covers`): F
+    raises a squeeze planned below that up to it (a servo softer than the model squeezes less than F says, and F can't
+    take it further), never holds a gauge-sized object past the servo's rated torque unless two position commands
+    already squeeze more (below), and with `covers` never holds the large end of the band past `room_mm`. A capped grip writes the squeeze as `GRIP_TARGET_N` and is a plan issue only
+    when `rated_n` is below the window's low end, the force the object needs not to slip (`grip_problems`). The
+    simulation (`simulate._open_loop_stalls`, `_Info.grip_squeeze_mm`) fails a pick-and-place trial whose object
+    (`size_scale`) is wider than the gauge by `GRIP_SAT_MM - grip_squeeze_mm` per jaw (at a stock jaw's moving jaw,
+    twice its radius' growth) or more, where the servo's own
+    position loop holds it at stall: `metrics["grip_stalled"]` {wider_mm, squeeze_mm} and `metrics["failure"]`; a
+    robustness study counts it as `stalled` ("Held the gripper servo at stall ..."), unless the object was also
+    crushed (`over_force`). It also crushes a trial (`simulate._open_loop_crushes`: `intact` false,
+    `metrics["grip_crushed"]` {force_n, wider_mm, squeeze_mm}, a named failure, `over_force` in a study) whose servo
+    model squeeze, `grip_stall_n` x min(`grip_squeeze_mm` + wider, `GRIP_SAT_MM`) / `GRIP_SAT_MM`, is above the
+    object's damage force, at its nominal size too: MuJoCo's soft contact measures far less on a light or rigid
+    object (a light bulb 2 % over its size: 10.35 N against the model's 15.66 N; a ping pong ball's least close, 3.31 N
+    against 0.28 N), and both are labels from that model, not from the measured grip (`docs/ROBUSTNESS.md`). The plan keeps a margin the simulation doesn't (80 % of the stall against the stall
+    itself), as its hold margin does. A floored squeeze (two position commands) above `limit_n` is a plan issue of
+    the `hobby_gripper` kind that names the lowest of the three ("... the least it can close past the <object> (two
+    position commands, <mm> at the jaw) squeezes about <N> N per finger, above <the object's limit | the <N> N it
+    holds continuously (its rated torque) | the band's>"): the SO-101's stock jaw on hobby servos has one PCA9685
+    count 0.48 mm at its 62 mm egg lever, so an egg gets 11.04 N, twice the 5.62 N the MG996R holds continuously
+    there, and a soda can 11.05 N against 4.38 N. The firmware's `GRIP_TARGET_N` comment then says "two position
+    commands, the least G can close past it, more than Morph's <target> N target", and the manual says F can't lower
+    it. Torque-limited and force-sensing grips
+    keep `GRIP_SQUEEZE` = the whole overtravel (G still commands `GRIP_MIN` without sensors);
+  - with force sensors (`open_loop_squeeze(grip, gkey, family, width_mm)`) the firmware's `GRIP_PROBE` is `probe_mm`:
+    the close goes no further than that past the gauge without a force reading, reads there too, and then opens to
+    `GRIP_MAX` with "!GRIP no force reading down to GRIP_PROBE past GRIP_CLOSED: opened to GRIP_MAX ..." (it went
+    back to `GRIP_CLOSED`, where an object larger than the gauge stayed squeezed with no reading; a torque-limited
+    gripper still does that, its torque limit caps it). `spread_mm` = `morph.electronics.OBJECT_SIZE_SPREAD` (0.08, the
+    robustness study's default size band, which `robust.default_spec` reads) x the object's half-width;
+    `reach_mm` = spread + two position commands (a reading). When reach is at most `PROBE_STALL_SHARE` (0.8) x band,
+    and with a dead sensor a gauge-sized object at the probe below gets no more than its damage force (stall x probe /
+    band) and one at the large end of its size, held `spread_mm` further past its own contact there, no more than its
+    damage force either (stall x min(probe + spread, band) / band), `covers` and `probe_mm` = min(max(reach, band x
+    `limit_n` / stall), `PROBE_STALL_SHARE` x band) (an SG90 hand's 18 mm marker: band x `limit_n` / stall is 1.50 mm,
+    the probe 1.20 mm); otherwise `covers` is false, `probe_mm` = min(max(band x `limit_n` / stall, two commands),
+    `PROBE_STALL_SHARE` x band), an object narrower than it per jaw isn't gripped, and the plan has an issue naming
+    both distances, what a dead sensor would put on a gauge-sized object at the reach (and its damage force when that
+    is above it, or else what the large end of its size would get when that is above it) and recommending a smart-bus
+    or Dynamixel gripper servo (for a hobby PWM gripper servo; a bus servo on a bus that can't set its torque limit has
+    its own issue and gets no firmware). On an MG996R egg-picker hand an 18 mm marker covers (0.92 mm probe, 0.72 mm
+    spread); an egg (1.92 mm needed), a strawberry (1.36 mm), a ping pong ball (1.76 mm) and a tomato (2.76 mm)
+    don't (0.92, 0.16, 0.16 and 0.32 mm probes), nor does a 20 mm grape: its 0.96 mm reach is under the 1.2 mm share,
+    but a dead sensor there would put 19.77 N on a gauge-sized grape, ten times its 2 N damage force, so its probe is
+    two commands (0.16 mm), where a dead sensor still puts 3.31 N on it, the least the servo can be sent (the plan's
+    warning says so). Nor does a 22 mm flat-sided part with a 25 N damage force: a dead sensor at its 1.04 mm reach
+    leaves a gauge-sized one 21.42 N, but one at the large end of its size (0.88 mm per jaw wider) gets the whole
+    30.86 N stall (it read covered, and the compiled firmware put 25.94 N on one 2 % over its size); its probe is
+    0.92 mm. Without a damage force the same part covers (1.04 mm probe), and its large end can reach the stall for the
+    moment before the jaw opens: the plan's warning, the firmware's comment and the manual say so. So on this hand the
+    only hobby grips without an issue are force-sensing ones on flat-sided parts from 21.5 mm
+    (`capability.MIN_WIDTH_MM`:
+    the force-sensing fingers close on 21.5 mm flat, 26 mm round; the plan itself raises no issue from 21.01 mm) up to
+    25.97 mm wide (from 25.98 mm, reaching the small end of its size would let a dead sensor put 80 % of the stall on
+    a gauge-sized one, the probe's cap), with no damage force or one at or above the MG996R's 30.86 N stall (below it
+    a dead sensor can put the stall on one at the large end of its size), measured on parts of 5 to 132 g (heavier
+    ones overload the hobby shoulder); the marker covers but is too small for the fingers (a `too_small` issue), and
+    without force sensors no object both covers and fits the
+    fingers (31.5 mm flat, 38 mm round). `probe_n` (stall x probe / band) and `large_n` (stall x min(probe + spread,
+    band) / band) are what a gauge-sized object and one at the large end of its size get at the probe with a dead
+    sensor until the jaw opens (`reach_large_n` the latter at `reach_mm`); the plan's warning, the firmware's comment
+    and the manual state both, and the warning adds the damage force when either is above it.
+    `arm.grip_meta` puts `probe_mm` in `asm.meta["grip_probe_mm"]`
+    (`simulate._Info.grip_probe_mm`), and a pick-and-place trial (`simulate._run_pick_place`) whose object
+    (`size_scale`) is narrower than the gauge by more than that per jaw closes only to the probe and opens
+    (`_given_up`), fails, and names it: `metrics["grip_gave_up"]` {narrower_mm, probe_mm} and `metrics["failure"]`; a
+    robustness study counts it as `no_force_reading` ("Let go with !GRIP ..."). The firmware's first reading needs
+    `GRIP_SENSE_N` (0.05 N) of squeeze, a few hundredths of a millimetre, so the two agree to within that. New
+    robot's repair (`brief.repair`, issue kind `hobby_gripper`, which also takes the capped-hold and size-band issues
+    above) switches
+    a hobby PWM arm with such an issue to smart-bus servos and says so, also when the person asked for hobby servos
+    ("a 4 dof arm with hobby servos to pick up ping pong balls"), as it does when they can't hold the load.
+    `tests/fw_stubs/grip_harness.cpp` prints `max` (`GRIP_MAX`) too.
+  `eplan.grip.squeeze_n` (every grip: the target, or the open-loop squeeze) is what `_actuator_currents` budgets the
+  gripper's current from. A hold above the servo's rated (continuous) torque share is a plan warning. `arm.grip_meta`
+  puts `grip_squeeze_mm`, `grip_squeeze_n` and `grip_stall_n` in `asm.meta`; `simulate._describe` then commands the jaw
+  `grip_squeeze_mm` past contact with the stall force as its limit (`info.grip_open_loop`), and a robustness study's
+  `grip_scale` scales that servo's gain too. `tests/fw_stubs/grip_harness.cpp` also runs a PCA9685 sketch (`pulse`, the
+  gripper channel's last pulse) and takes an F before G as `argv[3]`.
+- **New robot's preflight and Teams' preview never run the stock jaw's seat search.** `imported.grasp_lever(design,
+  sizing, quick=True)` and `imported.gripper_summary(..., quick=True)` (what `brief.preflight`, and through it Teams'
+  `impact`, call) take the lever the build worked out for this object (`_LEVERS`, keyed by `_lever_key`), or for one of
+  its shape within `NEAR_MM` (2 mm) of its diameter and length, else the profile's `jaw_lever_mm` (`JAW_LEVER_MM`, 70 mm
+  mid-jaw), and mark the force plan `lever_estimated`. The build's gripper stage (`pipeline2.gripper_stage`) always
+  searches. The search puts the SO-101's objects 20-66 mm across 62.2-79.8 mm from the pivot, so the estimate's stall
+  force and stall-capped limit are within 15 % of the build's. A target the object's window sets and a damage-capped
+  limit are the build's; a target capped at 0.8 x the stall (`imported.gripper_summary`) moves with the stall and so
+  can differ from the build's within the same 15 % (the SO-101's water bottle: 18.51 N quick, 16.23 N built). Measured on the SO-101 (load 5-15, wall): preflight of a soda can 28.3 s -> 4.1 s (CPU 24.9 ->
+  2.7 s, the rest is sizing for its new mass), each new egg diameter 2.8-8.9 s -> 0.0 s; Teams' preview of a soda-can
+  change 39.5 s -> 11.5 s, of a 42 mm egg 15.9 s -> 3.2 s.
+- **Teams' preview keeps the built grip when the grasp is the same.** A generated arm's gripper stage gets its hold
+  from its grasp simulation, which New robot's closed form (the preflight) doesn't have: the egg-picker builds 2.34 N
+  where the closed form says 2.17 N. `impact._regrip` plans the new grip with the base's `hold_force_n` and
+  `target_force_n` on the new servo and rail (`morph.electronics.plan` with the target pinned and the hold as the
+  simulated one), so only the stall, the force limit and "reaches only" move, whenever `impact._grasp_inputs` (the
+  gripper_design's object.*, finger.*, gripper.*, safety_factor and the Grip force target; the finger material only
+  while Keewano calibration is on) is the same for base and edit: a servo rail, an actuator family or a build level.
+  The preview then shows no "Grip" row and plans the electronics with the base's target, as the build does. Any other
+  gripper edit on a generated arm (the object, the fingers, the pads, a force sensor) gets the plan its gripper stage
+  will make: `impact._stage_grip` runs the grasp simulation's hold search (`morph.sim.min_hold_force`, the one number
+  of the simulation the plan reads; about 3 s, kept per gripper design in `impact._HOLDS`) and plans it on the new
+  servo and rail, so a 6 mm pad depth on the egg-picker keeps 2.34 N as its build does (it read 2.34 -> 2.17 N). A
+  stock jaw takes the preflight's grip, as its gripper stage is that closed form.
+- **Who receives a hand-over (E-N8); unsure is a hand-over.** `brief.HAND_TO_PERSON` reads a receiver after a giving
+  verb, in `brief.people_text(request)`: the request in lower case with a capitalised name, or a role or title and a
+  name ("Nurse Jones", "Doctor Patel", "Dr Smith"), written "someone"; a few misspellings mended ("teh", "brng",
+  "brign", "pas", "nures", "docter"); and a word that names someone by what they do and isn't on the lists below
+  written "morphagent" (`brief._agents`: an -er, -or, -ist, -ian, -man/-men, -person/-people, -folk, -mate or -ee word,
+  "the riveter", "the anaesthetist", "the librarian", "the postman", "the salesperson", "the dog trainer", inside a
+  noun phrase, after a determiner, a possessive or a preposition through up to three describing words, or a plural at
+  the start), unless it is a machine, a container, a tool, a place, a part of the robot, an animal, a verb, a name or
+  another word that ends the same way (`_NOT_AGENT`, `_AGENT_VERBS`, `_machine_reader`: "the capper", "the dryer", "the
+  coffee maker", "the sequencer", "the card reader", "the plate reader", "the clicker", "the other", "delivers",
+  "offer"; "the reader" on its own stays a person); such a word must end its noun phrase or have a second one follow
+  it (`_AGENT_END`: "to the fitter", "hand the fitter the bolts", but "the trainer shoes" are shoes). Hand, pass, give,
+  bring and feed (any form, "spoon-feeds") take "me", "him", "her", "us" and `_PERSON` (a family word, "my"/"our"/
+  "your" + up to three words + a person word, "elderly"/"disabled" + a word) with or without a thing after them
+  ("hand me", "bring her the cup", "a robot that feeds me"). They and fetch, get, grab, toss, throw, chuck, lob, offer,
+  serve, lend, loan and send (not a message: "send me an alert" is none) take every other receiver only with a thing
+  after it (`_THING`: a determiner, a possessive or a noun; never a job done to them, a singular after a/an/some ("give
+  them a shake", "give the parts a quick check"; "the wipes" and "the labels" are things), nor a robot asked for
+  (`_NOT_A_ROBOT`: a robot word after a/an/some or none said to the user, a robot or cobot after a/an to anyone, or a
+  robot word before that, which, to and a verb: "get me a robot arm that sorts screws", "give me robot arms", "get my
+  grandma a robot arm"; "hand the nurse the device", "hand the nurse a device", "hand the operator the gripper" and
+  "the machine parts" are things), nor a request (`_REQUEST`: a quote, an option, a way, an idea, a plan, a list and the
+  like only when a robot, its design, its cost or a robot's job (`_JOB`: build, make, design, move, sort, stack, pick,
+  place, lift, grip, transfer) follows within six words: "give me a cheap way to move parts", "get me a quote for an
+  arm", "a list of parts for a robot", "a breakdown of the cost"; "get me started", "get me going"; "something
+  that/to/for" and a robot's job: "give me something that stacks cups"; but "bring me my list", "give me the shopping
+  list", "pass me the list", "bring me something for my headache" and "get me a quote" on its own hand a thing to
+  someone)): "you" ("u", "ya", "y'all"), "the two of us"; "them" ("'em") and someone,
+  anyone or everyone before a thing ("bring them their drinks", "bring them water"; not "bring them all to the bin",
+  "two at a time", "get them done"), whoever and a clause ("give whoever asks a pen"); a title and a name; a person
+  word (`_ROLE`: nurse, surgeon, orderly, operator, worker, packer, welder, fitter, stacker, chef, barista, cashier,
+  customer, guest, diner, patron, bride, human, participant, the morning shift, the line lead, neighbour, friend,
+  bestie, hubby, cousin, baby, teen, man, lady, people and some 230 more, and the family words `_KIN`: grandma,
+  granma, grampa, nan, mum, mother, dad, father, auntie, uncle, baby, ...) after a determiner or a possessive ("the
+  surgeon", "our packers", "my colleague", "the old man", "their nanny", "my 90 year old mum") or in the plural, with
+  up to two describing words ("customers", "wheelchair users"); and any other noun phrase right after the verb when a
+  second one follows it that starts with a determiner or a possessive (`_ANY_NP1`: "hand the bride her bouquet", "give
+  the morning shift their parts", "hand bob the parts", "give grampa his pills", "hand the person in the wheelchair
+  their cup"), unless it is a thing, a place, the robot, an animal, a plant, a function word, a verb compound ("hand
+  pick the strawberries") or a way ("bring the tray the long way"). Those verbs and deliver, take, carry, present,
+  transfer, return, dispense, distribute, dish out, hold, slide, drop, move, push, roll, wheel and flick, and the
+  passive ("parts are handed to the operator"), reach a receiver after up to seven words, hyphenated ones too, and
+  "to" (not "next to", "close to", "due to"; no "then", "while", "so" or robot word in between: "hand the x-ray films
+  to the doctor", "pass the freshly washed and dried coffee mugs to the barista", "hold the cup out to her", "return
+  the cup to my grandma"): any of those, a family word on its own ("pass the remote to mum"), a short family or casual
+  word ("to ma", "to sis") or a common first name in lower case ("give the pills to mary"; `_NAMES`, without names
+  that are also words, such as "will", "mark", "rose" or "max") at the end of the phrase, "them", "myself", "all of
+  them", a plural word for someone by what they do ("to runners at the marathon"), or her, his, my, our, your or
+  their before anything that isn't their place or an animal (`_POSS`: "to my grandma", "to their nanny"). Fetch, get,
+  grab and bring also reach one after up to seven words and "for" ("fetch the remote for my dad"). And: "supply the
+  welder with rods", "provide the operator with screws", "keep the operator stocked with screws"; "passes parts back
+  and forth with a human"; "the person it hands the cup to", "the operator it passes parts to"; "drops the part into
+  my hand", "puts the part in the operator's hand"; "take" with two objects ("take her a cup of tea", "take the nurse
+  the tray"; not "it takes me 10 minutes"); handing things out (`HANDS_OUT`: "hand out the gloves", "pass
+  around the snacks", "hand round the biscuits", "a robot that gives out flyers", "give the gloves out"; not round an
+  obstacle or a place, out of something, nor a part that gives out); passers-by, bystanders, pedestrians, spectators,
+  commuters and tourists are people. A capitalised word is no name at the start of a sentence, after "the" or "a", for a
+  place, person or product word, a department or a brand ("Reception", "Assembly", "Pathology", "Recycling", "Goods
+  In", "Finance", "Starbucks", "Haas"), a month or a day, and when the request is in Title Case or capitals. Baby and
+  infant products are things (`brief._baby_goods`: "baby carrots", "baby food jars", "baby wipes", "infant formula"),
+  except right after a giving or feeding verb with no one else to get them ("feed the baby food", "give the baby
+  carrots": the baby may be the one fed). A tray denester and a bottle corker are machines; a grader, a candler, a
+  stacker or a deburrer may be a person and stays one (a safe error: "move the eggs to the grader" is a hand-over). The
+  patterns are compiled once (`brief._rx`).
+  A person's place is no person. A possessive, a family word or a person word before 's or s' owns the place the things
+  go to when a place, a piece of furniture, a container or a machine (`_PLACE`: desk, room, bedroom, office, workshop,
+  kitchen, table, car, door, shed, shelf, drawer, bin, tray, station, line, machine, cell, panel, fridge, printer,
+  garden bed and the like), after at most three describing words ("her bedside table", "my mum's kitchen table", "her
+  old wooden kitchen table"), ends the noun phrase: the text ends there, or punctuation, a number, a function word
+  (`_NOT_DESCRIBING`: and, at, so, every, please, ...), an adverb (`_ADVERB`: twice, daily, tonight, upstairs,
+  quickly, ...) or a preposition (`_PREPOSITION`: near, next, over, up, without, ...) follows (`_PHRASE_END`): "bring
+  the cup to her kitchen table near the window" is a pick and place. So "bring the mail to her desk", "bring them to
+  her room", "bring the cups to his office", "give the parts to my dad's workshop", "bring the pills to her nurses'
+  station", "bring the meds to her bedroom twice a day" and "give the bolts to his assembly line" are no hand-over. A
+  person word followed by a place word names the place ("pass the parts to the operator station", "the worker cell",
+  "the guest room"), and "her" or a person word whose next words go to, into or onto a place things are put away in
+  or on is the thing's (`_PUT_AWAY`: furniture, a container, a machine or a station, not a room or an area: "bring her
+  cup to the sink", "give her toys to the toy box", "bring her keys to the hook", "pass the guest towels to the
+  shelf"); she is still a person the robot brings things for, so people are nearby, with an emergency stop ("bring
+  her tea to the table", "bring her cup to the sink"). "In" or "on" a place says where the person is or how the thing
+  comes, and a room or an area may be where
+  the person is, so "bring her tea in the garden", "bring her medicine on a tray", "pass her pills on the tray",
+  "bring her tea to the garden", "bring them tea in the garden" and "give the operator parts in the tray" are
+  hand-overs (an animal's thing keeps the older guard, `_THEN_ANY_PLACE`: "bring the dog bowl to her porch"). The tool
+  hand-over archetype's things going to a place are a pick
+  and place (`_TO_A_PLACE`: "bring the tools to his workbench"; its workshop people keep the e-stop). Otherwise the
+  person is the receiver, because a missed hand-over drops the emergency stop beside a person: after "her" or 's comes
+  no place ("bring the meds to her twice a day", "gives the medicine to her nurse", "bring breakfast to her bedside
+  every day", "give it to her husband", "bring the remote to my dad's friend"), or the place word only describes the
+  person who follows it ("brings the medicine to her home nurse", "to her care home nurse", "to my dad's room mate",
+  "to her office manager", "to his lab partner"). These are hand-overs with people nearby and an e-stop, also when
+  the request says the person is alone or the robot works on its own ("bring the meds to her twice a day, she lives
+  alone"). The safe errors: "to her sofa", "to her bed" and "to her armchair" (someone sits or lies there), "bring the
+  cup to my left" and "to her side", and a capitalised word that is no name and on no list ("bring the tea to
+  Costa"). Known misses: a singular word for someone by what they do with a bare thing after it ("hand the shelf
+  painter cans"; a plural one takes it: "give the runners water"), and misspelt person words other than the few
+  above. A place named after people
+  infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
+  place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
+  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,613
+  requests from the release review's two hunts and the fixers' rounds, each with the task, people and e-stop it must
+  get,
+  run through `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
+- **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
+  order, failures included; not the ones it carried over or that were blocked), and `reused`: the stages whose
+  `stage_status` is "reused", early cutoffs included. Keewano's `StageRecomputed` events (`keewano.events_for`) and
+  Teams' activity read `recomputed`, so a wrist-camera or reach edit no longer counts the gripper stage it reused. The
+  start event's `dirty` stays `dirty_nodes(changes)`: the stages the edit may rerun (the Studio's "N of 9 stages
+  affected"); each stage's "node" event then says whether it was reused.
+- **The grip-limited payload is the firmware's.** `arm.grip_meta` puts the plan's `limit_n` (the firmware's
+  `GRIP_LIMIT_N`: its hard stop and the F command's cap) in `asm.meta["grip_limit_n"]`, and the payload sweep's
+  `grip_limited_payload_g` is 2 mu x min(the jaws' stall force, that limit) / g, with `grip_limit_n` in its metrics
+  (the jaws' stall force without a shipped plan). The egg-picker: 1,356 g at 19 N (it said 5,913 g at 82.9 N, a squeeze
+  its firmware never makes). Recorded in the simulation goldens (only `sim_payload_sweep.json` and `run_all` change).
+- **The SO-101's shake margin is thin, and stays so.** The stock SO-101 holds its egg through the shake test with 4.74 mm
+  of slip (4.83 mm on Dynamixel servos, DEMO_SCRIPT step 12) of the 5 mm allowed. A firmer grip doesn't buy margin: the
+  egg creeps along the stock jaw as it seats (4.67 mm at 6 N, 4.53 mm at 11 N, 4.47 mm at 14 N, near the top of its
+  1.26-16.67 N window; 4.56 mm at 14 N on Dynamixel), so the open-loop grip stays at the window's geometric mean,
+  4.58 N. `tests/test_robot_grip_force.py::test_the_so101_demo_keeps_its_egg_through_the_shake_test_with_a_thin_margin`
+  pins both slips (within 0.05 mm) and fails, saying so, when the margin drops under 0.1 mm; DEMO_SCRIPT says what the
+  demo shows if it tips over (step 12: 7 issues, not 6).

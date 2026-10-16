@@ -182,6 +182,9 @@ def apply_triage(b: B.Brief, res: dict) -> str:
     elif arch in B.ARCHETYPES and (b.archetype.get("key") == "generic_arm" or b.archetype.get("confidence", 0) < ac):
         B.set_archetype(b, arch, ac, src)
     obj, oc = _pick(ans, "object")
+    says = _noul(ans, "says_object")
+    if says is not None:
+        b.flags["says_object"] = round(float(says), 2)   # SubQ read the object in the request's words (brief.filled)
     key = next((k for k in list(B.OBJECTS) + list(B.CATALOG) if _opt(k) == obj), None)
     if key:
         o = B.object_value(key)
@@ -327,6 +330,8 @@ def apply_update(b: B.Brief, upd) -> str:
     n = 0
     for name, v in pairs.items():
         v2 = B.coerce(name, v) if v is not None else None
+        if name == "people_nearby" and v2 == "no" and b.get("people_nearby") in ("yes", "children", "pets"):
+            continue   # a person the request's words put next to it stays there: the e-stop is kept when unsure
         if v2 is not None and B.set_slot(b, name, v2, "inferred", conf(name), "claude"):
             n += 1
     return f"{B._arch(b).label}; read {n + (obj is not None)} facts"
@@ -348,11 +353,14 @@ def run_turn(b: B.Brief | None = None, *, text: str | None = None, answers: dict
     if not new and (answers or words):
         B.answer(b, answers, words or None)
     if words and b.status != "refused":
-        hit = B.harmful(words)                       # the local filter runs before any network call
-        if hit:
-            B.refuse(b, hit, "rules")
-            tl("triage", "rules", "done", "Refused before anything was sent anywhere", ms=0)
-            return b
+        # the local filter runs before any network call; on a later turn answer() has already read the whole
+        # conversation, so a reply ("it should beat my dad") is not re-judged on its own out of context
+        if new:
+            hit = B.harmful(words)
+            if hit:
+                B.refuse(b, hit, "rules")
+                tl("triage", "rules", "done", "Refused before anything was sent anywhere", ms=0)
+                return b
         sq, client = (_subq() if new else None), _claude()
         if new:
             b.request = words

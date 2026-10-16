@@ -173,6 +173,61 @@ def test_a_resize_that_keeps_the_grip_shows_no_grip_change(tmp_path):
     assert heavier["grip"]["text"].startswith("grip force target 2.34 → ")
 
 
+def test_a_servo_rail_change_keeps_the_built_grip_in_the_preview(tmp_path, monkeypatch):
+    # a 7.4 V rail on the egg-picker reruns the gripper stage, which keeps the grasp simulation's hold (2.34 N target);
+    # the preview showed "grip force target 2.34 -> 2.17 N" and planned the electronics with New robot's closed form
+    from morph.robot import electronics2
+
+    root = str(tmp_path / "egg-picker")
+    _, res = real_base(root)
+    hi = res["gripper"]["force"]["window_n"][1]
+    res["gripper"]["force"].update(hold_force_n=0.78, sim_hold_n=0.78, window_n=[1.17, hi], target_force_n=2.34)
+    with open(os.path.join(root, "r001", "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    planned = []
+    plan = electronics2.plan
+    monkeypatch.setattr(electronics2, "plan", lambda d, sz, grip=None: planned.append(dict(grip or {})) or plan(d, sz, grip))
+    out = impact.impact(root, "r001", {"electronics.servo_v": 7.4})
+    assert not out.get("error") and "grip" not in rows(out), rows(out).get("grip")
+    g = planned[-1]
+    assert (g["target_force_n"], g["window_n"], g["hold_force_n"]) == (2.34, [1.17, hi], 0.78)
+    assert g["servo_stall_force_n"] < 0.7 * res["gripper"]["force"]["servo_stall_force_n"]   # the rail moves the stall
+    # so does a servo swap or another build level: the grasp is the same, the build keeps 2.34 N
+    for change in ({"arm.actuator_family": "dynamixel"}, {"build.config": "production"}):
+        out = impact.impact(root, "r001", change)
+        assert not out.get("error") and "grip" not in rows(out), (change, rows(out).get("grip"))
+        assert planned[-1]["target_force_n"] == 2.34
+    # a different grasp is the preflight's: the pads or the object change what the grasp simulation finds
+    assert "grip" in rows(impact.impact(root, "r001", {"finger.pad": "flat"}))
+
+
+def test_a_finger_edit_previews_the_grip_its_gripper_stage_builds(tmp_path, monkeypatch):
+    # a 6 mm pad depth on the egg-picker: the preview read "grip force target 2.34 -> 2.17 N" (New robot's closed form)
+    # while the build's gripper stage, with its grasp simulation, keeps 2.34 N. The preview now finds the hold the same
+    # way the stage does
+    from morph.robot import electronics2, pipeline2
+
+    root = str(tmp_path / "egg-picker")
+    d, res = real_base(root)
+    built = pipeline2.gripper_stage(d, res["sizing"])["force"]          # the base as its gripper stage builds it
+    res["gripper"]["force"] = built
+    with open(os.path.join(root, "r001", "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    planned = []
+    plan = electronics2.plan
+    monkeypatch.setattr(electronics2, "plan", lambda d, sz, grip=None: planned.append(dict(grip or {})) or plan(d, sz, grip))
+    change = {"finger.pad_depth_mm": 6.0}
+    stage = pipeline2.gripper_stage(d.with_changes(change), res["sizing"])["force"]
+    out = impact.impact(root, "r001", change)
+    assert not out.get("error") and stage["target_force_n"] == built["target_force_n"]
+    assert "grip" not in rows(out), rows(out).get("grip")
+    assert planned[-1]["target_force_n"] == stage["target_force_n"] and planned[-1]["hold_force_n"] == stage["hold_force_n"]
+    # an edit that does move the grasp still shows the stage's new grip
+    heavier = rows(impact.impact(root, "r001", {"object.mass_g": 120.0}))["grip"]["text"]
+    stage = pipeline2.gripper_stage(d.with_changes({"object.mass_g": 120.0}), res["sizing"])["force"]
+    assert heavier == f"grip force target {built['target_force_n']:g} → {stage['target_force_n']:g} N"
+
+
 def test_teams_says_how_much_of_a_built_unit_cost_is_tooling(tmp_path):
     root = str(tmp_path / "egg-picker")
     real_base(root)

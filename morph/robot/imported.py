@@ -210,33 +210,48 @@ def size(design) -> dict:
 
 
 JAW_LEVER_MM = 70.0   # a stock jaw's lever when the grasp can't be worked out (mid-jaw on the SO-101)
+NEAR_MM = 2.0         # a lever worked out for an object this close in size stands in for it in a quick estimate
 _LEVERS: dict = {}
 
 
-def grasp_lever(design, sizing) -> float:
+def _lever_key(design, sizing) -> tuple:
+    from .pipeline2 import _bundle_hash
+
+    o, src = design.object, design.arm.source
+    acts = tuple(sorted((j["name"], j["actuator"]) for j in sizing["joints"])) + (("gripper", sizing["gripper_actuator"]),)
+    return (src, _bundle_hash(src), acts, o.shape, float(o.diameter_mm), float(o.length_mm))
+
+
+def grasp_lever(design, sizing, quick: bool = False) -> float:
     """The stock jaw's lever for this object (mm, from the jaw's pivot to the object's centre) where the simulation
     grasps it (simulate.grasp_lever: against the fixed jaw, inside the fingers, reachable straight down): the egg sits
     62 mm from the SO-101's pivot, a strawberry 70 mm. The firmware's torque limit is set for the target at this lever,
     so the simulated squeeze is the target. Worked out on the robot's own jaws with the servos sizing chose (a swapped
     gripper servo changes the hand) and the object's shape and size, on the camera-free URDF (a wrist camera rides
-    behind the jaws); memoized, as it takes about 2 s."""
+    behind the jaws); memoized, as it takes 2 s for an egg and 20 s for a soda can.
+    quick (New robot's preflight, Teams' preview: inside a request) never searches: the lever worked out for this object,
+    or for one of its shape within NEAR_MM of its size, when this process has it; else the jaw's mid-jaw lever (the
+    profile's jaw_lever_mm, 70 mm on the SO-101), within 15 % of the search's 62-80 mm for objects 20-66 mm across."""
     from ..spec import Design
     from . import simulate
-    from .pipeline2 import _bundle_hash
 
-    o, src = design.object, design.arm.source
-    acts = tuple(sorted((j["name"], j["actuator"]) for j in sizing["joints"])) + (("gripper", sizing["gripper_actuator"]),)
-    key = (src, _bundle_hash(src), acts, o.shape, float(o.diameter_mm), float(o.length_mm))
-    if key not in _LEVERS:
-        if len(_LEVERS) > 64:
-            _LEVERS.clear()
-        d = Design().with_changes({"name": "grasp", "arm.source": src, "object.shape": o.shape,
-                                   "object.diameter_mm": float(o.diameter_mm), "object.length_mm": float(o.length_mm)})
-        _LEVERS[key] = round(simulate.grasp_lever(build(d, sizing), d), 2)
+    key = _lever_key(design, sizing)
+    if key in _LEVERS:
+        return _LEVERS[key]
+    if quick:
+        near = [(abs(k[4] - key[4]) + abs(k[5] - key[5]), v) for k, v in _LEVERS.items()
+                if k[:4] == key[:4] and abs(k[4] - key[4]) <= NEAR_MM and abs(k[5] - key[5]) <= NEAR_MM]
+        return min(near)[1] if near else float(load_profile(design.arm.source)[0].get("jaw_lever_mm") or JAW_LEVER_MM)
+    if len(_LEVERS) > 64:
+        _LEVERS.clear()
+    o = design.object
+    d = Design().with_changes({"name": "grasp", "arm.source": design.arm.source, "object.shape": o.shape,
+                               "object.diameter_mm": float(o.diameter_mm), "object.length_mm": float(o.length_mm)})
+    _LEVERS[key] = round(simulate.grasp_lever(build(d, sizing), d), 2)
     return _LEVERS[key]
 
 
-def gripper_summary(design, sizing) -> dict:
+def gripper_summary(design, sizing, quick: bool = False) -> dict:
     """The gripper stage of an imported robot: its stock jaw's force plan, the grip's one source of truth (the electronics
     plan, the firmware, the simulation and the manual all use these numbers). The window comes from the object, with the
     same closed form the simulation uses for flat stock jaws: it slips below 1.5 x m g / (2 mu) and is damaged above its
@@ -245,14 +260,17 @@ def gripper_summary(design, sizing) -> dict:
     at limit_n.
     Stock jaws carry no force sensors (Morph makes no pads or mounts for them): the firmware squeezes with the gripper
     servo's torque limit, set for the target at lever_mm from the jaw's pivot (grasp_lever: where the simulation grasps
-    the object), and a hobby servo, which has none, is an issue for an object it can damage."""
+    the object), and a hobby servo, which has none, is an issue for an object it can damage. quick: grasp_lever's quick
+    estimate (New robot's preflight and Teams' preview), with lever_estimated True when it is one; the build's gripper
+    stage always works the lever out."""
     from .. import electronics as grip_electronics
 
     key = sizing["gripper"]["actuator"]
     prof = load_profile(design.arm.source)[0]
-    issues, warnings = [], []
+    issues, warnings, estimated = [], [], False
     try:
-        lever = grasp_lever(design, sizing)
+        lever = grasp_lever(design, sizing, quick=quick)
+        estimated = quick and _lever_key(design, sizing) not in _LEVERS
     except Exception as exc:  # noqa: BLE001  the grip still gets planned; the lever is the profile's estimate
         lever = float(prof.get("jaw_lever_mm") or JAW_LEVER_MM)
         warnings.append(f"the grasp on the stock jaws couldn't be worked out ({exc.__class__.__name__}); the torque limit "
@@ -276,7 +294,8 @@ def gripper_summary(design, sizing) -> dict:
             "force": {"servo_stall_force_n": round(stall, 1), "hold_force_n": round(hold, 3),
                       "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
                       "target_force_n": round(target, 2), "limit_n": round(limit, 2), "object_limit_n": o.max_force_n or None,
-                      "sensor": "none", "jaw": "revolute", "lever_mm": lever, "issues": issues, "warnings": warnings}}
+                      "sensor": "none", "jaw": "revolute", "lever_mm": lever, "issues": issues, "warnings": warnings,
+                      **({"lever_estimated": True} if estimated else {})}}
 
 
 def _place(asm, comp, prefix, link, T, step, kind=None, explode=(0, 0, 25)):

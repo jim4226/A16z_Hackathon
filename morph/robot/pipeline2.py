@@ -385,8 +385,11 @@ class RobotProject(Project):
             res["by"] = by
         if proposed_by:
             res["proposed_by"] = proposed_by
+        # "dirty": the stages this edit may rerun (dirty_nodes). An early cutoff (_cut_off) can still reuse one of them,
+        # which its "node" event says ("reused"); the ledger records the stages that ran
         emit({"type": "start", "rev": rev, "parent": parent, "changes": res["changes"], "dirty": todo})
         cache = {}
+        ran = []
 
         def asm():
             if "asm" not in cache:
@@ -438,6 +441,7 @@ class RobotProject(Project):
                     print(f"  {node:<14} blocked ({', '.join(blocked)})")
                 continue
             emit({"type": "node", "node": node, "status": "computing"})
+            ran.append(node)
             t0 = time.time()
             nd = os.path.join(out, sub) if sub else out
             os.makedirs(nd, exist_ok=True)
@@ -467,8 +471,11 @@ class RobotProject(Project):
         res["pipeline_version"] = pipeline_version(design.arm.source)
         # results.json marks a finished revision: it appears whole, and is on the disk before the ledger says so
         write_text(os.path.join(out, "results.json"), json.dumps(res, indent=1, default=_jsonable))
+        # what ran, not what the edit made a candidate: a stage the early cutoff reused is no StageRecomputed (Keewano)
+        # and no rebuilt stage in Teams' activity
         self.log({"type": "revision", "rev": rev, "parent": parent, "label": label, "changes": res["changes"],
-                  "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"], **({"by": by} if by else {}),
+                  "recomputed": ran, "reused": [n for n in ORDER if res["stage_status"].get(n) == "reused"],
+                  "design": design.to_dict(), "predicted": res["summary"], **({"by": by} if by else {}),
                   **({"proposed_by": proposed_by} if proposed_by else {})})
         return rev
 

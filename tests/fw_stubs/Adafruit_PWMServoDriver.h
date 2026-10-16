@@ -1,6 +1,7 @@
 #pragma once
 #include "Arduino.h"
 #include "Wire.h"
+#define MORPH_STUB_PCA9685 1
 class Adafruit_PWMServoDriver {   // signatures as in Adafruit PWM Servo Driver Library 3.x
  public:
   Adafruit_PWMServoDriver(const uint8_t addr = 0x40, TwoWire &i2c = Wire);

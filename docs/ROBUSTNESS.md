@@ -77,8 +77,18 @@ with 95% confidence)". Few runs give wide intervals, and the card says so with n
 "at least 54.0%". Run more before you trust a difference between two designs whose intervals overlap.
 
 **Failure groups:** each failed run is labelled by what went wrong: the jaws stayed shut at release and carried the
-object away, dragged off the target, missed the grasp, dropped on the way, squeezed harder than the object can take, out
-of reach, or hit a box in the room during a named phase. Each group shows its share with its own interval and "Most
+object away, dragged off the target, missed the grasp, let go with !GRIP (a hobby gripper's force-sensing close gives
+up on an object narrower than it reaches, as its firmware does), held the gripper servo at stall (a hobby gripper
+without force sensors closes by position only, so an object wide enough is held at its servo's stall; the plan has
+an issue when one within 8 % of the nominal size gets near it), knocked away by the arm before the grasp (the object
+moved more than 20 mm before the jaws began to close: the arm hit it on the way, which a real arm would do too, so it
+counts), dropped on the way, squeezed harder than the object can take, out of reach, or hit a box in the room during
+a named phase. For a hobby gripper without force sensors the
+stall and the squeeze come from the servo model its firmware closes by (how far past the object's contact the jaw is
+held, at the jaw that closes on it: both of a rack's jaws, a stock jaw's one moving jaw), not from the simulated
+contact force: MuJoCo's soft contact measures far less on a light or rigid object (a light bulb 2 % over its size:
+10.35 N against the model's 15.66 N), and on a stock jaw the moving jaw first pushes the object across the room left
+at the fixed jaw, so "Held the gripper servo at stall" can come with a low measured grip. Each group shows its share with its own interval and "Most
 likely when": the one tolerance range that best separates that group's runs from the rest (Youden's J over quantile cuts
 of each value, or of its distance from nominal), as "egg -4.7 to 1.5 mm along its length from its mark: 44% fail this way vs 14% otherwise". A rule
 is compared with what the same search finds on shuffled outcomes (the 95th percentile of 60 shuffles); below that it
@@ -117,7 +127,7 @@ as model-sensitive as one in which something did.
 The default egg-picker is the example: all 50 of its failures are the jaws staying shut at release, most often with the
 egg set down a few millimetres off its mark along its length (-4.7 to 1.5 mm) or turned a few degrees, which separate
 the jams about equally well. At half the timestep 16 of 20 re-runs still jam; with `impratio=1` none of 20 does. The
-count is sensitive to the grip as well: at 2.17 N instead of 2.34 N the same runs give 58 jams, best separated by the
+count is sensitive to the grip as well: at 2.1715 N instead of 2.34 N the same runs give 58 jams, best separated by the
 egg turned 3-9 degrees. Whether the real gripper jams there needs a bench test: set an egg 3 mm off its mark along its
 length, or turned 5 degrees, and release it.
 
@@ -174,7 +184,7 @@ under 2 at the start), the cancel, restart and build timings beside other work (
 
 | What | Measured |
 |---|---|
-| The default egg-picker, 200 runs at 1 ms (seed 1) | 150 of 200 succeed (Wilson 68.6-80.5 %). 50 jams (19.5-31.4 %): "egg -4.7 to 1.5 mm along its length from its mark: 44% fail this way vs 14% otherwise", model-sensitive (16 of 20 still jam at half the timestep, 0 of 20 with `impratio=1`); nothing else fails. With the 2.17 N grip the simulation used before the gripper stage's 2.34 N reached it, the same runs gave 140 of 200: 58 jams ("egg turned 3.4-9.4 deg"), 2 drags |
+| The default egg-picker, 200 runs at 1 ms (seed 1) | 150 of 200 succeed (Wilson 68.6-80.5 %). 50 jams (19.5-31.4 %): "egg -4.7 to 1.5 mm along its length from its mark: 44% fail this way vs 14% otherwise", model-sensitive (16 of 20 still jam at half the timestep, 0 of 20 with `impratio=1`); nothing else fails. With the 2.1715 N grip the simulation used before the gripper stage's 2.34 N reached it, the same runs gave 140 of 200: 58 jams ("egg turned 3.4-9.4 deg"), 2 drags |
 | Speed at 1 ms | 2.7 runs/s on 3 worker processes; 0.9 on 1, 1.6-1.8 on 2, 2.3-3.3 on 4. 200 runs and their 70 to 74 check runs: about 2 minutes (117-119 s) |
 | First result | 5.6-6.1 s after the start (rebuilding the robot and its plan takes 3.7-3.9 s of it) |
 | Worker processes | Start in 0.3-0.4 s at 135 MB from a script; 0.7-0.8 s at 150 MB under `morph studio`, whose module each one imports again |
@@ -193,6 +203,12 @@ under 2 at the start), the cancel, restart and build timings beside other work (
   most* in Details); there are no interaction or variance-based sensitivity indices yet.
 - The solver checks re-run at most 20 runs of a group and 15 successes, not every run.
 - No GPU: MuJoCo on the CPU. Tested on Linux; the processes are started the same way on Windows and macOS.
+- Some designs fail at their nominal size, so every run of their study fails the same way, with no plan issue to say
+  so beforehand: the stock SO-101 misses the round objects tried from 47 to 60 mm across and flat-sided ones of 36, 40,
+  44 and 48 mm ("Missed the grasp"; New robot no longer builds a round object over 46 mm or a flat-sided one over 34 mm
+  on the SO-101, but an import or a chat edit can), and the generated smart-bus arm without force sensors squeezes a
+  strawberry with up to 3.82 N in the simulation, above its 3 N damage force, although its torque limit is set for
+  0.66 N ("Squeezed harder than the strawberry can take").
 
 ## Where it is kept
 

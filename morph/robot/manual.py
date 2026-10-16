@@ -665,7 +665,11 @@ def _elec_steps(F: _Facts, start: int):
     revolute = (grip.get("motion") or {}).get("kind") == "revolute"
     sent = ["Joint zero: drive each joint to its alignment marks (arm straight up, wrist level), then store the encoder "
             "offsets as the zero pose.",
-            "Gripper zero: close the jaw until its faces just touch and store that as gripper = 0 rad." if revolute else
+            "Gripper zero: close the jaw until its faces just touch and store that as gripper = 0 rad."
+            if revolute and not (grip.get("open_loop") or {}).get("squeeze_mm") else
+            f"Gripper zero: close the jaw on a {obj.diameter_mm:g} mm gauge (the {obj.name}'s diameter) held against the "
+            "fixed jaw; store this as gripper = 0 rad (contact): its hobby servo has no torque limit, so G closes only a "
+            "set distance past this contact." if revolute else
             f"Gripper zero: close the jaws on a {obj.diameter_mm:g} mm gauge (the {obj.name}'s diameter); store this as "
             "gripper = 0 mm (contact)."]
     if F.sensor:
@@ -677,7 +681,8 @@ def _elec_steps(F: _Facts, start: int):
         if any("zero" in x.lower() for x in fo["sentences"]):
             sent = [x for x in sent if not x.startswith("Joint zero")]
         sent = fo["sentences"] + sent
-    gauge = [] if revolute else [f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"]
+    gauge = [] if revolute and not (grip.get("open_loop") or {}).get("squeeze_mm") else \
+        [f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"]
     steps.append({"index": idx, "title": "Calibrate joints, gripper and force sensors" if F.sensor else "Calibrate joints and gripper",
                   "kind": "calibration", "parts": [], "parts_table": [], "fasteners": [],
                   "tools": _add_tools((["calibration weights or a kitchen scale (50–500 g)"] if F.sensor else []) + gauge,
@@ -711,19 +716,80 @@ def _grip_sentence(grip: dict, name: str) -> str:
     t, lim = grip["target_n"], grip.get("limit_n")
     window = f"{lo:g}–{hi:g} N" if lo is not None and hi is not None else f"at least {lo:g} N" if lo is not None else None
     within = (f", within {window} for the {name}." if hi is not None else f" ({window} for the {name})." if window else ".")
+    ol = grip.get("open_loop") or {}
     if grip.get("sensor") == "fsr402":
         out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
-        return out + "; to change the target send F followed by newtons" + within
+        out += "; to change the target send F followed by newtons" + within
+        if ol.get("rated_n") is not None and lim is not None and lim > ol["rated_n"] + 0.005:
+            out += (f" F goes up to {lim:g} N, but above {ol['rated_n']:g} N, what its hobby servo holds continuously, it "
+                    f"runs warm on long carries.")
+        if ol.get("probe_mm"):
+            out += (f" Its hobby servo has no torque limit, so a close that has read no force by {ol['probe_mm']:.2f} mm "
+                    f"past the calibration gauge stops there and opens with !GRIP: a {name} up to that much narrower per "
+                    f"jaw than the gauge is still gripped"
+                    + (" (the small end of its size)" if ol.get("covers") else ", a narrower one isn't")
+                    + f"; with a dead sensor a gauge-sized {name} gets about {ol['probe_n']:g} N per finger there before "
+                    f"the jaw opens"
+                    + (f", above the {grip['object_limit_n']:g} N that damages it"
+                       if grip.get("object_limit_n") and ol["probe_n"] > grip["object_limit_n"] else "")
+                    + (f", and one at the large end of its size, {ol['spread_mm']:.2f} mm per jaw wider, "
+                       + ("its whole stall force" if grip.get("stall_force_n") and
+                          ol["large_n"] >= grip["stall_force_n"] - 0.005 else f"about {ol['large_n']:g} N")
+                       + (f", above the {grip['object_limit_n']:g} N that damages it"
+                          if grip.get("object_limit_n") and ol["large_n"] > grip["object_limit_n"] else "")
+                       if ol.get("large_n") is not None and ol.get("spread_mm") is not None else "") + ".")
+        return out
     motion = grip.get("motion") or {}
     revolute = motion.get("kind") == "revolute"
     stop = (f" (gripper = {motion['lo']:.2f} {motion.get('unit', '')}, its max-squeeze stop)" if motion.get("lo") is not None
             else " (its max-squeeze stop)")
     tl = grip.get("torque_limit")
     if not tl:
-        stall = grip.get("stall_force_n")
-        return (f"This gripper has no force sensors and its hobby servo no torque limit: G closes it past the {name}"
-                f"{stop} with all the servo's torque" + (f", about {stall:g} N per finger" if stall else "")
-                + f". Morph's grip target for the {name} is {t:g} N per finger" + (f" (window: {window})." if window else "."))
+        stall, sq = grip.get("stall_force_n"), grip.get("squeeze_n") or t
+        if not ol.get("squeeze_mm"):
+            return (f"This gripper has no force sensors and its servo no torque limit: nothing sets the squeeze. Morph's "
+                    f"grip target for the {name} is {t:g} N per finger" + (f" (window: {window})." if window else "."))
+        at = (f" (gripper = {motion['closed'] - motion['squeeze']:.2f} {motion.get('unit', '')})"
+              if motion.get("squeeze") is not None and motion.get("closed") is not None else "")
+        rated = ol.get("rated_n")
+        from ..electronics import PROBE_STALL_SHARE
+
+        under = (f"under {PROBE_STALL_SHARE * 100:.0f} % of the stall"
+                 + (" and its damage force" if grip.get("object_limit_n") else ""))
+        cap = ("its rated torque, what it holds continuously" if rated is not None and lim is not None and lim >= rated - 0.005
+               else f"what keeps a {name} at the large end of its size {under}"
+               if ol.get("covers") and ol.get("band_n") is not None and lim is not None and lim >= ol["band_n"] - 0.005
+               else f"the {name}'s limit")
+        floored = sq > t + 0.005          # two position commands, the least it can close past it, squeeze more
+        below = (f" (more than Morph's {t:g} N target: two position commands are the least it can close past it)"
+                 if floored else
+                 f" (less than Morph's {t:g} N target: the most that keeps a {name} at the large end of its size {under})"
+                 if ol.get("band_capped") else
+                 f" (less than Morph's {t:g} N target: the most it holds continuously)" if ol.get("capped") else "")
+        large = ""
+        if ol.get("spread_mm") is not None and ol.get("large_n") is not None:
+            from .electronics2 import size_off
+
+            share = ol["large_n"] / stall if stall else 0.0
+            dmg = grip.get("object_limit_n")
+            why = ("its whole stall force" if share >= 0.995 else f"{share * 100:.0f} % of its stall force")
+            large = (f" The jaws are set on a gauge of the {name}'s nominal size; one at the large end of its size, "
+                     f"{size_off(ol)}, is held that much further past its contact and gets about "
+                     f"{ol['large_n']:g} N per finger" + ("." if ol.get("covers") else
+                                                          f", {why}" + (f", above the {dmg:g} N that damages it"
+                                                                        if dmg and ol["large_n"] > dmg else "")
+                                                          + ": the plan lists this as an issue."))
+        return (f"This gripper has no force sensors and its hobby servo no torque limit, so G closes it only "
+                f"{ol['squeeze_mm']:.2f} mm past a gauge-sized {name}{at}, where the servo's own position loop squeezes "
+                f"about {sq:g} N per finger{below}; it would reach its {stall:g} N stall about {ol['servo_band_mm']:g} mm "
+                f"past contact and, held there, overheat (hobby servos have no overload protection).{large} Check the "
+                f"squeeze once with a kitchen scale between the jaws. "
+                + (f"F can't lower it: two position commands, the least G can close past the {name}, already squeeze "
+                   f"about {sq:g} N, above the {lim:g} N F is capped at ({cap}); the plan lists this as an issue"
+                   if lim is not None and sq > lim + 0.005 else
+                   f"To change it send F followed by newtons: F sets how far G closes from Morph's model of the servo, up "
+                   f"to {lim:g} N ({cap}). A servo softer than the model squeezes less than F says, and F can't ask for "
+                   f"more than {lim:g} N; lower it if the servo hums or warms while it holds") + within)
     where = (f"with the object {grip.get('lever_mm', 0):g} mm from the jaw's pivot (more nearer the pivot, less towards the tip)"
              if revolute else f"through its {grip.get('lever_mm', 0):g} mm pinion")
     return (f"This gripper has no force sensors: G closes it past the {name}{stop}, and the gripper servo's torque limit, "

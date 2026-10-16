@@ -147,6 +147,17 @@ def test_local_harm_filter_runs_before_any_provider(monkeypatch):
     assert roles(ev) == [("triage", "rules", "done")]
 
 
+@pytest.mark.parametrize("text, people", [("pass my dad his pills", "yes"), ("bring the meds to her twice a day", "yes"),
+                                          ("a robot that moves cups", "no")])
+def test_a_model_never_takes_away_a_person_the_words_put_next_to_it(monkeypatch, text, people):
+    # the designer reading "nobody nearby" into a hand-over to dad dropped the e-stop the rules had given it
+    client = FakeClient(out=update(people_nearby="no"))
+    monkeypatch.setattr(agents, "_subq", lambda: None)
+    monkeypatch.setattr(agents, "_claude", lambda: client)
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "people_nearby") == people and ("estop" in b.changes["electronics.extras"]) is (people == "yes")
+
+
 def test_claude_designer_call_shape(monkeypatch):
     client = FakeClient(out=update(archetype="fragile_food", object_preset="raw egg", layout="side_to_side", throughput_s=8.0,
                                    people_nearby="yes", stated=["object"]))

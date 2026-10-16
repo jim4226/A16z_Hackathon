@@ -45,21 +45,81 @@ ALIAS_PATTERNS = [
 _NUM = r"(\d+(?:\.\d+)?)"
 _UNITS = [  # every length becomes "<n> mm" and every mass "<n> g", so the rules below only parse mm and g
     (_NUM + r"\s*(?:kgs?|kilos?|kilograms?)\b", 1000.0, "g"),
-    (_NUM + r"\s*(?:lbs?|pounds?)\b", 453.592, "g"),
+    (_NUM + r"\s*(?:lbs?|pounds?)\b(?!\s*(?:coins?|notes?|shops?|stores?|signs?|symbols?|sterling)\b)", 453.592, "g"),
     (_NUM + r"\s*(?:oz|ounces?)\b", 28.3495, "g"),
-    (_NUM + r"\s*(?:grams?|gr)\b", 1.0, "g"),
+    (_NUM + r"\s*(?:grams?|grammes?|grm|gr)\b", 1.0, "g"),
     (_NUM + r"\s*(?:cm|centimet(?:er|re)s?)\b", 10.0, "mm"),
     (_NUM + r"\s*(?:millimet(?:er|re)s?)\b", 1.0, "mm"),
     (_NUM + r"\s*(?:met(?:er|re)s?)\b", 1000.0, "mm"),
+    (_NUM + r"\s*m\b(?=\s*(?:wide|long|tall|high|thick|across|diameter|cubes?|box(?:es)?|balls?|spheres?|cylinders?|tubes?|"
+             r"objects?|parts?|blocks?)\b)", 1000.0, "mm"),
     # "in" only when it cannot be the preposition: "2 in wide", "a 3 in cube", "2 inches"
-    (_NUM + r"\s*(?:inch(?:es)?\b|in\.?(?=\s*(?:wide|long|tall|high|thick|across|diameter|dia\b|cube|box|ball|sphere|"
-             r"cylinder|tube|object)\b|\s*(?:$|[,;)?!])))", 25.4, "mm"),
-    (_NUM + r'\s*(?:"|”)', 25.4, "mm"),
+    (_NUM + r"\s*(?:inch(?:es)?\b|in\.?(?=\s*(?:wide|long|tall|high|thick|across|diameter|dia\b|cubes?|box(?:es)?|balls?|"
+             r"spheres?|cylinders?|tubes?|objects?|parts?|blocks?)\b|\s*(?:$|[,;)?!])))", 25.4, "mm"),
+    (_NUM + r'\s*(?:"|”|\'\')', 25.4, "mm"),
 ]
 
 
+_UNIT_AHEAD = (r"(?=\s*-?\s*(?:kgs?|kilos?|kilograms?|lbs?|pounds?|oz|ounces?|grams?|grammes?|grm|gr|gms?|g|cm|centimet(?:er|re)s?|mm|"
+               r"millimet(?:er|re)s?|inch(?:es)?|in)\b)")
+_ONES = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+                                    "fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if i > 1}
+_NUM_WORD = r"(?:" + "|".join(list(_ONES) + list(_TENS)) + r"|hundred|thousand)"
+
+
+def _words_value(words: str) -> float | None:
+    """'three hundred' -> 300, 'twenty-five' -> 25, 'two thousand five hundred' -> 2500."""
+    total, part = 0, 0
+    for w in re.split(r"[\s-]+(?:and[\s-]+)?", words.strip()):
+        if w in _ONES:
+            part += _ONES[w]
+        elif w in _TENS:
+            part += _TENS[w]
+        elif w == "hundred":
+            part = (part or 1) * 100
+        elif w == "thousand":
+            total, part = total + (part or 1) * 1000, 0
+        else:
+            return None
+    return float(total + part)
+
+
+def _plain_numbers(text: str) -> str:
+    """Numbers before a unit written so the unit rules read them: thousands separators ("1,050 g", "1 000 g", and
+    "1.000 g" for grams, where three decimals of a gram would be odd), number words ("three hundred grams", "two-inch"),
+    "half a kilo", "a pound" and a hyphen or none between the number and its unit ("300-gram", "50mm-wide")."""
+    sep = r"(?:,|[\u00a0\u202f\u2009])"
+    text = re.sub(r"(?<![\d.,])(\d{1,3})((?:" + sep + r"\d{3})+)(?![\d,]|\.\d)" + _UNIT_AHEAD,
+                  lambda m: m.group(1) + re.sub(r"\D", "", m.group(2)), text)
+    text = re.sub(r"(?<![\d.,])(\d{1,3})((?: 000)+)(?![\d,]|\.\d)" + _UNIT_AHEAD, lambda m: m.group(1) + m.group(2).replace(" ", ""),
+                  text)                                                            # "1 000 g"; never "3 100 g bags"
+    text = re.sub(r"(?<![\d.,])([1-9]\d{0,2})((?:\.000)+)(?![\d,]|\.\d)(?=\s*(?:grams?|gr|gms?|g)\b)",
+                  lambda m: m.group(1) + m.group(2).replace(".", ""), text)
+    text = re.sub(r"(?<![\w.])\.(\d+)" + _UNIT_AHEAD, r"0.\1", text)                     # ".3 kg"
+    text = re.sub(r"\bhalf\s+an?\s+(?=(?:kilo|kilogram|pound|lb)s?\b(?!\s*(?:coins?|notes?|shops?|stores?)\b))", "0.5 ", text)
+    text = re.sub(r"\ba\s+quarter(?:\s+of)?\s+(?:an?\s+)?(?=(?:kilo|kilogram|pound|lb)s?\b(?!\s*(?:coins?|notes?|shops?|stores?)\b))",
+                  "0.25 ", text)
+    # fractions before a unit: "1 1/2 inch" is 1.5, "1/4 lb" a quarter pound (not 4 lb)
+    text = re.sub(r"(?<![\d./])(\d+)\s+(\d+)\s*/\s*([1-9]\d?)(?![\d/])" + _UNIT_AHEAD,
+                  lambda m: f"{int(m.group(1)) + int(m.group(2)) / int(m.group(3)):g}", text)
+    text = re.sub(r"(?<![\d./])(\d+)\s*/\s*([1-9]\d?)(?![\d/])" + _UNIT_AHEAD,
+                  lambda m: f"{int(m.group(1)) / int(m.group(2)):g}", text)
+    # "a pound of flour" is a mass, but "a pound coin", "one pound notes" and "a pound shop" are not
+    text = re.sub(r"\b(?:a|an|one)\s+(?=(?:kilos?|kilograms?|ounces?|inch(?:es)?)\b|"
+                  r"pounds?\b(?!\s*(?:coins?|notes?|shops?|stores?|signs?|symbols?|sterling)\b))", "1 ", text)
+    text = re.sub(r"\b(" + _NUM_WORD + r"(?:[\s-]+(?:and[\s-]+)?" + _NUM_WORD + r"){0,7})" + _UNIT_AHEAD,
+                  lambda m: f"{_words_value(m.group(1)):g}" if _words_value(m.group(1)) is not None else m.group(1), text)
+    text = re.sub(r"(\d)\s*-\s*(?=(?:kgs?|kilos?|kilograms?|lbs?|pounds?|oz|ounces?|grams?|gms?|g|cm|centimet(?:er|re)s?|mm|"
+                  r"millimet(?:er|re)s?|inch(?:es)?)\b)", r"\1 ", text)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*gms?\b", r"\1 g", text)
+    return re.sub(r"(\d\s*(?:mm|cm|in|inch(?:es)?))-(?=(?:wide|across|thick|diameter|long|high|tall|deep)\b)", r"\1 ", text)
+
+
 def normalize_units(text: str) -> str:
-    """'38 cm' -> '380 mm', '2 kg' -> '2000 g', '1.5 lb' -> '680 g', '2 in wide' -> '51 mm wide' (text is lower case)."""
+    """'38 cm' -> '380 mm', '2 kg' -> '2000 g', '1.5 lb' -> '680 g', '2 in wide' -> '51 mm wide' (text is lower case),
+    after _plain_numbers ("1,050 g" -> "1050 g", "half a kilo" -> "500 g", "two-inch" -> "50.8 mm")."""
+    text = _plain_numbers(text)
     for pat, k, unit in _UNITS:
         text = re.sub(pat, lambda m: f"{round(float(m.group(1)) * k, 1):g} {unit}", text)
     return text
@@ -93,9 +153,19 @@ CHEAPER = re.compile(r"\b(cheaper|cheapest|less expensive|cost less|lower (?:the
                      r"(?:parts )?(?:cost|price)s?|save money|costs? down)\b")
 
 
+def _hobby_grips(d: Design) -> bool:
+    """Whether hobby PWM servos would still grip the object safely: their gripper servo has no torque limit, so a
+    force-sensing close may not reach the object's small end, and a sensorless one may not hold it or keep every size of
+    it below stall (the plan's hobby_gripper issues, brief.classify)."""
+    from .brief import classify, preflight
+
+    return "hobby_gripper" not in classify(preflight({**d.flat(), "arm.actuator_family": "hobby_pwm"})["issues"])
+
+
 def cost_down(d: Design, ch: dict, said: list):
     """"Make it cheaper": one step down the cost ladder that still lifts the object with a 2x torque margin
-    (capability.PAYLOAD_G): Dynamixel to smart-bus servos, then one joint fewer, then hobby PWM servos."""
+    (capability.PAYLOAD_G): Dynamixel to smart-bus servos, then one joint fewer, then hobby PWM servos when they still
+    grip it safely (_hobby_grips)."""
     from .capability import payload_g
 
     if d.arm.source:
@@ -109,9 +179,12 @@ def cost_down(d: Design, ch: dict, said: list):
     elif dof > 4 and payload_g(fam, dof - 1) >= g:
         ch["arm.dof"] = dof - 1
         said.append(f"{dof - 1}-DOF arm (one servo fewer; top-down picks need only 4 joints)")
-    elif fam == "smart_bus" and payload_g("hobby_pwm", dof) >= g:
+    elif fam == "smart_bus" and payload_g("hobby_pwm", dof) >= g and _hobby_grips(d):
         ch["arm.actuator_family"] = "hobby_pwm"
         said.append("actuators → hobby PWM servos (the cheapest; they have no position feedback)")
+    elif fam == "smart_bus" and payload_g("hobby_pwm", dof) >= g:
+        said.append(f"{NOTE}this is already the cheapest arm Morph makes that grips the {d.object.name or 'object'} safely "
+                    f"({dof} joints, smart-bus servos): a hobby PWM gripper servo has no torque limit to back its grip up")
     else:
         label = {"hobby_pwm": "hobby PWM", "smart_bus": "smart-bus", "dynamixel": "Dynamixel"}.get(fam, fam)
         said.append(f"{NOTE}this is already the cheapest arm Morph makes for a {g:g} g object ({dof} joints, {label} servos)")

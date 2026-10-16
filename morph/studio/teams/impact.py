@@ -1,7 +1,8 @@
 """What a change request does, in numbers, before anything is built: the preview its author and reviewers read.
 
 The pipeline's fast stages run on the changed design (sizing, the gripper checks and the electronics plan: well under a
-second for a generated arm, about a second the first time for an imported one) and are compared with what the base
+second for a generated arm, about a second the first time for an imported one; an edit to a generated arm's object or
+fingers also runs its grasp simulation's hold search, about 3 s the first time) and are compared with what the base
 revision built: torque margins joint by joint, the servos, the bus protocol, controller and supply, the connectors and
 firmware library the wiring stage generates, the geometry the CAD stage rebuilds around, the grip force, the purchased
 parts' cost (priced the way the electronics stage prices them) and the issues the change adds or clears. Nothing is built
@@ -34,6 +35,7 @@ EXTRA = {"wrist_camera": "wrist camera", "estop": "e-stop", "imu": "IMU", "wifi"
 CRASH = "preflight could not run"
 _RESULTS: "collections.OrderedDict" = collections.OrderedDict()
 _SIZES: "collections.OrderedDict" = collections.OrderedDict()
+_HOLDS: "collections.OrderedDict" = collections.OrderedDict()   # gripper design -> its grasp simulation's holding force
 _LOCK = threading.Lock()
 
 
@@ -86,6 +88,80 @@ def _size(design: Design) -> dict:
             while len(_SIZES) > 16:
                 _SIZES.popitem(last=False)
     return hit
+
+
+def _grasp_inputs(design: Design) -> dict:
+    """What the gripper stage's grasp simulation and force window read of a generated arm (its gripper_design): the
+    object, the fingers and pads, the gripper and the Grip force target. The finger material only through Keewano's
+    calibration, when that is on."""
+    from ... import settings
+    from ...robot.pipeline2 import gripper_design
+
+    keep = ("object.", "finger.", "gripper.")
+    skip = () if settings.calibration_enabled() else ("finger.material",)
+    return {k: v for k, v in gripper_design(design)[0].flat().items()
+            if (k.startswith(keep) or k in ("safety_factor", "electronics.target_force_n")) and k not in skip}
+
+
+def _regrip(base_grip: dict | None, base: Design, new: Design, sz1: dict) -> dict | None:
+    """The new force plan when the edit leaves everything the grasp simulation and the force window read alone
+    (_grasp_inputs) and changes only what the gripper servo can do: the servo rail, the servo itself (an actuator
+    family), the build level's finger material. The build reruns the gripper stage and gets the base's hold, window and
+    target again (from its grasp simulation, which New robot's closed form doesn't have); only the stall moves (the
+    force limit, "reaches only"). A generated arm's plan with the base's hold and target on the new servo and rail; None
+    for a stock jaw (its plan is closed form, the preflight's own), a base without a hold, or a grasp that changes."""
+    if new.arm.source or base.arm.source or not base_grip or None in (base_grip.get("hold_force_n"),
+                                                                    base_grip.get("target_force_n")):
+        return None
+    if _grasp_inputs(base) != _grasp_inputs(new):
+        return None
+    from ... import analysis
+    from ... import electronics as grip_electronics
+    from ...design import build_profile
+    from ...robot.pipeline2 import gripper_design, gripper_drive
+
+    gd, ga = gripper_design(new)
+    pinned = gd.with_changes({"electronics.target_force_n": float(base_grip["target_force_n"])})
+    force = grip_electronics.plan(pinned, analysis.analyze(gd, build_profile(gd)),
+                                  {"min_hold_force_n": float(base_grip["hold_force_n"])},
+                                  **gripper_drive(new, ga, gripper_inputs(new, sz1)))
+    for k in ("mcu", "wiring", "parts", "sensing"):
+        force.pop(k, None)
+    return force
+
+
+def _stage_grip(new: Design, sz1: dict) -> dict | None:
+    """A generated arm's new force plan, found the way its gripper stage finds it (pipeline2.gripper_stage): the grasp
+    simulation's holding force (morph.sim.min_hold_force, the one number of it the plan reads, about 3 s, kept per
+    gripper design) on gripper_design(new), planned on the new servo and rail. An edit to the object, the fingers or the
+    pads gets the grip the build will get, not New robot's closed form (a 6 mm pad depth read 2.34 -> 2.17 N on the
+    egg-picker while its build keeps 2.34 N). None for a stock jaw: its stage is the preflight's closed form."""
+    if new.arm.source:
+        return None
+    import json
+
+    from ... import analysis
+    from ... import electronics as grip_electronics
+    from ... import sim as grip_sim
+    from ...design import build_profile
+    from ...robot.pipeline2 import gripper_design, gripper_drive
+
+    gd, ga = gripper_design(new)
+    geom = build_profile(gd)
+    key = json.dumps(gd.flat(), sort_keys=True, default=str)
+    with _LOCK:
+        hold = _HOLDS.get(key)
+    if hold is None:
+        hold = grip_sim.min_hold_force(gd, geom)
+        with _LOCK:
+            _HOLDS[key] = hold
+            while len(_HOLDS) > 32:
+                _HOLDS.popitem(last=False)
+    force = grip_electronics.plan(gd, analysis.analyze(gd, geom), {"min_hold_force_n": hold},
+                                  **gripper_drive(new, ga, gripper_inputs(new, sz1)))
+    for k in ("mcu", "wiring", "parts", "sensing"):
+        force.pop(k, None)
+    return force
 
 
 def _checks(design: Design) -> dict:
@@ -209,10 +285,12 @@ def _impact(root: str, base_rev: str | None, changes: dict, stages) -> dict:
     # pipeline2.PARTIAL): a longer reach or a wrist camera re-sizes the arm and keeps the grip the base built
     grip_dirty = "gripper" in st and (any(fnmatch.fnmatch(k, p) for k in keys for p in GRAPH["gripper"][0])
                                       or gripper_inputs(new, sz1) != gripper_inputs(base, sz0))
-    grip1 = chk1.get("grip_target_n") if grip_dirty else b["grip_n"]
+    grip_new = ((_regrip(b.get("grip"), base, new, sz1) or _stage_grip(new, sz1) or chk1.get("grip"))
+                if grip_dirty else None)
+    grip1 = (grip_new or {}).get("target_force_n", chk1.get("grip_target_n")) if grip_dirty else b["grip_n"]
     if "electronics" in st:
         from ...robot import electronics2
-        ep1 = electronics2.plan(new, sz1, grip=chk1.get("grip") if grip_dirty else b.get("grip"))
+        ep1 = electronics2.plan(new, sz1, grip=grip_new if grip_dirty else b.get("grip"))
     else:
         ep1 = ep0
 

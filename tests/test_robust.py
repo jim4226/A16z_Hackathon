@@ -420,13 +420,107 @@ def test_a_study_of_a_revision_that_now_holds_another_design_says_so(project, pr
     assert robust.load(project, doc["id"])["rev_changed"] is False
 
 
+def test_a_sensorless_hobby_grip_that_holds_its_servo_at_stall_is_a_failure_with_its_name(tmp_path):
+    """A hobby PWM gripper without force sensors on a 370 g can: G closes 0.49 mm past the calibration gauge, so a can
+    8 % over its nominal size is held 3.13 mm past its own contact, at the servo's stall, for the whole carry. The
+    study counted it placed; it now fails it as "stalled", as the simulation does, and the plan says so as an issue."""
+    from morph.cli import EGG_ROBOT
+    from morph.robot import pipeline2
+    from morph.studio.intent import object_changes
+
+    d = Design().with_changes({**EGG_ROBOT, **object_changes("soda can"), "finger.sensor": "none",
+                               "arm.actuator_family": "hobby_pwm"})
+    info = projects.create(str(tmp_path), "hobby-can", origin="default", demo=False, unique=False)
+    root, sz = info["root"], arm.size(d)
+    force = pipeline2.gripper_stage(d, sz, simulate=False)["force"]
+    ep = electronics2.plan(d, sz, grip=force)
+    assert any("closes by position only" in i for i in ep["issues"])
+    rev = os.path.join(root, "r001")
+    os.makedirs(rev)
+    with open(os.path.join(rev, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(d.dumps())
+    doc = simulate.run(arm.build(d, sz, ep), d, "pick_place", os.path.join(rev, "sim"), fast=True)
+    res = {"rev": "r001", "kind": "robot", "stage_status": {"sim": "computed"}, "provenance": {"sim": "computed"},
+           "gripper": {"force": force}, "sims": {"mjcf": "robot.xml", "scenarios": {"pick_place": {
+               "file": "sim_pick_place.json", "title": "Pick and place", "metrics": doc["metrics"]}}}}
+    with open(os.path.join(rev, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    runner = robust.Runner(robust.prepare(root, "r001", 0.002)["blob"])
+    rows = {s: runner.run({"i": 0, "params": {"object_size": s}, "perturb": {"size_scale": s}}) for s in (1.0, 1.08)}
+    assert rows[1.0]["outcome"] != "stalled"
+    assert rows[1.08]["outcome"] == "stalled" and not rows[1.08]["success"], rows[1.08]
+    assert robust.group_label("stalled", "can") == ("Held the gripper servo at stall: the can was wider than its "
+                                                    "position-only close allows")
+
+
+def test_a_sensorless_hobby_grip_that_would_crush_its_object_is_over_force_not_placed(tmp_path):
+    """A hobby PWM gripper without force sensors on a light bulb: one 2 % over its size is held 0.76 mm past its contact,
+    15.66 N in the servo model the firmware closes by, above the bulb's 15 N damage force, while MuJoCo's soft contact
+    measured 10.35 N, so the study counted it placed. It is now over_force, as the simulation's own crush check says."""
+    from morph.cli import EGG_ROBOT
+    from morph.robot import pipeline2
+    from morph.studio.intent import object_changes
+
+    d = Design().with_changes({**EGG_ROBOT, **object_changes("light bulb"), "finger.sensor": "none",
+                               "arm.actuator_family": "hobby_pwm"})
+    info = projects.create(str(tmp_path), "hobby-bulb", origin="default", demo=False, unique=False)
+    root, sz = info["root"], arm.size(d)
+    force = pipeline2.gripper_stage(d, sz, simulate=False)["force"]
+    ep = electronics2.plan(d, sz, grip=force)
+    rev = os.path.join(root, "r001")
+    os.makedirs(rev)
+    with open(os.path.join(rev, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(d.dumps())
+    doc = simulate.run(arm.build(d, sz, ep), d, "pick_place", os.path.join(rev, "sim"), fast=True)
+    res = {"rev": "r001", "kind": "robot", "stage_status": {"sim": "computed"}, "provenance": {"sim": "computed"},
+           "gripper": {"force": force}, "sims": {"mjcf": "robot.xml", "scenarios": {"pick_place": {
+               "file": "sim_pick_place.json", "title": "Pick and place", "metrics": doc["metrics"]}}}}
+    with open(os.path.join(rev, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    runner = robust.Runner(robust.prepare(root, "r001", 0.002)["blob"])
+    row = runner.run({"i": 0, "params": {"object_size": 1.02}, "perturb": {"size_scale": 1.02}})
+    assert row["outcome"] == "over_force" and not row["success"], row
+
+
+def test_an_object_the_resting_arm_knocks_away_is_knocked_not_a_missed_grasp(tmp_path):
+    """The default smart-bus egg-picker on a 520 g, 200 mm water bottle lying on its side: the resting hand's finger is
+    1.07 mm from the bottle's end, so one 1.5 % over its size touches it at the start, and the arm's first move
+    knocks it off the table (68.95 m of 'slip', with no floor). The study called that 'Missed the grasp'. It is a
+    real failure of this layout (the finger would touch a real bottle that size too), so it still counts, as
+    'Knocked away by the arm before the grasp'."""
+    from morph.robot import pipeline2
+    from morph.studio.intent import object_changes
+
+    d = projects.template("egg-picker").with_changes({**object_changes("water bottle"), "finger.sensor": "none"})
+    info = projects.create(str(tmp_path), "bottle", origin="default", demo=False, unique=False)
+    root, sz = info["root"], arm.size(d)
+    force = pipeline2.gripper_stage(d, sz, simulate=False)["force"]
+    ep = electronics2.plan(d, sz, grip=force)
+    rev = os.path.join(root, "r001")
+    os.makedirs(rev)
+    with open(os.path.join(rev, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(d.dumps())
+    doc = simulate.run(arm.build(d, sz, ep), d, "pick_place", os.path.join(rev, "sim"), fast=True)
+    res = {"rev": "r001", "kind": "robot", "stage_status": {"sim": "computed"}, "provenance": {"sim": "computed"},
+           "gripper": {"force": force}, "sims": {"mjcf": "robot.xml", "scenarios": {"pick_place": {
+               "file": "sim_pick_place.json", "title": "Pick and place", "metrics": doc["metrics"]}}}}
+    with open(os.path.join(rev, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    runner = robust.Runner(robust.prepare(root, "r001", 0.002)["blob"])
+    rows = {s: runner.run({"i": 0, "params": {"object_size": s}, "perturb": {"size_scale": s}}) for s in (1.0, 1.02)}
+    assert rows[1.0]["outcome"] == "placed", rows[1.0]
+    assert rows[1.02]["outcome"] == "knocked" and not rows[1.02]["success"], rows[1.02]
+    assert rows[1.02]["knocked_mm"] > robust.KNOCK_MM
+    assert robust.group_label("knocked", "bottle") == "Knocked away by the arm before the grasp"
+
+
 # ------------------------------------------------------------------ acceptance (MORPH_SLOW=1)
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 200 runs at 1 ms plus the solver checks (minutes)")
 def test_acceptance_the_published_study(tmp_path):
     """The egg-picker at default tolerances and 1 ms steps: 150 of 200 succeed (Wilson 68.6-80.5 %); the jam at
     release is concentrated where the egg sits a few mm off its mark along its length (as good a separator as the egg
-    turned a few degrees) and the solver checks label it model-sensitive. At the 2.17 N grip the simulation used before
+    turned a few degrees) and the solver checks label it model-sensitive. At the 2.1715 N grip the simulation used before
     the grip came from the gripper stage (2.34 N), the same seed gave 140 of 200, 58 jams with the egg turned."""
     project = make_revision(tmp_path / "home", fast=False)
     events, t0 = [], time.time()

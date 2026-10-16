@@ -24,7 +24,8 @@ def say(msg, d):
 
 
 def test_make_it_cheaper_steps_down_while_the_object_still_fits():
-    d = egg_arm(**{"arm.actuator_family": "dynamixel", "arm.dof": 6})
+    # an 18 mm object: hobby servos grip every size of it (+/-8 %) below stall without force sensors
+    d = egg_arm(**{"arm.actuator_family": "dynamixel", "arm.dof": 6, "object.diameter_mm": 18.0})
     seen = []
     for _ in range(5):
         out = say("make it cheaper", d)
@@ -36,6 +37,33 @@ def test_make_it_cheaper_steps_down_while_the_object_still_fits():
     assert seen == [{"arm.actuator_family": "smart_bus"}, {"arm.dof": 5}, {"arm.dof": 4}, {"arm.actuator_family": "hobby_pwm"}]
     assert out["reply"] == ("Nothing to change: this is already the cheapest arm Morph makes for a 60 g object "
                             "(4 joints, hobby PWM servos).")
+
+
+def test_cheaper_stops_before_hobby_servos_that_would_stall_on_the_large_end_of_the_object():
+    # the default arm's 66 mm object without force sensors: a hobby gripper servo closes by position only, so one 8 %
+    # over its nominal size holds it at stall (a plan issue): "make it cheaper" stepped into that robot
+    d = egg_arm(**{"arm.dof": 4})
+    out = say("make it cheaper", d)
+    assert out["changes"] == {} and out["reply"] == (
+        "Nothing to change: this is already the cheapest arm Morph makes that grips the raw egg safely (4 joints, "
+        "smart-bus servos): a hobby PWM gripper servo has no torque limit to back its grip up.")
+
+
+def test_cheaper_stops_before_hobby_servos_that_cant_grip_the_object_safely():
+    # the egg-picker's force-sensing hobby gripper can't reach an egg at the small end of its size without risking
+    # stall when a sensor reads nothing (a plan issue): "make it cheaper" stepped into that infeasible robot
+    from morph.studio.projects import template
+
+    d = template("egg-picker")
+    assert (d.arm.actuator_family, int(d.arm.dof)) == ("smart_bus", 5)
+    assert say("make it cheaper", d)["changes"] == {"arm.dof": 4}
+    out = say("make it cheaper", d.with_changes({"arm.dof": 4}))
+    assert out["changes"] == {} and out["reply"] == (
+        "Nothing to change: this is already the cheapest arm Morph makes that grips the raw egg safely (4 joints, "
+        "smart-bus servos): a hobby PWM gripper servo has no torque limit to back its grip up.")
+    # a grape: the probe that reaches its small end would let a dead sensor crush a gauge-sized one (a plan issue)
+    grape = d.with_changes({**intent.object_changes("grape"), "arm.dof": 4})
+    assert say("make it cheaper", grape)["changes"] == {}
 
 
 def test_cheaper_never_drops_below_the_object():

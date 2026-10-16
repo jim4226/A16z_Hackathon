@@ -19,6 +19,20 @@ from .spec import Design
 
 G = 9.81
 GEAR_EFF = 0.6
+# How far past contact a position-controlled jaw servo closes before it squeezes with its whole stall force (mm at the
+# jaw): its position loop's proportional band plus the gear's and the jaw's give. A typical figure, the simulation's
+# jaw servo model (simulate.GRIP_SAT_MM); the bench calibrates the real servo (the firmware's F command).
+SERVO_BAND_MM = 1.5
+# How far an object's size strays from its nominal size, each way (a share of it): the robustness study's default band
+# (services.robust.default_spec: USDA egg classes, medium to jumbo, for an egg; assumed for the rest). The jaws are
+# calibrated on a gauge of the nominal size, so a hobby servo's force-sensing close has to reach the small end, and its
+# sensorless close has to keep the large end under stall (electronics2.open_loop_squeeze).
+OBJECT_SIZE_SPREAD = 0.08
+# The most of its stall force a hobby servo's force-sensing close may reach on a gauge-sized object when no force reading
+# comes (a dead sensor): it is there only until the firmware gives up and opens. SERVO_BAND_MM is a typical figure, not
+# this servo's, so the probe stays a fifth short of it. A sensorless close keeps an object at the large end of its size
+# under the same share.
+PROBE_STALL_SHARE = 0.8
 HOLD_MARGIN = 1.5
 CRUSH_MARGIN = 1.5
 FSR_K_OHM_N = 10_000.0   # FSR 402 roughly follows R ~ K / F (10 kOhm at ~1 N); calibrate on the bench
