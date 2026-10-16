@@ -287,8 +287,16 @@ def test_a_place_is_the_boxs_only_while_it_is_that_box_fitted_there():
     assert worlds._covers({**box, "half": [25.0, 20.0, 50.0], "covers": place}) is None           # made bigger
     huge = {**place, "center": [0.0, 0.0, 500.0], "half": [600.0, 600.0, 500.0]}
     assert worlds._covers({**box, "covers": huge}) is None
-    edge = {**place, "half": [20.0 + worlds.SCAN_COVERS_MAX_MM, 20.0, 65.0]}
+    # R5: past the box only by as much as the box's own size on that axis (the 40 mm box: 40 mm), and sharing the
+    # faces the fit left alone; a place with no distance to it (clearance_mm 0) is no place
+    edge = {**place, "half": [20.0 + 40.0, 20.0, 65.0]}
     assert worlds._covers({**box, "covers": edge}) == edge
+    for bad in ({"half": [20.0 + 40.5, 20.0, 65.0]},                     # past its own size
+                {"half": [20.0 + worlds.SCAN_COVERS_MAX_MM, 20.0, 65.0]},   # 50 mm: within the old limit, not this box's
+                {"center": [0.0, 0.0, 50.0], "half": [30.0, 30.0, 60.0]},   # past every face: shares none with the box
+                {"yaw_deg": 30.0},                                          # not along the box's own sides
+                {"clearance_mm": 0.0}, {"clearance_mm": True}):
+        assert worlds._covers({**box, "covers": {**place, **bad}}) is None, bad
     # near misses at the place: the box's only while no closer than it was fitted to (to 0.1 mm, as it is shown)
     w = {"mount": {"position": [0.0, 0.0, 0.0], "yaw_deg": 0.0}, "obstacles": [{**box, "covers": place}]}
     rim = np.array([[0.0, 0.0, 128.0]] * 3)                    # 28 mm over the box, inside its place
@@ -305,6 +313,31 @@ def test_a_place_is_the_boxs_only_while_it_is_that_box_fitted_there():
     for bad in ({"clearance_mm": -1.0}, {"clearance_mm": 40.0}, {"clearance_mm": "far"}, {"rev": "../r1"}, {"rev": 3}):
         with pytest.raises(worlds.WorldError):
             worlds.validate({**base, "obstacles": [{**box, "covers": {**place, **bad}}]})
+
+
+def test_a_tiny_box_with_a_made_up_place_hides_no_near_miss(tmp_path, nominal):
+    """The review's attack through POST /api/world: a 10 mm cube about 56 mm from a near miss, saved with a place
+    ("covers") 50 mm past it on every side and clearance_mm 0, hid that near miss (it read "has a grey box already").
+    A place counts only as far past its box as the box's own size, sharing the faces the fit left alone, and only with
+    a distance to it: each made-up place here is ignored and the near miss is offered."""
+    rob, doc = nominal
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    res = measure(room, ROOM, doc, rob.xml)
+    (g,) = res["regions"]
+    px, py, pz = g["point"]
+    c = [px - 30.0, py + 25.0, pz - 40.0]
+    for past, cl in ((50.0, 0.0), (49.0, 0.0), (49.0, 8.0), (10.0, 5.0), (60.0, 0.0)):
+        tiny = {"id": "tiny", "label": "Tiny", "center": c, "half": [5.0] * 3, "yaw_deg": 0.0, "source": "user",
+                "covers": {"center": c, "half": [5.0 + past] * 3, "yaw_deg": 0.0, "clearance_mm": cl, "rev": "r001"}}
+        w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                             "obstacles": [tiny]})                          # what POST /api/world saves
+        assert w["obstacles"][0]["covers"]["clearance_mm"] == cl and worlds._covers(w["obstacles"][0]) is None
+        again = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc, rob.xml)
+        assert [r["min_clearance_mm"] for r in again["regions"]] == [g["min_clearance_mm"]], (past, cl, again)
+        assert not again["stats"].get("covered"), (past, cl, again["stats"])
+        text = worlds.scan_check(again)["text"]
+        assert "Add box here" in text and "grey box already" not in text, text
 
 
 DESK_VASE = (-309.49747468305833, -50.50252531694167)     # the review's desk scan: a 44 mm vase beside the egg-picker's path

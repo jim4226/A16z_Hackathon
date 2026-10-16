@@ -119,6 +119,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   clearance, a near miss's row, the base's margin, the room above the arm, the World panel and `morph world`): to 0.1
   mm under 10 mm, to the millimetre from there. Before, 30.68 mm read "At least 31 mm", and a near miss of 9.96 mm was
   kept as 10.0, so the scan check passed it as "At least 10 mm" and the simulation called it clear.
+- The place a box from Add box here keeps (`covers`) counts only as what the fit makes: past the box only on trimmed
+  sides, no further than the box's own size, and with the distance it was fitted to. A world saved through the API
+  with a 10 mm cube and a place 50 mm past it on every side could hide a real 9.0 mm near miss; now that place is
+  ignored and the near miss is offered.
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the

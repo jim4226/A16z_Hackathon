@@ -936,7 +936,8 @@ SCAN_CELL_MM = 24.0          # the coarse samples of a geom grouped in cells thi
 SCAN_RBOUND_CLASSES_MM = (16.0, 48.0)                # geoms' bounding spheres tested in these size classes
 SCAN_MAX_REGIONS, SCAN_GROW_MM, SCAN_MIN_BOX_MM = 8, 30.0, 20.0
 SCAN_COVER_MM = SCAN_NEAR_MM  # a near miss this close to a grey box is the box's: the simulation keeps clear of that
-SCAN_COVERS_MAX_MM = 50.0    # the place a trimmed box was made for reaches at most this far past the box on any side
+SCAN_COVERS_MAX_MM = 50.0    # the place a trimmed box was made for reaches at most this far past the box on any side,
+SCAN_COVERS_FACE_MM = 0.2    # and no further than the box's own size there; its other faces are the box's (to this)
 SCAN_COVERS_TOL_MM = 0.1     # a near miss within this of its box's fit target (shown to 0.1 mm) is no closer than it
 SCAN_FIT_MIN_MM = 5.0        # a box trimmed to keep clear of the path thinner than this is no box (none is offered)
 SCAN_FIT_TOL_MM = 0.05
@@ -1646,7 +1647,8 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
         r["trimmed"] = bool(np.any(np.abs(lo - lo0) > 1e-6) or np.any(np.abs(hi - hi0) > 1e-6))
         if r["trimmed"]:                                # the near miss's place: Add box here keeps it with the box, with
             yaw = r["box"]["yaw_deg"]                   # the distance the box was fitted to (a closer path is offered again)
-            clo, chi = np.maximum(lo0, lo - SCAN_COVERS_MAX_MM), np.minimum(hi0, hi + SCAN_COVERS_MAX_MM)
+            ext = np.minimum(SCAN_COVERS_MAX_MM, hi - lo)                # no further past it than its own size
+            clo, chi = np.maximum(lo0, lo - ext), np.minimum(hi0, hi + ext)
             r["covers"] = {**_world_box(world, R, clo, chi, yaw), "clearance_mm": floor_mm(target)}
             r["box"] = _world_box(world, R, lo, hi, yaw)
     if late and stats is not None:
@@ -1681,23 +1683,27 @@ def _world_box(world, R, lo, hi, yaw) -> dict:
             "half": [round(float(max(v, 1.0)), 1) for v in (hi - lo) / 2.0], "yaw_deg": yaw}
 
 
-def _inside_box(inner: dict, outer: dict, tol: float = 1.0) -> bool:
-    """Whether box `inner` lies within box `outer` (same frame), give or take `tol` mm."""
-    Ri, Ro = _rz(float(inner.get("yaw_deg", 0.0))), _rz(float(outer.get("yaw_deg", 0.0)))
-    corners = np.array(list(itertools.product((-1.0, 1.0), repeat=3))) * np.asarray(inner["half"], float)
-    X = corners @ Ri.T + np.asarray(inner["center"], float)
-    return bool(np.all(np.abs((X - np.asarray(outer["center"], float)) @ Ro) <= np.asarray(outer["half"], float) + tol))
-
-
 def _covers(o: dict) -> dict | None:
-    """The place a box Add box here made was fitted for ("covers"), when it still is: it has the fit's distance, the box
-    lies within it (a box moved or made bigger doesn't cover the old place) and it reaches no more than
-    SCAN_COVERS_MAX_MM past the box (a world from elsewhere can't hide near misses with a huge one)."""
+    """The place a box Add box here made was fitted for ("covers"), when it still is what the fit makes: it has the
+    fit's distance (more than 0), it lies along the box's own sides, it shares the faces the fit left alone (to
+    SCAN_COVERS_FACE_MM: the box was trimmed only on the sides facing the path) and reaches past the others no further
+    than the box's own size on that axis, at most SCAN_COVERS_MAX_MM. So a box moved or made bigger doesn't cover the
+    old place, and a world from elsewhere can't hide near misses with a place much bigger than its box."""
     cv = o.get("covers")
-    if not isinstance(cv, dict) or not isinstance(cv.get("clearance_mm"), (int, float)):
+    if not isinstance(cv, dict) or isinstance(cv.get("clearance_mm"), bool) or \
+            not isinstance(cv.get("clearance_mm"), (int, float)) or not cv["clearance_mm"] > 0.0:
         return None
-    grown = {**o, "half": [float(h) + SCAN_COVERS_MAX_MM for h in o["half"]]}
-    return cv if _inside_box(o, cv) and _inside_box(cv, grown) else None
+    try:
+        turn = (float(cv.get("yaw_deg", 0.0)) - float(o.get("yaw_deg", 0.0)) + 180.0) % 360.0 - 180.0
+        h = np.asarray(o["half"], float)
+        c = _rz(float(o.get("yaw_deg", 0.0))).T @ (np.asarray(cv["center"], float) - np.asarray(o["center"], float))
+        past = np.r_[-h - (c - np.asarray(cv["half"], float)), c + np.asarray(cv["half"], float) - h]   # each face
+    except (KeyError, TypeError, ValueError):
+        return None
+    reach = np.minimum(SCAN_COVERS_MAX_MM, np.r_[2.0 * h, 2.0 * h]) + SCAN_COVERS_FACE_MM
+    shared = np.abs(past) <= SCAN_COVERS_FACE_MM
+    ok = abs(turn) < 0.01 and shared.any() and bool(np.all((past >= -SCAN_COVERS_FACE_MM) & (past <= reach)))
+    return cv if ok else None
 
 
 def _grey_boxes(world) -> list:

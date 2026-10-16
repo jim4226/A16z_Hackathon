@@ -1338,11 +1338,15 @@ field failure rate (section 0, honesty).
   near misses within `SCAN_COVER_MM` of that place too, while the box still lies inside it (+1 mm; moved elsewhere it
   doesn't), so a box trimmed away from its near miss (a vase's top under the arm) isn't offered again. R4: `covers` also
   carries `clearance_mm`, the distance the box was fitted to (the region's `min_clearance_mm`), and `rev`, the revision
-  whose path it was (set by the route), and reaches at most `SCAN_COVERS_MAX_MM` = 50 mm past the trimmed box. Such a
-  box and its place own a near miss only while it is no closer than `clearance_mm` (less `SCAN_COVERS_TOL_MM` = 0.1 mm):
-  a path that comes closer there gets the place offered again, with a box fitted to the new path. A `covers` without
-  `clearance_mm`, that the box doesn't lie inside, or that reaches further than 50 mm past the box is ignored
-  (`_covers`), and the box then owns, like any grey box, only the near misses within 10 mm of itself. A region whose
+  whose path it was (set by the route), and reaches at most `SCAN_COVERS_MAX_MM` = 50 mm past the trimmed box (R5: and
+  no further past a face than the box's own size on that axis). Such a box and its place own a near miss only while it
+  is no closer than `clearance_mm` (less `SCAN_COVERS_TOL_MM` = 0.1 mm): a path that comes closer there gets the place
+  offered again, with a box fitted to the new path. `_covers` ignores a `covers` that isn't what a fit makes, and the
+  box then owns, like any grey box, only the near misses within 10 mm of itself: without `clearance_mm` or with 0 (R5),
+  turned against the box, not containing it, or (R5) past a face by more than the box's size on that axis or 50 mm, or
+  sharing none of its faces (to `SCAN_COVERS_FACE_MM` = 0.2 mm; the fit trims only the sides facing the path). R5:
+  before, the limit was 50 mm past any box, so an API client could save a 10 mm cube with a place 50 mm past it on
+  every side and `clearance_mm` 0 and hide a 9.0 mm near miss 56 mm from the cube; now that place is ignored. A region whose
   fitted box is a box the world holds already (`_same_box`: 0.05 mm, 0.01 degree) is left out and counted in
   `stats.covered`, the rest numbered again (`_already_boxed`): an API client that saves boxes without `covers` can't get
   the same box offered twice. Measured on the review's desk with the trimmed box and its place saved and the mount moved
