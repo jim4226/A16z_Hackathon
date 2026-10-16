@@ -75,9 +75,35 @@ def test_bench_bin_20_finds_a_clear_way_round(egg):
     assert m["min_clearance_mm"] >= simulate.CLEAR_MM                  # and the simulated run kept it too
 
 
+def fine_min(rob, poses, pose, step):
+    """The clearance along a path through `poses` posed every `step` of each move between them (joints, the grip and
+    the object linearly, the quaternion normalised): the reference the check must never be above."""
+    dd = rob._mj.MjData(rob.model)
+    best = (math.inf, None)
+    for a, b in zip(poses, poses[1:] + poses[-1:]):
+        n = max(1, int(round((b["t"] - a["t"]) / step))) if b is not a else 1
+        for k in range(n):
+            u = k / n
+            p = {"t": a["t"] + (b["t"] - a["t"]) * u, "q": (1 - u) * a["q"] + u * b["q"]}
+            if "obj" in a:
+                o = (1 - u) * a["obj"] + u * b["obj"]
+                p["obj"] = np.r_[o[:3], o[3:] / max(float(np.linalg.norm(o[3:])), 1e-9)]
+            pose(dd, p, a["held"])
+            c = rob.clearance(dd, with_object=a["held"])[0]
+            if c < best[0]:
+                best = (c, p["t"])
+    return best
+
+
+def plan_poses(rob, plan, i0, i1):
+    return [{"t": float(plan.t[k]), "q": np.r_[plan.q[k], simulate._held(rob, plan.g[k])],
+             "held": plan.ph[min(k, i1 - 1)] in simulate.CARRIED} for k in range(i0, min(i1 + 1, len(plan.t)))]
+
+
 def test_the_check_takes_every_10_ms_sample(egg):
-    """_check_path's moves cover the plan sample by sample, and each move's clearance is the smallest over all its 10 ms
-    samples (as a plain loop over every sample finds it)."""
+    """_check_path's moves cover the plan sample by sample, and each move's clearance is no more than the smallest over
+    all its 10 ms samples (as a plain loop over every sample finds it) nor than the move posed every 0.5 ms between
+    them (R6: between two samples a jaw moves up to several millimetres), and within 0.2 mm of the latter."""
     d, asm = egg
     rob = simulate._make_robot(asm, d, False, {"world": bench(bin_beside_the_arc(d, 20.0))})
     plan, at = simulate._plan_pick_place(rob, d, False)
@@ -85,14 +111,87 @@ def test_the_check_takes_every_10_ms_sample(egg):
     assert starts[0] == 0 and starts == sorted(starts) and [n for n, _ in plan.moves] == MOVE_ORDER
     dd = rob._mj.MjData(rob.model)
     ends = starts[1:] + [len(plan.t)]
+    pose = lambda dd, p, held: rob.pose_carried(dd, p["q"][:-1], p["q"][-1], held)     # noqa: E731
     for (name, i0), i1, e in zip(plan.moves, ends, rob.path):
         ref = math.inf
         for k in range(i0, i1):
             held = plan.ph[k] in simulate.CARRIED
             rob.pose_carried(dd, plan.q[k], simulate._held(rob, plan.g[k]), held)
             ref = min(ref, rob.clearance(dd, with_object=held)[0])
-        assert e["move"] == name and e["min_clearance_mm"] == round(min(ref, 500.0), 1), (name, e, ref)
+        assert e["move"] == name and e["min_clearance_mm"] <= math.floor(min(ref, 500.0) * 10.0 + 1e-6) / 10.0, (name, e, ref)
+        if name in ("carry", "return"):
+            fine = fine_min(rob, plan_poses(rob, plan, i0, i1), pose, 0.0005)[0]
+            assert fine - 0.2 <= e["min_clearance_mm"] <= fine, (name, e, fine)
+        assert e["clear"] == (e["min_clearance_mm"] >= simulate.CLEAR_MM)
     assert np.allclose(np.diff(plan.t), simulate.PLAN_DT)                # one sample every 10 ms
+
+
+@pytest.mark.parametrize("raw, kept, ok", [(9.96, 9.9, False), (30.68, 30.6, True), (10.0, 10.0, True), (-0.04, -0.1, False)])
+def test_the_simulated_clearance_is_kept_rounded_down(egg, raw, kept, ok, monkeypatch):
+    """The smallest clearance along the simulated run is kept to 0.1 mm rounded down, never up: 9.96 mm is 9.9 and
+    not clear (before: 10.0, "clear"), 30.68 is 30.6, and 0.04 mm into a box is 0.1 mm into it. (The arm held still
+    between frames here, so nothing between them comes closer; the plan's moves are checked the same way.)"""
+    d, asm = egg
+    rob = simulate._make_robot(asm, d, True, {"world": bench(bin_beside_the_arc(d, 20.0))})
+    plan, at = simulate._plan_pick_place(rob, d, True)
+    run_, met = simulate._run_pick_place(rob, d, plan, at)
+    real = rob.clearance
+    rob.clearance = lambda dd, with_object=False, distmax=0.5: (raw, *real(dd, with_object=with_object)[1:])
+    monkeypatch.setattr(rob.motion, "bound", lambda a, b: np.zeros(len(rob.motion.geoms)))
+    simulate._check_path(rob, plan)
+    m = simulate._world_metrics(rob, d, run_, plan)
+    assert m["min_clearance_mm"] == kept and m["clearance_ok"] is ok, m["min_clearance_mm"]
+
+
+def run_and_frames(egg, world, monkeypatch):
+    """(metrics, robot, run) of a world-mode pick and place."""
+    got = {}
+    real = simulate._world_metrics
+
+    def spy(rob, design, run_, plan):
+        got.update(rob=rob, run=run_)
+        return real(rob, design, run_, plan)
+    monkeypatch.setattr(simulate, "_world_metrics", spy)
+    m = run(egg, world)["metrics"]
+    return m, got["rob"], got["run"]
+
+
+def frame_pose(rob):
+    def pose(dd, p, held):
+        dd.qpos[:] = 0
+        dd.qpos[rob.qadr] = p["q"][:rob.n]
+        if rob.g_q:
+            rob.set_grip(dd, p["q"][-1])
+        dd.qpos[rob.obj_q:rob.obj_q + 3] = np.asarray(p["obj"][:3]) * simulate.MM
+        dd.qpos[rob.obj_q + 3:rob.obj_q + 7] = simulate._q_body(p["obj"][3:7])
+        rob._mj.mj_kinematics(rob.model, dd)
+    return pose
+
+
+@pytest.mark.parametrize("which", ["bin 18.5", "bracket"])
+def test_the_runs_clearance_counts_the_motion_between_its_frames(egg, which, monkeypatch):
+    """R6: a jaw point moves up to 19.5 mm between two of the run's frames (30 a second). With the bench bin 18.5 mm
+    outside the carry arc the frames said 10.3 mm ("At least 10 mm", clearance_ok) while the run posed every 2 ms comes
+    within 9.956 mm, and the plan's own way back was 9.9 mm and not clear; beside a 10 mm bracket the frames said
+    12.4 mm, the run 10.916 mm. The kept clearance is now never more than the run posed every 2 ms (and within 0.2 mm
+    of it), and clearance_ok is false when a planned move isn't clear."""
+    d, _ = egg
+    ob = bin_beside_the_arc(d, 18.5) if which == "bin 18.5" else box("Bracket", (260.56, 18.71, 76.18), (5.0, 5.0, 5.0))
+    m, rob, run_ = run_and_frames(egg, bench(ob), monkeypatch)
+    poses = [{"t": float(f["t"]), "q": np.asarray(f["q"], float), "obj": np.asarray(f["obj"], float),
+              "held": f["phase"] in simulate.CARRIED} for f in run_.frames]
+    truth, t = fine_min(rob, poses, frame_pose(rob), 0.002)
+    assert truth - 0.2 <= m["min_clearance_mm"] <= truth, (m["min_clearance_mm"], truth, t)
+    assert m["min_clearance_mm"] <= min(e["min_clearance_mm"] for e in m["path"])
+    assert m["clearance_ok"] == (all(e["clear"] for e in m["path"]) and m["min_clearance_mm"] >= simulate.CLEAR_MM)
+    if which == "bin 18.5":
+        assert not m["clearance_ok"] and m["min_clearance_mm"] < simulate.CLEAR_MM and m["success"]
+        w = worlds.validate({"id": "bench", "mount": {"position": [0, 0, 0], "yaw_deg": 0}, "surface": bench()["surface"],
+                             "obstacles": [ob]})
+        res = worlds.checks(w, {"sims": {"scenarios": {"pick_place": {"metrics": {**m, "world": "bench",
+                                                                                   "world_sha": worlds.sha(w)}}}}})
+        c = next(c for c in res["checks"] if c["id"] == "clearance")
+        assert c["status"] == "warn" and c["text"].startswith("Only 9.") and "At least" not in c["text"], c
 
 
 @pytest.mark.parametrize("off", [36.0])
@@ -191,3 +290,37 @@ def test_the_check_reads_the_move(egg):
     assert c["text"] == ("The planned path takes the jaw left 4.0 mm into Carton wall during the set-down (5.3 s), and no "
                          "clear way around it was found.")
     assert worlds.MOVES == simulate.MOVES
+
+
+def test_the_workspace_measures_the_arm_itself_not_its_tool_point(egg):
+    """R6: the overhead and people checks used the tool point's highest and furthest of 4000 random poses (567.1 and
+    568.0 mm on the egg-picker) while its fingers reach about 20 mm further. The workspace scenario now keeps the arm's
+    own top and furthest point (arm_top_mm, arm_reach_mm): at least what any of 3000 random poses, the jaws at either
+    end of their range, puts any vertex of the robot's collision shapes at, and not much more."""
+    d, asm = egg
+    m = simulate.run(asm, d, "workspace")["metrics"]
+    rob = simulate._make_robot(asm, d, False, {})
+    mm, dd = rob.model, rob._mj.MjData(rob.model)
+    V, G = [], []
+    for g in rob.robot_geoms:
+        if mm.geom_type[g] == rob._mj.mjtGeom.mjGEOM_MESH:
+            a, n = mm.mesh_vertadr[mm.geom_dataid[g]], mm.mesh_vertnum[mm.geom_dataid[g]]
+            V.append(np.asarray(mm.mesh_vert[a:a + n], float))
+            G.append(np.full(n, g))
+    V, G = np.vstack(V), np.concatenate(G)
+    jaw = int(np.nonzero(mm.jnt_qposadr == rob.g_q[0])[0][0])
+    links = [mm.body(n).id for n in rob.asm.ordered_links() if mm.body(n).id > 0]
+    rng = np.random.default_rng(11)
+    top = far = 0.0
+    for q in rng.uniform(rob.lo, rob.hi, size=(3000, rob.n)):
+        for g in mm.jnt_range[jaw] / rob.g_scale:
+            dd.qpos[:] = 0
+            dd.qpos[rob.qadr] = q
+            rob.set_grip(dd, g)
+            rob._mj.mj_kinematics(mm, dd)
+            if dd.xpos[links, 2].min() < -1e-3 or dd.site_xpos[rob.tcp_site][2] < 0.0:
+                continue
+            P = (np.einsum("nij,nj->ni", dd.geom_xmat[G].reshape(-1, 3, 3), V) + dd.geom_xpos[G]) / simulate.MM
+            top, far = max(top, float(P[:, 2].max())), max(far, float(np.linalg.norm(P, axis=1).max()))
+    assert top <= m["arm_top_mm"] <= top + 5.0 and far <= m["arm_reach_mm"] <= far + 5.0, (m, top, far)
+    assert m["arm_top_mm"] > m["max_height_mm"] + 10.0 and m["arm_reach_mm"] > m["reach_3d_mm"] + 10.0, m

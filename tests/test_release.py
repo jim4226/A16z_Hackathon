@@ -4,6 +4,7 @@ installed wheel carries every file Morph reads (and keeps .env out of site-packa
 import argparse
 import ast
 import http.client
+import json
 import os
 import re
 import shutil
@@ -115,6 +116,120 @@ def test_an_installed_wheel_keeps_env_out_of_site_packages(tmp_path, monkeypatch
     assert resources.config_dir() == os.path.join(os.path.expanduser("~"), ".config", "morph")
 
 
+def _as_wheel(tmp_path, monkeypatch) -> Path:
+    """An installed wheel (no checkout) started in an empty folder, with the user's folders under tmp_path."""
+    monkeypatch.setattr(resources, "ROOT", resources.BUNDLED)
+    monkeypatch.setattr(resources, "_HOMES", {})
+    monkeypatch.delenv("MORPH_HOME", raising=False)
+    for var, sub in (("XDG_DATA_HOME", "data"), ("XDG_CONFIG_HOME", "config"), ("LOCALAPPDATA", "local"),
+                     ("HOME", "home"), ("USERPROFILE", "home")):
+        monkeypatch.setenv(var, str(tmp_path / sub))
+    from morph.importers import common
+    monkeypatch.setattr(common, "_HOME", None)  # what a Studio in this process set
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    return work
+
+
+def test_an_installed_wheel_keeps_projects_in_the_users_data_folder(tmp_path, monkeypatch):
+    """A wheel used to keep projects in ./projects of whatever folder it started in, and moved into someone's own folder
+    of that name (README's "delete the projects folder" then meant theirs). Now: MORPH_HOME, else the per-user data
+    folder, unless ./projects already holds Morph projects. Every module agrees, and doctor prints the absolute path."""
+    from morph import settings
+    from morph.importers import common
+    from morph.studio.teams import store as team_store
+    from morph.studio.toolbox import store as tool_store
+
+    monkeypatch.delenv("MORPH_HOME", raising=False)
+    assert resources.projects_home() == str(REPO / "projects")  # a checkout: its own folder's
+    work = _as_wheel(tmp_path, monkeypatch)
+    (work / "projects" / "thesis").mkdir(parents=True)
+    (work / "projects" / "thesis" / "notes.txt").write_text("mine", encoding="utf-8")
+    want = os.path.join(resources.data_dir(), "projects")
+    assert os.path.isabs(want) and not want.startswith(str(work)) and "site-packages" not in want
+    if sys.platform.startswith("linux"):
+        assert want == str(tmp_path / "data" / "morph" / "projects")
+    elif os.name == "nt":
+        assert want == str(tmp_path / "local" / "Morph" / "projects")
+    assert resources.projects_home() == want == settings.home() == common.home()
+    assert tool_store.home_dir() == want == team_store.home_dir()
+    assert resources.projects_home_note(want) == ""
+    env = {k: v for k, v in os.environ.items() if k != "MORPH_HOME"}
+    env.update(PYTHONPATH=str(REPO), MORPH_OFFLINE="1")
+    code = ("import argparse, morph.resources as r; r.ROOT = r.BUNDLED; import morph.cli as c; print('HOME=' + c.HOME); "
+            "c.cmd_doctor(argparse.Namespace(offline=True))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=work, env=env, capture_output=True, text=True, timeout=600)
+    assert f"HOME={want}\n" in out.stdout and f"projects folder {want}: can write it" in out.stdout, out.stdout + out.stderr
+    assert sorted(os.listdir(work / "projects")) == ["thesis"] and os.listdir(work / "projects" / "thesis") == ["notes.txt"]
+
+    (work / "projects" / "egg-picker").mkdir()  # projects an older wheel made here: Morph keeps using them and says so
+    (work / "projects" / "egg-picker" / "ledger.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setattr(resources, "_HOMES", {})
+    assert resources.projects_home() == "projects" == settings.home()
+    assert tool_store.home_dir() == str(work / "projects")
+    note = resources.projects_home_note("projects")
+    assert "already holds Morph projects, so Morph keeps using it" in note and want in note and "MORPH_HOME" in note
+    monkeypatch.setenv("MORPH_HOME", str(tmp_path / "mine"))
+    assert resources.projects_home() == str(tmp_path / "mine") == settings.home()
+    assert resources.projects_home_note(str(tmp_path / "mine")) == " (MORPH_HOME)"
+
+
+def test_a_checkouts_projects_are_in_its_folder_whatever_folder_morph_starts_in(tmp_path, monkeypatch):
+    """The launchers install a `morph` command into .venv (README says to activate it): run from another folder,
+    `morph doctor` or `morph studio` used that folder's ./projects, someone's own folder of that name too. A checkout's
+    projects are in its own folder, an absolute path, from any folder; another folder's Morph projects are left where
+    they are, and Morph says how to open them."""
+    from morph import settings
+    from morph.importers import common
+    from morph.studio.teams import store as team_store
+    from morph.studio.toolbox import store as tool_store
+
+    monkeypatch.delenv("MORPH_HOME", raising=False)
+    monkeypatch.setattr(common, "_HOME", None)
+    root = tmp_path / "Morph"                              # a checkout somewhere else (its projects folder not made yet)
+    root.mkdir()
+    monkeypatch.setattr(resources, "ROOT", str(root))
+    work = tmp_path / "work"
+    (work / "projects" / "thesis").mkdir(parents=True)
+    (work / "projects" / "thesis" / "notes.txt").write_text("mine", encoding="utf-8")
+    monkeypatch.chdir(work)
+    want = str(root / "projects")
+    assert resources.checkout() == str(root) and os.path.isabs(want)
+    assert resources.projects_home() == want == settings.home() == common.home() == tool_store.home_dir() == \
+        team_store.home_dir()
+    assert resources.projects_home_note(want) == ""      # someone's own ./projects: not Morph's, nothing to say
+    (work / "projects" / "egg-picker").mkdir()           # Morph projects made here before: left alone, and named
+    (work / "projects" / "egg-picker" / "ledger.jsonl").write_text("", encoding="utf-8")
+    assert resources.projects_home() == want
+    note = resources.projects_home_note(want)
+    assert f"the Morph projects in {work / 'projects'} stay where they are" in note and \
+        f"MORPH_HOME={work / 'projects'}" in note, note
+    monkeypatch.chdir(root)                              # the launchers' folder: nothing to say
+    assert resources.projects_home() == want and resources.projects_home_note(want) == ""
+    env = {k: v for k, v in os.environ.items() if k != "MORPH_HOME"}
+    env.update(PYTHONPATH=str(REPO), MORPH_OFFLINE="1")
+    code = (f"import argparse, morph.resources as r; r.ROOT = {str(root)!r}; import morph.cli as c; "
+            "print('HOME=' + c.HOME); c.cmd_doctor(argparse.Namespace(offline=True))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=work, env=env, capture_output=True, text=True, timeout=600)
+    assert f"HOME={want}\n" in out.stdout and f"projects folder {want} (the Morph folder's;" in out.stdout, \
+        out.stdout + out.stderr
+    assert sorted(os.listdir(work / "projects")) == ["egg-picker", "thesis"]
+    assert os.listdir(work / "projects" / "egg-picker") == ["ledger.jsonl"] and os.path.isdir(want)
+
+
+def test_the_studio_says_where_the_projects_are(tmp_path, monkeypatch, capsys):
+    from morph.studio import server
+    from test_keys_and_launch import _free_port, _robots
+
+    _robots(tmp_path / "projects")
+    monkeypatch.setattr(cli, "HOME", str(tmp_path / "projects"))
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    monkeypatch.setattr(server, "serve", lambda *a, **k: None)
+    cli.cmd_studio(argparse.Namespace(name="egg-picker", host="127.0.0.1", port=_free_port(), open=False, remote=False))
+    assert f"Projects folder: {tmp_path / 'projects'}\n" in capsys.readouterr().out
+
+
 def test_saving_keys_creates_the_settings_folder(tmp_path, monkeypatch):
     target = tmp_path / "config" / "morph" / ".env"
     monkeypatch.setattr(keys, "TEMPLATE", str(tmp_path / "no-template"))
@@ -169,6 +284,52 @@ def test_shell_launcher_parses():
     assert subprocess.run(["bash", "-n", str(REPO / "run_studio.sh")], capture_output=True).returncode == 0
 
 
+# ------------------------------------------------------------------ what the README says about keys and switches
+
+def _keys_js_settings() -> list:
+    """The titles of the switches under Keys, Privacy and network (static/keys.js SETTINGS)."""
+    js = (STATIC / "keys.js").read_text(encoding="utf-8")
+    body = js[js.index("const SETTINGS = ["):js.index("];", js.index("const SETTINGS = ["))]
+    return re.findall(r"^\s*\['([a-z_]+)', '((?:[^'\\]|\\.)*)'", body, re.M)
+
+
+def test_the_readme_lists_every_privacy_switch_the_keys_dialog_has():
+    """README said "three switches" when the dialog had five; it names each one now, by the dialog's own title."""
+    from morph import settings
+    switches = _keys_js_settings()
+    assert [k for k, _ in switches] == [k for k in settings.DEFAULTS if k != "sourcing_enabled"]  # sourcing: Find agents
+    readme = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
+    para = readme[readme.index("**Privacy and network**"):readme.index("`MORPH_OFFLINE=1`")]
+    words = {3: "three", 4: "four", 5: "five", 6: "six"}
+    assert f"has {words[len(switches)]} switches" in para, para
+    for key, title in switches:
+        name = title.split(" (")[0]  # "Use Keewano calibration (demo data unless ...)": the name before its note
+        assert f"*{name}" in para, (key, name)
+    assert "*Allow network lookups (Darwin, SubQ, Claude)* is on" in para
+    assert "*Let agents use tools (beta)* is on" in para and "purchased parts* is off" in para
+
+
+def test_the_readme_says_what_test_keys_covers_and_lists_tool_keys():
+    from morph import keys
+    readme = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
+    checked = sorted({"Claude", "Keewano", "SubQ"})
+    src = (REPO / "morph" / "keys.py").read_text(encoding="utf-8")
+    body = src[src.index("def check("):src.index("if not jobs:", src.index("def check("))]
+    assert sorted(re.findall(r'jobs\["(\w+)"\]', body)) == checked  # what Test keys tries
+    assert "**Test keys** in the same dialog tries the Claude, Keewano and SubQ keys" in readme
+    assert "| `MORPH_TOOL_*` |" in readme and "docs/TOOLS.md" in readme
+    assert {k["service"] for k in keys.KEYS} <= {"Claude", "Keewano", "SubQ"}
+
+
+def test_no_doc_or_message_tells_people_to_pip_install_morph_with_extras():
+    """Installing "morph" with the video, cad or xacro extra from PyPI fetched an unrelated project called morph (and
+    zsh refused the brackets): commands name the packages themselves. Developer installs of this checkout are fine."""
+    bad = re.compile(r"pip3?\s+install\s+(-\S+\s+)*[\"']?morph\[(video|cad|xacro|machines|dev)")
+    hits = [str(p.relative_to(REPO)) for p, text in _shipped_text_files()
+            if p.suffix in (".md", ".py", ".js", ".html", ".bat", ".sh", ".txt", ".toml", ".in") and bad.search(text)]
+    assert hits == []
+
+
 # ------------------------------------------------------------------ constraints
 
 def _norm(name: str) -> str:
@@ -212,3 +373,76 @@ def test_release_docs_exist_link_correctly_and_name_this_version():
                 assert (REPO / doc).parent.joinpath(path).resolve().exists(), (doc, link)
     assert not (REPO / "docs" / "HACKATHON_PLAN.md").exists() and (REPO / "docs" / "internal" / "HACKATHON_PLAN.md").exists()
     assert "github.com/jim4226/morph-studio/security/advisories/new" in (REPO / "SECURITY.md").read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------ what ships: licences, fixtures, paths, build
+
+RECORDED_FIXTURES = ("tests/fixtures/darwin", "tests/fixtures/tools/answers/mouser_wrong_key.json")  # from real services
+OWN_FIXTURES = ("tests/fixtures/tools/answers", "tests/fixtures/tools/fixparts.json", "tests/fixtures/launchers")  # made up
+
+
+def test_the_notices_name_every_vendored_folder_robot_and_recorded_fixture():
+    notices = (REPO / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    notice = (REPO / "NOTICE").read_text(encoding="utf-8")
+    vendor = STATIC / "vendor"
+    for folder in [vendor, *(p for p in sorted(vendor.rglob("*")) if p.is_dir())]:
+        rel = folder.relative_to(REPO).as_posix()
+        assert f"`{rel}/" in notices and f"{rel}/" in notice, rel
+    for robot in sorted(p for p in (REPO / "robots").iterdir() if p.is_dir()):
+        rel = robot.relative_to(REPO).as_posix()
+        assert f"`{rel}/`" in notices and f"{rel}/" in notice, rel
+    assert "`data/darwin-cache/`" in notices and "data/darwin-cache/" in notice and "THIRD_PARTY_NOTICES.md" in notice
+    for path in sorted(p for p in (REPO / "tests" / "fixtures").rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+        rel = path.relative_to(REPO).as_posix()
+        whose = next((k for k in RECORDED_FIXTURES + OWN_FIXTURES if rel == k or rel.startswith(k + "/")), None)
+        assert whose, f"{rel} is new: say in THIRD_PARTY_NOTICES whether it was recorded from a service or made up"
+        assert f"`{whose}" in notices, whose
+    for rel in RECORDED_FIXTURES:
+        assert rel in notice, rel
+
+
+def _shipped_text_files():
+    """Every text file of the repository (what a release zip or the source archive carries)."""
+    if shutil.which("git") and (REPO / ".git").exists():
+        out = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"], capture_output=True, check=True).stdout
+        paths = [REPO / p for p in out.decode("utf-8").split("\0") if p]
+    else:  # a source archive: no .git
+        skip = {".git", ".venv", "projects", "build", "dist", "__pycache__"}
+        paths = [p for p in REPO.rglob("*") if p.is_file() and not skip & set(p.relative_to(REPO).parts)]
+    for p in paths:
+        if p.is_file() and p.suffix not in (".stl", ".glb", ".zip", ".gif", ".png", ".woff2", ".jpg", ".npz"):
+            try:
+                yield p, p.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+
+
+def test_no_development_machine_paths_ship():
+    marker = "/tmp/" + "claude-0"  # split, so this file doesn't name it
+    assert [str(p.relative_to(REPO)) for p, text in _shipped_text_files() if marker in text] == []
+
+
+def test_the_wheel_lists_its_files_instead_of_taking_the_source_archives():
+    """include-package-data off: the package-data globs carry every Studio file (tools/package_smoke.py checks the
+    installed wheel), and setuptools no longer warns about each static/ folder that isn't a package."""
+    tool = _pyproject()["tool"]["setuptools"]
+    assert tool["include-package-data"] is False
+    assert tool["package-data"]["morph.studio"] == ["static/**/*"]
+    assert tool["package-data"]["morph.studio.toolbox"] == ["catalog/*.json"]
+
+
+def test_the_owners_release_decisions_are_recorded_and_kept():
+    """W3: the owner kept README's accurate Keewano paragraph (REL-6, not main's "every design ... is logged, and the
+    measured results tune the next design" with both switches off by default), left private vulnerability reporting
+    to their own switch (REL-5) and ships Farnell off until a legal review (REL-10). The checklist says so."""
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "with event sending on, every design, bench test and human minute is logged, and with calibration on" in readme
+    assert "Both are off by default, and the R Cubed demo history in Keewano is seeded data, not real builds." in readme
+    assert "recursive self-improvement" not in readme
+    checklist = (REPO / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
+    decided = checklist[checklist.index("## Decided for 0.2.0b1"):checklist.index("## Before tagging")]
+    for item, word in (("REL-6", "**Keep**"), ("REL-5", "**The owner's switch.**"), ("REL-10", "**Off by default until")):
+        row = next(ln for ln in decided.splitlines() if ln.startswith(f"| {item}:"))
+        assert word in row, row
+    manifest = json.loads((REPO / "morph" / "studio" / "toolbox" / "catalog" / "element14.json").read_text(encoding="utf-8"))
+    assert manifest.get("off_by_default"), manifest.get("off_by_default")

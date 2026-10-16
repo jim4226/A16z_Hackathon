@@ -1,0 +1,1143 @@
+{
+ "so101_follower_12v.csv": {
+  "note": "C018 is the 12 V servo; the 200 mm cable is not a servo",
+  "lines": {
+   "Feetech STS3215-C018 servo": [
+    "sts3215",
+    6
+   ],
+   "Waveshare Bus Servo Adapter (A)": [
+    null,
+    0
+   ],
+   "12V 5A power supply for STS3215 servos": [
+    null,
+    0
+   ],
+   "STS3215 servo horn (aluminium)": [
+    null,
+    0
+   ],
+   "M2x6 screw": [
+    null,
+    0
+   ],
+   "STS3215 servo cable 200 mm": [
+    null,
+    0
+   ],
+   "USB-C cable": [
+    null,
+    0
+   ],
+   "PLA filament 1 kg": [
+    null,
+    0
+   ],
+   "Table clamp": [
+    null,
+    0
+   ]
+  }
+ },
+ "so101_leader_follower.csv": {
+  "note": "the servo arm is a horn",
+  "lines": {
+   "STS3215 Servo 7.4V, 1/345 gear (C001)": [
+    "sts3215_7v4",
+    7
+   ],
+   "STS3215 Servo 7.4V, 1/191 gear (C044)": [
+    "sts3215_7v4",
+    2
+   ],
+   "STS3215 Servo 7.4V, 1/147 gear (C046)": [
+    "sts3215_7v4",
+    3
+   ],
+   "Bus servo driver board for STS3215": [
+    null,
+    0
+   ],
+   "5V 4A power supply": [
+    null,
+    0
+   ],
+   "Feetech FE-URT-1 servo debug board": [
+    null,
+    0
+   ],
+   "STS3215 servo arm, aluminium": [
+    null,
+    0
+   ]
+  }
+ },
+ "koch_v11.csv": {
+  "note": "Koch v1.1: XL330-M077 is the leader arm's motor, not the M288",
+  "lines": {
+   "Dynamixel XL430-W250-T": [
+    "xl430_w250",
+    2
+   ],
+   "Dynamixel XL330-M288-T": [
+    "xl330_m288",
+    4
+   ],
+   "Dynamixel XL330-M077-T": [
+    null,
+    0
+   ],
+   "U2D2": [
+    null,
+    0
+   ],
+   "U2D2 Power Hub Board": [
+    null,
+    0
+   ],
+   "ROBOTIS U2D2 for Dynamixel XL430": [
+    null,
+    0
+   ],
+   "SMPS 12V 5A for XL430": [
+    null,
+    0
+   ],
+   "Robot Cable-X3P 180mm (for XL430)": [
+    null,
+    0
+   ],
+   "FR12-H101K frame for XL430": [
+    null,
+    0
+   ],
+   "XL330 servo cable JST EH 3P": [
+    null,
+    0
+   ]
+  }
+ },
+ "hobby_arm.csv": {
+  "note": "",
+  "lines": {
+   "MG996R servo": [
+    "mg996r",
+    3
+   ],
+   "SG90 9g micro servo": [
+    "sg90",
+    3
+   ],
+   "PCA9685 16-channel servo driver": [
+    null,
+    0
+   ],
+   "MG996R metal servo arm": [
+    null,
+    0
+   ],
+   "SG90 servo arm set": [
+    null,
+    0
+   ],
+   "MG996R servo bracket silver": [
+    null,
+    0
+   ],
+   "MG996R replacement gears": [
+    null,
+    0
+   ],
+   "5V 10A power supply": [
+    null,
+    0
+   ],
+   "Arduino Uno R3": [
+    null,
+    0
+   ],
+   "Capacitor 1000uF for MG996R": [
+    null,
+    0
+   ],
+   "SG90 servo extension lead": [
+    null,
+    0
+   ]
+  }
+ },
+ "stepper_arm.csv": {
+  "note": "",
+  "lines": {
+   "NEMA17 stepper motor 42-40": [
+    null,
+    0
+   ],
+   "NEMA17 planetary gearbox stepper 5.18:1": [
+    null,
+    0
+   ],
+   "TMC2209 stepper driver": [
+    null,
+    0
+   ],
+   "DRV8825 stepper driver for NEMA17": [
+    null,
+    0
+   ],
+   "GT2 pulley 20T for NEMA17": [
+    null,
+    0
+   ],
+   "NEMA17 motor mount bracket": [
+    null,
+    0
+   ],
+   "SG90 servo": [
+    "sg90",
+    1
+   ],
+   "24V 5A power supply": [
+    null,
+    0
+   ]
+  }
+ },
+ "eu_semicolon.csv": {
+  "note": "German headers: is the table read at all? (Servohorn = servo horn, Netzteil = power supply)",
+  "lines": {
+   "Feetech STS3215 Servo 12V": [
+    "sts3215",
+    6
+   ],
+   "Servohorn Aluminium STS3215": [
+    null,
+    0
+   ],
+   "Netzteil 12V 5A": [
+    null,
+    0
+   ]
+  }
+ },
+ "eu_semicolon_en.csv": {
+  "note": "",
+  "lines": {
+   "Feetech STS3215 Servo 12V": [
+    "sts3215",
+    6
+   ],
+   "STS3215 servo horn, aluminium": [
+    null,
+    0
+   ],
+   "Power supply 12V 5A": [
+    null,
+    0
+   ]
+  }
+ },
+ "servo_board_kicad8.csv": {
+  "note": "KiCad 8 Symbol Fields Table export; J2-J7 are JST connectors for the servo bus; M1/M2 are the Motor_Servo symbol (the servo itself, plugged into a header)",
+  "lines": {
+   "100nF": [
+    null,
+    0
+   ],
+   "1000uF": [
+    null,
+    0
+   ],
+   "USB_C_Receptacle": [
+    null,
+    0
+   ],
+   "STS3215_BUS": [
+    null,
+    0
+   ],
+   "Barrel_Jack_12V": [
+    null,
+    0
+   ],
+   "SG90": [
+    "sg90",
+    2
+   ],
+   "CH340C": [
+    null,
+    0
+   ],
+   "74LVC1G125": [
+    null,
+    0
+   ],
+   "10k": [
+    null,
+    0
+   ]
+  }
+ },
+ "servo_board_kicad_legacy.csv": {
+  "note": "KiCad 5-7 bom_csv_grouped_by_value plugin output (header 'Qnty')",
+  "lines": {
+   "100nF": [
+    null,
+    0
+   ],
+   "STS3215": [
+    null,
+    0
+   ],
+   "MG996R": [
+    "mg996r",
+    2
+   ],
+   "CH340C": [
+    null,
+    0
+   ]
+  }
+ },
+ "servo_board_kibom.csv": {
+  "note": "KiBoM default columns: 'Component' is the group number",
+  "lines": {
+   "#1": [
+    null,
+    0
+   ],
+   "#2": [
+    "sg90",
+    2
+   ],
+   "#3": [
+    null,
+    0
+   ],
+   "#4": [
+    null,
+    0
+   ]
+  }
+ },
+ "jlc_bom.csv": {
+  "note": "JLCPCB assembly BOM",
+  "lines": {
+   "100nF": [
+    null,
+    0
+   ],
+   "CH340C": [
+    null,
+    0
+   ],
+   "STS3215 connector": [
+    null,
+    0
+   ]
+  }
+ },
+ "bldc_arm.csv": {
+  "note": "",
+  "lines": {
+   "GIM6010-8 BLDC actuator": [
+    null,
+    0
+   ],
+   "CubeMars AK80-9 actuator": [
+    null,
+    0
+   ],
+   "Moteus r4.11 controller": [
+    null,
+    0
+   ],
+   "AS5047P magnetic encoder": [
+    null,
+    0
+   ],
+   "XL330-M288-T": [
+    "xl330_m288",
+    1
+   ],
+   "U2D2 interface for XL330 servos": [
+    null,
+    0
+   ]
+  }
+ },
+ "pack_counts.csv": {
+  "note": "a pack of N bought once: Qty 1, N servos",
+  "lines": {
+   "STS3215 12V servo (6 pcs)": [
+    "sts3215",
+    6
+   ],
+   "6 x STS3215 12V servo": [
+    "sts3215",
+    6
+   ],
+   "SG90 micro servo 10 pack": [
+    "sg90",
+    10
+   ],
+   "MG996R servo x4": [
+    "mg996r",
+    4
+   ]
+  }
+ },
+ "so_arm100_readme.md": {
+  "note": "",
+  "lines": {
+   "STS3215 Servo 12V, 1/345 gear (C018)": [
+    "sts3215",
+    6
+   ],
+   "Motor Control Board": [
+    null,
+    0
+   ],
+   "USB-C Cable 2 pcs": [
+    null,
+    0
+   ],
+   "Power Supply (12V 5A)": [
+    null,
+    0
+   ],
+   "Table Clamp 2 pcs": [
+    null,
+    0
+   ]
+  }
+ },
+ "joint_named_follower.csv": {
+  "note": "a hand-made list naming each servo by its joint (bb1fd6b seeded 6)",
+  "lines": {
+   "Base STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Shoulder STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Elbow STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Wrist pitch STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Wrist roll STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Gripper STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "FE-URT-1 bus adapter": [
+    null,
+    0
+   ],
+   "12V 5A power supply": [
+    null,
+    0
+   ]
+  }
+ },
+ "so101_two_arms_readme.md": {
+  "note": "SO-101 README layout with the arm named before each servo (hunters' file, round 3)",
+  "lines": {
+   "Follower arm: STS3215 Servo 12V, 1/345 gear (C018)": [
+    "sts3215",
+    6
+   ],
+   "Leader arm: STS3215 Servo 7.4V, 1/345 gear (C001)": [
+    "sts3215_7v4",
+    1
+   ],
+   "Leader arm: STS3215 Servo 7.4V, 1/191 gear (C044)": [
+    "sts3215_7v4",
+    2
+   ],
+   "Leader arm: STS3215 Servo 7.4V, 1/147 gear (C046)": [
+    "sts3215_7v4",
+    3
+   ],
+   "Motor Control Board": [
+    null,
+    0
+   ],
+   "USB-C Cable 2 pcs": [
+    null,
+    0
+   ],
+   "Power Supply 12V (follower)": [
+    null,
+    0
+   ],
+   "Power Supply 5V (leader)": [
+    null,
+    0
+   ],
+   "Table Clamp 4pcs": [
+    null,
+    0
+   ],
+   "Screwdriver Set": [
+    null,
+    0
+   ]
+  }
+ },
+ "lerobot_joint_names.csv": {
+  "note": "LeRobot's own motor names (shoulder_pan ... gripper) as labels (hunters' file, round 3)",
+  "lines": {
+   "Shoulder pan: STS3215 C001": [
+    "sts3215_7v4",
+    1
+   ],
+   "Shoulder lift: STS3215 C001": [
+    "sts3215_7v4",
+    1
+   ],
+   "Elbow flex: STS3215 C001": [
+    "sts3215_7v4",
+    1
+   ],
+   "Wrist flex: STS3215 C001": [
+    "sts3215_7v4",
+    1
+   ],
+   "Wrist roll: STS3215 C001": [
+    "sts3215_7v4",
+    1
+   ],
+   "Gripper: STS3215 C001": [
+    "sts3215_7v4",
+    1
+   ],
+   "Waveshare bus servo adapter": [
+    null,
+    0
+   ],
+   "5V 4A power supply": [
+    null,
+    0
+   ],
+   "USB-C cable": [
+    null,
+    0
+   ]
+  }
+ },
+ "lerobot_model_first.csv": {
+  "note": "model first, then the joint it drives, no separator (bb1fd6b tagged these) (hunters' file, round 3)",
+  "lines": {
+   "STS3215 C018 shoulder pan": [
+    "sts3215",
+    1
+   ],
+   "STS3215 C018 shoulder lift": [
+    "sts3215",
+    1
+   ],
+   "STS3215 C018 elbow flex": [
+    "sts3215",
+    1
+   ],
+   "STS3215 C018 wrist flex": [
+    "sts3215",
+    1
+   ],
+   "STS3215 C018 wrist roll": [
+    "sts3215",
+    1
+   ],
+   "STS3215 C018 gripper": [
+    "sts3215",
+    1
+   ],
+   "FE-URT-1 bus adapter": [
+    null,
+    0
+   ],
+   "12V 5A power supply": [
+    null,
+    0
+   ]
+  }
+ },
+ "koch_roles.csv": {
+  "note": "Koch v1.1 with LeRobot joint names per line (hunters' file, round 3)",
+  "lines": {
+   "Follower shoulder pan: Dynamixel XL430-W250-T": [
+    "xl430_w250",
+    1
+   ],
+   "Follower shoulder lift: Dynamixel XL430-W250-T": [
+    "xl430_w250",
+    1
+   ],
+   "Follower elbow flex: Dynamixel XL330-M288-T": [
+    "xl330_m288",
+    1
+   ],
+   "Follower wrist flex: Dynamixel XL330-M288-T": [
+    "xl330_m288",
+    1
+   ],
+   "Follower wrist roll: Dynamixel XL330-M288-T": [
+    "xl330_m288",
+    1
+   ],
+   "Follower gripper: Dynamixel XL330-M288-T": [
+    "xl330_m288",
+    1
+   ],
+   "Leader joints 1-5: Dynamixel XL330-M077-T": [
+    null,
+    0
+   ],
+   "Leader gripper: Dynamixel XL330-M288-T": [
+    "xl330_m288",
+    1
+   ],
+   "U2D2": [
+    null,
+    0
+   ],
+   "U2D2 Power Hub Board": [
+    null,
+    0
+   ],
+   "12V 5A power supply (follower)": [
+    null,
+    0
+   ],
+   "5V 4A power supply (leader)": [
+    null,
+    0
+   ],
+   "Robot Cable-X3P 180mm": [
+    null,
+    0
+   ]
+  }
+ },
+ "aloha_bimanual.csv": {
+  "note": "ALOHA-style bimanual list: left/right master and puppet arms (hunters' file, round 3)",
+  "lines": {
+   "Left master arm: XM430-W350-T": [
+    "xm430_w350",
+    4
+   ],
+   "Left master arm: XL430-W250-T": [
+    "xl430_w250",
+    5
+   ],
+   "Right master arm: XM430-W350-T": [
+    "xm430_w350",
+    4
+   ],
+   "Right master arm: XL430-W250-T": [
+    "xl430_w250",
+    5
+   ],
+   "Left puppet arm: XM540-W270-T": [
+    null,
+    0
+   ],
+   "Left puppet arm: XM430-W350-T": [
+    "xm430_w350",
+    4
+   ],
+   "Right puppet arm: XM540-W270-T": [
+    null,
+    0
+   ],
+   "Right puppet arm: XM430-W350-T": [
+    "xm430_w350",
+    4
+   ],
+   "U2D2": [
+    null,
+    0
+   ],
+   "U2D2 Power Hub Board": [
+    null,
+    0
+   ],
+   "12V 30A power supply": [
+    null,
+    0
+   ],
+   "Logitech C922 webcam": [
+    null,
+    0
+   ]
+  }
+ },
+ "hobby_6dof_waist.csv": {
+  "note": "a 6-DOF hobby arm: waist, shoulder, elbow, wrist, gripper (hunters' file, round 3)",
+  "lines": {
+   "Waist MG996R": [
+    "mg996r",
+    1
+   ],
+   "Shoulder MG996R": [
+    "mg996r",
+    2
+   ],
+   "Elbow MG996R": [
+    "mg996r",
+    1
+   ],
+   "Wrist pitch MG996R": [
+    "mg996r",
+    1
+   ],
+   "Wrist roll SG90": [
+    "sg90",
+    1
+   ],
+   "Gripper SG90": [
+    "sg90",
+    1
+   ],
+   "PCA9685 16-channel servo driver": [
+    null,
+    0
+   ],
+   "Arduino Nano": [
+    null,
+    0
+   ],
+   "6V 5A power supply": [
+    null,
+    0
+   ],
+   "MG996R metal servo horn 25T": [
+    null,
+    0
+   ],
+   "Multi-purpose servo bracket for MG996R": [
+    null,
+    0
+   ],
+   "U-bracket": [
+    null,
+    0
+   ],
+   "Bearing 625ZZ": [
+    null,
+    0
+   ],
+   "M3x8 screws (100 pcs)": [
+    null,
+    0
+   ]
+  }
+ },
+ "joint_motor_columns.csv": {
+  "note": "a table with a Joint column and a Motor column (hunters' file, round 3)",
+  "lines": {
+   "Base": [
+    "mg996r",
+    1
+   ],
+   "Shoulder": [
+    "mg996r",
+    1
+   ],
+   "Elbow": [
+    "mg996r",
+    1
+   ],
+   "Wrist pitch": [
+    "sg90",
+    1
+   ],
+   "Wrist roll": [
+    "sg90",
+    1
+   ],
+   "Gripper": [
+    "sg90",
+    1
+   ]
+  }
+ },
+ "part_model_columns.csv": {
+  "note": "a Model column next to the part (hunters' file, round 3)",
+  "lines": {
+   "Servo": [
+    "sts3215",
+    6
+   ],
+   "Bus servo adapter": [
+    null,
+    0
+   ],
+   "Power supply": [
+    null,
+    0
+   ],
+   "Camera": [
+    null,
+    0
+   ]
+  }
+ },
+ "part_desc_joints.csv": {
+  "note": "the joint as the part, the servo as its description (debatable: see the engineer's 'Gripper' rule) (hunters' file, round 3)",
+  "lines": {
+   "Base": [
+    "sts3215",
+    1
+   ],
+   "Shoulder": [
+    "sts3215",
+    1
+   ],
+   "Elbow": [
+    "sts3215",
+    1
+   ],
+   "Wrist pitch": [
+    "sts3215",
+    1
+   ],
+   "Wrist roll": [
+    "sts3215",
+    1
+   ],
+   "Gripper": [
+    "sts3215",
+    1
+   ],
+   "Bus adapter": [
+    null,
+    0
+   ]
+  }
+ },
+ "motor_ids.csv": {
+  "note": "motor IDs as labels (LeRobot sets IDs 1-6) (hunters' file, round 3)",
+  "lines": {
+   "ID 1 – STS3215 C001 (shoulder pan)": [
+    "sts3215_7v4",
+    1
+   ],
+   "ID 2 – STS3215 C001 (shoulder lift)": [
+    "sts3215_7v4",
+    1
+   ],
+   "ID 3 – STS3215 C001 (elbow flex)": [
+    "sts3215_7v4",
+    1
+   ],
+   "ID 4 – STS3215 C001 (wrist flex)": [
+    "sts3215_7v4",
+    1
+   ],
+   "ID 5 – STS3215 C001 (wrist roll)": [
+    "sts3215_7v4",
+    1
+   ],
+   "ID 6 – STS3215 C001 (gripper)": [
+    "sts3215_7v4",
+    1
+   ],
+   "Waveshare Bus Servo Adapter (A)": [
+    null,
+    0
+   ]
+  }
+ },
+ "stepper_arm_roles.csv": {
+  "note": "a stepper arm with J1-J6 labels (hunters' file, round 3)",
+  "lines": {
+   "J1 (base): NEMA 23 stepper 1.9 Nm": [
+    null,
+    0
+   ],
+   "J2 – Stepper motor NEMA 23 with 10:1 planetary gearbox": [
+    null,
+    0
+   ],
+   "J3: Stepper motor NEMA 17 (17HS4401)": [
+    null,
+    0
+   ],
+   "J4 stepper NEMA 14": [
+    null,
+    0
+   ],
+   "J5 NEMA 17 pancake stepper": [
+    null,
+    0
+   ],
+   "J6: NEMA 11 stepper": [
+    null,
+    0
+   ],
+   "Gripper: MG996R servo": [
+    "mg996r",
+    1
+   ],
+   "TMC2209 stepper driver": [
+    null,
+    0
+   ],
+   "Arduino Mega 2560": [
+    null,
+    0
+   ],
+   "24V 15A power supply": [
+    null,
+    0
+   ],
+   "GT2 belt 6mm (2 m)": [
+    null,
+    0
+   ],
+   "GT2 pulley 20T": [
+    null,
+    0
+   ]
+  }
+ },
+ "bimanual_so101.csv": {
+  "note": "bimanual SO-101: left/right follower and leader packs (hunters' file, round 3)",
+  "lines": {
+   "Left arm: 6x STS3215 12V": [
+    "sts3215",
+    6
+   ],
+   "Right arm: 6x STS3215 12V": [
+    "sts3215",
+    6
+   ],
+   "Left leader: 6x STS3215 7.4V": [
+    "sts3215_7v4",
+    6
+   ],
+   "Right leader: 6x STS3215 7.4V": [
+    "sts3215_7v4",
+    6
+   ],
+   "Motor control board": [
+    null,
+    0
+   ]
+  }
+ },
+ "de_stueckliste.csv": {
+  "note": "a German parts list (German headers are supported) (hunters' file, round 3)",
+  "lines": {
+   "Basis MG996R": [
+    "mg996r",
+    1
+   ],
+   "Schulter MG996R": [
+    "mg996r",
+    2
+   ],
+   "Ellenbogen MG996R": [
+    "mg996r",
+    1
+   ],
+   "Handgelenk SG90": [
+    "sg90",
+    1
+   ],
+   "Greifer: SG90": [
+    "sg90",
+    1
+   ],
+   "Servo-Treiber PCA9685": [
+    null,
+    0
+   ],
+   "Netzteil 6V 5A": [
+    null,
+    0
+   ],
+   "Servohorn 25T für MG996R": [
+    null,
+    0
+   ],
+   "Schrauben M3x8": [
+    null,
+    0
+   ]
+  }
+ },
+ "packs_mixed.md": {
+  "note": "packs written in the ways shops and people write them (hunters' file, round 3)",
+  "lines": {
+   "STS3215 12V servo ×6 (follower arm)": [
+    "sts3215",
+    6
+   ],
+   "STS3215 servos (qty 6)": [
+    "sts3215_7v4",
+    6
+   ],
+   "MG996R x6, 180 degree": [
+    "mg996r",
+    6
+   ],
+   "SG90 x2 (pan/tilt)": [
+    "sg90",
+    2
+   ],
+   "Follower arm (6x STS3215 12V)": [
+    "sts3215",
+    6
+   ],
+   "Gripper (2x SG90)": [
+    "sg90",
+    2
+   ]
+  }
+ },
+ "lekiwi.csv": {
+  "note": "LeKiwi: arm and wheel servos (hunters' file, round 3)",
+  "lines": {
+   "STS3215 Servo 12V (C018) - arm": [
+    "sts3215",
+    6
+   ],
+   "STS3215 Servo 12V (C018) - wheels": [
+    "sts3215",
+    3
+   ],
+   "Omni wheels 4 inch": [
+    null,
+    0
+   ],
+   "Raspberry Pi 5": [
+    null,
+    0
+   ],
+   "Waveshare Bus Servo Adapter": [
+    null,
+    0
+   ],
+   "12V 5000mAh battery pack": [
+    null,
+    0
+   ]
+  }
+ },
+ "koch_model_colon.csv": {
+  "note": "model first, then a ':' and the joint (hunters' file, round 3)",
+  "lines": {
+   "XL430-W250-T: follower shoulder": [
+    "xl430_w250",
+    2
+   ],
+   "XL330-M288-T: follower wrist + gripper": [
+    "xl330_m288",
+    4
+   ],
+   "XL330-M077-T: leader": [
+    null,
+    0
+   ],
+   "XL330-M288-T: leader gripper": [
+    "xl330_m288",
+    1
+   ],
+   "XL430-W250-T: waist": [
+    "xl430_w250",
+    1
+   ]
+  }
+ },
+ "hobby_printed_parts.csv": {
+  "note": "round 7's final skeptic: printed parts named for their joint with the servo they hold, noted \"printed PLA\" (1f6b690 seeded {mg996r: 7, sg90: 3})",
+  "lines": {
+   "MG996R servo": [
+    "mg996r",
+    3
+   ],
+   "SG90 micro servo": [
+    "sg90",
+    1
+   ],
+   "Base (MG996R)": [
+    null,
+    0
+   ],
+   "Upper arm link (MG996R)": [
+    null,
+    0
+   ],
+   "Forearm link (MG996R)": [
+    null,
+    0
+   ],
+   "Gripper rack (SG90)": [
+    null,
+    0
+   ],
+   "Gripper pinion (SG90)": [
+    null,
+    0
+   ],
+   "Counterweight (MG996R)": [
+    null,
+    0
+   ],
+   "Bearing 6807": [
+    null,
+    0
+   ],
+   "M3 screw 10 mm": [
+    null,
+    0
+   ]
+  }
+ },
+ "so101_printed.csv": {
+  "note": "round 7's final skeptic: SO-101 printed parts named with the servo, noted \"printed\" (1f6b690 seeded a phantom 7.4 V STS3215 x4)",
+  "lines": {
+   "STS3215 servo 12V": [
+    "sts3215",
+    6
+   ],
+   "Moving jaw (STS3215)": [
+    null,
+    0
+   ],
+   "Static jaw STS3215": [
+    null,
+    0
+   ],
+   "Wrist link STS3215": [
+    null,
+    0
+   ],
+   "Upper arm STS3215": [
+    null,
+    0
+   ],
+   "Motor holder STS3215": [
+    null,
+    0
+   ],
+   "Waveshare bus servo adapter": [
+    null,
+    0
+   ]
+  }
+ }
+}

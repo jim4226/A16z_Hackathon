@@ -2,8 +2,8 @@
 stand-in for the router that answers /api/video/* with the real handlers (Claude and SubQ faked) and streams events.
 
 Needs Playwright with Chromium and ffmpeg (for the test clips); skipped otherwise. This Chromium build has no H.264,
-which makes the H.264 clip a real "this browser can't play it" case. Screenshots go to MORPH_SHOTS (default
-/tmp/claude-0/shots) as f3_*.png.
+which makes the H.264 clip a real "this browser can't play it" case. With MORPH_SHOTS=<folder> set, screenshots go
+there as f3_*.png; without it, none are taken.
 """
 
 import base64
@@ -30,7 +30,7 @@ from morph.studio import api_video, vision
 from test_video import AGREE, FakeClaude, egg, fake_subq
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHOTS = os.environ.get("MORPH_SHOTS", "/tmp/claude-0/shots")
+SHOTS = os.environ.get("MORPH_SHOTS")  # a folder for the screenshots; none are taken without it
 CHROME = os.environ.get("MORPH_CHROME", "/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
 pw = pytest.importorskip("playwright.sync_api")
 if not shutil.which("ffmpeg"):
@@ -266,6 +266,8 @@ def wait_js(page, expr, timeout=10000):
 
 
 def shot(page, name):
+    if not SHOTS:
+        return
     os.makedirs(SHOTS, exist_ok=True)
     page.screenshot(path=os.path.join(SHOTS, f"f3_{name}.png"))
 

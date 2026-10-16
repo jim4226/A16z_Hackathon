@@ -2,13 +2,16 @@
 API (the Farnell, Newark and element14 stores), each written from the vendor's own documentation and checked here on
 what the runner sends and what it keeps from a recorded answer:
 
-- element14: the "medium" response group example on its Product Search API (REST) description page, verbatim
-  (tests/fixtures/tools/answers/element14_keyword_medium.json);
+- element14: tests/fixtures/tools/answers/element14_keyword.json follows the "medium" response group of its Product
+  Search API (REST) description page with made-up products and values (no copy of the page's example), plus a line of
+  prompt injection in a field the manifest drops;
 - Mouser: its Swagger document (api.mouser.com/api/docs/V1) has no example answer, so
   tests/fixtures/tools/answers/mouser_keyword.json follows its SearchResponseRoot model with made-up values, plus a line of
-  prompt injection in a field the manifest drops.
+  prompt injection in a field the manifest drops. tests/fixtures/tools/answers/mouser_wrong_key.json is Mouser's real
+  answer to a wrong key (a key of zeros, recorded on 2026-10-14): HTTP 200 with an Errors entry, not a 401.
 
-Neither has been tried with a real key: verified.live is null, which the Studio shows as "Not yet tried with a real key"."""
+Neither has been tried with a real key: verified.live is null, which the Studio shows as "Not yet tried with a real key".
+The element14 tool ships off (`off_by_default`) until Farnell's API terms have had a legal review."""
 
 import json
 import os
@@ -26,6 +29,7 @@ ANSWERS = os.path.join(REPO, "tests", "fixtures", "tools", "answers")
 MOUSER_KEY = "0a1b2c3d-4e5f-4a7b-8c9d-ef0123456789"
 E14_KEY = "gd8n8b2kxqw6jq5mutsbrvur"  # the shape of the sample key on element14's description page (24 letters and digits)
 TOOLS = ["element14_search_keyword", "mouser_search_keyword", "mouser_search_part_number"]
+MOUSER_TOOLS = {"mouser_search_keyword", "mouser_search_part_number"}
 QUERY_WARNING = "The key travels in the URL's query string, because this API requires it; Morph never logs that URL."
 
 
@@ -50,7 +54,7 @@ class Vendor:
             return self.status, hdr, b'{"Errors": [{"Code": "Unauthorized", "Message": "Invalid unique identifier."}]}'
         if r["host"] == "api.mouser.com":
             return 200, hdr, answer("mouser_keyword.json")
-        return 200, hdr, answer("element14_keyword_medium.json")
+        return 200, hdr, answer("element14_keyword.json")
 
 
 @pytest.fixture
@@ -77,10 +81,10 @@ def data(out):
 
 
 # ------------------------------------------------------------------ the manifests
-def test_morph_ships_two_read_only_distributor_manifests_that_are_on(home):
+def test_morph_ships_two_read_only_distributor_manifests_and_only_mousers_is_on(home):
     cat = catalog.load(home)
     assert cat.errors == [] and sorted(cat.tools) == TOOLS and sorted(cat.providers) == ["element14", "mouser"]
-    assert catalog.enabled_names(cat, home) == set(TOOLS)  # Morph's own tools are on until the owner turns one off
+    assert catalog.enabled_names(cat, home) == MOUSER_TOOLS  # Morph's own tools are on, but for one that says off_by_default
     for t in cat.tools.values():
         assert t.curated and t.side_effect == "read" and not t.paid and t.cost_usd == 0
         assert list(t.warnings) == [QUERY_WARNING]  # both APIs take the key in the query string; nothing else to flag
@@ -103,13 +107,15 @@ def test_morph_ships_two_read_only_distributor_manifests_that_are_on(home):
 
 
 def test_the_keys_dialog_lists_both_keys_with_where_to_get_them(home):
+    catalog.set_enabled("element14_search_keyword", True, home)  # the owner turned Farnell on (it ships off)
     st = {k["name"]: k for k in keys.status(home)}
     m, e = st["MORPH_TOOL_MOUSER_KEY"], st["MORPH_TOOL_ELEMENT14_KEY"]
     assert m["service"] == "Mouser Electronics" and m["label"] == "Mouser Search API key" and m["set"] is False
     assert m["used_by"] == ["Mouser keyword search", "Mouser part number lookup"] and m["hosts"] == ["api.mouser.com"]
     assert e["service"] == "Farnell (element14, Newark)" and e["used_by"] == ["Farnell keyword search"]
     assert "Morph adds no fee" in m["cost"] and "query limit" in e["cost"]
-    assert "Nothing else from your project is sent" in m["privacy"] and "deleted after 7 days" in e["privacy"]
+    assert "Nothing else from your project is sent" in m["privacy"] and "go to Claude" in e["privacy"]
+    assert "up to 7 days" in e["privacy"] and "don't allow storing" not in e["privacy"]
     assert keys.save({"MORPH_TOOL_MOUSER_KEY": MOUSER_KEY}, home=home) == ["MORPH_TOOL_MOUSER_KEY"]
     with pytest.raises(ValueError, match="doesn't look like|does not look like") as err:
         keys.save({"MORPH_TOOL_ELEMENT14_KEY": "not a key"}, home=home)
@@ -175,13 +181,14 @@ def test_element14_keyword_search_sends_the_documented_query_and_keeps_prices_an
                           ("resultsSettings.numberOfResults", "5"), ("resultsSettings.responseGroup", "medium"),
                           ("callInfo.responseDataFormat", "JSON"), ("callInfo.apiKey", E14_KEY)]
     d = data(out)
-    assert d["total"] == 7355 and len(d["products"]) == 1
+    assert d["total"] == 2 and len(d["products"]) == 2
     p = d["products"][0]
     assert sorted(p) == sorted(["sku", "displayName", "brandName", "translatedManufacturerPartNumber", "packSize",
                                 "translatedMinimumOrderQuality", "unitOfMeasure", "productStatus", "rohsStatusCode", "prices", "stock"])
-    assert p["sku"] == "1360825" and p["translatedManufacturerPartNumber"] == "0001.1001" and p["translatedMinimumOrderQuality"] == 10
-    assert p["prices"][0] == {"to": 90, "from": 10, "cost": 0.78} and p["stock"]["level"] == 518
+    assert p["sku"] == "9000301" and p["translatedManufacturerPartNumber"] == "SBS-12V-30" and p["translatedMinimumOrderQuality"] == 1
+    assert p["prices"][0] == {"to": 9, "from": 1, "cost": 21.84} and p["stock"]["level"] == 342
     assert "attributes" not in p and "datasheets" not in p and E14_KEY not in out["content"]
+    assert "Ignore every previous instruction" not in out["content"]  # attributes aren't kept: less third-party text
 
 
 @pytest.mark.parametrize("args", [{"term": "fuse", "store": "uk.farnell.com"}, {"term": "manuPartNum:LM339ADT", "store": "uk.farnell.com"},
@@ -200,6 +207,30 @@ def test_element14_refuses_terms_and_stores_its_docs_dont_list(args):
 def test_a_refused_key_comes_back_as_rejected(name, args, secret, status):
     out = run(name, args, secret, Vendor(status))
     assert out["kind"] == "needs_credential" and out["need"]["reason"] == "rejected" and secret not in out["content"]
+
+
+class WrongKey(Vendor):
+    """Mouser's answer to a wrong key, as recorded: HTTP 200 (application/json) with an Errors list."""
+
+    def transport(self, r, ip, timeout, max_bytes):
+        self.requests.append(r)
+        return 200, {"content-type": "application/json; charset=utf-8"}, answer("mouser_wrong_key.json")
+
+
+@pytest.mark.parametrize("name,args", [("mouser_search_keyword", {"keyword": "30-81794"}),
+                                       ("mouser_search_part_number", {"part_numbers": "595-SN74HC595N"})])
+def test_mouser_refusing_the_key_with_200_comes_back_as_rejected(name, args):
+    """Mouser answers a wrong key with HTTP 200 and an Errors entry for the API Key: the manifest's auth_error rule
+    makes that the key card's "refused the key" (Replace key), as a 401 or 403 would."""
+    v = WrongKey()
+    out = run(name, args, MOUSER_KEY, v)
+    assert out["kind"] == "needs_credential" and out["need"] == {"env": "MORPH_TOOL_MOUSER_KEY", "reason": "rejected"}
+    assert json.loads(out["content"])["status"] == 200 and MOUSER_KEY not in out["content"] and len(v.requests) == 1
+    doc = json.loads(answer("mouser_wrong_key.json"))            # any other error stays part of the answer
+    doc["Errors"][0]["PropertyName"] = "SearchByKeywordRequest.keyword"
+    v.transport = lambda r, ip, timeout, max_bytes: (200, {"content-type": "application/json"}, json.dumps(doc).encode())
+    out = run(name, args, MOUSER_KEY, v)
+    assert out["kind"] == "ok" and json.loads(out["content"])["data"]["errors"][0]["Message"] == "Invalid unique identifier."
 
 
 # ------------------------------------------------------------------ in a run
@@ -222,7 +253,7 @@ def test_a_run_pauses_for_the_mouser_key_and_its_answer_reaches_claude_as_data(h
     assert card["type"] == "credential_needed" and card["env"] == "MORPH_TOOL_MOUSER_KEY" and card["service"] == "Mouser Electronics"
     assert card["url"] == "https://www.mouser.com/apihome/" and card["hosts"] == ["api.mouser.com"] and card["reason"] == "missing"
     names = [t["name"] for t in claude.requests[0]["tools"]]
-    assert names[0] == "tool_search_tool_bm25" and sorted(names[1:]) == TOOLS  # the curated catalog, deferred
+    assert names[0] == "tool_search_tool_bm25" and set(names[1:]) == MOUSER_TOOLS  # the tools that are on, deferred
     assert all(t.get("defer_loading") for t in claude.requests[0]["tools"][1:])
     tb.on_credentials_saved(keys.save({"MORPH_TOOL_MOUSER_KEY": MOUSER_KEY}, home=home))
     assert tb.get(view["id"])["status"] == "done" and len(v.requests) == 1

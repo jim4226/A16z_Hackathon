@@ -24,8 +24,7 @@ TEMPLATE = resources.path("env.example")
 
 KEYS = [
     {"name": "ANTHROPIC_API_KEY", "service": "Claude", "label": "Anthropic API key",
-     "what": "Understands free-form chat requests and runs Live prices (beta). Without it the suggestion chips and common "
-             "phrasings still work.",
+     "what": "One key for every Claude feature in this section, billed to your Anthropic account.",
      "where": "console.anthropic.com, Settings, API Keys", "url": "https://console.anthropic.com/settings/keys"},
     {"name": "KEEWANO_API_KEY", "service": "Keewano", "label": "Project key (type SDK)",
      "what": "Sends revisions, edits and bench measurements to your Keewano project, once Send build events to Keewano is on below.",
@@ -110,6 +109,8 @@ def _write_private(path: str, text: str):
         os.chmod(path, 0o600)  # mkstemp already made it 0600; this also covers a umask or an older file
     except OSError:
         pass
+    from .services import winacl
+    winacl.restrict(path)  # Windows ignores 0600: this user only
 
 
 def ensure_env_file(path: str | None = None) -> bool:
@@ -148,6 +149,15 @@ def tool_keys(home: str | None = None) -> list:
                  "it nowhere. Remove it.")
         out.append(e)
     return out
+
+
+def env_file() -> dict:
+    """Where keys are saved, for the Keys dialog: the file's name, its folder in words (a checkout: the Morph folder,
+    where both launchers are; an installed wheel: the settings folder's path) and whether git ignores it."""
+    folder = os.path.dirname(os.path.abspath(ENV_PATH))
+    root = resources.checkout()
+    same = bool(root) and os.path.normcase(os.path.realpath(folder)) == os.path.normcase(os.path.realpath(root))
+    return {"file": os.path.basename(ENV_PATH), "folder": "the Morph folder" if same else folder, "git_ignored": same}
 
 
 def status(home: str | None = None) -> list:

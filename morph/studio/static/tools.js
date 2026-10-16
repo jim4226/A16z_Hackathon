@@ -154,9 +154,18 @@ async function act(r, what, arg) {
   }
 }
 
+function needClaude() {
+  studio.toast(can.keys ? 'Live prices need Claude: add the Anthropic key in Keys.' : 'Live prices need the Anthropic key: ask the owner to add it in Keys.');
+  if (can.keys) window.dispatchEvent(new CustomEvent('morph:keys', { detail: { key: 'ANTHROPIC_API_KEY' } }));
+}
+
 export async function startPrices() {
   const rev = studio.S?.current?.rev;
   if (!can.start) { studio.toast('Only editors and the owner can start Live prices.'); return; }
+  if (ready.claude === false) {  // asked again first (a key may have been added since): no start the server would refuse
+    await refresh();
+    if (ready.claude === false) { needClaude(); bomButton(); return; }
+  }
   try {
     const out = await studio.api.post('/api/runs/start', { agent: 'price_check', rev });
     const r = runs.get(out.run.id) || { view: out.run, el: null, keyAdded: false, answer: null };
@@ -167,10 +176,8 @@ export async function startPrices() {
     if (out.already) r.el?.scrollIntoView({ block: 'end' });
   } catch (e) {
     const msg = e.body?.error || e.message || "Couldn't start Live prices";
-    if (e.status === 503) {
-      studio.toast(can.keys ? 'Live prices need Claude: add the Anthropic key in Keys.' : 'Live prices need the Anthropic key: ask the owner to add it in Keys.');
-      if (can.keys) window.dispatchEvent(new CustomEvent('morph:keys', { detail: { key: 'ANTHROPIC_API_KEY' } }));
-    } else studio.toast(msg);
+    if (e.status === 503) needClaude();
+    else studio.toast(msg);
   }
   bomButton();
 }
@@ -327,11 +334,14 @@ function requestHTML(r, q) {  // a need no tool covers: Darwin's suggestions (ed
     <div class="tl-ask">Noted in Morph's tool requests. The run carries on without it.${owner || d ? '' : ' Ask the owner to draft a tool for it (Keys, New tool).'}</div></div>`;
 }
 
+// who a price is credited to: the tool's provider as its manifest asks ("from Farnell/element14"), on every line shown
+const source = (x) => x.source || x.service || '';
+
 function resultHTML(v) {
   const res = v.result, rows = res.lines || [], items = new Set(rows.map((x) => x.item)).size, total = v.context?.lines;
-  const svcs = [...new Set(rows.map((x) => x.service).filter(Boolean))];
-  return `<div class="tl-res"><div class="tl-k">${items}${total ? ` of ${total}` : ''} purchased line${(total || items) === 1 ? '' : 's'} priced${svcs.length ? ` · ${esc(svcs.join(', '))}` : ''}${res.checked_at ? ` · ${esc(hhmm(res.checked_at))}` : ''}</div>
-    <ul class="tl-prices">${rows.slice(0, 4).map((x) => `<li><span class="it" title="${esc(x.item)}">${esc(x.item)}</span><span class="pr num">${esc(price(x.unit_price, x.currency))}${x.matched ? '' : ' <span class="tag warn" title="Morph couldn\'t find this price or part number in the tool\'s answer">check</span>'}</span></li>`).join('')}</ul>
+  const svcs = [...new Set(rows.map(source).filter(Boolean))];
+  return `<div class="tl-res"><div class="tl-k">${items}${total ? ` of ${total}` : ''} purchased line${(total || items) === 1 ? '' : 's'} priced${svcs.length ? ` · from ${esc(svcs.join(', '))}` : ''}${res.checked_at ? ` · ${esc(hhmm(res.checked_at))}` : ''}</div>
+    <ul class="tl-prices">${rows.slice(0, 4).map((x) => `<li><span class="it" title="${esc(x.item)}">${esc(x.item)}</span><span class="pr num">${esc(price(x.unit_price, x.currency))}${x.matched ? '' : ' <span class="tag warn" title="Morph couldn\'t find this price or part number in the tool\'s answer">check</span>'}</span>${source(x) ? `<span class="src">from ${esc(source(x))}</span>` : ''}</li>`).join('')}</ul>
     ${rows.length > 4 ? `<div class="dim">and ${rows.length - 4} more: Show prices</div>` : ''}</div>`;
 }
 
@@ -342,7 +352,7 @@ function showPrices(r) {
       <button class="btn icon ghost" type="button" data-x title="Close (Esc)">${I('x')}</button></div>
     <div class="tl-table"><table class="table"><thead><tr><th>Item</th><th>Distributor</th><th>Part number</th><th class="num">Unit price</th><th class="num">At qty</th><th class="num">Stock</th><th></th></tr></thead><tbody>
       ${rows.map((x) => `<tr><td class="strong">${esc(x.item)}</td><td>${esc(x.distributor)}</td><td class="mono">${esc(x.part_number)}</td><td class="num">${esc(price(x.unit_price, x.currency)) || '–'}</td>
-        <td class="num">${x.quantity ?? '–'}</td><td class="num">${x.stock ?? '–'}</td><td>${x.matched ? `<span class="tag good" title="Found in ${esc(x.service)}'s answer">${I('check')}from ${esc(x.service)}</span>` : '<span class="tag warn" title="Morph couldn\'t find this price or part number in the tool\'s answer">check it</span>'}</td></tr>`).join('')}
+        <td class="num">${x.quantity ?? '–'}</td><td class="num">${x.stock ?? '–'}</td><td>${x.matched ? `<span class="tag good" title="Found in ${esc(source(x))}'s answer">${I('check')}from ${esc(source(x))}</span>` : `<span class="tag warn" title="Morph couldn't find this price or part number in the tool's answer">check it</span> <span class="src">from ${esc(source(x))}</span>`}</td></tr>`).join('')}
     </tbody></table></div>
     ${r.answer ? `<div class="tl-sum"><div class="tl-k">Claude's summary (beta)</div><p>${esc(r.answer)}</p></div>` : ''}
     <div class="dlg-f"><span class="grow"></span>${can.start ? '<button class="btn" type="button" data-again>Check again</button>' : ''}<button class="btn primary" type="button" data-x>Close</button></div>`;

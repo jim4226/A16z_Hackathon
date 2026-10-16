@@ -27,6 +27,15 @@ decisions lives outside the repo; the essentials are summarized here.
   - Never claim an order was placed.
   - Never identify people in images.
 - **Security.** Treat every upload, URL, URDF, zip and model output as hostile (section 9).
+- **Decided (owner, W3).** README's Keewano paragraph keeps the accurate rewrite (REL-6); GitHub private vulnerability
+  reporting is the owner's switch and was still off on 2026-10-15, SECURITY.md's public-issue fallback standing in
+  (REL-5); the Farnell (element14) tool ships off until a legal review of its terms (REL-10). The release checklist's
+  *Decided for 0.2.0b1* table has the details.
+- **What ships (W3).** THIRD_PARTY_NOTICES (and NOTICE, briefly) names every vendored folder, robot bundle, saved
+  service answer and test fixture recorded from a real service; every other fixture is made up, never a copy of a
+  provider's documentation example (`tests/test_release.py` checks the list). No shipped file names a developer's
+  machine. The wheel lists its files (`include-package-data = false` with explicit package-data), and CI's package job
+  fails on setuptools' warning that a folder isn't a package.
 - **Style.**
   - Match the surrounding code: dense, few comments, plain English in UI copy, no emoji.
   - Tests go under `tests/` and must pass offline: no network, no keys.
@@ -38,6 +47,18 @@ decisions lives outside the repo; the essentials are summarized here.
   code; editing keewano.py (event ids), settings, keys or the CLI rebuilds nothing.
 
 ## 1. Storage layout (MORPH_HOME, default `projects/` in the repo folder)
+
+Every default of that folder is `resources.projects_home()` (W3): `MORPH_HOME` when set; in a checkout, `projects` in
+the Morph folder as an absolute path (`checkout()/projects`, R3), whatever the current folder (the launchers' editable
+`morph` in .venv runs from any folder; Morph projects in another folder's `./projects` are left alone, and
+`projects_home_note()` names them with the MORPH_HOME that opens them); for an installed wheel, `projects` in
+`resources.data_dir()` (`%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph`, `$XDG_DATA_HOME/morph` or
+`~/.local/share/morph`),
+unless `./projects` in the current folder already holds Morph's files or a project (`resources.holds_projects`: a
+`.settings.json`, `.tools`, `.runs`, `.team`, `.robots`, `.imports` or `.briefs`, or a folder with a `ledger.jsonl`),
+which it keeps using. `cli.HOME`, `settings.home()`, `importers.common.home()`, the toolbox's and Teams' `home_dir()` and
+`api_video` all use it; `morph doctor` and `morph studio` print the absolute path, with `projects_home_note()` when
+the choice isn't obvious (MORPH_HOME, or the kept `./projects`).
 
 | Path | Owner | Contents |
 |---|---|---|
@@ -242,13 +263,18 @@ class Request:
   `POST /api/project` (it only checks a name); **editor**: `POST /api/chat`, `/api/params`, `/api/jobs/cancel`,
   `/api/jobs/resolve`, `/api/source`, `/api/projects`, `/api/projects/fork`; **owner**: `DELETE /api/projects`,
   `POST /api/reset`, `GET`/`POST /api/keys`, `POST /api/keys/check`, `POST /api/settings`.
+- `GET /api/keys` → `{keys, integrations, settings, file, env, compute}`; `env` = `keys.env_file()`: `{file, folder,
+  git_ignored}`, where `folder` is "the Morph folder" in a clone or release zip (both launchers' folder, on every
+  system) and the settings folder's path for an installed wheel. The Keys dialog names it, never a launcher; its
+  Claude section lists everything the Anthropic key powers (free-form chat, New robot, Show Morph the job, World's AI
+  review, Live prices, New tool), once: the key's own line under its field says it is one key for all of them.
 
 | Area | Routes |
 |---|---|
 | W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, while another process runs a robustness study of it (another Studio on the folder, `morph study`, or either on another computer sharing the folder: `robust.active`'s pid and host, `server.study_elsewhere`, and the message names the process and the computer, as Reset demo's does; from that check to the move to the trash Delete holds the study lock itself, `server._no_study`, so a study can't start in between, and one that took the lock first makes Delete refuse with nothing moved), for the start project, and for the project another running Studio started on) |
 | W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?, edit?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting; `edit: true` skips the chat routing of section 3); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
-| F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
+| F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `POST /api/import/fixes {fix}` → 202 `{job}` (W3: one of the fixes an import's build was offered in this project's chat, by id; 404 when no message offers it); `GET /api/export?project=&rev=&full=` |
 | F3 video | `POST /api/video/analyze {frames:[{t_s, jpeg_b64}], marks?, crop?, subq?: bool}` (16 MiB); `PUT /api/video/upload` (raw, ≤500 MB, ffmpeg fallback) → `{frames}`; `POST /api/video/apply {changes, manual?}` (`manual: true`: the cards were filled in by hand, and the chat line says so) |
 | F4 teams | `GET /api/me`; `GET /api/team`; `POST /api/team/join`, `/invites`, `/revoke`, `/members`, `/policy`; `GET\|POST /api/comments`; `POST /api/comments/resolve`; `GET\|POST /api/proposals` (change requests); `POST /api/proposals/apply`; `GET\|POST /api/reviews`; `POST /api/reviews/decide`; `GET /api/activity`; `GET /api/inbox`; `POST /api/presence`; `GET /api/audit`; `GET\|POST /api/branches`; `GET\|POST /api/releases` |
 | F5 world | `GET /api/world?project=`; `POST /api/world` (save world.json); `PUT /api/world/upload` (raw .glb ≤300 MB); `POST /api/world/obstacles/auto`; `POST /api/world/inspect {views:[{name, jpeg_b64}]}` |
@@ -405,6 +431,21 @@ in another Studio still running on the same projects folder: `Studio.held_elsewh
 (`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's own empty project
 goes to `.trash` first, so the name is kept).
 
+A room's jobs run on one thread (`rooms.JobQueue`, W3): it starts with the first job, waits up to `IDLE_S` = 600 s for
+the next before it ends (its journal still goes as soon as the queue is empty, `_settle`), and calls `memory.trim()` after each job: `gc.collect()` (R3: a build leaves hundreds of MB
+in reference cycles), then glibc's `malloc_trim(0)` (nothing on other systems). `morph studio` calls
+`memory.limit_arenas()` (glibc `mallopt(M_ARENA_MAX, 2)`) before its start-up builds (the demo robots, a rebuild
+with newer code) and `memory.trim()` after them, just before `serve()`, which calls `limit_arenas()` too; run_studio.sh
+exports `MALLOC_ARENA_MAX=2` unless it is set. R3, measured the same way (a fresh home, MALLOC_ARENA_MAX=2, RSS once
+both rooms are idle, after each of six edits, and 60 s later): without the start-up trim and the collection, 783 MB
+idle after start-up, 383-698 MB after the builds, 703 MB idle; with them, 296-304 MB, 284-334 MB, 314-383 MB, and a
+peak of 1088 MB while building. Measured over six parameter edits alternating the two
+demo robots (Linux, 16 GB), the resident memory after each: before, 444, 706, 805, 971, 1058, 1242 MB (peak 1.5 GB;
+with `MALLOC_ARENA_MAX=2` alone still 484 to 1011 MB); after, 326, 520, 375, 550, 605, 500 MB from `morph studio`
+(peak 1.13 GB) and 322, 508, 355, 422, 469, 389 MB as run_studio.sh starts it (peak 1.01 GB).
+tests/test_studio_memory.py repeats it with MORPH_SLOW=1 (R3: under 500 MB idle after start-up, under 600 MB after any
+build, and the last three no more than 200 MB above the first three on average).
+
 ## 3. Live events (SSE)
 
 - Every event carries `project`. With Teams on, events about a person's request (`user`, `assistant`, the
@@ -490,6 +531,11 @@ studio = {
 - `init(studio)` runs after the first state load (and also when the server can't be reached).
 - When the tab switches projects (`openProject`), the bus gets `{type: "project", project, switched: true}` once the new
   project's state is loaded (I2b): world mode and Teams reload what they show, as for Reset demo's `project` event.
+- When the view tab changes (Robot, Simulation, ...), the bus gets `{type: "tab", tab, prev}` (W3): the World panel
+  (on the 3D view, which the Simulation tab borrows) steps aside on every tab but Robot, still open, and a walk or a
+  guided tour stops there.
+- A project opened before its first revision is finished says so in the chat; when that build is done (a `done` with
+  no parent, no message typed meanwhile) the message becomes the welcome and the feature tips follow (W3).
 - The page subscribes to events before it loads its state, retries `/api/state` with backoff (1, 2, 4, 8, then
   every 15 s, and at once when the stream connects) instead of staying offline, follows a build already running from
   `state.building` or from its `node` events, and reloads its state when the stream reconnects after a drop. A project
@@ -1111,6 +1157,86 @@ in sections 3, 4 and 8. The rest that other code relies on:
   `capability.min_width(shape, "none")`, the force-sensing finger (`FSR_FINGER`). `GET /api/import/<id>` (the session's
   state, with `fetch {status, error}`) settles a link whose download ended before the page knew its id. An archive with
   nothing usable left says what was skipped; a link without `https://` to an allowed host gets it added.
+  W3: a parts list's line is a catalog motor only when its part name or MPN names one (`bom._catalog_key`); its
+  description, notes, details or specs column then only picks that motor's variant when the name doesn't
+  (`autoprofile.VARIANT_RX`: "12V", "12VDC", "12-volt", 30 kg·cm, C018 or C047 is the 12 V STS3215, "7.4V" or
+  C001/C044/C046 the 7.4 V one), so a screw or a
+  driver board whose notes name the servo stays a fastener or electronics. A line named only "Servo" (or "Bus servo",
+  "Motor") is what its description says. R4: a name that is a part for a motor (`bom.ACCESSORY`: horn, bracket, mount,
+  plate, cover, case, adapter, board, driver, controller, power supply, screw, nut, cable, hub, extension, tester,
+  charger, battery and the like, in the name before what it comes with: "with", "incl.", "(", "+") is never a catalog
+  motor, so "12V 5A power supply for STS3215 servos" or "STS3215 servo horn" isn't one; and a name that is a motor's
+  kind with up to three words before it and a count after it (`bom.GENERIC_MOTOR`: "Feetech servo", "Gripper servo",
+  "Servo (x6)") is what its description says. R5: the accessory word counts only as what the name names
+  (`bom._accessory`): its head noun, the last plain word before what it comes with or is described by (also a comma,
+  ";", a spaced dash, "included", "built-in", "for", and after the motor word a spec such as 12V or 30kg.cm; a trailing
+  kit, set or pack word skipped), or a word before the motor word ("Power supply servo"). So "STS3215 servo, horn
+  included", "Feetech STS3215 Servo Motor 12V Metal Case", "STS3215 12V servo - plastic case", "XL430-W250-T servo,
+  cable included", "STS3215 high-torque servo, flange mount" and "Dynamixel XM430-W350-T built-in controller" are
+  catalog motors again (R4 made them none, purchased, cable or electronics), while "STS3215 servo 25T metal horn",
+  "STS3215 servo horn kit" and "STS3215 servo motor driver" aren't; the review's 50-line comparison maps as R4 did.
+  R6 replaces R4's and R5's word lists, which a unit, colour or material after the accessory word ("STS3215 servo
+  cable 200 mm") or an accessory noun missing from the list ("servo arm", "gear set", "frame", "U2D2 for XL430")
+  turned back into a servo: what a line is comes from its name's head (`bom._head`, the name before "(", ",", ";",
+  "+", a dash, "with", "incl.", "built-in" and the fits-what clauses "for", "compatible", "fits", "suits"; a "/" right
+  after the motor word). `bom._is_motor_name` holds for a motor word followed only by how the motor is built (a
+  material's case or gears, specs, kind words such as "serial bus", colours, units, a kit word, and what a shop's
+  listing says it is for or has: "RC Robot Arm", "Full Metal Gear Dual Ball Bearing") with no part for a
+  motor before it (`bom.ACCESSORY`, unless it is a material's case: "Metal case STS3215 servo"), or for a catalog model
+  (`autoprofile.MODEL_RX`) with only makers, kind words and specs ("Feetech STS3215-C018"); a model named only in a
+  fits-what clause never makes a line a motor. `autoprofile.TEXT_RX`: Waveshare's ST3215 is the 12 V STS3215 unless it
+  says 7.4 V (not the ST3215-HS), and a Dynamixel family is the catalog motor only with its own code or none (an
+  XL330-M077, XM430-W210, XM430-W350-R or 2XL430 is none). A name of only a motor's kind or maker ("Wrist pitch/roll
+  servo", "Servo #1", "Servo - shoulder", "Dynamixel") is what its description names (`bom._generic_motor`); a line
+  whose reference designators are all connectors, chips, passive parts or switches ("J2 J3") is no motor in a board's
+  parts list (one with a footprint or package column: a hand-made list's "Ref" can name the joints, "J1-J6"). Motors the
+  catalog lacks (steppers, BLDC and gear motors) are category "actuator" with `catalog` None; a row's `pack` counts the
+  motors of a pack bought once (`actuator_keys`: Qty 1 and "(6 pcs)" is 6); KiCad 5-7's grouped CSV (its "Source:"
+  rows, "Qnty") and KiBoM (the value, not the group number in "Component") are read; `total` is None when no line has a
+  price. The hunters' 418-line corpus and 14 whole parts lists are data in tests/data (tests/test_import_bom_lines.py).
+  R9 (the third round's hunters: 0033630 read 345 of their 1,368 lines, the 1,313 of their corpus and their 55 probes,
+  and 13 of their 16 whole lists wrong, most of them because a joint word outside a closed list lost the motor;
+  tests/data/bom_hunt_lines.json also holds the fixer's 85 probes, 1,453 rows): a line's label, the words naming the
+  joint, arm or motor ID its motor drives or is, is positive evidence (`bom._label_words`; 8fd3662 made it open, any
+  words but a listed part's, and 1,564 of the final skeptic's 1,800 noun-label lines that 0033630 read as parts became
+  motors: "Upper arm link (MG996R)", "Gripper rack (SG90)", "Counterweight (MG996R)"). Every plain word is a joint or
+  motion word (`bom._LABEL_JOINT`: "Shoulder", "Elbow flex", "Waist", "Camera pan", "Turntable", "Grabber", "Schulter"),
+  whose or which arm or side (`bom._ARM_OWNER`: "Leader", "Left master"), an ID word, or a maker's, kind, unit, colour
+  or filler word ("Optional"; "Tower" only before "Pro", a pack word only as a count: "Upper arm piece MG996R" is a
+  part); joint references (J1, #2, ID 1, SO-101; at most two letters, so "ESP32" is none); a motor word only before its
+  number ("Motor ID 2"); "arm" or "leg" only after whose it is, or a leg before its number (`bom._LIMB`: "Upper arm",
+  "Leg 2"; "Lift arm" and "Leg MG996R" are parts); "End" and "Index" only before "effector" and "finger"; a drive wheel
+  or a numbered link only before ":" or a dash (`bom._LABEL_ROLE`: "Wheel: STS3215 12V", "Link 2: MG996R"; "Wheel
+  STS3215" and "Link 2 MG996R" stay parts); "moving" only in brackets after a joint ("Gripper (moving jaw) STS3215";
+  "Moving jaw SG90" is the printed jaw). Any other word makes the line that part ("Leader arm handle STS3215", "Trigger
+  (STS3215)", "Static jaw STS3215", "Palm SG90"), unless a motor word names it a servo ("Wheel servo STS3215 12V").
+  A label qualifies the model after it, before ":" or a dash, in
+  brackets first ("[J1] STS3215") and alone before brackets ("J1 (STS3215)"); after the model only joint and motion
+  words do (`bom._MOTION`, `bom._JOINT_AFTER`: "STS3215 C018 shoulder pan"; "SG90 gripper" stays a part unless a spec or
+  code comes between, and "MG996R: upper arm link" is the link). A kit word with a label ("Pan tilt SG90 kit") and a
+  part's verb before the model ("Gripper (uses SG90)") make no motor; "Upgrade" is a word of a servo's name
+  (`bom._KIND`: "DS3218 Upgrade 20KG Full Metal Gear Digital Servo"; 8fd3662 read it as a part's verb) and only "upgrade
+  kit" and "upgrade from/to" make a part (`bom._upgrade_part`), and "drive" before a motor word is that motor
+  (`bom._part_verb`: "Drive servo MG996R"). A print word anywhere in a line's name or notes makes it a part
+  (`bom._printed`: printed, 3D printed, PLA, PETG, ABS, resin, TPU, ASA, STL: "Base MG996R (printed)", "STS3215 shoulder
+  pan (printed)", "Upper arm STS3215" noted "printed"), except in a clause about what a servo fits ("MG996R servo for
+  the 3D printed arm" is the servo). The final skeptic's 1,800 noun-label lines are a test: none is a motor that 0033630
+  read as a part. "Servo for <label> (<model>)" reads the model; a
+  part named only by its label is the motor of a model MPN, or of a description that says servo ("Base" described as
+  "STS3215 12V servo"; "Gripper" described as "SG90" stays no motor); "Model", "Motor", "Servo" and "Actuator"
+  columns are the MPN; the head's own model is the key (`bom._own_key`: "DS3218 servo (MG996R compatible)" is the
+  DS3218); notes about another arm or against a variant pick nothing (`bom._own_words`); `bom._PACK` also reads "×6 (",
+  "(qty 6)", "set of 6" and "(6x"; "DS3218MG", "MG", "NEMA 17" and "stroke" are a motor's own words; a head whose last
+  noun holds something (`bom._HOLDER`: "Wrist camera mount") or names a stand-in is "purchased", and only the head says
+  "material". The corpus, both probe sets and the whole lists are data (tests/data/bom_hunt_lines.json, bom_files); the
+  one known gap is a servo the catalog lacks named by maker and code alone ("Hiwonder LX-16A" is "purchased").
+  Rows add `description` and `catalog_name`. An object import whose grip would bend the fingers
+  gets New robot's repair (`api_import._fit_fingers`: `brief.preflight`'s deflection check, the beam 1.5 mm thicker at
+  a time up to 14 mm), said in its reply. When an import's build isn't feasible (a robot's first build, an object's
+  revision), `api_import._explain` posts an assistant message in that project's chat (kept in its history) with up to
+  four issues and `fixes: [{id, label, changes}]` (`fixes_for`: `arm.actuator_overrides = "all=sts3215"` for an
+  imported arm on 7.4 V STS3215s short of torque, else Dynamixel servos; the finger thickness the deflection check
+  passes); the page shows them as buttons (`.fixacts`, hidden for read-only members) that `POST /api/import/fixes`.
 - **Show Morph the job:** `GET /api/video/info` adds `offline` (network lookups off, so no Claude: the cards say which).
   `vision.map_to_changes` adds the force-sensing finger for a new object that is fragile or narrow (`_map_finger`;
   `finger.sensor`, `finger.width_mm`, `finger.material` and `fab.process` are in `vision.KEYS` only as that finger needs
@@ -1156,11 +1282,14 @@ plus the anthropic SDK, imported only when a run calls Claude; not pipeline code
 Section 1's storage table and section 3's event list point here (added with the docs, B2-T4); this section is the
 reference.
 
-**Storage** (MORPH_HOME; every file 0600 and written atomically, folders 0700):
+**Storage** (MORPH_HOME; every file 0600 and written atomically, folders 0700; Windows ignores those modes, so
+`services.winacl.restrict(path)` gives the user full control and then drops the inherited permissions (icacls, the
+grant first) of each `.runs`, `.tools` and `.team` folder when Morph makes it and of `.env` each time `keys` saves it;
+it never raises, and where icacls fails the path stays as private as its folder (W3)):
 
 | Path | Contents |
 |---|---|
-| `.tools/catalog/*.json` | the owner's own manifests (off until the owner turns each tool on); Morph's ship in `morph/studio/toolbox/catalog/` (on by default; package data: the first one adds `catalog/*.json` to pyproject's package-data and MANIFEST.in) |
+| `.tools/catalog/*.json` | the owner's own manifests (off until the owner turns each tool on); Morph's ship in `morph/studio/toolbox/catalog/` (on by default unless the manifest has `off_by_default`, as `element14.json` does (W3); package data: the first one adds `catalog/*.json` to pyproject's package-data and MANIFEST.in) |
 | `.tools/state.json` | `{enabled: {tool: bool}}`, the owner's overrides. A file that can't be read turns every tool off (`read_state(...)["damaged"]`, listed in `GET /api/tools` errors); turning one on writes the others off, as shown. A `pins.json` that can't be read turns the owner's own manifests off (W3) |
 | `.tools/approvals.json` | `{tools: {tool: {fingerprint, mode: always \| key_saved, by, at}}}` |
 | `.tools/audit.jsonl` + `audit.head` | hash-chained log (`audit.verify(home)`): tool_enabled/disabled, keys_saved (names only), tool_approved (once \| always \| key_saved), tool_skipped/denied/refused, tool_call {run, tool, kind, host, ok, status, ms, cost_usd, outcome}, run_started/paused/resumed/interrupted/done/failed/refused/cancelled/expired, run_cancel_requested. Never a key, an argument or an answer |
@@ -1169,7 +1298,11 @@ reference.
 **Manifests** (`morph.tool_manifest/1`, `catalog.parse_manifest`): one provider each: `id` (2-24 of a-z0-9, never a name
 Morph uses: morph, darwin, mcp, tool, web, claude, anthropic, subq, keewano, code, computer, bash), `service`,
 `privacy` (required), `hosts` (public DNS names: no IP literal, localhost or local-network name), optional `summary`,
-`homepage`, `verified {docs, checked, live, notes}`, `credentials[]` {id, env `MORPH_TOOL_[A-Z0-9_]{2,40}`, label, what,
+`homepage`, `verified {docs, checked, live, notes}`, `off_by_default` (W3: 10-400 characters saying why one of Morph's
+own tools starts off; `catalog.default_on(tool)` is `curated and not off_by_default`, and the owner's switch in
+`.tools/state.json` still wins), `attribution` (W3: 2-60 characters, whom its data is credited to, `Tool.credit`, else
+the service; Claude's tool description then asks it to say "from <attribution>" wherever it gives that data),
+`credentials[]` {id, env `MORPH_TOOL_[A-Z0-9_]{2,40}`, label, what,
 where, url, hosts (a subset), pattern (`^...$`, no groups or alternation, never matches ""), prefix?, cost?, privacy?} and
 `tools[]` {name `<id>_...`, title, description (Morph-written for Morph's own), side_effect read | write | upload | spend,
 sends, request {method, url, query, headers, body}, auth? {credential, in: header | query, name, prefix}, input_schema
@@ -1189,8 +1322,9 @@ from morph.studio.toolbox import Toolbox, ToolboxError, Builtin, register
 tb = Toolbox(studio.home, emit=fn)       # one per Studio; emit(event) is called from run threads
 tb.recover()                             # at Studio start: running runs -> interrupted pauses; 7-day expiry
 tb.tools() -> {tools: [{name, tool, title, service, provider, description, side_effect, sends, privacy, host,
-               cost_usd, cost_note, curated, enabled, paid, warnings, verified, key: {env, label, set, url, where,
-               hosts} | None, approval: {mode, by, at} | None}], errors, spend_cap_usd}      # GET /api/tools
+               cost_usd, cost_note, curated, enabled, paid, off_by_default, credit, warnings, verified, key: {env,
+               label, set, url, where, hosts} | None, approval: {mode, by, at} | None}], errors, spend_cap_usd}
+                                                                                              # GET /api/tools
 tb.set_enabled(name, on, by=)            # POST /api/tools/enable|disable (owner)
 tb.start(agent=, system=, prompt=, project=, core=[Builtin | name], context=, title=, by=, effort="medium",
          max_tokens=16000, binding=None) -> view    # POST /api/runs/start (editor); drives in the background
@@ -1256,7 +1390,11 @@ loopback, link-local or metadata, shared, documentation, reserved, multicast, IP
 Teredo or NAT64 address) and the connection goes to the checked address (TLS still checks the name); no redirects; one
 deadline (a watchdog shuts a dripping socket); JSON answers only, capped, reduced to the declared fields and shortened;
 every known key (the tool's and every other `MORPH_TOOL_*`, Claude, SubQ, Keewano key) removed from answers and errors;
-a request that would carry a known key outside its own slot is refused; 401/403 with a key pause the run as `rejected`.
+a request that would carry a known key outside its own slot is refused; 401/403 with a key pause the run as `rejected`,
+and so does a JSON answer (2xx or 4xx) that matches the manifest's `response.auth_error` rule (`{pointer, match}`: the
+object at the pointer, or one in the list there, has every `match` field with that value, text compared without case;
+only for a tool with `auth`; checked by `check_tool`). Mouser's manifest has one: a wrong key gets HTTP 200 and
+`{"Errors": [{"PropertyName": "API Key", ...}]}` (tests/fixtures/tools/answers/mouser_wrong_key.json, recorded).
 Direct connections only: a Studio that must go through an HTTP proxy can't reach tool APIs yet.
 
 **What T3 wires** (nothing in T1 touches server.py): `studio.toolbox = Toolbox(studio.home, emit=...)` and `recover()` at
@@ -1329,18 +1467,23 @@ retry; returns Darwin's `status` and `question`, which the agent passes on and n
 and `morph_prices_record`, which keeps a line only for an item of this parts list, a catalog tool that answered in this
 run, a distributor and part number, and a price of 0 or more; `matched` says whether the part number and the price
 appear in that tool's answers. The record is `{rev, checked_at, lines: [{item, distributor, part_number, unit_price,
-currency, quantity, stock, tool, service, matched}], dropped: [{item, why}]}`, merged by (item, distributor, part
-number). `darwin.search` results now carry `status` (completed | needs_input | no_match) and `question`; the BOM tab's
+currency, quantity, stock, tool, service, source, matched}], dropped: [{item, why}]}`, merged by (item, distributor,
+part number); `source` (W3) is the tool's `credit`, which the card and Show prices print as "from <source>" on every
+line, matched or not, and the system prompt asks Claude to credit each price in its summary. `darwin.search` results now carry `status` (completed | needs_input | no_match) and `question`; the BOM tab's
 Darwin shortlist is unchanged.
 
 **Catalog** (`morph/studio/toolbox/catalog/`, package data in pyproject and MANIFEST.in): `mouser.json`
 (`mouser_search_keyword`, `mouser_search_part_number`; POST to api.mouser.com with the key in the `apiKey` query
 parameter; `MORPH_TOOL_MOUSER_KEY`) and `element14.json` (`element14_search_keyword`, GET api.element14.com
-`/catalog/products` with `callInfo.apiKey`; 46 stores; `MORPH_TOOL_ELEMENT14_KEY`), read-only, no fee, written from
+`/catalog/products` with `callInfo.apiKey`; 46 stores; `MORPH_TOOL_ELEMENT14_KEY`; W3: `off_by_default` until a legal
+review of Farnell's API terms, which limit storing its data and passing it on, and `attribution` "Farnell/element14"),
+read-only, no fee, written from
 the providers' API documentation (`verified.docs`, `checked` 2026-10-13, `live: null`: the Keys dialog and the cards
 say "Not yet tried with a real key"). `response.keep` (`{extracted field: [names]}`) keeps only the named fields of an
 object or of each object of a list. A curated tool may be read-only with POST (Mouser's search) without a warning.
-Contract tests run each manifest against a recorded or documented answer (`tests/fixtures/tools/answers/`).
+Contract tests run each manifest against an answer in its documented shape with made-up values, or one recorded from
+the service (`tests/fixtures/tools/answers/`; THIRD_PARTY_NOTICES names the recorded ones; no copy of a provider's
+documentation example).
 
 **Front end** (`static/tools.js`, FEATURES entry `tools`; styles in the `tools:` section of style.css): one card per
 run of the tab's project in the chat, rebuilt from `GET /api/runs` when the page loads, when the chat is redrawn and
@@ -1354,8 +1497,11 @@ its first (or changed) use, whose answer is sent for every call it covers; a too
 card per call. Members who can't act see "Ask the owner to add the <key> in Keys." or
 "Ask the owner to allow it." (editors: "Or skip it"). The BOM tab's filters bar gets "Live prices (beta)" for editors
 (and for everyone once prices exist): it starts a run, says what a working run waits for, or opens the prices; without
-Claude (503) it says so and opens Keys on `ANTHROPIC_API_KEY`. The Keys dialog lists "Tools agents can use" with an
-on/off switch per tool. New on the feature bus (section 4): app.js sends `{type: "connection", live: true, again}`
+Claude it says so and opens Keys on `ANTHROPIC_API_KEY`: when `GET /api/runs` last said `ready.claude: false` it asks
+again and, still false, sends no start (no refused request in the browser console); a start refused with 503 does the
+same. The Keys dialog lists "Tools agents can use" with an
+on/off switch per tool, and a tool's `off_by_default` text under it (whether on or off). New on the feature bus
+(section 4): app.js sends `{type: "connection", live: true, again}`
 whenever the page's event stream opens, so a feature can reload what a stream that opened late (after the 3 s wait
 before the first state load) or reopened after a drop may have missed; tools.js refreshes its cards then.
 
@@ -1535,7 +1681,7 @@ review (W3) they do: every free-text field uses the one filter of section 9, and
 One nominal simulation says a design works once, exactly as drawn. A **study** runs a revision's own nominal
 pick-and-place plan (planned once, as the Studio's simulation plans it) many times in worlds drawn from the project's
 tolerance spec, labels every run, and reports the success rate with its interval, the failure groups, the one rule
-that best isolates each and whether it survives other solver settings. Simulation, for the tolerances shown; never a
+that best isolates each and whether it survives other simulator settings. Simulation, for the tolerances shown; never a
 field failure rate (section 0, honesty).
 
 - **Code.** `morph/services/robust.py` (the engine: spec, sampling, workers, analysis, storage) and
@@ -1632,6 +1778,10 @@ field failure rate (section 0, honesty).
   clopper_pearson95, groups with id, label, count, rate, model_sensitive).
 - **CLI:** `morph study <project> [--rev rNNN] [--runs N] [--workers N] [--stress] [--seed S] [--timestep ms]
   [--no-checks]` prints the study as ASCII text; Ctrl+C keeps the finished runs and the same command carries on.
+  `robust.report()` uses the card's words (R3): `robust.likely()` ("likely between 63% and 76%", bounds rounded away
+  from the estimate; `api_study.likely` is the same function) with `robust.INTERVAL_NOTE` saying it is the 95%
+  confidence interval, "at least 98.1% with 95% confidence" when every run succeeds, and "Same with other simulator
+  settings" or "Model-sensitive" for a failure group's checks.
 - **Studio routes (B2-S2, `morph/studio/api_study.py`)**, all with `?project=`; starting, cancelling, resuming and
   editing tolerances need an editor, reading and replays a viewer (Teams' role table lists all seven):
   - `GET /api/study[?rev=]`: `{job, studies, latest, latest_stress, stopped, limits, host, rate, may, notes,
@@ -1656,20 +1806,25 @@ field failure rate (section 0, honesty).
     process can't start, stops or takes over 5 minutes; `robustness` adds `recorded` (the row the study saved),
     `matches_record` (false: Morph's simulation changed since) and `label`.
   - `api_study.card(doc)` and `headline(doc)` give the card's words (heavy_plan section 6): "Succeeds in 140 of 200
-    randomized runs (95% CI 63-76%); the nominal run succeeds." (interval bounds rounded away from the estimate, so the
-    shown interval always holds the computed one; all or none succeeding uses the exact bound, "at least 98.1% with 95%
-    confidence"), `NOTES["simulation"]`, the flags (outdated, revision gone or changed, stopped part way, unstable and
-    error runs, rebuilt with other Morph code) and each group's share, rule (with "could be chance"), sensitivity
-    (`robust.SENSITIVE`) and example run. `NOTES["none"]`: "One nominal run. Small differences in placement or hardware
-    aren't tested."
+    randomized runs (likely between 63% and 76%); the nominal run succeeds." (the 95% interval in words,
+    `api_study.likely`; `interval_note` = `NOTES["interval"]` is its tooltip; bounds rounded away from the estimate, so
+    the shown interval always holds the computed one; all or none succeeding uses the exact bound, "at least 98.1% with
+    95% confidence" or "likely at most 1.9%"), `NOTES["simulation"]`, the flags (outdated, revision gone or changed,
+    stopped part way, unstable and error runs, rebuilt with other Morph code) and each group's share ("58 of 200 runs
+    (likely between 23% and 36%)"), rule (with "could be chance"; none for a group of fewer than
+    `robust.RULE_MIN_RUNS` = 3 runs, in `robust.analyze` and again in the card for studies saved before), sensitivity
+    (`robust.SENSITIVE`, or "Not checked with other simulator settings yet.") and example run. `NOTES["none"]`: "One
+    nominal run. Small differences in placement or hardware aren't tested."
   - The Studio stops a project's study before Delete project and Reset demo (`jobs.stop(studio, name)`, up to 5 s; its
     runs are kept, in the trash with a deleted project) and every study when it stops (`jobs.shutdown(studio)`). A study
     another process runs (another Studio, `morph study`) refuses both instead (409, saying where: section 2).
   - `robust.load()` adds `rev_changed`; `studies()` reads each revision's spec once.
 - **The card (`static/study.js`, feature `study`):** under the pick-and-place result in the Simulation tab (section 4):
   the note where no study exists; live progress (`study` events: phase, run k of n, the success rate so far with its
-  interval, failures so far by group, time left estimated); the result with its flags, at most two failure groups
-  (label, share, "Most likely when: <rule>", the model-sensitive or "Same under other solver settings" badge, Replay)
+  interval in words, failures so far by group, time left estimated), shown in place of the revision's earlier result
+  while a study of it runs, and scrolled into view (with Cancel) when the editor starts it from the card; the result
+  with its flags, at most two failure groups
+  (label, share, "Most likely when: <rule>", the model-sensitive or "Same with other simulator settings" badge, Replay)
   and Details (a dialog: every group with its check counts, what matters most (Youden's J against chance), every
   tolerance with its source, editable for editors, and the project's studies); for editors a start row (50, 200 or
   1,000 runs, Stress test, "Run N more" to deepen, an estimate of the time on the Studio's computer), Cancel and Carry
@@ -1691,7 +1846,42 @@ field failure rate (section 0, honesty).
   `detours` gains `release` and the new `via` values; `GET /api/world` returns `sim.path` and `sim.blocked`, and the
   World panel's status line says which way the arm went. Simulations without a world are bit-identical (golden hashes
   unchanged); the world golden (`egg-picker-bin-world`) was re-recorded for the new checks. Planning in world mode
-  takes at most about 0.4 s more (worst measured 0.91 s against 0.49 s, at load 7-14).
+  takes at most about 0.4 s more (worst measured 0.91 s against 0.49 s, at load 7-14). R5: every clearance the world
+  metrics keep (`min_clearance_mm`, each `path` entry's, `detours`, `arc`) is rounded down to 0.1 mm
+  (`simulate.floor_mm`), never up, so `clearance_ok` is false at 9.96 mm (it was kept as 10.0 and called clear); `clear`
+  and the planner still compare the unrounded distances. The world golden was re-recorded for both recorded
+  environments: 7 numbers of `sim_pick_place.json` (and `run_all`) changed, each 0.1 mm lower; the frames and every
+  MuJoCo state are bit-identical. `worlds.checks` shows those distances rounded down too (`mm_text`: to 0.1 mm under 10
+  mm, to the millimetre from there): "Only 9.9 mm between the arm and the room; 10 mm or more is OK.", "At least 30 mm
+  between the arm and the room" for 30.68 (it read 31); the base's margin and the room above the arm likewise, with the
+  base's parts rounded outwards (`_footprint`) and room that is missing (an overhang, the arm into a box) rounded up
+  (`mm_up_text`). The World panel (`world.js` `mmDown`) and `morph world` follow the same rule.
+  R6: a jaw point moves up to 6.5 mm between two 10 ms plan samples and 19.5 mm between two of the run's frames (30 a
+  second), so beside the bench bin 18.5 mm out the frames said 10.3 mm while the run posed every 2 ms comes within
+  9.956 mm (and the plan's way back was 9.9 mm, not clear), and beside a 10 mm bracket 12.4 mm while the run comes
+  within 10.916 mm. `morph/robot/sweep.py`: `Motion.bound` bounds how far any point of each geom travels over a linear
+  move between two poses (per body: the turns of the joints that move it times its reach from their anchors, grown for
+  the joints further out, plus their slides), and `path_min` halves the moves whose bound (D_a + D_b - L) / 2 could be
+  below the closest distance found less `SWEEP_TOL_MM` (0.05 mm), with at most `SWEEP_MAX_POSES` (4000) poses in between
+  (else the bound left is what is kept). `simulate._along(between=True)` measures a move's samples and the move on to
+  the next one that way, for every `path` entry (`min_clearance_mm`, `clear`), the kept alternative's `detours` record
+  and `arc` (from the carry entry); `blocked` is a move measured into a box. The planner still chooses among its
+  alternatives on the samples, so the plans, the frames and every MuJoCo state are unchanged. `_world_metrics` measures
+  the run between its frames the same way and keeps the smaller of that and every `path` entry (`min_clearance_mm`,
+  `min_clearance_at`); `clearance_ok` also needs every `path` entry clear. On the bench now: bin 18.5 mm out 9.9 mm,
+  not OK (truth 9.956), bracket 10.8 (10.916), bin 20 mm out 11.3 (11.361); a world-mode pick and place took 4.1 s
+  instead of 2.9 at load 1.5. The workspace scenario adds `arm_top_mm` and `arm_reach_mm` (`_arm_extent`, rounded up):
+  the highest and furthest point of the robot's collision shapes (a mesh's hull corners, a box's corners, another
+  primitive's bounding sphere), the jaws at both ends of their range, over the sampled poses and a pattern search from
+  the best; `max_height_mm` and `reach_3d_mm` stay the tool point's. Egg-picker 588.1 / 588.1 mm (tool point 567.1 /
+  568.0), SO-101 533.4 / 552.4; the scenario takes 3.5 s instead of 1.7-1.9 at load 1.5. The overhead check ("Shelf is
+  N mm above the arm's highest point"), the people check ("No walkway or seat is within 100 mm of anywhere the arm can
+  reach") and the reach dome (`world.js` `_reachMM`) use them; a revision without them gets those checks skipped with
+  "simulate it again". `usable_workspace_fraction` is kept and shown rounded down (1249 of 2500 poses: 0.499, "49%",
+  a warning; it read "50%", a pass). The sim golden was re-recorded for both recorded environments: `run_all`,
+  `sim_workspace.json` (the two new keys; the world fixture's fraction 0.995 is 0.994) and the world fixture's
+  `sim_pick_place.json` (its `path` entries and `detours` each 0.1 mm lower, `min_clearance_mm` 12.1 is 11.3 at 4.36 s);
+  `robot.xml`, the frames and every MuJoCo state are bit-identical.
 - **World-tolerance presets (B2-S3, H2).** `register_world_preset(name, fn, label=None, room_only=False)`;
   `PRESET_LABELS`, `ROOM_ONLY`. `room` ("Only the room varies: the mount and every box; the object and the hardware stay
   nominal"): the standard world ranges (mount +/-10 mm and +/-2 deg, each box 0-15 mm) with every other entry off, so
@@ -1700,39 +1890,260 @@ field failure rate (section 0, honesty).
   (`data-f="preset"`, editors only); a room-only study's card carries `api_study.NOTES["room_only"]`. Measured: a carton
   wall 12 mm from the open jaws at the place spot, 200 runs at 1 ms, seed 3: 185 of 200 succeed (Wilson 88.0-95.4 %),
   15 `world_collision:release` (7.5 %, 4.6-12.0 %), rule "mount 4.5 to 10.0 mm off in y", not model-sensitive.
-- **Clearance to the room scan (B2-S3, H3; `morph/studio/worlds.py`).** `scan_clearance(glb_path, world, doc,
-  robot_xml, *, near_mm=10, floor_cut_mm=10, time_limit_s=20, max_faces=MAX_FACES, per_pose=False)`: the revision's
-  simulated frames (`sim_pick_place.json`, posed about every 10 ms) in its own collision model (`sim/robot.xml`, the
-  object while carried) against the uploaded scan. The scan is cropped to within `SCAN_CUT_MM` (50 mm) of a geom's
-  bounding sphere at some pose (64 mm cells), big triangles cut to the part near the arm, triangles rising no more
-  than `floor_cut_mm` above the mount surface dropped; each triangle is covered by its own points (`_scan_samples`:
-  rows along its longest edge at most `SCAN_SAMPLE_MM`/2 apart, points at most `SCAN_SAMPLE_MM` apart, so no point of
-  it is further than rho <= 1.41 mm from one) in a scipy cKDTree (sliding midpoint, no compact nodes, every query
-  bounded). Robot geoms (fixed ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine
-  samples (1 mm edges, 2 mm faces) are measured against the tree, and those that could be the closest get exact
-  point-triangle distances (`closest_on_triangles`) to every triangle with a point within their bound. Two passes:
-  every pose coarsely (bounds), then the most promising first; found to `SCAN_TOL_MM` (0.05 mm); below `SCAN_TOUCH_MM`
-  (0.5 mm) it touches. Returns `{min_clearance_mm (None beyond 50 mm), at {t, link, point (world mm)}, regions,
-  stats, note}`, with `per_pose` also `poses [[t, mm|None]]`; never raises for a bad scan or model:
-  `{"skipped": reason, "note"}`. `regions` (at most `SCAN_MAX_REGIONS` = 8, the closest first): the near misses
-  (closer than `near_mm`) grouped by 30 mm, each `{id: "scan-k", label: "Scan near miss k", min_clearance_mm, t, link,
-  point, points, box {center, half, yaw_deg}}`: the scanned surface within 30 mm of them in the world frame along the
-  mount surface's axes, at least 20 mm thick (grown away from the arm), down to the surface when it or the scan under
-  it nearly reaches it. Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to 0.21 mm
-  over whole runs); a generated room of 998,664 triangles in 6.5-8.3 s at load 3-6 and 10.6 s at load 7-11
-  (`MORPH_SLOW=1`).
-  `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer
-  than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured
-  against the scanned surface, which can be noisy or have holes. A warning, not a verdict."); `regions` ride on it.
-  `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
-  (`_ADVICE["scan"]`). `POST /api/world/inspect` measures it when the world has `room.glb` and the revision was
-  simulated in this room as it is now (else a skip saying so), kept in memory per (project, revision, world sha, room
-  file size and mtime), the last eight; it sends `world {stage: "scan", status: "start" | "done", text}` and an `agent`
-  event (`feasibility`, `code`).
+- **Clearance to the room scan (B2-S3, H3; `morph/studio/worlds.py`).** `scan_clearance(glb_path, world, doc, robot_xml,
+  *, near_mm=10, floor_cut_mm=10, time_limit_s=20, max_faces=MAX_FACES, per_pose=False)`: the revision's simulated
+  frames (`sim_pick_place.json`, posed about every 10 ms) in its own collision model (`sim/robot.xml`, the object while
+  carried) against the uploaded scan. The scan is cropped to within `SCAN_CUT_MM` (50 mm) of a geom's bounding sphere at
+  some pose (64 mm cells), big triangles cut to the part near the arm, triangles rising no more than `floor_cut_mm`
+  above the mount surface dropped; each triangle is covered by its own points (`_scan_samples`: rows along its longest
+  edge at most `SCAN_SAMPLE_MM`/2 apart, points at most `SCAN_SAMPLE_MM` apart, so no point of it is further than rho <=
+  1.41 mm from one) in a scipy cKDTree (sliding midpoint, no compact nodes, every query bounded). Robot geoms (fixed
+  ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine samples (1 mm edges, 2 mm faces;
+  R6: rows 1.6 mm apart on each collision shape's faces) are measured against the tree, and those that could be the
+  closest get exact point-triangle distances (`closest_on_triangles`) to every triangle with a point within their bound
+  (R6: the shapes' own distances, below). Two passes: every pose coarsely (bounds;
+  R3: in `_spread` order, every 16th pose, then those halfway between and so on, so a check cut short has looked along
+  the whole path; R4: the bounding spheres tested by size class, `SCAN_RBOUND_CLASSES_MM`, and the coarse samples by
+  `SCAN_CELL_MM` = 24 mm cell, a cell skipped when its sphere is beyond the samples' search bound: the same answers pose
+  by pose, about 6-8 times faster), then the lowest bounds first; found to `SCAN_TOL_MM` (0.05 mm); below
+  `SCAN_TOUCH_MM` (0.5 mm) it touches. R5: every distance it keeps (`min_clearance_mm`, a region's `min_clearance_mm`
+  and `box_clearance_mm`, `covers.clearance_mm`, `stats.lower_mm` and `stats.unlisted_mm`) is rounded down to 0.1 mm
+  (`floor_mm`), never up, while the boxes are fitted to the unrounded distance; `scan_check` shows them the same way
+  (`mm_text`): 30.68 mm reads "At least 30 mm" (it read 31), and a near miss of 9.96 mm, which was kept as 10.0 and
+  passed as "At least 10 mm" beside a "10.0 mm" row, is kept as 9.9 and "comes within 9.9 mm". Returns
+  `{min_clearance_mm (None beyond 50 mm), at {t, link, point (world mm)}, regions, stats, note}`, with `per_pose` also
+  `poses [[t, mm|None]]`; never raises for a bad scan or model: `{"skipped": reason, "note"}`. `regions` (at most
+  `SCAN_MAX_REGIONS` = 8, the closest first): the near misses (closer than `near_mm`) grouped by 30 mm, each `{id:
+  "scan-k", label: "Scan near miss k", min_clearance_mm, t, link, point, points, box {center, half, yaw_deg}}` (R5: and
+  `exact`, below): the scanned surface within 30 mm of them in the world frame along the mount surface's axes, at least
+  20 mm thick (grown away from the arm), down to the surface when it or the scan under it nearly reaches it (W3: then
+  trimmed on the sides facing the swept path until no robot point at any pose comes closer to it than the region's
+  `min_clearance_mm` (R6: until MuJoCo's distance from it to the path, between the poses too, is no less),
+  `box_clearance_mm` and `trimmed` saying so; `box: None` with `no_box` when that would leave it thinner than 5 mm; R7:
+  a region the arm touches or passes through (distance under `SCAN_TOUCH_MM`) gets its box untrimmed and `touches` true
+  (R6 trimmed it against MuJoCo's negative distances until nothing was left, so the Studio's e2e post the jaw passes 7
+  mm into got no box). R8: its `box_clearance_mm` is MuJoCo's lower bound only when `box_path` bounded the whole path
+  further than the touch, else 0.0 (`box_path` stops at the first pose closer than its target; R7 kept that pose's
+  distance, so a row read "0.1 mm from the path" for a box 8.75 mm into it); and it is offered only when a plan can go
+  round it (R9: tried by the simulation itself, below). `must_reach` measures it (MuJoCo's distance, the motion between
+  poses counted, `box_path` with a pose mask)
+  against what the planner can't move: the arm in its starting pose (pose 0), going down to the object, grasping and
+  lifting it (from the "above the object" marker to "lifted", and phases grasp and lift), setting it down and letting
+  go (phases place and release), and the object where it starts and ends (the first and last pose). Closer than
+  `SCAN_TOUCH_MM` to any of them, the region has `box: None`, `must_reach` and `no_box` (`MUST_REACH`): `object` or
+  `object_end` when the scan's own closest point there is within `SCAN_ON_OBJECT_MM` (2 mm) of the object ("the scan
+  holds the object itself here (or something within 2 mm of it) ..."; R9: it said "touching", but a block 0.3 mm beside
+  the egg is one), `object_box` or `object_end_box` when only the box
+  reaches it, else `start`, `pick` or `place`. A trimmed box that would reach the object where it starts or ends isn't
+  offered either (`object_box`, `object_end_box`). The check says "Add box here turns it into a grey box over the
+  scanned surface there (at least 20 mm each way, so it can be larger than what was scanned), and the next simulation
+  tries to plan round it" (R7: "the thing as scanned, and the next simulation plans round it", untrue for a 0.1 mm
+  speck's 19.8 mm box), and where no box is offered for that reason, "the arm must reach there to pick or place the
+  object, or stands there in its starting pose, so no box is offered" (plus "(the scan holds the object itself where
+  it starts, or something within 2 mm of it)"); with boxes offered elsewhere, "Where the arm must reach ... no box is
+  offered." Measured on the bench
+  (`tests/test_world_scan.py`): the egg itself scanned at the pick spot (`object`), a 4 mm nub 0.2 mm under a finger at
+  the grasp (its box reaches the egg) and the egg's shape at the place spot get no box, where R7's box failed the next
+  simulation ("the object touches Scan near miss 1 in the arm's starting pose"; the real Studio said the same); the
+  vase 10 mm into the carry keeps its box, and the next simulation succeeds. Of 40 specks the arm touches on the
+  approach, the carry or the way back (a fuzz on the bench, seed 1), 29 boxes would meet a pose no plan moves (13 the
+  starting pose, 13 the set-down and release, 3 the descent, grasp and lift) and aren't offered; the 5 of those checked
+  with MuJoCo reached 3.8 to 20.2 mm into it as R7 offered them. R9: a plan the simulation knows going round the box was
+  assumed, not tried: the planner's other approaches, carry arcs and ways back meet near the hover points and the rest
+  pose, so a touch box often lies across all of them, and a trimmed box within `CLEAR_MM` of the approach sends the
+  planner another way whose run strays 1 to 3 mm from its plan; on the hunters' bench 8 of 26 touch boxes and 2 of 20
+  trimmed boxes made the next simulation fail. Now `api_world._scan` runs `worlds.try_boxes` on every region with a box:
+  each box is added to the room as Add box here adds it (`validate`, `sim_world`), and the revision's robot, rebuilt
+  from its design and its saved `sizing` and `eplan` as the pipeline builds it (`api_world._box_trial`, kept for the
+  last two revisions), plans and simulates the pick and place there (`simulate.world_trials`: `_plan_pick_place` and
+  `_run_pick_place`, fast=False as the Studio's pipeline; `_Robot(described=...)` reuses the slow description; the box
+  tried is the room's last, and `at_box`, `contact` and `blocked` are about it by its id, `_Robot.world_ids`, kept out
+  of the simulation's documents, so their golden hashes are unchanged: 1f6b690 compared labels, and Add box here could
+  make a second "Scan near miss 1", whose row then showed the other box's distance or whose offer the other box's
+  contact could refuse). A region's id and label are numbered on past the "Scan near miss k" labels and "scan-k" ids the
+  world holds (`worlds._number_regions`; world.js `scanBoxName` does the same for a box added to an unsaved world that
+  holds its label or id). A box the run touches, the plan passes into, or that fails a simulation the revision's own
+  didn't (`baseline_ok`), loses its box and `covers`, with `trial` {ok: False, failure} and `no_box` "A simulation with
+  a grey box here fails (<failure>), so none is offered: move the robot or the thing instead."; one it goes round keeps
+  it, with `trial` {ok, min_clearance_mm (the simulation's own: its run and plan against every box, so no more than its
+  distance to this one), at_box, fails}. Two or more kept are tried together (`stats.together`: the failure, or None; at
+  1f6b690, when the deadline passed before that run, `stats.together` was `TRIAL_LATE` and the check said "Added
+  together, those boxes make the simulation fail (Morph ran out of time ...)" and was kept; now `stats.together_late`
+  and `stats.trial_timeout`, and "There wasn't time to try a simulation with those boxes added together: checking again
+  when the computer is less busy may try it."). Out of time (`SCAN_TRIAL_S` = 30 s of its own) a box isn't offered
+  (`TRIAL_LATE`, `stats.trial_timeout`), nor when the revision's robot can't be simulated again (a preview, its results
+  missing, or the trial raised: `stats.untried`, the reason, and "a simulation with a box there couldn't be tried
+  (<reason>), so none is offered"), and the answer isn't kept. The check says, tried: "Add box here turns it into <the
+  box>; a simulation with it, tried here, keeps clear of it (the row says how close it comes)." (untried: "; the next
+  simulation tries to plan round it, and may take another way, closer to it, or fail."), and with none offered for that
+  reason "a simulation with a grey box there, tried here, fails (the row says how), so none is offered". The World
+  panel's row adds "tried: the simulation keeps X mm from it" ("at least" when its closest box is another; world.js
+  `scanTried`). Measured to another box under 0.5 mm it gives no number: "keeps clear of it", with "and still fails
+  elsewhere (<failure>)" when the trial fails (1f6b690 printed "keeps at least -2.4 mm from it" when a simulation
+  failing already went into another box). The trial is the next simulation: on the hunters' 15 cases kept in
+  tests/data/scan_box_trials.json its failure is word for word the one the simulation after Add box here reports, and
+  its clearance the same number. Its cost, measured with `api_world.inspect_world` on this tree (4 cores): the review's
+  desk scan (vase 8.8 mm, the box tried 10.1 mm from the simulation) `try_boxes` 4.8-6.5 s of a 17.6-18.7 s scan check
+  at load 6-10; the same desk with the mount moved 15 mm (2.0 mm, tried 2.1 mm) 9.6-13.3 s of 21-25 s at load 6-12, and
+  the whole Check placement in the Studio 47.0 s at load 16. `worlds.failed_on_box`: when the revision's simulation
+  fails on a box with source "auto", `stats.fails_on` {label, failure} and the check says "The simulation fails on
+  <label>, a box Add box here made (<failure>): remove that box, and move the robot or the thing instead." A trimmed
+  box is fitted to its region's distance plus `SCAN_FIT_TOL_MM` and verified to at least that distance, so
+  `box_clearance_mm` is never under the row's `min_clearance_mm` (a 2.0 mm near miss's box read 1.9).
+  `scan_event_text` counts `stats.places`, not only the rows listed. R8: the check's distance and
+  each region's are kept as 0.0 under `SCAN_TOUCH_MM` (`_touch_floor`: `min_clearance_mm`), since there the check stops
+  looking closer and the distance it had is one pose's (a speck at 0.197 mm was kept as 0.2); near
+  misses within `SCAN_COVER_MM` = 10 mm of one of the world's grey boxes are that box's, and a
+  region of nothing else is left out, `stats.covered` counting them). R3: a trimmed region also has `covers`, its box
+  before trimming (it holds the region's near-miss points); an obstacle saved with `covers` owns the near misses within
+  `SCAN_COVER_MM` of that place too, while the box still lies inside it (+1 mm; moved elsewhere it doesn't), so a box
+  trimmed away from its near miss (a vase's top under the arm) isn't offered again. R4: `covers` also carries
+  `clearance_mm`, the distance the box was fitted to (the region's `min_clearance_mm`), and `rev`, the revision whose
+  path it was (set by the route), and reaches at most `SCAN_COVERS_MAX_MM` = 50 mm past the trimmed box (R5: and no
+  further past a face than the box's own size on that axis). Such a box and its place own a near miss only while it is
+  no closer than `clearance_mm` (less `SCAN_COVERS_TOL_MM` = 0.1 mm): a path that comes closer there gets the place
+  offered again, with a box fitted to the new path. `_covers` ignores a `covers` that isn't what a fit makes, and the
+  box then owns, like any grey box, only the near misses within 10 mm of itself: without `clearance_mm` or with 0 (R5),
+  turned against the box, not containing it, or (R5) past a face by more than the box's size on that axis or 50 mm, or
+  sharing none of its faces (to `SCAN_COVERS_FACE_MM` = 0.2 mm, R6: 0.4 mm; the fit trims only the sides facing the
+  path). R5:
+  before, the limit was 50 mm past any box, so an API client could save a 10 mm cube with a place 50 mm past it on every
+  side and `clearance_mm` 0 and hide a 9.0 mm near miss 56 mm from the cube; now that place is ignored. A region whose
+  fitted box is a box the world holds already (`_same_box`: 0.05 mm, 0.01 degree) is left out and counted in
+  `stats.covered`, the rest numbered again (`_already_boxed`): an API client that saves boxes without `covers` can't get
+  the same box offered twice. Measured on the review's desk with the trimmed box and its place saved and the mount moved
+  15 mm in -x: the wrist comes within 2.2 mm, above the box, and that place is offered with a box fitted to the new
+  path, where 22bec48 said it had a grey box already. R5: a near miss is listed by its distance to the nearest of the
+  scan's own points, up to rho more than its distance to the scan, so each region's points that could be its closest are
+  measured exactly (`exact()`, closest first, before the limit): its `min_clearance_mm`, `point`, `t` and `link` are a
+  real robot-to-scan distance, the arm coming at least that close there, and the box is fitted to it. Only the region
+  holding the whole check's closest point, in a check not cut short that found that point (not one stopped at a touch),
+  has `exact: true` (its closest approach); every other region's distance, and every region of a check cut short, is an
+  upper bound the row shows as "at most". `covers.clearance_mm` is that distance, so a later check that measures the
+  place closer offers it again. A region measured closer than the check's own closest (the second pass stops at its
+  first point under 0.5 mm, and a pass cut short measures only part of the path) makes its distance, place, time and
+  link the check's `min_clearance_mm` and `at`: on rD's r004 the check kept 0.2 mm while its row measured 0.0 mm (a vase
+  in the arm's path in the tests: 0.3 and 0.0 mm). Measured on the review's desk scan (one region) and a vase beside a
+  bin (two): the rows read as before (8.9 mm exact; 0.0 mm touching and 8.0 mm at most), the regions step 0.03-0.12 s
+  with the refinement and 0.04-0.16 s without (one run each, load 5-7). `_fit_boxes` prunes each geom's fine samples by
+  its coarse ones (as pass 2 does), keys points by 0.25 mm cell, and drops points once clear of the shrinking box. R4:
+  the measuring passes run to `time_limit_s` until there is a near miss (R5: until the second pass lists one, a point
+  closer than `near_mm`: a box is fitted only to those, and a first-pass bound alone set the time aside and then cut the
+  first pass short with nothing to fit, as on rD at an 8 s limit, stopped at 6.0 s); from then on they stop early enough
+  for the regions and the fit, `SCAN_FIT_S_PER_POSE` (4 ms) a distinct pose, at least `SCAN_RESERVE_MIN_S` (0.5 s) and
+  at most `SCAN_RESERVE_SHARE` (25 %) of the limit (2.4 s for the desk scan's 607 distinct poses, whose regions and fit
+  took 1.3-1.9 s at load 11-14). A region not fitted by then gets `box: None`, `no_box` saying Morph ran out of time,
+  and `stats.fit_timeout`, and the check text says there wasn't time to fit a box (`stats.regions_s` and `stats.fit_s`
+  time the two steps). Cut short (`stats.truncated`), the answer never claims more room than was measured:
+  `min_clearance_mm` is the closest distance measured anywhere, pass 2's exact ones or pass 1's coarse robot samples to
+  the scan's points (a real distance: the arm comes at least that close; `at` names that sample's link, time and scan
+  point), `stats.lower_mm` a lower bound when every pose was bounded, `stats.poses_checked` of `stats.unique_poses`,
+  `stats.part_clear` when it looked at a pose and every one it looked at stays beyond 50 mm, and `stats.need_s` about
+  what the whole check would take at this pace (cut in the first pass, the second counted as long as the first: it took
+  0.5 to 5 times as long in the scans measured). A second pass cut short after the closest point is measured (every pose
+  and point left has a bound at or above it) is not truncated; `stats.unlisted_mm` then bounds the near misses not
+  listed. Measured on the review's desk scan (2,872 triangles near the arm, 667 poses, the vase near miss, 8.8 mm),
+  alternating with 22bec48 at the default 20 s: at load 3.7-7.0, 22bec48 took 12.3-13.1 s and R4 7.5-8.5 s (pass 1
+  0.75-0.97 s against 5.7-5.8 s; regions and fit 0.9-1.2 s); at load 11-13, 22bec48 took 16.4-17.8 s and was cut short
+  in 2 of 4 runs, R4 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and was never cut short. The same scan with the
+  mount moved 15 mm (the wrist touching the vase, 0.2 mm): R4 9.1-9.8 s at load 2-3 (22bec48 stopped in its first pass
+  at 15.7 s and said the part checked stayed more than 50 mm away), 7.8-12.4 s at load 2-4 and 17.2 s at load 8, against
+  21-30 s at load 4-5 before, which a 20 s check always cut short. R4's per-pose distances and closest point are
+  identical to 22bec48's on the desk scan's three revisions (with and without the box, and moved), and so are its
+  regions except on the moved revision (r004) with its own saved world: that world's place has no `clearance_mm`, so R4
+  ignores it and offers the place (scan-1, 0.0 mm, box half 20.5/20.6/80 mm) where 22bec48 called it covered (by design:
+  a place without the distance it was fitted to isn't trusted). R5 against R4 on the same three revisions, untimed, per
+  pose and not: the same per-pose distances, the same boxes, the same closest point except r004 not per pose (now its
+  row's 0.0 mm at 1.62 s, before 0.2 mm at 1.46 s, above), and the distances 0.1 mm lower where they were rounded up
+  (9.0 to 8.9 mm on r002 and r003). Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up
+  to 0.21 mm over whole runs; R6: within 0.005 mm); a generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1
+  1.3 s; `MORPH_SLOW=1`).
+  R6: the robot was its surface samples (a capsule as a 24-sided prism) at the 10 ms poses only, so on rD's r004 a plate
+  9.95 mm under the carried egg read "At least 10 mm", a 0.1 mm speck 0.25 mm under a finger "comes within 0.6 mm", and
+  a speck and a 0.4 mm cable the jaw passes through between two poses (-0.11 and -0.40 mm) "comes within 1.0 mm" and
+  "0.8 mm". `_geom_shape` now gives each robot geom its collision shape (`_Shape`: a mesh's convex hull, a box; a sphere
+  and a capsule exactly, by the polytope inside them; a cylinder as the 32-sided prism around it, an ellipsoid as the
+  polytope around it, so never further than they are) with surface samples `SCAN_ROBOT_MM` (1.6 mm) rows apart and
+  `cover_f`, how far the shape's surface can be from one; the geoms whose samples could hold the closest point get their
+  exact distance (`_shape_tris`: the faces of those samples against the triangles near them, pairs closest bound first
+  by bounding spheres, boxes and each face's plane, `_tri_tri` for two triangles, `_seg_tri` for a capsule's axis; a
+  triangle with a corner inside the hull at 0). A third pass bounds the motion between the poses:
+  `sweep.Motion(per_geom=True, radius_mm=)` bounds how far any point of each geom travels over a move, and a move whose
+  bound (D_a + D_b - L) / 2 could be below the closest found less `SCAN_BETWEEN_TOL_MM` (0.1 mm) is halved and measured
+  in between, exactly, against the triangles and faces that can still come that close in that half, at most
+  `SCAN_MAX_BETWEEN` (4000) poses (`stats.between_poses`, `between_s`); it may use half the boxes' share of the time,
+  and `min_clearance_mm` is a lower bound of the whole path: the smaller of the closest measured, the moves still
+  queued and the lowest bound of a geom's move the pass left alone (`low3`, no closer than the closest found less 0.1
+  mm), so at most 0.1 mm under the closest approach before it is rounded down (R7: the moves left alone didn't count,
+  so with a 3 mm tolerance a speck 3 mm outside the fastest corner read 2.9 mm where MuJoCo has 2.75, and with 0.1 mm a
+  closest measured at 10.03 mm over a move bounded at 9.95 could read "At least 10 mm"; with nothing measured within
+  50 mm and a bound just under it, "The arm stays more than 49 mm", `stats.beyond_mm`). Cut short there:
+  `stats.between_cut`, `lower_mm` that bound, and "The motion between the poses wasn't all measured closely enough in
+  the 20 s a check has" in place of "Only part of the path was measured". A region's box is measured with MuJoCo
+  (`box_path`: the box as a geom of a copy of the collision model, `mj_geomDistance` to each geom near it at every pose
+  and between them as above) and trimmed against the robot point it comes closest at (`_trim_box`) until it keeps the
+  region's distance less `SCAN_FIT_TOL_MM`, at most `SCAN_FIT_ROUNDS` (12) times; `box_clearance_mm` is that lower
+  bound, the box is saved rounded inwards and its place outwards (`_world_box(rounding=)`). `stats.places` counts every
+  place not left to a box (the closest `SCAN_MAX_REGIONS` listed): "12 places closer than 10 mm (the 8 closest are
+  listed)" (it said 8); the share of a path checked in part is rounded down (606 of 607 poses: 99%, it read 100%).
+  `_covers` needs `clearance_mm` of at least `SCAN_TOUCH_MM` (any above 0 counted: a crafted 0.1 hid a 6 mm near miss
+  under a cabinet's place); `_near_grey_box(P, D, boxes, Dlo, exact, path_box)` decides a box's `closest` on a lower
+  bound of each near miss (its scan-point distance less rho and its geom's `cover_f`), measuring it exactly where only
+  the scan-point distance clears it (before, that distance alone, up to 1.41 mm more), and a near miss within reach of
+  only a box's place is the box's only while the box is no further from the path than that lower bound plus
+  `SCAN_COVER_MM` (`_path_to_boxes`, the robot samples' closest approach to it: a 100 mm cabinet 52 mm from the path
+  vouched for its place 45 mm below). A region whose fitted box the world holds already, but whose place was fitted for
+  a path that stayed further away (`covers.clearance_mm` less 0.1 mm above the region's distance), is kept without a box
+  (`boxed`, `no_box`: the box there is the one that fits and the path comes closer; on rD with the plate and its box 0.3
+  mm nearer the path, the check before said it had a grey box already). Tests: `tests/test_world_scan_shapes.py`
+  with the hunters' configurations as data (`tests/data/scan_shape_cases.json`, built on the egg-picker's bench path,
+  MuJoCo every 0.25 ms around the closest pose as the reference); the hunters' own scripts on rD r004: all OK. Measured
+  (load from other work on the same 4 cores): the desk scan 11.3-11.5 s at load 1-2 (R7, pass 2 4.4-4.5 s, 422 poses
+  between in 4.2-4.5 s, fit 0.6 s; with the mount moved 15 mm 8.7 s at load 2.5), 15.1-16.3 s at load 11-12 (pass 2
+  5.1-5.3 s, 422 poses
+  between in 6.1-6.6 s, fit 1.1-1.4 s), 20 s and cut short between the poses at load 13-17 (the pre-R6 engine took
+  14.7-14.8 s at load 16); R8: 9.9-10.3 s at load 3-4, 10.8-11.0 s at load 3-4 with the World e2e running and
+  13.3-14.6 s at load 8.9-10.2 with the full suite running. With the mount moved 15 mm (2.0 mm): R8 8.5-8.7 s at load
+  2-3, 9.2-9.5 s at load 5 and 9.4-9.5 s at load 8.5-9.8; the final skeptic, at 16ef0d8, 13.8-15.9 s at load 9.3-9.8.
+  The million-triangle room (it touches; the regions step skips refining a place that touches): R8 9.8 s at load 2,
+  11.9 s at load 5-6 and 12.3 s at load 7-7.7; the final skeptic, at 16ef0d8, 11.5 s at load 8.6-9.6.
+  `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`):
+  pass, warn (closer than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with
+  `SCAN_NOTE` ("Measured against the scanned surface, which can be noisy or have holes. A warning, not a verdict.");
+  `regions` ride on it. R4, cut short: "The wrist comes within at most 4.6 mm of the scanned surface at 1.4 s" (plus
+  "(no closer than 3.0 mm)" with `lower_mm`), or "touches or passes through" below 0.5 mm; "In the part of the path
+  checked (25% of it, or less than 1% of it), the arm stays more than 50 mm ..." only with `part_clear`, else "There
+  wasn't time to measure how close the arm comes ..."; never "At least" or "more than 50 mm" otherwise. Then "Only part
+  of the path was measured in the 20 s a check has (a large scan or a busy computer)", followed by "checking again when
+  the computer is less busy may measure all of it" or, when `need_s` is more than `SCAN_RETRY_FACTOR` (2) times the
+  limit, "at this pace, measuring all of it would take more than twice that, so checking again helps only on a much less
+  busy computer"; a near miss without a region adds "There wasn't time to measure that place closely enough to offer a
+  box for it."; `unlisted_mm` adds "Time ran out before every place closer than 10 mm was listed; any other is at least
+  X mm from the arm" (R5: then ": checking again when the computer is less busy may list them all.") `checks(...,
+  scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it (`_ADVICE["scan"]`). `POST
+  /api/world/inspect` measures it when the world has `room.glb` and the revision was simulated in this room as it is now
+  (else a skip saying so), kept in memory per (project, revision, world sha, room file size and mtime), the last eight
+  (R3: not when the check was cut short or a box's fit ran out of time, so checking again measures again; R4 kept an
+  answer whose list of near misses alone was cut short, `unlisted_mm`; R5: not any more, since the places not listed may
+  be as close as the arm touching, so Check placement again lists them when the computer is less busy, where the kept
+  answer showed the same short list until the room or the revision changed); it sends `world {stage: "scan", status:
+  "start" | "done", text}` ("Closest to the scan: at most 4.6 mm ... (cut short)" when cut short) and an `agent` event
+  (`feasibility`, `code`). R8: the text is `scan_event_text`: "The arm touches or passes through the scan" under
+  `SCAN_TOUCH_MM` (it read "Closest to the scan: 0.2 mm" beside a check saying "touches"), and with nothing measured
+  within 50 mm, "Nothing within X mm of the scan" with the check's own bound (`stats.beyond_mm`: "Nothing within 49 mm"
+  where the check says "more than 49 mm"; it said 50).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
-  the box size) and **Add box here**: the box joins the world's grey boxes as `{id: region id (made unique), label,
-  center, half, yaw_deg, source: "auto"}`; *Save and simulate* then plans around it, and the next check measures the new
-  path. Browser test: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan`.
+  the box size, its distance from the path and whether it was trimmed, or why there is no box; R5: "at most X mm from"
+  unless the region is `exact`) and **Add box here**
+  (only with a box): the box joins the world's grey boxes as `{id: region id (made unique), label,
+  center, half, yaw_deg, source: "auto", covers?}` (`covers` when the region has one, with its `clearance_mm` and
+  `rev`; `worlds.validate` keeps it as a box with `clearance_mm` from 0 to 10 mm and `rev` a revision name, the
+  simulation never sees it); a box equal to one the world holds (0.05 mm, 0.01 degree) isn't added again, the row
+  reading Added. R4: a box sized, moved or turned by hand (the gizmo or the panel's numbers, `setBoxFromBase`), or a
+  room rescaled, loses its `covers`. *Save and simulate* then plans around it (R9: a box offered was tried, and the
+  simulation after Add box here is the one the check ran), and the next check measures the new path. Browser tests:
+  `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan` and
+  `::test_a_box_trimmed_off_a_vase_is_added_once_and_not_offered_again`; `tests/test_world_gizmo.py` (hand edits).
 - **Under attack (B2-S4).** An adversarial review of the track; what other code relies on since:
   - `robust.StudyConflict` (a `StudyError`; the routes answer 409) for what can't run as asked: a revision with nothing
     to study (`robust.studyable(p, rev)`: the simulation stage failed or never ran, a preview-only build, no pick and

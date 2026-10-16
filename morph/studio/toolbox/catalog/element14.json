@@ -4,7 +4,9 @@
   "service": "Farnell (element14, Newark)",
   "summary": "Price breaks and stock from the element14 Product Search API, which serves the Farnell, Newark and element14 stores (read-only).",
   "homepage": "https://partner.element14.com",
-  "privacy": "The keyword the price check searches for (from your parts list) and the store go to Farnell (element14, Newark) with your key. Farnell's terms don't allow storing its data, so Morph keeps the answers only in the run, deleted after 7 days.",
+  "privacy": "The keyword the price check searches for (from your parts list) and the store go to Farnell (element14, Newark) with your key. Like every tool's answers, Farnell's go to Claude and stay in the run's file on this computer for up to 7 days.",
+  "off_by_default": "Morph ships this tool off until Farnell's API terms have had a legal review: they limit storing Farnell's data and passing it on. Turned on, its answers go to Claude and stay in the run's file for up to 7 days, as every tool's do. Turn it on only if your agreement with Farnell allows that.",
+  "attribution": "Farnell/element14",
   "hosts": [
     "api.element14.com"
   ],
@@ -12,7 +14,7 @@
     "docs": "https://partner.element14.com/docs/Product_Search_API_REST__Description",
     "checked": "2026-10-13",
     "live": null,
-    "notes": "Query parameters and the keywordSearchReturn answer come from the Product Search API (REST) description page, read on 2026-10-13; the tests' answer is its medium response group example. Only keyword searches (term any:) are used."
+    "notes": "Query parameters and the keywordSearchReturn answer come from the Product Search API (REST) description page, read on 2026-10-13; the tests' answer follows its medium response group with made-up values. Only keyword searches (term any:) are used."
   },
   "credentials": [
     {

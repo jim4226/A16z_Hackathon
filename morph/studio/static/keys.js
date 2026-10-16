@@ -11,7 +11,7 @@ import { I, esc, sleep } from './panels.js';
 const JSON_POST = { 'Content-Type': 'application/json', 'X-Morph-Client': '1' };  // the server refuses changes without X-Morph-Client
 const KEY_ICON = '<svg class="i sm" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M16 7l3 3M13.5 9.5l2 2"/></svg>';
 const SERVICE_NOTE = {
-  Claude: 'Free-form chat, and Live prices (beta) in the BOM tab. Without a key, the suggestion chips and common phrasings still work.',
+  Claude: 'Claude reads free-form chat requests and New robot requests, analyses the frames in Show Morph the job, gives World mode\'s AI review, runs Live prices (beta) in the BOM tab and drafts tools (New tool, preview). Without a key, the suggestion chips, common phrasings and built-in rules still work, and you fill in the video cards yourself.',
   Keewano: 'Build memory: logs revisions and measurements in your Keewano project once Send build events is on (below). Grip-force calibration from that history is optional; the R Cubed demo history is seeded, not measured.',
   SubQ: 'SubQ Snap answers quick yes/no and multiple-choice questions about a request in about a second, labelled "SubQ Snap (AI)". Requests go to SubQ (Subquadratic Inc.) under your own account. SubQ keeps requests per your organisation\'s retention setting (zero retention on request) and does not train on API content.',
 };
@@ -57,7 +57,8 @@ export class KeysDialog {
     const row = (x) => `<label class="kt"><span class="switch"><input type="checkbox" data-tool="${esc(x.name)}"${x.enabled ? ' checked' : ''}${x.drafted?.changed ? ' disabled' : ''}><i></i></span>
         <span><b>${esc(x.title)}</b>${x.drafted ? ' <span class="tag acc" title="Drafted by Claude from the service\'s documentation and approved by the owner (Morph writes a tool, preview)">drafted</span>' : ''}${x.verified && x.verified.live == null ? ' <span class="tag neutral" title="Written from the service\'s documentation; not yet tried with a real key">Not yet tried with a real key</span>' : ''}
         <small>${esc([x.service, side[x.side_effect] || x.side_effect, x.host, x.key ? `${x.key.label}: ${x.key.set ? 'set' : 'not set'}` : 'no key needed', x.curated || x.drafted ? '' : 'your own manifest'].filter(Boolean).join(' · '))}</small>
-        ${x.drafted?.changed ? '<small class="kwarn">Changed after it was approved, so Morph keeps it off. Draft it again (New tool) to review and approve the new version.</small>' : ''}</span></label>`;
+        ${x.drafted?.changed ? '<small class="kwarn">Changed after it was approved, so Morph keeps it off. Draft it again (New tool) to review and approve the new version.</small>' : ''}
+        ${x.off_by_default ? `<small class="kwarn">${esc(x.off_by_default)}</small>` : ''}</span></label>`;
     const waiting = t.drafts || [], ready = waiting.filter((d) => d.status === 'ready'), busy = waiting.length - ready.length;
     const where = [...new Set(ready.map((d) => d.project).filter(Boolean))];
     return `<section class="ksec ktoolist"><div class="ks-h"><b>Tools agents can use</b><span class="tag neutral">beta</span><span class="grow"></span>
@@ -116,7 +117,7 @@ export class KeysDialog {
         <span><b>${esc(title)}</b><small>${esc(note)}</small></span></label>`;
     this.el.innerHTML = `<div class="glass dlg" role="dialog" aria-label="API keys">
       <div class="dlg-h"><div class="kicon">${KEY_ICON}</div><div class="grow"><div class="t">API keys</div>
-        <div class="s">Optional: everything works without them. Saved only on ${d.compute?.remote ? `<b>${esc(d.compute.host)}</b>, the computer running Morph Studio,` : 'this computer,'} in the <span class="mono">${esc(d.file || '.env')}</span> file next to <span class="mono">run_studio.bat</span> (git-ignored). Values are never shown again or sent anywhere except the service they belong to.</div></div>
+        <div class="s">Optional: everything works without them. Saved only on ${d.compute?.remote ? `<b>${esc(d.compute.host)}</b>, the computer running Morph Studio,` : 'this computer,'} in the <span class="mono">${esc(d.env?.file || d.file || '.env')}</span> file in ${d.env && d.env.folder !== 'the Morph folder' ? `<span class="mono">${esc(d.env.folder)}</span>` : 'the Morph folder'}${d.env?.git_ignored === false ? '' : ' (git-ignored)'}. Values are never shown again or sent anywhere except the service they belong to.</div></div>
         <button class="btn icon ghost" type="button" data-a="close" title="Close (Esc)">${I('x', 'sm')}</button></div>
       ${services.map((sv) => `<section class="ksec"><div class="ks-h"><b>${esc(sv)}</b>${keys.filter((k) => k.service === sv).every((k) => k.set) ? '<span class="tag good">set up</span>' : '<span class="tag neutral">not set up</span>'}</div>
         <div class="ks-n">${esc(SERVICE_NOTE[sv] || '')}</div>${keys.filter((k) => k.service === sv).map(field).join('')}</section>`).join('')}

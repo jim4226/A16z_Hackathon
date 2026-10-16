@@ -62,7 +62,8 @@ def set_home(path: str | None):
 
 
 def home() -> str:
-    return _HOME or os.path.abspath(os.environ.get("MORPH_HOME") or "projects")
+    from ..resources import projects_home
+    return _HOME or os.path.abspath(projects_home())
 
 
 def utcnow() -> str:

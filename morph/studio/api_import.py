@@ -8,6 +8,11 @@
   GET    /api/import/<id>/preview.png?candidate=n   -> image/png thumbnail (no WebGL needed)
   POST   /api/import/<id>/commit {candidate, name, answers} -> 202 {kind, ...}; progress as SSE
   DELETE /api/import/<id>
+  POST   /api/import/fixes {fix}                    -> 202 {job}: one of the fixes an import's build was offered
+
+An object's grip that would bend the fingers too far gets the finger repair New robot applies (a thicker beam) before
+it is built. When an import's build isn't feasible, the project's chat says why, with the fixes Morph can make
+(`fixes`: [{id, label, changes}], changes computed here, never sent by the page): each is built as a new revision.
 
 SSE: {"type": "import", "id", "stage", "status", "text", "project"} while fetching, detecting, saving and building.
 In the Studio a robot or project becomes a new project (projects service): {"type": "project_created", "project",
@@ -35,6 +40,9 @@ _doomed: dict = {}            # sessions deleted while a download or build was r
 _busy_lock = threading.Lock()
 _cleaned: set = set()
 PATH_RX = re.compile(r"^/api/import/([a-f0-9]{16})(?:/(file|detect|commit|preview\.glb|preview\.png))?/?$")
+TORQUE_RX = re.compile(r"needs [\d.]+ N·m with margin")
+BEND_RX = re.compile(r"tip deflection|bending safety factor")
+MAX_FINGER_MM = 14.0          # as New robot's repair (brief.repair): the beam grows 1.5 mm at a time up to this
 
 
 def _home(req) -> str:
@@ -368,6 +376,7 @@ def _follow(sid: str, s, room, job, emit, q):
             except (OSError, ValueError):
                 res = {}
             summary = res.get("summary") or {}
+            _explain(room, job.result, f"The imported robot {room.name}")   # in its own chat, before the tab opens it
             emit({"type": "import", "id": sid, "stage": "build", "status": "done", "built_project": room.name,
                   "rev": job.result, "text": f"Built {room.name} ({job.result})",
                   "feasible": summary.get("feasible"), "issues": [str(x)[:240] for x in (summary.get("issues") or [])[:4]],
@@ -384,19 +393,122 @@ def _follow(sid: str, s, room, job, emit, q):
 
 
 def _queue_object(req, changes: dict, label: str):
-    """Object keys as an edit of this tab's project, queued in its room like a parameter edit (W0b). None when the
-    Studio has no queue (then _apply_async)."""
+    """Object keys as an edit of this tab's project, queued in its room like a parameter edit (W0b), with the finger
+    repair when its grip would bend the fingers too far; when that build isn't feasible, the chat says why (_explain).
+    None when the Studio has no queue (then _apply_async)."""
     from .rooms import QueueFull
 
     room, queue_changes = getattr(req, "room", None), getattr(req.studio, "queue_changes", None)
     if room is None or not callable(queue_changes) or getattr(room, "jobs", None) is None:
         return None
+    changes, note = _fit_fingers(room, changes)
     try:
-        job = queue_changes(room, changes, label=label, reply=f"Imported {label}: object and fingers updated.",
+        job = queue_changes(room, changes, label=label, reply=f"Imported {label}: object and fingers updated.{note}",
                             source="import", by=_member_id(req))
     except QueueFull as exc:
         return _err(429, str(exc))
+    when_done = getattr(req.studio, "when_done", None)
+    if callable(when_done):
+        when_done(job, lambda j: j.result and _explain(room, j.result, f"With the imported {label}, {room.name}"))
     return 202, job.info()
+
+
+def _bends(flat: dict) -> bool:
+    """Whether New robot's preflight (brief.preflight) flags the fingers' bending for this design."""
+    from . import brief
+    return "deflection" in brief.classify(brief.preflight(flat)["issues"])
+
+
+def _fit_fingers(room, changes: dict) -> tuple[dict, str]:
+    """New robot's finger repair for an imported object (brief.repair): while the grip would bend the fingers more than
+    they may, the beam gets 1.5 mm thicker, up to 14 mm. Returns (changes, a sentence for the reply or "")."""
+    try:
+        base = room.latest()
+        if base is None:
+            return changes, ""
+        flat = room.p.load_design(base).with_changes(changes).flat()
+        if flat.get("arm.source"):          # an imported arm's own gripper: no finger beam to size
+            return changes, ""
+        t0 = t = float(flat["finger.thickness_mm"])
+        while t < MAX_FINGER_MM and _bends({**flat, "finger.thickness_mm": t}):
+            t = round(min(MAX_FINGER_MM, t + 1.5), 1)
+    except Exception:  # noqa: BLE001  (the repair is a courtesy: the object is applied either way)
+        traceback.print_exc()
+        return changes, ""
+    if t == t0:
+        return changes, ""
+    return ({**changes, "finger.thickness_mm": t},
+            f" Its grip would bend the {t0:g} mm finger beams too far, so they are {t:g} mm thick now, as New robot "
+            "would make them.")
+
+
+def fixes_for(design, issues: list) -> list:
+    """The changes Morph can make for a build's issues, as chips: [{id, label, changes}] (computed here: the page only
+    names the one it wants). A joint short of torque: the 12 V STS3215 for an imported arm on 7.4 V ones, else Dynamixel
+    servos; fingers that bend too far: the thickness that New robot's check passes."""
+    import uuid
+
+    out = []
+    if any(TORQUE_RX.search(i) for i in issues):
+        if design.arm.source and any("sts3215_7v4" in i for i in issues):
+            out.append(("Use 12 V STS3215 servos", {"arm.actuator_overrides": "all=sts3215"}))
+        elif design.arm.actuator_family != "dynamixel":
+            out.append(("Swap to Dynamixel servos", {"arm.actuator_family": "dynamixel", "arm.actuator_overrides": ""}))
+    if any(BEND_RX.search(i) for i in issues) and not design.arm.source:
+        flat, t = design.flat(), float(design.finger.thickness_mm)
+        try:
+            while t < MAX_FINGER_MM:
+                t = round(min(MAX_FINGER_MM, t + 1.5), 1)
+                if not _bends({**flat, "finger.thickness_mm": t}):
+                    break
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+        if t > design.finger.thickness_mm:
+            out.append((f"Thicker fingers ({t:g} mm)", {"finger.thickness_mm": t}))
+    return [{"id": uuid.uuid4().hex[:12], "label": label, "changes": ch} for label, ch in out]
+
+
+def _explain(room, rev: str, what: str):
+    """After an import's build: when it isn't feasible, a chat message in its project says why, with the fixes Morph
+    can make (each a chip that builds it as a new revision)."""
+    try:
+        res = room.p.load_results(rev)
+        design = room.p.load_design(rev)
+        summary = res.get("summary") or {}
+        if summary.get("feasible") is not False:
+            return
+        issues = [str(x)[:240] for x in (summary.get("issues") or [])][:4]
+        if not issues:
+            return
+        fixes = fixes_for(design, issues)
+        text = (f"{what} built {rev}, but it isn't feasible yet:\n" + "\n".join(f"· {i}" for i in issues) +
+                ("\nA fix Morph can make builds a new revision:" if fixes else
+                 "\nChange what it flags here in the chat, or in the parameters."))
+        room.hub.send({"type": "assistant", "text": text, "fixes": fixes, "source": "import", "rev": rev})
+    except Exception:  # noqa: BLE001  (an explanation never breaks the import)
+        traceback.print_exc()
+
+
+def fix(req):
+    """POST /api/import/fixes {fix}: build one of the fixes an import's build was offered in this project's chat."""
+    from .rooms import QueueFull
+
+    fid = (req.body or {}).get("fix") if isinstance(req.body, dict) else None
+    room = getattr(req, "room", None)
+    if not isinstance(fid, str) or not re.fullmatch(r"[a-f0-9]{12}", fid) or room is None:
+        return _err(400, "Name one of the fixes in this project's chat.")
+    with room.hub.lock:
+        found = next((f for m in reversed(room.hub.history) for f in (m.get("fixes") or [])
+                      if isinstance(f, dict) and f.get("id") == fid), None)
+    if found is None:
+        return _err(404, "That fix is no longer offered in this project's chat.")
+    try:
+        job = req.studio.queue_changes(room, dict(found["changes"]), label=found["label"],
+                                       reply=f"{found['label']}: building it as a new revision.", source="import",
+                                       user_text=found["label"], by=_member_id(req))
+    except QueueFull as exc:
+        return _err(429, str(exc))
+    return 202, {"ok": True, "job": job.info()}
 
 
 def _apply_async(req, changes: dict, label: str) -> bool:
@@ -427,6 +539,8 @@ def dispatch(req):
             if req.method == "POST":
                 return create(req)
             return _err(405, "Use POST to start an import.")
+        if path.rstrip("/") == "/api/import/fixes":
+            return fix(req) if req.method == "POST" else _err(405, "Use POST to build a fix.")
         m = PATH_RX.match(path)
         if not m:
             return _err(404, "Unknown import route.")

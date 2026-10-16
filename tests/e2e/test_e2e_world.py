@@ -10,7 +10,9 @@ browser with software WebGL.
   Claude in the Studio process (six pictures, findings, suggested changes applied, a tour with its captions);
 - the panel at 1600x900, 1280x720 and 910 px wide, and no drawing while nothing moves;
 - a scanned bench whose post the simulation can't see: the check measures the path against the scan, warns, and
-  "Add box here" makes the post a grey box the next simulation goes round.
+  "Add box here" makes the post a grey box the next simulation goes round;
+- a scanned tall vase whose rim is just under the arm: the box offered is trimmed off its top, keeps the place it was
+  made for, is added once however often it is pressed, and the place is not offered again after Save and simulate.
 
 MORPH_E2E=1 runs these (about two minutes each; the first also builds the demo robots once, about two more;
 MORPH_E2E_WORLD_HOME=<dir> keeps them between runs). MORPH_E2E_PORTS=8835-8838 picks the Studios' ports.
@@ -31,6 +33,8 @@ import types
 import urllib.request
 
 import pytest
+
+from morph.studio import worlds
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CHROME = os.environ.get("PLAYWRIGHT_CHROMIUM") or "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
@@ -321,7 +325,7 @@ def test_desk_placement_with_a_turn_and_a_box_on_the_carry_path(run, home):
     assert m["arc"]["clear"] and m["arc"]["min_clearance_mm"] >= 10.0 and m["arc"]["usual"] is False, m["arc"]  # past the bin
     st = pg.status()
     near = m["min_clearance_at"]["obstacle"]
-    assert "pick and place succeeds" in st and "carry path" in st and f"closest {round(m['min_clearance_mm'])} mm, to {near}" in st, st
+    assert "pick and place succeeds" in st and "carry path" in st and f"closest {worlds.mm_text(m['min_clearance_mm'])} mm, to {near}" in st, st
     # the closest call is said, not hidden: here the open jaws pass the desk's mug at the place spot (the release is not
     # re-planned around boxes), under the 10 mm the carry path keeps
     assert m["clearance_ok"] == (m["min_clearance_mm"] >= 10.0) and (m["clearance_ok"] or "Under 10 mm" in st), (m, st)
@@ -428,7 +432,7 @@ def test_room_scan_scale_place_boxes_simulate_and_walk(run, tmp_path):
     m = pg.metrics()
     assert m["success"] and m["world"] == "room" and m["clearance_ok"], m
     st = pg.status()
-    assert re.search(r"r\d+ in kitchen: pick and place succeeds; closest \d+ mm, to ", st), st
+    assert re.search(r"r\d+ in kitchen: pick and place succeeds; closest \d+(?:\.\d)? mm, to ", st), st
     pg.ev("() => window.morphWorld.wv.frameOverview(0)")
     pg.shot("e2e_scan_simulated")
     # walking: on the kitchen floor, in front of the counter, the robot in sight; W walks forward; Esc stops
@@ -558,8 +562,13 @@ def test_the_panel_fits_three_window_sizes_and_nothing_draws_while_idle(run):
             pg.shot(f"e2e_layout_{size[0]}_inspector")
             pg.click(".inspbtn")
     # idle: once the camera's damping has run out (fast-forwarded here: software WebGL draws ~1 frame a second),
-    # nothing is drawn while nothing moves, in the room, walking or not; a hidden 3D view stops the walk
+    # nothing is drawn while nothing moves, in the room, walking or not; a hidden 3D view stops the walk. The settle's
+    # last step still moves the camera a little (a 'change': one frame owed), and under load that frame came more than
+    # 1.5 s later, inside the count (it drew 1 frame at load 6-17): the count starts once that frame is drawn
     settle = "() => { const c = window.morph.viewer.v.controls; for (let i = 0; i < 600; i++) c.update(); return true; }"
+    drawn = """() => new Promise((done) => { const v = window.morph.viewer.v;
+      const tick = () => requestAnimationFrame(() => (v._dirty ? tick() : requestAnimationFrame(() => done(true))));
+      tick(); })"""
     pg.ev(COUNT)
     for what in ("the room, panel open", "walking, no key held"):
         if what.startswith("walking"):
@@ -567,6 +576,7 @@ def test_the_panel_fits_three_window_sizes_and_nothing_draws_while_idle(run):
             until(lambda: pg.world("!!wv.walking"), 20, "walking")
             time.sleep(1.5)
         pg.ev(settle)
+        pg.ev(drawn)
         time.sleep(1.5)
         n0 = pg.ev(COUNT)
         time.sleep(4.0)
@@ -637,7 +647,7 @@ def _stand_in(port: int, home: str, record: str):
     import anthropic
 
     from morph.robot.pipeline2 import RobotProject
-    from morph.studio import server, worlds
+    from morph.studio import server
 
     class Messages:
         def create(self, **kw):
@@ -658,7 +668,7 @@ def _stand_in(port: int, home: str, record: str):
     server.serve(RobotProject(os.path.join(home, "egg-picker")), "127.0.0.1", port, home=home)
 
 
-def bench_scan_glb(path):
+def bench_scan_glb(path, vase=False):
     """A bench scanned with a 41 x 41 x 70 mm post on it, as a phone exports it (one .glb, y up, metres). The robot will
     stand on the bench top at the world origin; the post stands beside the egg-picker's way back to rest."""
     import numpy as np
@@ -666,7 +676,8 @@ def bench_scan_glb(path):
 
     tf = trimesh.transformations
     parts = [trimesh.creation.box((1.1, 1.2, 0.025), tf.translation_matrix((0.1, 0.0, -0.0125))),
-             trimesh.creation.box((0.0414, 0.0414, 0.0696), tf.translation_matrix((0.2314, 0.095, 0.0348)))]
+             trimesh.creation.box((0.0414, 0.0414, 0.0696), tf.translation_matrix((0.2314, 0.095, 0.0348))) if not vase else
+             trimesh.creation.cylinder(radius=0.022, height=0.17, sections=48, transform=tf.translation_matrix((0.2714, 0.075, 0.085)))]
     for m, rgb in zip(parts, ((166, 132, 98), (70, 96, 150))):
         m.visual.face_colors = np.tile([*rgb, 255], (len(m.faces), 1))
     mesh = trimesh.util.concatenate(parts)
@@ -701,7 +712,10 @@ def test_add_box_here_from_the_room_scan(run, tmp_path):
     assert scan and scan["status"] == "warn" and scan["value"] < 10 and scan["regions"], scan
     assert pg.world("panel.state.result.verdict") != "blocked"                  # a warning, never a verdict
     text = " ".join(pg.pg.inner_text(".wv-panel").split())
-    assert "A warning, not a verdict." in text and re.search(r"Scan near miss 1: (touches|\d+\.\d mm from) the ", text), text
+    assert "A warning, not a verdict." in text and re.search(r"Scan near miss 1: (touches|(at most )?\d+\.\d mm from) the ", text), text
+    tried = scan["regions"][0]["trial"]                 # the next simulation, run during the check with the box
+    assert tried["ok"] and "a simulation with it, tried here, keeps clear of it" in scan["text"], scan
+    assert re.search(r"tried: the simulation keeps (at least )?\d+(\.\d)? mm from it", text), text
     add = ".wv-panel button[data-a='scanbox'][data-arg='0']"
     assert pg.pg.inner_text(add) == "Add box here"
     pg.ev("() => window.morphWorld.wv.frameOverview(0)")
@@ -717,6 +731,7 @@ def test_add_box_here_from_the_room_scan(run, tmp_path):
     m = pg.metrics()
     assert m["success"] and not m["world_contacts"] and m["min_clearance_at"]["obstacle"] == "Scan near miss 1", m
     assert m["min_clearance_mm"] >= 10.0 and "closest" in pg.status() and "Scan near miss 1" in pg.status(), pg.status()
+    assert m["min_clearance_mm"] == tried["min_clearance_mm"], (m["min_clearance_mm"], tried)    # as the check said
     pg.click(".wv-panel button[data-a='check']")
     until(lambda: pg.world("!panel.state.busy && !!panel.state.result && panel.state.result.rev") == pg.rev(), 120,
           "the check of the new simulation")
@@ -727,6 +742,66 @@ def test_add_box_here_from_the_room_scan(run, tmp_path):
     pg.shot("s3_scan_box_added")
     pg.check()
 
+
+
+def test_a_box_trimmed_off_a_vase_is_added_once_and_not_offered_again(run, tmp_path):
+    """A tall vase whose rim is just under the arm: the box over it is trimmed off its top to keep clear of the path,
+    so it ends up away from the near miss at the rim. Added, it keeps the place it was made for; pressed again, it isn't
+    added twice; after Save and simulate the check doesn't offer that place again (W3 UX-5) (1600x900)."""
+    studio, pg = run((1600, 900))
+    pg.open_world()
+    with open(bench_scan_glb(str(tmp_path / "vase.glb"), vase=True), "rb") as fh:
+        st, up = studio.call("PUT", "/api/world/upload?project=egg-picker&name=vase.glb", raw=fh.read())
+    assert st == 200, up
+    world = {"id": "bench", "name": "Bench with a vase", "asset": "room.glb", "asset_sha": up["draft"]["asset_sha"],
+             "units": "m", "up": "y", "scale": 1.0, "source": {"kind": "glb", "name": "vase.glb"},
+             "mount": {"position": [0.0, 0.0, 0.0], "yaw_deg": 0.0}, "obstacles": [], "zones": [],
+             "surface": {"label": "Bench top", "center": [100.0, 0.0, -12.5], "half": [550.0, 600.0, 12.5], "yaw_deg": 0.0}}
+    before = pg.rev()
+    st, saved = studio.call("POST", "/api/world?project=egg-picker", {"world": world})
+    assert st == 202, saved
+    pg.built(before, "the vase scan")
+    pg.click(".wv-panel button[data-a='check']")
+    until(lambda: pg.world("!panel.state.busy && !!panel.state.result"), 120, "the check with the scan")
+    scan = pg.world("panel.state.result.checks.find(c => c.id === 'scan')")
+    assert scan and scan["status"] == "warn" and scan["regions"], scan
+    g = scan["regions"][0]
+    assert g["box"] and g["trimmed"] and g["covers"] and g["trial"]["ok"], g
+    assert g["covers"]["clearance_mm"] == g["min_clearance_mm"] and g["covers"]["rev"] == pg.rev(), g   # fitted for
+    add = ".wv-panel button[data-a='scanbox'][data-arg='0']"
+    assert pg.pg.inner_text(add) == "Add box here"
+    pg.ev("() => window.morphWorld.wv.frameOverview(0)")
+    pg.pg.locator(add).scroll_into_view_if_needed()
+    pg.shot("r3_vase_near_miss_1600")
+    pg.click(add)
+    obs = pg.world("wv.world.obstacles")
+    assert [(o["id"], o["source"]) for o in obs] == [("scan-1", "auto")], obs
+    assert obs[0]["covers"] == g["covers"] and obs[0]["center"] == g["box"]["center"], obs
+    assert pg.pg.inner_text(add) == "Added" and pg.pg.is_disabled(add)
+    # the same row offered again (as a check that offered it twice would): the box the world holds isn't added twice
+    pg.world("(panel.state.result.checks.find(c => c.id === 'scan').regions[0].added = false, panel.render(), 1)")
+    assert pg.pg.inner_text(add) == "Add box here"
+    pg.click(add)
+    assert pg.world("wv.world.obstacles.length") == 1 and pg.pg.inner_text(add) == "Added"
+    pg.save("the vase's box")
+    m = pg.metrics()
+    assert m["success"] and not m["world_contacts"], m
+    assert m["min_clearance_mm"] == g["trial"]["min_clearance_mm"], (m["min_clearance_mm"], g["trial"])
+    with open(os.path.join(studio.home, "egg-picker", "world", "world.json"), encoding="utf-8") as fh:
+        saved = json.load(fh)
+    assert saved["obstacles"][0]["covers"] == g["covers"], saved["obstacles"]
+    pg.click(".wv-panel button[data-a='check']")
+    until(lambda: pg.world("!panel.state.busy && !!panel.state.result && panel.state.result.rev") == pg.rev(), 120,
+          "the check of the new simulation")
+    after = pg.world("panel.state.result.checks.find(c => c.id === 'scan')")
+    assert not after["regions"] and not pg.pg.locator(".wv-panel button[data-a='scanbox']").count(), after
+    assert after["status"] == "pass" or "has a grey box already, so it is not offered again" in after["text"], after
+    pg.pg.locator(".wv-panel .wv-check", has_text="scanned surface").scroll_into_view_if_needed()
+    pg.shot("r3_vase_box_added_1600")
+    # sized by hand, it is no longer the box fitted for that place: the place goes with the edit
+    pg.world("(wv.setBoxFromBase('scan-1', {h: 120}), 1)")
+    assert pg.world("'covers' in wv.world.obstacles[0]") is False
+    pg.check()
 
 
 if __name__ == "__main__" and len(sys.argv) == 5 and sys.argv[1] == "stand-in":

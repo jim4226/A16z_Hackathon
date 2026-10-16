@@ -19,19 +19,31 @@ is not there when the browser has no WebGL).
 5. **Save and simulate:** saving the world reruns only the simulation stage; every other stage is reused. The pick and
    place then runs against the boxes. Every move of it (the approach, the descent to the object, the grasp, the lift,
    the carry, the set-down, the release, the rise and the way back to rest) is checked against the boxes every 10 ms,
-   with the object while it is carried. The carry path is picked to stay at least 10 mm clear; a move that would come
+   with the object while it is carried, and so is the motion between those poses: how far any point of the arm can
+   travel from one to the next is bounded, and wherever that could bring it closer the move is checked at poses in
+   between, so the clearance kept is the closest approach to within 0.05 mm, rounded down. The simulated run itself is
+   measured the same way, between its frames (30 a second) too, and the clearance shown is the smaller of the run's and
+   the plan's. The carry path is picked to stay at least 10 mm clear at its 10 ms samples; a move that would come
    closer tries its alternatives: the approach and the way back along the carry path (the hand closed to the object's
    width on the way back), the approach from higher up, the release with the hand opened only 4 mm past the object,
-   and the way back straight up first. The first that keeps 10 mm wins, else the one with the most room. A move that
-   would still pass into a box fails the simulation, naming the move and the box. The line under the room's name says
-   how the newest simulation went, how close the arm came to a box, and which other way it took.
-   *Play in the room* replays it there, and *Walk* lets you walk through the room (WASD and the mouse, or drag to
-   look where the browser won't lock the mouse): you start on a walkway when there is one, else on the floor a step or
-   two from the robot, with it in sight.
+   and the way back straight up first. The first that keeps 10 mm there wins, else the one with the most room; one that
+   keeps 10 mm only at its samples shows as a near miss (a bin 18.5 mm beside the bench's carry path: 9.9 mm). A move
+   that would still pass into a box fails the simulation, naming the move and the box. The line under the room's name
+   says how the newest simulation went, how close the arm came to a box, and which other way it took. *Play in the
+   room* replays it there, and *Walk* lets you walk through the room (WASD and the mouse, or drag to look where the
+   browser won't lock the mouse): you start on a walkway when there is one, else on the floor a step or two from the
+   robot, with it in sight.
 6. **Check placement:** measured checks decide the verdict (*ready*, *needs changes* or *blocked*): the simulation ran
    in this room, both targets are in reach and on the surface, the arm stays clear of the boxes, the base sits on the
-   surface, tip-over (a heuristic), people areas inside the reach, anything overhead, and how much of the workspace
-   stays clear. With a room scan, it also measures the simulated path against the scan itself (below).
+   surface, tip-over (a heuristic), people areas within 100 mm of anywhere the arm can reach, anything less than 50 mm
+   over the arm's highest point, and how much of the workspace stays clear. The highest and furthest points are the
+   arm's own (its collision shapes, the jaws open and closed, over the joints' range), not its tool point's: the
+   egg-picker's fingertips reach 588 mm up and out, its tool point 567 and 568 mm (on the built-in desk that puts the
+   chair within 100 mm of the egg-picker's reach, so the people check warns there: "The arm's reach (589 mm to its
+   furthest point + 100 mm) overlaps Chair"). With a room scan, it also measures
+   the simulated path against the scan itself (below). Every distance these checks keep or show is rounded down, never
+   up: to 0.1 mm under 10 mm and to the millimetre from there, so 9.97 mm reads 9.9 (never the 10 mm that is OK) and
+   30.68 mm reads "at least 30 mm"; room that is missing (the base over the edge, the arm into a box) is rounded up.
 
 Each revision is simulated in exactly the room its design names: every saved room is kept under its hash in
 `<project>/world/saved/`, so editing the room while a build waits never changes what that build simulates, and a
@@ -49,18 +61,76 @@ morph world egg-picker --off
 ## Clearance to the room scan (a warning)
 
 The simulation sees only the grey boxes, so *Check placement* also measures how close the simulated arm (and the object
-while it is carried), posed every 10 ms along the newest simulation, comes to the uploaded scan. It looks at the part
-of the scan near the arm: the scan's triangles are covered by points of their own that a k-d tree searches, and the
-closest ones get exact point-to-triangle distances; on scans made of a world's own boxes it agrees with MuJoCo's own
-distances to within a few tenths of a millimetre. The result is a warning, never the verdict: "Measured against the
-scanned surface, which can be noisy or have holes. A warning, not a verdict." It names the part of the arm and the
-time, and says *touches or passes through* below 0.5 mm.
+while it is carried) comes to the uploaded scan along the newest simulation: posed about every 10 ms, and moving between
+those poses. It looks at the part of the scan near the arm and measures the robot's own collision shapes against the
+scan's triangles exactly: each part's convex hull (as MuJoCo collides with it), a box, a sphere and a capsule as they
+are, a cylinder or an ellipsoid as the polytope around it. On scans made of a world's own boxes it agrees with MuJoCo's
+own distances to within 0.005 mm. Between two poses no point of the arm travels further than its joints' turns allow,
+and wherever that could bring it closer than the closest it found, the move is measured at poses in between, so the
+distance it keeps is never more than the closest approach anywhere along the path and at most 0.1 mm less, rounded
+down: a speck or a cable the arm passes straight through between two poses *touches or passes through*. The result is a
+warning, never the verdict: "Measured against the scanned surface, which can be noisy or have holes. A warning, not a
+verdict." It names the part of the arm and the time, and says *touches or passes through* below 0.5 mm.
 
 Each place where the arm comes within 10 mm of the scan is listed with **Add box here**: a grey box over that part of
-the scan (standing on the surface when the scan under it does), added to the room. *Save and simulate* then plans
-around it, and the next check measures the new path. The check takes up to 20 seconds on a large scan (7.5 seconds for
-a generated room of a million triangles on an idle 4-core computer, 11.5 on a busy one); its answer is kept until the
-room, the scan or the revision's simulation changes.
+the scan (standing on the surface when the scan under it does), added to the room. When more than eight places are that
+close, every one is counted and the eight closest are listed. Each place is numbered on past the "Scan near miss" boxes
+the world holds already, so a box added has a label no other box has. A box around a round thing sticks out at its
+corners, so the box is measured against the same path first (MuJoCo's own distance to it at every pose, and the motion
+between them) and trimmed on the sides that face it until it is no closer to the path as it is than the scan there (the
+row says how close it is, "at most" unless it is the check's closest place measured along the whole path, and "trimmed"
+when it was). When a box that keeps clear would be thinner than 5 mm, none is offered: move the robot or the thing.
+Where the arm touches or passes through the scan no box can keep clear of the path, so the box there is a grey box over
+that part of the scan, untrimmed: at least 20 mm each way, so it can be much bigger than what was scanned (a speck gets
+a 20 mm box), and its row says it "touches the path" unless the whole path keeps at least 0.5 mm from it. Where such a
+box would come within 0.5 mm of what no plan can change (the arm's starting pose, the moves down to the object, the
+grasp and the lift, the set-down and the release, or where the object starts and ends), none is offered, and the row
+says the arm must reach there (and, when the scan holds the object itself where it is picked up, or something within 2
+mm of it, says that). A trimmed box that would reach the object where it starts or ends isn't offered either.
+
+A box keeps clear of the path as it is, but the next simulation plans again with the box in the room: it can take
+another way for the approach, the carry, how far the hand opens to let go and the way back, and that way can come closer
+to the box, or fail on it. On the hunters' bench, 8 of 26 touch boxes and 2 of 20 trimmed boxes offered before this
+check tried them made the next simulation fail. So before a box is offered, *Check placement* tries it: it plans and
+simulates the pick and place again with that box in the room, as *Save and simulate* would, each box on its own. When
+that simulation touches the box, plans into it, or fails where the revision's own simulation didn't, the box is not
+offered and its row says how the simulation fails ("A simulation with a grey box here fails (the wrist hits Scan near
+miss 1 during the approach at 1.7 s), so none is offered"). When it goes round it, the box is offered and its row says
+how close that simulation comes to it ("tried: the simulation keeps 0.3 mm from it", or "at least" when the closest box
+is another one; within 0.5 mm of another box, or into it, it gives no number: "keeps clear of it", and "still fails
+elsewhere" when the revision's own simulation fails too): after *Add box here*, *Save and simulate* runs the same
+simulation and says the same. Two or more boxes offered are also tried together, and the check says when that fails (add
+one, simulate, and check again), or that there wasn't time to try them together (never that they fail), and checking
+again tries again. A box there wasn't time to try is not offered, and checking again tries it. When the simulation fails
+on a box *Add box here* made earlier, the check names that box and says to remove it. Under 0.5 mm the arm's distance to
+the scan is kept and shown as touching (0.0), in the check, its rows and the scan line in the Studio's progress. A near
+miss within 10 mm of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box
+away from it (a vase's rim just under the arm), as long as the box itself stands about as near the path (no further from
+it than the near miss's distance plus 10 mm): the same place is not offered again, and the check says it has a grey box
+already. A box added this way keeps how close the path came there and which revision's path it was fitted to: when a new
+path comes closer at that place (the robot moved, say), the place is offered again with a box fitted to the new path;
+when the box the room holds is already the one that fits there, the place is listed without one, saying the path now
+comes closer than the box was fitted to. Sizing, moving or turning such a box by hand, or setting the room's scale
+again, makes it a plain grey box. The place a box keeps reaches past it only on the sides that were trimmed, and no
+further than the box is big, and it counts only with a distance of at least 0.5 mm, so a box saved from elsewhere can't
+claim a big place, or a place for near misses closer than the box was fitted to. The same box is never added twice, and
+a box the room holds already is never offered again.
+
+The check, the boxes' fit included, has 20 seconds, and trying the boxes 30 seconds more. On a 4-core computer the
+review's desk scan, a vase 8.8 mm from the arm's path, takes 9.9 to 11.5 seconds to measure at load 1-4, 13.3 to 14.6 at
+load 9-10 and 15 to 16 at load 11-12 (measured only at the poses, as before, it took 14.7 seconds at load 16: the motion
+between the poses costs about as much again), and trying its box 4.8 to 6.5 seconds more at load 6-10 (17.6 to 18.7
+seconds in all); the same desk with the mount moved 15 mm, the wrist 2.0 mm from the vase, 8.5 to 9.5 seconds to measure
+at load 2-10 (one run at load 9-10 took 13.8 to 15.9), and trying its box 9.6 to 13.3 seconds more at load 6-12 (21 to
+25 seconds in all; in the Studio at load 16 that check took 47 seconds); a generated room of a million triangles 9.8
+seconds at load 2 and 11.5 to 12.3 at load 5-10. When a check can't measure the whole path in time, it never claims more
+room than it measured: it says how close the arm comes at most (the closest distance it did measure: "The wrist comes
+within at most 4.6 mm of the scanned surface"), with how close it comes at least when it knows ("no closer than 8.6
+mm"), or that there wasn't time to measure it, and that only part of the path, or of the motion between its poses, was
+measured (at load 13 to 17 the desk check can run out of time there). It says whether checking again when the computer
+is less busy may finish it, or whether, at that pace, it would take more than twice as long. Its answer is kept until
+the room, the scan or the revision's simulation changes, except an answer cut short, one whose box ran out of time to be
+fitted, or one that ran out of time before every near miss was listed: *Check placement* measures those again.
 
 - Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
   goes counts as a near miss.
@@ -104,7 +174,8 @@ review: no pictures are rendered or sent. What Anthropic and SubQ keep: [PRIVACY
 - Walking collides with the boxes and with scans up to 400,000 triangles; larger scans walk against the boxes and the
   floor only, and the panel says so.
 - Smooth frame rates are not verified: it was measured only with software rendering. The view draws only while
-  something moves, and walking stops when you leave the Robot tab.
+  something moves, and walking stops when you leave the Robot tab. The World panel steps aside on the other tabs (the
+  Simulation tab replays in the room without it) and is back, as you left it, on the Robot tab.
 - One room per project: uploading a new scan replaces the old one before the world is saved.
 - Candidate mount positions (A, B, C) exist in the room format but have no buttons yet.
 - Needs MuJoCo 3.1.6 or newer (`morph doctor` says which you have).

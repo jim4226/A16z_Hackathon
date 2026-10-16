@@ -1,0 +1,9 @@
+Part,Qty,Price,Notes
+NEMA17 stepper motor 42-40,4,9.99,1.7A
+NEMA17 planetary gearbox stepper 5.18:1,1,29.00,base
+TMC2209 stepper driver,5,4.00,UART
+DRV8825 stepper driver for NEMA17,1,2.00,spare
+GT2 pulley 20T for NEMA17,4,1.00,
+NEMA17 motor mount bracket,5,2.00,
+SG90 servo,1,1.80,gripper
+24V 5A power supply,1,18.00,

@@ -32,7 +32,8 @@ _LOCKS_GUARD = threading.Lock()
 
 
 def home_dir(home: str | None = None) -> str:
-    return os.path.abspath(home or os.environ.get("MORPH_HOME") or "projects")
+    from ...resources import projects_home
+    return os.path.abspath(home or projects_home())
 
 
 def team_dir(home: str | None = None) -> str:
@@ -152,12 +153,16 @@ class locked:
 
 
 def ensure_dir(folder: str, private: bool = False):
+    new = private and not os.path.isdir(folder)
     os.makedirs(folder, exist_ok=True)
     if private and os.name != "nt":
         try:
             os.chmod(folder, 0o700)
         except OSError:
             pass
+    if new:  # Windows ignores 0700: this user only, for the files made in it too
+        from ...services.winacl import restrict
+        restrict(folder)
 
 
 def write_json(path: str, data, private: bool = False):

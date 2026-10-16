@@ -62,6 +62,7 @@ KNOCK_MM = 20.0                     # the object moved this far before the grasp
                                     # resting hand sits 1.07 mm from a water bottle's end; one 1.5 % longer is hit)
 DEFAULT_SEED = 1                    # the seed of the published egg-picker study (150 of 200)
 CHECK_RUNS, CHECK_SUCCESSES = 20, 15
+RULE_MIN_RUNS = 3                   # a failure group needs this many runs before a rule may say where it happens
 CACHED = 4                          # packed robots a long-running process keeps (about 5 MB each)
 NOTE = "Simulation, for the tolerances shown; not a field failure rate."
 SENSITIVE = "This result changes with the simulator's friction or timestep settings. Test it on the real robot."
@@ -591,7 +592,8 @@ def analyze(rows: list, params: list, checks: list | None = None, seed: int = DE
         ex = rs[int(np.argmin(np.linalg.norm((Xi - nom) / span, axis=1)))] if on else rs[0]
         item = {"id": g, "label": group_label(g, obj), "count": len(rs), "rate": round(len(rs) / n, 4),
                 "wilson95": [round(v, 4) for v in wilson(len(rs), n)],
-                "rule": _rule(feats, y, params, seed, obj) if feats and len(rs) < n else None,   # every run: nothing to isolate
+                # every run: nothing to isolate; one or two runs: any range around them "isolates" them, by chance
+                "rule": _rule(feats, y, params, seed, obj) if feats and RULE_MIN_RUNS <= len(rs) < n else None,
                 "example_run": ex["i"], "runs": [r["i"] for r in rs][:500]}
         if checks is not None:
             item.update(_sensitivity(g, pick.get(g, []), ok_ids, checks))
@@ -1787,6 +1789,25 @@ def _pct(v) -> str:
     return f"{v * 100:.1f}%"
 
 
+def bound_pct(v: float, down: bool, fine: bool) -> str:
+    """A bound of an interval as a percentage, rounded away from the estimate (a lower bound down, an upper one up), so
+    the interval shown always contains the computed one."""
+    k = 10 if fine else 1
+    x = (math.floor if down else math.ceil)(round(v * 100 * k, 6)) / k
+    return f"{x:.1f}" if fine else f"{x:.0f}"
+
+
+def likely(lo: float, hi: float) -> str:
+    """The 95% interval in words, as the Robustness card and `morph study` say it: "likely between 63% and 76%"."""
+    fine = hi - lo < 0.04
+    return f"likely between {bound_pct(lo, True, fine)}% and {bound_pct(hi, False, fine)}%"
+
+
+INTERVAL_NOTE = ("Likely: the 95% confidence interval. Over the tolerances shown, the true rate is in this range with 95% "
+                 "confidence; fewer runs give a wider range.")
+SAME_SETTINGS = "Same with other simulator settings"
+
+
 def uncounted(k: int) -> str:
     """What a study says when none of its runs could be counted."""
     return ("No run could be counted: " + ("its one run was" if k == 1 else f"all {k} runs were")
@@ -1801,13 +1822,16 @@ def report(doc: dict) -> str:
              f"  study {doc['id']}, seed {doc['seed']}, {doc['timestep'] * 1000:g} ms steps, status {doc['status']}"]
     if s.get("n"):
         nom = ((doc.get("model") or {}).get("nominal") or {}).get("success")
-        line = f"Succeeds in {s['successes']} of {_runs(s['n'])}: {_pct(s['p'])} (95% CI {_pct(s['wilson95'][0])}-{_pct(s['wilson95'][1])})."
+        line = f"Succeeds in {s['successes']} of {_runs(s['n'])}: {_pct(s['p'])} ({likely(*s['wilson95'])})."
         if s.get("clopper_pearson95") and s["successes"] == s["n"]:
             line = ((f"Succeeds in all {s['n']} runs" if s["n"] > 1 else "Succeeds in its one run")
-                    + f": at least {_pct(s['clopper_pearson95'][0])} (95%, exact).")
+                    + f": at least {bound_pct(s['clopper_pearson95'][0], True, True)}% with 95% confidence.")
+        elif s.get("clopper_pearson95") and s["successes"] == 0:
+            line = (f"Succeeds in 0 of {_runs(s['n'])}: likely at most "
+                    f"{bound_pct(s['clopper_pearson95'][1], False, True)}%.")
         if nom is not None:
             line += " The nominal run " + ("succeeds." if nom else "fails.")
-        lines += [line, NOTE]
+        lines += [line, NOTE] + ([INTERVAL_NOTE] if "likely" in line or s.get("groups") else [])
         if s.get("successes_sensitive"):
             lines.append(SUCCESSES_SENSITIVE)
         for key, (one, many) in (("unstable", ("was numerically unstable", "were numerically unstable")),
@@ -1820,14 +1844,14 @@ def report(doc: dict) -> str:
             lines.append("Failure groups:")
         for g in s.get("groups", []):
             lo, hi = g["wilson95"]
-            lines.append(f"  {g['count']:>4} run{_s(g['count']) or ' '} ({_pct(g['rate'])}, 95% CI {_pct(lo)}-{_pct(hi)})  {g['label']}")
+            lines.append(f"  {g['count']:>4} run{_s(g['count']) or ' '} ({_pct(g['rate'])}, {likely(lo, hi)})  {g['label']}")
             if g.get("rule"):
                 lines.append(f"       {g['rule']['text']}" + ("" if g["rule"]["significant"] else " (could be chance)"))
             ms = g.get("model_sensitive")
             if ms is not None:
                 c = g.get("checks") or {}
                 h, i1 = c.get("half_timestep") or {}, c.get("impratio_1") or {}
-                lines.append(f"       {'model-sensitive' if ms else 'robust to solver settings'}: at half the timestep "
+                lines.append(f"       {'Model-sensitive' if ms else SAME_SETTINGS}: at half the timestep "
                              f"{h.get('still_fail', 0)} of {h.get('runs', 0)} still fail this way; with impratio=1, "
                              f"{i1.get('still_fail', 0)} of {i1.get('runs', 0)}.")
                 if ms:

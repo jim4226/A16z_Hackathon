@@ -98,6 +98,7 @@ class ServerBackend {
   params(changes, base_rev) { return post(this.q('/api/params'), { changes, base_rev }); }
   source(rev) { return post(this.q('/api/source'), { rev }); }
   resolve(job, action) { return post(this.q('/api/jobs/resolve'), { job, action }); }
+  fix(id) { return post(this.q('/api/import/fixes'), { fix: id }); }
   // true, or why it was refused (another Studio on the projects folder works on a demo project), or false (busy here)
   async reset(rebuild) { const r = await send('POST', '/api/reset', { rebuild: !!rebuild }); return r.ok || (await r.json().catch(() => ({}))).error || false; }
   setProject(name) { this.name = name; return this.onEvent ? this.connect(this.onEvent, this.onStatus) : Promise.resolve(); }
@@ -367,10 +368,12 @@ async function loadState(st, { fresh = false, first = false } = {}) {
   renderProjects();
   for (const m of st.history || []) addMsg(m.type, m.text, m);
   S.chatEmpty = !(st.history || []).length;
+  S.waitingFirst = null;
   if (S.chatEmpty) {
-    addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : (st.queue || []).length ? ': its first build is waiting for its turn' : ''}.`
+    const msg = addMsg('assistant', !st.current ? `${st.project} has no finished revision yet${st.building ? ': its first build is running' : (st.queue || []).length ? ': its first build is waiting for its turn' : ''}.`
       : fresh && !first ? `Opened ${st.project} at ${st.current.rev}. ${st.current.label ? `“${st.current.label}”. ` : ''}Ask for a change or edit a parameter.`
-        : `Loaded ${st.project} at ${st.current.rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`);
+        : welcomeText(st.project, st.current.rev));
+    if (!st.current) S.waitingFirst = msg;  // replaced by the welcome once the first build is done
   }
   if (st.current) await show(st.current, st.previous, { tour: false });
   else {  // a project whose first build hasn't finished: nothing of the project shown before stays as its revision
@@ -393,6 +396,19 @@ async function loadState(st, { fresh = false, first = false } = {}) {
   S.reloads = (S.reloads || 0) + 1;
   S.loaded = true;
   for (const r of S.revs.slice(-6)) if (!S.labels[r]) backend.rev(r).then((x) => { S.labels[r] = x.label; renderRevs(); }).catch(() => {});
+}
+
+function welcomeText(project, rev) {
+  return `Loaded ${project} at ${rev}. Ask for a change, or edit a parameter, and I'll regenerate every stage that depends on it: CAD, simulation, electronics, manufacturing, sourcing and the assembly manual.${S.integrations.claude?.chat ? '' : S.integrations.claude?.configured ? ' (Network lookups are off under Keys: the suggestions below and common phrasings work.)' : ' (No Anthropic key yet: the suggestions below and common phrasings work; add a key under Keys, top right, for free-form requests.)'}`;
+}
+// A project opened before its first revision says so; when that build is done, the welcome (and the feature tips)
+// take that message's place, as for a project opened with a finished revision.
+function firstBuildDone(cur) {
+  const msg = S.waitingFirst;
+  S.waitingFirst = null;
+  if (!msg?.isConnected || $('#messages .msg.user')) return;
+  $('.b', msg).textContent = welcomeText(S.project, cur.rev);
+  featureTips();
 }
 
 function renderKeysDot() {
@@ -486,6 +502,7 @@ function addMsg(role, text, opts = {}) {
       else el.lastElementChild.appendChild(gone());
     }
     if (opts.offer && opts.live && backend?.chat) offerActs(el, opts.offer);
+    if (opts.fixes?.length && backend?.fix) fixActs(el, opts.fixes);
   } else if (role === 'system') {
     el.innerHTML = `<div class="b"><span class="spin"></span><span class="t"></span></div>`;
     $('.t', el).textContent = text;
@@ -497,6 +514,17 @@ function addMsg(role, text, opts = {}) {
   $('#messages').appendChild(el);
   scrollChat();
   return el;
+}
+// An import's build that isn't feasible: the fixes Morph can make, each built as a new revision when pressed (the
+// server holds each fix's changes; the page only names it).
+function fixActs(el, fixes) {
+  const c = h('div', 'qacts fixacts');
+  c.innerHTML = fixes.map((f) => `<button class="btn" type="button" data-fix="${esc(f.id)}">${I('spark', 'sm')}${esc(f.label)}</button>`).join('');
+  $$('button', c).forEach((b) => (b.onclick = async () => {
+    $$('button', c).forEach((x) => (x.disabled = true));
+    try { await backend.fix(b.dataset.fix); } catch (e) { toast(e.message || String(e)); $$('button', c).forEach((x) => (x.disabled = false)); }
+  }));
+  el.lastElementChild.appendChild(c);
 }
 // A message that read like another robot (or importing one) was not applied: offer that feature's dialog, or the edit
 // after all ({edit: true} skips the routing).
@@ -669,6 +697,7 @@ function showTab(name, { fromTour = false } = {}) {
   const slot = panels[name]?.slot;
   if (slot) { viewer?.attach(slot); }
   panels[name]?.onShow?.();
+  if (prev !== name) emitBus({ type: 'tab', tab: name, prev });  // feature modules: studio.on('tab', fn)
   try { history.replaceState(null, '', urlWith({ tab: name })); } catch (e) { /* file:// */ }
 }
 function urlWith(o) {
@@ -975,7 +1004,8 @@ function onEvent(ev) {
       liveProv = null;
       S.busy = false;
       setConn(backend.label === 'Fixture' ? 'fixture' : 'live');
-      show(cur, ev.previous, { tour: true });
+      const firstRev = S.waitingFirst && !cur.parent;
+      Promise.resolve(show(cur, ev.previous, { tour: true })).then(() => { if (firstRev) firstBuildDone(cur); }).catch((e) => console.warn(e));
       break;
     }
     default: break;

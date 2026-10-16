@@ -24,13 +24,36 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Chat edits understand units (mm, cm, in, g, kg, lb, oz) and whole-word object names, and questions such as "can it
   lift 2 kg?" no longer change the design.
 - **Import** (beta): drop a robot folder or zip (URDF, xacro, MuJoCo XML) or paste a GitHub or Hugging Face link; drop
-  an STL, OBJ or GLB of the object to grasp, a parts list (CSV, XLSX, Markdown), a KiCad board or a Morph export.
-  Morph finds the gripper, tool point, base and ready pose, asks only what the files can't tell (usually the motors)
-  and builds the robot as a new project. Imported robots are kept in `projects/.robots/` with their licence and where
-  they came from; `morph import` does the same from a terminal, given a path or a link. Auto-imported arms are sized
-  for their worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
-  stretched-out pose). On a Studio other computers use, links are off unless it was started with
-  `--allow-url-import`.
+  an STL, OBJ or GLB of the object to grasp, a parts list (CSV, XLSX, Markdown), a KiCad board or a Morph export. Morph
+  finds the gripper, tool point, base and ready pose, asks only what the files can't tell (usually the motors) and
+  builds the robot as a new project. Imported robots are kept in `projects/.robots/` with their licence and where they
+  came from; `morph import` does the same from a terminal, given a path or a link. Auto-imported arms are sized for
+  their worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
+  stretched-out pose). On a Studio other computers use, links are off unless it was started with `--allow-url-import`. A
+  parts list line is a catalog motor when its part name says it is a motor and its name or MPN names one, and its
+  description or notes pick the variant (a "12V" STS3215, or a C018 or C047, is the 12 V servo; a note about the other
+  arm, "the follower uses the 12V version", doesn't); notes that mention the servo on a screw or a driver board don't
+  make it one, and neither does a name for a part of one, whatever follows or what it fits ("STS3215 servo cable 200
+  mm", "SG90 servo arm set", "U2D2 for Dynamixel XL430"), nor a kit named for its joint without a motor word ("Pan tilt
+  SG90 kit"; a "servo kit" is servos), nor a printed part ("printed", "3D printed", "PLA", "PETG", "ABS", "resin" or
+  "STL" anywhere in its name or notes: "Base (PLA, holds STS3215)", "Base MG996R (printed)", except in what a servo
+  fits: "MG996R servo for the 3D printed arm"); what a servo comes with or is built with doesn't change what it is
+  ("STS3215 servo, horn included", "Feetech STS3215 Servo Motor 12V Metal Case", "DS3218MG"), and neither does the
+  joint, arm or motor ID it drives or is, named before it, in brackets or after it ("Elbow flex: STS3215 C001", "Waist
+  XM430-W350-T", "Left master arm - XL430-W250-T", "ID 1: STS3215", "[J1] STS3215", "J1 (STS3215)", "STS3215 C018
+  shoulder pan", "MG996R: upper arm", "Servo for gripper (SG90)", "Schulter MG996R"); a label is only joint, motion,
+  arm, side and ID words (beside makers', kind, colour and filler words), so without a motor word ("Wheel servo STS3215
+  12V" is the servo) any other noun keeps a line a part ("Shoulder bracket STS3215", "Lift arm MG996R", "Upper arm link
+  (MG996R)", "Gripper rack (SG90)", "Moving jaw SG90", "SG90 gripper"), and a shop's "Upgrade" servo is a servo ("DS3218
+  Upgrade 20KG Full Metal Gear Digital Servo"). A line named "Feetech servo", "Gripper servo" or "Servo (x6)" is the
+  motor its description names, read the same way (just "Dynamixel" described as "U2D2 interface for XL430" is no motor);
+  a part named only by its joint is the motor its MPN names, or its description when that says it is a servo ("Base"
+  described as "STS3215 12V servo"; "Gripper" described as "SG90" may be a whole gripper); a "Model" or "Motor" column
+  counts as the MPN; and a pack bought once counts its motors ("STS3215 servo ×6 (follower arm)", "Set of 6 STS3215
+  servos"). KiCad's grouped CSV and KiBoM parts lists are read too, and a list without prices shows no total. The
+  preview shows the MPN and the description. An object whose grip would bend the fingers gets the thicker beam New robot
+  would give it. An import whose build isn't feasible says why in its project's chat, with the fixes Morph can build as
+  buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).
 - **Show Morph the job** (beta): add a phone video or photos of the task done by hand. Morph picks still frames in
   your browser, estimates the object, the pick and place spots, the cycle time and safety needs, and lists every
   change before Apply. Only the chosen frames are sent, after you agree: to Claude, plus up to 4 to SubQ as an
@@ -76,28 +99,114 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   egg-picker succeeds in 150 of 200 runs (68-81 %); all 50 failures are the jaws staying shut at release (44 % of the
   runs with the egg -4.7 to 1.5 mm off its mark along its length end that way), and that failure changes with the
   solver's settings. Runs are reproducible from the seed on any number of worker processes, saved as they finish and
-  resumable (Ctrl+C keeps them):
-  `morph study egg-picker` (with `--runs 1000` or `--stress`). In the Studio, the **Robustness** card under the Simulation tab's
-  pick-and-place result runs a study of the revision on screen (50, 200 or 1,000 runs, or a stress test with every range
-  doubled), shows its progress live, stops it on request within seconds (the finished runs stay, and it carries on
-  later), says what the result means and what it doesn't, replays a failing run in the 3D view, and lists every
-  tolerance with where its range comes from. Editors start studies and change tolerances (a change marks older studies
-  outdated); every member of a team reads them. Studies run on the Studio's computer, so `morph studio --remote` on a
-  bigger machine is how a team brings its own compute; one study at a time per project, at most 10,000 runs from the
-  Studio. Where no study exists the card says so: one nominal run tests nothing around it. Simulation, for the
-  tolerances shown; not a field failure rate.
+  resumable (Ctrl+C keeps them): `morph study egg-picker` (with `--runs 1000` or `--stress`). In the Studio, the
+  **Robustness** card under the Simulation tab's pick-and-place result runs a study of the revision on screen (50, 200
+  or 1,000 runs, or a stress test with every range doubled), shows its progress live in view in place of the earlier
+  result, stops it on request within seconds (the finished runs stay, and it carries on later), says what the result
+  means and what it doesn't in plain words ("likely between 68% and 81%", the 95% interval in its tooltip; no "Most
+  likely when" for a failure group of fewer than 3 runs; `morph study` prints the same words), replays a failing run in
+  the 3D view, and lists every tolerance with where its range comes from. Editors start studies and change tolerances
+  (a change marks older studies outdated); every member of a team reads them. Studies run on the Studio's computer, so
+  `morph studio --remote` on a bigger machine is how a team brings its own compute; one study at a time per project, at
+  most 10,000 runs from the Studio. Where no study exists the card says so: one nominal run tests nothing around it.
+  Simulation, for the tolerances shown; not a field failure rate.
 - **World mode checks the whole path** (beta): every move of the pick and place (the approach, the descent to the
   object, the grasp, the lift, the carry, the set-down, the release, the rise and the way back to rest) is checked
   against the grey boxes every 10 ms, with the object while it is carried. A move that comes within 10 mm tries its
   alternatives (along the carry path, from higher up, the release with the hand opened only 4 mm past the object, the
   way back straight up first) and keeps the first that stays clear; when none does, the simulation fails and says
   which move and which box ("the jaw left hits Carton wall during the set-down at 5.0 s"). The World panel's status
-  line says which way the arm went. Simulations without a room are unchanged.
-- **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path
-  against the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can
-  be noisy or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot
-  becomes a grey box, and the next simulation plans around it. A generated room of a million triangles is checked in 7
-  to 12 seconds.
+  line says which way the arm went. Simulations without a room are unchanged. The motion between those poses counts
+  too: a jaw moves up to 6.5 mm between two 10 ms samples and 19.5 mm between two of the run's frames, so beside the
+  bench bin 18.5 mm out the check said "At least 10 mm" where the run comes within 9.96 mm. How far any point of the
+  arm can travel between two poses is bounded, and the moves that could come closer are checked in between, so the
+  clearance kept and shown (the smaller of the run's and the plan's) is never more than the closest approach; the
+  check isn't OK while any planned move comes within 10 mm. A shelf over the robot and a walkway beside it are measured
+  from the arm's own highest and furthest point, not its tool point's (the egg-picker's fingertips reach 21 mm higher),
+  and "Room to move" rounds its share down.
+- **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path against
+  the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can be noisy
+  or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot becomes a
+  grey box, trimmed so it is no closer to the path as it is than the scan, offered only when a simulation with it, run
+  during the check as Save and simulate would run it, goes round it (below). A place next
+  to a grey box, or one a box was added for (even when the trim moved the box away from it), isn't offered again while
+  the path comes no closer there than the box was fitted for; when it does (the robot moved, say), the place is offered
+  again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same box is never added
+  twice, and a box the room holds already is never offered again. The check, the boxes' fit included, has 20 seconds
+  (trying the boxes 30 seconds more):
+  the review's desk scan takes 9.9 to 11.5 seconds to measure on a 4-core computer at load 1-4, 13.3 to 14.6 at load
+  9-10 and 15 to 16 at load 11-12, and trying its box 4.8 to 6.5 seconds more at load 6-10, and a generated room of a
+  million triangles 9.8 seconds at load 2 and 11.5 to 12.3 at load 5-10 (below: it now measures the arm's own shapes and
+  the motion between its poses).
+  The boxes' share of the time is set aside only once the check has listed a near miss,
+  sized from what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm
+  comes within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the
+  path was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short,
+  whose box ran out of time to be fitted, or that ran out of time before every near miss was listed (they say so, and
+  that checking again may list them all), aren't kept, so Check placement measures them again.
+- World mode's distances are rounded down, never up, wherever they are kept or shown (the room scan, the simulation's
+  clearance, a near miss's row, the base's margin, the room above the arm, the World panel and `morph world`): to 0.1
+  mm under 10 mm, to the millimetre from there. Before, 30.68 mm read "At least 31 mm", and a near miss of 9.96 mm was
+  kept as 10.0, so the scan check passed it as "At least 10 mm" and the simulation called it clear.
+- The place a box from Add box here keeps (`covers`) counts only as what the fit makes: past the box only on trimmed
+  sides, no further than the box's own size, and with the distance it was fitted to. A world saved through the API
+  with a 10 mm cube and a place 50 mm past it on every side could hide a real 8.8 mm near miss; now that place is
+  ignored and the near miss is offered.
+- A room-scan near miss's row says "at most X mm" unless it is the check's closest place measured along the whole path,
+  and its distance is measured exactly at its own closest points: before, a row read "2.2 mm from the wrist" in a check
+  cut short where the wrist comes within 2.1 mm, and a box added from it kept 2.2 mm as its fit.
+- The room-scan check measures the arm's own collision shapes, and the motion between the poses it takes. It measured
+  the arm by points of its surface 1 to 2 mm apart (the carried egg, a capsule, as a 24-sided prism), only at poses 10
+  ms apart, so a plate 9.95 mm under the egg read "At least 10 mm", a speck 0.25 mm under a finger "comes within 0.6
+  mm", and a speck the jaw passes straight through between two poses "comes within 1.0 mm" (a 0.4 mm cable there, 0.8
+  mm). Now each part's convex hull (a box, a sphere and a capsule as they are, a cylinder as the 32-sided prism around
+  it) is measured exactly against the scan's triangles, within 0.005 mm of MuJoCo's own distances on scans made of
+  boxes, and wherever the arm could come closer between two poses than the closest it found, the move is measured in
+  between, so the distance kept is never more than the closest approach anywhere along the path and at most 0.1 mm
+  under it before rounding down (the moves the check left alone count with their bounds): those now read 9.8 mm and
+  touching. Where the arm touches or passes through the scan, Add box here offers a grey box over that part of the scan,
+  untrimmed (at least 20 mm each way, so a speck gets a 20 mm box), offered when a simulation with it goes round it; its
+  row says it touches the path unless the whole path keeps at least 0.5 mm from it (a row read "0.1 mm from the path"
+  for a box 8.75 mm into it). Where the arm must go (its starting pose, the descent, the grasp and the lift, the
+  set-down and the release, the object where it starts and ends) no box is offered, and the row says the arm must reach
+  there and when the scan holds the object itself: a box there made the simulation fail ("the object touches Scan near
+  miss 1 in the arm's starting pose", with the egg itself scanned at the pick spot). Under 0.5 mm the check's distance
+  and its rows' are kept as 0.0 (a speck at 0.197 mm read 0.2), and the scan line in the Studio's progress says the arm
+  touches the scan ("Closest to the scan: 0.2 mm" before), and with nothing within 50 mm gives the check's own bound
+  ("Nothing within 49 mm"). A box from Add box here is measured against the path
+  with MuJoCo's own distances, between the poses too, and its row says how close the path comes to it. More than eight
+  places closer than 10 mm are all counted ("12 places closer than 10 mm (the 8 closest are listed)"; it said 8), and a
+  check cut short after 606 of 607 poses says "99% of it", not 100%. A grey box's place counts only with a distance of
+  at least 0.5 mm and only while the box itself stands about as near the path (a 100 mm cabinet 52 mm from the path,
+  saved through the API with a place 50 mm below it and a distance of 0.1 mm, hid a 6 mm near miss), and a near miss is
+  the box's only when measured no closer than the box was fitted for (the distance to the nearest of the scan's points
+  decided, up to 1.4 mm more, so a plate 0.3 mm nearer than its box was fitted for stayed hidden); when the box the room
+  holds is the one that fits there anyway, the place is listed without one, saying the path comes closer than the box
+  was fitted to. Measuring between the poses makes the check slower: the desk scan above took 14.7 seconds at load 16
+  measured only at the poses; at load 13 to 17 it can run out of time between them, and then says how close the arm
+  comes at most and at least, and that the motion between the poses wasn't all measured.
+- Add box here is tried before it is offered. A box was offered when it kept clear of the path as it was (a touch box
+  when no move a plan can't change met it), but the next simulation plans again with the box in the room, and its other
+  ways for the approach, the carry and the way back can meet the box too, or its run strays 1 to 3 mm from its plan into
+  a box trimmed to 0.6 mm: on the hunters' bench 8 of 26 touch boxes and 2 of 20 trimmed boxes made the next simulation
+  fail ("the wrist hits Scan near miss 1 during the approach at 1.7 s"), after the check had said "a grey box the
+  simulation keeps clear of". Now Check placement plans and simulates the pick and place again with each box, as Save
+  and simulate would: a box that simulation fails with is not offered and its row says how it fails; one it goes round
+  is offered and its row says how close that simulation comes to it, as the simulation after Add box here says (of the
+  hunters' cases kept as tests, all 8 failures are caught and the 7 others offered with the clearance their next
+  simulation measured). Boxes offered together are tried together too; when there isn't time for that simulation, the
+  check says so (not that they fail) and checking again tries it. A check numbers its near misses on past the "Scan near
+  miss" boxes the world holds, so a box added never takes another's label (a second "Scan near miss 1" made its row show
+  the first box's distance), and a box is tried as itself, not by its label. A row whose trial comes within 0.5 mm of
+  another box, or into it, gives no number ("keeps clear of it", and "still fails elsewhere" when the simulation fails
+  there; it read "keeps at least -2.4 mm from it"). Trying a box is a simulation run, so a check that offers one takes
+  longer: on the review's desk scan 4.8 to 6.5 seconds more at load 6-10 (17.6 to 18.7 seconds in all), with the mount
+  moved 15 mm 9.6 to 13.3 seconds more at load 6-12 (21 to 25 seconds in all; 47 seconds in the Studio at load 16). When
+  the simulation fails on a box Add box here made, the check names it and says to remove it. Also: a trimmed box is
+  fitted to the near miss's own distance (a 2.0 mm near miss's box read 1.9 mm from the path), the scan line in the
+  Studio's progress counts every place, not only the eight listed ("8 near misses" where the check said 12), and where
+  the scan holds the object itself the check adds "or something within 2 mm of it" (a block 0.3 mm beside the egg read
+  as the egg).
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the
@@ -106,11 +215,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   when the Studio stopped after N of M runs" at once, with the runs it saved, and *Carry on* finishes it with the same
   runs as if it had never stopped. A revision that can't be studied (its simulation failed, a preview-only build), and
   a study whose revision was replaced or whose Morph code changed since, are refused before anything starts, with the
-  reason. A failure group that holds every run gets no rule, and successful runs that fail under other solver settings
-  are flagged as well: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
+  reason. A failure group that holds every run gets no rule, and successful runs that fail with other simulator
+  settings are flagged as well: [docs/ROBUSTNESS.md](docs/ROBUSTNESS.md).
 - **Live prices** (beta): in the BOM tab, Claude checks current distributor prices and stock for the purchased parts
   with Morph's read-only distributor tools (Mouser, and Farnell, element14 and Newark; written from their API
-  documentation and marked "Not yet tried with a real key"). Each run gets a card in the chat that says what it used
+  documentation and marked "Not yet tried with a real key"). The Farnell tool ships turned off until a legal review of
+  Farnell's API terms, which limit storing its data and passing it on: Keys says so next to it, and only the owner
+  turns it on. Every price says which distributor it is from ("from Farnell/element14", "from Mouser Electronics"),
+  on the card, in Show prices and in Claude's summary. Each run gets a card in the chat that says what it used
   and what it waits for: **Key needed** names the service, what the key is for, its cost and what is sent, with Add
   key (opens Keys on that key), Get a key and Skip; once the key is saved the run continues by itself ("Key added,
   continuing…"), and a key the service refuses can be replaced. A tool that asks first shows a **Tool request** card
@@ -180,12 +292,27 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   `run_studio.bat` once the Studio starts, so a `git pull` in another window can't make it misread the new file. CI
   runs both launchers, from Command Prompt and PowerShell on Windows, the upgrade and `--update` included.
 - `--remote` says how to let the link through the firewall on Windows and macOS when another computer can't open it.
+- Where MuJoCo has no build, the launchers say so before they make `.venv`, instead of failing in pip and blaming the
+  internet connection. What counts is the Python's own platform, since that is what pip installs for: an Intel Mac or
+  32-bit Windows is told at once; an ARM64 or 32-bit Python on Windows, an Intel Python on an Apple silicon Mac, or a
+  Mac Terminal in Intel mode (Rosetta) is named with the fix; an x64 Python on Windows 11 on ARM goes on, in x64
+  emulation. Windows on ARM is untested: MuJoCo's x64 build uses AVX instructions, which that emulation runs only on
+  Windows 11 24H2 or later, so there every start first checks that MuJoCo loads and steps a one-sphere model (which
+  runs its compute code, not only the library loading) and, when that fails, says to update Windows or use another
+  computer. When pip fails, both launchers name the same Pythons the packages have builds for
+  (an x64 Python on Windows).
 - `constraints.txt` pins tested versions with wheels for Python 3.10 to 3.14 on Windows x64, macOS 12+ on Apple
   silicon and Linux x64.
 - One version number, in `morph/__init__.py`. The package metadata now has the licence, project links, supported
   Pythons and the extras `video`, `cad`, `xacro` and `dev`.
 - A wheel now carries the SO-101 robot, Darwin's cached answers and the licences, and keeps `.env` out of
   site-packages. Running from the git folder is unchanged.
+- Morph installed with pip keeps its projects in your user's data folder (`%LOCALAPPDATA%\Morph\projects`,
+  `~/Library/Application Support/Morph/projects`, `~/.local/share/morph/projects`) instead of a `projects` folder in
+  whatever folder it was started from, where it moved into a folder of yours with that name. A `projects` folder that
+  already holds Morph projects is kept, and Morph says so; `MORPH_HOME` still chooses. `morph doctor` and `morph
+  studio` print the projects folder's full path. A Morph folder from git or a zip uses its own `projects` folder even
+  when its `.venv` `morph` runs from another folder (it used that folder's `./projects`).
 - CI on Windows, macOS and Linux with Python 3.10 to 3.14, a lint job, and a check that the installed wheel builds
   both demo robots.
 - End-to-end browser tests (`tests/e2e`, run with `MORPH_E2E=1` set) start a real Studio, offline and without keys,
@@ -197,6 +324,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md), a [release checklist](docs/RELEASE_CHECKLIST.md), and one page each
   for [Teams](docs/TEAMS.md), [Import](docs/IMPORT.md) and [World mode](docs/WORLD.md). Internal planning docs moved
   to `docs/internal/`.
+- The source archive and the wheel carry what they say: NOTICE and THIRD_PARTY_NOTICES name the fonts, Darwin's saved
+  answers and the test fixtures recorded from real services (the others are made up), and no file names a folder of
+  the computer Morph was developed on (a browser test saved its screenshots there; it takes them only when
+  `MORPH_SHOTS` is set now). Building the wheel no longer prints a setuptools warning for each Studio folder, and CI
+  fails if one comes back.
 
 ### Privacy
 
@@ -210,9 +342,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   names, links, robot names, frames or what you typed. Team activity is never sent.
 - Board exports no longer carry Morph's licence; `morph kicad --license` adds one when you choose.
 - Live prices sends the distributor only the keywords or part numbers it searches for (from your parts list), with
-  your key for that distributor, and sends the parts list to Claude; cards, events and logs never carry a key, a
-  tool's answer or Claude's messages. Farnell's terms don't allow storing its data, so its answers stay only in the
-  run, which is deleted after 7 days.
+  your key for that distributor, and sends the parts list and what each tool answered to Claude; the run's file keeps
+  those answers (cut down, without keys) for up to 7 days, and cards, events and logs never carry a key, a tool's
+  answer or Claude's messages.
 - Drafting a tool (preview) sends Claude the need you typed, the documentation's address and the tool ids and key
   names Morph already uses; Claude's web fetch reads pages of that documentation site only. Morph keeps the pages'
   addresses and the lines that name each host, not the pages. Darwin's suggestions send the need to Darwin's public
@@ -226,8 +358,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   anything, caps and checks request bodies, bounds its event queues and sends security headers with a content
   security policy.
 - `arm.source` names a robot in a known folder; URDF meshes stay inside the robot's folder.
-- `.env` is written readable by your user only. Chat can't change the project name or the robot source, and a chat
+- `.env` is written readable by your user only (on Windows, as private as the Morph folder where Windows won't let
+  Morph limit it to your user; see below). Chat can't change the project name or the robot source, and a chat
   message that looks like an API key (Claude, SubQ or Keewano) is refused.
+- Windows ignores the 0600 mode Morph gives its private files, so they were as private as the folder they were in:
+  every user of the computer could read them in a folder such as C:\Morph. Morph now limits `.env` (each time it
+  saves it) and the `.runs`, `.tools` and `.team` folders (when it makes them) to your user, with Windows' own
+  permissions (icacls). Where that isn't possible, they stay as private as their folder: keep Morph in your own user
+  folder, such as Documents.
 - API keys are never sent on to another server when a service answers with a redirect (SubQ, Keewano). A `.env` from
   an older Morph that others could read is made private when the Studio starts.
 - Remote mode: after 10 different wrong access codes from one address, a `MORPH_TOKEN` you chose isn't checked from
@@ -254,8 +392,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   from every answer). A tool's key (`MORPH_TOOL_*`) shows in the Keys dialog under its service, with where to get it,
   its cost and what is sent; it is checked against the tool's pattern when saved, sent only to that tool's hosts and
   never to Claude, and chat refuses it like any other key.
-  Agent runs that wait for a key, an approval or a restart are kept in `projects/.runs/` (private, deleted after 7
-  days); every tool decision and call goes into a hash-chained log, `projects/.tools/audit.jsonl`.
+  Agent runs that wait for a key, an approval or a restart are kept in `projects/.runs/` (readable by your user only
+  on macOS and Linux; on Windows, see below; deleted after 7 days); every tool decision and call goes into a
+  hash-chained log, `projects/.tools/audit.jsonl`.
 - A drafted tool (preview) is checked before the owner sees it: GET only, at most 4 lookups; every address HTTPS to a
   public DNS name that the documentation pages Claude read name outside any text aimed at AI agents, resolving to
   public addresses; its key a `MORPH_TOOL_*` name sent only to those hosts; no wording that addresses an AI; no clash
@@ -358,6 +497,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - A page opened or refreshed during a build follows the build and shows the new revision when it is done. When the
   server can't answer, the page keeps listening and retries instead of staying offline; after a server restart it
   reloads.
+- A Studio left running no longer grows with every build (about 1.2 GB after six builds, 1.5 GB at its peak): each
+  project's builds run on one thread, and after each build, and after the demo builds of a first start, Morph
+  collects what the build left in reference cycles and hands the freed memory back to the system. It waits at about
+  300 to 400 MB (it idled at 720-780 MB after a first start) and peaks near 1.1 GB while building.
+  [docs/INSTALL.md](docs/INSTALL.md) says how much memory Morph needs.
 - Robots with a custom controller PCB print their base on a 250 mm bed again (it was 253 mm): the USB-C and power
   jacks sit higher, over the board's edge, so the bay behind the board is shorter.
 - Chat: a Claude call gives up after about a minute instead of holding the project's queue, and "gentler grip" scales
@@ -933,3 +1077,21 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   me in the kitchen"), with keys too: before, SubQ or Claude's guess (a raw egg) was taken as the answer and the
   follow-up asked "Where does it pick up the eggs?" without asking. A guessed object counts only when the request's
   words name it ("pills" for a pill bottle) or SubQ reads an object in them.
+- `morph new` and `morph demo` without an Anthropic key say they use the offline parser instead of "Claude unavailable:
+  TypeError". An `ANTHROPIC_PROFILE` whose config file is missing is named as that (the SDK's CredentialsError and the
+  file it looked for), not as a missing SDK.
+- Keys: the Anthropic key's section lists everything it powers (chat, New robot, Show Morph the job, World mode's AI
+  review, Live prices, New tool), once, and the dialog names the folder `.env` is in on every system.
+- A project opened while its first build runs shows the welcome and tips once that build is done, instead of keeping
+  "no finished revision yet".
+- Simulation tab: the player stays on screen in a narrow window (910 px), and Space plays and pauses even right after
+  clicking the tab.
+- Live prices: a wrong Mouser key, which Mouser answers with HTTP 200 and an error, reads "Mouser Electronics refused
+  the key" with Replace key instead of "no results"; without a Claude key, Live prices opens Keys without sending a
+  request the Studio refuses.
+- World mode: the World panel steps aside on every tab but Robot (still open), and a walk or a guided tour stops
+  there.
+- Docs: README lists all five privacy switches, says which keys Test keys tries and has a row for tool keys
+  (`MORPH_TOOL_*`); INSTALL names every key to revoke (tool keys included) and every end-to-end browser flow, and says
+  to close the Studio before `git pull` on Windows; SECURITY.md says what to do when GitHub's private reporting form
+  isn't available; INTEGRATIONS (was SPONSORS) no longer tells readers to add a payment method for Darwin: Morph never pays.

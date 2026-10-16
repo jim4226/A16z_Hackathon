@@ -91,7 +91,7 @@ def test_a_room_study_of_a_carton_reports_the_collision_rate(tmp_path):
     card = api_study.card(robust.load(root, doc["id"]))
     assert api_study.NOTES["room_only"] in card["flags"]
     g = card["groups"][0]
-    assert g["share"].startswith(f"{hits[0]['count']} of {s['n']} runs (") and g["share"].endswith(", 95% CI)")
+    assert g["share"].startswith(f"{hits[0]['count']} of {s['n']} runs (likely between ") and g["share"].endswith("%)")
 
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 200 runs at 1 ms (about 2-4 minutes on 3 workers)")

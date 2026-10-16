@@ -153,6 +153,11 @@ def test_world_simulates_in_a_starter_room_and_off_again(home, builds, capsys):
     design, kw = builds[-1]
     assert design.world.id == "desk" and len(design.world.sha) == 16 and kw.get("fast_sim") is True
     assert (home / "arm-one" / "world" / "saved" / f"{design.world.sha}.json").is_file()
+    res = home / "arm-one" / RobotProject(str(home / "arm-one")).latest() / "results.json"     # a near miss of 9.97 mm
+    data = json.loads(res.read_text(encoding="utf-8"))
+    data["sims"]["scenarios"]["pick_place"]["metrics"]["min_clearance_mm"] = 9.97
+    res.write_text(json.dumps(data), encoding="utf-8")
+    assert cli.main(["world", "arm-one"]) == 0 and "closest 9.9 mm to a box" in capsys.readouterr().out    # never 10
     assert cli.main(["world", "arm-one", "--starter", "desk"]) == 0 and "already simulates" in capsys.readouterr().out
     assert cli.main(["world", "arm-one", "--off"]) == 0 and builds[-1][0].world.id == ""
     entries = RobotProject(str(home / "arm-one")).entries()

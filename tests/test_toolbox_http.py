@@ -65,6 +65,11 @@ class _API(BaseHTTPRequestHandler):
             return self._send(200, b"<html></html>", "text/html")
         if self.path.startswith("/unauth"):
             return self._send(401, b'{"error":"bad key"}')
+        if self.path.startswith("/soft-refusal"):  # a service that refuses a key with 200 (or 400) and a body that says so
+            code = 400 if "400" in self.path else 200
+            return self._send(code, json.dumps({"Errors": [{"Code": "Invalid", "PropertyName": " api key "}], "Results": None}).encode())
+        if self.path.startswith("/other-error"):
+            return self._send(200, json.dumps({"Errors": [{"Code": "Required", "PropertyName": "keyword"}], "Results": []}).encode())
         return self._send(404, b"{}")
 
     def do_POST(self):
@@ -346,6 +351,52 @@ def test_keep_reduces_an_extracted_list_to_the_named_fields(api):
     assert "Ignore previous instructions" not in json.dumps(d)  # the note field was not kept
     s["response"]["keep"] = {"total": ["x"]}
     assert json.loads(run(s, {"mpn": "STS3215"})["content"])["data"]["total"] == 30  # a scalar stays as it is
+
+
+AUTH_ERROR = {"pointer": "/Errors", "match": {"PropertyName": "API Key"}}
+
+
+@pytest.mark.parametrize("path", ["/soft-refusal/{mpn}", "/soft-refusal-400/{mpn}"])
+def test_an_answer_matching_the_auth_error_rule_is_a_refused_key(api, path):
+    """A service that refuses a key with 200 or 400 and says so in the body (Mouser: an Errors entry for the API Key):
+    the manifest's auth_error rule makes it the same refused key as a 401, so the run asks for a new one."""
+    s = spec_for(api, path=path)
+    s["response"] = {"type": "json", "extract": {"errors": "/Errors"}, "auth_error": AUTH_ERROR}
+    assert T.check_tool(s, hosts=["127.0.0.1"], credentials={"nexar": CRED}, policy=POLICY) == []
+    out = run(s, {"mpn": "STS3215"})
+    assert out["kind"] == "needs_credential" and out["need"] == {"env": "MORPH_TOOL_NEXAR_TOKEN", "reason": "rejected"}
+    assert KEY not in out["content"]
+    del s["response"]["auth_error"]                     # without the rule: an answer (200) or a failed call (400)
+    assert run(s, {"mpn": "STS3215"})["kind"] == ("ok" if "400" not in path else "error")
+
+
+def test_errors_the_auth_error_rule_doesnt_match_stay_the_answer(api):
+    s = spec_for(api, path="/other-error/{mpn}")
+    s["response"] = {"type": "json", "extract": {"errors": "/Errors"}, "auth_error": AUTH_ERROR}
+    out = run(s, {"mpn": "STS3215"})
+    assert out["kind"] == "ok" and json.loads(out["content"])["data"]["errors"][0]["PropertyName"] == "keyword"
+    s = spec_for(api)                                    # the rule's pointer finds nothing in a normal answer
+    s["response"]["auth_error"] = AUTH_ERROR
+    assert run(s, {"mpn": "STS3215"})["kind"] == "ok"
+    assert T.auth_refused(AUTH_ERROR, {"Errors": {"PropertyName": "API Key", "Code": "Invalid"}})   # one object, not a list
+    assert not T.auth_refused(AUTH_ERROR, {"Errors": None}) and not T.auth_refused(None, {"Errors": []})
+    assert not T.auth_refused({"pointer": "/Errors", "match": {"Id": 0}}, {"Errors": [{"Id": False}]})   # 0 is not false
+
+
+@pytest.mark.parametrize("rule,msg", [({"pointer": "/Errors"}, "auth_error"), ({"pointer": "Errors", "match": {"a": "b"}}, "pointer"),
+                                      ({"pointer": "/E", "match": {}}, "match"), ({"pointer": "/E", "match": {"a": None}}, "match"),
+                                      ({"pointer": "/E", "match": {"a": ["b"]}}, "match"), ({"pointer": "/E", "match": {"a/b": "c"}}, "match"),
+                                      ({"pointer": "/E", "match": {f"k{i}": 1 for i in range(6)}}, "match"),
+                                      ({"pointer": "/E", "match": {"a": "b"}, "status": 200}, "auth_error"), ("/Errors", "auth_error")])
+def test_the_auth_error_rule_is_checked(api, rule, msg):
+    s = spec_for(api)
+    s["response"]["auth_error"] = rule
+    with pytest.raises(T.SpecError, match=msg):
+        T.check_tool(s, hosts=["127.0.0.1"], credentials={"nexar": CRED}, policy=POLICY)
+    s["response"]["auth_error"] = AUTH_ERROR             # a tool that sends no key can't have one refused
+    del s["auth"]
+    with pytest.raises(T.SpecError, match="needs auth"):
+        T.check_tool(s, hosts=["127.0.0.1"], credentials={"nexar": CRED}, policy=POLICY)
 
 
 @pytest.mark.parametrize("keep", [{"missing": ["a"]}, {"offers": []}, {"offers": "distributor"}, {"offers": ["a/b"]},

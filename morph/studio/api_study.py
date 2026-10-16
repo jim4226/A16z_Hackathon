@@ -24,7 +24,6 @@ takes larger ones.
 from __future__ import annotations
 
 import itertools
-import math
 import socket
 import threading
 from collections import OrderedDict
@@ -49,7 +48,8 @@ NOTES = {
     "successes_sensitive": robust.SUCCESSES_SENSITIVE,
     "robust": "Still fails the same way at half the timestep and with softer friction (impratio=1): not a quirk of the "
               "simulator's settings.",
-    "unchecked": "Not re-run under other solver settings yet.",
+    "unchecked": "Not checked with other simulator settings yet.",
+    "interval": robust.INTERVAL_NOTE,
     "chance": "could be chance",
     "outdated": "The tolerances changed after this study: it is outdated. Run it again for the ones shown now.",
     "rev_missing": "Its revision no longer exists.",
@@ -101,11 +101,8 @@ def _cores() -> int:
 
 # ---------------------------------------------------------------------- the card's sentences
 
-def _pct(v: float, down: bool, fine: bool) -> str:
-    """A bound of an interval as a percentage, rounded away from the estimate (a lower bound down, an upper one up)."""
-    k = 10 if fine else 1
-    x = (math.floor if down else math.ceil)(round(v * 100 * k, 6)) / k
-    return f"{x:.1f}" if fine else f"{x:.0f}"
+_pct = robust.bound_pct          # a bound rounded away from the estimate: the interval shown contains the computed one
+likely = robust.likely             # "likely between 63% and 76%" (the 95% interval), as `morph study` says it too
 
 
 def interval(lo: float, hi: float) -> str:
@@ -114,8 +111,9 @@ def interval(lo: float, hi: float) -> str:
 
 
 def headline(doc: dict) -> str | None:
-    """The study's result in one sentence (heavy_plan section 6, note 1): "Succeeds in 140 of 200 randomized runs (95%
-    CI 63-76%); the nominal run succeeds." None before its first counted run."""
+    """The study's result in one sentence (heavy_plan section 6, note 1): "Succeeds in 140 of 200 randomized runs
+    (likely between 63% and 76%); the nominal run succeeds." The interval is the 95% one (NOTES["interval"] says so on
+    the card). None before its first counted run."""
     s = doc.get("summary") or {}
     n, k = s.get("n") or 0, s.get("successes") or 0
     void = len(s.get("unstable") or []) + len(s.get("errors") or [])
@@ -129,10 +127,10 @@ def headline(doc: dict) -> str | None:
         text = (f"Succeeds in all {n} {runs}" if n > 1 else "Succeeds in its one randomized run") + \
                f" (at least {_pct(cp[0], True, True)}% with 95% confidence)"
     elif k == 0 and cp:
-        text = f"Succeeds in 0 of {n} {runs} (95% CI 0-{_pct(cp[1], False, True)}%)"
+        text = f"Succeeds in 0 of {n} {runs} (likely at most {_pct(cp[1], False, True)}%)"
     else:
         lo, hi = s.get("wilson95") or robust.wilson(k, n)
-        text = f"Succeeds in {k} of {n} {runs} (95% CI {interval(lo, hi)})"
+        text = f"Succeeds in {k} of {n} {runs} ({likely(lo, hi)})"
     if doc.get("stress"):
         text = "With every tolerance doubled (stress test), " + text[0].lower() + text[1:]
     nominal = ((doc.get("model") or {}).get("nominal") or {}).get("success")
@@ -154,7 +152,7 @@ def _checks_text(c: dict) -> str | None:
 def card(doc: dict) -> dict:
     """What the Robustness card shows for a study record: the headline, the honesty notes that apply, and each
     failure group in words (its share with the interval, the rule that best isolates it, whether it survives other
-    solver settings, and the run closest to nominal to replay)."""
+    simulator settings, and the run closest to nominal to replay)."""
     s = doc.get("summary") or {}
     n = s.get("n") or 0
     flags = []
@@ -183,18 +181,18 @@ def card(doc: dict) -> dict:
         flags.append(NOTES["successes_sensitive"])
     groups = []
     for g in s.get("groups") or []:
-        rule = g.get("rule") or None
+        rule = (g.get("rule") or None) if g.get("count", 0) >= robust.RULE_MIN_RUNS else None   # studies from before the limit
         lo, hi = g.get("wilson95") or (0.0, 1.0)
         ms = g.get("model_sensitive")
         groups.append({"id": g["id"], "label": g["label"], "count": g["count"],
-                       "share": f"{g['count']} of {n} runs ({interval(lo, hi)}, 95% CI)",
+                       "share": f"{g['count']} of {n} runs ({likely(lo, hi)})",
                        "rule": (rule["text"] + ("" if rule.get("significant") else f" ({NOTES['chance']})")) if rule else None,
                        "significant": bool(rule and rule.get("significant")),
                        "model_sensitive": ms,
                        "sensitivity": NOTES["sensitive"] if ms else NOTES["robust"] if ms is False else NOTES["unchecked"],
                        "checks": _checks_text(g.get("checks")), "example_run": g.get("example_run")})
     return {"headline": headline(doc), "note": NOTES["simulation"], "flags": flags, "groups": groups,
-            "stress": bool(doc.get("stress"))}
+            "interval_note": NOTES["interval"], "stress": bool(doc.get("stress"))}
 
 
 def _view(doc: dict) -> dict:

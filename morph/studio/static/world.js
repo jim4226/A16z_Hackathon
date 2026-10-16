@@ -38,6 +38,44 @@ const DEG = Math.PI / 180;
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const r1 = (x) => Math.round(x * 10) / 10;
+// a clearance as the texts show it, rounded down, never up: to 0.1 mm under 10 mm (9.97 reads 9.9, not 10), to the mm
+// from there (30.68 reads 30, not 31); worlds.mm_text does the same in Python
+const mmDown = (x) => { const v = Math.floor(x * 10 + 1e-6) / 10; return v < 10 ? v.toFixed(1) : String(Math.floor(v + 1e-9)); };
+// Add box here, tried (worlds.try_boxes): the simulation run with the box, as the next one would run, and the closest it
+// comes to any box (so no further from this one); untried, the next simulation may take another way or fail. Measured
+// to another box (at_box false) the number is only a lower bound for this one, and under 0.5 mm, or into that box (a
+// simulation that failed already fails there again), no number about this one at all: the run keeps clear of it
+const scanTrialClear = (t) => t.min_clearance_mm == null || (!t.at_box && +t.min_clearance_mm < 0.5);
+const scanTried = (g) => {
+  const t = g.trial;
+  if (!t?.ok) return '';
+  if (scanTrialClear(t)) return `; tried: the simulation keeps clear of it${t.fails ? ` and still fails elsewhere (${esc(t.fails)})` : ''}`;
+  const mc = +t.min_clearance_mm;
+  return `; tried: the simulation ${mc < 0 ? 'comes within 0.5 mm of it' : `keeps ${t.at_box ? '' : 'at least '}${mmDown(mc)} mm from it`}`
+    + (t.fails ? ` (and still fails: ${esc(t.fails)})` : '');
+};
+const scanBoxTitle = (g) => g.trial?.ok
+  ? `A grey box over this part of the scan: a simulation with it, tried when the scan was checked, ${scanTrialClear(g.trial)
+    ? `keeps clear of it${g.trial.fails ? ' and still fails elsewhere' : ''}`
+    : +g.trial.min_clearance_mm < 0 ? 'comes within 0.5 mm of it' : `comes no closer to it than ${mmDown(+g.trial.min_clearance_mm)} mm`}`
+  : (g.touches ? 'A grey box over this part of the scan, where the arm touches it: the next simulation tries to plan round it, and may fail'
+    : 'A grey box over this part of the scan, no closer to the path as it is than the scan: the next simulation may take another way, closer to it, or fail');
+// Add box here's id and label for a scan near miss: its own, unless the world holds that id or label already (a box added
+// for an earlier check's "Scan near miss 1"); then the next "Scan near miss k" past every one the world holds, so no two
+// boxes share a label (the simulation names the box it hits or comes closest to by its label)
+const scanBoxName = (obs, g) => {
+  const ids = new Set(obs.map((o) => o.id)), labels = new Set(obs.map((o) => o.label));
+  let { id, label } = g;
+  if (labels.has(label) || ids.has(id)) {
+    let k = 0;
+    for (const o of obs) {
+      const m = /^Scan near miss (\d+)$/.exec(o.label || '') || /^scan-(\d+)(?:-\d+)?$/.exec(o.id || '');
+      if (m) k = Math.max(k, +m[1]);
+    }
+    do { k += 1; id = `scan-${k}`; label = `Scan near miss ${k}`; } while (ids.has(id) || labels.has(label));
+  }
+  return { id, label };
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const uid = () => Math.random().toString(36).slice(2, 8);
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4();
@@ -108,6 +146,7 @@ function injectCSS() {
 .wv-walk.on{display:block}
 .wv-walk kbd{font:11px var(--mono,monospace);padding:1px 5px;border-radius:4px;border:1px solid var(--line3,#343b49);color:var(--ink,#e9ecf2)}
 .wv-panel.min{width:auto;padding-bottom:10px}.wv-panel.min>:not(h3){display:none}
+.wv-panel.away{display:none!important}   /* the 3D view shows another tab (the Simulation tab's replay): the panel waits */
 .wv-panel h3 .wv-min{margin-left:auto}.wv-panel h3 .wv-min+.wv-x{margin-left:0}
 .wv-status{margin-top:6px;padding:5px 8px;border-radius:7px;background:var(--bg2,#12151c);border:1px solid var(--line,#1c212b);font-size:11.5px;color:var(--ink2,#b9c0cd)}
 .wv-status.ok{border-color:rgba(61,214,140,.3)}.wv-status.bad{border-color:rgba(255,107,107,.35)}.wv-status.run{border-color:rgba(112,145,255,.35)}
@@ -539,7 +578,10 @@ export class WorldView {
     w.scale = +(w.scale * k).toPrecision(6);
     w.mount.position = sc(w.mount.position);
     if (w.surface) { w.surface.center = sc(w.surface.center); w.surface.half = sc(w.surface.half); }
-    for (const o of w.obstacles || []) { o.center = sc(o.center); o.half = sc(o.half); }
+    for (const o of w.obstacles || []) {
+      o.center = sc(o.center); o.half = sc(o.half);
+      delete o.covers;                      // fitted to the path at the old scale: the next check measures afresh
+    }
     for (const z of w.zones || []) { if (z.box) { z.box.center = sc(z.box.center); z.box.half = sc(z.box.half); } else { z.polygon = z.polygon.map(sc); z.z = z.z.map((x) => x * k); } }
     for (const c of w.candidates || []) c.position = sc(c.position);
     w.floor_z = r1((w.floor_z || 0) * k);
@@ -584,6 +626,7 @@ export class WorldView {
     const o = (this.world.obstacles || []).find((x) => x.id === id);
     if (!o) return false;
     const b = { ...this.boxInBase(o), ...vals };
+    delete o.covers;                        // resized or moved by hand: no longer the box fitted for that place
     const size = [b.w, b.d, b.h].map((x) => clamp(Number.isFinite(x) ? x : 100, 10, 20000));
     o.half = size.map((x) => r1(x / 2));
     o.center = this.baseToWorld([b.x, b.y, this.surfaceTop + clamp(b.bottom || 0, -5000, 5000) + size[2] / 2]).map(r1);
@@ -653,6 +696,7 @@ export class WorldView {
       const g = tc.object;
       const o = g && (this.world.obstacles || []).find((x) => x.id === g.userData.id);
       if (!o) return;
+      delete o.covers;                      // edited by hand: no longer the box fitted for that place
       if (tc.mode === 'scale') {           // the gizmo scales the group: fold it into the box size
         const m = g.userData.mesh, k = g.scale;
         o.half = [m.scale.x * k.x / 2, m.scale.y * k.y / 2, m.scale.z * k.z / 2].map((h) => r1(Math.max(h, 5)));
@@ -1087,7 +1131,7 @@ export class WorldView {
       g.position.fromArray(p);
       g.add(new THREE.Mesh(new THREE.SphereGeometry(c.near ? 9 : 13, 20, 12), new THREE.MeshBasicMaterial({ color: c.color, toneMapped: false })),
         new THREE.Mesh(new THREE.RingGeometry(20, 26, 40), new THREE.MeshBasicMaterial({ color: c.color, transparent: true, opacity: 0.7, side: THREE.DoubleSide, toneMapped: false })));
-      g.userData = { contact: c, label: c.near ? `${Math.round(m.min_clearance_mm)} mm` : `hits ${c.obstacle}` };
+      g.userData = { contact: c, label: c.near ? `${mmDown(m.min_clearance_mm)} mm` : `hits ${c.obstacle}` };
       this.base.add(noRay(g));
     }
     this._dirty();
@@ -1240,7 +1284,7 @@ export class WorldView {
     return (VIEW_TITLE[name] || name) + (cut.length ? ` (see-through: ${cut.slice(0, 3).join(', ')})` : '');
   }
 
-  _reachMM(doc) { return this.reachMM || doc?.metrics?.reach_3d_mm || 450; }
+  _reachMM(doc) { return this.reachMM || doc?.metrics?.arm_reach_mm || doc?.metrics?.reach_3d_mm || 450; }   // the arm's furthest point
 
   _nearestEdge() {                          // unit vector (base frame) from the robot to the closest surface edge
     const s = this.world.surface;
@@ -1487,6 +1531,15 @@ export class WorldPanel {
   }
 
   get open() { return this.el.style.display !== 'none'; }
+
+  /** The shared 3D view moved to another tab (the Simulation tab's replay) or came back to the Robot tab. Away, the
+   * panel stays open but out of sight, and a walk or a guided tour stops: they belong to the Robot tab. */
+  setAway(away) {
+    this.away = !!away;
+    this.el.classList.toggle('away', this.away);
+    if (this.away) { this.wv.walk(false); this.wv.stopTour(); }
+    this.render();
+  }
   /** World mode is on: the newest revision simulates in a room, or a room was just saved for the next one. */
   get on() { const p = this.state.pending; return p ? !p.off : !!this.state.active?.id; }
 
@@ -1680,16 +1733,28 @@ export class WorldPanel {
   }
 
   /** "Add box here": a place where the simulated path comes close to the room scan becomes a grey box, which the
-   * simulation keeps the arm clear of once the world is saved and simulated again. */
+   * simulation keeps the arm clear of once the world is saved and simulated again. A box trimmed to keep clear of the
+   * path keeps the place it was made for ("covers": with the distance it was fitted to and its revision), so the next
+   * check offers that place again only when the path comes closer there; a box the world already holds is never added
+   * twice. Editing the box by hand drops its "covers". */
   addScanBox(i) {
     const g = (this.state.result?.checks || []).find((c) => c.id === 'scan')?.regions?.[i], wv = this.wv;
-    if (!g || g.added || this.state.busy || !wv.world) return;
+    if (!g?.box || g.added || this.state.busy || !wv.world) return;
     const obs = wv.world.obstacles || (wv.world.obstacles = []);
+    const same = (a, b) => a.length === b.length && a.every((v, j) => Math.abs(v - b[j]) < 0.05);
+    const twin = obs.find((o) => same(o.center || [], g.box.center) && same(o.half || [], g.box.half)
+      && Math.abs((o.yaw_deg || 0) - (g.box.yaw_deg || 0)) < 0.01);
+    if (twin) {
+      g.added = true;
+      this.render();
+      return this.toast(`${twin.label} is this box already: Save and simulate to test the path against it`);
+    }
     if (obs.length >= 200) return this.toast('This world already has 200 grey boxes, the most it can hold');
-    const ids = new Set(obs.map((o) => o.id));
-    let id = g.id, k = 2;
-    while (ids.has(id)) id = `${g.id}-${k++}`;
-    obs.push({ id, label: g.label, center: [...g.box.center], half: [...g.box.half], yaw_deg: g.box.yaw_deg, source: 'auto' });
+    const { id, label } = scanBoxName(obs, g);
+    g.label = label;                                  // the row names the box as added
+    const box = { id, label, center: [...g.box.center], half: [...g.box.half], yaw_deg: g.box.yaw_deg, source: 'auto' };
+    if (g.covers) box.covers = { ...g.covers, center: [...g.covers.center], half: [...g.covers.half] };
+    obs.push(box);
     wv._buildBoxes(); wv.changed('boxes');
     g.added = true;
     this.toast(`${g.label} is a grey box now: Save and simulate to test the path against it`);
@@ -1766,7 +1831,7 @@ export class WorldPanel {
     const same = sim.world === s.active?.id && (!s.saved || sim.world_sha === s.saved.sha);
     let t = `${sim.rev} in ${s.saved?.world?.name || sim.world}: pick and place ${sim.success ? 'succeeds' : 'fails'}`;
     if (!sim.success && sim.failure) t += ` (${sim.failure})`;
-    if (sim.min_clearance_mm != null) t += `; closest ${Math.round(sim.min_clearance_mm)} mm, to ${sim.min_clearance_at?.obstacle || 'a grey box'}`;
+    if (sim.min_clearance_mm != null) t += `; closest ${mmDown(sim.min_clearance_mm)} mm, to ${sim.min_clearance_at?.obstacle || 'a grey box'}`;
     else t += '; no grey boxes to keep clear of';
     const arc = sim.arc, back = sim.detours?.retreat, there = sim.detours?.approach, rel = sim.detours?.release;
     const ways = [];
@@ -1787,7 +1852,7 @@ export class WorldPanel {
   }
 
   render() {
-    document.body.classList.toggle('wv-open', !!(this.open && !this.state.min));
+    document.body.classList.toggle('wv-open', !!(this.open && !this.state.min && !this.away));
     if (!this.open) return;
     const f = document.activeElement;
     if (f && f !== document.body && this.el.contains(f) && f.matches('input:not([type]), input[type="text"], input[type="number"]')) {
@@ -1869,7 +1934,7 @@ export class WorldPanel {
         ${rv.skipped ? `<div class="wv-note warn">${esc(rv.skipped)}</div>` : ''}${rv.note ? `<div class="wv-note warn">${esc(rv.note)}</div>` : ''}${rv.error ? `<div class="wv-note warn">${esc(rv.error)}</div>` : ''}
         ${r.asked?.subq && !r.subq ? '<div class="wv-note warn">SubQ didn\'t answer (no SubQ key, it is paused, or it declined the pictures): only the checks above.</div>' : ''}
         <div style="margin-top:6px">${(r.checks || []).map((c) => `<div class="wv-check"><span class="st ${esc(c.status)}">${esc(c.status)}</span><span>${esc(c.text)}</span></div>`
-          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${(+g.min_clearance_mm).toFixed(1)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm</span>${B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: 'A grey box over this part of the scan: the simulation keeps the arm clear of it' })}</div>`).join('') : '')).join('')}</div>
+          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${g.exact ? '' : 'at most '}${mmDown(+g.min_clearance_mm)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; ${g.box ? `box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm${g.box_clearance_mm != null ? (+g.box_clearance_mm < 0.5 ? ', touches the path' : `, ${mmDown(+g.box_clearance_mm)} mm from the path`) : ''}${g.trimmed ? ' (trimmed to keep clear of it)' : ''}${scanTried(g)}` : esc(g.no_box || 'no box')}</span>${g.box ? B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: scanBoxTitle(g) }) : ''}</div>`).join('') : '')).join('')}</div>
         ${rv.summary && rv.source === 'claude' ? `<div class="wv-note">${esc(SRC.claude)}: ${esc(rv.summary)}</div>` : ''}
         ${(rv.findings || []).length ? `<div style="margin-top:7px">${rv.findings.map((f) => `<div class="wv-find ${esc(f.severity)}"><span class="src">${esc(SRC[f.source] || f.source)} · ${esc(f.category)} · ${esc(VIEW_TITLE[f.viewpoint] || f.viewpoint)}</span>
           <div>${esc(f.evidence)}</div><div class="wv-note" style="margin-top:2px">${esc(f.recommendation)}</div></div>`).join('')}</div>` : ''}
@@ -1925,6 +1990,8 @@ export async function init(studio) {
     }
   };
   studio.on('done', sync);
+  studio.on('tab', (ev) => panel.setAway(ev.tab !== 'robot'));
+  if (studio.S?.tab && studio.S.tab !== 'robot') panel.setAway(true);
   studio.on('project', () => { wv.clear(); panel.reset(); sync(); });
   studio.on('queue', (ev) => {
     for (const j of ev.jobs || []) if (j.position == null && panel.jobEnded(j) && panel.open) panel.refresh();

@@ -138,18 +138,19 @@ def _doc(k, n, nominal=True, stress=False, **extra):
 
 
 def test_the_card_says_what_the_study_shows_and_no_more():
-    assert api_study.headline(_doc(140, 200)) == ("Succeeds in 140 of 200 randomized runs (95% CI 63-76%); the nominal "
-                                                  "run succeeds.")
+    assert api_study.headline(_doc(140, 200)) == ("Succeeds in 140 of 200 randomized runs (likely between 63% and 76%); "
+                                                  "the nominal run succeeds.")
     assert api_study.headline(_doc(200, 200)) == ("Succeeds in all 200 randomized runs (at least 98.1% with 95% "
                                                   "confidence); the nominal run succeeds.")   # exact bound 98.17%, rounded down
-    assert api_study.headline(_doc(0, 200, nominal=False)) == ("Succeeds in 0 of 200 randomized runs (95% CI 0-1.9%); "
-                                                               "the nominal run fails.")
+    assert api_study.headline(_doc(0, 200, nominal=False)) == ("Succeeds in 0 of 200 randomized runs (likely at most "
+                                                               "1.9%); the nominal run fails.")
     assert api_study.headline(_doc(1, 1)) == "Succeeds in its one randomized run (at least 2.5% with 95% confidence); " \
                                              "the nominal run succeeds."
     assert api_study.headline(_doc(82, 195, stress=True)).startswith("With every tolerance doubled (stress test), "
-                                                                     "succeeds in 82 of 195 randomized runs (95% CI 35-50%)")  # Wilson 35.3-49.1, outward
+                                                                     "succeeds in 82 of 195 randomized runs (likely between 35% and 50%)")  # Wilson 35.3-49.1, outward
     assert api_study.headline({"summary": {"n": 0}}) is None
     assert api_study.interval(0.6331, 0.7589) == "63-76%" and api_study.interval(0.9817, 0.9999) == "98.1-100.0%"
+    assert api_study.likely(0.6331, 0.7589) == "likely between 63% and 76%"
     group = {"id": "jam", "label": "Jaws stayed shut at release: the egg was carried away", "count": 58, "rate": 0.29,
              "wilson95": [0.2311, 0.3568], "example_run": 107, "model_sensitive": True,
              "rule": {"text": "egg turned 3.4-9.4 deg: 49% fail this way vs 13% otherwise", "significant": True},
@@ -164,11 +165,15 @@ def test_the_card_says_what_the_study_shows_and_no_more():
     assert c["flags"] == [api_study.NOTES["outdated"], "1 run was numerically unstable and is not counted.",
                           "r002 was simulated with other Morph code; this study uses today's model of it."]
     jam, drag = c["groups"]
-    assert jam["share"] == "58 of 200 runs (23-36%, 95% CI)" and jam["rule"].endswith("13% otherwise")
+    assert jam["share"] == "58 of 200 runs (likely between 23% and 36%)" and jam["rule"].endswith("13% otherwise")
+    assert c["interval_note"].startswith("Likely: the 95% confidence interval.")
     assert jam["sensitivity"] == "This result changes with the simulator's friction or timestep settings. Test it on the " \
                                  "real robot." and jam["example_run"] == 107
     assert jam["checks"] == "Re-run at half the timestep, 16 of 20 still fail this way; with impratio=1, 1 of 20."
-    assert drag["rule"] == "x (could be chance)" and drag["sensitivity"] == api_study.NOTES["robust"] and drag["checks"] is None
+    # two runs are too few to say where a group happens: no "Most likely when" (a study saved before the limit, too)
+    assert drag["rule"] is None and drag["sensitivity"] == api_study.NOTES["robust"] and drag["checks"] is None
+    doc["summary"]["groups"][1]["count"] = 3
+    assert api_study.card(doc)["groups"][1]["rule"] == "x (could be chance)"
     cut = api_study.card({**_doc(30, 30), "status": "interrupted", "done": 30, "n": 200, "rev_changed": True})
     assert cut["flags"][0] == api_study.NOTES["rev_changed"]
     assert cut["flags"][1].startswith("Stopped when the Studio stopped after 30 of 200 runs; the numbers are for those runs.")

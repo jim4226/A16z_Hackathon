@@ -1,0 +1,22 @@
+[
+ {"id": "S1", "case": "plate_under_object", "D": 9.95, "phi": 9.0, "must": "near",
+  "why": "a 1 mm plate under the carried egg (a capsule of radius 22 mm, sampled as a 24-sided prism) at 9.95 mm: it read 'At least 10 mm'"},
+ {"id": "S2", "case": "plate_under_object", "D": 0.40, "phi": 9.0, "must": "touches",
+  "why": "the same plate 0.40 mm under the egg: it read 'comes within 1.0 mm'"},
+ {"id": "S3", "case": "speck_under_finger", "D": 0.25, "must": "touches",
+  "why": "a 0.1 mm speck 0.25 mm under the left finger's flat bottom, between the robot's surface samples (2 mm apart)"},
+ {"id": "S4", "case": "plate_under_object", "D": 2.0, "phi": 9.0, "must": "box_row",
+  "why": "the plate at 2.0 mm: the row's box, saved as Add box here saves it, must keep at least its box_clearance_mm from the path"},
+ {"id": "T1", "case": "speck_between", "inside": 0.6, "must": "touches",
+  "why": "a 0.1 mm speck the fastest jaw point passes through halfway between two 10 ms poses: it read 1.0 mm"},
+ {"id": "T2", "case": "cable_between", "inside": 0.6, "half": [0.2, 0.2, 30.0], "must": "touches",
+  "why": "a vertical 0.4 mm cable through the same spot: it read 0.8 mm"},
+ {"id": "R1", "case": "plates_along_path", "count": 12, "must": "count",
+  "why": "12 small plates along the path, each its own place 1-9 mm from the arm: the text counted the 8 listed"},
+ {"id": "C1", "case": "cabinet_covers", "clearance_mm": 0.1, "must": "offered",
+  "why": "a Cabinet whose crafted place ('covers', clearance_mm 0.1) reaches 50 mm below it over a 6 mm near miss: it read 'has a grey box already'"},
+ {"id": "C2", "case": "cabinet_covers", "clearance_mm": 6.0, "must": "offered",
+  "why": "the same Cabinet, its place fitted to 6 mm: the Cabinet itself stands about 50 mm from the path, so it vouches for nothing there"},
+ {"id": "CV", "case": "covered_closer", "D": 2.0, "dz": 0.3, "must": "listed",
+  "why": "a box Add box here made for the plate at 2.0 mm, then the plate and the box 0.3 mm nearer the path (1.7 mm): listed again (with a box fitted to the new path, or saying the box there is the one that fits), never 'has a grey box already'"}
+]

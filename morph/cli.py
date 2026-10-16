@@ -18,13 +18,13 @@ import os
 import sys
 import time
 
-from . import agent, boardrepo, darwin, keewano, kicad, report
+from . import agent, boardrepo, darwin, keewano, kicad, report, resources
 from .explore import explore
 from .pipeline import Project
 from .spec import Design
 from .studio.projects import EGG_ROBOT  # noqa: F401  (the default arm; tests and tools import it from here)
 
-HOME = os.environ.get("MORPH_HOME", "projects")
+HOME = resources.projects_home()  # MORPH_HOME, else projects/ in the Morph folder (a wheel: the user's data folder)
 
 
 def _project(name: str) -> Project:
@@ -303,6 +303,9 @@ def cmd_studio(a):
              **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {}),
              **({"token_chosen": False} if token and not fixed else {}),  # Morph's own random code: never locked out
              **({"last": True} if getattr(a, "last", False) else {})}  # the process ends with the Studio (_leave)
+    from .studio import memory
+    print(f"Projects folder: {os.path.abspath(HOME)}{resources.projects_home_note(HOME)}")
+    memory.trim()  # what the start-up builds freed goes back to the system before the Studio waits for work
     serve(p, a.host, a.port, home=HOME, token=token, **extra)
 
 
@@ -315,7 +318,8 @@ def _first_robots(a, other: str, building: list):
     the build is a rebuild for newer Morph code. Returns a.name's RobotProject."""
     from . import keys
     from .robot.pipeline2 import RobotProject, pipeline_version
-    from .studio import projects
+    from .studio import memory, projects
+    memory.limit_arenas()  # before the start-up builds below: they share two malloc arenas, as the Studio's builds do
     if keys.ensure_env_file():
         print("Created .env for your API keys (optional): use the Keys button in the Studio, or edit .env.")
     projects.backfill_demo(HOME)  # robots this launcher made before 0.2: Reset demo touches only demo projects
@@ -895,7 +899,7 @@ def cmd_world(a) -> int:
     clear = pp.get("min_clearance_mm")
     print(f"{a.name} {base} simulates in {design.world.id} ({design.world.sha}): pick and place "
           f"{'succeeds' if pp.get('success') else 'fails'}"
-          + (f", closest {clear:.0f} mm to a box" if isinstance(clear, (int, float)) else "")
+          + (f", closest {worlds.mm_text(clear)} mm to a box" if isinstance(clear, (int, float)) else "")
           + (f", {len(pp['world_contacts'])} contacts" if pp.get("world_contacts") else ""))
     print("  " + worlds.NOTES["world"])
     return 0 if pp.get("success") else 1
@@ -931,7 +935,7 @@ def cmd_study(a) -> int:
             last.update(t=now, phase=ev["phase"])
             rate = f", {_pct(ev['p'])} succeed so far" if ev.get("p") is not None else ""
             eta = f", about {ev['eta_s']:.0f} s left" if ev.get("eta_s") else ""
-            what = {"prepare": "rebuilding the robot and its plan", "runs": "runs", "checks": "solver checks",
+            what = {"prepare": "rebuilding the robot and its plan", "runs": "runs", "checks": "checks with other simulator settings",
                     "done": "done"}.get(ev["phase"], ev["phase"])
             print(f"  {ev['elapsed_s']:6.1f} s  {what}: {ev['done']} of {ev['n']}{rate}{eta}", flush=True)
 
@@ -1191,9 +1195,11 @@ def cmd_doctor(a):
         with open(probe, "w", encoding="utf-8") as fh:
             fh.write("\u2192 \u2248 ok")  # characters the generators write; cp1252 cannot encode them
         os.remove(probe)
-        line(True, f"can write {os.path.abspath(HOME)}")
+        line(True, f"projects folder {os.path.abspath(HOME)}{resources.projects_home_note(HOME)}: can write it")
     except OSError as exc:
-        line(False, f"cannot write {os.path.abspath(HOME)} ({exc})", "move the repo out of a read-only or synced folder")
+        line(False, f"projects folder {os.path.abspath(HOME)}: cannot write it ({exc})",
+             "move the Morph folder out of a read-only or synced folder" if checkout else
+             "set MORPH_HOME to a folder you can write")
     if keys.ensure_env_file():
         line(None, f"created {keys.ENV_PATH} from env.example (add your keys there, or with the Keys button in the Studio)")
     for k in keys.status():
@@ -1221,7 +1227,7 @@ def cmd_doctor(a):
         errs = res.get("errors") or {}
         line(not bad, f"{name} {last}: " + ("all stages built" if not bad else
              "; ".join(f"{n} {st}" + (f" ({errs[n][:120]})" if n in errs else "") for n, st in bad.items())),
-             "send this output to the team; delete the projects folder and start again to rebuild")
+             f"send this output to the team; delete {os.path.abspath(HOME)} and start again to rebuild")
     if not getattr(a, "offline", False) and not settings.network_allowed():
         line(None, "network checks skipped: network lookups are off (Keys, Privacy and network)")
     elif not getattr(a, "offline", False):

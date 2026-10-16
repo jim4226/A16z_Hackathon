@@ -2,8 +2,8 @@
 tools need (the Keys dialog lists them) and the fingerprints approvals are bound to.
 
 Manifests come from Morph (morph/studio/toolbox/catalog/*.json: curated, written from each vendor's official docs, on
-by default) and from this Studio's owner (MORPH_HOME/.tools/catalog/*.json: off until the owner turns them on). One
-manifest describes one provider:
+by default unless the manifest says `off_by_default` and why) and from this Studio's owner
+(MORPH_HOME/.tools/catalog/*.json: off until the owner turns them on). One manifest describes one provider:
 
     {"schema": "morph.tool_manifest/1", "id": "fixparts", "service": "FixParts", "homepage": "https://www.fixparts.com",
      "summary": "...", "privacy": "Part numbers from the parts list go to FixParts.", "hosts": ["api.fixparts.com"],
@@ -51,7 +51,8 @@ CRED_ID = re.compile(r"[a-z][a-z0-9_]{1,31}")
 KEY_PREFIX = re.compile(r"[A-Za-z0-9_-]{2,16}")
 RESERVED = ("morph", "darwin", "mcp", "tool", "web", "claude", "anthropic", "subq", "keewano", "code", "computer", "bash")
 SIDE_EFFECTS = http_tool.SIDE_EFFECTS
-MANIFEST_FIELDS = {"schema", "id", "service", "summary", "homepage", "privacy", "hosts", "credentials", "tools", "verified"}
+MANIFEST_FIELDS = {"schema", "id", "service", "summary", "homepage", "privacy", "hosts", "credentials", "tools", "verified",
+                   "off_by_default", "attribution"}
 CREDENTIAL_FIELDS = {"id", "env", "label", "what", "where", "url", "hosts", "pattern", "prefix", "cost", "privacy"}
 TOOL_FIELDS = {"name", "title", "description", "side_effect", "sends", "request", "auth", "input_schema", "response",
                "limits", "cost"}
@@ -130,6 +131,12 @@ class Tool:
     source: str = ""
     fingerprint: str = ""
     warnings: tuple = ()
+    off_by_default: str = ""  # why one of Morph's own tools starts off (the manifest's text; the Keys dialog shows it)
+    attribution: str = ""     # how its data is credited wherever Morph shows it ("from <attribution>"); default: service
+
+    @property
+    def credit(self) -> str:
+        return self.attribution or self.service
 
     @property
     def paid(self) -> bool:
@@ -145,6 +152,8 @@ class Tool:
         if self.credential is not None:
             parts.append(f"It uses the person's {self.credential.label}, which Morph adds: when the tool would help, call it even "
                          "if the key isn't set yet, and Morph asks the person for it.")
+        if self.attribution:
+            parts.append(f'Wherever you give its prices or stock, say they are from {self.attribution}.')
         return " ".join(parts)[:2000]
 
     def definition(self) -> dict:
@@ -223,7 +232,9 @@ def parse_manifest(doc, *, source: str = "", curated: bool = False, policy=DEFAU
     info = {"id": pid, "service": service, "privacy": privacy, "curated": curated, "source": source,
             "summary": _text(doc["summary"], "summary", 1, 300) if "summary" in doc else "",
             "homepage": _url(doc["homepage"], "homepage") if "homepage" in doc else "",
-            "hosts": list(_hosts(doc.get("hosts"), "hosts", policy)), "verified": None}
+            "hosts": list(_hosts(doc.get("hosts"), "hosts", policy)), "verified": None,
+            "off_by_default": _text(doc["off_by_default"], "off_by_default", 10, 400) if "off_by_default" in doc else "",
+            "attribution": _text(doc["attribution"], "attribution", 2, 60) if "attribution" in doc else ""}
     if "verified" in doc:
         ver = doc["verified"]
         if not isinstance(ver, dict) or set(ver) - {"docs", "checked", "live", "notes"} or \
@@ -303,7 +314,8 @@ def parse_manifest(doc, *, source: str = "", curated: bool = False, policy=DEFAU
                           sends=sends, privacy=privacy, host=http_tool.split_url(t["request"]["url"], policy)[1], cost_usd=float(usd),
                           cost_note=_text(cost["note"], f"{where}.cost.note", 1, 200) if "note" in cost else "",
                           spec=json.loads(json.dumps(t)), credential=cred, curated=curated, source=source,
-                          fingerprint=fp, warnings=tuple(warnings)))
+                          fingerprint=fp, warnings=tuple(warnings), off_by_default=info["off_by_default"],
+                          attribution=info["attribution"]))
     unused = set(creds) - used
     if unused:
         raise ManifestError(f"credentials no tool uses: {sorted(unused)}")
@@ -425,14 +437,19 @@ def problems(home: str | None = None) -> list:
     return out
 
 
+def default_on(tool: Tool) -> bool:
+    """Morph's own tools start on, except those whose manifest says `off_by_default` (and why); the owner's own start off."""
+    return tool.curated and not tool.off_by_default
+
+
 def enabled_names(cat: Catalog, home: str | None = None) -> set:
-    """Morph's own tools are on unless the owner turned them off; the owner's own manifests are off until turned on. A
-    manifest installed from an approved draft (pinned) is on only while its content still has the approved sha256.
-    Fail closed: while state.json can't be read nothing is on, and while pins.json can't be read none of the owner's own
-    manifests is."""
+    """Morph's own tools are on unless the owner turned them off (or their manifest is off by default, until the owner
+    turns them on); the owner's own manifests are off until turned on. A manifest installed from an approved draft
+    (pinned) is on only while its content still has the approved sha256. Fail closed: while state.json can't be read
+    nothing is on, and while pins.json can't be read none of the owner's own manifests is."""
     st, pins = read_state(home), read_pins(home)
     over, damaged, pins_bad = st["enabled"], st.get("damaged"), _unreadable(_pins_path(home))
-    return {n for n, t in cat.tools.items() if over.get(n, t.curated and not damaged) and not (pins_bad and not t.curated)
+    return {n for n, t in cat.tools.items() if over.get(n, default_on(t) and not damaged) and not (pins_bad and not t.curated)
             and pin_ok(cat, t, pins) is not False}
 
 

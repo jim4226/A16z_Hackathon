@@ -3,10 +3,25 @@
 For every tagged release (`vX.Y.Z`, or `vX.Y.ZbN` for a beta). Copy it into the release pull request and tick each
 line. A release ships only when every line is ticked or has a written reason in the PR.
 
+## Decided for 0.2.0b1
+
+The owner's decisions from the release review (W3), so the lines below aren't argued again in the release PR:
+
+| Item | Decision | What it means for the release |
+|---|---|---|
+| REL-6: README's Keewano paragraph | **Keep** the accurate rewrite ("with event sending on, every design, bench test and human minute is logged, and with calibration on, logged results tune the next design's grip force. Both are off by default, and the R Cubed demo history in Keewano is seeded data, not real builds."). `origin/main`'s line ("recursive self-improvement", everything logged and tuning the next design) is not restored: it described both switches as always on. | Nothing to do. A README diff against `main` at that paragraph is intended. |
+| REL-5: GitHub private vulnerability reporting | **The owner's switch.** Only the repository owner can turn it on; on 2026-10-15 `gh api repos/jim4226/morph-studio/private-vulnerability-reporting` still printed `{"enabled":false}`. Until then SECURITY.md's fallback applies: a public "Security contact" issue with no details. | The line under *Before tagging* stays unticked until the owner turns it on, or the release PR says in writing that 0.2.0b1 ships with the fallback only. |
+| REL-10: Farnell (element14) tool | **Off by default until a legal review** of Farnell's API terms says Morph may keep its answers in run files and send them to Claude. The owner's switch in Keys turns it on for their own Studio. | `element14.json` keeps `off_by_default`; the release notes say the Farnell tool ships off (the line under *Before tagging*). |
+
 ## Before tagging
 
 - [ ] `morph/__init__.py` has the new version, and CHANGELOG.md has its section with every feature that ships (the
       placeholder lines replaced or removed).
+- [ ] CHANGELOG.md's heading for the release has the release date instead of "not yet tagged", for example
+      `## 0.2.0b1 (beta, YYYY-MM-DD)` with the day of the tag.
+- [ ] GitHub private vulnerability reporting is on, so SECURITY.md's *Report a vulnerability* link works:
+      `gh api repos/jim4226/morph-studio/private-vulnerability-reporting` prints `{"enabled":true}` (the owner turns it
+      on under Settings, Code security, or with `gh api -X PUT repos/jim4226/morph-studio/private-vulnerability-reporting`).
 - [ ] CI is green on the release commit: all 15 test cells (Windows, macOS, Linux; Python 3.10 to 3.14), lint, the
       package job on all three systems, and the launchers job (both launchers run for real, the Windows one from
       Command Prompt and both PowerShells; on Windows also the upgrade from a launcher that pulled on every start, with LF
@@ -22,8 +37,9 @@ line. A release ships only when every line is ticked or has a written reason in 
 - [ ] [SECURITY.md](../SECURITY.md) still describes what the release protects, and
       [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) covers every vendored file (`static/vendor/`, `robots/`,
       `data/`).
-- [ ] No secrets in the history: `git log --all -G "sk-ant-api|kwpat-|AIza" --oneline --name-only` lists only tests,
-      docs and the code that recognizes key formats, and none of their matching lines is a real key.
+- [ ] No secrets in the history: `git log --all -p -G "sk-[A-Za-z0-9_-]{20,}|kwpat-|AIza|ghp_|github_pat_|AKIA|xox[bp]-|(MORPH_TOOL_[A-Z0-9_]+|MORPH_TOKEN|[A-Z_]*API_KEY|[A-Z_]*_PAT)=[^ ]{8,}"`
+      shows only tests, docs and the code that recognizes key formats, and none of the matching lines is a real key.
+      Running [gitleaks](https://github.com/gitleaks/gitleaks) 8.19 or newer (`gitleaks git .`) as well is better still.
 - [ ] UI copy is honest: "estimated", "seeded demo data", "beta" and "not bench-validated" wherever they apply; no
       claim that an order was placed.
 - [ ] With `MORPH_SLOW=1` set, `python -m pytest -q tests/test_robust.py tests/test_robust_room.py
@@ -37,6 +53,9 @@ line. A release ships only when every line is ticked or has a written reason in 
       tests/test_toolbox_vendors_live.py tests/test_toolbox_draft_live.py` passes (a few cents of Claude usage), and
       each distributor manifest whose test passed has `verified.live` set to that date. A manifest nobody tried keeps
       `live: null`, so the Studio says "Not yet tried with a real key"; the release notes say which.
+- [ ] Farnell (element14): until a legal review of its API terms says Morph may keep its answers in run files and send
+      them to Claude, `morph/studio/toolbox/catalog/element14.json` keeps `off_by_default` (Keys shows it off, with why)
+      and the release notes say the Farnell tool ships off.
 
 ## Manual QA
 
@@ -62,13 +81,20 @@ Run each on a clean machine or a fresh user account, from a fresh clone of the r
 | 16 | Robustness study (Windows, macOS and Linux) | Simulation tab, pick and place: run a 200-run study, cancel it part way, *Carry on*, replay a failing run, open Details. Start another and close the Studio's window (or end its process) mid-study; start the Studio again. | Live progress, then the result with its interval and "This is simulation, ..."; cancel stops within seconds and keeps the finished runs; the replay plays in the 3D view. After the restart the card says "Stopped when the Studio stopped after N of M runs" with those runs, and *Carry on* finishes it. No study process is left running (Task Manager, Activity Monitor or `ps`). |
 | 17 | World mode with a real room scan | Upload a phone scan (.glb) of a bench, place the robot, *Save and simulate*, *Check placement*; *Add box here* on a near miss; *Save and simulate* again. | The scan check warns and never sets the verdict, naming each near miss; the added box appears; the next simulation plans around it. |
 | 18 | Live prices with real keys: Anthropic, then Mouser | BOM tab, **Live prices (beta)**; add the Mouser key from the Key needed card. | The card says what the key is for, what is sent and to which host; after Save the run continues by itself; prices show "from Mouser Electronics" and two of them match mouser.com. The key's value appears nowhere: search `projects/.runs/`, `projects/.tools/` and the terminal output for it. |
-| 19 | An element14 key | Keys, Tools agents can use: Farnell on, Mouser off; Live prices again. | Prices from Farnell. Its answers are kept only in the run's file, which the Studio deletes 7 days after the run last changed. |
+| 19 | An element14 key, only where your agreement with Farnell allows it | Keys, Tools agents can use: Farnell is off and says why; turn Farnell on and Mouser off; Live prices again. | Farnell's note names the legal review and what turning it on means. Prices read "from Farnell/element14" on the card, in Show prices and in Claude's summary. Its answers stay in the run's file, which the Studio deletes 7 days after the run last changed. |
 | 20 | A wrong key | Save a wrong Mouser key; Live prices. | "Mouser Electronics refused the key" with Replace key, and replacing it continues the run. If the card shows a failed call instead, write down the status Mouser answered. |
 | 21 | Runs that stop | Start Live prices, then turn off *Let agents use tools*; start another and quit the Studio while it works, then start it again. | "Agent tools were turned off" with Open Keys and Continue, which finishes once they are on; after the restart, "The Studio restarted while this ran" and Continue. |
 | 22 | Draft a tool (preview) | On a need card, Draft a tool from a small read-only API's official documentation; approve; run again with its real key. | The review names each host with the documentation's line; the next run asks for the new key; the tool answers with the real key. |
 | 23 | Teams and tools | Owner, editor and viewer browsers; the editor starts Live prices. | Only the owner adds keys and allows tools; the editor can skip; the viewer is told to ask the owner. |
 | 24 | Upgrading a clone whose launcher pulled (Windows 11, Git for Windows with its default settings) | In a clone of `main` after the release is merged, `git reset --hard 0f75a21` (a launcher that pulled on every start), then double-click `run_studio.bat`. Close it; in Command Prompt run `.\run_studio.bat` followed by a space and a comment such as `# Windows (later, double-click run_studio.bat in Explorer)`. | First start: git pulls, then the new launcher carries on with no "is not recognized", "was unexpected at this time" or "The syntax of the command is incorrect"; the packages install with pip's progress and the Studio opens. Second start: no git output, "Ignoring the rest of the line from # on", and the Studio opens. |
 | 25 | Upgrading a clone whose launcher pulled (macOS) | In a clone of `main` after the release is merged, `git reset --hard 0f75a21`, then `./run_studio.sh --update` in Terminal (zsh). Close it and run `./run_studio.sh` again. | First start: git pulls, pip runs quietly, then "--update is an option of the launcher" and the Studio opens. Second start: pip's progress once (the tested versions and the `morph` command), then the Studio. `.venv/bin/morph doctor` works afterwards. |
+| 26 | An Intel Mac, or Windows 11 on ARM | `./run_studio.sh` (Mac); on Windows on ARM, double-click `run_studio.bat` with only the ARM64 Python installed, then again with the x64 Python from python.org. | Intel Mac and ARM64 Python: a message saying why and what to install, before any download, and no `.venv` folder left behind. x64 Python on ARM: the note about x64 emulation, then the Studio opens and builds; on Windows 11 before 24H2, the message that MuJoCo doesn't load or run and to update Windows (record the Windows version and which you saw, and that a pick-and-place build simulates after the check passes). |
+
+Row 26 still needs real hardware: it can't be run in the release review, which has no Windows on ARM computer.
+The launcher's check there (`run_studio.bat` stepping a MuJoCo model before it starts the Studio) is tested only
+through the script's lines and its Python one-liners run on Linux (`tests/test_launchers.py`), and CI's launchers
+job runs on x64 Windows, where that check is skipped. Run the row on a Windows 11 on ARM machine and record the
+Windows version, which message appeared, and whether a pick-and-place build simulates after the check passes.
 
 ## Tag and publish
 

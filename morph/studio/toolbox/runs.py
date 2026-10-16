@@ -225,7 +225,8 @@ class Toolbox:
 
     def tools(self) -> dict:
         """GET /api/tools: every catalog tool, whether it is on, its key (set or not, never the value), its approval and
-        warnings, plus the manifests that failed to load. A tool installed from an approved draft adds `drafted`: the
+        warnings, plus the manifests that failed to load; `off_by_default` (why one of Morph's own tools starts off, else
+        "") and `credit` (who its data is credited to). A tool installed from an approved draft adds `drafted`: the
         approved sha256, whether its manifest changed since (then it is off) and who approved it."""
         cat, appr, pins = self.catalog(), self.approvals.all(), catalog.read_pins(self.home)
         on = self.enabled(cat)
@@ -233,6 +234,7 @@ class Toolbox:
         for t in sorted(cat.tools.values(), key=lambda t: (t.service.lower(), t.name)):
             a, c, p = appr.get(t.name), t.credential, None if t.curated else pins.get(t.provider)
             out.append({"name": t.name, **t.card(), "description": t.description, "enabled": t.name in on, "paid": t.paid,
+                        "off_by_default": t.off_by_default, "credit": t.credit,
                         "warnings": list(t.warnings), "verified": (cat.providers.get(t.provider) or {}).get("verified"),
                         "key": None if c is None else {"env": c.env, "label": c.label, "set": bool(self.env.get(c.env)),
                                                        "url": c.url, "where": c.where, "hosts": list(c.hosts)},

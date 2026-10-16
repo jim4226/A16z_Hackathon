@@ -55,19 +55,23 @@ about two minutes).
 **API keys are optional.** Everything runs without them. Click **Keys** (top right of the Studio) to
 paste your own; they are saved only on your computer, in the git-ignored `.env` (created from
 `env.example` on first launch), and take effect immediately. **Test keys** in the same dialog tries
-each one, so a mistyped key shows up at once.
+the Claude, Keewano and SubQ keys, so a mistyped one shows up at once; a tool's key is tried the first time a tool
+uses it, and a refused one is reported in the chat with **Replace key**.
 
 | Key | What it adds | Where to get it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Free-form chat requests, Claude reading a **New robot** request, the frame analysis in **Show Morph the job** and World mode's AI review (without it, the suggestion chips, common phrasings and built-in rules work, and you fill in the video cards yourself) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| `ANTHROPIC_API_KEY` | Free-form chat requests, Claude reading a **New robot** request, the frame analysis in **Show Morph the job**, World mode's AI review, **Live prices** (beta) and drafting a tool (preview) (without it, the suggestion chips, common phrasings and built-in rules work, and you fill in the video cards yourself) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 | `SUBQ_API_KEY` | SubQ Snap: quick yes/no and multiple-choice decisions, shown as "SubQ Snap (AI)" ([SubQ Snap](#subq-snap-optional)) | [console.subq.ai](https://console.subq.ai) |
 | `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: revisions and measurements logged once event sending is on, and an optional grip-force calibration from that history (seeded demo data unless your project holds real bench results) | Keewano settings ([docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)) |
+| `MORPH_TOOL_*` | Keys for agent tools (beta), such as Mouser's Search API key for **Live prices**: each is sent only to its own service, never to Claude, and the chat asks for it when a tool needs it ([docs/TOOLS.md](docs/TOOLS.md)) | The service's own page, linked next to the key in Keys |
 | Darwin | Nothing to add: Darwin Search is public | |
 
-**Privacy and network** (at the bottom of the Keys dialog) has three switches, saved in
+**Privacy and network** (at the bottom of the Keys dialog) has five switches, saved in
 `projects/.settings.json` (never any keys): *Allow network lookups (Darwin, SubQ, Claude)* is on; off keeps
 everything on this computer. *Send build events to Keewano* and *Use Keewano calibration* are off until you
-turn them on. `MORPH_OFFLINE=1` turns every network call off whatever the switches say. What each service
+turn them on. *Let agents use tools (beta)* is on, but an agent run (Live prices) starts only when someone presses
+its button; *Check live prices after a build changes the purchased parts* is off. `MORPH_OFFLINE=1` turns every
+network call off whatever the switches say. What each service
 receives, and when anything leaves your computer: [docs/PRIVACY.md](docs/PRIVACY.md). To report a security problem:
 [SECURITY.md](SECURITY.md).
 
@@ -80,7 +84,8 @@ for each of the 14 steps. Script and tips: [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIP
   whether every pipeline stage built, lists which features are ready (New robot, Import, Show Morph the job, Teams,
   World mode) with the optional tools they use, and says what to fix. Send its output to the team.
 - A stage marked *error* in the pipeline strip leaves its tab empty; the other stages still work.
-  Delete the `projects` folder and start again to rebuild everything from scratch.
+  Delete the `projects` folder in the Morph folder and start again to rebuild everything from scratch (`morph doctor`
+  prints where your projects are; Morph installed with pip keeps them in your user's data folder).
 - "Morph Studio is already running": close the other terminal window first.
 - Packages broken or half-installed: delete the `.venv` folder and run the launcher again.
 - The right panel (time card, grip force) folds away when the window is 1280 px wide or narrower, as at
@@ -136,7 +141,10 @@ Open it on the laptop. That browser stays signed in (for 30 days, or until Morph
 code); anyone without the code gets a page asking for it. To keep the same link across restarts, put
 `MORPH_TOKEN=` and a code of your choice (8 or more letters and digits) in `.env`. Keys added with the
 **Keys** button are saved on the computer running Morph, and the header reads **Live on** that
-computer's name, so it is clear which machine does the work. `morph doctor` shows each machine's CPU cores.
+computer's name, so it is clear which machine does the work. `morph doctor` shows each machine's CPU cores. Give that
+computer about 1.5 GB of free memory for Morph: the Studio takes up to about 1.1 GB while it builds and about 300 to
+400 MB when it waits (after starting and between builds), and a robustness study adds about 150 MB for each worker
+process (by default one fewer than the computer's cores).
 
 If the link doesn't open on the laptop, the stronger computer's firewall is the usual reason. On Windows, allow Python
 through Windows Defender Firewall for the network you are on (Windows Security, Firewall & network protection), or
@@ -252,7 +260,8 @@ workbench, or your own room scan as a `.glb`. Place the robot on a surface, mark
 and where people walk or sit, and save: the pick and place is simulated again in that room (no other stage reruns),
 and **Check placement** gives a measured verdict. The simulation sees only the grey boxes, and it is not a motion
 planner. With a room scan, the check also measures the simulated path against the scan itself (a warning, never the
-verdict), and **Add box here** turns a near miss into a grey box the next simulation keeps clear of.
+verdict), and **Add box here** turns a near miss into a grey box, offered only after a simulation with that box, run
+during the check, goes round it (its row says how close).
 
 From a terminal (`--off` instead of `--starter desk` brings the plain table back):
 
@@ -276,15 +285,15 @@ morph study egg-picker --runs 1000
 morph study egg-picker --stress
 ```
 
-The first makes 200 runs and the solver checks (about 2 minutes on 4 cores), `--runs 1000` goes deeper (the first 200
-are kept), and `--stress` doubles every tolerance range.
+The first makes 200 runs and re-runs its failures with other simulator settings (about 2 minutes on 4 cores),
+`--runs 1000` goes deeper (the first 200 are kept), and `--stress` doubles every tolerance range.
 
 Results are saved in the project (`.studies/`) as each run finishes, so Ctrl+C keeps them and the same command
 carries on. It is simulation, for the tolerances shown; not a field failure rate.
 
 In the Studio the same study is the **Robustness** card under the Simulation tab's pick-and-place result: run one for
 the revision on screen, follow it live, cancel it (the finished runs stay), see each failure group with the condition
-that best separates it and whether it holds under other solver settings, replay a failing run in the 3D view, and edit
+that best separates it and whether it holds with other simulator settings, replay a failing run in the 3D view, and edit
 the tolerances (each shows where its range comes from). Studies run on the Studio's computer: start the Studio with
 `--remote` on a machine with more cores and everyone's browser uses them.
 
@@ -302,9 +311,10 @@ an offline fallback. `morph subq "help me sort socks"` tries a key by hand.
 ### Live prices and agent tools (beta)
 
 **Live prices** in the BOM tab has Claude check current distributor prices and stock for the purchased parts with
-Morph's read-only distributor tools (Mouser; Farnell, element14 and Newark). When a tool needs your key or your OK, the
-run asks in the chat and carries on once you answer; each key goes only to its own service, never to Claude. Each price
-names the tool that answered, one Morph can't find in that answer is marked "check it", and nothing is ever ordered.
+Morph's read-only distributor tools: Mouser, and Farnell (element14, Newark), which ships turned off until its API terms
+have had a legal review ([docs/TOOLS.md](docs/TOOLS.md)). When a tool needs your key or your OK, the run asks in the
+chat and carries on once you answer; each key goes only to its own service, never to Claude. Each price says which
+distributor it is from, one Morph can't find in that answer is marked "check it", and nothing is ever ordered.
 The distributor tools were written from their providers' documentation and are not yet tried with real keys. The owner
 can add tools as JSON manifests, or have Claude draft one from an API's documentation (preview):
 [docs/TOOLS.md](docs/TOOLS.md).

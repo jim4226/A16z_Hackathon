@@ -24,6 +24,7 @@ import traceback
 import weakref
 
 from ..robot.pipeline2 import RobotProject
+from . import memory
 from ..services import durable
 
 
@@ -419,9 +420,11 @@ class Job:
 
 
 class JobQueue:
-    """First in, first out, one job at a time per room. The worker thread starts with the first job and ends when the
-    queue is empty. Every change is published to the room as a `queue` event. A job that ended as a conflict waits for
-    an answer (Apply or Drop) in `waiting` until someone gives one, however many jobs run meanwhile.
+    """First in, first out, one job at a time per room. The worker thread starts with the first job and waits for the
+    next one for up to IDLE_S before it ends: one long-lived thread builds the room's revisions, so their memory stays
+    in one malloc arena, and after each job what it freed goes back to the system (memory.trim). Every change is
+    published to the room as a `queue` event. A job that ended as a conflict waits for an answer (Apply or Drop) in
+    `waiting` until someone gives one, however many jobs run meanwhile.
 
     The queue is journaled in <project>/.morph/queue-<OWNER>.jsonl (`journal`, one file per Studio process): a line
     when a job is queued (`record`: what it takes to tell about it, or to build it again), when a first build starts
@@ -432,6 +435,7 @@ class JobQueue:
     MAX_QUEUED = 10
     KEEP = 50            # finished jobs remembered for wait/resolve
     MAX_CONFLICTS = 50   # conflicts waiting for an answer; past it the oldest is dropped (and the room is told)
+    IDLE_S = 600.0       # how long the worker waits for the next job before it ends
 
     def __init__(self, room: "Room"):
         self.room = room
@@ -571,6 +575,8 @@ class JobQueue:
             if self.worker is None or not self.worker.is_alive():
                 self.worker = threading.Thread(target=self._work, daemon=True, name=f"morph-room-{self.room.name}")
                 self.worker.start()
+            else:
+                self.cond.notify_all()                 # the worker waiting for its next job
         return job
 
     def get(self, job_id) -> Job | None:
@@ -663,6 +669,9 @@ class JobQueue:
         while True:
             with self.cond:
                 if not self.pending:
+                    self._settle()                     # the journal goes as soon as the queue is empty, as before
+                    self.cond.wait_for(lambda: self.pending, timeout=self.IDLE_S)
+                if not self.pending:
                     self.worker = None
                     self._settle()
                     return
@@ -691,6 +700,7 @@ class JobQueue:
                     self._settle()
                     self.publish(job)
                 job._done.set()
+                memory.trim()                          # what the build freed, back to the system
 
 
 class Room:

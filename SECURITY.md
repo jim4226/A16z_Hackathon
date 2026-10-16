@@ -4,8 +4,12 @@
 
 Please report security problems privately, through GitHub's private vulnerability reporting:
 [**Report a vulnerability**](https://github.com/jim4226/morph-studio/security/advisories/new) (the Security tab of
-this repository). Don't open a public issue for it, and don't put API keys, exploit code or private designs in an
-issue, a screenshot or a log. If one of your keys was exposed, revoke it with its provider first.
+this repository). Don't describe the problem in a public issue, and don't put API keys, exploit code or private designs
+in an issue, a screenshot or a log. If one of your keys was exposed, revoke it with its provider first.
+
+If that form isn't available (the Security tab has no *Report a vulnerability* button), open a
+[public issue](https://github.com/jim4226/morph-studio/issues/new) titled "Security contact" that only says you have
+a security problem to report, with no details. A maintainer answers there with a private way to send them.
 
 We aim to reply within a week. Morph is a beta from a small team, and there is no bug bounty.
 
@@ -34,7 +38,9 @@ Morph Studio is a local app: a small web server on your computer, used from your
   127.0.0.1, so the Studio sees one loopback address: the 16-connection cap no longer applies to any of them (only the
   64 in all do), and wrong access codes from any of them count against that one address. Give the proxy its own
   per-client connection and rate limits.
-- API keys live in `.env`, readable by your user only on macOS and Linux. The Studio never sends a key back to the
+- API keys live in `.env`, readable by your user only: 0600 on macOS and Linux; on Windows, Morph limits it to your
+  user with Windows' own permissions each time it saves it, and where Windows won't allow that it is as private as
+  the Morph folder (keep Morph in your own user folder, such as Documents). The Studio never sends a key back to the
   browser or prints it. Text you type anywhere else (chat, New robot, Show Morph the job, Teams comments and names)
   that looks like an API key or a Morph access code, or holds a key you saved, is refused before it is saved, shown or
   sent. It knows Claude, SubQ (`sk-`) and Keewano keys, Morph Teams codes, a remote Studio's own access code, tool keys,

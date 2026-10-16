@@ -1,0 +1,13 @@
+Part,Qty,Price,Notes
+J1 (base): NEMA 23 stepper 1.9 Nm,1,29.00,
+J2 – Stepper motor NEMA 23 with 10:1 planetary gearbox,1,79.00,
+J3: Stepper motor NEMA 17 (17HS4401),1,12.00,
+J4 stepper NEMA 14,1,11.00,
+J5 NEMA 17 pancake stepper,1,10.00,
+J6: NEMA 11 stepper,1,15.00,
+Gripper: MG996R servo,1,4.50,
+TMC2209 stepper driver,6,4.00,
+Arduino Mega 2560,1,15.00,
+24V 15A power supply,1,35.00,
+GT2 belt 6mm (2 m),1,6.00,
+GT2 pulley 20T,4,1.00,

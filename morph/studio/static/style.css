@@ -354,7 +354,10 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px;
 
 /* simulation tab */
 .sim { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 292px; grid-template-rows: auto minmax(0, 1fr) 176px; }
-.sim .bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg1); }
+.sim .bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg1); }
+/* the player keeps to the right; in a narrow view it wraps under the scenarios as one row, never off-screen */
+.sim .bar .player { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.sim .bar [data-scen] { flex-wrap: wrap; max-width: 100%; }
 .sim .vp { grid-column: 1; grid-row: 2; }
 .sim .tl { grid-column: 1; grid-row: 3; border-top: 1px solid var(--line); background: var(--bg1); padding: 8px 14px 10px; display: flex; flex-direction: column; min-height: 0; }
 .sim .side { grid-column: 2; grid-row: 2 / 4; border-left: 1px solid var(--line); background: var(--bg1); overflow-y: auto; padding: 14px; }
@@ -816,6 +819,7 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .msg .qacts .qnote, .msg .qgone { color: var(--muted); font-size: 11.5px; }
 .msg .qacts .qnote { align-self: center; }
 .msg .qgone { margin-top: 6px; }
+body.tm-readonly .msg .fixacts { display: none; }   /* an import's fixes: editors build them, viewers read the reasons */
 #projMenu .tag.warn { margin-left: 4px; }
 /* many projects: the list scrolls and New robot / Import under it stay in reach; long descriptions show two lines */
 #projList { max-height: calc(100vh - 190px); overflow-y: auto; overscroll-behavior: contain; }
@@ -917,9 +921,11 @@ body.presenting #present { display: block; animation: fadeUp .3s; }
 .tl-res, .tl-sum { border-top: 1px solid var(--line2); padding-top: 7px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
 .tl-k { font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
 .tl-prices { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
-.tl-prices li { display: flex; gap: 8px; justify-content: space-between; font-size: 12px; }
-.tl-prices .it { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
+.tl-prices li { display: flex; flex-wrap: wrap; column-gap: 8px; justify-content: space-between; font-size: 12px; }
+.tl-prices .it { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
 .tl-prices .pr { flex: none; color: var(--ink); font-weight: 600; }
+.tl-prices .src { flex: 1 0 100%; color: var(--dim); font-size: 11px; margin-top: -1px; }
+.tl-table .src { color: var(--dim); font-size: 11px; white-space: nowrap; }
 .tl-sum p { margin: 0; font-size: 12px; color: var(--ink2); white-space: pre-wrap; line-height: 1.5; }
 .tl-table { overflow-x: auto; margin-top: 10px; border: 1px solid var(--line2); border-radius: 9px; }
 .tl-table .table th { position: static; } .tl-table td.mono { white-space: nowrap; }

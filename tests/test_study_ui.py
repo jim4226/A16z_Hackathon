@@ -112,13 +112,15 @@ def test_the_card_starts_follows_and_explains_a_study(studio, browser):
     end = time.time() + 240
     while time.time() < end and not page.evaluate("() => !!document.querySelector('#studyCard .sd-head')"):
         t = card(page)
-        seen |= {m for m in ("Preparing", "Run ", "So far", "Re-running failures") if m in t}
+        seen |= {m for m in ("Preparing", "Run ", "So far", "Checking failures") if m in t}
         time.sleep(0.15)
-    assert {"Run ", "So far"} <= seen or "Re-running failures" in seen, seen
+    assert {"Run ", "So far"} <= seen or "Checking failures" in seen, seen
     until(page, "() => !document.querySelector('#studyCard .sd-run')", 60, "the progress to end")
     text = card(page)
     m = re.search(r"Succeeds in (all 4|\d of 4) randomized runs \(([^)]*)\); the nominal run succeeds\.", text)
     assert m, text
+    assert m.group(2).startswith(("likely ", "at least ")) and "CI" not in text and "solver" not in text, text
+    assert "95% confidence interval" in page.get_attribute("#studyCard .sd-head", "title")
     assert api_study.NOTES["simulation"] in text and "Run a study" in text      # 2 ms here: the card's own run 1 ms
     shot(page, "done")
     # the card's own settings (seed 1, 1 ms) again deepen that study: "Run 46 more", or nothing to do at 4 runs
@@ -172,5 +174,35 @@ def test_the_card_starts_follows_and_explains_a_study(studio, browser):
     assert hidden and "Succeeds in" in card(page)
     page.evaluate("() => { document.body.classList.remove('tm-readonly'); window.morphStudy.info.may.start = false; window.morphStudy.render(); }")
     assert not page.evaluate("() => !!document.querySelector('#studyCard [data-a=\"start\"]')")
+
+    # another study, started with the Run button scrolled down to the bottom of the column under an earlier result with
+    # failure groups: its progress and Cancel come into view, and the earlier result waits while it runs
+    page.evaluate("() => window.morphStudy.refresh()")
+    until(page, "() => !!document.querySelector('#studyCard [data-a=\"start\"]')", 30, "the editor's controls again")
+    page.evaluate("""() => { const c = window.morphStudy, g = {id: 'jam', label: 'Jaws stayed shut at release', count: 3,
+        share: '3 of 4 runs (likely between 30% and 96%)', rule: null, sensitivity: 'Not checked with other simulator settings yet.',
+        model_sensitive: null, example_run: 1};
+      c.info.latest = {...c.info.latest, card: {...c.info.latest.card, groups: [g, {...g, id: 'drag'}, {...g, id: 'miss'}]}};
+      c.form.runs = 50; c.render(); }""")                                     # long enough to look at it running
+    side = "document.querySelector('#views .view[data-view=\"sim\"] .sim .side')"
+    page.evaluate(f"() => {{ const s = {side}; s.scrollTop = s.scrollHeight; }}")
+    before = page.evaluate(f"() => ({{top: {side}.scrollTop, card: document.querySelector('#studyCard').getBoundingClientRect().top,"
+                           f" col: {side}.getBoundingClientRect().top}})")
+    assert before["top"] > 0 and before["card"] < before["col"], before    # the card's top is scrolled out of view
+    page.click("#studyCard [data-a='start']")
+    until(page, "() => !!document.querySelector('#studyCard [data-a=\"cancel\"]')", 30, "Cancel")
+    page.wait_for_timeout(300)
+    box = page.evaluate(f"""() => {{ if (!document.querySelector('#studyCard [data-a="cancel"]')) return null;
+      const b = document.querySelector('#studyCard [data-a="cancel"]').getBoundingClientRect(),
+        s = {side}.getBoundingClientRect(), r = document.querySelector('#studyCard .sd-run').getBoundingClientRect(),
+        at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return {{cancel: [b.top, b.bottom], run: [r.top, r.bottom], col: [s.top, s.bottom], vh: innerHeight,
+              hit: !!at && !!at.closest('[data-a="cancel"]'), groups: document.querySelectorAll('#studyCard .sd-g').length}}; }}""")
+    assert box, "the study ended before it could be looked at"
+    assert box["col"][0] <= box["run"][0] and box["cancel"][1] <= min(box["col"][1], box["vh"]) and box["hit"], box
+    assert box["groups"] == 0 and "Jaws stayed shut" not in card(page), box
+    shot(page, "running_again")
+    page.click("#studyCard [data-a='cancel']")
+    until(page, "() => !document.querySelector('#studyCard .sd-run')", 120, "the study to stop")
     assert not errors, errors
     ctx.close()

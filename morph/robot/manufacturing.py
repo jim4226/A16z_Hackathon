@@ -1598,6 +1598,11 @@ def dfm_checks(entry: dict, g: Geo) -> list:
     return out
 
 
+def _down1(v: float) -> float:
+    """A measured length (mm) shown to 0.1 mm rounded down, so one short of a minimum never reads as the minimum."""
+    return math.floor(float(v) * 10.0 + 1e-6) / 10.0
+
+
 def _sheet_dfm(g: Geo) -> list:
     p = g.p
     sheet = p.meta.get("sheet") or {}
@@ -1628,7 +1633,8 @@ def _sheet_dfm(g: Geo) -> list:
         for sgn, nm in ((1, "a"), (-1, "b")):
             reach = float(max(side * sgn))
             if reach < min_fl:
-                out.append(f"B{i + 1}: flange {nm} is {reach:.1f} mm, below the {min_fl:.1f} mm press-brake minimum (4×T)")
+                out.append(f"B{i + 1}: flange {nm} is {_down1(reach):.1f} mm, below the {min_fl:.1f} mm press-brake minimum "
+                           "(4×T)")
         # bend relief at the ends where the bend meets the outline
         for (x, y) in ((u0, v0), (u1, v1)):
             disk = Point(x, y).buffer(max(t, 1.0), quad_segs=16)
@@ -1639,7 +1645,8 @@ def _sheet_dfm(g: Geo) -> list:
         for h in g.holes:
             dist = ln.distance(Point(h["c"])) - h["d"] / 2
             if dist < 2.0 * t + R:
-                where = "crosses the bend line" if dist < 0 else f"sits {dist:.1f} mm from the bend (min {2 * t + R:.1f})"
+                where = ("crosses the bend line" if dist < 0 else
+                         f"sits {_down1(dist):.1f} mm from the bend (min {2 * t + R:.1f})")
                 out.append(f"B{i + 1}: hole Ø{h['d']:.1f} {where}: it will distort")
                 break
     return out

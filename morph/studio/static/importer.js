@@ -41,6 +41,7 @@ const CSS = `
   font: 11.5px var(--mono, monospace); white-space: pre-wrap; word-break: break-word; user-select: all; }
 .imp-bar { height: 4px; border-radius: 3px; background: var(--bg4, #20252f); overflow: hidden; margin: 12px 0 4px; }
 .imp-bar > i { display: block; height: 100%; width: 0; background: var(--accent, #7091ff); transition: width .2s; }
+.imp-desc { display: block; color: var(--muted, #8a93a6); font-size: 11px; }
 .imp-check { display: grid; gap: 5px; margin-top: 10px; }
 .imp-row { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; line-height: 1.45; color: var(--ink2, #b9c0cd); }
 .imp-row .dot { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; margin-top: 0; }
@@ -592,7 +593,7 @@ export class Importer {
     const money = (v) => (v == null ? '–' : `${c.currency === 'EUR' ? '€' : c.currency === 'GBP' ? '£' : c.currency && c.currency !== 'USD' ? `${c.currency} ` : '$'}${Number(v).toFixed(2)}`);
     const tables = (c.tables || []).length > 1 ? `<div class="imp-sec"><h4>Table<span class="grow"></span><select data-k="table">${c.tables.map((t) => `<option value="${t.index}"${t.index === (this.answers.table ?? 0) ? ' selected' : ''}>${E(t.title || `Table ${t.index + 1}`)} (${t.rows} rows)</option>`).join('')}</select></h4></div>` : '';
     const detail = `<dl class="imp-kv"><dt>Rows</dt><dd>${c.count}</dd><dt>Total</dt><dd>${money(c.total)}${c.total != null ? ' (from the listed prices)' : ''}</dd></dl>${tables}
-      <table class="imp-table"><thead><tr><th>Part</th><th>Qty</th><th>Unit</th><th>Link</th></tr></thead><tbody>${(c.rows || []).slice(0, 12).map((r) => `<tr><td>${E(r.item)}${r.catalog ? ` <span class="tag acc">${E(r.catalog)}</span>` : ''}</td><td class="n">${E(r.qty)}</td><td class="n">${money(r.unit_price)}</td><td>${r.url ? `<a href="${E(r.url)}" target="_blank" rel="noopener noreferrer">${E(new URL(r.url).hostname.replace(/^www\./, ''))}</a>` : ''}</td></tr>`).join('')}</tbody></table>
+      <table class="imp-table"><thead><tr><th>Part</th>${(c.rows || []).some((r) => r.mpn) ? '<th>MPN</th>' : ''}<th>Qty</th><th>Unit</th><th>Link</th></tr></thead><tbody>${(c.rows || []).slice(0, 12).map((r) => `<tr><td>${E(r.item)}${r.description && r.description !== r.item ? `<small class="imp-desc">${E(r.description)}</small>` : ''}${r.catalog ? ` <span class="tag acc" title="${E(r.catalog_name || r.catalog)}: Morph's catalog part for this line">${E(r.catalog_name || r.catalog)}</span>` : ''}</td>${(c.rows || []).some((x) => x.mpn) ? `<td class="mono">${E(r.mpn || '')}</td>` : ''}<td class="n">${E(r.qty)}</td><td class="n">${money(r.unit_price)}</td><td>${r.url ? `<a href="${E(r.url)}" target="_blank" rel="noopener noreferrer">${E(new URL(r.url).hostname.replace(/^www\./, ''))}</a>` : ''}</td></tr>`).join('')}</tbody></table>
       ${(c.rows || []).length > 12 ? `<div class="imp-note">and ${c.rows.length - 12} more rows</div>` : ''}${this.warnings(c.warnings)}
       <div class="imp-note">Morph reads the parts, quantities and prices; a parts list doesn't change the robot. You get it back as a clean CSV.</div>`;
     return { detail, action: `<button class="btn primary" type="button" data-a="commit">Read this parts list</button>` };
@@ -616,8 +617,7 @@ export class Importer {
         const torque = (b.issues || []).some((x) => /N·m with margin/.test(x));
         fin = `<div class="imp-row warn" style="margin-top:12px"><span class="dot">${ROW_ICON.warn}</span><span><b>${E(b.project)}</b> is built${b.rev ? ` (${E(b.rev)})` : ''}, but its software checks found issues:</span></div>
           ${this.warnings(b.issues)}
-          <div class="imp-note">${torque ? 'A joint needs a stronger servo: import the files again and pick one family under Actuators, so Morph sizes every joint for the worst pose (2x torque margin) on one supply voltage.'
-            : 'Open it to see each stage\'s report, then change what it flags in the chat or the parameters.'}</div>`;
+          <div class="imp-note">Open it: its chat says the same, with the fixes Morph can make${torque ? ' (a stronger servo for every joint, on one supply voltage)' : ''}; each builds a new revision. Or change what it flags in the chat or the parameters.</div>`;
       } else if (b.done) {
         fin = `<div class="imp-row done" style="margin-top:12px"><span class="dot">${ROW_ICON.done}</span><span><b>${E(b.project)}</b> is ready: ${this.result?.kind === 'project'
           ? 'the export\'s latest design was rebuilt here, every stage from scratch.'
@@ -648,7 +648,7 @@ export class Importer {
   // the parsed rows as CSV; cells that a spreadsheet would run as a formula are quoted as text
   downloadCsv() {
     const r = this.result || {}, rows = r.rows || [];
-    const cols = ['item', 'qty', 'unit_price', 'ext_price', 'currency', 'category', 'make_or_buy', 'ref', 'refs', 'value', 'footprint', 'mpn', 'manufacturer', 'supplier', 'url'];
+    const cols = ['item', 'qty', 'unit_price', 'ext_price', 'currency', 'category', 'make_or_buy', 'ref', 'refs', 'value', 'footprint', 'mpn', 'manufacturer', 'supplier', 'description', 'url'];
     const cell = (v) => {
       let t = v == null ? '' : String(v);
       if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;

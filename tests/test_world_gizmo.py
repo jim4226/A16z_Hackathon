@@ -129,3 +129,34 @@ def test_a_deselected_box_leaves_no_gizmo_after_an_ai_review(server, browser):
         page.screenshot(path=os.path.join(SHOTS, "h0a_after_review_selected.png"))
     assert not errors, errors
     page.close()
+
+
+def test_a_box_edited_by_hand_no_longer_covers_its_place(server, browser):
+    """A box Add box here made keeps the place it was fitted for ("covers"); resized or moved by hand (the gizmo or the
+    panel's numbers), or the room rescaled, it is no longer that box, so its place goes with the edit and the next check
+    can offer the place again. A box not touched keeps it."""
+    page = browser.new_page(viewport={"width": 1100, "height": 720})
+    page.set_default_timeout(90000)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{server}/tools/world_demo.html?studio=1", timeout=120000)
+    _until(page, "window.ready === true")
+    desk, doc, inspect = _desk_inputs()
+    for o in desk["obstacles"][:3]:
+        o["covers"] = {"center": o["center"], "half": [h + 10.0 for h in o["half"]], "yaw_deg": o["yaw_deg"],
+                       "clearance_mm": 6.0, "rev": "r001"}
+    page.evaluate("([w, d, i]) => window.demo.load(w, d, {starters: {desk: w}, inspect: i})", [desk, doc, inspect])
+    page.evaluate("window.demo.wv.frameOverview(0); window.demo.viewer.pause()")
+    ids = [o["id"] for o in desk["obstacles"][:3]]
+    covers = "(id) => 'covers' in window.demo.wv.world.obstacles.find((o) => o.id === id)"
+    assert all(page.evaluate(covers, i) for i in ids)
+    _press(page, f'.wv-panel [data-a="sel"][data-arg="{ids[0]}"]')        # the gizmo on it: a drag that sizes it
+    page.evaluate("(() => { const tc = window.demo.wv.tc; tc.setMode('scale'); tc.object.scale.set(1, 1, 0.8);"
+                  " tc.dispatchEvent({type: 'objectChange'}); })()")
+    page.evaluate("([id]) => window.demo.wv.setBoxFromBase(id, {h: 120})", [ids[1]])     # the panel's numbers
+    assert [page.evaluate(covers, i) for i in ids] == [False, False, True]
+    page.evaluate("(() => { const wv = window.demo.wv; wv.scaleRef = {measured: 100, a: [0, 0, 0], b: [100, 0, 0]};"
+                  " return wv.applyScale(101); })()")                        # the room rescaled
+    assert page.evaluate(covers, ids[2]) is False
+    assert not errors, errors
+    page.close()

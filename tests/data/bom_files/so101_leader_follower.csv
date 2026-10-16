@@ -1,0 +1,8 @@
+Item,Qty,Price,Comments
+"STS3215 Servo 7.4V, 1/345 gear (C001)",7,13.89,follower + leader gripper
+"STS3215 Servo 7.4V, 1/191 gear (C044)",2,13.89,leader
+"STS3215 Servo 7.4V, 1/147 gear (C046)",3,13.89,leader
+Bus servo driver board for STS3215,2,10.60,
+5V 4A power supply,2,10.00,
+Feetech FE-URT-1 servo debug board,1,8.00,
+"STS3215 servo arm, aluminium",1,2.00,gripper

@@ -7,8 +7,8 @@ module, implement exactly these signatures and output schemas. Never rename keys
 that other modules read. Don't edit files you don't own; if a contract is missing
 something you need, add it inside your own module and note it in your final report.
 
-Python env: `/tmp/claude-0/venv/bin/python` (mujoco, trimesh, manifold3d, shapely,
-numpy, playwright, pytest installed). Run from the repo root with `PYTHONPATH=.`.
+Python env: the launchers' `.venv` with the developer packages (INSTALL.md, For developers: mujoco, trimesh,
+manifold3d, shapely, numpy, pytest; playwright for the browser tests). Run from the repo root with `PYTHONPATH=.`.
 Units are **mm, rad, kg, N·m**. The robot base frame is **z-up**, x forward, and the origin is on the
 table under the base yaw axis.
 

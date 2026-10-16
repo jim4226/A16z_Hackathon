@@ -88,7 +88,7 @@ def price_check(body):
             if not lines:
                 return answer("This revision has no purchased parts to price.")
             return call("mouser_search_keyword", "toolu_mouser", {"keyword": _keyword(lines[0]["item"])},
-                        query="distributor price and stock", found=("mouser_search_keyword", "element14_search_keyword"))
+                        query="distributor price and stock", found=("mouser_search_keyword", "mouser_search_part_number"))
         if name == "mouser_search_keyword":
             if err:
                 why = doc.get("error") if isinstance(doc, dict) else "error"

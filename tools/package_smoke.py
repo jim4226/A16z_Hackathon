@@ -46,6 +46,22 @@ def main() -> int:
             assert {"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "THREE_LICENSE", "OFL-Inter.txt"} <= licences, licences
             env = Path(keys.ENV_PATH).resolve()
             assert "site-packages" not in env.parts, f".env would be written into site-packages: {env}"
+            saved = os.environ.pop("MORPH_HOME")  # without it: the user's data folder, never ./projects of any folder
+            try:
+                resources._HOMES.clear()
+                projects = resources.projects_home()
+                assert projects == os.path.join(resources.data_dir(), "projects") and os.path.isabs(projects), projects
+                assert not Path(projects).resolve().is_relative_to(Path(tmp).resolve()), projects
+                os.makedirs(os.path.join(tmp, "projects", "thesis"))  # someone's own folder called projects: not Morph's
+                resources._HOMES.clear()
+                assert resources.projects_home() == projects
+                os.makedirs(os.path.join(tmp, "projects", "egg-picker"))  # projects an older install made here: kept
+                open(os.path.join(tmp, "projects", "egg-picker", "ledger.jsonl"), "w").close()
+                resources._HOMES.clear()
+                assert resources.projects_home() == "projects"
+            finally:
+                os.environ["MORPH_HOME"] = saved
+                resources._HOMES.clear()
             profile, folder = imported.load_profile("so101")
             assert Path(folder).resolve().is_relative_to(pkg / "_assets"), folder
             assert profile.get("urdf") and (Path(folder) / profile["urdf"]).is_file()
@@ -58,7 +74,7 @@ def main() -> int:
         finally:
             os.chdir(start)
     print(f"Morph {morph.__version__} wheel at {pkg}: Studio files, fonts, robot bundles, Darwin cache and licences "
-          "present; .env goes to " + str(env.parent))
+          f"present; .env goes to {env.parent}, projects to {projects} unless MORPH_HOME says otherwise")
     return 0
 
 

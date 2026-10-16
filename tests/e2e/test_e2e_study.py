@@ -83,7 +83,8 @@ def test_a_study_in_the_real_studio_from_the_card(browser, studio):
     took = round(time.time() - t0, 1)
     assert any(re.search(r"Run \d of 8\.", t) for t in seen) and first is not None, seen[-3:]
     text = card(pg)
-    m = re.search(r"Succeeds in (\d) of 8 randomized runs \(95% CI (\d+)-(\d+)%\); the nominal run succeeds\.", text)
+    m = re.search(r"Succeeds in (\d) of 8 randomized runs \(likely (?:between \d+% and \d+%|at most [\d.]+%)\); the nominal run "
+                  r"succeeds\.", text)
     assert m, text
     assert "This is simulation, for the tolerances shown; not a field failure rate." in text
     status, info = studio.api("GET", "/api/study?project=egg-picker")

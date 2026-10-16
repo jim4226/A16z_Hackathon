@@ -27,7 +27,8 @@ _LOCK = threading.Lock()
 
 
 def home() -> str:
-    return os.environ.get("MORPH_HOME") or "projects"
+    from .resources import projects_home
+    return projects_home()
 
 
 def path() -> str:

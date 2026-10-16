@@ -1960,7 +1960,7 @@ def _api_export(req):
 def _keys_state(studio: Studio) -> dict:
     from .. import keys, settings
     return {"keys": keys.status(home=studio.home), "integrations": integrations(), "settings": settings.load(),
-            "settings_problem": settings.problem(), "file": os.path.basename(keys.ENV_PATH),
+            "settings_problem": settings.problem(), "file": os.path.basename(keys.ENV_PATH), "env": keys.env_file(),
             "compute": compute_info(studio.remote)}
 
 
@@ -2254,6 +2254,8 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     if not project.finished():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     chosen = bool(token) if token_chosen is None else token_chosen
+    from . import memory
+    memory.limit_arenas()  # before the Studio's threads: builds then share two malloc arenas (as MALLOC_ARENA_MAX=2)
     token = None if team else access_token(host, token)
     # local Studio: requests must name this server (127.0.0.1/localhost); remote Studio: the access token decides; a team
     # Studio: the member's session decides, so a tunnel's or the LAN's address works too

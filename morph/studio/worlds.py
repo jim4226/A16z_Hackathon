@@ -10,7 +10,9 @@ metres) is mapped into it by `units`, `up` and `scale` (the two-point scale tool
      "floor_z": 0.0,
      "mount": {"position": [x, y, z], "yaw_deg": 0.0},              # robot base origin; x axis turned by yaw
      "surface": {"label", "center", "half", "yaw_deg"},              # the box the robot stands on (its top = mount z)
-     "obstacles": [{"id", "label", "center", "half", "yaw_deg", "source": "starter|auto|user"}],
+     "obstacles": [{"id", "label", "center", "half", "yaw_deg", "source": "starter|auto|user",
+                    "covers"?: {"center", "half", "yaw_deg",        # Add box here: the scanned place it was made for,
+                                "clearance_mm"?, "rev"?}}],         # how close that path came there, and its revision
      "zones": [{"id", "label", "kind": "walkway|seat", "polygon": [[x, y], ...], "z": [z0, z1]} | {..., "box": {...}}],
      "scene": [{"label", "center", "half", "yaw_deg", "color"}],      # furniture drawn for box-only worlds
      "candidates": [{"label": "A|B|C", "position", "yaw_deg"}]}      # other mounts to compare in the AI review
@@ -27,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import heapq
 import itertools
 import json
 import math
@@ -223,6 +226,16 @@ def validate(raw) -> dict:
         label = _text(o.get("label"), f"Box {i + 1}")
         w["obstacles"].append({"id": _unique(ids, _slug(o.get("id") or label, f"box-{i + 1}")), "label": label, **b,
                                "source": o.get("source") if o.get("source") in ("starter", "auto", "user") else "user"})
+        if o.get("covers") is not None:                 # the near miss an Add box here box was made for (before trimming)
+            cv = o["covers"]
+            w["obstacles"][-1]["covers"] = _box(cv, f"obstacle {i + 1} covers")
+            if cv.get("clearance_mm") is not None:      # the fit's target: the path's distance to the scan there
+                w["obstacles"][-1]["covers"]["clearance_mm"] = _num(cv["clearance_mm"], f"obstacle {i + 1} covers "
+                                                                    "clearance_mm", 0.0, SCAN_NEAR_MM)
+            if cv.get("rev") is not None:               # the revision whose path the box was fitted to
+                if not isinstance(cv["rev"], str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", cv["rev"]):
+                    raise WorldError(f"obstacle {i + 1} covers rev must be a revision name.")
+                w["obstacles"][-1]["covers"]["rev"] = cv["rev"]
     zs = raw.get("zones") or []
     if not isinstance(zs, list) or len(zs) > MAX_ZONES:
         raise WorldError(f"zones must be a list of at most {MAX_ZONES}.")
@@ -917,10 +930,30 @@ SCAN_SAMPLE_MM = 2.0         # the scan's own points: this far apart along rows 
 SCAN_SPLIT_MM = 32.0         # big triangles are cut down first, to the parts near the arm
 SCAN_MAX_SAMPLES = 4_000_000
 SCAN_TOL_MM = 0.05           # the closest approach is found to within this (it is shown to 0.1 mm)
+SCAN_BETWEEN_TOL_MM = 0.1    # and the motion between the poses bounded to within this (rounded down)
 SCAN_TOUCH_MM = 0.5          # closer than this the arm touches or passes through the scan: no need to look closer
+SCAN_ON_OBJECT_MM = 2.0      # a scanned point this close to the object where it starts is the object (or touches it)
 SCAN_WORKERS = -1           # threads for the big k-d tree queries (-1: every core)
-SCAN_FINE_MM, SCAN_COARSE_MM = (1.0, 2.0), 8.0      # robot surface samples: (edges, faces) near the scan; elsewhere
+SCAN_THREADED = 32_768      # points in a query worth starting threads for (each start costs about a millisecond)
+SCAN_ROBOT_MM, SCAN_COARSE_MM = 1.6, 8.0             # robot surface samples: rows this far apart near the scan; elsewhere
+SCAN_MAX_BETWEEN = 4000      # poses measured between the 10 ms poses, at most (else what is left is a bound)
+SCAN_CELL_MM = 24.0          # the coarse samples of a geom grouped in cells this size, each skipped when far from the scan
+SCAN_RBOUND_CLASSES_MM = (16.0, 48.0)                # geoms' bounding spheres tested in these size classes
 SCAN_MAX_REGIONS, SCAN_GROW_MM, SCAN_MIN_BOX_MM = 8, 30.0, 20.0
+SCAN_COVER_MM = SCAN_NEAR_MM  # a near miss this close to a grey box is the box's: the simulation keeps clear of that
+SCAN_COVERS_MAX_MM = 50.0    # the place a trimmed box was made for reaches at most this far past the box on any side,
+SCAN_COVERS_FACE_MM = 0.4    # and no further than the box's own size there; its other faces are the box's (to this:
+                             # the box is saved rounded in, its place out, each face up to 0.18 mm, 0.1 unturned)
+SCAN_COVERS_TOL_MM = 0.1     # a near miss within this of its box's fit target (shown to 0.1 mm) is no closer than it
+SCAN_FIT_MIN_MM = 5.0        # a box trimmed to keep clear of the path thinner than this is no box (none is offered)
+SCAN_FIT_TOL_MM = 0.05
+SCAN_FIT_ROUNDS = 12         # a box measured against the path at most this many times while it is trimmed
+# once there are near misses, the measuring passes leave the regions and their boxes about what they need (the fit
+# poses the robot once per pose: regions and fit took 2.0-3.1 ms a distinct pose at load 11-14), with room to spare,
+# and never more than a share of the limit
+SCAN_FIT_S_PER_POSE, SCAN_RESERVE_MIN_S, SCAN_RESERVE_SHARE = 0.004, 0.5, 0.25
+SCAN_TRIAL_S = 30.0          # time to try a simulation with each box Add box here would make (try_boxes)
+SCAN_RETRY_FACTOR = 2.0      # a check cut short that needs more than this many times its limit: checking again won't do
 
 
 def _cross_rows(a, b):
@@ -951,6 +984,94 @@ def closest_on_triangles(P, A, B, C):
         better = d < best
         best, out = np.where(better, d, best), np.where(better[:, None], E, out)
     return np.where(inside[:, None], Q, out)
+
+
+def _dot(a, b):
+    return (a * b).sum(-1)
+
+
+def _seg_seg(P0, P1, Q0, Q1):
+    """The closest points of segments P0-P1 and Q0-Q1 (rows, mm), degenerate ones (points) too: (distance, point on
+    the first, point on the second)."""
+    d1, d2, r = P1 - P0, Q1 - Q0, P0 - Q0
+    a, e, f, c, b = _dot(d1, d1), _dot(d2, d2), _dot(d2, r), _dot(d1, r), _dot(d1, d2)
+    tiny = 1e-12
+    pa, qe = a <= tiny, e <= tiny
+    sa, se = np.where(pa, 1.0, a), np.where(qe, 1.0, e)
+    den = a * e - b * b
+    s = np.where(den > tiny * np.maximum(a * e, tiny), np.clip((b * f - c * e) / np.where(den > 0, den, 1.0), 0.0, 1.0), 0.0)
+    t = (b * s + f) / se
+    s = np.where(t < 0.0, np.clip(-c / sa, 0.0, 1.0), np.where(t > 1.0, np.clip((b - c) / sa, 0.0, 1.0), s))
+    t = np.clip(t, 0.0, 1.0)
+    s, t = np.where(pa, 0.0, s), np.where(pa, np.clip(f / se, 0.0, 1.0), t)
+    s, t = np.where(qe & ~pa, np.clip(-c / sa, 0.0, 1.0), s), np.where(qe, 0.0, t)
+    X, Y = P0 + s[:, None] * d1, Q0 + t[:, None] * d2
+    return np.sqrt(((X - Y) ** 2).sum(1)), X, Y
+
+
+def _seg_hits_tri(P0, P1, A, B, C):
+    """Where segment P0-P1 crosses triangle A, B, C (rows): (hit, the crossing point)."""
+    D, e1, e2 = P1 - P0, B - A, C - A
+    p = _cross_rows(D, e2)
+    det = _dot(e1, p)
+    ok = np.abs(det) > 1e-12 * np.maximum(np.sqrt(_dot(D, D) * _dot(e1, e1) * _dot(e2, e2)), 1e-30)
+    inv = 1.0 / np.where(ok, det, 1.0)
+    s0 = P0 - A
+    u = _dot(s0, p) * inv
+    q = _cross_rows(s0, e1)
+    v = _dot(D, q) * inv
+    t = _dot(e2, q) * inv
+    hit = ok & (u >= 0.0) & (v >= 0.0) & (u + v <= 1.0) & (t >= 0.0) & (t <= 1.0)
+    return hit, P0 + np.clip(t, 0.0, 1.0)[:, None] * D
+
+
+def _rows(X, idx):
+    """Corners idx of each triangle X ((n, 3, 3)), stacked corner by corner: (len(idx) * n, 3)."""
+    return X[:, idx].transpose(1, 0, 2).reshape(-1, 3)
+
+
+def _tri_tri(F, T):
+    """Distance between triangles F[i] and T[i] ((n, 3, 3) mm, degenerate ones too) and the closest points: the nearest
+    of a corner of one and the other triangle, and of an edge of each; 0 where they cross. (distance, on F, on T).
+    The 21 cases go as three batches of rows, not one small numpy call each."""
+    n = len(F)
+    if not n:
+        return np.zeros(0), np.zeros((0, 3)), np.zeros((0, 3))
+    e0, e1 = np.array([0, 1, 2]), np.array([1, 2, 0])
+    other = np.concatenate([np.tile(T, (3, 1, 1)), np.tile(F, (3, 1, 1))])
+    C = np.concatenate([_rows(F, e0), _rows(T, e0)])            # a corner of one against the other triangle
+    X = closest_on_triangles(C, other[:, 0], other[:, 1], other[:, 2])
+    d1 = np.sqrt(((X - C) ** 2).sum(1))
+    on_f, on_t = np.concatenate([C[:3 * n], X[3 * n:]]), np.concatenate([X[:3 * n], C[3 * n:]])
+    I, J = np.repeat(e0, 3), np.tile(e0, 3)                     # an edge of each
+    d2, x2, y2 = _seg_seg(_rows(F, I), _rows(F, e1[I]), _rows(T, J), _rows(T, e1[J]))
+    S0 = np.concatenate([_rows(F, e0), _rows(T, e0)])          # an edge of one through the other
+    S1 = np.concatenate([_rows(F, e1), _rows(T, e1)])
+    hit, x3 = _seg_hits_tri(S0, S1, other[:, 0], other[:, 1], other[:, 2])
+    D = np.concatenate([d1, d2, np.where(hit, 0.0, np.inf)]).reshape(21, n)
+    A = np.concatenate([on_f, x2, x3]).reshape(21, n, 3)
+    B = np.concatenate([on_t, y2, x3]).reshape(21, n, 3)
+    k, idx = D.argmin(0), np.arange(n)
+    return D[k, idx], A[k, idx], B[k, idx]
+
+
+def _seg_tri(P0, P1, A, B, C):
+    """Distance between segments P0-P1 and triangles A, B, C (rows) and the closest points (on the segment, on the
+    triangle); 0 where the segment crosses it."""
+    n = len(P0)
+    best, ps, pt = np.full(n, np.inf), np.zeros((n, 3)), np.zeros((n, 3))
+    for E in (P0, P1):
+        X = closest_on_triangles(E, A, B, C)
+        dd = np.sqrt(((X - E) ** 2).sum(1))
+        b = dd < best
+        best, ps, pt = np.where(b, dd, best), np.where(b[:, None], E, ps), np.where(b[:, None], X, pt)
+    for U, W in ((A, B), (B, C), (C, A)):
+        dd, x, y = _seg_seg(P0, P1, U, W)
+        b = dd < best
+        best, ps, pt = np.where(b, dd, best), np.where(b[:, None], x, ps), np.where(b[:, None], y, pt)
+    hit, x = _seg_hits_tri(P0, P1, A, B, C)
+    best, ps, pt = np.where(hit, 0.0, best), np.where(hit[:, None], x, ps), np.where(hit[:, None], x, pt)
+    return best, ps, pt
 
 
 def _hull_samples(V, edge, face):
@@ -986,22 +1107,154 @@ def _hull_samples(V, edge, face):
     return np.vstack(out)
 
 
-def _primitive_points(m, g):
-    """A box, sphere or capsule geom's surface as a convex point set (mm, its own frame), for _hull_samples."""
+class _Shape:
+    """A robot geom's collision shape for the scan check, in its own frame (mm). `kind` "poly" (a convex polytope:
+    a mesh's hull, a box, and a cylinder or an ellipsoid as the polytope around it), "sphere" or "capsule" (radius `r`,
+    half length `h` along z). `tris`/`eq` the polytope's faces and planes (eq @ [x, 1] <= 0 inside); `fine` points of
+    its surface (a sphere's or a capsule's on the polytope inside it), each on face `owner`, no point of the shape's
+    surface further than `cover_f` from one (_scan_samples' rows on each face, and how far a sphere or capsule bulges
+    past its polytope); `coarse` fewer of them, `par` each fine point's nearest coarse one, no point of the surface
+    further than `cover_c` from a coarse one."""
+
+    def __init__(self, kind, P, r=0.0, h=0.0, fine_mm=SCAN_ROBOT_MM, coarse_mm=SCAN_COARSE_MM):
+        from scipy.spatial import ConvexHull, QhullError, cKDTree
+
+        self.kind, self.r, self.h = kind, float(r), float(h)
+        P = np.asarray(P, float)
+        try:
+            hull = ConvexHull(P)
+        except (QhullError, ValueError):
+            hull = ConvexHull(P, qhull_options="QJ")    # flat: joggled into a thin hull
+        V = P[hull.vertices]
+        self.tris = P[hull.simplices]
+        self.eq = np.asarray(hull.equations, float)
+        self.fc = self.tris.mean(1)                     # each face's centre and the radius around it that holds it
+        self.fr = np.sqrt(((self.tris - self.fc[:, None, :]) ** 2).sum(-1)).max(1) + 1e-9
+        sag = 0.0
+        if kind == "sphere":                            # how far the true surface bulges past the polytope's faces
+            sag = self.r + float(self.eq[:, 3].max())
+        elif kind == "capsule":
+            ends = np.array([[0.0, 0.0, self.h], [0.0, 0.0, -self.h]])
+            inner = -(ends @ self.eq[:, :3].T + self.eq[:, 3])                # each end's distance inside each face
+            sag = self.r - float(inner.min(0).min())
+        self.fine, self.owner, cover = _scan_samples(self.tris[:, 0], self.tris[:, 1], self.tris[:, 2], fine_mm)
+        self.cover_f = cover + max(sag, 0.0)
+        self.coarse = _hull_samples(V, coarse_mm, coarse_mm)
+        dpar, self.par = cKDTree(self.coarse).query(self.fine)
+        self.cover_c = self.cover_f + float(dpar.max(initial=0.0))
+        self.rad = float(np.sqrt((V * V).sum(1)).max(initial=0.0)) + (self.r if kind != "poly" else 0.0)
+
+
+def _geom_shape(m, g):
+    """The scan check's _Shape of a robot geom (None for planes, height fields and the like)."""
     import mujoco
     import trimesh
 
     s = np.asarray(m.geom_size[g], float) * 1000.0
     t = m.geom_type[g]
-    if t == mujoco.mjtGeom.mjGEOM_BOX:
-        return trimesh.creation.box(extents=2 * s).vertices
-    if t == mujoco.mjtGeom.mjGEOM_SPHERE:
-        return trimesh.creation.icosphere(subdivisions=3, radius=s[0]).vertices
-    if t == mujoco.mjtGeom.mjGEOM_CAPSULE:
-        return trimesh.creation.capsule(height=2 * s[1], radius=s[0], count=[24, 24]).vertices
-    if t == mujoco.mjtGeom.mjGEOM_CYLINDER:
-        return trimesh.creation.cylinder(radius=s[0], height=2 * s[1], sections=32).vertices
+    G = mujoco.mjtGeom
+    if t == G.mjGEOM_MESH:
+        mid = m.geom_dataid[g]
+        V = np.asarray(m.mesh_vert[m.mesh_vertadr[mid]:m.mesh_vertadr[mid] + m.mesh_vertnum[mid]], float) * 1000.0
+        return _Shape("poly", V) if len(V) >= 4 else None
+    if t == G.mjGEOM_BOX:
+        return _Shape("poly", np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)], float) * s)
+    if t == G.mjGEOM_SPHERE:
+        return _Shape("sphere", trimesh.creation.icosphere(subdivisions=3, radius=s[0]).vertices, r=s[0])
+    if t == G.mjGEOM_CAPSULE:
+        return _Shape("capsule", trimesh.creation.capsule(height=2 * s[1], radius=s[0], count=[24, 24]).vertices,
+                      r=s[0], h=s[1])
+    if t == G.mjGEOM_CYLINDER:                          # the 32-sided prism around it: measured no further than it
+        n = 32
+        a = np.arange(n) * 2.0 * math.pi / n
+        ring = np.c_[np.cos(a), np.sin(a)] * s[0] / math.cos(math.pi / n)
+        return _Shape("poly", np.r_[np.c_[ring, np.full(n, s[1])], np.c_[ring, np.full(n, -s[1])]])
+    if t == G.mjGEOM_ELLIPSOID:                         # the polytope around the unit sphere, stretched
+        ico = trimesh.creation.icosphere(subdivisions=2, radius=1.0)
+        inner = float(np.abs(ico.face_normals * ico.triangles[:, 0]).sum(1).min())
+        return _Shape("poly", np.asarray(ico.vertices, float) / inner * s[:3])
     return None
+
+
+def _shape_tris(sh, Rg, tg, TA, TB, TC, tcen, trad, c, faces=None, bounds=None, fbounds=None) -> tuple:
+    """A robot shape (_Shape, posed: axes Rg, centre tg, mm) against triangles TA, TB, TC (their centres and the radii
+    around them that hold them): the exact distance (inf when no part of one is within c), the closest points (robot,
+    triangle) and how many pairs were measured; a polytope only by its `faces` when given (those that can hold the
+    closest point). A triangle with a corner inside a polytope is at 0. The triangles beyond c of the shape's bounding
+    sphere, and a polytope's faces beyond c of the box around the rest, are left out; the face-triangle pairs left go
+    closest bound first (bounding spheres and boxes), until none could be closer than the closest measured. With
+    `bounds` (an array, one per triangle), each triangle's lower bound of its distance to the shape is written into
+    it, and with `fbounds` (one per face measured: all, or `faces`) each face's to the triangles."""
+    sb = np.sqrt(((tcen - tg) ** 2).sum(1)) - trad - sh.rad
+    if bounds is not None:
+        bounds[:] = sb
+    near = sb < c
+    if fbounds is not None:
+        fbounds[:] = sb[~near].min(initial=math.inf) if near.any() else sb.min(initial=math.inf)
+    if not near.any():
+        return math.inf, None, None, 0
+    TA, TB, TC, tcen, trad = TA[near], TB[near], TC[near], tcen[near], trad[near]
+    if sh.kind == "poly":
+        F = np.arange(len(sh.tris)) if faces is None else np.asarray(faces)
+        nw, off = sh.eq[:, :3] @ Rg.T, sh.eq[:, 3]      # each face's plane, posed: <= 0 inside
+        val = ((np.stack([TA, TB, TC], 1).reshape(-1, 3) - tg) @ nw.T + off).reshape(len(TA), 3, -1)
+        inside = val.max(2) <= 1e-9                     # [triangle, corner] inside the polytope: it passes through
+        if inside.any():
+            t0, k0 = np.argwhere(inside)[0]
+            v = (TA, TB, TC)[k0][t0]
+            if bounds is not None:
+                bounds[near] = 0.0
+            if fbounds is not None:
+                fbounds[:] = 0.0
+            return 0.0, v, v, 0
+        lbt = val.min(1).max(1)                         # the polytope lies behind every face's plane: no closer than
+        if bounds is not None:
+            bounds[near] = np.maximum(bounds[near], lbt)
+        vmin, vmax = val.min(1)[:, F], val.max(1)[:, F]  # the triangle's nearest corner to the farthest such plane
+        Fw = sh.tris[F] @ Rg.T + tg
+        fc = Fw.mean(1)
+        fr = np.sqrt(((Fw - fc[:, None, :]) ** 2).sum(-1)).max(1)
+        flo, fhi = Fw.min(1), Fw.max(1)
+        tlo, thi = np.minimum(np.minimum(TA, TB), TC), np.maximum(np.maximum(TA, TB), TC)
+        gap = np.sqrt(((tcen[:, None, :] - fc[None]) ** 2).sum(-1)) - trad[:, None] - fr[None]
+        e = np.maximum(np.maximum(tlo[:, None] - fhi[None], flo[None] - thi[:, None]), 0.0)
+        gap = np.maximum.reduce([gap, np.sqrt((e * e).sum(-1)), vmin, np.broadcast_to(lbt[:, None], vmin.shape)])
+        if fbounds is not None:
+            fbounds[:] = np.minimum(fbounds, gap.min(0))
+        # a face holds the closest point only if the triangle reaches in front of its plane
+        ti, fi = np.nonzero((gap < c) & (vmax > 0.0))
+        if not len(fi):
+            return math.inf, None, None, 0
+        X = closest_on_triangles(fc[fi], TA[ti], TB[ti], TC[ti])     # tighter for big triangles: the face's centre to
+        lb = np.maximum(gap[ti, fi], np.sqrt(((X - fc[fi]) ** 2).sum(1)) - fr[fi])     # the triangle, less its radius
+        o = np.argsort(lb, kind="stable")               # the pairs that could be closest first, until none could be
+        fi, ti, lb = fi[o], ti[o], lb[o]
+        best, n, i, step = (math.inf, None, None), 0, 0, 64
+        while i < len(fi) and lb[i] < best[0]:          # the closest-looking 64, then every pair that could be closer
+            j = min(i + step, int(np.searchsorted(lb, best[0])))
+            sel = slice(i, j)
+            dd, pr, ps = _tri_tri(Fw[fi[sel]], np.stack([TA[ti[sel]], TB[ti[sel]], TC[ti[sel]]], 1))
+            n += len(dd)
+            k0 = int(np.argmin(dd))
+            if dd[k0] < best[0]:
+                best = (float(dd[k0]), pr[k0], ps[k0])
+            i, step = j, len(fi)
+        return max(0.0, best[0]), best[1], best[2], n
+    elif sh.kind == "sphere":
+        ps = closest_on_triangles(np.broadcast_to(tg, TA.shape), TA, TB, TC)
+        v = ps - tg
+        n = np.sqrt((v * v).sum(1))
+        dd, pr = n - sh.r, tg + v / np.maximum(n, 1e-12)[:, None] * sh.r
+    else:
+        ax = Rg[:, 2] * sh.h
+        dd, pc, ps = _seg_tri(np.broadcast_to(tg - ax, TA.shape), np.broadcast_to(tg + ax, TA.shape), TA, TB, TC)
+        v = ps - pc
+        n = np.sqrt((v * v).sum(1))
+        dd, pr = dd - sh.r, pc + v / np.maximum(n, 1e-12)[:, None] * sh.r
+    if bounds is not None:
+        bounds[near] = np.maximum(dd, 0.0)
+    k0 = int(np.argmin(dd))
+    return max(0.0, float(dd[k0])), pr[k0], ps[k0], int(len(dd))
 
 
 def _split_triangles(A, B, C, lo, hi, cap, deadline):
@@ -1116,25 +1369,59 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
                    floor_cut_mm: float = SCAN_FLOOR_MM, time_limit_s: float = 20.0, max_faces: int = MAX_FACES,
                    per_pose: bool = False) -> dict:
     """How close the robot's swept path (the revision's simulated frames, posed about every 10 ms in its own collision
-    model, sim/robot.xml, with the object while it is carried) comes to the uploaded room scan.
+    model, sim/robot.xml, with the object while it is carried, and the motion between those poses) comes to the
+    uploaded room scan.
 
     The scan near the sweep is covered by points of its own triangles (no point of a triangle further than rho from
     one of its own) in a k-d tree (scipy cKDTree), so a robot point's nearest scan point is at most rho further than
-    the scan itself: a bound both ways. Robot geoms are pruned by their bounding spheres, then by coarse samples of
-    their surfaces; their fine samples are measured against the tree, and those that could be the closest get exact
-    point-triangle distances to every triangle with a point inside the bound. Scanned triangles that rise no more than
-    `floor_cut_mm` above the surface the robot stands on are left out.
-    Returns {"min_clearance_mm" (None: nothing within SCAN_CUT_MM), "at" {t, link, point}, "regions": the near misses
-    (closer than `near_mm`) as boxes in the world frame that "Add box here" turns into obstacles, "stats", "note"};
-    with `per_pose`, "poses": [[t, mm or None]]. Never raises for a bad scan: {"skipped": reason}."""
+    the scan itself. The robot is its collision shapes (_geom_shape: a mesh's convex hull, as MuJoCo collides with it, a
+    box, a sphere, a capsule; a cylinder or an ellipsoid as the polytope around it), each covered by points of its
+    surface (no point of it further than its cover_f from one). Geoms are pruned by their bounding spheres, then by
+    coarse samples; the fine samples that could hold the closest point are measured against the tree, and those geoms
+    get exact distances (_shape_tris: the faces of those samples against the scanned triangles near the geom, closest
+    bound first; a sphere's or a capsule's centre or axis against the triangles), so a distance is the shapes' own,
+    not their samples'. Between two poses every point of a geom travels at most L (sweep.Motion, per geom), so it is
+    no closer than (D_a + D_b - L) / 2 there; moves where that could be closer than the closest distance found are
+    halved and measured in between, exactly, against the triangles and faces that could still come that close in that
+    part of the move, until none could be closer by more than SCAN_TOL_MM (stats["between_poses"], at most
+    SCAN_MAX_BETWEEN; this third pass may use half the boxes' share of the time). Scanned triangles that rise no more
+    than `floor_cut_mm` above the surface the robot stands on are left out.
+    Returns {"min_clearance_mm" (None: nothing within SCAN_CUT_MM; never more than the closest approach), "at" {t,
+    link, point}, "regions": the near misses (closer than `near_mm`) as boxes in the world frame that "Add box here"
+    turns into obstacles, "stats", "note"}; with `per_pose`, "poses": [[t, mm or None]]. Never raises for a bad scan:
+    {"skipped": reason}.
+
+    A region's box is measured against the same swept path (MuJoCo's own distance between the box and each geom near
+    it, at every pose and between them, box_path) and trimmed on the sides that face it until it is no closer to the
+    path than the scan there ("box_clearance_mm", no more than the box's closest approach to the path, between poses
+    too; "box": None when that leaves too thin a box, with "no_box" saying why), so adding it never makes the
+    clearance worse; a trimmed box keeps the place it was made for as "covers" (its box before trimming, with
+    "clearance_mm", the distance it was fitted to), which Add box here saves with it. Near misses within SCAN_COVER_MM
+    of one of the world's grey boxes, or of the place a grey box was added for while they are no closer than it was
+    fitted to and the box itself stands about as near the path (_near_grey_box), are left to that box, and so are
+    regions whose box the world holds already (stats["covered"] counts those regions): they are not offered again.
+    stats["places"] counts every place closer than `near_mm` not left to a box; the closest SCAN_MAX_REGIONS are listed.
+    Once the second pass lists a near miss (a box is fitted only to those), it stops early enough for the regions and
+    their boxes to be done within the limit (about SCAN_FIT_S_PER_POSE a pose, at least SCAN_RESERVE_MIN_S, at most
+    SCAN_RESERVE_SHARE of it); a box not fitted in time isn't offered (stats["fit_timeout"]).
+
+    Cut short (stats["truncated"]), the answer never claims more room than was measured: "min_clearance_mm" is the
+    closest distance measured anywhere (each a real distance, so the arm comes at least that close), with
+    stats["lower_mm"] a lower bound of the whole path when every pose was bounded (the motion between poses counted),
+    ["poses_checked"] of ["unique_poses"], ["part_clear"] when every pose looked at stays beyond SCAN_CUT_MM, and
+    ["need_s"] about the time the whole check would take at this pace. A second pass cut short after the closest point
+    was measured (nothing left could come closer) is not truncated when the third pass still bounds the motion between
+    the poses in time: stats["unlisted_mm"] then says how close the near misses not listed could be."""
     import mujoco
     import trimesh
     from scipy.spatial import cKDTree
 
+    from ..robot import sweep
     from ..robot.simulate import _q_body
 
     t0 = time.monotonic()
-    deadline = t0 + time_limit_s
+    end = t0 + time_limit_s                             # everything, the boxes' fit too, is done by then
+    deadline = end                                      # the measuring passes: earlier once there are near misses
     stats = {"faces": 0, "kept_faces": 0, "triangles": 0, "samples": 0, "poses": 0, "points": 0, "refined": 0,
              "pairs": 0, "truncated": False}
     try:
@@ -1194,13 +1481,30 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             d.qpos[oq + 3:oq + 7] = _q_body(o[3:7])
         mujoco.mj_kinematics(m, d)
 
-    # ---- the scan near the sweep: within SCAN_CUT_MM of a geom's bounding sphere at some pose
-    geoms = np.r_[robot, obj_geoms]
-    reach = m.geom_rbound[geoms] * 1000.0 + SCAN_CUT_MM + 1.0
+    # ---- the robot's shapes, and how far each geom can travel between two poses
+    geoms = np.r_[robot, obj_geoms].astype(int)
+    shape = {}
+    for g in geoms:
+        sh = _geom_shape(m, g)
+        if sh is not None:
+            shape[int(g)] = sh
+    gi = {int(g): i for i, g in enumerate(geoms)}
+    rad = np.array([max(1000.0 * float(m.geom_rbound[g]), shape[int(g)].rad if int(g) in shape else 0.0) for g in geoms])
+    motion = sweep.Motion(m, geoms, radius_mm=rad, per_geom=True)
+    # ---- the scan near the sweep: within SCAN_CUT_MM (and how far the arm moves before the next pose) of a geom's
+    # bounding sphere at some pose
     centres = np.empty((len(poses), len(geoms), 3))
+    states = []
     for k, (_, q, o, _) in enumerate(poses):
         pose(q, o)
         centres[k] = d.geom_xpos[geoms] * 1000.0
+        states.append(motion.state(d))
+    Lmove = np.array([motion.bound(states[k], states[k + 1]) for k in range(len(poses) - 1)]).reshape(-1, len(geoms))
+    half = np.zeros((len(poses), len(geoms)))           # each pose: half the larger move next to it, per geom
+    if len(Lmove):
+        half[:-1] = Lmove / 2.0
+        half[1:] = np.maximum(half[1:], Lmove / 2.0)
+    reach = rad + SCAN_CUT_MM + 1.0 + half.max(0)
     lo, hi = (centres - reach[None, :, None]).min((0, 1)), (centres + reach[None, :, None]).max((0, 1))
     with np.errstate(invalid="ignore"):                 # each corner's sides of the box (and of the floor cut) as bits:
         code = ((Vb < lo) * np.array([1, 2, 4]) + (Vb > hi) * np.array([8, 16, 32])).sum(1) + 64 * (Vb[:, 2] < floor_cut_mm)
@@ -1222,7 +1526,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         A, B, C = A[keep], B[keep], C[keep]
     stats["triangles"] = int(len(A))
     stats["crop_s"] = round(time.monotonic() - t0, 2)
-    if not len(A):
+    if not len(A) or not shape:
         stats["seconds"] = round(time.monotonic() - t0, 2)
         return out
     h = SCAN_SAMPLE_MM
@@ -1233,26 +1537,26 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     S, own, rho = _scan_samples(A, B, C, h)
     stats.update(samples=int(len(S)), sample_mm=round(h, 2), rho_mm=round(rho, 3))
     tree = cKDTree(S, balanced_tree=False, compact_nodes=False)
-    nt = len(A)
+    tcen = (A + B + C) / 3.0                            # each triangle's centre and the radius around it that holds it
+    trad = np.sqrt(np.max([((X - tcen) ** 2).sum(1) for X in (A, B, C)], axis=0))
     stats["tree_s"] = round(time.monotonic() - t0, 2)
-    # ---- each geom's surface, sampled coarsely (pruning) and finely (measuring; the coarse samples too), own frame
-    shape = {}
-    for g in geoms:
-        if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH:
-            mid = m.geom_dataid[g]
-            pts = np.asarray(m.mesh_vert[m.mesh_vertadr[mid]:m.mesh_vertadr[mid] + m.mesh_vertnum[mid]], float) * 1000.0
-        else:
-            pts = _primitive_points(m, g)
-        if pts is None or not len(pts):
-            continue
-        coarse = _hull_samples(pts, SCAN_COARSE_MM, SCAN_COARSE_MM)
-        fine = np.vstack([_hull_samples(pts, *SCAN_FINE_MM), coarse])
-        dpar, par = cKDTree(coarse).query(fine)
-        shape[int(g)] = (coarse, fine, par, float(dpar.max()))       # each fine sample's coarse one, and how far
-    if not shape:
-        stats["seconds"] = round(time.monotonic() - t0, 2)
-        return out
-    cmax = max(v[3] for v in shape.values())
+    # each geom's coarse samples grouped by SCAN_CELL_MM cell, so the parts of a big geom far from the scan are skipped
+    cells = {}
+    for g, sh in shape.items():
+        key = _cell_keys(np.floor(sh.coarse / SCAN_CELL_MM).astype(np.int64))
+        uk, cell = np.unique(key, return_inverse=True)
+        lo_c, hi_c = np.full((len(uk), 3), np.inf), np.full((len(uk), 3), -np.inf)
+        np.minimum.at(lo_c, cell, sh.coarse)
+        np.maximum.at(hi_c, cell, sh.coarse)
+        mid = (lo_c + hi_c) / 2.0
+        crad = np.zeros(len(uk))
+        np.maximum.at(crad, cell, np.sqrt(((sh.coarse - mid[cell]) ** 2).sum(1)))
+        cells[g] = (mid, crad + 1e-6, cell.ravel())                 # the coarse samples by cell: centre, radius, whose
+    ccmax = max(sh.cover_c for sh in shape.values())
+    cfmax = max(sh.cover_f for sh in shape.values())
+    rb = 1000.0 * m.geom_rbound
+    rb[geoms] = np.maximum(rb[geoms], rad)
+    size_class = np.digitize(rb, SCAN_RBOUND_CLASSES_MM)              # the bounding-sphere test, small geoms apart
     fixed = np.array([g for g in robot if int(g) in shape and m.body_weldid[m.geom_bodyid[g]] == 0], int)
     moving = np.array([g for g in robot if int(g) in shape and m.body_weldid[m.geom_bodyid[g]] != 0], int)
     carried = np.r_[moving, [g for g in obj_geoms if int(g) in shape]].astype(int)
@@ -1263,72 +1567,185 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     def placed(g, X):
         return X @ d.geom_xmat[g].reshape(3, 3).T + d.geom_xpos[g] * 1000.0
 
-    def coarse_at(k, limit):
-        """Pose k: the geoms that may come within `limit` of the scan (the ones that never move only at the first
-        pose, unless every pose is asked for), and their coarse samples' distances to the nearest scan points (inf
-        where too far to matter)."""
-        pose(poses[k][1], poses[k][2])
-        gs = carried if poses[k][3] in held else moving
-        if k == 0 or per_pose:
-            gs = np.r_[fixed, gs].astype(int)
+    def set_of(ph, first_pose):
+        gs = carried if ph in held else moving
+        return np.r_[fixed, gs].astype(int) if first_pose else gs
+
+    def coarse_eval(gs, lim):
+        """The pose in d: for geoms gs, each searched out to lim[g] (mm): {geom: lower bound of its distance to the
+        scan}, the geoms that may come within their lim, their coarse samples' distances to the nearest scan points
+        (inf where too far), and the closest of those samples: (geom, sample, scan point) or None. The bounding spheres
+        are tested by size class, then the cells of coarse samples."""
+        lbs = {}
         if not len(gs):
-            return gs, []
-        r = 1000.0 * m.geom_rbound[gs]
-        dc, _ = tree.query(d.geom_xpos[gs] * 1000.0, k=1, distance_upper_bound=limit + rho + float(r.max()))
-        gs = gs[dc - r - rho < limit]
+            return lbs, gs, [], None
+        L = np.array([lim[int(g)] for g in gs])
+        r = rb[gs]
+        dc = np.full(len(gs), np.inf)
+        for c in np.unique(size_class[gs]):
+            sel = size_class[gs] == c
+            dc[sel] = tree.query(d.geom_xpos[gs[sel]] * 1000.0, k=1,
+                                 distance_upper_bound=float(L[sel].max()) + rho + float(r[sel].max()))[0]
+        bound_s = dc - r - rho
+        far = ~(bound_s < L)
+        for g, b, lm in zip(gs[far], bound_s[far], L[far]):
+            lbs[int(g)] = max(float(lm), float(b)) if np.isfinite(b) else float(lm)
+        gs, L = gs[~far], L[~far]
         if not len(gs):
-            return gs, []
-        P = [placed(g, shape[int(g)][0]) for g in gs]
+            return lbs, gs, [], None
+        cc = [placed(g, cells[int(g)][0]) for g in gs]
+        rc = np.concatenate([cells[int(g)][1] for g in gs])
+        top = float(L.max()) + rho + ccmax
+        dcc = tree.query(np.vstack(cc), k=1, distance_upper_bound=top + float(rc.max()))[0]
+        bnds = [lm + rho + shape[int(g)].cover_c for g, lm in zip(gs, L)]
+        hot = [h < bd + 1e-6 for h, bd in zip(np.split(dcc - rc, np.cumsum([len(x) for x in cc])[:-1]), bnds)]
+        sel = [h[cells[int(g)][2]] for g, h in zip(gs, hot)]
+        P = [placed(g, shape[int(g)].coarse[s]) for g, s in zip(gs, sel)]
         P = np.vstack(P) if len(P) > 1 else P[0]
-        dq, _ = tree.query(P, k=1, distance_upper_bound=limit + rho + cmax, workers=SCAN_WORKERS if len(P) > 2048 else 1)
-        return gs, np.split(dq, np.cumsum([len(shape[int(g)][0]) for g in gs])[:-1])
+        dq = [np.full(len(s), np.inf) for s in sel]
+        if len(P):
+            dp, ip = tree.query(P, k=1, distance_upper_bound=top, workers=SCAN_WORKERS if len(P) > SCAN_THREADED else 1)
+            for x, s, part in zip(dq, sel, np.split(dp, np.cumsum([int(s.sum()) for s in sel])[:-1])):
+                x[s] = part
+        close = None
+        if len(P) and np.isfinite(dp).any():
+            i = int(dp.argmin())
+            j = int(np.searchsorted(np.cumsum([int(s.sum()) for s in sel]), i, "right"))
+            close = (int(gs[j]), P[i], int(ip[i]), float(dp[i]))
+        for g, x, lm in zip(gs, dq, L):
+            fin = x[np.isfinite(x)]
+            b = float(fin.min()) - rho - shape[int(g)].cover_c if len(fin) else math.inf
+            lbs[int(g)] = max(0.0, min(b, float(lm)) if len(fin) < len(x) else b)
+        return lbs, gs, dq, close
 
-    def exact(Pc, ub):
-        """Exact distances from points Pc to the scan, and the closest points. The closest point lies on a triangle
-        with one of its own points within rho of it, so within ub + rho (ub: at least the distance) of Pc: every such
-        triangle is measured, about a million point-triangle pairs at a time."""
-        r = ub + rho + 1e-6
-        D, Q = np.full(len(Pc), np.inf), np.zeros((len(Pc), 3))
-        ends = np.cumsum(tree.query_ball_point(Pc, r, return_length=True))
-        i = 0
-        while i < len(Pc):
-            j = max(i + 1, int(np.searchsorted(ends, (ends[i - 1] if i else 0) + 4_000_000, "right")))
-            lists = tree.query_ball_point(Pc[i:j], r[i:j])
-            cnt = np.fromiter(map(len, lists), np.int64, len(lists))
-            ids = np.fromiter(itertools.chain.from_iterable(lists), np.int64, int(cnt.sum()))
-            key = np.unique(np.repeat(np.arange(i, j, dtype=np.int64), cnt) * nt + own[ids])
-            for a in range(0, len(key), 1_000_000):
-                rows, tri = key[a:a + 1_000_000] // nt, key[a:a + 1_000_000] % nt
-                X = closest_on_triangles(Pc[rows], A[tri], B[tri], C[tri])
-                dist = np.sqrt(((X - Pc[rows]) ** 2).sum(1))
-                o = np.lexsort((dist, rows))
-                o = o[np.r_[True, rows[o][1:] != rows[o][:-1]]]
-                better = dist[o] < D[rows[o]]
-                D[rows[o][better]], Q[rows[o][better]] = dist[o][better], X[o][better]
-            stats["pairs"] += int(len(key))
-            i = j
-        stats["refined"] += len(Pc)
-        return D, Q
+    def exact_geom(g, X, fi, da):
+        """Geom g (posed in d) against the scan near its candidate samples X (placed; fi their fine indices, da their
+        distances to the nearest scan points): the exact distance of its shape to the triangles any of them could be
+        closest to (within da + rho + cover_f of the sample: within that of the ball around them) and the closest
+        points (robot, scan). A polytope is measured by the faces of those samples (the closest point of a
+        face is within cover_f of one of the face's samples) (_shape_tris)."""
+        sh = shape[g]
+        r = float(da.max()) + rho + sh.cover_f + 1e-6
+        tg = d.geom_xpos[g] * 1000.0
+        xc = X.mean(0)                                  # every scan point within r of a candidate is this near its middle
+        ids = np.asarray(tree.query_ball_point(xc, float(np.sqrt(((X - xc) ** 2).sum(1)).max()) + r, return_sorted=False),
+                         np.int64)
+        stats["refined"] += len(X)
+        if not len(ids):
+            return math.inf, None, None
+        tu = np.unique(own[ids])
+        faces = np.unique(sh.owner[fi]) if sh.kind == "poly" else None
+        dd, pr, ps, n = _shape_tris(sh, d.geom_xmat[g].reshape(3, 3), tg, A[tu], B[tu], C[tu], tcen[tu], trad[tu],
+                                    r + 1.0, faces)
+        stats["pairs"] += n
+        return dd, pr, ps
 
-    # pass 1, coarse, every pose: a lower bound for each, and upper bounds (a coarse sample is a point of the robot
-    # and is measured with the rest), so the exact pass starts tight and takes the most promising poses first
-    lb, ubk, seen, same = np.full(len(poses), np.inf), np.full(len(poses), np.inf), {}, {}
-    for k in range(len(poses)):
+    def fine_eval(gs, dq, lim, cut_of, t, k, collect=False, stop_at=None, tol=SCAN_TOL_MM):
+        """The pose in d (index k, time t; k None for one in between): the fine samples of geoms gs whose coarse
+        sample (dq) could be within lim[g] (mm: how far each geom is searched), measured against the tree, then exact
+        distances for the geoms whose candidates could be closer than cut_of() - tol, closest first. Returns ({geom:
+        lower bound}, the pose's closest (d, geom, robot point, scan point) or None, rest): rest is how close the
+        candidates left could come when `stop_at` (a deadline) cut it short, else inf. With `collect`, near misses go
+        to `near`."""
+        nonlocal deadline
+        Ps, Gs, Fs = [], [], []
+        lbs = {}
+        for g, x in zip(gs, dq):
+            sh = shape[int(g)]
+            sel = (x - rho - sh.cover_c < lim[int(g)])[sh.par]
+            lbs[int(g)] = lim[int(g)]
+            if sel.any():
+                Ps.append(placed(g, sh.fine[sel]))
+                Gs.append(np.full(int(sel.sum()), g))
+                Fs.append(np.nonzero(sel)[0])
+        if not Ps:
+            return lbs, None, math.inf
+        P, owner, fidx = np.vstack(Ps), np.concatenate(Gs), np.concatenate(Fs)
+        stats["points"] += len(P)
+        lim_o = np.array([lim[int(g)] for g in owner])
+        da, ia = tree.query(P, k=1, distance_upper_bound=float(lim_o.max()) + rho + cfmax,
+                            workers=SCAN_WORKERS if len(P) > SCAN_THREADED else 1)
+        cov = np.array([shape[int(g)].cover_f for g in owner])
+        bnd = da - rho - cov
+        live = bnd < lim_o
+        P, owner, fidx, da, ia, bnd = P[live], owner[live], fidx[live], da[live], ia[live], bnd[live]
+        if collect:
+            c = np.nonzero(da < near_mm)[0]
+            if len(c):                                  # near misses: for each scan point, its closest robot point
+                c = c[np.argsort(da[c], kind="stable")]
+                c = c[np.unique(ia[c], return_index=True)[1]]
+                near.append((ia[c], P[c], da[c], np.full(len(c), t), owner[c], np.full(len(c), -1 if k is None else k),
+                             fidx[c]))
+                deadline = min(deadline, end - reserve)
+        done_mask = np.zeros(len(bnd), bool)
+        exact_g, pose_best, rest = {}, None, math.inf
+        first_bnd = {}                                  # each geom's candidates, the closest-looking geom first
+        for g in np.unique(owner):
+            first_bnd[int(g)] = float(bnd[owner == g].min())
+        for g in sorted(first_bnd, key=first_bnd.get):
+            cut = min(cut_of(), pose_best[0] if pose_best else math.inf) - tol
+            if pose_best is not None and pose_best[0] < SCAN_TOUCH_MM:
+                break                                   # it touches: nothing closer to find
+            if not first_bnd[g] < cut:
+                break                                   # in order: the geoms after it are no closer
+            if stop_at is not None and time.monotonic() > stop_at:
+                rest = max(0.0, first_bnd[g])
+                break
+            sel = np.nonzero((owner == g) & (bnd < cut))[0]
+            done_mask[sel] = True
+            dg, pr, ps = exact_geom(g, P[sel], fidx[sel], da[sel])
+            exact_g[g] = dg
+            if pr is not None and (pose_best is None or dg < pose_best[0]):
+                pose_best = (dg, g, pr, ps)
+        for g in np.unique(owner):                      # each geom's lower bound: its exact distance, its candidates
+            gsel = owner == g                           # not measured, and the samples beyond the limit
+            left = bnd[gsel & ~done_mask]
+            v = min(exact_g.get(int(g), math.inf), float(left.min()) if len(left) else math.inf, lim[int(g)])
+            lbs[int(g)] = max(0.0, v)
+        return lbs, pose_best, rest
+
+    # pass 1, coarse, every pose: a lower bound for each geom, and upper bounds (a coarse sample is a point of the
+    # robot, or of the polytope around a cylinder, and is measured with the rest), so the exact pass starts tight and
+    # takes the most promising poses first. The poses go spread out (every 16th, then those halfway between, ...): cut
+    # short on a busy computer, it has still looked along the whole path, not only its start. Each geom is looked for
+    # out to the limit plus half its move to the next pose and from the last, so what lies between poses is bounded
+    lb, ubk, seen, same, ub_at = np.full(len(poses), np.inf), np.full(len(poses), np.inf), {}, {}, {}
+    lbg = [None] * len(poses)                           # each pose: {geom: lower bound}
+    visited = np.zeros(len(poses), bool)
+    first = list(range(len(poses)))                     # standing still: the first pose of the stillness says it all
+    for k in range(1, len(poses)):
+        if np.array_equal(poses[k][1], poses[k - 1][1]) and np.array_equal(poses[k][2], poses[k - 1][2]):
+            first[k] = first[k - 1]
+    unique = sum(1 for k, k0 in enumerate(first) if k == k0)
+    # the boxes' share of the time: only once the second pass lists a near miss to fit one to, about what the fit needs
+    reserve = min(SCAN_RESERVE_SHARE * time_limit_s, max(SCAN_RESERVE_MIN_S, SCAN_FIT_S_PER_POSE * unique))
+    for k in _spread(len(poses)):
+        if first[k] != k:
+            same[k] = first[k]
+            continue
         if time.monotonic() > deadline:
             stats["truncated"] = True
             break
-        if k and np.array_equal(poses[k][1], poses[k - 1][1]) and np.array_equal(poses[k][2], poses[k - 1][2]):
-            same[k] = same.get(k - 1, k - 1)            # standing still: the pose before says it all
-            continue
-        gs, dq = coarse_at(k, SCAN_CUT_MM if per_pose else max(near_mm, min(SCAN_CUT_MM, float(ubk.min()))))
-        if len(gs):
-            lb[k] = max(0.0, min(float(x.min()) - rho - shape[int(g)][3] for g, x in zip(gs, dq)))
-            ubk[k] = min(float(x.min()) for x in dq)
-            seen[k] = (gs, dq)                        # pass 2 visits only these, with a tighter bound: reused
+        limit = SCAN_CUT_MM if per_pose else max(near_mm, min(SCAN_CUT_MM, float(ubk.min())))
+        pose(poses[k][1], poses[k][2])
+        gs = set_of(poses[k][3], k == 0 or per_pose)
+        lbs, gk, dq, close = coarse_eval(gs, {int(g): limit + half[k, gi[int(g)]] for g in gs})
+        visited[k] = True
+        lbg[k] = lbs
+        if lbs:
+            lb[k] = min(lbs.values())
+        if len(gk):
+            ubk[k] = min((float(x.min()) for x in dq if len(x)), default=math.inf)
+            seen[k] = (gk, dq)                        # pass 2 visits only these, with a tighter bound: reused
+            if close is not None:
+                ub_at[k] = close
     ub = float(ubk.min())
+    cut1 = bool(stats["truncated"])
     stats["pass1_s"] = round(time.monotonic() - t0 - stats["prepare_s"], 2)
-    # pass 2, fine and exact
-    for k in np.argsort(lb, kind="stable"):
+    # pass 2, fine and exact; cut short, `rest` is how close what it didn't measure could come at most
+    order2, rest, refined, limit = np.argsort(lb, kind="stable"), math.inf, 0, SCAN_CUT_MM
+    vpose = lb.copy()                                   # each pose's lower bound, exact where measured
+    for n2, k in enumerate(order2):
         bound = min(SCAN_CUT_MM, float(ubk[k])) if per_pose else min(SCAN_CUT_MM, ub, best["d"])
         limit = max(near_mm, bound)
         if not lb[k] < limit:
@@ -1336,90 +1753,923 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
                 continue
             break
         if time.monotonic() > deadline:
-            stats["truncated"] = True
+            rest = float(lb[k])                         # in order: the poses after it are no closer
             break
+        if k not in seen:
+            continue
         t = poses[k][0]
         pose(poses[k][1], poses[k][2])
         gs, dq = seen.pop(k)
-        Ps, Gs = [], []
-        for g, x in zip(gs, dq):
-            _, fine, par, cm = shape[int(g)]
-            sel = (x - rho - cm < limit)[par]
-            if sel.any():
-                Ps.append(placed(g, fine[sel]))
-                Gs.append(np.full(int(sel.sum()), g))
-        if not Ps:
-            continue
-        P, owner = np.vstack(Ps), np.concatenate(Gs)
-        stats["points"] += len(P)
-        da, ia = tree.query(P, k=1, distance_upper_bound=limit + rho, workers=SCAN_WORKERS if len(P) > 2048 else 1)
-        live = da - rho < limit
-        P, owner, da, ia = P[live], owner[live], da[live], ia[live]
-        c = np.nonzero(da < near_mm)[0]
-        if len(c):                                      # near misses: for each scan point, its closest robot point
-            c = c[np.argsort(da[c], kind="stable")]
-            c = c[np.unique(ia[c], return_index=True)[1]]
-            near.append((ia[c], P[c], da[c], np.full(len(c), t), owner[c]))
-        order = np.argsort(da, kind="stable")
-        pose_best, done = math.inf, 0
-        while done < len(order):                        # nearest first, while a point could still be the closest
-            if (pose_best if per_pose else best["d"]) < SCAN_TOUCH_MM:
-                break                                   # it touches: nothing closer to find
-            cut = min(bound, pose_best) if per_pose else min(SCAN_CUT_MM, ub, best["d"])
-            step = 128 if done == 0 else 1024             # the closest few first: they settle the bound
-            idx = order[done:done + step]
-            idx = idx[da[idx] - rho < cut - SCAN_TOL_MM]
-            if not len(idx):
-                break
-            if time.monotonic() > deadline:
-                stats["truncated"] = True
-                break
-            done += step
-            D, Q = exact(P[idx], da[idx])
-            i0 = int(D.argmin())
-            pose_best = min(pose_best, float(D[i0]))
-            if D[i0] < best["d"]:
-                best = {"d": float(D[i0]), "t": t, "g": int(owner[idx[i0]]), "q": Q[i0], "p": P[idx[i0]]}
-        if per_pose and pose_best < SCAN_CUT_MM:
-            out["poses"][k][1] = round(pose_best, 2)
+        cut_of = (lambda: bound) if per_pose else (lambda: min(SCAN_CUT_MM, ub, best["d"]))
+        lbs, pb, r_in = fine_eval(gs, dq, {int(g): limit + half[k, gi[int(g)]] for g in gs}, cut_of, t, k,
+                                  collect=True, stop_at=deadline)
+        for g, v in lbs.items():
+            lbg[k][g] = max(lbg[k].get(g, 0.0), v)
+        vpose[k] = max(lb[k], min(lbg[k].values()))
+        if pb is not None and pb[0] < best["d"]:
+            best = {"d": pb[0], "t": t, "g": pb[1], "q": pb[3], "p": pb[2]}
+        if r_in < math.inf:                             # cut short inside this pose: the next ones are no closer
+            rest = min(r_in, float(lb[order2[n2 + 1]]) if n2 + 1 < len(order2) else math.inf)
+            break
+        refined += 1
+        if per_pose and pb is not None and pb[0] < SCAN_CUT_MM:
+            out["poses"][k][1] = round(pb[0], 2)
     for k, k0 in same.items() if per_pose else ():
         out["poses"][k][1] = out["poses"][k0][1]
     stats["pass2_s"] = round(time.monotonic() - t0 - stats["prepare_s"] - stats["pass1_s"], 2)
-    if best["d"] < SCAN_CUT_MM:
-        b = m.geom_bodyid[best["g"]]
-        out["min_clearance_mm"] = round(best["d"], 1)
-        out["at"] = {"t": round(float(best["t"]), 2), "link": "object" if b == obj_body else m.body(b).name,
-                     "point": [round(float(v), 1) for v in to_world(world, best["q"])]}
-    out["regions"] = _scan_regions(world, near, S, best if best["d"] < near_mm else None, m, obj_body, floor_cut_mm)
+    final = best["d"] < SCAN_TOUCH_MM or (not cut1 and rest >= best["d"] - SCAN_TOL_MM)
+    # pass 3, between the poses: a move whose geoms could come closer than the closest found is measured in between.
+    # Each such move keeps, per geom, the scanned triangles within the closest found plus its whole move L of it at
+    # either end (every point of the geom stays within L/2 of where it was at one end), so anywhere along the move the
+    # rest are at least the closest found plus L/2 away, and a pose in between is measured exactly against those alone.
+    # What it keeps is a lower bound of the whole path (lo_path): the closest measured, the moves still queued and the
+    # lowest bound of a move a geom was left alone in (low3: each no closer than the closest found less
+    # SCAN_BETWEEN_TOL_MM), never the closest measured alone
+    lo_path, t3, evals = best["d"], time.monotonic(), 0
+    low3 = [math.inf]
+    end3 = max(deadline, end - reserve / 2.0)          # the closest answer first: half the boxes' share if need be
+    if final and best["d"] >= SCAN_TOUCH_MM:
+        target = min(SCAN_CUT_MM, best["d"])
+        heap, seq = [], itertools.count()
+
+        def near_tris(g, r):
+            """The pose in d: the scanned triangles that could be within r of geom g (a scan point of theirs within
+            r + rho of its bounding sphere)."""
+            ids = np.asarray(tree.query_ball_point(d.geom_xpos[g] * 1000.0, shape[g].rad + r + rho, return_sorted=False),
+                             np.int64)
+            return np.unique(own[ids]) if len(ids) else np.zeros(0, np.int64)
+
+        def dist_to(g, tr, fc_, c):
+            """The pose in d: geom g's exact distance to the scanned triangles tr (inf beyond c), by its faces fc_ (a
+            polytope's; None: all), the closest points (robot, scan) and each triangle's and face's lower bound."""
+            bnd_t = np.full(len(tr), math.inf)
+            bnd_f = None if fc_ is None else np.full(len(fc_), math.inf)
+            if not len(tr):
+                return math.inf, None, None, bnd_t, bnd_f
+            dd, pr, ps, n = _shape_tris(shape[g], d.geom_xmat[g].reshape(3, 3), d.geom_xpos[g] * 1000.0,
+                                        A[tr], B[tr], C[tr], tcen[tr], trad[tr], c, faces=fc_, bounds=bnd_t,
+                                        fbounds=bnd_f)
+            stats["pairs"] += n
+            return dd, pr, ps, bnd_t, bnd_f
+
+        def ib(la, lb_, L, gs):
+            """How close a move's geoms could come between its two ends: (the closest, the geoms that could come
+            closer than the closest found less SCAN_BETWEEN_TOL_MM; the others keep clear of that all along the move,
+            and of every part of it, so the halves need not look at them)."""
+            v, keep, cut = math.inf, [], min(target, best["d"]) - SCAN_BETWEEN_TOL_MM
+            for g in gs:
+                a, b = la.get(int(g)), lb_.get(int(g))
+                Lg = float(L[gi[int(g)]])
+                if a is None and b is None:
+                    continue
+                w = (a + b - Lg) / 2.0 if a is not None and b is not None else (a if b is None else b) - Lg
+                if w < cut:
+                    v = min(v, w)
+                    keep.append(int(g))
+                else:
+                    low3[0] = min(low3[0], w)           # no closer than this there: the lower bound counts it
+            return v, keep
+
+        def push(pa, la, sa, pb_, lb_, sb, gs, tris, c):
+            v, gs = ib(la, lb_, motion.bound(sa, sb), gs)
+            if gs:
+                heapq.heappush(heap, (v, next(seq), pa, la, sa, pb_, lb_, sb, gs, tris, c))
+
+        for k in range(len(poses) - 1):
+            a, b = first[k], first[k + 1]
+            if a == b or lbg[a] is None or lbg[b] is None:
+                continue
+            v, gs = ib(lbg[a], lbg[b], Lmove[k], set_of(poses[k][3], False))
+            if not gs:
+                continue
+            tris, c = {}, {}
+            for at in (k, k + 1):
+                pose(poses[at][1], poses[at][2])
+                for g in gs:
+                    Lg = float(Lmove[k][gi[g]])
+                    t_ = near_tris(g, min(target, best["d"]) + Lg)
+                    tris[g] = np.union1d(tris[g], t_) if g in tris else t_
+                    c[g] = min(target, best["d"]) + Lg / 2.0          # the rest: at least this far all along
+            tris = {g: (t_, None) for g, t_ in tris.items()}          # every face to start with
+            pa = (poses[k][0], poses[k][1], poses[k][2], poses[k][3])
+            pb_ = (poses[k + 1][0], poses[k + 1][1], poses[k + 1][2], poses[k][3])
+            heapq.heappush(heap, (v, next(seq), pa, lbg[a], states[a], pb_, lbg[b], states[b], gs, tris, c))
+        while heap and heap[0][0] < min(target, best["d"]) - SCAN_BETWEEN_TOL_MM and best["d"] >= SCAN_TOUCH_MM:
+            if evals >= SCAN_MAX_BETWEEN or (evals % 8 == 0 and time.monotonic() > end3):   # the clock every 8th
+                break
+            v, _, pa, la, sa, pb_, lb_, sb, gs, tris, c = heapq.heappop(heap)
+            o = (pa[2] + pb_[2]) / 2.0
+            o[3:] /= max(float(np.linalg.norm(o[3:])), 1e-9)
+            pm = ((pa[0] + pb_[0]) / 2.0, (pa[1] + pb_[1]) / 2.0, o, pa[3])
+            pose(pm[1], pm[2])
+            sm = motion.state(d)
+            lm, Lc = {}, (motion.bound(sa, sm), motion.bound(sm, sb))
+            kids = ({}, {})
+            for g in gs:
+                tr, fc_ = tris[g]
+                if fc_ is None and shape[g].kind == "poly":
+                    fc_ = np.arange(len(shape[g].tris))
+                dg, pr, ps, bt, bf = dist_to(g, tr, fc_, c[g])
+                lm[g] = min(dg, c[g])                   # nothing else comes within c[g] anywhere along the move
+                if pr is not None and dg < best["d"]:
+                    best = {"d": dg, "t": pm[0], "g": g, "q": ps, "p": pr}
+                for kid, L in zip(kids, Lc):            # a half keeps the triangles and faces that could come within
+                    lim_ = c[g] + float(L[gi[g]])       # c[g] in it: each point stays within its move of the middle
+                    kid[g] = (tr[bt < lim_], None if fc_ is None else fc_[bf < lim_])
+            evals += 1
+            push(pa, la, sa, pm, lm, sm, gs, kids[0], c)
+            push(pm, lm, sm, pb_, lb_, sb, gs, kids[1], c)
+        # a lower bound of the whole path: the closest measured, the moves still queued and those left alone, each no
+        # closer than its bound (all within SCAN_BETWEEN_TOL_MM of the closest found unless time ran out)
+        lo_path = max(0.0, min(best["d"], min((h_[0] for h_ in heap), default=math.inf), low3[0]))
+        if heap and heap[0][0] < min(target, best["d"]) - SCAN_BETWEEN_TOL_MM and best["d"] >= SCAN_TOUCH_MM:
+            final = False                               # out of time between the poses: what is left is a bound (every
+            stats["between_cut"] = True                 # move not in the heap is no closer than best less the tolerance)
+            lo3, left3 = lo_path, len(heap)
+    stats.update(between_poses=evals, between_s=round(time.monotonic() - t3, 2))
+    # cut short, the answer never claims more room than was measured: the closest distance measured anywhere (pass 2's
+    # exact ones, or pass 1's coarse samples, which are points of the robot too) is the most the arm keeps clear
+    stats.update(truncated=not final, limit_s=time_limit_s, poses_checked=int(visited.sum()), unique_poses=unique)
+    if final and rest < near_mm:                        # every place closer than near_mm isn't listed, the closest is
+        stats["unlisted_mm"] = floor_mm(max(0.0, rest - float(half.max(initial=0.0))))
+    close = best
+    if not final:
+        if ub < best["d"] and ub_at:
+            k = min(ub_at, key=lambda i: ubk[i])
+            g, p, j, _ = ub_at[k]
+            close = {"d": float(ubk[k]), "t": poses[k][0], "g": g, "q": S[j], "p": p}
+        if cut1:
+            stats["lower_mm"] = None
+        elif stats.get("between_cut"):                  # every pose measured; the moves left bounded by the third pass
+            stats["lower_mm"] = floor_mm(lo3) if lo3 > 0.0 else None
+        else:                                           # every pose bounded, and the moves between them
+            v = np.minimum(vpose, rest)
+            moves = [(v[first[k]] + v[first[k + 1]] - float(Lmove[k].max(initial=0.0))) / 2.0
+                     for k in range(len(poses) - 1) if first[k] != first[k + 1]]
+            lower = min([float(v.min())] + moves + [best["d"]])
+            stats["lower_mm"] = floor_mm(lower) if lower > 0.0 else None
+        stats["part_clear"] = bool(close["d"] >= SCAN_CUT_MM and _part_clear(
+            [(k, lbg[k]) for k in np.nonzero(visited)[0] if lbg[k] is not None], half, gi))
+        if cut1:                                        # at this pace: pass 1 for every pose, and pass 2 as long
+            need = stats["prepare_s"] + 2.0 * stats["pass1_s"] * unique / max(1, int(visited.sum()))   # (it took 0.5-5x)
+        elif stats.get("between_cut"):                  # and the moves left: at least two poses each
+            need = stats["prepare_s"] + stats["pass1_s"] + stats["pass2_s"] + \
+                stats["between_s"] * (1.0 + 2.0 * left3 / max(1, evals))
+        else:
+            todo = int(np.sum(lb < limit))
+            need = stats["prepare_s"] + stats["pass1_s"] + stats["pass2_s"] * todo / max(1, refined)
+        stats["need_s"] = round(need, 1)
+    shown = min(lo_path, close["d"]) if final else close["d"]
+    if final and lo_path < SCAN_CUT_MM and "g" not in close:     # nothing measured within SCAN_CUT_MM, the motion
+        stats["beyond_mm"] = floor_mm(lo_path)                   # between the poses bounded only to just short of it
+    elif close["d"] < SCAN_CUT_MM or (final and lo_path < SCAN_CUT_MM):
+        b = m.geom_bodyid[close["g"]]
+        out["min_clearance_mm"] = _touch_floor(shown)               # rounded down: never more room than measured
+        out["at"] = {"t": round(float(close["t"]), 2), "link": "object" if b == obj_body else m.body(b).name,
+                     "point": [round(float(v), 1) for v in to_world(world, close["q"])]}
+    ids = np.array(sorted(shape), int)                  # the shapes' bounding spheres at every pose, for the boxes
+    col, rr = np.array([gi[g] for g in ids]), np.array([shape[g].rad for g in ids])
+    pos_of = {int(g): j for j, g in enumerate(ids)}
+
+    fit_model = []                                      # the collision model with a box to fit (made when needed)
+
+    def fit_box(c, h, Rb):
+        """The collision model with the box (centre c, half sizes h, axes Rb; robot base frame, mm) added as its last
+        geom (made once): (model, data, box geom, put(q, o) posing the robot and the object with the box in place)."""
+        if not fit_model:
+            spec = mujoco.MjSpec.from_string(robot_xml)
+            gb = spec.worldbody.add_body().add_geom()   # last: every robot geom keeps its index
+            gb.type, gb.size, gb.contype, gb.conaffinity = mujoco.mjtGeom.mjGEOM_BOX, [0.001] * 3, 0, 0
+            m2 = spec.compile()
+            fit_model.extend([m2, mujoco.MjData(m2), m2.ngeom - 1])
+        m2, d2, bg = fit_model
+        m2.geom_size[bg] = h / 1000.0                   # its size in the model, its place in each pose's data (a geom
+        m2.geom_rbound[bg] = float(np.linalg.norm(h)) / 1000.0     # on a body without joints isn't moved by kinematics)
+        m2.geom_aabb[bg] = np.r_[0.0, 0.0, 0.0, h / 1000.0]
+
+        def put(q, o):
+            pose(q, o)
+            d2.qpos[:] = d.qpos
+            mujoco.mj_kinematics(m2, d2)
+            d2.geom_xpos[bg] = c / 1000.0
+            d2.geom_xmat[bg] = np.asarray(Rb, float).reshape(-1)
+        return m2, d2, bg, put
+
+    def box_path(c, h, Rb, target, stop_at, mask=None):
+        """How near the swept path comes to a solid box (centre c, half sizes h, axes Rb; robot base frame, mm), the
+        motion between poses counted as in pass 3, each pose measured by MuJoCo's own distance between the box and
+        each geom near it (mj_geomDistance, as the simulation measures its grey boxes): (a lower bound of it, or None
+        when `stop_at` passed first; (the closest measured, its robot point)). It stops at the first pose found closer
+        than target less SCAN_FIT_TOL_MM (a robot point to trim the box against); else it bounds every move to that.
+        With `mask` (one bool a pose) only those poses, and the moves between two of them, count."""
+        m2, d2, bg, put = fit_box(c, h, Rb)
+        ft = np.zeros(6)
+        use = None if mask is None else {first[k] for k in np.nonzero(mask)[0]}
+        found = [math.inf, None]
+        cut = target - SCAN_FIT_TOL_MM
+        loc = (centres[:, col, :] - c) @ Rb
+        lbm = np.sqrt((np.maximum(np.abs(loc) - h, 0.0) ** 2).sum(-1)) - rr        # [pose, shape] lower bounds
+
+        def at(gs, lim, row=None):
+            out = {}
+            for g in gs:
+                if row is not None and row[pos_of[g]] >= lim[g]:
+                    out[g] = float(row[pos_of[g]])
+                    continue
+                v = 1000.0 * mujoco.mj_geomDistance(m2, d2, g, bg, lim[g] / 1000.0, ft)
+                out[g] = min(v, lim[g])                 # beyond lim: it says lim
+                if v < min(found[0], lim[g]):
+                    found[0], found[1] = v, ft[:3] * 1000.0
+            return out
+
+        lbb, low = [None] * len(poses), math.inf       # each pose's bounds; the lowest bound left standing
+        for k, (_, q, o, ph) in enumerate(poses):
+            if first[k] != k or (use is not None and k not in use):
+                continue
+            if k % 32 == 0 and time.monotonic() > stop_at:
+                return None, found
+            gs = [int(g) for g in set_of(ph, k == 0)]
+            lim = {g: target + half[k, gi[g]] + 1.0 for g in gs}
+            row = lbm[k]
+            if any(row[pos_of[g]] < lim[g] for g in gs):
+                put(q, o)
+            lbb[k] = at(gs, lim, row)
+            if found[0] < cut:
+                return found[0], found
+            low = min(low, min(lbb[k].values(), default=math.inf))
+        heap, seq, evals = [], itertools.count(), 0
+
+        def split(la, lb_, L, gs):                      # as pass 3's ib: the geoms that could come closer than cut
+            v, keep = math.inf, []
+            for g in gs:
+                a, b = la.get(g), lb_.get(g)
+                if a is None and b is None:
+                    continue
+                Lg = float(L[gi[g]])
+                w = (a + b - Lg) / 2.0 if a is not None and b is not None else (a if b is None else b) - Lg
+                if w < cut:
+                    v = min(v, w)
+                    keep.append(g)
+                else:
+                    nonlocal_low[0] = min(nonlocal_low[0], w)
+            return v, keep
+
+        nonlocal_low = [low]
+        for k in range(len(poses) - 1):
+            a, b = first[k], first[k + 1]
+            if a == b or (mask is not None and not (mask[k] and mask[k + 1])):
+                continue
+            v, gs = split(lbb[a], lbb[b], Lmove[k], [int(g) for g in set_of(poses[k][3], False)])
+            if gs:
+                heapq.heappush(heap, (v, next(seq), poses[k], lbb[a], states[a], poses[k + 1], lbb[b], states[b], gs))
+        while heap:
+            if evals % 8 == 0 and time.monotonic() > stop_at:
+                return None, found
+            if evals >= SCAN_MAX_BETWEEN:
+                return heap[0][0], found               # not bounded to the target in time: what is left is a bound
+            _, _, pa, la, sa, pb_, lb_, sb, gs = heapq.heappop(heap)
+            o = (pa[2] + pb_[2]) / 2.0
+            o[3:] /= max(float(np.linalg.norm(o[3:])), 1e-9)
+            pm = ((pa[0] + pb_[0]) / 2.0, (pa[1] + pb_[1]) / 2.0, o, pa[3])
+            put(pm[1], pm[2])
+            sm = motion.state(d)
+            Lh = motion.bound(sa, sb) / 2.0
+            lm = at(gs, {g: target + float(Lh[gi[g]]) + 1.0 for g in gs})
+            evals += 1
+            if found[0] < cut:
+                return found[0], found
+            nonlocal_low[0] = min(nonlocal_low[0], min(lm.values()))
+            for x in ((pa, la, sa, pm, lm, sm), (pm, lm, sm, pb_, lb_, sb)):
+                v, keep = split(x[1], x[4], motion.bound(x[2], x[5]), gs)
+                if keep:
+                    heapq.heappush(heap, (v, next(seq), *x, keep))
+        return min(found[0], nonlocal_low[0]), found
+
+    # what no plan can move (the planner's alternatives are for the approach, the carry, the release's opening and the
+    # way back): the arm in its starting pose, going down to the object, grasping and lifting it (from the "above the
+    # object" marker to "lifted"), setting it down and letting go; and the object where it starts and ends
+    marks = {str(mk.get("label")): float(mk["t"]) for mk in doc.get("markers") or []
+             if isinstance(mk, dict) and isinstance(mk.get("t"), (int, float))}
+    t_above, t_lifted = marks.get("above the object"), marks.get("lifted")
+    fixed_moves = {
+        "start": np.arange(len(poses)) == 0,
+        "pick": np.array([ph in ("grasp", "lift") or (t_above is not None and t_lifted is not None
+                                                     and t_above - 1e-6 <= t <= t_lifted + 1e-6)
+                          for t, _, _, ph in poses], bool),
+        "place": np.array([ph in ("place", "release") for _, _, _, ph in poses], bool)}
+
+    def to_object(k, c, h, Rb):
+        """MuJoCo's distance (mm, capped at 10) between a box and the object as it is at pose k."""
+        m2, d2, bg, put = fit_box(c, h, Rb)
+        ft = np.zeros(6)
+        put(poses[k][1], poses[k][2])
+        return min(1000.0 * mujoco.mj_geomDistance(m2, d2, int(g), bg, 0.01, ft) for g in obj_geoms)
+
+    def must_reach(c, h, Rb, stop_at, arm=True, point=None):
+        """What a box (centre c, half sizes h, axes Rb; robot base frame, mm) would meet that no plan can move, or
+        None: "object" or "object_end" when it meets the object where it starts or where it is set down and the
+        scan's own closest point there (`point`, base frame) is on it or next to it (within SCAN_ON_OBJECT_MM: the
+        scan holds the object itself, or something within 2 mm of it), "object_box" or "object_end_box" when only
+        the box reaches it; with `arm`, "start" (the arm in its starting pose), "pick" (the arm going down to the object,
+        grasping and lifting it) or "place" (setting it down and letting go); False when `stop_at` passed first.
+        Meeting is coming closer than SCAN_TOUCH_MM, by MuJoCo's own distance (as the simulation measures its grey
+        boxes), the motion between poses counted (box_path)."""
+        for k, what in ((0, "object"), (len(poses) - 1, "object_end")) if len(obj_geoms) else ():
+            if to_object(k, c, h, Rb) < SCAN_TOUCH_MM:
+                on = point is not None and to_object(k, np.asarray(point, float), np.full(3, 0.05), np.eye(3)) \
+                    < SCAN_ON_OBJECT_MM
+                return what if on else f"{what}_box"
+        for what in ("start", "pick", "place") if arm else ():
+            if not fixed_moves[what].any():
+                continue
+            lo_b, _ = box_path(c, h, Rb, SCAN_TOUCH_MM, stop_at, mask=fixed_moves[what])
+            if lo_b is None:
+                return False
+            if lo_b < SCAN_TOUCH_MM - SCAN_FIT_TOL_MM:
+                return what
+        return None
+
+    t1 = time.monotonic()
+
+    def refine(K, G, FI, P, D):
+        """Exact distances for near misses (pose index K, geom G, fine sample FI, robot point P, distance to the nearest
+        scan point D), a pose and geom at a time: each the distance of that geom's shape there to the scan near it,
+        and the closest points (scan, robot)."""
+        Dx, Qx, Px = D.astype(float).copy(), np.zeros((len(D), 3)), P.copy()
+        for k in np.unique(K):
+            if k < 0:
+                continue
+            pose(poses[int(k)][1], poses[int(k)][2])
+            for g in np.unique(G[K == k]):
+                sel = np.nonzero((K == k) & (G == g))[0]
+                dg, pr, ps = exact_geom(int(g), P[sel], FI[sel], D[sel])
+                if pr is not None:
+                    Dx[sel], Qx[sel], Px[sel] = dg, ps, pr
+        return Dx, Qx, Px
+
+    out["regions"] = _scan_regions(world, near, S, best if best["d"] < near_mm else None, m, obj_body, floor_cut_mm, stats,
+                                   refine=refine, rho=rho, final=final and lo_path >= SCAN_TOUCH_MM,
+                                   deadline=end, lo=lo_path if final else None,
+                                   cover={g: sh.cover_f for g, sh in shape.items()},
+                                   path_box=lambda boxes: _path_to_boxes(boxes, poses, pose, d, m, shape, half, gi,
+                                                                         fixed, moving, carried, held, end))
+    stats["regions_s"] = round(time.monotonic() - t1, 2)
+    if out["regions"]:                                  # a row measured closer than the check's closest (the second
+        r0 = min(out["regions"], key=lambda r: r["_d"])  # pass stops at a touch; a pass cut short): that is the closest
+        if r0["_d"] < (shown if out["min_clearance_mm"] is not None else math.inf) - 1e-9:
+            out["min_clearance_mm"] = _touch_floor(r0["_d"])
+            out["at"] = {"t": r0["t"], "link": r0["link"], "point": list(r0["point"])}
+    if out["regions"]:
+        t1 = time.monotonic()
+        _fit_boxes(world, out["regions"], poses, pose, d, m, shape, fixed, moving, carried, held, end, stats,
+                   verify=box_path, must=must_reach)
+        stats["fit_s"] = round(time.monotonic() - t1, 2)
+        out["regions"] = _already_boxed(world, out["regions"], stats)
     stats["seconds"] = round(time.monotonic() - t0, 2)
     return out
 
 
-def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm) -> list:
-    """The near misses grouped into regions (scan points within 30 mm of each other), the closest SCAN_MAX_REGIONS, each
-    as a box in the world frame along the mount surface's axes: the scanned surface within SCAN_GROW_MM of its points,
-    at least SCAN_MIN_BOX_MM thick (grown away from the arm: a scan shows only the side facing it) and down to the
-    surface when it, or the scan under it, nearly reaches it (a thing standing there)."""
+def _part_clear(bounds, half, gi, cut=SCAN_CUT_MM) -> bool:
+    """Whether the part of the path a check cut short looked at stays beyond `cut`: at each pose looked at
+    ((index, {geom: lower bound})), every geom's bound less half the larger of its moves next to it (half[pose, gi[geom]]),
+    as every point of the arm between two poses is within half the move of one of them. Its bounds at the poses alone
+    don't say that: a pose 50.5 mm clear with a 3 mm move to the next can pass 49 mm from the scan in between."""
+    if not bounds:
+        return False
+    return all(v - float(half[k, gi[int(g)]]) >= cut for k, lbs in bounds for g, v in lbs.items())
+
+
+def _spread(n: int, step: int = 16) -> list:
+    """0..n-1 in an order that covers the whole range early: every `step`-th, then those halfway between, and so on."""
+    seen, out = np.zeros(n, bool), []
+    while step >= 1:
+        idx = np.arange(0, n, step)
+        idx = idx[~seen[idx]]
+        seen[idx] = True
+        out.extend(idx.tolist())
+        step //= 2
+    return out
+
+
+def _box_dist(X, lo, hi) -> np.ndarray:
+    """Distances (mm) from points to the axis-aligned box [lo, hi]; 0 inside it."""
+    e = np.maximum(np.maximum(lo - X, X - hi), 0.0)
+    return np.sqrt((e * e).sum(-1))
+
+
+def _path_to_boxes(box, poses, pose, d, m, shape, half, gi, fixed, moving, carried, held, deadline=math.inf) -> float:
+    """How near the swept path comes to a box (base frame {center, half, yaw_deg}), at most (mm): the closest any
+    robot surface sample comes to it at any pose (each a real point, so the path comes at least that near; inf when
+    nothing comes within 200 mm or time runs out)."""
+    c = np.asarray(box["center"], float)
+    h = np.asarray(box["half"], float)
+    R = _rz(float(box.get("yaw_deg", 0.0)))
+    best, prev = 200.0, None
+    for k, (_, q, o, ph) in enumerate(poses):
+        if prev is not None and np.array_equal(q, prev[0]) and np.array_equal(o, prev[1]):
+            continue
+        if time.monotonic() > deadline:
+            return math.inf
+        prev = (q, o)
+        pose(q, o)
+        gs = carried if ph in held else moving
+        if k == 0:
+            gs = np.r_[fixed, gs].astype(int)
+        for g in gs:
+            sh = shape.get(int(g))
+            if sh is None:
+                continue
+            ctr = (d.geom_xpos[g] * 1000.0 - c) @ R
+            if float(np.linalg.norm(np.maximum(np.abs(ctr) - h, 0.0))) - sh.rad >= best:
+                continue
+            X = ((sh.coarse @ d.geom_xmat[g].reshape(3, 3).T + d.geom_xpos[g] * 1000.0) - c) @ R
+            dc = np.sqrt((np.maximum(np.abs(X) - h, 0.0) ** 2).sum(1))
+            hot = (dc - (sh.cover_c - sh.cover_f) < best)[sh.par]
+            if not hot.any():
+                continue
+            Y = ((sh.fine[hot] @ d.geom_xmat[g].reshape(3, 3).T + d.geom_xpos[g] * 1000.0) - c) @ R
+            best = min(best, float(np.sqrt((np.maximum(np.abs(Y) - h, 0.0) ** 2).sum(1)).min()))
+    return best if best < 200.0 else math.inf
+
+
+def _trim_box(P, lo, hi, need):
+    """Shrink the box lo..hi (copies) until every point P is at least `need` from it (to SCAN_FIT_TOL_MM): the nearest
+    offending point moves the face that costs the box least; the box only shrinks, so a point once clear stays clear.
+    None when that would leave it thinner than SCAN_FIT_MIN_MM."""
+    lo, hi, live = lo.copy(), hi.copy(), P
+    for _ in range(400):
+        dd = _box_dist(live, lo, hi) if len(live) else np.zeros(0)
+        bad = dd < need - SCAN_FIT_TOL_MM
+        if not bad.any():
+            return lo, hi
+        live, dd = live[bad], dd[bad]
+        x = live[int(np.argmin(dd))]
+        best = None
+        for i in range(3):
+            span = hi[i] - lo[i]
+            for side, new in (("lo", x[i] + need), ("hi", x[i] - need)):
+                if side == "lo" and lo[i] < new <= hi[i] - SCAN_FIT_MIN_MM:
+                    cost = (new - lo[i]) / span
+                elif side == "hi" and lo[i] + SCAN_FIT_MIN_MM <= new < hi[i]:
+                    cost = (hi[i] - new) / span
+                else:
+                    continue
+                if best is None or cost < best[0]:
+                    best = (cost, i, side, new)
+        if best is None:
+            return None
+        _, i, side, new = best
+        if side == "lo":
+            lo[i] = new
+        else:
+            hi[i] = new
+    return None
+
+
+# why no box is offered where the arm must go (scan_clearance's must_reach): a box there would fail the simulation
+MUST_REACH = {
+    "object": "the scan holds the object itself here (or something within 2 mm of it), where it starts: the arm must "
+              "reach it to pick it up, so no box is offered",
+    "object_end": "the scan holds something where the object is set down: the arm must reach there, so no box is "
+                  "offered; move the place spot or what is there",
+    "object_box": "a box over this part of the scan would reach the object where it starts, which the arm must reach, "
+                  "so none is offered; move the robot or the thing",
+    "object_end_box": "a box over this part of the scan would reach where the object is set down, which the arm must "
+                      "reach, so none is offered; move the place spot or the thing",
+    "start": "the arm touches the scan here in its starting pose, which no plan changes, so no box is offered; move the "
+             "robot or the thing",
+    "pick": "the arm must reach here to go down to the object, grasp it and lift it (straight moves no plan changes), so "
+            "no box is offered; move the pick spot or the thing",
+    "place": "the arm must reach here to set the object down and let go (moves no plan changes), so no box is offered; "
+             "move the place spot or the thing",
+}
+
+
+def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried, held, deadline=math.inf, stats=None,
+               verify=None, must=None):
+    """Trim each region's box (surface axes: region["_lo"], ["_hi"]) on the sides facing the swept path until the
+    robot comes no closer to it than the scan did there (the region's distance, "_d"): an axis-aligned box around a
+    round thing sticks out at its corners, towards the arm. One pass over the poses collects the robot's surface samples
+    near any box (bounding spheres prune the geoms, each geom's coarse samples prune its fine ones) and the box is
+    trimmed against them (_trim_box). Then the box as it is saved (to 0.1 mm, rounded inwards) is measured exactly
+    against the swept path, the motion between poses counted (`verify`(centre, half sizes, axes, target, deadline) ->
+    (lower bound or None when out of time, (closest measured, robot point))); a robot point closer than the target is
+    trimmed against too, and the box measured again, at most SCAN_FIT_ROUNDS times. "box_clearance_mm" is that lower
+    bound, rounded down: the box keeps at least that clear of the path. A trimmed region keeps its box before trimming
+    as "covers" (rounded outwards). Past `deadline` no box is offered for the regions not yet fitted
+    (stats["fit_timeout"]).
+    Where the arm touches or passes through the scan (a distance under SCAN_TOUCH_MM) no box keeps clear of the path:
+    the box is the scanned surface there, untrimmed ("touches"), with "box_clearance_mm" 0.0 unless the whole path was
+    bounded further from it. Such a box is offered only when a plan can go round it: `must`(centre, half sizes, axes,
+    deadline, point=...) says what it would meet that no plan moves (the object where it starts or ends, the arm in its
+    starting pose, going down to the object, grasping and lifting it, setting it down and letting go); then "box" is
+    None, "must_reach" says which and "no_box" says why (MUST_REACH). A trimmed box that would reach the object where
+    it starts or ends isn't offered either."""
+    R = regions[0]["_R"]
+    boxes = [(r["_lo"].copy(), r["_hi"].copy(), float(r.get("_d", r["min_clearance_mm"]))) for r in regions]
+    near = [[] for _ in boxes]
+    lo_all = np.array([b[0] for b in boxes])
+    hi_all = np.array([b[1] for b in boxes])
+    reach = np.array([b[2] for b in boxes]) + 1.0
+    prev, late = None, False
+    for k, (_, q, o, ph) in enumerate(poses):
+        if prev is not None and np.array_equal(q, prev[0]) and np.array_equal(o, prev[1]):
+            continue                                     # standing still: the pose before says it all
+        if time.monotonic() > deadline:
+            late = True
+            break
+        prev = (q, o)
+        pose(q, o)
+        gs = carried if ph in held else moving
+        if k == 0:
+            gs = np.r_[fixed, gs].astype(int)
+        gs = np.array([g for g in gs if int(g) in shape], int)
+        if not len(gs):
+            continue
+        C = (d.geom_xpos[gs] * 1000.0) @ R
+        r = np.array([shape[int(g)].rad for g in gs])
+        e = np.maximum(np.maximum(lo_all[:, None] - C[None], C[None] - hi_all[:, None]), 0.0)
+        hit = np.sqrt((e * e).sum(-1)) - r[None] < reach[:, None]          # [box, geom]
+        for j in np.nonzero(hit.any(0))[0]:
+            g = int(gs[j])
+            sh = shape[g]
+            A = d.geom_xmat[g].reshape(3, 3).T @ R                         # own frame -> surface axes
+            b0 = (d.geom_xpos[g] * 1000.0) @ R
+            bs = np.nonzero(hit[:, j])[0]
+            Xc = sh.coarse @ A + b0
+            cm = sh.cover_c - sh.cover_f
+            keep = np.zeros(len(sh.coarse), bool)
+            for b in bs:
+                keep |= _box_dist(Xc, lo_all[b], hi_all[b]) < reach[b] + cm
+            if not keep.any():
+                continue
+            X = sh.fine[keep[sh.par]] @ A + b0
+            for b in bs:
+                close = _box_dist(X, lo_all[b], hi_all[b]) < reach[b]
+                if close.any():
+                    near[b].append(X[close])
+    for r, (lo0, hi0, target), pts in zip(regions, boxes, near):
+        for key in ("_lo", "_hi", "_R", "_d"):
+            r.pop(key, None)
+        if late or time.monotonic() > deadline:
+            late = True
+            r["box"] = None
+            r["no_box"] = ("Morph ran out of time to fit a box here that keeps clear of the path: checking again when the "
+                           "computer is less busy may fit one.")
+            continue
+        P = np.vstack(pts) if pts else np.zeros((0, 3))
+        if len(P):                                       # one point per quarter-millimetre cell
+            P = P[np.unique(_cell_keys(np.round(P / 0.25).astype(np.int64)), return_index=True)[1]]
+        yaw = r["box"]["yaw_deg"]
+        if target < SCAN_TOUCH_MM:                      # the arm touches or passes through the scan here: no box keeps
+            saved = _world_box(world, R, lo0, hi0, yaw, rounding="in")    # clear of it, so the box is the scanned
+            lo_b = None                                 # surface there, untrimmed, offered when a plan can go round it
+            if verify is not None:
+                b = box_to_base(world, saved, nd=4)
+                cb, hb, Rb = np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"]))
+                lo_b, _ = verify(cb, hb, Rb, target, deadline)
+                why = None
+                if lo_b is not None and must is not None:
+                    why = must(cb, hb, Rb, deadline, point=to_base(world, r["point"]))
+                if lo_b is None or why is False:
+                    late = True
+                    r["box"] = None
+                    r["no_box"] = ("Morph ran out of time to fit a box here that keeps clear of the path: checking again "
+                                   "when the computer is less busy may fit one.")
+                    continue
+                if why:
+                    r["box"], r["touches"], r["must_reach"], r["no_box"] = None, True, why, MUST_REACH[why]
+                    continue
+            r["box"], r["trimmed"], r["touches"] = saved, False, True
+            if verify is not None:                      # verify stops at the first pose closer than the target: the box
+                r["box_clearance_mm"] = (0.0 if lo_b < target - SCAN_FIT_TOL_MM     # reaches that close or closer
+                                         else floor_mm(max(0.0, lo_b)) if lo_b < SCAN_CUT_MM else None)
+            else:
+                dd = _box_dist(P, lo0, hi0)
+                r["box_clearance_mm"] = floor_mm(dd.min()) if len(dd) else None
+            continue
+        # fitted to the target plus the tolerance, so the box is never shown closer to the path than the near miss
+        # (a 2.0 mm near miss's box read 1.9 mm from the path: fitted to within 0.05 mm under it, then rounded down)
+        fit, lo_b = _trim_box(P, lo0, hi0, target + SCAN_FIT_TOL_MM), None
+        for _ in range(SCAN_FIT_ROUNDS if fit is not None else 0):
+            saved = _world_box(world, R, *fit, yaw, rounding="in")
+            if verify is None:
+                break
+            b = box_to_base(world, saved, nd=4)
+            lo_b, found = verify(np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"])),
+                                 target + SCAN_FIT_TOL_MM, deadline)
+            if lo_b is None or lo_b >= target:
+                break
+            P = np.vstack([P, np.asarray(found[1], float)[None] @ R])         # the robot point it comes closest at
+            fit = _trim_box(P, fit[0], fit[1], target + SCAN_FIT_TOL_MM)
+            lo_b = None
+            if fit is None:
+                break
+        if verify is not None and fit is not None and lo_b is None and time.monotonic() > deadline:
+            late = True
+            r["box"] = None
+            r["no_box"] = ("Morph ran out of time to fit a box here that keeps clear of the path: checking again when the "
+                           "computer is less busy may fit one.")
+            continue
+        if fit is None or (verify is not None and (lo_b is None or lo_b < target)):
+            r["box"] = None
+            r["no_box"] = (f"A box here would come closer to the path than the scan ({_mm1(target)} mm) unless it were "
+                           f"thinner than {SCAN_FIT_MIN_MM:.0f} mm: move the robot or the thing instead.")
+            continue
+        lo, hi = fit
+        if must is not None:                            # trimmed clear of the arm's path, but not of the object at rest
+            b = box_to_base(world, _world_box(world, R, lo, hi, yaw, rounding="in"), nd=4)
+            why = must(np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"])), deadline,
+                       arm=False)
+            if why:
+                why = why if why.endswith("_box") else f"{why}_box"
+                r["box"], r["must_reach"], r["no_box"] = None, why, MUST_REACH[why]
+                continue
+        r["box"] = _world_box(world, R, lo, hi, yaw, rounding="in")
+        r["trimmed"] = bool(np.any(np.abs(lo - lo0) > 1e-6) or np.any(np.abs(hi - hi0) > 1e-6))
+        if verify is not None:
+            r["box_clearance_mm"] = floor_mm(max(0.0, lo_b)) if lo_b < SCAN_CUT_MM else None   # None: further all along
+        else:                                            # samples only (a caller without the path): an upper bound
+            dd = _box_dist(P, lo, hi)
+            r["box_clearance_mm"] = floor_mm(dd.min()) if len(dd) else None
+        if r["trimmed"]:                                # the near miss's place: Add box here keeps it with the box, with
+            b = box_to_base(world, r["box"], nd=4)      # the distance the box was fitted to (a closer path is offered
+            cb = np.asarray(b["center"], float) @ R     # again); reaching past the box as saved no further than its size
+            hb = np.abs(_rz(float(b["yaw_deg"])).T @ R).T @ np.asarray(b["half"], float)
+            ext = np.minimum(SCAN_COVERS_MAX_MM, 2.0 * hb)
+            clo, chi = np.minimum(np.maximum(lo0, cb - hb - ext), cb - hb), np.maximum(np.minimum(hi0, cb + hb + ext), cb + hb)
+            r["covers"] = {**_world_box(world, R, clo, chi, yaw, rounding="out"), "clearance_mm": floor_mm(target)}
+    if late and stats is not None:
+        stats["fit_timeout"] = True
+
+
+TRIAL_LATE = ("Morph ran out of time to try a simulation with a box here: checking again when the computer is less "
+              "busy may try it.")
+
+
+def try_boxes(res: dict, world: dict, trial, deadline: float, baseline_ok: bool | None = None) -> None:
+    """Add box here's promise, tried rather than assumed: each box a region of scan_clearance() offers is added to the
+    room on its own, as Add box here adds it, and the pick and place planned and simulated again as the next simulation
+    would run it (`trial`(rooms, deadline) -> [result or None], simulate.world_trials on the revision's robot, each
+    room a sim_world() whose last box is the one tried: its at_box, contact and blocked are about that box, told apart
+    by id from any other with its label). A box the simulation goes round keeps its offer, with "trial" {ok,
+    min_clearance_mm (the simulation's own clearance, no more than its distance to this box), at_box (measured to this
+    box), fails (when the
+    revision's own simulation failed too, `baseline_ok` False: how this one fails, without touching the box)}. A box
+    the run touches or the plan passes into, or with which the simulation fails where the revision's didn't, is
+    offered no more: "trial" {ok False, failure} and "no_box" say how it fails. A box not tried before `deadline`
+    (time.monotonic()) isn't offered either (stats["trial_timeout"]). Two or more boxes kept are tried together too:
+    stats["together"] is how that simulation fails, or None when it succeeds; when the deadline passes before it runs,
+    stats["together_late"] (and stats["trial_timeout"], so the answer is measured again): never said to fail."""
+    regs = [r for r in res.get("regions") or [] if r.get("box")]
+    if not regs:
+        return
+    stats = res.setdefault("stats", {})
+
+    def room(rs):
+        obs = list(world.get("obstacles") or [])
+        ids = {o.get("id") for o in obs}
+        for r in rs:
+            i, k = str(r["id"]), 2
+            while i in ids:
+                i, k = f"{r['id']}-{k}", k + 1
+            ids.add(i)
+            obs.append({"id": i, "label": r["label"], "center": r["box"]["center"], "half": r["box"]["half"],
+                        "yaw_deg": r["box"]["yaw_deg"], "source": "auto"})
+        return sim_world(validate({**world, "obstacles": obs}))
+
+    def drop(r, why):
+        r["box"] = None
+        r.pop("covers", None)
+        r["no_box"] = why
+
+    results = trial([room([r]) for r in regs], deadline)
+    kept = []
+    for r, t in zip(regs, results):
+        if t is None:
+            drop(r, TRIAL_LATE)
+            stats["trial_timeout"] = True
+            continue
+        if t["contact"] or t["blocked"] or (not t["success"] and baseline_ok is not False):
+            how = t.get("failure") or f"the arm comes {mm_up_text(-float(t['min_clearance_mm'] or 0.0))} mm into it"
+            r["trial"] = {"ok": False, "failure": how}
+            drop(r, f"A simulation with a grey box here fails ({how}), so none is offered: move the robot or the thing "
+                    "instead.")
+            continue
+        r["trial"] = {"ok": True, "min_clearance_mm": t["min_clearance_mm"], "at_box": bool(t.get("at_box")),
+                      "fails": None if t["success"] else t.get("failure")}
+        kept.append(r)
+    if len(kept) > 1 and baseline_ok is not False:
+        (t,) = trial([room(kept)], deadline)
+        if t is None:                                   # not tried: nothing is known about them together
+            stats["together_late"] = stats["trial_timeout"] = True
+        else:
+            stats["together"] = None if t["success"] else t.get("failure") or "it fails"
+
+
+def failed_on_box(world: dict, doc: dict) -> dict | None:
+    """When the revision's simulation (`doc`, sim_pick_place) fails on a grey box Add box here made (source "auto": its
+    run hits it or its plan passes into it): {label, failure}, else None. The scan check says so: that box is the one
+    to remove, whatever the scan says now."""
+    met = (doc or {}).get("metrics") or {}
+    if met.get("success") is not False:
+        return None
+    hits = [h.get("obstacle") for h in met.get("world_contacts") or []]
+    hits.append(((met.get("blocked") or {}).get("at") or {}).get("obstacle"))
+    for o in world.get("obstacles") or []:
+        if o.get("source") == "auto" and o.get("label") and o.get("label") in hits:
+            return {"label": o["label"], "failure": str(met.get("failure") or "")}
+    return None
+
+
+def _same_box(a: dict, b: dict) -> bool:
+    """The same box to 0.05 mm and 0.01 degree (both rounded to 0.1 mm when saved)."""
+    try:
+        d = (float(a.get("yaw_deg", 0.0)) - float(b.get("yaw_deg", 0.0)) + 180.0) % 360.0 - 180.0
+        return abs(d) < 0.01 and all(abs(float(x) - float(y)) < 0.05 for x, y in
+                                     zip([*a["center"], *a["half"]], [*b["center"], *b["half"]]))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _already_boxed(world, regions, stats) -> list:
+    """The regions left once those whose fitted box the world holds already are taken out (the same place, the same
+    path: adding it again changes nothing), counted in stats["covered"]; the rest numbered again. A region whose box
+    the world holds already, fitted for a path that stayed further away (its place's distance) than this one comes,
+    is kept without a box ("boxed": the box's label): the box is the one that fits, and the path comes closer anyway."""
+    obs = world.get("obstacles") or []
+    keep = []
+    for r in regions:
+        o = next((o for o in obs if r.get("box") and _same_box(r["box"], o)), None)
+        cv = _covers(o) if o is not None else None
+        if o is None:
+            keep.append(r)
+        elif cv is not None and r["min_clearance_mm"] < float(cv["clearance_mm"]) - SCAN_COVERS_TOL_MM:
+            r.update(box=None, boxed=str(o.get("label") or "A grey box"),
+                     no_box=(f"{o.get('label') or 'A grey box'} is the box that fits here, but the path now comes within "
+                             f"{_mm1(r['min_clearance_mm'])} mm of the scan, closer than the {_mm1(cv['clearance_mm'])} mm "
+                             "it was fitted to: move the robot or the thing."))
+            keep.append(r)
+    if len(keep) < len(regions):
+        stats["covered"] = int(stats.get("covered") or 0) + len(regions) - len(keep)
+        if "places" in stats:
+            stats["places"] = max(len(keep), int(stats["places"]) - (len(regions) - len(keep)))
+    _number_regions(world, keep)
+    return keep
+
+
+def _number_regions(world: dict, regions: list) -> None:
+    """Each region's id and label ("scan-k", "Scan near miss k"), numbered on past the boxes Add box here made already:
+    a world holding "Scan near miss 1" lists its next near misses as 2, 3 ..., so a box added for one never takes the
+    label of a box already there (the simulation names the box it hits or comes closest to by its label)."""
+    last = 0
+    for o in world.get("obstacles") or []:
+        for text, rx in ((o.get("label"), r"Scan near miss (\d+)"), (o.get("id"), r"scan-(\d+)(?:-\d+)?")):
+            m = re.fullmatch(rx, str(text or ""))
+            if m:
+                last = max(last, int(m.group(1)))
+    for i, r in enumerate(regions, last + 1):
+        r.update({"id": f"scan-{i}", "label": f"Scan near miss {i}"})
+
+
+def _world_box(world, R, lo, hi, yaw, rounding="near") -> dict:
+    """A box given by its corners lo..hi along the surface axes R (robot base frame) as a world-frame box, to 0.1 mm as
+    it is saved: "near", or "in" (its half sizes rounded down past where rounding moved its centre: the box as saved
+    lies inside lo..hi) or "out" (up: it holds lo..hi)."""
+    mid = R @ ((lo + hi) / 2.0)
+    centre = [round(float(v), 1) for v in to_world(world, mid)]
+    half = (hi - lo) / 2.0
+    if rounding != "near":
+        off = np.abs(R.T @ (np.asarray(to_base(world, centre)) - mid))     # how far rounding moved it, along each side
+        half = (np.floor((half - off) * 10.0 + 1e-6) if rounding == "in" else np.ceil((half + off) * 10.0 - 1e-6)) / 10.0
+        #  (1e-6 of a tenth: float noise, not room)
+    return {"center": centre, "half": [round(float(max(v, 1.0)), 1) for v in half], "yaw_deg": yaw}
+
+
+def _covers(o: dict) -> dict | None:
+    """The place a box Add box here made was fitted for ("covers"), when it still is what the fit makes: it has the
+    fit's distance (at least SCAN_TOUCH_MM: a box fitted to a touch keeps nothing clear), it lies along the box's own
+    sides, it shares the faces the fit left alone (to SCAN_COVERS_FACE_MM: the box was trimmed only on the sides facing
+    the path) and reaches past the others no further than the box's own size on that axis, at most SCAN_COVERS_MAX_MM.
+    So a box moved or made bigger doesn't cover the old place, and a world from elsewhere can't hide near misses with a
+    place much bigger than its box."""
+    cv = o.get("covers")
+    if not isinstance(cv, dict) or isinstance(cv.get("clearance_mm"), bool) or \
+            not isinstance(cv.get("clearance_mm"), (int, float)) or not cv["clearance_mm"] >= SCAN_TOUCH_MM:
+        return None
+    try:
+        turn = (float(cv.get("yaw_deg", 0.0)) - float(o.get("yaw_deg", 0.0)) + 180.0) % 360.0 - 180.0
+        h = np.asarray(o["half"], float)
+        c = _rz(float(o.get("yaw_deg", 0.0))).T @ (np.asarray(cv["center"], float) - np.asarray(o["center"], float))
+        past = np.r_[-h - (c - np.asarray(cv["half"], float)), c + np.asarray(cv["half"], float) - h]   # each face
+    except (KeyError, TypeError, ValueError):
+        return None
+    reach = np.minimum(SCAN_COVERS_MAX_MM, np.r_[2.0 * h, 2.0 * h]) + SCAN_COVERS_FACE_MM
+    shared = np.abs(past) <= SCAN_COVERS_FACE_MM
+    ok = abs(turn) < 0.01 and shared.any() and bool(np.all((past >= -SCAN_COVERS_FACE_MM) & (past <= reach)))
+    return cv if ok else None
+
+
+def _grey_boxes(world) -> list:
+    """The world's grey boxes in the robot base frame: [(centre, half sizes, axes, closest, the box it stands for)].
+    A box Add box here made from a trimmed region also stands for the place it was made for (_covers), and both only
+    for near misses no closer than the distance it was fitted to (`closest`; None: any near miss)."""
+    out = []
+    for o in world.get("obstacles") or []:
+        try:
+            cv = _covers(o)
+            closest = None if cv is None else float(cv["clearance_mm"]) - SCAN_COVERS_TOL_MM
+            b0 = box_to_base(world, o)
+            for bx in [o] + ([cv] if cv else []):
+                b = box_to_base(world, bx)
+                out.append((np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"])), closest,
+                            None if bx is o else b0))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _box_hit(P, c, h, R, reach) -> np.ndarray:
+    e = np.maximum(np.abs((P - c) @ R) - h, 0.0)
+    return np.sqrt((e * e).sum(1)) <= reach
+
+
+def _near_grey_box(P, D, boxes, Dlo=None, exact=None, path_box=None) -> np.ndarray:
+    """Which near misses (scan points P, robot base frame, mm; D their distances to the path, Dlo lower bounds of them)
+    are a grey box's: within SCAN_COVER_MM of it, and no closer to the path than the box was fitted for (its `closest`;
+    decided on Dlo, and where only D says so on `exact`(indices), the distances measured exactly). One within reach of
+    only the place a box was made for is the box's only while the box itself stands about as near the path
+    (`path_box`(box), how near the path comes to it at most, no further than the near miss's lower bound plus
+    SCAN_COVER_MM): a box 50 mm from the path doesn't vouch for a place it was never fitted to. Without `path_box`
+    that last rule isn't applied."""
+    out = np.zeros(len(P), bool)
+    Dlo = D if Dlo is None else Dlo
+    measured = {}
+    for c, h, R, closest, of in boxes:
+        hit = _box_hit(P, c, h, R, SCAN_COVER_MM) & ~out
+        if closest is not None and hit.any():
+            ok = Dlo >= closest
+            maybe = hit & ~ok & (D >= closest)
+            if maybe.any() and exact is not None:
+                todo = np.array([i for i in np.nonzero(maybe)[0] if i not in measured], int)
+                if len(todo):
+                    measured.update(zip(todo.tolist(), exact(todo).tolist()))
+                ok = ok | np.array([measured.get(i, -math.inf) >= closest for i in range(len(P))])
+            hit &= ok
+        if of is not None and hit.any() and path_box is not None:   # only the place, not the box: the box must
+            hit &= Dlo >= path_box(of) - SCAN_COVER_MM                  # stand near the path too
+        out |= hit
+    return out
+
+
+def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None, refine=None, rho=0.0, final=False,
+                  deadline=math.inf, lo=None, cover=None, path_box=None) -> list:
+    """The near misses grouped into places (scan points within 30 mm of each other), the closest SCAN_MAX_REGIONS of
+    them listed (stats["places"] counts them all), each as a box in the world frame along the mount surface's axes: the
+    scanned surface within SCAN_GROW_MM of its points, at least SCAN_MIN_BOX_MM thick (grown away from the arm: a scan
+    shows only the side facing it) and down to the surface when it, or the scan under it, nearly reaches it (a thing
+    standing there). Near misses next to one of the world's grey boxes, or to the place one was added for, are that
+    box's (_near_grey_box): a place of nothing else is left out (counted in stats["covered"]). Each region keeps its box
+    in surface axes ("_lo", "_hi", "_R") for _fit_boxes.
+    A near miss is listed by its distance to the nearest of the scan's own points from a sample of the robot's surface
+    (pose index, geom and sample kept), which can be up to rho plus the geom's cover_f more than the distance between
+    the shapes. With `refine` (K, G, FI, P, D) -> (exact distances, scan points, robot points), each region's near
+    misses that could be its closest are measured exactly before `deadline`, so its distance ("min_clearance_mm",
+    "_d") is a real robot-to-scan distance, the arm coming at least that close there. It is "exact" (the closest
+    approach there, the motion between poses counted) for the region holding the whole check's closest point when the
+    check measured all of the path and found that point (`final`, its distance `lo`; not when it stopped at a touch);
+    every other region's distance is "at most"."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     from scipy.spatial import cKDTree
 
-    parts = [(S[a], p, dd, tt, g) for a, p, dd, tt, g in near]
+    parts = [(S[a], p, dd, tt, g, k, fi, np.zeros(len(dd), bool)) for a, p, dd, tt, g, k, fi in near]
     if best is not None:
-        parts.append((best["q"][None], best["p"][None], np.array([best["d"]]), np.array([best["t"]]), np.array([best["g"]])))
+        parts.append((best["q"][None], best["p"][None], np.array([best["d"] if lo is None else min(lo, best["d"])]),
+                      np.array([best["t"]]), np.array([best["g"]]), np.array([-1]), np.array([-1]), np.ones(1, bool)))
     if not parts:
         return []
-    Q, P, D, TT, G = (np.concatenate([x[i] for x in parts]) for i in range(5))
+    Q, P, D, TT, G, K, FI, B = (np.concatenate([x[i] for x in parts]) for i in range(8))
     keys = _cell_keys(np.floor(Q / 5.0).astype(np.int64))        # one point per 5 mm cell: its closest approach
-    o = np.lexsort((D, keys))
+    o = np.lexsort((~B, D, keys))                                  # (the closest point itself on a tie)
     o = o[np.r_[True, keys[o][1:] != keys[o][:-1]]]
-    Q, P, D, TT, G = Q[o], P[o], D[o], TT[o], G[o]
+    Q, P, D, TT, G, K, FI, B = Q[o], P[o], D[o], TT[o], G[o], K[o], FI[o], B[o]
     pairs = cKDTree(Q).query_pairs(30.0, output_type="ndarray")
     adj = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(len(Q), len(Q))) if len(pairs) else \
         coo_matrix((len(Q), len(Q)))
     n, lab = connected_components(adj, directed=False)
+    cov = np.array([0.0 if b else (cover or {}).get(int(g), 0.0) for g, b in zip(G, B)])
+    Dlo = np.where(B, D, D - rho - cov)
+
+    def exact_of(idx):
+        return refine(K[idx], G[idx], FI[idx], P[idx], D[idx])[0] if refine is not None else D[idx]
+    covered = _near_grey_box(Q, D, _grey_boxes(world), Dlo, exact_of, path_box)
+    places = set(lab[~covered].tolist())
+    if stats is not None:
+        stats["covered"] = int(len(set(lab[covered].tolist()) - places))
+        stats["places"] = len(places)
     closest = np.full(n, np.inf)
-    np.minimum.at(closest, lab, D)
+    np.minimum.at(closest, lab[~covered], D[~covered])
     yaw = world["surface"]["yaw_deg"] if world.get("surface") else world["mount"]["yaw_deg"]
     R = _rz(yaw - world["mount"]["yaw_deg"])          # surface axes, seen from the robot base
     Ss = S[::max(1, len(S) // 500_000)]
@@ -1427,33 +2677,49 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm) -> list:
     Ls = Ss @ R
     regions = []
     for k in np.argsort(closest, kind="stable")[:SCAN_MAX_REGIONS]:
-        idx = np.nonzero(lab == k)[0]
+        idx = np.nonzero((lab == k) & ~covered)[0]
+        if not len(idx):
+            break                                          # the rest are next to grey boxes already
         cand = Ss[np.all((Ss >= Q[idx].min(0) - SCAN_GROW_MM) & (Ss <= Q[idx].max(0) + SCAN_GROW_MM), axis=1)]
         if len(cand):
             cand = cand[np.isfinite(cKDTree(Q[idx]).query(cand, distance_upper_bound=SCAN_GROW_MM)[0])]
         L = np.vstack([cand, Q[idx]]) @ R               # in the surface's axes (base frame origin)
-        lo, hi = L.min(0), L.max(0)
+        lo_, hi_ = L.min(0), L.max(0)
         away = (Q[idx] - P[idx]).mean(0) @ R            # from the arm towards the scan
         for i in range(3):
-            if hi[i] - lo[i] < SCAN_MIN_BOX_MM:
+            if hi_[i] - lo_[i] < SCAN_MIN_BOX_MM:
                 if away[i] >= 0:
-                    hi[i] = lo[i] + SCAN_MIN_BOX_MM
+                    hi_[i] = lo_[i] + SCAN_MIN_BOX_MM
                 else:
-                    lo[i] = hi[i] - SCAN_MIN_BOX_MM
-        under = Ls[np.all((Ls[:, :2] >= lo[:2]) & (Ls[:, :2] <= hi[:2]), axis=1), 2]
-        if min(lo[2], under.min() if len(under) else math.inf) < SCAN_GROW_MM:     # it stands on the surface (z = 0)
-            lo[2] = 0.0
+                    lo_[i] = hi_[i] - SCAN_MIN_BOX_MM
+        under = Ls[np.all((Ls[:, :2] >= lo_[:2]) & (Ls[:, :2] <= hi_[:2]), axis=1), 2]
+        if min(lo_[2], under.min() if len(under) else math.inf) < SCAN_GROW_MM:     # it stands on the surface (z = 0)
+            lo_[2] = 0.0
         j = idx[np.argmin(D[idx])]
+        d, q = float(D[j]), Q[j]
+        if refine is not None:                          # exact distances, closest first, while one could be closer
+            o, done = idx[np.argsort(Dlo[idx], kind="stable")], 0
+            while done < len(o) and d >= SCAN_TOUCH_MM and time.monotonic() < deadline:    # a touch: no closer
+                c = o[done:done + 64]
+                c = c[~B[c] & (Dlo[c] < d - SCAN_TOL_MM)]
+                if not len(c):
+                    break
+                done += 64
+                Dx, Qx, Px = refine(K[c], G[c], FI[c], P[c], D[c])
+                i = int(np.argmin(Dx))
+                if Dx[i] < d:
+                    j, d, q = int(c[i]), float(Dx[i]), Qx[i]
+                    P[c[i]] = Px[i]
         b = m.geom_bodyid[G[j]]
-        centre = to_world(world, R @ ((lo + hi) / 2.0))
-        regions.append({"min_clearance_mm": round(float(D[j]), 1), "t": round(float(TT[j]), 2),
-                        "link": "object" if b == obj_body else m.body(b).name,
-                        "point": [round(float(v), 1) for v in to_world(world, Q[j])],
+        centre = to_world(world, R @ ((lo_ + hi_) / 2.0))
+        regions.append({"min_clearance_mm": _touch_floor(d), "_d": max(0.0, d), "exact": bool(final and B[idx].any()),
+                        "t": round(float(TT[j]), 2), "link": "object" if b == obj_body else m.body(b).name,
+                        "point": [round(float(v), 1) for v in to_world(world, q)],
                         "box": {"center": [round(float(v), 1) for v in centre],
-                                "half": [round(float(max(v, 1.0)), 1) for v in (hi - lo) / 2.0], "yaw_deg": round(float(yaw), 2)},
-                        "points": int(len(idx))})
-    for i, r in enumerate(regions, 1):
-        r.update({"id": f"scan-{i}", "label": f"Scan near miss {i}"})
+                                "half": [round(float(max(v, 1.0)), 1) for v in (hi_ - lo_) / 2.0], "yaw_deg": round(float(yaw), 2)},
+                        "points": int(len(idx)), "_lo": lo_.copy(), "_hi": hi_.copy(), "_R": R})
+    regions.sort(key=lambda r: r["_d"])                 # measured exactly, the closest first again
+    _number_regions(world, regions)
     return regions
 
 
@@ -1496,7 +2762,7 @@ def _box_local(box: dict, p) -> np.ndarray:
 
 
 def _footprint(robot: dict | None) -> list | None:
-    """[[x0, y0], [x1, y1]] of the base link's parts (robot base frame, mm) from robot.json."""
+    """[[x0, y0], [x1, y1]] of the base link's parts (robot base frame, mm) from robot.json, rounded outwards."""
     if not isinstance(robot, dict):
         return None
     root = robot.get("root") or "base"
@@ -1511,7 +2777,8 @@ def _footprint(robot: dict | None) -> list | None:
                 continue
     if not np.all(np.isfinite(lo)):
         return None
-    return [[round(float(lo[0]), 1), round(float(lo[1]), 1)], [round(float(hi[0]), 1), round(float(hi[1]), 1)]]
+    up = lambda v: -floor_mm(-v)        # noqa: E731  (to 0.1 mm outwards: the base is never smaller than its parts)
+    return [[floor_mm(lo[0]), floor_mm(lo[1])], [up(hi[0]), up(hi[1])]]
 
 
 def _robot_mass(results: dict, robot: dict | None) -> float | None:
@@ -1536,6 +2803,54 @@ def _sentence(s: str) -> str:
     return s[:1].upper() + s[1:] + ("" if s.endswith(".") else ".")
 
 
+def floor_mm(v) -> float:
+    """A measured distance (mm) kept or shown to 0.1 mm, rounded down: never more room than was measured (9.96 mm is
+    9.9, not the 10.0 that would be clear). Float noise aside: 2.3 stays 2.3."""
+    return math.floor(float(v) * 10.0 + 1e-6) / 10.0
+
+
+def _touch_floor(v) -> float:
+    """A scan distance as kept: 0.0 under SCAN_TOUCH_MM, where the check stops looking closer (it touches; the distance
+    measured there is one pose's, not a bound of the path), else rounded down to 0.1 mm."""
+    return 0.0 if float(v) < SCAN_TOUCH_MM else floor_mm(v)
+
+
+def scan_event_text(res: dict) -> str:
+    """The scan check's line in the Studio's progress (the "world" and "agent" events): what scan_check says, short."""
+    if res.get("skipped"):
+        return str(res["skipped"])
+    st = res.get("stats") or {}
+    mc, n = res.get("min_clearance_mm"), max(len(res.get("regions") or []), int(st.get("places") or 0))
+    cut = bool(st.get("truncated"))
+    if mc is not None:
+        text = ("The arm touches or passes through the scan" if mc < SCAN_TOUCH_MM else
+                f"Closest to the scan: {'at most ' if cut else ''}{_mm1(mc)} mm")
+    elif cut:
+        text = "Not all measured in time"
+    else:                                               # as scan_check: more than the bound, never more than measured
+        text = f"Nothing within {mm_text(min(SCAN_CUT_MM, float(st.get('beyond_mm') or SCAN_CUT_MM)))} mm of the scan"
+    return (text + (f", {n} near miss{'es' if n != 1 else ''}" if n else "")
+            + (" (cut short)" if cut and mc is not None else ""))
+
+
+def mm_text(v) -> str:
+    """A clearance as the texts show it, rounded down: to 0.1 mm under CLEAR_OK_MM (9.97 reads 9.9, never 10), to the
+    millimetre from there (30.68 reads 30, not 31)."""
+    x = floor_mm(v)
+    return f"{x:.1f}" if x < CLEAR_OK_MM else f"{math.floor(x + 1e-9):.0f}"
+
+
+def mm_up_text(v) -> str:
+    """Room that is missing (mm: an overlap, an overhang) as the texts show it, rounded up: never less than measured."""
+    x = math.ceil(float(v) * 10.0 - 1e-6) / 10.0
+    return f"{x:.1f}" if x < CLEAR_OK_MM else f"{math.ceil(x - 1e-9):.0f}"
+
+
+def _mm1(v) -> str:
+    """A distance to 0.1 mm, rounded down."""
+    return f"{floor_mm(v):.1f}"
+
+
 def _check(cid, label, status, text, value=None, unit="", view="overview", **extra) -> dict:
     out = {"id": cid, "label": label, "status": status, "text": text, "view": view}
     if value is not None:
@@ -1552,23 +2867,118 @@ def scan_check(scan: dict) -> dict:
     if scan.get("skipped"):
         return _check("scan", label, "skip", f"{_sentence(scan['skipped'])} {SCAN_NOTE}", view=view, note=SCAN_NOTE)
     mc, at, regions = scan.get("min_clearance_mm"), scan.get("at") or {}, scan.get("regions") or []
+    stats = scan.get("stats") or {}
     who = "the object" if at.get("link") == "object" else f"the {str(at.get('link') or 'arm').replace('_', ' ')}"
     when = f" at {float(at.get('t') or 0.0):.1f} s" if at else ""
-    if mc is None:
-        st, text = "pass", f"The arm stays more than {SCAN_CUT_MM:.0f} mm from the scanned surface."
+    cut = bool(stats.get("truncated"))
+    lower = stats.get("lower_mm")
+    if cut and mc is None:                              # cut short: only what was measured, never more room than that
+        share = math.floor(100.0 * (stats.get("poses_checked") or 0) / max(1, stats.get("unique_poses") or 1) + 1e-9)
+        part = (f" ({share:.0f}% of it)" if share >= 1 else " (less than 1% of it)") if stats.get("unique_poses") else ""
+        text = (f"In the part of the path checked{part}, the arm stays more than {SCAN_CUT_MM:.0f} mm from the "
+                "scanned surface." if stats.get("part_clear") else
+                "There wasn't time to measure how close the arm comes to the scanned surface.")
+        st = "warn"
+    elif mc is None:
+        beyond = min(SCAN_CUT_MM, float(stats.get("beyond_mm") or SCAN_CUT_MM))
+        st, text = "pass", f"The arm stays more than {mm_text(beyond)} mm from the scanned surface."
     elif mc < SCAN_TOUCH_MM:
         st, text = "warn", _sentence(f"{who} touches or passes through the scanned surface{when}")
-    elif mc < SCAN_NEAR_MM:
-        st, text = "warn", _sentence(f"{who} comes within {mc:.1f} mm of the scanned surface{when}")
+    elif cut:
+        st, text = "warn", _sentence(f"{who} comes within at most {_mm1(mc)} mm of the scanned surface{when}"
+                                     + (f" (no closer than {_mm1(lower)} mm)" if lower else ""))
+    elif floor_mm(mc) < SCAN_NEAR_MM:
+        st, text = "warn", _sentence(f"{who} comes within {_mm1(mc)} mm of the scanned surface{when}")
     else:
-        st, text = "pass", f"At least {mc:.0f} mm between the arm and the scanned surface (closest: {who}{when})."
+        st, text = "pass", f"At least {mm_text(mc)} mm between the arm and the scanned surface (closest: {who}{when})."
     if regions:
-        n = len(regions)
-        text += (f" {n} place{'s' if n != 1 else ''} closer than {SCAN_NEAR_MM:.0f} mm: Add box here turns "
-                 f"{'one' if n != 1 else 'it'} into a grey box the simulation keeps clear of.")
-    if (scan.get("stats") or {}).get("truncated"):
-        st = "warn"
-        text += " Only part of the path was checked in time: the scan is large."
+        n, boxed = len(regions), sum(1 for r in regions if r.get("box") is not None)
+        places = max(n, int(stats.get("places") or 0))     # every place, not only the SCAN_MAX_REGIONS listed
+        text += f" {places} place{'s' if places != 1 else ''} closer than {SCAN_NEAR_MM:.0f} mm"
+        if places > n:
+            text += f" (the {n} closest are listed)"
+        touch = sum(1 for r in regions if r.get("box") is not None and r.get("touches"))
+        must = [r for r in regions if r.get("must_reach")]
+        scanned = any(r["must_reach"] == "object" for r in must)
+        failed = [r for r in regions if (r.get("trial") or {}).get("ok") is False]     # a simulation with it fails
+        tried = sum(1 for r in regions if r.get("box") is not None and (r.get("trial") or {}).get("ok"))
+        if boxed:                                       # where the arm touches the scan, the box is the scanned surface
+            what = (f"a grey box over the scanned surface there (at least {SCAN_MIN_BOX_MM:.0f} mm each way, so it can "
+                    "be larger than what was scanned)" if touch == boxed else
+                    "a grey box, trimmed so it is no closer to the path as it is now than the scan"
+                    + (" (where the arm touches the scan, the box is the scanned surface there, untrimmed)" if touch
+                       else ""))
+            text += f": Add box here turns {'one' if places != 1 else 'it'} into {what}"
+            if tried == boxed:                          # try_boxes: the next simulation, run here with the box
+                text += ("; a simulation with it, tried here, keeps clear of it (the row says how close it comes)."
+                         if boxed == 1 else "; a simulation with each, tried here on its own, keeps clear of it (the "
+                         "rows say how close each comes).")
+            else:                                       # not tried: the path the next simulation takes isn't known
+                text += ("; the next simulation tries to plan round it, and may take another way, closer to it, or "
+                         "fail.")
+            if failed:
+                text += " Where a simulation with a box fails, none is offered (the rows say how)."
+            if any(r.get("no_box") == TRIAL_LATE for r in regions):
+                text += (" There wasn't time to try a simulation with a box at every place: checking again when the "
+                         "computer is less busy may try them all.")
+            if stats.get("together"):
+                text += (f" Added together, those boxes make the simulation fail ({str(stats['together']).rstrip('.')}"
+                         "): add one, Save and simulate, then check again.")
+            elif stats.get("together_late"):
+                text += (" There wasn't time to try a simulation with those boxes added together: checking again when "
+                         "the computer is less busy may try it.")
+        elif must and len(must) == n:                  # where the arm must go: a box there fails the simulation
+            text += (f": the arm must reach {'there' if n == 1 else 'those places'} to pick or place the object, or "
+                     "stands there in its starting pose, so no box is offered"
+                     + (" (the scan holds the object itself where it starts, or something within "
+                        f"{SCAN_ON_OBJECT_MM:.0f} mm of it)." if scanned else "."))
+        elif failed and len(failed) + len(must) == n:   # try_boxes: the simulation fails with each box
+            text += (": a simulation with a grey box there, tried here, fails (the row says how), so none is offered; "
+                     "move the robot or the thing.")
+        elif stats.get("untried"):                      # api_world: the revision's robot couldn't be simulated again
+            text += (f": a simulation with a box there couldn't be tried ({str(stats['untried']).rstrip('.')}), so none "
+                     "is offered.")
+        elif stats.get("trial_timeout"):
+            text += (": there wasn't time to try a simulation with a box there: checking again when the computer is "
+                     "less busy may try it.")
+        elif stats.get("fit_timeout"):
+            text += ": there wasn't time to fit a box that keeps clear of the path."
+        elif any(r.get("boxed") for r in regions):
+            text += (": the grey box there already is the one that fits, but the path comes closer to the scan than it "
+                     "was fitted to; move the robot or the thing.")
+        else:
+            text += ": too close to the path for a box; move the robot or the thing."
+        if must and (boxed or len(must) < n):
+            text += (" Where the arm must reach to pick or place the object, or stands in its starting pose, no box is "
+                     "offered" + (": the scan holds the object itself there, or something within "
+                                  f"{SCAN_ON_OBJECT_MM:.0f} mm of it." if scanned else "."))
+    elif cut and mc is not None and floor_mm(mc) < SCAN_NEAR_MM:
+        text += " There wasn't time to measure that place closely enough to offer a box for it."
+    if stats.get("fails_on"):                         # a box Add box here made, and the simulation fails on it
+        fo = stats["fails_on"]
+        text += (f" The simulation fails on {fo['label']}, a box Add box here made"
+                 + (f" ({str(fo['failure']).rstrip('.')})" if fo.get("failure") else "")
+                 + ": remove that box, and move the robot or the thing instead.")
+    covered = stats.get("covered") or 0
+    if covered:
+        text += (f" {covered} {'other ' if regions else ''}place{'s' if covered != 1 else ''} closer than "
+                 f"{SCAN_NEAR_MM:.0f} mm {'have' if covered != 1 else 'has'} a grey box already, so "
+                 f"{'they are' if covered != 1 else 'it is'} not offered again.")
+    if stats.get("unlisted_mm") is not None:
+        u = float(stats["unlisted_mm"])
+        text += (f" Time ran out before every place closer than {SCAN_NEAR_MM:.0f} mm was listed"
+                 + (f"; any other is at least {_mm1(u)} mm from the arm" if u > 0 else "")
+                 + ": checking again when the computer is less busy may list them all.")
+    if cut:
+        limit, need = float(stats.get("limit_s") or 20.0), stats.get("need_s")
+        text += (f" The motion between the poses wasn't all measured closely enough in the {limit:.0f} s a check has (a "
+                 "large scan or a busy computer)" if stats.get("between_cut") else
+                 f" Only part of the path was measured in the {limit:.0f} s a check has (a large scan or a busy computer)")
+        if need is not None and need > SCAN_RETRY_FACTOR * limit:     # checking again won't finish it either
+            text += (": at this pace, measuring all of it would take more than twice that, so checking again helps "
+                     "only on a much less busy computer.")
+        else:
+            text += ": checking again when the computer is less busy may measure all of it."
     return _check("scan", label, st, f"{text} {SCAN_NOTE}", mc, "mm", view, where=at, regions=regions, note=SCAN_NOTE)
 
 
@@ -1635,20 +3045,20 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
         elif blocked and isinstance(blocked.get("at"), dict):
             b = blocked["at"]
             text = (f"The planned path takes the {str(b.get('link', 'arm')).replace('_', ' ')} "
-                    f"{-float(blocked.get('min_clearance_mm') or 0.0):.1f} mm into {b.get('obstacle')} during "
+                    f"{mm_up_text(-float(blocked.get('min_clearance_mm') or 0.0))} mm into {b.get('obstacle')} during "
                     f"{MOVES.get(blocked.get('move'), 'the run')} ({b.get('t', 0):.1f} s), and no clear way around it was found.")
             out.append(_check("clearance", "Clearance along the path", "fail", text, blocked.get("min_clearance_mm"), "mm",
                               "along_path", where=b))
         elif mc is None or mc < 0:
             out.append(_check("clearance", "Clearance along the path", "fail", f"The arm passes through a box{where}.",
                               mc, "mm", "along_path", where=at))
-        elif mc < CLEAR_OK_MM:
+        elif floor_mm(mc) < CLEAR_OK_MM:                # rounded down, never up: 9.97 mm is a near miss of 9.9 mm
             out.append(_check("clearance", "Clearance along the path", "warn",
-                              f"Only {mc:.0f} mm between the arm and the room{where}; {CLEAR_OK_MM:.0f} mm or more is OK.",
+                              f"Only {_mm1(mc)} mm between the arm and the room{where}; {CLEAR_OK_MM:.0f} mm or more is OK.",
                               mc, "mm", "along_path", where=at))
         else:
             out.append(_check("clearance", "Clearance along the path", "pass",
-                              f"At least {mc:.0f} mm between the arm and the room{where}.", mc, "mm", "along_path", where=at))
+                              f"At least {mm_text(mc)} mm between the arm and the room{where}.", mc, "mm", "along_path", where=at))
     elif in_world and not sw["obstacles"]:
         out.append(_check("clearance", "Clearance along the path", "warn",
                           "This world has no grey boxes, so the simulation sees only the surface. Add a box for anything "
@@ -1690,10 +3100,10 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
         for c in corners:
             loc = _box_local(surf, c)
             margins.append(min(surf["half"][0] - abs(loc[0]), surf["half"][1] - abs(loc[1])))
-        mg = round(float(min(margins)), 1)
+        mg = floor_mm(min(margins))                     # rounded down: never more margin than measured
         st = "pass" if mg >= FOOT_MARGIN_MM else ("warn" if mg >= 0 else "fail")
-        text = (f"The base sits {mg:.0f} mm inside the edge of the {surf['label'].lower()}." if mg >= 0 else
-                f"The base hangs {-mg:.0f} mm over the edge of the {surf['label'].lower()}.")
+        text = (f"The base sits {mm_text(mg)} mm inside the edge of the {surf['label'].lower()}." if mg >= 0 else
+                f"The base hangs {mm_up_text(-mg)} mm over the edge of the {surf['label'].lower()}.")
         if st == "warn":
             text += f" Keep {FOOT_MARGIN_MM:.0f} mm or more."
         out.append(_check("footprint", "Base on the surface", st, text, mg, "mm", "base", footprint_mm=fp))
@@ -1710,8 +3120,8 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
                               ratio, "x", "base"))
     else:
         out.append(_check("footprint", "Base on the surface", "skip", "The robot's base geometry isn't available.", view="base"))
-    # ---- people zones against the reach sphere
-    reach3 = ws.get("reach_3d_mm")
+    # ---- people zones against the reach sphere: the arm's own furthest point, not its tool point's
+    reach3 = ws.get("arm_reach_mm")
     pts = (sims.get("workspace") or {}).get("points")
     if sw["zones"] and isinstance(reach3, (int, float)):
         rad = reach3 + PEOPLE_MARGIN_MM
@@ -1743,17 +3153,20 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
             names = ", ".join(z["label"] for z, _ in hits)
             st = "warn"
             share = f"{frac * 100:.0f}%" if frac >= 0.01 else "under 1%"
-            text = (f"The arm's reach ({reach3:.0f} mm + {PEOPLE_MARGIN_MM:.0f} mm) overlaps {names}"
+            text = (f"The arm's reach ({math.ceil(reach3 - 1e-6):.0f} mm to its furthest point + {PEOPLE_MARGIN_MM:.0f} mm) "
+                    f"overlaps {names}"
                     + (f"; {share} of its workspace is inside." if frac > 0 else ".")
                     + " Slow it down near people or add a guard.")
         else:
-            st, text = "pass", "No walkway or seat is within the arm's reach plus 100 mm."
+            st, text = "pass", f"No walkway or seat is within {PEOPLE_MARGIN_MM:.0f} mm of anywhere the arm can reach."
         out.append(_check("people", "People zones out of reach", st, text, frac, "fraction", "walkway",
-                          zones=[{"label": z["label"], "kind": z["kind"], "distance_mm": round(d, 1)} for z, d in hits]))
+                          zones=[{"label": z["label"], "kind": z["kind"], "distance_mm": floor_mm(d)} for z, d in hits]))
     elif sw["zones"]:
-        out.append(_check("people", "People zones out of reach", "skip", "The workspace simulation is missing.", view="walkway"))
-    # ---- boxes over the robot (wall cabinets, a shelf) it could reach when it stretches up
-    hmax = ws.get("max_height_mm")
+        out.append(_check("people", "People zones out of reach", "skip",
+                          "The workspace simulation is missing." if not ws else
+                          "How far the arm reaches isn't measured for this revision: simulate it again.", view="walkway"))
+    # ---- boxes over the robot (wall cabinets, a shelf) it could reach when it stretches up: its own highest point
+    hmax = ws.get("arm_top_mm")
     if isinstance(hmax, (int, float)):
         worst = None
         for o in sw["obstacles"]:
@@ -1770,14 +3183,20 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
             out.append(_check("overhead", "Room above the arm", "pass", "Nothing hangs over the robot.", view="overview"))
         else:
             gap, o = worst
+            gap = floor_mm(gap)                         # rounded down: never more room than measured
             st = "pass" if gap >= 50.0 else "warn"
-            text = (f"{o['label']} is {gap:.0f} mm above the arm's highest reach." if gap >= 0 else
-                    f"Stretched up, the arm reaches {-gap:.0f} mm into {o['label']} above it; keep its moves below it.")
-            out.append(_check("overhead", "Room above the arm", st, text, round(gap, 1), "mm", "overview"))
+            text = (f"{o['label']} is {mm_text(gap)} mm above the arm's highest point." if gap >= 0 else
+                    f"Stretched up, the arm reaches {mm_up_text(-gap)} mm into {o['label']} above it; keep its moves "
+                    "below it.")
+            out.append(_check("overhead", "Room above the arm", st, text, gap, "mm", "overview"))
+    elif ws:
+        out.append(_check("overhead", "Room above the arm", "skip",
+                          "The arm's highest point isn't measured for this revision: simulate it again.", view="overview"))
     uf = ws.get("usable_workspace_fraction")
     if in_world and isinstance(uf, (int, float)):
+        uf = math.floor(float(uf) * 1000.0 + 1e-6) / 1000.0     # rounded down: 1249 of 2500 is 49.9%, not 50%
         out.append(_check("workspace", "Room to move", "pass" if uf >= 0.5 else "warn",
-                          f"{uf * 100:.0f}% of the arm's poses stay clear of the room" +
+                          f"{math.floor(uf * 100.0 + 1e-6):.0f}% of the arm's poses stay clear of the room" +
                           ("." if uf >= 0.5 else "; it has little room to move here."), uf, "fraction", "top_down"))
     # ---- wrist camera line of sight (only with a wrist camera)
     if "wrist_camera" in str(flat.get("electronics.extras") or ""):
@@ -1826,7 +3245,8 @@ def _facts(world, sw, out, verdict, pp, ws, flat, robot, results) -> dict:
         "frame": "robot base: x forward, y left, z up, millimetres; origin at the base on the mount surface",
         "verdict": verdict,
         "robot": {"dof": (results.get("summary") or {}).get("dof"), "reach_mm": ws.get("reach_mm"),
-                  "reach_3d_mm": ws.get("reach_3d_mm"), "max_height_mm": ws.get("max_height_mm"),
+                  "reach_3d_mm": ws.get("reach_3d_mm"), "max_height_mm": ws.get("max_height_mm"),     # its tool point
+                  "arm_top_mm": ws.get("arm_top_mm"), "arm_reach_mm": ws.get("arm_reach_mm"),         # the arm itself
                   "mass_kg": _robot_mass(results, robot), "base_footprint_mm": _footprint(robot)},
         "task": {"object": flat.get("object.name"), "object_diameter_mm": flat.get("object.diameter_mm"),
                  "pick_mm": [flat.get("task.pick_x_mm"), flat.get("task.pick_y_mm")],

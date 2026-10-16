@@ -7,6 +7,7 @@ depends on the network.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Literal, Optional
 
@@ -40,15 +41,39 @@ class NeedSpec(BaseModel):
 
 
 def _client():
+    """An Anthropic client, or None (with the reason in `_client.why`) when network lookups are off, the SDK is
+    missing, the configured credentials can't be loaded (an ANTHROPIC_PROFILE without its config file: the SDK's
+    CredentialsError) or none are configured: no key, auth token or profile, which the SDK would only report as an
+    error on the first request."""
     from . import settings
 
     if not settings.network_allowed():  # Keys, Privacy and network: everything stays on this computer
+        _client.why = "network lookups are off"
         return None
     try:
         import anthropic
-        return anthropic.Anthropic()
-    except Exception:
+    except ImportError:
+        _client.why = "the Anthropic SDK isn't installed"
         return None
+    try:
+        client = anthropic.Anthropic()
+    except Exception as exc:  # noqa: BLE001  (whatever the SDK raises, the offline parser takes over and says why)
+        if exc.__class__.__name__ == "CredentialsError":
+            profile = os.environ.get("ANTHROPIC_PROFILE", "").strip()
+            what = f"the Anthropic profile {profile!r}" if profile else "the configured Anthropic credentials"
+            detail = re.sub(r"\s*\(profile '[^']*'\)$", "", str(exc).split(". ")[0].strip())[:200]
+            _client.why = f"{what} couldn't be loaded (CredentialsError{': ' + detail if detail else ''})"
+        else:
+            _client.why = f"the Anthropic client couldn't start ({exc.__class__.__name__})"
+        return None
+    if client.api_key is None and client.auth_token is None and getattr(client, "credentials", None) is None:
+        _client.why = "no Anthropic key"
+        return None
+    _client.why = None
+    return client
+
+
+_client.why = None
 
 
 def _to_design(n: NeedSpec) -> Design:
@@ -128,7 +153,9 @@ def propose(need: str) -> tuple[Design, NeedSpec, str]:
             if resp.stop_reason != "refusal" and resp.parsed_output is not None:
                 return _to_design(resp.parsed_output), resp.parsed_output, "claude"
         except Exception as exc:
-            print(f"  (Claude unavailable: {exc.__class__.__name__}; using offline parser)")
+            print(f"  (Claude unavailable: {exc.__class__.__name__}; using the offline parser)")
+    else:
+        print(f"  ({_client.why or 'Claude unavailable'}: using the offline parser)")
     spec = heuristic(need)
     return _to_design(spec), spec, "heuristic"
 

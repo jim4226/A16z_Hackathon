@@ -21,7 +21,14 @@ re-point it between the check and the request; redirects are never followed; var
 sending and reading; answers are capped in size, must be JSON, are reduced to the declared fields, stripped of every key
 Morph knows (before anything is shortened, so a cut never leaves a key's first characters), shortened, and labelled as
 third-party data. 401 and 403 with a key come back as needs_credential (rejected), so the
-run can ask for a new key. No value of a key ever appears in a result, an error or the audit fields.
+run can ask for a new key; so does an answer that matches the manifest's `response.auth_error` rule, for a service
+that refuses a key with another status (Mouser answers a wrong key with 200 and an "Errors" list):
+
+     "auth_error": {"pointer": "/Errors", "match": {"PropertyName": "API Key"}}
+
+The rule holds when the object at `pointer` (or an object in the list there) has every `match` field with that value
+(text compared without case or surrounding spaces), in a JSON answer with a 2xx or 4xx status.
+No value of a key ever appears in a result, an error or the audit fields.
 """
 
 from __future__ import annotations
@@ -318,8 +325,12 @@ def check_tool(spec: dict, *, hosts, credentials: dict, policy: HttpPolicy = DEF
         if not isinstance(prefix, str) or len(prefix) > 20 or re.search(r"[\x00-\x1f\x7f]", prefix):
             raise SpecError("auth.prefix: at most 20 printable characters")
     resp = spec.get("response") or {}
-    if not isinstance(resp, dict) or set(resp) - {"type", "extract", "keep", "max_items"} or resp.get("type", "json") != "json":
-        raise SpecError('response: {"type": "json", "extract": {...}, "keep"?: {...}, "max_items": n}; only JSON answers are supported')
+    if not isinstance(resp, dict) or set(resp) - {"type", "extract", "keep", "max_items", "auth_error"} or \
+            resp.get("type", "json") != "json":
+        raise SpecError('response: {"type": "json", "extract": {...}, "keep"?: {...}, "max_items": n, "auth_error"?: {...}}; '
+                        "only JSON answers are supported")
+    if "auth_error" in resp:
+        _check_auth_error(resp["auth_error"], auth)
     extract = resp.get("extract") or {}
     if not isinstance(extract, dict) or len(extract) > 20 or any(
             not FIELD.fullmatch(str(k)) or not isinstance(p, str) or not (p == "" or p.startswith("/")) or len(p) > 200
@@ -341,6 +352,39 @@ def check_tool(spec: dict, *, hosts, credentials: dict, policy: HttpPolicy = DEF
             not isinstance(n, int) or isinstance(n, bool) or not 1024 <= n <= policy.max_response_bytes:
         raise SpecError("limits are outside the Studio's caps")
     return warnings
+
+
+def _check_auth_error(rule, auth):
+    """response.auth_error: {"pointer": a JSON pointer, "match": {field: text, number or true/false, at most 5}}, only
+    for a tool that sends a key (a rule that says "the key was refused" needs one)."""
+    if auth is None:
+        raise SpecError("response.auth_error needs auth: only a tool that sends a key can have it refused")
+    if not isinstance(rule, dict) or set(rule) != {"pointer", "match"}:
+        raise SpecError('response.auth_error: {"pointer": "/...", "match": {"field": "value"}}')
+    p, match = rule["pointer"], rule["match"]
+    if not isinstance(p, str) or not (p == "" or p.startswith("/")) or len(p) > 200:
+        raise SpecError("response.auth_error.pointer: a JSON pointer")
+    if not isinstance(match, dict) or not 1 <= len(match) <= 5 or any(
+            not isinstance(k, str) or not KEEP_NAME.fullmatch(k) or v is None or isinstance(v, (dict, list))
+            or (isinstance(v, str) and not 1 <= len(v) <= 100) for k, v in match.items()):
+        raise SpecError("response.auth_error.match: 1 to 5 field names, each with a text, number or true/false")
+
+
+def _same(got, want) -> bool:
+    if isinstance(want, str):
+        return isinstance(got, str) and got.strip().casefold() == want.strip().casefold()
+    if isinstance(want, bool) or isinstance(got, bool):
+        return got is want
+    return isinstance(got, (int, float)) and got == want
+
+
+def auth_refused(rule: dict | None, doc) -> bool:
+    """True when a JSON answer matches the manifest's auth_error rule: the service refused the key."""
+    if not rule:
+        return False
+    at = json_pointer(doc, rule["pointer"])
+    return any(isinstance(it, dict) and all(_same(it.get(k), v) for k, v in rule["match"].items())
+               for it in (at if isinstance(at, list) else [at]))
 
 
 # ------------------------------------------------------------------------------------------------ requests
@@ -648,16 +692,24 @@ def run(spec: dict, args, *, credential: dict | None = None, secret: str | None 
                     need={"env": credential["env"], "reason": "rejected"})
     if status == 429:
         return done("error", {"error": "rate_limited", "retry_after": (headers.get("retry-after") or "")[:20]})
+    resp = spec.get("response") or {}
+    ctype = headers.get("content-type", "").split(";")[0].strip().lower()
+    is_json = ctype == "application/json" or ctype.endswith("+json")
+    doc = _MISSING
+    if is_json and 200 <= status < 500:
+        try:
+            doc = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            pass
+    if auth and doc is not _MISSING and auth_refused(resp.get("auth_error"), doc):  # a refusal the status doesn't show
+        return done("needs_credential", {"error": "needs_credential", "service": credential.get("service"), "status": status},
+                    need={"env": credential["env"], "reason": "rejected"})
     if not 200 <= status < 300:  # redacted whole, then cut
         return done("error", {"error": "http_error", "status": status, "detail": redact(body.decode("utf-8", "replace"), used)[:300]})
-    ctype = headers.get("content-type", "").split(";")[0].strip().lower()
-    if not (ctype == "application/json" or ctype.endswith("+json")):
+    if not is_json:
         return done("error", {"error": "not_json", "content_type": ctype[:60]})
-    try:
-        doc = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, RecursionError):
+    if doc is _MISSING:
         return done("error", {"error": "invalid_json"})
-    resp = spec.get("response") or {}
     extract = resp.get("extract")
     data = {k: json_pointer(doc, p) for k, p in extract.items()} if extract else doc
     for k, names in (resp.get("keep") or {}).items():

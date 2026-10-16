@@ -1,7 +1,7 @@
 """World mode in a real browser: tools/world_demo.html with the real RobotViewer, world.js and the fixture robot.
 Loads the desk starter through init(studio), places the robot by clicking the desk, walks (keys and drag-look),
 snapshots the six views and plays the guided tour; then a room scan (.glb) with the two-point scale tool and
-proposed boxes. Screenshots go to $MORPH_SHOTS (default: morph-shots in the temp folder), f5_*.png. Skipped without
+proposed boxes. With MORPH_SHOTS=<folder> set, screenshots go there (f5_*.png); none are taken without it. Skipped without
 Playwright or a Chromium it can start ($MORPH_CHROME, else Playwright's own). Software WebGL is slow: about two minutes."""
 
 import base64
@@ -11,7 +11,6 @@ import io
 import json
 import os
 import sys
-import tempfile
 import threading
 
 import pytest
@@ -29,7 +28,7 @@ from test_world_obstacles import counter_scene_glb  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHROME = os.environ.get("MORPH_CHROME") or next(
     (p for p in ("/opt/pw-browsers/chromium-1194/chrome-linux/chrome",) if os.path.exists(p)), None)
-SHOTS = os.environ.get("MORPH_SHOTS") or os.path.join(tempfile.gettempdir(), "morph-shots")
+SHOTS = os.environ.get("MORPH_SHOTS")  # a folder for the screenshots; none are taken without it
 ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]   # WebGL without a GPU
 
 
@@ -73,6 +72,8 @@ def _page(browser):
 
 
 def shot(page, name):
+    if not SHOTS:
+        return
     os.makedirs(SHOTS, exist_ok=True)
     page.screenshot(path=os.path.join(SHOTS, name))
 
@@ -163,13 +164,14 @@ def test_desk_world_place_walk_views_and_tour(server, browser):
     # ---- the six views, 1024 x 768 JPEG with labels drawn in
     views = page.evaluate("async () => (await window.demo.wv.snapshotViews(window.demo.wv._docCache)).map(v => ({name: v.name, b: v.jpeg_b64}))")
     assert [v["name"] for v in views] == list(worlds.VIEWS)
-    os.makedirs(SHOTS, exist_ok=True)
     for v in views:
         img = _image(v["b"])
         assert img.format == "JPEG" and img.size == (1024, 768)
         assert max(img.getpixel((4, 4))) < 80                              # the title bar is drawn over the render
         assert ImageStat.Stat(img.convert("L").crop((0, 40, 1024, 740))).stddev[0] > 8, v["name"]   # not blank
-        img.save(os.path.join(SHOTS, f"f5_view_{v['name']}.png"))
+        if SHOTS:
+            os.makedirs(SHOTS, exist_ok=True)
+            img.save(os.path.join(SHOTS, f"f5_view_{v['name']}.png"))
     assert worlds.clean_views([{"name": v["name"], "jpeg_b64": v["b"]} for v in views])     # the server accepts them
 
     # ---- check through the panel (it needs the world saved: the check uses its simulation), then the guided tour
@@ -202,8 +204,77 @@ def test_desk_world_place_walk_views_and_tour(server, browser):
     assert step() == n0
     page.click('.wv-cap [data-k="stop"]')
     assert not page.evaluate("document.querySelector('.wv-cap').classList.contains('on')")
-    with open(os.path.join(SHOTS, "f5_fps.json"), "w", encoding="utf-8") as fh:
-        json.dump({"walk_fps": fps, "page_fps": page.evaluate("window.demo.fps"), "renderer": "SwiftShader (software)"}, fh)
+    if SHOTS:
+        with open(os.path.join(SHOTS, "f5_fps.json"), "w", encoding="utf-8") as fh:
+            json.dump({"walk_fps": fps, "page_fps": page.evaluate("window.demo.fps"), "renderer": "SwiftShader (software)"}, fh)
+    assert not errors, errors
+    page.close()
+
+
+def test_the_panel_waits_on_the_other_tabs_and_a_walk_stops_there(server, browser):
+    """The World panel lives on the 3D view, which the Simulation tab borrows for its replay: on any tab but Robot the
+    panel steps aside (still open) and a walk stops, as WORLD.md says; back on Robot it is where it was."""
+    page = _page(browser)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{server}/tools/world_demo.html?studio=1", timeout=120000)
+    page.wait_for_function("window.ready === true", timeout=120000)
+    desk, doc, inspect = _desk_inputs()
+    page.evaluate("([w, d, i]) => window.demo.load(w, d, {starters: {desk: w}, inspect: i})", [desk, doc, inspect])
+    shown = "() => { const e = window.demo.panel.el; return window.demo.panel.open && !!e.offsetParent; }"
+    assert page.evaluate(shown) and page.evaluate("document.body.classList.contains('wv-open')")
+    page.evaluate("window.demo.wv.walk(true)")
+    page.wait_for_timeout(300)
+    assert page.evaluate("!!window.demo.wv.walking")
+    page.evaluate("window.demo.studio.emit('tab', {tab: 'sim', prev: 'robot'})")
+    assert not page.evaluate(shown) and page.evaluate("window.demo.panel.open")      # aside, not closed
+    assert page.evaluate("!window.demo.wv.walking && !document.body.classList.contains('wv-open')")
+    page.evaluate("window.demo.studio.emit('tab', {tab: 'robot', prev: 'sim'})")
+    assert page.evaluate(shown) and page.evaluate("document.body.classList.contains('wv-open')")
+    assert not errors, errors
+    page.close()
+
+
+def test_the_panels_clearances_are_never_rounded_up(server, browser):
+    """The World panel's numbers round a clearance down, never up: the status line's closest box (9.97 mm reads 9.9,
+    next to "Under 10 mm"; before, "closest 10 mm"), the marker on the closest place, and a scan near miss's row and
+    its box's distance from the path (to 0.1 mm). A row says "at most" unless it is the place's exact closest approach."""
+    page = _page(browser)
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{server}/tools/world_demo.html", timeout=120000)
+    page.wait_for_function("window.ready === true", timeout=120000)
+    desk, doc, inspect = _desk_inputs()
+    page.evaluate("([w, d, i]) => window.demo.load(w, d, {inspect: i})", [desk, doc, inspect])
+    status = page.evaluate("""() => { const p = window.demo.panel;
+      p.state.sim = {rev: 'r002', world: 'desk', world_sha: 'demo', success: true, min_clearance_mm: 9.97,
+                     min_clearance_at: {t: 3.5, link: 'jaw_left', obstacle: 'Mug'}, clearance_ok: false, world_contacts: []};
+      p.state.active = {id: 'desk', sha: 'demo'}; p.state.saved = {sha: 'demo', world: {name: 'Desk'}};
+      return p._status()[1]; }""")
+    assert "closest 9.9 mm, to Mug" in status and "Under 10 mm" in status, status
+    far = page.evaluate("() => { window.demo.panel.state.sim.min_clearance_mm = 30.68; return window.demo.panel._status()[1]; }")
+    assert "closest 30 mm, to Mug" in far, far
+    label = page.evaluate("""(d) => { const wv = window.demo.wv;
+      wv._contactMarks({...d, metrics: {...d.metrics, min_clearance_mm: 9.97, world_contacts: [],
+                                        min_clearance_at: {t: 3.5, link: 'jaw_left', obstacle: 'Mug'}}});
+      return [...wv.base.children].filter((o) => o.userData.contact).map((o) => o.userData.label); }""", doc)
+    assert label == ["9.9 mm"], label
+    region = {"id": "scan-1", "label": "Scan near miss 1", "min_clearance_mm": 9.97, "t": 3.2, "link": "wrist",
+              "point": [0.0, 0.0, 0.0], "box": {"center": [0.0, 0.0, 50.0], "half": [20.0, 20.0, 50.0], "yaw_deg": 0.0},
+              "box_clearance_mm": 9.99, "trimmed": True}
+    scan = worlds.scan_check({"min_clearance_mm": 9.9, "at": {"t": 3.2, "link": "wrist", "point": [0.0, 0.0, 0.0]},
+                              "regions": [region]})
+    rows = page.evaluate("""(c) => { const p = window.demo.panel;
+      p.state.result = {...p.state.result, checks: [c], verdict: 'ready', review: {findings: [], source: 'rules'}};
+      p.render(); return [...document.querySelectorAll('.wv-panel .wv-scan')].map((e) => e.textContent); }""", scan)
+    assert len(rows) == 1 and "at most 9.9 mm from the wrist" in rows[0] and "9.9 mm from the path" in rows[0], rows
+    assert "10.0" not in rows[0], rows
+    # the row of the place holding the check's closest point, measured all along the path, is its closest approach
+    scan["regions"] = [{**region, "exact": True}]
+    rows = page.evaluate("""(c) => { const p = window.demo.panel;
+      p.state.result = {...p.state.result, checks: [c]}; p.render();
+      return [...document.querySelectorAll('.wv-panel .wv-scan')].map((e) => e.textContent); }""", scan)
+    assert ": 9.9 mm from the wrist" in rows[0] and "at most" not in rows[0], rows
     assert not errors, errors
     page.close()
 
@@ -283,6 +354,8 @@ def test_glb_room_scale_place_and_boxes(server, browser, tmp_path):
     for v in views:
         img = _image(v["b"])
         assert ImageStat.Stat(img.convert("L").crop((0, 40, 1024, 740))).stddev[0] > 8, v["name"]
-        img.save(os.path.join(SHOTS, f"f5_scan_{v['name']}.png"))
+        if SHOTS:
+            os.makedirs(SHOTS, exist_ok=True)
+            img.save(os.path.join(SHOTS, f"f5_scan_{v['name']}.png"))
     assert not errors, errors
     page.close()
