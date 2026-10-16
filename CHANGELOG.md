@@ -192,14 +192,16 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   simulation measured). Boxes offered together are tried together too; when there isn't time for that simulation, the
   check says so (not that they fail) and checking again tries it. A check numbers its near misses on past the "Scan near
   miss" boxes the world holds, so a box added never takes another's label (a second "Scan near miss 1" made its row show
-  the first box's distance), and a box is tried as itself, not by its label. Trying a box is a simulation run, so a
-  check that offers one takes longer: on the review's desk scan 4.8 to 6.5 seconds more at load 6-10 (17.6 to 18.7
-  seconds in all), with the mount moved 15 mm 9.6 to 13.3 seconds more at load 6-12 (21 to 25 seconds in all; 47 seconds
-  in the Studio at load 16). When the simulation fails on a box Add box here made, the check names it and says to remove
-  it. Also: a trimmed box is fitted to the near miss's own distance (a 2.0 mm near miss's box read 1.9 mm from the
-  path), the scan line in the Studio's progress counts every place, not only the eight listed ("8 near misses" where the
-  check said 12), and where the scan holds the object itself the check adds "or something within 2 mm of it" (a block
-  0.3 mm beside the egg read as the egg).
+  the first box's distance), and a box is tried as itself, not by its label. A row whose trial comes within 0.5 mm of
+  another box, or into it, gives no number ("keeps clear of it", and "still fails elsewhere" when the simulation fails
+  there; it read "keeps at least -2.4 mm from it"). Trying a box is a simulation run, so a check that offers one takes
+  longer: on the review's desk scan 4.8 to 6.5 seconds more at load 6-10 (17.6 to 18.7 seconds in all), with the mount
+  moved 15 mm 9.6 to 13.3 seconds more at load 6-12 (21 to 25 seconds in all; 47 seconds in the Studio at load 16). When
+  the simulation fails on a box Add box here made, the check names it and says to remove it. Also: a trimmed box is
+  fitted to the near miss's own distance (a 2.0 mm near miss's box read 1.9 mm from the path), the scan line in the
+  Studio's progress counts every place, not only the eight listed ("8 near misses" where the check said 12), and where
+  the scan holds the object itself the check adds "or something within 2 mm of it" (a block 0.3 mm beside the egg read
+  as the egg).
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the

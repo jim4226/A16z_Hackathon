@@ -51,3 +51,38 @@ def test_add_box_here_never_gives_a_box_a_label_the_world_holds():
     assert case([{"id": "drawn", "label": "Scan near miss 1"}], g) == {"id": "scan-2", "label": "Scan near miss 2"}
     assert case([{"id": "scan-2", "label": "Shelf"}], {"id": "scan-2", "label": "Scan near miss 2"}) == \
         {"id": "scan-3", "label": "Scan near miss 3"}
+
+
+def _tried(trial):
+    defs = _shipped("esc", "mmDown", "scanTrialClear", "scanTried", "scanBoxTitle")
+    g = {"trial": trial, "touches": False}
+    return _run(defs, f"[scanTried({json.dumps(g)}), scanBoxTitle({json.dumps(g)})]")
+
+
+def test_a_tried_rows_number_is_never_another_boxs_overlap_or_a_failure_that_did_not_happen():
+    """A box kept although the revision's own simulation fails (`fails`): its trial's clearance is the simulation's
+    own, measured to whatever box it comes closest to, and can be negative there (it fails on that other box).
+    1f6b690's row said "tried: the simulation keeps at least -2.4 mm from it (and still fails: ...)". Measured to
+    another box and under 0.5 mm, the row now gives no number: the simulation keeps clear of this box and still fails
+    elsewhere, or, when it doesn't fail, just keeps clear of it."""
+    fails = "the wrist hits Shelf during the carry at 4.1 s"
+    row, title = _tried({"ok": True, "min_clearance_mm": -2.31, "at_box": False, "fails": fails})
+    assert row == f"; tried: the simulation keeps clear of it and still fails elsewhere ({fails})", row
+    assert "-2" not in title and "keeps clear of it" in title, title
+    row, title = _tried({"ok": True, "min_clearance_mm": 0.3, "at_box": False, "fails": fails})
+    assert row == f"; tried: the simulation keeps clear of it and still fails elsewhere ({fails})", row
+    row, title = _tried({"ok": True, "min_clearance_mm": 0.3, "at_box": False, "fails": None})
+    assert row == "; tried: the simulation keeps clear of it" and "fail" not in title, (row, title)
+    # measured to another box, 0.5 mm or more: a lower bound for this one
+    row, title = _tried({"ok": True, "min_clearance_mm": 3.17, "at_box": False, "fails": None})
+    assert row == "; tried: the simulation keeps at least 3.1 mm from it" and "no closer to it than 3.1 mm" in title
+    row, _ = _tried({"ok": True, "min_clearance_mm": 3.17, "at_box": False, "fails": fails})
+    assert row == f"; tried: the simulation keeps at least 3.1 mm from it (and still fails: {fails})", row
+    # measured to this box: its own distance, rounded down
+    row, title = _tried({"ok": True, "min_clearance_mm": 2.06, "at_box": True, "fails": None})
+    assert row == "; tried: the simulation keeps 2.0 mm from it" and "no closer to it than 2.0 mm" in title
+    row, _ = _tried({"ok": True, "min_clearance_mm": 0.02, "at_box": True, "fails": None})
+    assert row == "; tried: the simulation keeps 0.0 mm from it", row
+    row, title = _tried({"ok": True, "min_clearance_mm": None, "at_box": False, "fails": None})
+    assert row == "; tried: the simulation keeps clear of it" and "keeps clear of it" in title
+    assert _tried({"ok": False, "failure": fails})[0] == ""

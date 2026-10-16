@@ -1467,8 +1467,11 @@ field failure rate (section 0, honesty).
   it (the row says how close it comes)." (untried: "; the next simulation tries to plan round it, and may take another
   way, closer to it, or fail."), and with none offered for that reason "a simulation with a grey box there, tried here,
   fails (the row says how), so none is offered". The World panel's row adds "tried: the simulation keeps X mm from it"
-  ("at least" when its closest box is another). The trial is the next simulation: on the hunters' 15 cases kept in
-  tests/data/scan_box_trials.json its failure is word for word the one the simulation after Add box here reports, and
+  ("at least" when its closest box is another; world.js `scanTried`). Measured to another box under 0.5 mm it gives no
+  number: "keeps clear of it", with "and still fails elsewhere (<failure>)" when the trial fails (R8 printed "keeps at
+  least -2.4 mm from it" when a simulation failing already went into another box). The trial is the next simulation:
+  on the hunters' 15 cases kept in tests/data/scan_box_trials.json its failure is word for word the one the simulation
+  after Add box here reports, and
   its clearance the same number. Its cost, measured with `api_world.inspect_world` on this tree (4 cores): the review's
   desk scan (vase 8.8 mm, the box tried 10.1 mm from the simulation) `try_boxes` 4.8-6.5 s of a 17.6-18.7 s scan check
   at load 6-10; the same desk with the mount moved 15 mm (2.0 mm, tried 2.1 mm) 9.6-13.3 s of 21-25 s at load 6-12, and

@@ -42,14 +42,22 @@ const r1 = (x) => Math.round(x * 10) / 10;
 // from there (30.68 reads 30, not 31); worlds.mm_text does the same in Python
 const mmDown = (x) => { const v = Math.floor(x * 10 + 1e-6) / 10; return v < 10 ? v.toFixed(1) : String(Math.floor(v + 1e-9)); };
 // Add box here, tried (worlds.try_boxes): the simulation run with the box, as the next one would run, and the closest it
-// comes to any box (so no further from this one); untried, the next simulation may take another way or fail
-const scanTried = (g) => g.trial?.ok
-  ? `; tried: the simulation keeps ${g.trial.min_clearance_mm == null ? 'clear of it'
-    : `${g.trial.at_box ? '' : 'at least '}${mmDown(+g.trial.min_clearance_mm)} mm from it`}${g.trial.fails ? ` (and still fails: ${esc(g.trial.fails)})` : ''}`
-  : '';
+// comes to any box (so no further from this one); untried, the next simulation may take another way or fail. Measured
+// to another box (at_box false) the number is only a lower bound for this one, and under 0.5 mm, or into that box (a
+// simulation that failed already fails there again), no number about this one at all: the run keeps clear of it
+const scanTrialClear = (t) => t.min_clearance_mm == null || (!t.at_box && +t.min_clearance_mm < 0.5);
+const scanTried = (g) => {
+  const t = g.trial;
+  if (!t?.ok) return '';
+  if (scanTrialClear(t)) return `; tried: the simulation keeps clear of it${t.fails ? ` and still fails elsewhere (${esc(t.fails)})` : ''}`;
+  const mc = +t.min_clearance_mm;
+  return `; tried: the simulation ${mc < 0 ? 'comes within 0.5 mm of it' : `keeps ${t.at_box ? '' : 'at least '}${mmDown(mc)} mm from it`}`
+    + (t.fails ? ` (and still fails: ${esc(t.fails)})` : '');
+};
 const scanBoxTitle = (g) => g.trial?.ok
-  ? `A grey box over this part of the scan: a simulation with it, tried when the scan was checked, ${g.trial.min_clearance_mm == null ? 'keeps clear of it'
-    : `comes no closer to it than ${mmDown(+g.trial.min_clearance_mm)} mm`}`
+  ? `A grey box over this part of the scan: a simulation with it, tried when the scan was checked, ${scanTrialClear(g.trial)
+    ? `keeps clear of it${g.trial.fails ? ' and still fails elsewhere' : ''}`
+    : +g.trial.min_clearance_mm < 0 ? 'comes within 0.5 mm of it' : `comes no closer to it than ${mmDown(+g.trial.min_clearance_mm)} mm`}`
   : (g.touches ? 'A grey box over this part of the scan, where the arm touches it: the next simulation tries to plan round it, and may fail'
     : 'A grey box over this part of the scan, no closer to the path as it is than the scan: the next simulation may take another way, closer to it, or fail');
 // Add box here's id and label for a scan near miss: its own, unless the world holds that id or label already (a box added
