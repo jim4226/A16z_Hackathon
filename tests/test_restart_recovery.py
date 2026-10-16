@@ -811,10 +811,11 @@ def test_a_briefs_first_build_asked_for_again_marks_the_brief_built(home, tmp_pa
 # ------------------------------------------------------------------ a full disk, and a stop at the wrong moment
 
 
-def test_a_full_disk_at_a_restart_never_loses_a_cut_off_first_build(home, tmp_path, monkeypatch):
+def test_a_full_disk_at_a_restart_never_loses_a_cut_off_first_build(home, tmp_path, monkeypatch, capsys):
     """The disk is full when the Studio starts: the rebuild's journal line, the rebuild itself and the error record all
     fail. The stopped Studio's journal used to go first, leaving the design only in memory ("kept no design ... delete
-    the project"); it stays until what replaces it is written, so the next start, with space again, builds kb1."""
+    the project"); it stays until what replaces it is written, so the next start, with space again, builds kb1. The
+    terminal says each in one plain line (it printed a traceback for each: h5_diskfull)."""
     from morph.services import durable
     cut_off_first_build(home)
     full = [True]
@@ -841,6 +842,8 @@ def test_a_full_disk_at_a_restart_never_loses_a_cut_off_first_build(home, tmp_pa
     finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
     assert kb1.completed() == [] and rooms.journals(str(home / "kb1"))   # the stopped Studio's journal stays
     assert not (home / "kb1" / ".morph" / "first-build.json").exists()
+    out = capsys.readouterr()
+    assert "Traceback" not in out.out + out.err and "kb1: its first build stopped. The disk is full" in out.out, out
     after = tmp_path / "space-again"
     shutil.copytree(home, after)
     full[0] = False
@@ -1306,3 +1309,39 @@ def test_a_change_request_that_needed_no_build_never_says_it_built_one(home, bui
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+@pytest.mark.parametrize("full", ["tools", "tools, chat and journal"])
+def test_a_start_on_a_full_disk_says_so_in_one_line_and_still_recovers(home, builds, monkeypatch, capsys, full):
+    """h5_diskfull: a Studio starting on a full disk printed a five-frame traceback from the agents' toolbox
+    (api_tools.attach -> Toolbox.recover -> drafts.recover -> store.locked, OSError 28), and one more for each chat
+    line and queue journal line the disk refused. Each says so in one plain line now, and the Studio starts and
+    rebuilds a cut-off first build all the same (keeping the stopped Studio's journal while its own can't be written)."""
+    import errno
+    from morph.services import durable
+    from morph.studio.toolbox import draft as draft_mod
+
+    def no_space(path, *a, **k):
+        raise OSError(errno.ENOSPC, "No space left on device", str(path))
+
+    cut_off_first_build(home)
+    monkeypatch.setattr(draft_mod.store, "locked", no_space)
+    if full != "tools":
+        real_append = durable.append_line
+        monkeypatch.setattr(durable, "append_line", lambda path, line: no_space(path) if "kb1" in str(path)
+                            else real_append(path, line))
+    builds.gate = threading.Event()
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    out = capsys.readouterr()
+    text = out.out + out.err
+    said = [line for line in text.splitlines() if durable.DISK_FULL in line]
+    assert "Traceback" not in text and said and [s for s in said if s.startswith("Agent tools:")] == said[:1], text
+    if full == "tools":
+        assert len(said) == 1, text
+    else:
+        assert any(s.startswith("kb1: ") for s in said) and rooms.journals(str(home / "kb1")), text
+    kb1 = st.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert [j.label for j in queued] == ["first design" + REBUILT] and st.toolbox is not None
+    builds.gate.set()
+    finish(*queued)

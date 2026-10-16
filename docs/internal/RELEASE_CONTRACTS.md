@@ -116,7 +116,12 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   `rNNN.deleted-*` leftovers of a deletion a locked file stopped are deleted.
 - A full disk (ENOSPC, EDQUOT) reads `durable.DISK_FULL` ("The disk is full: free some space on this computer, then try
   again."): routes answer 507 with it (the generic handler, Teams' `_safe`, settings and keys), a build's chat error says
-  it. The Teams and toolbox lock files close their descriptor and remove themselves when their first write fails.
+  it. The Teams and toolbox lock files close their descriptor and remove themselves when their first write fails. The
+  terminal says it in one plain line, never a traceback: the agents' toolbox at the start (`api_tools.attach`;
+  `Toolbox.recover` tries every run and the drafts, leaves what the disk refused for the next start, then raises the
+  disk-full error), a chat line or queue journal line the disk refused (once per project until a write succeeds
+  again), a failed build or edit and a first build's error record (`server._report`). Other errors keep their
+  traceback.
 
 ## 2. Server routing contract (W0b implements; everyone else uses)
 

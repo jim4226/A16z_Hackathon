@@ -274,6 +274,7 @@ class Hub:
         self.project, self.path = project, path
         self.clients, self.lock = {}, threading.Lock()  # queue -> member id (None: not signed in as a member)
         self.history, self._lines = self._load()
+        self._full = False  # the disk refused a chat line (said once, until one is saved again)
 
     def _load(self) -> tuple[list, int]:
         if not self.path:
@@ -310,8 +311,13 @@ class Hub:
             else:
                 durable.append_line(self.path, json.dumps(event))  # a cut-off last line never swallows this one
                 self._lines += 1
-        except (OSError, TypeError, ValueError):
-            traceback.print_exc()  # a full disk loses saved chat, never the build
+            self._full = False
+        except (OSError, TypeError, ValueError) as exc:  # a full disk loses saved chat, never the build
+            if not durable.disk_full(exc):
+                traceback.print_exc()
+            elif not self._full:  # said once, until a message is saved again
+                self._full = True
+                print(f"{self.project}: its chat isn't saved for now. {durable.DISK_FULL}")
 
     def clear_history(self):
         with self.lock:
@@ -435,6 +441,7 @@ class JobQueue:
         self.cuttable = set()  # ids of jobs journaled "started": a stop from then on cuts them off
         self.kept = set()  # ids of first builds that ended with an error the disk refused to record: still open
         self.stopped = False  # the Studio is stopping cleanly (stopping): a build starting now is cut off by that stop
+        self.full = False  # the disk refused a journal line (said once, until one is written again)
 
     # -- the journal
     def _log(self, op: str, job: Job, **fields) -> bool:
@@ -450,9 +457,14 @@ class JobQueue:
             os.makedirs(os.path.dirname(self.journal), exist_ok=True)
             durable.append_line(self.journal, json.dumps({"op": op, "id": job.id, "studio": OWNER, "pid": os.getpid(),
                                                           "host": HOST, **fields}, default=str))
+            self.full = False
             return True
-        except (OSError, TypeError, ValueError):
-            traceback.print_exc()
+        except (OSError, TypeError, ValueError) as exc:
+            if not durable.disk_full(exc):
+                traceback.print_exc()
+            elif not self.full:  # said once, until a line is written again
+                self.full = True
+                print(f"{self.room.name}: Morph can't write down its queue for now. {durable.DISK_FULL}")
             return False
 
     def started(self, job: Job):

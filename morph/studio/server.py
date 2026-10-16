@@ -263,6 +263,15 @@ class Refused(RuntimeError):
     """A project change the Studio won't make now (the project is building, or it is the start project)."""
 
 
+def _report(exc, home: str, line: str):
+    """The terminal's word on an error a person sees in the chat: a full disk in one plain line (`line`, then "The disk
+    is full: ..."), anything else with its whole traceback."""
+    if durable.disk_full(exc):
+        print(f"{line} {durable.explain(exc, home)}")
+    else:
+        traceback.print_exc()
+
+
 def study_elsewhere(home: str, root: str) -> str | None:
     """Where a robustness study of project folder `root` runs when another process runs it (robust.active: its lock
     names the process and the computer), for people: "in another Morph Studio on this projects folder (process 4242 on
@@ -499,8 +508,8 @@ class Studio:
         try:
             projects.park_first_build(room.p.root, record)
             return True
-        except (OSError, TypeError, ValueError):
-            traceback.print_exc()
+        except (OSError, TypeError, ValueError) as exc:
+            _report(exc, self.home, f"{room.name}: Morph couldn't record that its first build failed.")
             return False
 
     def _park(self, room: Room, design: dict, label: str, by, cut: int) -> bool:
@@ -864,7 +873,7 @@ class Studio:
                 _after_build(self, room, rev)
                 return rev
             except Exception as exc:  # noqa: BLE001  (shown in the chat; the room keeps working)
-                traceback.print_exc()
+                _report(exc, self.home, f"{room.name}: an edit couldn't be built.")
                 self._say(room, job, "error", f"Error: {durable.explain(exc, self.home)}")
                 return None
             finally:
@@ -950,7 +959,7 @@ class Studio:
                 _after_build(self, room, rev)
                 return rev
             except Exception as exc:  # noqa: BLE001
-                traceback.print_exc()
+                _report(exc, self.home, f"{room.name}: its first build stopped.")
                 why = durable.explain(exc, self.home)
                 if (not room.completed() and not self._failed_first(room, design, label, job.by if job is not None
                                                                     else None, cut, why) and job is not None):
