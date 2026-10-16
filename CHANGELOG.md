@@ -120,8 +120,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   the path comes no closer there than the box was fitted for; when it does (the robot moved, say), the place is offered
   again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same box is never added
   twice, and a box the room holds already is never offered again. The check, the boxes' fit included, has 20 seconds:
-  the review's desk scan takes 11.3 to 11.5 seconds on a 4-core computer at load 1-2 and 15 to 16 at load 11-12, and a
-  generated room of a million triangles 14.5 seconds at load 10-12 (below: it now measures the arm's own shapes and the motion between its poses).
+  the review's desk scan takes 9.9 to 11.5 seconds on a 4-core computer at load 1-4 and 15 to 16 at load 11-12, and a
+  generated room of a million triangles 9.8 seconds at load 2 and 11.5 to 12 at load 5-10 (below: it now measures the
+  arm's own shapes and the motion between its poses).
   The boxes' share of the time is set aside only once the check has listed a near miss,
   sized from what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm
   comes within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the
@@ -148,8 +149,16 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   boxes, and wherever the arm could come closer between two poses than the closest it found, the move is measured in
   between, so the distance kept is never more than the closest approach anywhere along the path and at most 0.1 mm
   under it before rounding down (the moves the check left alone count with their bounds): those now read 9.8 mm and
-  touching. Where the arm touches or passes through the scan, Add box here offers that part of the scan as it is,
-  untrimmed, and the next simulation plans round it. A box from Add box here is measured against the path
+  touching. Where the arm touches or passes through the scan, Add box here offers a grey box over that part of the scan,
+  untrimmed (at least 20 mm each way, so a speck gets a 20 mm box), and the next simulation tries to plan round it; its
+  row says it touches the path unless the whole path keeps at least 0.5 mm from it (a row read "0.1 mm from the path"
+  for a box 8.75 mm into it). Where the arm must go (its starting pose, the descent, the grasp and the lift, the
+  set-down and the release, the object where it starts and ends) no box is offered, and the row says the arm must reach
+  there and when the scan holds the object itself: a box there made the simulation fail ("the object touches Scan near
+  miss 1 in the arm's starting pose", with the egg itself scanned at the pick spot). Under 0.5 mm the check's distance
+  and its rows' are kept as 0.0 (a speck at 0.197 mm read 0.2), and the scan line in the Studio's progress says the arm
+  touches the scan ("Closest to the scan: 0.2 mm" before), and with nothing within 50 mm gives the check's own bound
+  ("Nothing within 49 mm"). A box from Add box here is measured against the path
   with MuJoCo's own distances, between the poses too, and its row says how close the path comes to it. More than eight
   places closer than 10 mm are all counted ("12 places closer than 10 mm (the 8 closest are listed)"; it said 8), and a
   check cut short after 606 of 607 poses says "99% of it", not 100%. A grey box's place counts only with a distance of

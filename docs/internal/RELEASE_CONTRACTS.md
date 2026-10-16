@@ -1389,10 +1389,34 @@ field failure rate (section 0, honesty).
   trimmed on the sides facing the swept path until no robot point at any pose comes closer to it than the region's
   `min_clearance_mm` (R6: until MuJoCo's distance from it to the path, between the poses too, is no less),
   `box_clearance_mm` and `trimmed` saying so; `box: None` with `no_box` when that would leave it thinner than 5 mm; R7:
-  a region the arm touches or passes through (distance under `SCAN_TOUCH_MM`) gets its box untrimmed, `touches` true and
-  `box_clearance_mm` MuJoCo's lower bound (0.0 when it reaches into the path), the check saying "Add box here turns it
-  into a grey box, the thing as scanned, and the next simulation plans round it" (R6 trimmed it against MuJoCo's
-  negative distances until nothing was left, so the Studio's e2e post the jaw passes 7 mm into got no box); near
+  a region the arm touches or passes through (distance under `SCAN_TOUCH_MM`) gets its box untrimmed and `touches` true
+  (R6 trimmed it against MuJoCo's negative distances until nothing was left, so the Studio's e2e post the jaw passes 7
+  mm into got no box). R8: its `box_clearance_mm` is MuJoCo's lower bound only when `box_path` bounded the whole path
+  further than the touch, else 0.0 (`box_path` stops at the first pose closer than its target; R7 kept that pose's
+  distance, so a row read "0.1 mm from the path" for a box 8.75 mm into it); and it is offered only when a plan can go
+  round it. `must_reach` measures it (MuJoCo's distance, the motion between poses counted, `box_path` with a pose mask)
+  against what the planner can't move: the arm in its starting pose (pose 0), going down to the object, grasping and
+  lifting it (from the "above the object" marker to "lifted", and phases grasp and lift), setting it down and letting
+  go (phases place and release), and the object where it starts and ends (the first and last pose). Closer than
+  `SCAN_TOUCH_MM` to any of them, the region has `box: None`, `must_reach` and `no_box` (`MUST_REACH`): `object` or
+  `object_end` when the scan's own closest point there is within `SCAN_ON_OBJECT_MM` (2 mm) of the object ("the scan
+  holds the object itself here (or something touching it) ..."), `object_box` or `object_end_box` when only the box
+  reaches it, else `start`, `pick` or `place`. A trimmed box that would reach the object where it starts or ends isn't
+  offered either (`object_box`, `object_end_box`). The check says "Add box here turns it into a grey box over the
+  scanned surface there (at least 20 mm each way, so it can be larger than what was scanned), and the next simulation
+  tries to plan round it" (R7: "the thing as scanned, and the next simulation plans round it", untrue for a 0.1 mm
+  speck's 19.8 mm box), and where no box is offered for that reason, "the arm must reach there to pick or place the
+  object, or stands there in its starting pose, so no box is offered" (plus "(the scan holds the object itself where
+  it starts)"); with boxes offered elsewhere, "Where the arm must reach ... no box is offered." Measured on the bench
+  (`tests/test_world_scan.py`): the egg itself scanned at the pick spot (`object`), a 4 mm nub 0.2 mm under a finger at
+  the grasp (its box reaches the egg) and the egg's shape at the place spot get no box, where R7's box failed the next
+  simulation ("the object touches Scan near miss 1 in the arm's starting pose"; the real Studio said the same); the
+  vase 10 mm into the carry keeps its box, and the next simulation succeeds. Of 40 specks the arm touches on the
+  approach, the carry or the way back (a fuzz on the bench, seed 1), 29 boxes would meet a pose no plan moves (13 the
+  starting pose, 13 the set-down and release, 3 the descent, grasp and lift) and aren't offered; the 5 of those checked
+  with MuJoCo reached 3.8 to 20.2 mm into it as R7 offered them. R8: the check's distance and
+  each region's are kept as 0.0 under `SCAN_TOUCH_MM` (`_touch_floor`: `min_clearance_mm`), since there the check stops
+  looking closer and the distance it had is one pose's (a speck at 0.197 mm was kept as 0.2); near
   misses within `SCAN_COVER_MM` = 10 mm of one of the world's grey boxes are that box's, and a
   region of nothing else is left out, `stats.covered` counting them). R3: a trimmed region also has `covers`, its box
   before trimming (it holds the region's near-miss points); an obstacle saved with `covers` owns the near misses within
@@ -1502,8 +1526,10 @@ field failure rate (section 0, honesty).
   between in 4.2-4.5 s, fit 0.6 s; with the mount moved 15 mm 8.7 s at load 2.5), 15.1-16.3 s at load 11-12 (pass 2
   5.1-5.3 s, 422 poses
   between in 6.1-6.6 s, fit 1.1-1.4 s), 20 s and cut short between the poses at load 13-17 (the pre-R6 engine took
-  14.7-14.8 s at load 16); with the mount moved 15 mm (2.1 mm) 12.5-13.5 s at load 12; the million-triangle room 14.5 s
-  at load 10-12 (it touches; the regions step skips refining a place that touches).
+  14.7-14.8 s at load 16); R8: 9.9-10.3 s at load 3-4 and 10.8-11.0 s at load 3-4 with the World e2e running. With
+  the mount moved 15 mm (2.0 mm): R8 8.5-8.7 s at load 2-3 and 9.2-9.5 s at load 5; the final skeptic, at 16ef0d8,
+  13.8-15.9 s at load 9.3-9.8. The million-triangle room (it touches; the regions step skips refining a place that
+  touches): R8 9.8 s at load 2 and 11.9 s at load 5-6; the final skeptic, at 16ef0d8, 11.5 s at load 8.6-9.6.
   `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`):
   pass, warn (closer than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with
   `SCAN_NOTE` ("Measured against the scanned surface, which can be noisy or have holes. A warning, not a verdict.");
@@ -1525,7 +1551,10 @@ field failure rate (section 0, honesty).
   be as close as the arm touching, so Check placement again lists them when the computer is less busy, where the kept
   answer showed the same short list until the room or the revision changed); it sends `world {stage: "scan", status:
   "start" | "done", text}` ("Closest to the scan: at most 4.6 mm ... (cut short)" when cut short) and an `agent` event
-  (`feasibility`, `code`).
+  (`feasibility`, `code`). R8: the text is `scan_event_text`: "The arm touches or passes through the scan" under
+  `SCAN_TOUCH_MM` (it read "Closest to the scan: 0.2 mm" beside a check saying "touches"), and with nothing measured
+  within 50 mm, "Nothing within X mm of the scan" with the check's own bound (`stats.beyond_mm`: "Nothing within 49 mm"
+  where the check says "more than 49 mm"; it said 50).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
   the box size, its distance from the path and whether it was trimmed, or why there is no box; R5: "at most X mm from"
   unless the region is `exact`) and **Add box here**

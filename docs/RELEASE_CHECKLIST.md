@@ -90,6 +90,12 @@ Run each on a clean machine or a fresh user account, from a fresh clone of the r
 | 25 | Upgrading a clone whose launcher pulled (macOS) | In a clone of `main` after the release is merged, `git reset --hard 0f75a21`, then `./run_studio.sh --update` in Terminal (zsh). Close it and run `./run_studio.sh` again. | First start: git pulls, pip runs quietly, then "--update is an option of the launcher" and the Studio opens. Second start: pip's progress once (the tested versions and the `morph` command), then the Studio. `.venv/bin/morph doctor` works afterwards. |
 | 26 | An Intel Mac, or Windows 11 on ARM | `./run_studio.sh` (Mac); on Windows on ARM, double-click `run_studio.bat` with only the ARM64 Python installed, then again with the x64 Python from python.org. | Intel Mac and ARM64 Python: a message saying why and what to install, before any download, and no `.venv` folder left behind. x64 Python on ARM: the note about x64 emulation, then the Studio opens and builds; on Windows 11 before 24H2, the message that MuJoCo doesn't load or run and to update Windows (record the Windows version and which you saw, and that a pick-and-place build simulates after the check passes). |
 
+Row 26 still needs real hardware: it can't be run in the release review, which has no Windows on ARM computer.
+The launcher's check there (`run_studio.bat` stepping a MuJoCo model before it starts the Studio) is tested only
+through the script's lines and its Python one-liners run on Linux (`tests/test_launchers.py`), and CI's launchers
+job runs on x64 Windows, where that check is skipped. Run the row on a Windows 11 on ARM machine and record the
+Windows version, which message appeared, and whether a pick-and-place build simulates after the check passes.
+
 ## Tag and publish
 
 - [ ] Merge the release pull request into `main`.

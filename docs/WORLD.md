@@ -38,7 +38,9 @@ is not there when the browser has no WebGL).
    surface, tip-over (a heuristic), people areas within 100 mm of anywhere the arm can reach, anything less than 50 mm
    over the arm's highest point, and how much of the workspace stays clear. The highest and furthest points are the
    arm's own (its collision shapes, the jaws open and closed, over the joints' range), not its tool point's: the
-   egg-picker's fingertips reach 588 mm up and out, its tool point 567 and 568 mm. With a room scan, it also measures
+   egg-picker's fingertips reach 588 mm up and out, its tool point 567 and 568 mm (on the built-in desk that puts the
+   chair within 100 mm of the egg-picker's reach, so the people check warns there: "The arm's reach (589 mm to its
+   furthest point + 100 mm) overlaps Chair"). With a room scan, it also measures
    the simulated path against the scan itself (below). Every distance these checks keep or show is rounded down, never
    up: to 0.1 mm under 10 mm and to the millimetre from there, so 9.97 mm reads 9.9 (never the 10 mm that is OK) and
    30.68 mm reads "at least 30 mm"; room that is missing (the base over the edge, the arm into a box) is rounded up.
@@ -78,8 +80,17 @@ and trimmed on the sides that face it until it is no closer to the path than the
 is, "at most" unless it is the check's closest place measured along the whole path, and "trimmed" when it was): adding
 it never makes the clearance worse. When a box that keeps clear would be thinner than 5 mm, none is offered: move the
 robot or the thing. Where the arm touches or passes through the scan no box can keep clear of the path, so the box
-offered there is that part of the scan as it is, untrimmed (its row says "0.0 mm from the path"). *Save and simulate*
-then plans around it, and the next check measures the new path. A near miss
+offered there is a grey box over that part of the scan, untrimmed: at least 20 mm each way, so it can be much bigger
+than what was scanned (a speck gets a 20 mm box), and its row says it "touches the path" unless the whole path keeps
+at least 0.5 mm from it. It is offered only where a plan can go round it. The simulation can take another way for the
+approach, the carry, how far the hand opens to let go and the way back, but not for the arm's starting pose, the moves
+down to the object, the grasp and the lift, the set-down and the release, or where the object starts and ends: where
+the box would come within 0.5 mm of one of those, a box would make the simulation fail, so none is offered, and the
+row says the arm must reach there (and, when the scan holds the object itself where it is picked up, says that). A
+trimmed box that would reach the object where it starts or ends isn't offered either. After *Add box here*, *Save and
+simulate* tries to plan around the box (when no way it knows keeps clear, the simulation fails and names the move and
+the box), and the next check measures the new path. Under 0.5 mm the arm's distance to the scan is kept and shown as
+touching (0.0), in the check, its rows and the scan line in the Studio's progress. A near miss
 within 10 mm of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box away
 from it (a vase's rim just under the arm), as long as the box itself stands about as near the path (no further from it
 than the near miss's distance plus 10 mm): the same place is not offered again, and the check says it has a grey box
@@ -93,13 +104,13 @@ claim a big place, or a place for near misses closer than the box was fitted to.
 a box the room holds already is never offered again.
 
 The check, the boxes' fit included, has 20 seconds. On a 4-core computer the review's desk scan, a vase 9 mm from the
-arm's path, takes 11.3 to 11.5 seconds at load 1-2 and 15 to 16 at load 11-12 (measured only at the poses, as before,
+arm's path, takes 9.9 to 11.5 seconds at load 1-4 and 15 to 16 at load 11-12 (measured only at the poses, as before,
 it took 14.7 seconds at load 16: the motion between the poses costs about as much again); the same desk with the mount
-moved 15 mm, the wrist 2 mm from the vase, 8.7 seconds at load 2.5 and 12.5 to 13.5 at load 12; a generated room of a
-million triangles 14.5 seconds at load 10-12. When a check can't measure the whole path in time, it never claims more
-room than it measured: it says how close the arm comes at most (the closest distance it did measure: "The wrist comes
-within at most 4.6 mm of the scanned surface"), with how close it comes at least when it knows ("no closer than 8.6
-mm"), or that there wasn't time to measure it, and
+moved 15 mm, the wrist 2.0 mm from the vase, 8.5 to 9.5 seconds at load 2-5 and 13.8 to 15.9 at load 9-10; a
+generated room of a million triangles 9.8 seconds at load 2 and 11.5 to 12 at load 5-10. When a check can't measure
+the whole path in time, it never claims more room than it measured: it says how close the arm comes at most (the
+closest distance it did measure: "The wrist comes within at most 4.6 mm of the scanned surface"), with how close it
+comes at least when it knows ("no closer than 8.6 mm"), or that there wasn't time to measure it, and
 that only part of the path, or of the motion between its poses, was measured (at load 13 to 17 the desk check can run
 out of time there). It says whether checking again when the computer is less busy may finish it, or whether, at that
 pace, it would take more than twice as long. Its answer is kept until the room, the scan or the revision's simulation
