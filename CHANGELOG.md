@@ -117,10 +117,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   to a grey box, or one a box was added for (even when the trim moved the box away from it), isn't offered again while
   the path comes no closer there than the box was fitted for; when it does (the robot moved, say), the place is offered
   again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same box is never added
-  twice, and a box the room holds already is never offered again. The check, the boxes' fit included, stays within its
-  20 seconds: the review's desk scan takes 7.5 to 8.5 seconds on a 4-core computer at load 4-7 (12 to 13 before) and 10
-  to 11.5 at load 11-13, where it used to take 16 to 18 and was often cut short; a generated room of a million triangles
-  takes 10.5 seconds at load 7. The boxes' share of the time is set aside only once the check has listed a near miss,
+  twice, and a box the room holds already is never offered again. The check, the boxes' fit included, has 20 seconds:
+  the review's desk scan takes 15 to 16 seconds on a 4-core computer at load 11-12, and a generated room of a million
+  triangles 14.5 seconds at load 10-12 (below: it now measures the arm's own shapes and the motion between its poses).
+  The boxes' share of the time is set aside only once the check has listed a near miss,
   sized from what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm
   comes within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the
   path was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short,
@@ -137,6 +137,25 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - A room-scan near miss's row says "at most X mm" unless it is the check's closest place measured along the whole path,
   and its distance is measured exactly at its own closest points: before, a row read "2.2 mm from the wrist" in a check
   cut short where the wrist comes within 2.1 mm, and a box added from it kept 2.2 mm as its fit.
+- The room-scan check measures the arm's own collision shapes, and the motion between the poses it takes. It measured
+  the arm by points of its surface 1 to 2 mm apart (the carried egg, a capsule, as a 24-sided prism), only at poses 10
+  ms apart, so a plate 9.95 mm under the egg read "At least 10 mm", a speck 0.25 mm under a finger "comes within 0.6
+  mm", and a speck the jaw passes straight through between two poses "comes within 1.0 mm" (a 0.4 mm cable there, 0.8
+  mm). Now each part's convex hull (a box, a sphere and a capsule as they are, a cylinder as the 32-sided prism around
+  it) is measured exactly against the scan's triangles, within 0.005 mm of MuJoCo's own distances on scans made of
+  boxes, and wherever the arm could come closer between two poses than the closest it found, the move is measured in
+  between, to within 0.1 mm: those now read 9.8 mm and touching. A box from Add box here is measured against the path
+  with MuJoCo's own distances, between the poses too, and its row says how close the path comes to it. More than eight
+  places closer than 10 mm are all counted ("12 places closer than 10 mm (the 8 closest are listed)"; it said 8), and a
+  check cut short after 606 of 607 poses says "99% of it", not 100%. A grey box's place counts only with a distance of
+  at least 0.5 mm and only while the box itself stands about as near the path (a 100 mm cabinet 52 mm from the path,
+  saved through the API with a place 50 mm below it and a distance of 0.1 mm, hid a 6 mm near miss), and a near miss is
+  the box's only when measured no closer than the box was fitted for (the distance to the nearest of the scan's points
+  decided, up to 1.4 mm more, so a plate 0.3 mm nearer than its box was fitted for stayed hidden); when the box the room
+  holds is the one that fits there anyway, the place is listed without one, saying the path comes closer than the box
+  was fitted to. Measuring between the poses makes the check slower: the desk scan above took 14.7 seconds at load 16
+  measured only at the poses; at load 13 to 17 it can run out of time between them, and then says how close the arm
+  comes at most and at least, and that the motion between the poses wasn't all measured.
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the

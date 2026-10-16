@@ -57,39 +57,49 @@ morph world egg-picker --off
 ## Clearance to the room scan (a warning)
 
 The simulation sees only the grey boxes, so *Check placement* also measures how close the simulated arm (and the object
-while it is carried), posed every 10 ms along the newest simulation, comes to the uploaded scan. It looks at the part
-of the scan near the arm: the scan's triangles are covered by points of their own that a k-d tree searches, and the
-closest ones get exact point-to-triangle distances; on scans made of a world's own boxes it agrees with MuJoCo's own
-distances to within a few tenths of a millimetre. The result is a warning, never the verdict: "Measured against the
-scanned surface, which can be noisy or have holes. A warning, not a verdict." It names the part of the arm and the
-time, and says *touches or passes through* below 0.5 mm.
+while it is carried) comes to the uploaded scan along the newest simulation: posed about every 10 ms, and moving between
+those poses. It looks at the part of the scan near the arm and measures the robot's own collision shapes against the
+scan's triangles exactly: each part's convex hull (as MuJoCo collides with it), a box, a sphere and a capsule as they
+are, a cylinder or an ellipsoid as the polytope around it. On scans made of a world's own boxes it agrees with MuJoCo's
+own distances to within 0.005 mm. Between two poses no point of the arm travels further than its joints' turns allow,
+and wherever that could bring it closer than the closest it found, the move is measured at poses in between, so the
+distance it keeps is the closest approach along the whole path to within 0.1 mm, rounded down: a speck or a cable the
+arm passes straight through between two poses *touches or passes through*. The result is a warning, never the verdict:
+"Measured against the scanned surface, which can be noisy or have holes. A warning, not a verdict." It names the part of
+the arm and the time, and says *touches or passes through* below 0.5 mm.
 
 Each place where the arm comes within 10 mm of the scan is listed with **Add box here**: a grey box over that part of
-the scan (standing on the surface when the scan under it does), added to the room. A box around a round thing sticks
-out at its corners, so the box is measured against the same path first and trimmed on the sides that face it until it
-is no closer to the path than the scan there (the row says how close it is, "at most" unless it is the check's closest
-place measured along the whole path, and "trimmed" when it was): adding it never
-makes the clearance worse. When a box that keeps clear would be thinner than 5 mm, none is offered: move the robot or
-the thing. *Save and simulate* then plans around it, and the next check measures the new path. A near miss within 10 mm
-of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box away from it (a
-vase's rim just under the arm): the same place is not offered again, and the check says it has a grey box already. A box
-added this way keeps how close the path came there and which revision's path it was fitted to: when a new path comes
-closer at that place (the robot moved, say), the place is offered again with a box fitted to the new path. Sizing,
-moving or turning such a box by hand, or setting the room's scale again, makes it a plain grey box. The place a box
-keeps reaches past it only on the sides that were trimmed, and no further than the box is big, so a small box saved
-from elsewhere can't claim a big place. The same box is
-never added twice, and a box the room holds already is never offered again.
+the scan (standing on the surface when the scan under it does), added to the room. When more than eight places are that
+close, every one is counted and the eight closest are listed. A box around a round thing sticks out at its corners, so
+the box is measured against the same path first (MuJoCo's own distance to it at every pose, and the motion between them)
+and trimmed on the sides that face it until it is no closer to the path than the scan there (the row says how close it
+is, "at most" unless it is the check's closest place measured along the whole path, and "trimmed" when it was): adding
+it never makes the clearance worse. When a box that keeps clear would be thinner than 5 mm, none is offered: move the
+robot or the thing. *Save and simulate* then plans around it, and the next check measures the new path. A near miss
+within 10 mm of a grey box is that box's, and so is the place a box was added for, even when the trim moved the box away
+from it (a vase's rim just under the arm), as long as the box itself stands about as near the path (no further from it
+than the near miss's distance plus 10 mm): the same place is not offered again, and the check says it has a grey box
+already. A box added this way keeps how close the path came there and which revision's path it was fitted to: when a new
+path comes closer at that place (the robot moved, say), the place is offered again with a box fitted to the new path;
+when the box the room holds is already the one that fits there, the place is listed without one, saying the path now
+comes closer than the box was fitted to. Sizing, moving or turning such a box by hand, or setting the room's scale
+again, makes it a plain grey box. The place a box keeps reaches past it only on the sides that were trimmed, and no
+further than the box is big, and it counts only with a distance of at least 0.5 mm, so a box saved from elsewhere can't
+claim a big place, or a place for near misses closer than the box was fitted to. The same box is never added twice, and
+a box the room holds already is never offered again.
 
 The check, the boxes' fit included, has 20 seconds. On a 4-core computer the review's desk scan, a vase 9 mm from the
-arm's path, takes 7.5 to 8.5 seconds at load 4-7 and 10 to 11.5 at load 11-13; the same desk with the wrist touching the
-vase 9 to 10 seconds at load 2-3 and 17 at load 8; a generated room of a million triangles 10.5 seconds at load 7. When
+arm's path, takes 15 to 16 seconds at load 11-12 (measured only at the poses, as before, it took 14.7 seconds at load
+16: the motion between the poses costs about as much again); the same desk with the mount moved 15 mm, the wrist 2 mm
+from the vase, 12.5 to 13.5 seconds at load 12; a generated room of a million triangles 14.5 seconds at load 10-12. When
 a check can't measure the whole path in time, it never claims more room than it measured: it says how close the arm
-comes at most (the closest distance it did measure: "The wrist comes within at most 4.6 mm of the scanned surface"), or
-that there wasn't time to measure it, and that only part of the path was measured. It says whether checking again when
-the computer is less busy may finish it, or whether, at that pace, it would take more than twice as long. Its answer is
-kept until the room, the scan or the revision's simulation changes, except an answer cut short, one whose box ran out
-of time to be fitted, or one that ran out of time before every near miss was listed: *Check placement* measures those
-again.
+comes at most (the closest distance it did measure: "The wrist comes within at most 4.6 mm of the scanned surface"),
+with how close it comes at least when it knows ("no closer than 8.6 mm"), or that there wasn't time to measure it, and
+that only part of the path, or of the motion between its poses, was measured (at load 13 to 17 the desk check can run
+out of time there). It says whether checking again when the computer is less busy may finish it, or whether, at that
+pace, it would take more than twice as long. Its answer is kept until the room, the scan or the revision's simulation
+changes, except an answer cut short, one whose box ran out of time to be fitted, or one that ran out of time before
+every near miss was listed: *Check placement* measures those again.
 
 - Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
   goes counts as a near miss.

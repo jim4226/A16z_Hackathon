@@ -137,7 +137,9 @@ def test_the_scan_points_cover_every_triangle(h):
 @pytest.mark.parametrize("which", ["bin", "carton-and-post"])
 def test_within_2_mm_of_mujoco_on_box_fixtures(tmp_path, which):
     """Acceptance: a scan made of the world's own boxes, measured pose by pose (every 10 ms around the closest
-    approach) against MuJoCo's mj_geomDistance to those boxes: within 2 mm everywhere (in practice a few tenths)."""
+    approach) against MuJoCo's mj_geomDistance to those boxes: within 2 mm everywhere (in practice a few tenths; R6, the
+    robot's own shapes measured exactly: within 0.01 mm, and the check's closest, the motion between poses counted,
+    never above MuJoCo's closest pose)."""
     boxes = ([bin_beside_the_arc(EGG, 20.0)] if which == "bin" else
              [carton_wall(EGG, 48.0), box("Post", (203.6, 83.6, 34.8), (20.7, 20.7, 34.8), 17.0)])
     rob, doc, met = simulated(tuple(boxes))
@@ -152,8 +154,8 @@ def test_within_2_mm_of_mujoco_on_box_fixtures(tmp_path, which):
     diff = sv[near] - mj[near]
     print(f"\n{which}: {near.sum()} poses, scan - MuJoCo {diff.min():+.3f} to {diff.max():+.3f} mm, min {res['min_clearance_mm']} "
           f"vs {mj.min():.2f}, {res['stats']['seconds']} s")
-    assert np.abs(diff).max() <= 2.0
-    assert abs(res["min_clearance_mm"] - mj.min()) <= 2.0 and res["at"]["t"] == pytest.approx(t0, abs=0.6)
+    assert np.abs(diff).max() <= 0.01
+    assert mj.min() - 0.3 <= res["min_clearance_mm"] <= mj.min() and res["at"]["t"] == pytest.approx(t0, abs=0.6)
     assert not res["stats"]["truncated"] and res["note"] == worlds.SCAN_NOTE
 
 
@@ -400,7 +402,7 @@ def test_a_box_not_fitted_in_time_is_not_offered(tmp_path, nominal, monkeypatch)
     rob, doc = nominal
     room = boxes_glb(tmp_path / "room.glb", [SLAB, POST])
     fit = worlds._fit_boxes
-    monkeypatch.setattr(worlds, "_fit_boxes", lambda *a: fit(*a[:11], time.monotonic() - 1.0, a[12]))
+    monkeypatch.setattr(worlds, "_fit_boxes", lambda *a, **k: fit(*a[:11], time.monotonic() - 1.0, a[12], **k))
     res = measure(room, ROOM, doc, rob.xml)
     (g,) = res["regions"]
     assert g["box"] is None and "ran out of time" in g["no_box"] and res["stats"]["fit_timeout"], g
@@ -574,7 +576,8 @@ TOUCHING_VASE = ((264.2, 72.0), 22.0, 170.0)     # TALL_VASE 7.8 mm nearer the p
 
 @pytest.mark.parametrize("vase, limits, past", [
     (TOUCHING_VASE, (8, 20, 60, 200, 1300), ()),                  # the review's rD: the wrist touched, cut short
-    (TALL_VASE, (300,), range(4, 36, 2))])                        # 8.0 mm: and every 2 s past one a pose
+    (TALL_VASE, (300,), range(4, 72, 2))])                        # 8.0 mm: and every 2 s past one a pose (R6: the
+                                                                  # motion between poses is measured too: more reads)
 def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nominal, monkeypatch, vase, limits, past):
     """Cut short anywhere (the first pass, the second, or after the closest place was measured), the check reports the
     closest distance it measured, a real distance from a point of the robot to the scan, as "at most", and a lower
@@ -604,36 +607,44 @@ def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nom
             assert not r["exact"] and r["min_clearance_mm"] >= true - 0.1, (limit, r)
             assert (r.get("covers") or {}).get("clearance_mm", r["min_clearance_mm"]) == r["min_clearance_mm"], r
         seen.add("pass 1" if st["poses_checked"] < st["unique_poses"] else "pass 2")
-        assert "Only part of the path was measured" in c["text"] and "Check placement again" not in c["text"], c
+        assert ("Only part of the path was measured" in c["text"] or    # R6: or the motion between the poses
+                "The motion between the poses wasn't all measured closely enough" in c["text"]), c
+        assert "Check placement again" not in c["text"], c
         assert "more than 50 mm" not in c["text"] and "At least" not in c["text"], (limit, c["text"])
         assert mc is not None and true <= mc + 0.05, (limit, true, res)    # it comes at least as close as it says
         assert ("touches" in c["text"]) if mc < worlds.SCAN_TOUCH_MM else (f"within at most {mc:.1f} mm" in c["text"])
         if st.get("lower_mm") is not None:
             assert st["lower_mm"] <= true + 0.05 and f"no closer than {st['lower_mm']:.1f} mm" in c["text"], (limit, st)
-    assert seen >= {"pass 1", "whole"} and (seen >= {"pass 2", "listed in part"} if vase is TALL_VASE else True), seen
+    # R6: after the second pass the motion between poses is measured, so a second pass cut short after the closest
+    # place was found is "listed in part" only when that third pass still finishes; at a second a clock reading it doesn't
+    assert seen >= {"pass 1", "whole"} and (seen >= {"pass 2"} if vase is TALL_VASE else True), seen
 
 
-@pytest.mark.parametrize("dy, truth, text", [
-    (4.40, 9.96, "comes within 9.9 mm of the scanned surface"),     # a near miss: before, "At least 10 mm" and a 10.0 row
-    (0.37, 8.17, "comes within 8.1 mm of the scanned surface"),     # before, 8.2
-    (21.06, 16.76, "At least 16 mm between the arm and the scanned surface")])     # before, "At least 17 mm"
-def test_no_distance_is_rounded_up(tmp_path, nominal, dy, truth, text):
-    """The tall vase moved `dy` mm along y, so the closest approach (`truth`, pose by pose to 0.01 mm) has a fraction
-    that rounds up: every distance the check keeps or shows is rounded down instead (to 0.1 mm, "At least" to the
-    millimetre), so it never claims more room than was measured, and a near miss of 9.96 mm is never 10."""
+@pytest.mark.parametrize("dy, truth, near", [
+    (4.40, 9.96, True),             # a near miss: before, "At least 10 mm" and a 10.0 row
+    (0.37, 8.17, True),             # before, 8.2
+    (21.06, 16.76, False)])         # before, "At least 17 mm"
+def test_no_distance_is_rounded_up(tmp_path, nominal, dy, truth, near):
+    """The tall vase moved `dy` mm along y, so the closest approach at the 10 ms poses (`truth`, pose by pose to
+    0.01 mm) has a fraction that rounds up: every distance the check keeps or shows is rounded down instead (to 0.1 mm,
+    "At least" to the millimetre), so it never claims more room than was measured, and a near miss of 9.96 mm is never
+    10. R6: the motion between the poses counts too (the first vase comes within 9.83 mm between two of them), so what
+    the check keeps is never more than the poses' closest, rounded down, and not much less."""
     rob, doc = nominal
     (cx, cy), r, h = TALL_VASE
     m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh((cx, cy + dy), r, h)])
     res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml, per_pose=True)
     pp = min(v for _, v in res["poses"] if v is not None)
     assert pp == pytest.approx(truth, abs=0.015), pp
-    assert res["min_clearance_mm"] == math.floor(pp * 10 + 1e-6) / 10, (res["min_clearance_mm"], pp)
-    near = pp < worlds.SCAN_NEAR_MM
-    assert bool(res["regions"]) == near, res["regions"]
+    mc = res["min_clearance_mm"]
+    assert mc <= math.floor(pp * 10 + 1e-6) / 10 and mc >= pp - 0.3 and mc == math.floor(mc * 10 + 1e-6) / 10, (mc, pp)
+    assert (mc < worlds.SCAN_NEAR_MM) == near and bool(res["regions"]) == near, (mc, res["regions"])
     for g in res["regions"]:
         assert g["min_clearance_mm"] <= pp and (g.get("covers") or {}).get("clearance_mm", 0.0) <= pp, g
         assert g["box_clearance_mm"] is None or g["box_clearance_mm"] <= g["min_clearance_mm"] + 0.2, g
     c = worlds.scan_check(res)
+    text = f"comes within {mc:.1f} mm of the scanned surface" if near else \
+        f"At least {math.floor(mc):.0f} mm between the arm and the scanned surface"
     assert c["status"] == ("warn" if near else "pass") and text in c["text"] and c["value"] <= pp, c
     assert ("At least" in c["text"]) != near and "10.0" not in c["text"], c
 

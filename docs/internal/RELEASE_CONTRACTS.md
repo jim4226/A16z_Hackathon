@@ -1365,9 +1365,10 @@ field failure rate (section 0, honesty).
   above the mount surface dropped; each triangle is covered by its own points (`_scan_samples`: rows along its longest
   edge at most `SCAN_SAMPLE_MM`/2 apart, points at most `SCAN_SAMPLE_MM` apart, so no point of it is further than rho <=
   1.41 mm from one) in a scipy cKDTree (sliding midpoint, no compact nodes, every query bounded). Robot geoms (fixed
-  ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine samples (1 mm edges, 2 mm faces)
-  are measured against the tree, and those that could be the closest get exact point-triangle distances
-  (`closest_on_triangles`) to every triangle with a point within their bound. Two passes: every pose coarsely (bounds;
+  ones once) are pruned by bounding sphere, then coarse hull samples (8 mm); the fine samples (1 mm edges, 2 mm faces;
+  R6: rows 1.6 mm apart on each collision shape's faces) are measured against the tree, and those that could be the
+  closest get exact point-triangle distances (`closest_on_triangles`) to every triangle with a point within their bound
+  (R6: the shapes' own distances, below). Two passes: every pose coarsely (bounds;
   R3: in `_spread` order, every 16th pose, then those halfway between and so on, so a check cut short has looked along
   the whole path; R4: the bounding spheres tested by size class, `SCAN_RBOUND_CLASSES_MM`, and the coarse samples by
   `SCAN_CELL_MM` = 24 mm cell, a cell skipped when its sphere is beyond the samples' search bound: the same answers pose
@@ -1384,8 +1385,9 @@ field failure rate (section 0, honesty).
   `exact`, below): the scanned surface within 30 mm of them in the world frame along the mount surface's axes, at least
   20 mm thick (grown away from the arm), down to the surface when it or the scan under it nearly reaches it (W3: then
   trimmed on the sides facing the swept path until no robot point at any pose comes closer to it than the region's
-  `min_clearance_mm`, `box_clearance_mm` and `trimmed` saying so; `box: None` with `no_box` when that would leave it
-  thinner than 5 mm; near misses within `SCAN_COVER_MM` = 10 mm of one of the world's grey boxes are that box's, and a
+  `min_clearance_mm` (R6: until MuJoCo's distance from it to the path, between the poses too, is no less),
+  `box_clearance_mm` and `trimmed` saying so; `box: None` with `no_box` when that would leave it thinner than 5 mm; near
+  misses within `SCAN_COVER_MM` = 10 mm of one of the world's grey boxes are that box's, and a
   region of nothing else is left out, `stats.covered` counting them). R3: a trimmed region also has `covers`, its box
   before trimming (it holds the region's near-miss points); an obstacle saved with `covers` owns the near misses within
   `SCAN_COVER_MM` of that place too, while the box still lies inside it (+1 mm; moved elsewhere it doesn't), so a box
@@ -1397,7 +1399,8 @@ field failure rate (section 0, honesty).
   offered again, with a box fitted to the new path. `_covers` ignores a `covers` that isn't what a fit makes, and the
   box then owns, like any grey box, only the near misses within 10 mm of itself: without `clearance_mm` or with 0 (R5),
   turned against the box, not containing it, or (R5) past a face by more than the box's size on that axis or 50 mm, or
-  sharing none of its faces (to `SCAN_COVERS_FACE_MM` = 0.2 mm; the fit trims only the sides facing the path). R5:
+  sharing none of its faces (to `SCAN_COVERS_FACE_MM` = 0.2 mm, R6: 0.4 mm; the fit trims only the sides facing the
+  path). R5:
   before, the limit was 50 mm past any box, so an API client could save a 10 mm cube with a place 50 mm past it on every
   side and `clearance_mm` 0 and hide a 9.0 mm near miss 56 mm from the cube; now that place is ignored. A region whose
   fitted box is a box the world holds already (`_same_box`: 0.05 mm, 0.01 degree) is left out and counted in
@@ -1447,8 +1450,48 @@ field failure rate (section 0, honesty).
   pose and not: the same per-pose distances, the same boxes, the same closest point except r004 not per pose (now its
   row's 0.0 mm at 1.62 s, before 0.2 mm at 1.46 s, above), and the distances 0.1 mm lower where they were rounded up
   (9.0 to 8.9 mm on r002 and r003). Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up
-  to 0.21 mm over whole runs); a generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1 1.3 s;
-  `MORPH_SLOW=1`). `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`):
+  to 0.21 mm over whole runs; R6: within 0.005 mm); a generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1
+  1.3 s; `MORPH_SLOW=1`).
+  R6: the robot was its surface samples (a capsule as a 24-sided prism) at the 10 ms poses only, so on rD's r004 a plate
+  9.95 mm under the carried egg read "At least 10 mm", a 0.1 mm speck 0.25 mm under a finger "comes within 0.6 mm", and
+  a speck and a 0.4 mm cable the jaw passes through between two poses (-0.11 and -0.40 mm) "comes within 1.0 mm" and
+  "0.8 mm". `_geom_shape` now gives each robot geom its collision shape (`_Shape`: a mesh's convex hull, a box; a sphere
+  and a capsule exactly, by the polytope inside them; a cylinder as the 32-sided prism around it, an ellipsoid as the
+  polytope around it, so never further than they are) with surface samples `SCAN_ROBOT_MM` (1.6 mm) rows apart and
+  `cover_f`, how far the shape's surface can be from one; the geoms whose samples could hold the closest point get their
+  exact distance (`_shape_tris`: the faces of those samples against the triangles near them, pairs closest bound first
+  by bounding spheres, boxes and each face's plane, `_tri_tri` for two triangles, `_seg_tri` for a capsule's axis; a
+  triangle with a corner inside the hull at 0). A third pass bounds the motion between the poses:
+  `sweep.Motion(per_geom=True, radius_mm=)` bounds how far any point of each geom travels over a move, and a move whose
+  bound (D_a + D_b - L) / 2 could be below the closest found less `SCAN_BETWEEN_TOL_MM` (0.1 mm) is halved and measured
+  in between, exactly, against the triangles and faces that can still come that close in that half, at most
+  `SCAN_MAX_BETWEEN` (4000) poses (`stats.between_poses`, `between_s`); it may use half the boxes' share of the time,
+  and `min_clearance_mm` is the smaller of the closest measured and the bound left. Cut short there:
+  `stats.between_cut`, `lower_mm` that bound, and "The motion between the poses wasn't all measured closely enough in
+  the 20 s a check has" in place of "Only part of the path was measured". A region's box is measured with MuJoCo
+  (`box_path`: the box as a geom of a copy of the collision model, `mj_geomDistance` to each geom near it at every pose
+  and between them as above) and trimmed against the robot point it comes closest at (`_trim_box`) until it keeps the
+  region's distance less `SCAN_FIT_TOL_MM`, at most `SCAN_FIT_ROUNDS` (12) times; `box_clearance_mm` is that lower
+  bound, the box is saved rounded inwards and its place outwards (`_world_box(rounding=)`). `stats.places` counts every
+  place not left to a box (the closest `SCAN_MAX_REGIONS` listed): "12 places closer than 10 mm (the 8 closest are
+  listed)" (it said 8); the share of a path checked in part is rounded down (606 of 607 poses: 99%, it read 100%).
+  `_covers` needs `clearance_mm` of at least `SCAN_TOUCH_MM` (any above 0 counted: a crafted 0.1 hid a 6 mm near miss
+  under a cabinet's place); `_near_grey_box(P, D, boxes, Dlo, exact, path_box)` decides a box's `closest` on a lower
+  bound of each near miss (its scan-point distance less rho and its geom's `cover_f`), measuring it exactly where only
+  the scan-point distance clears it (before, that distance alone, up to 1.41 mm more), and a near miss within reach of
+  only a box's place is the box's only while the box is no further from the path than that lower bound plus
+  `SCAN_COVER_MM` (`_path_to_boxes`, the robot samples' closest approach to it: a 100 mm cabinet 52 mm from the path
+  vouched for its place 45 mm below). A region whose fitted box the world holds already, but whose place was fitted for
+  a path that stayed further away (`covers.clearance_mm` less 0.1 mm above the region's distance), is kept without a box
+  (`boxed`, `no_box`: the box there is the one that fits and the path comes closer; on rD with the plate and its box 0.3
+  mm nearer the path, the check before said it had a grey box already). Tests: `tests/test_world_scan_shapes.py`
+  with the hunters' configurations as data (`tests/data/scan_shape_cases.json`, built on the egg-picker's bench path,
+  MuJoCo every 0.25 ms around the closest pose as the reference); the hunters' own scripts on rD r004: all OK. Measured
+  (load from other work on the same 4 cores): the desk scan 15.1-16.3 s at load 11-12 (pass 2 5.1-5.3 s, 422 poses
+  between in 6.1-6.6 s, fit 1.1-1.4 s), 20 s and cut short between the poses at load 13-17 (the pre-R6 engine took
+  14.7-14.8 s at load 16); with the mount moved 15 mm (2.1 mm) 12.5-13.5 s at load 12; the million-triangle room 14.5 s
+  at load 10-12 (it touches; the regions step skips refining a place that touches).
+  `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`):
   pass, warn (closer than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with
   `SCAN_NOTE` ("Measured against the scanned surface, which can be noisy or have holes. A warning, not a verdict.");
   `regions` ride on it. R4, cut short: "The wrist comes within at most 4.6 mm of the scanned surface at 1.4 s" (plus

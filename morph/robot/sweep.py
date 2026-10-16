@@ -32,19 +32,26 @@ class Motion:
     """Path-length bounds for some geoms of a MuJoCo model (mm): `state(d)` after kinematics, `bound(a, b)` for the
     move between two states, one bound per geom (in the order given). Geoms on one body move together, so the bounds
     are worked out per body: its origin and a radius around it that holds its geoms (their offset plus their bounding
-    radius)."""
+    radius, or `radius_mm` (one per geom, mm) when the caller measures a shape that reaches further, such as the
+    polytope around a cylinder). With `per_geom`, each geom is bounded on its own (its centre and its radius): tighter
+    for a small geom on a big body, at the cost of a row per geom."""
 
-    def __init__(self, m, geoms):
+    def __init__(self, m, geoms, radius_mm=None, per_geom=False):
         import mujoco
 
         self.geoms = np.asarray(geoms, int)
-        bodies, self.of = np.unique(np.asarray(m.geom_bodyid[self.geoms], int), return_inverse=True)
+        self.per_geom = bool(per_geom)
+        if self.per_geom:
+            bodies, self.of = np.asarray(m.geom_bodyid[self.geoms], int), np.arange(len(self.geoms))
+        else:
+            bodies, self.of = np.unique(np.asarray(m.geom_bodyid[self.geoms], int), return_inverse=True)
         self.bodies = bodies
         rb = np.zeros(len(bodies))
         for i, g in enumerate(self.geoms):
-            r = float(np.linalg.norm(m.geom_pos[g])) + float(m.geom_rbound[g])
+            rg = 1000.0 * float(m.geom_rbound[g]) if radius_mm is None else float(radius_mm[i])
+            r = rg if self.per_geom else 1000.0 * float(np.linalg.norm(m.geom_pos[g])) + rg
             rb[self.of[i]] = max(rb[self.of[i]], r)
-        self.rb = rb * 1000.0
+        self.rb = rb
         chain = np.zeros((len(bodies), m.njnt), bool)
         for i, b in enumerate(bodies):
             b = int(b)
@@ -67,7 +74,7 @@ class Motion:
         """What a bound needs of a pose (kinematics done): the joint positions and, for each body and joint of its
         chain, how far from the joint's anchor its geoms reach (mm)."""
         anchor = d.xanchor[self.jnt] * 1000.0
-        origin = d.xpos[self.bodies] * 1000.0
+        origin = (d.geom_xpos[self.geoms] if self.per_geom else d.xpos[self.bodies]) * 1000.0
         reach = np.sqrt(((origin[:, None, :] - anchor[None, :, :]) ** 2).sum(-1)) + self.rb[:, None]
         return d.qpos.copy(), self.chain * reach
 
