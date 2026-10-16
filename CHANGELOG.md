@@ -445,6 +445,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   used to count as crashes (twice parked the design, "The Studio stopped twice ..."), and Ctrl+C there ended in a
   traceback. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
   failed starts are no tries either.
+- With two Studios on one projects folder, Reset demo in one no longer deletes the revision the other is building (it
+  is refused, and says why), a Studio no longer deletes the project another running Studio started on, a project
+  another Studio deleted and made again under its name opens with its own chat and kept design (the deleted one's were
+  shown, written into, and its kept design built as the new project's first revision), and a deleted project's chat no
+  longer makes its folder again. `morph studio <project>` on a project of your own whose first build was cut off or
+  failed says how to go on instead of building the default robot into it ("no project ... yet").
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

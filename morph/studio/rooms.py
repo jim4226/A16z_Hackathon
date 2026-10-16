@@ -83,8 +83,44 @@ def release_claims():
     """This process ends now (cli._leave, which skips the interpreter's shutdown and so the Claims' finalizers): every
     lock it holds on a projects folder is released and its file removed, as a Studio that stops cleanly leaves it."""
     with _CLAIMS_LOCK:
-        for held in list(_CLAIMS.values()):
+        for key, held in list(_CLAIMS.items()):
             held.lock.release()
+            try:
+                os.remove(start_record(key, OWNER))
+            except OSError:
+                pass
+
+
+def start_record(home: str, owner: str) -> str:
+    return os.path.join(home, STUDIOS, f"{owner}.json")
+
+
+def note_start(home: str, project: str):
+    """The project this process's Studio started on, beside its lock (claim): another Studio on the same projects folder
+    won't delete it (started_elsewhere). Never raises."""
+    try:
+        durable.write_json(start_record(home, OWNER), {"start": project, "pid": os.getpid(), "host": HOST})
+    except (OSError, TypeError, ValueError):
+        traceback.print_exc()
+
+
+def started_elsewhere(home: str, project: str) -> bool:
+    """True when another Studio still running on projects folder `home` (its lock is held) started on `project`."""
+    try:
+        names = os.listdir(os.path.join(home, STUDIOS))
+    except OSError:
+        return False
+    for n in names:
+        owner = n[:-5] if n.endswith(".json") else None
+        if not owner or not owner_live(home, owner):
+            continue
+        try:
+            with open(os.path.join(home, STUDIOS, n), encoding="utf-8") as fh:
+                if (json.load(fh) or {}).get("start") == project:
+                    return True
+        except (OSError, ValueError, AttributeError):
+            continue
+    return False
 
 
 def _sweep(home: str):
@@ -95,10 +131,10 @@ def _sweep(home: str):
         return
     for n in names:
         path = os.path.join(folder, n)
-        if n == f"{OWNER}.lock" or not n.endswith(".lock"):
+        if n in (f"{OWNER}.lock", f"{OWNER}.json") or not n.endswith((".lock", ".json")):
             continue
         try:
-            if now - os.path.getmtime(path) < STALE_LOCK_S or durable.BuildLock.held(path):
+            if now - os.path.getmtime(path) < STALE_LOCK_S or durable.BuildLock.held(owner_lock(home, n.rsplit(".", 1)[0])):
                 continue
             os.remove(path)
         except OSError:
@@ -140,6 +176,19 @@ def journal_live(path: str, home: str) -> bool:
     return owner_live(home, journal_owner(path))
 
 
+def folder_id(root: str):
+    """What tells project folder `root` from another made since under the same name (another Studio deleted the
+    project and a new one took the name): its device and file id. A deleted project's folder keeps its id in `.trash/`
+    (projects.delete moves it), so a new folder of its name has another. Nothing in the folder counts (a meta.json
+    being replaced, or rewritten when a failed first build is made again, is still the same folder). None: no
+    folder. A file system without file ids (FAT: 0) reads every folder as the same one, as before."""
+    try:
+        st = os.stat(root)
+    except OSError:
+        return None
+    return st.st_dev, st.st_ino
+
+
 FIRST_BUILD_TURN = os.path.join(".morph", "first-build.lock")
 
 
@@ -150,6 +199,9 @@ def first_build_turn(root: str, wait: float = 5.0):
     it reads the other Studios' journals and writes its own, so two Studios asked at once never both queue it. The file
     stays (removing it would let two processes each lock a file of their own). After `wait` seconds (a process that
     hangs holding it) it goes on without the lock."""
+    if not os.path.isdir(root):  # deleted meanwhile (another Studio): no folder to lock, and none to make again
+        yield
+        return
     lock = durable.BuildLock(os.path.join(root, FIRST_BUILD_TURN))
     end = time.monotonic() + wait
     while not lock.acquire() and time.monotonic() < end:
@@ -232,8 +284,11 @@ class Hub:
         return out[-self.MAX_HISTORY:], len(raw)
 
     def _save(self, event: dict):
-        """Append one message to chat.jsonl; past 2 x MAX_HISTORY lines, rewrite it with the last MAX_HISTORY."""
+        """Append one message to chat.jsonl; past 2 x MAX_HISTORY lines, rewrite it with the last MAX_HISTORY. Nothing
+        is written once the project's folder is gone (another Studio deleted it): a ghost folder would keep its name."""
         try:
+            if not os.path.isdir(os.path.dirname(os.path.dirname(self.path))):
+                return
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             if self._lines >= 2 * self.MAX_HISTORY:
                 durable.write_text(self.path, "".join(json.dumps(e) + "\n" for e in self.history))
@@ -375,6 +430,8 @@ class JobQueue:
         try:
             if self.claim is None:  # the lock that tells other Studios this journal's writer still runs
                 self.claim = claim(self.home)
+            if not os.path.isdir(os.path.dirname(os.path.dirname(self.journal))):
+                return False  # the project's folder is gone (deleted by another Studio): never made again here
             os.makedirs(os.path.dirname(self.journal), exist_ok=True)
             durable.append_line(self.journal, json.dumps({"op": op, "id": job.id, "studio": OWNER, "pid": os.getpid(),
                                                           "host": HOST, **fields}, default=str))
@@ -605,6 +662,7 @@ class Room:
     def __init__(self, name: str, project: RobotProject | str):
         self.name = name
         self.p = project if isinstance(project, RobotProject) else RobotProject(project)
+        self.folder = folder_id(self.p.root)  # the folder this room was made for (Studio.room: not one made since)
         self.hub = Hub(name, os.path.join(self.p.root, ".morph", "chat.jsonl"))
         self.lock = threading.RLock()
         self.jobs = JobQueue(self)

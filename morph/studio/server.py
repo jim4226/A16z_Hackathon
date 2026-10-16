@@ -42,13 +42,13 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from ..pipeline import REV
 from ..robot.pipeline2 import LABELS, PARAMS, RobotProject, params_for, pipeline_version
-from ..services import durable
+from ..services import durable, robust
 from ..spec import diff
 from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import (OWNER, REQUESTER, RESUMED, STARTED, Hub, Job, QueueFull, Room,  # noqa: F401  (Hub: older code
-                    UnknownProject, claim, first_build_turn, journal_live, journal_owner, journals,  # imports it
-                    open_jobs)  # from here)
+                    UnknownProject, claim, first_build_turn, folder_id, journal_live, journal_owner,  # imports it
+                    journals, note_start, open_jobs, started_elsewhere)  # from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
                        looks_like_secret, param_changes, project_name, remember_access_code, secret_refused)
@@ -281,6 +281,7 @@ class Studio:
         self._rooms = threading.Lock()
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
         self.claim = claim(self.home)  # the lock that tells another Studio on this folder that this one runs
+        note_start(self.home, self.start)  # and which project it started on (that Studio won't delete it)
         if not self.claim.real:
             print(f"{self.home} can't hold file locks (a network folder?): run only one Morph Studio on it at a time, "
                   "or one may take the other's unfinished work for a stopped Studio's.")
@@ -519,9 +520,10 @@ class Studio:
             if here:
                 return self._say(room, job, "error", "This project has no finished revision yet, so there is nothing "
                                                      "to change. Wait for its first build.")
+            how = ("start the Studio on another project, then delete it from the project menu and make it again"
+                   if room.name == self.start else "delete the project from the project menu and make it again")
             return self._say(room, job, "error", f"{room.name} has no finished revision yet, its first build isn't "
-                                                 "running and Morph kept no design to build it again: delete the "
-                                                 "project from the project menu and make it again.")
+                                                 f"running and Morph kept no design to build it again: {how}.")
         if not asked:
             return self._say(room, job, "error", f"{room.name} has no finished revision yet, and its first build isn't "
                                                  "running: send \"build it again\" to try it once more, or delete the "
@@ -607,14 +609,14 @@ class Studio:
             return self.rooms[self.start]
         project_name(name)
         room = self.rooms.get(name)
-        if room is not None and os.path.isdir(room.p.root):
+        if room is not None and room.folder is not None and folder_id(room.p.root) == room.folder:
             return room
         root = self._root(name)
         if not root:
             raise UnknownProject(f"There is no robot project called {name}.")
-        with self._rooms:
+        with self._rooms:  # a room is kept for the folder it was made for: not one another Studio made under its name
             room = self.rooms.get(name)
-            if room is None or not os.path.isdir(room.p.root):
+            if room is None or room.folder is None or folder_id(room.p.root) != room.folder:
                 room = self.rooms[name] = Room(name, root)
             return room
 
@@ -676,6 +678,9 @@ class Studio:
             if self.held_elsewhere(root):
                 raise Refused(f"Another Morph Studio on this projects folder is building {name} or has changes of it "
                               "waiting: delete it there, or here once its queue there is empty.")
+            if started_elsewhere(self.home, name):
+                raise Refused(f"{name} is the project another Morph Studio on this projects folder started on: stop "
+                              "that Studio first, or start it on another project.")
             from . import jobs
             jobs.stop(self, name)  # its robustness study first (finished runs are kept, in the trash with the project)
             _tools_gone(self, name)  # and its agent runs that wait or work: none continues in a project of that name
@@ -1031,7 +1036,9 @@ class Studio:
         clean build of its original design (see baseline()); the revisions after it are deleted, like deleting the
         project but keeping its first build. If that build is from older code, or `rebuild` is set (new API keys:
         the Keewano grip calibration only applies to a fresh build), it is rebuilt now (about 30 s per robot).
-        Other projects are never touched. False when a demo project is still building."""
+        Other projects are never touched. False when a demo project is still building here; Refused (nothing removed)
+        while another process builds one, has changes of one waiting or runs a robustness study on one: another Studio
+        on this projects folder (a live queue journal there), or `morph robot` (a revision's build lock)."""
         names = [p["name"] for p in projects.list_projects(self.home) if p["demo"]]
         rooms = [self.room(n) for n in names]
         held = []
@@ -1040,6 +1047,14 @@ class Studio:
                 if room.jobs.busy() or not room.lock.acquire(blocking=False):
                     return False
                 held.append(room)
+            for room in rooms:  # under the room locks: nothing here starts meanwhile
+                study = robust.active(room.p.root)
+                theirs = study is not None and (study.get("pid"), study.get("host")) != (os.getpid(), socket.gethostname())
+                if (theirs or self.held_elsewhere(room.p.root)
+                        or any(durable.BuildLock.held(room.p.build_lock(r)) for r in room.p.revs())):
+                    raise Refused(f"Another Morph Studio on this projects folder (or a `morph` command) is building "
+                                  f"{room.name}, has changes of it waiting or runs a study on it: reset the demo when "
+                                  "it is done.")
             from . import jobs
             for room in rooms:
                 jobs.stop(self, room.name)  # Reset demo stops the project's robustness study too (its runs are kept)
@@ -1804,7 +1819,10 @@ def _api_projects_delete(req):
 
 @route("POST", "/api/reset", role="owner")
 def _api_reset(req):
-    ok = req.studio.reset(rebuild=req.body.get("rebuild") is True)
+    try:
+        ok = req.studio.reset(rebuild=req.body.get("rebuild") is True)
+    except Refused as exc:
+        return 409, {"ok": False, "project": req.studio.start, "error": str(exc)}
     if ok:
         _audit(req, "reset", rebuild=req.body.get("rebuild") is True)
     return (200 if ok else 409), {"ok": ok, "project": req.studio.start}

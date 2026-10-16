@@ -207,9 +207,9 @@ export class Presenter {
       btn('reset').disabled = true;
       btn('reset').innerHTML = '<span class="spin"></span>Resetting (up to a minute)…';
       this.resetting = true;
-      const ok = await a.reset().finally(() => { this.resetting = false; });
+      const res = await a.reset().finally(() => { this.resetting = false; });
       this.ran.clear();
-      a.toast(ok ? 'Demo reset: both robots are back at their full builds' : 'Still regenerating; reset when the pipeline is idle');
+      a.toast(res === true ? 'Demo reset: both robots are back at their full builds' : res || 'Still regenerating; reset when the pipeline is idle');
       this.render();
     };
     this.el.querySelectorAll('.pr-dots b').forEach((b) => (b.onclick = () => this.go(+b.dataset.k)));

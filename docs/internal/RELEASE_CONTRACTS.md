@@ -54,7 +54,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
-| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; a Studio stopped with Ctrl+C removes its own (`cli._leave`), and files nobody holds (a crash, a kill) are removed by a later start after 10 minutes |
+| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; a Studio stopped with Ctrl+C removes its own (`cli._leave`), and files nobody holds (a crash, a kill) are removed by a later start after 10 minutes; `.studios/<id>.json`: `{start, pid, host}`, the project that Studio started on (`rooms.note_start`), which no other Studio deletes while that one runs (`rooms.started_elsewhere`), removed and swept the same way |
 | `.team/` | F4 | `team.json` (+ `team.json.bak`: the copy before its last change, 0600, W3), `secret` (0600), `audit.jsonl` |
 | `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
 | `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
@@ -198,7 +198,7 @@ class Request:
 
 | Area | Routes |
 |---|---|
-| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, and for the start project) |
+| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, for the start project, and for the project another running Studio started on) |
 | W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?, edit?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting; `edit: true` skips the chat routing of section 3); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
 | F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
@@ -298,9 +298,21 @@ and a stop in between leaves both journals, never neither. Then:
   Studio that still runs has the project's first build queued or building (an open `build` in a live journal), an edit
   and "build it again" are answered "Another Morph Studio on this projects folder is building <project>'s first
   design; wait for it there." and nothing is queued; Delete project is refused (409) while any live journal of another
-  Studio is in the project (`Studio.held_elsewhere`). A first build that a Studio which stopped while this one ran
-  left open in its journal counts as kept (`Studio._kept_first`): "build it again" builds it from that design, sets
-  the stopped build's revision aside and removes that journal. Whether to queue a first build is decided by one
+  Studio is in the project (`Studio.held_elsewhere`), and for a project another running Studio started on; Reset demo
+  is refused (409 `{ok: false, error}`, nothing removed) while another Studio has a demo project queued or building (a
+  live journal), a `morph robot` build holds one of its revisions' build locks, or another process runs a robustness
+  study on it. A room is kept only for the folder it was made for (`rooms.folder_id`: the folder's device and file id,
+  which a deleted project keeps in `.trash/`): a project another Studio deleted gets no chat or journal line (no
+  folder is made again under its name), and a new project another Studio made under the name gets a fresh room, never
+  the deleted one's chat or kept first build (on a file system without file ids, FAT, it is kept as before). In the
+  start project, "Morph kept no design" advises starting the Studio on another project first. `morph studio <project>`
+  on a project of its own with no finished revision (its first build cut off or failed) changes nothing and exits with
+  "<project> has no finished revision yet, so the Studio can't start on it. Start the Studio on another project
+  (`morph studio egg-picker`), then send "build it again" in <project>'s chat, or delete <project> from the project
+  menu there." (`cli.cmd_studio`); it built the default template into it and rewrote its meta.json. A demo project, or
+  a name with no project, is still built from its template. A first build that a Studio which stopped while this one
+  ran left open in its journal counts as kept (`Studio._kept_first`): "build it again" builds it from that design,
+  sets the stopped build's revision aside and removes that journal. Whether to queue a first build is decided by one
   process at a time, under an OS lock on `<p>/.morph/first-build.lock` (`rooms.first_build_turn`, also taken by
   `Studio._recover` for a project with journals or a revision its start-up set aside, which reads the journals again
   under it), so two Studios asked at once, or starting at once, queue it once. A delete in one Studio
