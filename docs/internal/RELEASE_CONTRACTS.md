@@ -759,8 +759,16 @@ members; a member can hold several.
   Japanese, Korean, full-width punctuation, emoji), so Chinese or Japanese written straight after a link is not read
   as one (Thai, written without spaces too, still can be); a port, 1 to 5 digits followed by `/`, `?`, `#`, `@`, `"`,
   `<` or `>`, is no password, so
-  `http://10.0.0.5:8765?user=bob@example.com` and `http://10.0.0.5:8765@evil.com` pass. Not caught: a password with a
-  raw `/`, and one that starts with 1 to 5 digits and one of those characters, `postgres://admin:2024?Secret@db`.
+  `http://10.0.0.5:8765?user=bob@example.com` and `http://10.0.0.5:8765@evil.com` pass; a link right after a `"` or
+  `'` (JSON, a Python or JavaScript string, a shell argument) ends at that quote followed by `,`, `:`, `}` or `]` (one
+  that closes its string; an escaped `\"` doesn't), so minified JSON in which a link comes before an e-mail value,
+  `{"homepage":"https://example.com","email":"robert.smith@example.com"}`, passes (the user and password ran on into
+  the next values), and a password in such a link is redacted without the values after it. Not caught: a password
+  with a raw `/` (`openssl rand -base64` passwords hold one 22% to 40% of the time, by length: 1,250 of 4,000
+  generated), one that starts with 1 to 5 digits and one of those characters, `postgres://admin:2024?Secret@db` or
+  `postgres://admin:2024"Secret!x@db`, one with any character from U+2000 on (€, an emoji: 389 of 4,000 generated
+  passwords with é, ñ, ü, ß, ж, ø, ç, €, £ or §, every one of them a €), one under 8 characters, and, in a link right
+  after a quote, one holding that quote unescaped and then `,`, `:`, `}` or `]` (not valid JSON).
   Still refused: a port followed with no space by another symbol (`,`, `;`, `&`, `)`, `'` ...) and then, before
   any space or `/`, by text with an `@`, as in `http://10.0.0.5:8765,bob@example.com`, which RFC 3986 reads as a
   user and a password), `Bearer` and a token with

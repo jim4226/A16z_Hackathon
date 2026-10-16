@@ -258,9 +258,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password (also with a raw `?`, `#` or `@` in
   the password, no user as in `redis://:password@host`, or an e-mail address as the user; a port is no password, so
   `http://10.0.0.5:8765?user=bob@example.com`, a port and a query with an e-mail address, passes, where 9,201 of
-  20,000 such generated links were refused. Still missed: a password with a raw `/`, and one that starts with 1 to 5
-  digits and a `?`, `#` or `@`, such as `postgres://admin:2024?Secret@db`, 0.5% to 1.6% of 20,000 generated passwords
-  with such symbols) and `.env` lines such as `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no
+  20,000 such generated links were refused; so does minified JSON in which a link comes before an e-mail value,
+  `{"homepage":"https://example.com","email":"robert.smith@example.com"}`. Still missed: a password with a raw `/`,
+  which `openssl rand -base64` passwords hold 22% (12 bytes) to 40% (24 bytes) of the time; one that starts with 1 to
+  5 digits and a `?`, `#`, `@`, `"`, `<` or `>`, such as `postgres://admin:2024?Secret@db` (0.5% to 1.6% of 20,000
+  generated passwords with such symbols); one with any character from U+2000 on, such as € or an emoji; one under 8
+  characters; and, in a link inside quotes, one holding that quote unescaped and then `,`, `:`, `}` or `]`) and `.env`
+  lines such as `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no
   space (these keys and JWTs used to slip past), and a tool key after `key=` or inside a link. A key with no prefix of its own pasted alone (an AWS secret key, a bare
   hex token) is still not caught unless it is saved in the Keys dialog. New robot used to keep such
   a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ

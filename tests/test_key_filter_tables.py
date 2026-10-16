@@ -87,6 +87,29 @@ def test_a_link_password_with_a_raw_question_mark_hash_or_at_is_refused_and_reda
         assert password not in redacted and not security.has_key(redacted), redacted
 
 
+
+# (a link with a password, quoted as JSON, a Python or JavaScript literal or a shell argument, then more text)
+QUOTED_LINKS = [
+    ('{"url":"postgres://admin:S3cr3t!pass@db.example.com","owner":"robert.smith@example.com"}', "S3cr3t!pass"),
+    ('{"url":"redis://:Xk9fP2qL#mB7@redis.internal:6379","by":"robert.smith@example.com"}', "Xk9fP2qL#mB7"),
+    ('{"url":"postgres://admin:pa\\",ss1234@db","owner":"robert.smith@example.com"}', 'pa\\",ss1234'),
+    ("{'url':'mysql://root:Tr0ub4dor&3x@10.0.0.12:3306/db','by':'robert.smith@example.com'}", "Tr0ub4dor&3x"),
+    ('psql "postgres://admin:c0rrect\'horse@db/x" -c "select 1" # robert.smith@example.com', "c0rrect'horse"),
+]
+
+
+@pytest.mark.parametrize("text,password", QUOTED_LINKS, ids=[p for _, p in QUOTED_LINKS])
+def test_a_quoted_link_s_password_ends_at_the_quote_that_closes_its_string(text, password):
+    """In minified JSON a link with no port and no path followed by an e-mail value was refused
+    ({"homepage":"https://example.com","email":"robert.smith@example.com"}: the link's user and password ran on
+    through the closing quote to the e-mail's @), and a refused link took the next values with it when redacted. A
+    link after a quote now ends at a quote of that kind followed by , : } or ]: a password there is still refused and
+    redacted (an escaped quote, \\", stays in it), and the values after it are kept."""
+    assert security.looks_like_secret(text), text
+    redacted = security.redact_keys(text)
+    assert password not in redacted and not security.has_key(redacted), redacted
+    assert "robert.smith@example.com" in redacted, redacted
+
 @pytest.mark.parametrize("glue", ["我的密钥是", "キーは", "는", "а", "κλειδί", "clé", "是"])
 def test_a_key_glued_to_a_non_ascii_letter_is_refused_and_redacted(glue):
     """Python's \\b counts 是, は, 는, а and é as word characters: a key right after them, with no space (how Chinese,
@@ -235,11 +258,14 @@ DOC_CLAIMS = [
 DOC_LINKS = [
     ("CHANGELOG.md", "links with a password (also", "and `.env` lines such as",
      {"redis://:password@host": "refused", "http://10.0.0.5:8765?user=bob@example.com": "pass",
+      '{"homepage":"https://example.com","email":"robert.smith@example.com"}': "pass",
       "postgres://admin:2024?Secret@db": "pass"}),
     ("docs/internal/RELEASE_CONTRACTS.md", "with a password (`scheme://user:password@`", "`Bearer` and a token",
      {"redis://:password@host": "refused", "smtp://bob@gmail.com:password@smtp.gmail.com": "refused",
       "http://10.0.0.5:8765?user=bob@example.com": "pass", "http://10.0.0.5:8765@evil.com": "pass",
-      "postgres://admin:2024?Secret@db": "pass", "http://10.0.0.5:8765,bob@example.com": "refused"}),
+      '{"homepage":"https://example.com","email":"robert.smith@example.com"}': "pass",
+      "postgres://admin:2024?Secret@db": "pass", 'postgres://admin:2024"Secret!x@db': "pass",
+      "http://10.0.0.5:8765,bob@example.com": "refused"}),
 ]
 
 
