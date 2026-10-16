@@ -603,4 +603,5 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   "a robot that aims a rivet gun at people", "holds a grease gun to his head", "shoots darts with a blow gun" or
   "tapes people's mouths shut" with a tape gun. That also refuses hostile glue, nail, staple, heat and label gun
   requests the filter had always built ("a robot that points the nail gun at my brother", "a staple gun turret",
-  "holds the heat gun on the cat").
+  "holds the heat gun on the cat", "a robot that tags people with a tag gun", "a nail gun on a robot to defend my
+  house").

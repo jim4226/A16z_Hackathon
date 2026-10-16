@@ -861,9 +861,12 @@ _GUN_TARGET = (r"(?:people|persons?|someone|somebody|anyone|anybody|everyone|eve
                _ANIMAL + r"|squirrels?|foxes|fox|deer|mice|mouse|rats?|pigeons?|wildlife)")
 _POSS_LIVING = (r"(?:(?:my|your|his|her|their|our)\s+(?:(?!(?:" + _BODY + "|" + _HAND + r")\b)[a-z-]+\s+){0,2}?" + _GUN_TARGET +
                 r"['’]s?|" + _GUN_TARGET + r"['’]s?|my|your|his|her|their|our)")
+# the living word ends its noun phrase: "at the dog", not "at the dog house" or "the cat flap"
+_TARGET_END = (r"(?!['’])(?!\s+(?!(?:with|and|or|at|to|on|in|into|for|from|while|when|so|then|until|because|if|using|by|who|"
+               r"that|which|every|each|again|all|too|as|until|before|after|whenever|if)\b)[a-z])")
 _NOT_DONE = r"(?<!\bnever )(?<!\bnot )(?<!n't )(?<!\bwithout )(?<!\bavoid )(?<!\bavoids )(?<!\bavoiding )(?<!\bno )"
 _AT_SOMEONE = (r"(?:(?:the|a|an|my|your|his|her|their|our|some|any|all|every)\s+)?(?:(?!(?:at|to|on|in|into|and|or|with|from)\b)"
-               r"[a-z'’-]+\s+){0,2}?(?:" + _GUN_TARGET + r"\b(?!['’])|" + _POSS_LIVING + r"\s+(?:[a-z-]+\s+)?(?:" + _BODY + "|" +
+               r"[a-z'’-]+\s+){0,2}?(?:" + _GUN_TARGET + r"\b" + _TARGET_END + "|" + _POSS_LIVING + r"\s+(?:[a-z-]+\s+)?(?:" + _BODY + "|" +
                _HAND + r")\b|" + _BODY + r"\b|" + _HAND + r"\b)")
 GUN_TURNED_ON = (_NOT_DONE + r"\b(?:aim|point|hold|held|fir(?:e|es|ed|ing)|shoot|shot|direct|train|level|turn|wave|waving|brandish|"
                  r"press|push|put|jab|poke|stick|spray|squirt|blast|swing|thrust|us(?:e|es|ed|ing))(?:s|es|ed|ing)?\b"
@@ -871,13 +874,26 @@ GUN_TURNED_ON = (_NOT_DONE + r"\b(?:aim|point|hold|held|fir(?:e|es|ed|ing)|shoot
                  r"myself|yourself|himself|herself|themselves|ourselves)\b|her\b(?!\s+[a-z])|" + _AT_SOMEONE + r")|" + _NOT_DONE +
                  r"\b(?:aim|point|hold|held|press|push|put|jab|poke|stick|spray|squirt|blast|shoot|fir(?:e|es|ed|ing))"
                  r"(?:s|es|ed|ing)?\b[^.;!?]{0,60}?\b(?:to|in|into|up)\s+(?:(?:the|a|an|my|your|his|her|their|our)\s+)?"
-                 r"(?:" + _GUN_TARGET + r"['’]s?\s+)?(?:[a-z-]+\s+)?" + _BODY + r"\b|"
+                 r"(?:" + _GUN_TARGET + r"['’]s?\s+)?(?:[a-z-]+\s+)?" + _BODY + r"\b|" +
+                 # done to someone with it: "tags people with a tag gun", "nails the cat", "glues people's hands together",
+                 # "a robot with a nail gun that targets intruders"
+                 _NOT_DONE + r"\b(?:stapl|nail|glu|tape|taping|tag|label|rivet|screw|spray|squirt|zap|burn|scald|heat|solder|"
+                 r"paint|seal|caulk|target|attack|hit|strik|struck|threat|scar|chas|stab|pok|jab|shock|sting|stung|blast|pelt|"
+                 r"pin|punish|hunt|hurt|harm|injur)\w*\s+(?:(?:the|a|an|my|your|his|her|their|our|some|any|all|every)\s+)?"
+                 r"(?:(?!(?:at|to|on|in|into|and|or|with|from|for)\b)[a-z'’-]+\s+){0,2}?(?:" + _GUN_TARGET + r"\b" + _TARGET_END +
+                 "|" +
+                 _GUN_TARGET + r"['’]s?\s+(?:[a-z-]+\s+)?(?:" + _BODY + "|" + _HAND + r")\b)|"
+                 # a gun that defends or guards a place: "a nail gun on a robot to defend my house"
+                 r"\b(?:defend\w*|defen[cs]e|deter\w*|repel\w*|guard(?:s|ed|ing)?\s+(?:the|my|our|a|its|his|her|their)\b|"
+                 r"ward(?:s|ed|ing)?\s+off|keep(?:s|ing)?\s+(?:people|intruders|burglars|strangers|thieves|them|everyone)\s+"
+                 r"(?:out|away))|" +
                  r"(?<!\baway from )(?<!\bclear of )(?<!\bfar from )(?<!\bout of )\b" + _POSS_LIVING + r"\s+(?:[a-z-]+\s+)?" +
                  r"(?:mouths?|lips|eyes?|eyeballs?|faces?|heads?|foreheads?|temples?|necks?|throats?|ears?|nose|noses)\b|"
                  r"\b(?:darts?|turrets?|sentry|sentries|shoot\w*|fir(?:e|es|ed|ing)\b(?!\s+(?:extinguisher|alarm|blanket|exit|"
                  r"door|safety|drill|station|hazard|risk|place|wood|pit|truck|engine)s?)|(?<!\bair )(?<!\bair-)blow[- ]?guns?|"
                  r"blowpipes?|bullets?|scar(?:e|es|ed|ing)|threat\w*|frighten\w*|intimidat\w*|menac\w*|terrori[sz]\w*|"
-                 r"gag(?:s|ged|ging)?|torment\w*|harass\w*|shut\s+(?:people|someone|anyone|them|him|her)\s+up)\b")
+                 r"gag(?:s|ged|ging)?|torment\w*|harass\w*|shut\s+(?:people|someone|anyone|them|him|her)\s+up|intruders?|"
+                 r"burglars?|trespassers?|strangers?|robbers?|attackers?|enem(?:y|ies))\b")
 _STUB = "This robot sounds like it's meant to hurt, threaten or restrain people or animals. Morph doesn't design that."
 
 
