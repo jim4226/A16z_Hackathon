@@ -258,8 +258,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password (also with a raw `?`, `#` or `@` in
   the password, no user as in `redis://:password@host`, or an e-mail address as the user; a port is no password, so
   `http://10.0.0.5:8765?user=bob@example.com`, a port and a query with an e-mail address, passes, where 9,201 of
-  20,000 such generated links were refused; so does minified JSON in which a link comes before an e-mail value,
-  `{"homepage":"https://example.com","email":"robert.smith@example.com"}`. Still missed: a password with a raw `/`,
+  20,000 such generated links were refused; so does minified JSON in which a link starts a string and an e-mail
+  value follows, `{"homepage":"https://example.com","email":"robert.smith@example.com"}`, but not yet one with text
+  before the link in its string, `{"bio":"Robotics at https://rsmith.dev","email":"robert.smith@gmail.com"}`. Still
+  missed: a password with a raw `/`,
   which `openssl rand -base64` passwords hold 22% (12 bytes) to 40% (24 bytes) of the time; one that starts with 1 to
   5 digits and a `?`, `#`, `@`, `"`, `<` or `>`, such as `postgres://admin:2024?Secret@db` (0.5% to 1.6% of 20,000
   generated passwords with such symbols); one with any character from U+2000 on, such as € or an emoji; one under 8

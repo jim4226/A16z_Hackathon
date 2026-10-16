@@ -564,6 +564,10 @@
    "http://10.0.0.5:8765;bob@example.com",
    "http://10.0.0.5:8765&owner=bob@example.com",
    "[Studio](http://10.0.0.5:8765)(bob@example.com)"
+  ],
+  "minified JSON with text before a link with no port and no path in its string, then an e-mail value": [
+   "{\"bio\":\"Robotics at https://rsmith.dev\",\"email\":\"robert.smith@gmail.com\"}",
+   "{\"note\":\"see https://example.com\",\"to\":\"robert.smith@example.com\"}"
   ]
  }
 }

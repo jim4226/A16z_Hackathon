@@ -780,7 +780,11 @@ members; a member can hold several.
   after a quote, one holding that quote unescaped and then `,`, `:`, `}` or `]` (not valid JSON).
   Still refused: a port followed with no space by another symbol (`,`, `;`, `&`, `)`, `'` ...) and then, before
   any space or `/`, by text with an `@`, as in `http://10.0.0.5:8765,bob@example.com`, which RFC 3986 reads as a
-  user and a password), `Bearer` and a token with
+  user and a password; and minified JSON in which text comes before a link with no port and no path in its string
+  and an e-mail value follows, `{"bio":"Robotics at https://rsmith.dev","email":"robert.smith@gmail.com"}` (15 of 25
+  such objects: the link isn't right after the quote, so the rule doesn't know the string ends; stopping every link
+  at `",` would miss Dashlane and KeePass passwords holding `",` or `":`, 6 more of kf_measure's seed-7 draws)),
+  `Bearer` and a token with
   a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value has a letter and a digit). A key with no
   prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
   Python reads by Unicode: 是, は and é count as letters), so a key glued to Chinese, Japanese or Korean text is caught.
