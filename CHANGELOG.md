@@ -558,6 +558,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   2,697 phrases of all the release review's hunts, 272 readings change: 268 of the second hunt's requests, two
   hand-overs of pet food to a person (people nearby, not pets) and two Studio labels typed in as requests; none of the
   first hunt's 573.
+- New robot no longer reads a vacuum, floor or steam cleaner next to the robot as a person who cleans there: "move
+  the boxes next to the floor cleaner" and "a robot that sorts mail next to the steam cleaner" were built with
+  people nearby and an emergency stop.
 - New robot no longer keeps an object on "my SO-101" that the stock jaws can't hold: "use my SO-101 to move light
   bulbs" built an SO-101 with no issue whose own simulation then dropped the 60 mm bulb. In Morph's simulation the
   stock jaws dropped every round object tried from 47 to 60 mm across and flat-sided ones of 36, 40, 44 and 48 mm (a
