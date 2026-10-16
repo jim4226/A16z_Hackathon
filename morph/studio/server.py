@@ -309,6 +309,7 @@ class Studio:
         self.builds = threading.BoundedSemaphore(max_builds or _env_int("MORPH_MAX_BUILDS", 1))
         self.rooms = {self.start: Room(self.start, project)}
         self._rooms = threading.Lock()
+        self.stopped = False  # a clean stop is under way (stopping): every room, and every room opened from now on, too
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
         self.claim = claim(self.home)  # the lock that tells another Studio on this folder that this one runs
         note_start(self.home, self.start)  # and which project it started on (that Studio won't delete it)
@@ -479,8 +480,12 @@ class Studio:
         """The Studio stops cleanly (Ctrl+C, serve_forever returning; serve() calls this, never for an error escaping
         serve_forever): each room's queue journals a first build this stop cuts off as "interrupted", so only stops
         that came from elsewhere (a crash, a kill, a power cut, the system running out of memory, an error) count
-        towards FIRST_BUILD_TRIES. Never raises."""
-        for room in list(self.rooms.values()):
+        towards FIRST_BUILD_TRIES. A room opened from now on (a New robot request still being answered) is stopping
+        from the start (room), so the clean stop is written down whole. Never raises."""
+        with self._rooms:  # a room opened at the same time is in this list, or sees the flag
+            self.stopped = True
+            stopping = list(self.rooms.values())
+        for room in stopping:
             try:
                 room.jobs.stopping()
             except Exception:  # noqa: BLE001  (stopping must not fail)
@@ -654,7 +659,10 @@ class Studio:
         with self._rooms:
             room = self.rooms.get(name)
             if room is None or not self._kept(room):
-                room = self.rooms[name] = Room(name, root)
+                room = Room(name, root)
+                if self.stopped:  # a project made (or opened) while the Studio stops cleanly: that stop cuts it off too
+                    room.jobs.stopping()
+                self.rooms[name] = room
             return room
 
     @staticmethod

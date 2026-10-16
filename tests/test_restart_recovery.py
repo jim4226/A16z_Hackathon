@@ -19,7 +19,7 @@ import pytest
 from morph.robot.pipeline2 import RobotProject
 from morph.services import robust
 from morph.spec import Design
-from morph.studio import api_brief, api_team, jobs, rooms, server
+from morph.studio import api_brief, api_team, jobs, projects, rooms, server
 from morph.studio import brief as B
 from morph.studio.teams import activity, collab
 from test_studio_rooms import FakeBuilds, finish, make_project
@@ -1081,6 +1081,24 @@ def test_a_first_build_that_starts_after_a_clean_stop_was_written_down_is_no_try
     assert [(e["id"], e["started"]) for e in entries] == [(job.id, False)]  # cut off by a clean stop: no try
     builds.gate.set()
     finish(ahead, job)
+
+
+def test_a_project_made_while_the_studio_stops_cleanly_gets_no_try(home, builds):
+    """A New robot request (POST /api/projects) still being answered when Ctrl+C came: Studio.stopping marked only the
+    rooms that were open, so the new project's room started with stopped=False, its first build journaled "started"
+    and nothing more, and the next start counted the clean stop as a try. A room opened once the clean stop is under
+    way is stopping too, and so is a room of an existing project opened then."""
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    projects.create(str(home), "kb4", design=Design().with_changes({"build.quantity": 5}))
+    st.stopping()                                                           # Ctrl+C: what serve() calls
+    builds.gate = threading.Event()
+    room, job = st.create_project("kb3", design=Design().with_changes({"build.quantity": 7}))  # in flight at Ctrl+C
+    assert builds.started.wait(5)
+    entries = rooms.open_jobs(rooms.journals(str(home / "kb3"))[0])
+    assert [(e["id"], e["started"]) for e in entries] == [(job.id, False)]  # cut off by a clean stop: no try
+    assert st.room("kb4").jobs.stopped                                     # opened after the stop began
+    builds.gate.set()
+    finish(job)
 
 
 def test_a_start_that_cant_listen_changes_no_journal(home, monkeypatch):

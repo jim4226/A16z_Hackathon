@@ -285,8 +285,11 @@ and a stop in between leaves both journals, never neither. Then:
   (`_Stop.end`: `Studio.stopping`, then `jobs.shutdown`), and every later one only cuts the wait for studies short
   (`jobs.shutdown(hurry=)`), so however many come and wherever they land, the clean stop is written down whole. A first
   build that takes the build slot after `Studio.stopping` (`JobQueue.stopped`: the build ahead of it ended while studies
-  stopped) journals `started` and `interrupted` together. A signal the process ignores (nohup) stays ignored. `serve()` listens before the Studio's start-up recovers anything, so a start that can't
-  listen (a busy port, a mistyped `--host`) leaves every journal as it was. At
+  stopped) journals `started` and `interrupted` together, and so does the first build of a project made once
+  `Studio.stopping` ran (a New robot request still being answered at Ctrl+C): `Studio.stopped` makes every room opened
+  from then on stopping too (`Studio.room`). A signal the process ignores (nohup) stays ignored. `serve()` listens
+  before the Studio's start-up recovers anything, so a start that can't listen (a busy port, a mistyped `--host`)
+  leaves every journal as it was. At
   `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
   at every start): it is kept in `<p>/.morph/first-build.json` (`projects.park_first_build`), the chat and the terminal
   say "The Studio stopped twice while building <project>'s first design, so Morph won't start it again on its own ...
