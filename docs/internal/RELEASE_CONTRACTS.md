@@ -336,7 +336,9 @@ and a stop in between leaves both journals, never neither. Then:
   `applied_in` on the request) and `rooms.owner_live` leaves it to that Studio, as for the queue journals. A Studio
   that keeps running settles them too, each time it lists, applies or closes a project's change requests (one this
   Studio applied, or one applied with no Studio named, it leaves to its own queue), so a request a stopped Studio
-  applied never stays "applied" with no revision until some Studio starts. A request whose change the head revision
+  applied never stays "applied" with no revision until some Studio starts. Each request is decided under the
+  project's Teams lock (`teams.store.locked`), read again there, so one another running Studio opened and applied
+  again meanwhile is left to that Studio. A request whose change the head revision
   already has (the build ends `noop`) is applied at the head revision, not opened again with "nothing to change". A
   build that ends after its request was reopened anyway (a file system that can't lock) still records its revision:
   `done` with a revision makes an open request applied again (`collab._proposal_state`).
