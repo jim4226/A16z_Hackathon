@@ -457,10 +457,16 @@ _ACTION = (r"(?:shake|twist|tap|wipe|rinse|check|clean|spin|push|nudge|squeeze|l
 _THING_DET = (r"(?:the|a|an|some|his|her|their|my|your|our|its|this|that|these|those|one|two|three|four|five|six|another|"
               r"more|any|each|every|all|both|enough|[0-9]+)")
 _ROBOT_WORD = r"(?:robot|robotic|arm|bot|cobot|machine|gripper|design|device|gadget|system|setup)s?"
-_REQUEST = (r"(?:(?:quotes?|options?|ways?|ideas?|suggestions?|plans?|estimates?|prices?|recommendations?|advice|list|"
-            r"overview|summary|breakdown|bom|started|going)\b(?=\s+(?:for|of|on|to|that|which|like|with|about)\b|"
-            r"\s*(?:$|[.,;:!?]))|(?:some|any)thing\s+(?:that|which|for|like|to\s+(?:build|make|design|move|sort|stack|pick|"
-            r"place|carry|lift|hold|pack))\b)")
+# A request noun is a request only when a robot, its design or its job follows ("a list of parts for a robot", "a quote
+# for an arm", "an option for moving eggs", "a way to move parts", "a breakdown of the cost"): "bring me my list", "give
+# me the shopping list" and "bring me something for my headache" hand a thing to someone
+_JOB = r"(?:build|make|design|automat|mov|sort|stack|pick|plac|lift|grip|grasp|transfer)"   # a robot's job, not a person's
+_DESIGN_WORD = (r"(?:" + _ROBOT_WORD + r"|builds?|costs?|pric(?:e|es|ing)|budget|bom|bill of materials|servos?|motors?|"
+                r"actuators?|fingers?|parts? list|" + _JOB + r"[a-z]*ing|to\s+" + _JOB + r"[a-z]*)\b")
+_REQUEST = (r"(?:(?:quotes?|options?|ways?|ideas?|suggestions?|plans?|estimates?|prices?|recommendations?|advice|lists?|"
+            r"overview|summary|breakdown|bom)\b(?=(?:\s+(?!(?:then|and|but|so|because|when|while)\b)[\w'’-]+){0,6}?\s+" +
+            _DESIGN_WORD + r")|(?:started|going)\b|(?:some|any)thing\s+(?:that|which|for|like|to)\s+(?:can\s+|will\s+)?" +
+            _JOB + r"[a-z]*\b)")
 _NOT_REQUEST = r"(?!\s+(?:(?:a|an|the|some|any|your|my|me)\s+)?(?:[a-z-]+\s+)?" + _REQUEST + ")"
 _NO_THING = (r"(?!\s+(?:(?:a|an|some|another|one|more|good|quick|little|gentle|final|firm|proper|light)\s+)*"
              r"(?:(?!(?:the|his|her|their|my|your|our|its|this|that|these|those)\b)[a-z-]+\s+)?" + _ACTION + r"\b" +

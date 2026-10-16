@@ -555,7 +555,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   is there ("a robot that pours me a coffee", "pass the salt over here", "pass the butter", "a robot barista in a busy
   cafe") keeps a person nearby, with an emergency stop, as Morph's assumption. The other way round, "bring them all to
   the bin", "give me a cheap way to move parts", "get me a quote for an arm that moves boxes", "bring her keys to the
-  hook", "bring the shopping to her car boot" and "bring the mail to Reception" are no longer hand-overs. Over the
+  hook", "bring the shopping to her car boot" and "bring the mail to Reception" are no longer hand-overs; a request
+  word is a request only when a robot, its design or its job follows, so "bring me my list", "give me the shopping
+  list" and "bring me something for my headache" still hand the thing over. Over the
   2,697 phrases of all the release review's hunts, 272 readings change: 268 of the second hunt's requests, two
   hand-overs of pet food to a person (people nearby, not pets) and two Studio labels typed in as requests; none of the
   first hunt's 573.

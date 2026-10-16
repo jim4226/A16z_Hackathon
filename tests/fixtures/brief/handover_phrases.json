@@ -10321,6 +10321,147 @@
    "text": "bring her mug to the dishwasher",
    "family": "C-her-object",
    "task": "not_hand_over"
+  },
+  {
+   "text": "bring me my list",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give me the shopping list",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring me something for my headache",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give me something for the pain",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot to give me something for my headache",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring grandma her list",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass me the list",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring me the plans",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand me the price list",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring me something that helps with the pain",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give my dad his list of jobs",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring me something for my cough",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass me the list of parts",
+   "family": "C-request-thing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give me a list of parts for a robot",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give me a quote for an arm",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "get me a list of parts for a robot arm",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give me something for sorting screws",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give me some ideas for gripping eggs",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give me a plan for a robot that sorts mail",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "get me some options for a gripper",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give me an estimate of the cost",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give me something that sorts screws",
+   "family": "C-request",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give me a way to move cups",
+   "family": "C-request",
+   "task": "not_hand_over"
   }
  ]
 }

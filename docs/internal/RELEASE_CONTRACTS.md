@@ -1828,8 +1828,13 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   serve, lend, loan and send (not a message: "send me an alert" is none) take every other receiver only with a thing
   after it (`_THING`: a determiner, a possessive or a noun; never a job done to them, a singular after a/an/some ("give
   them a shake", "give the parts a quick check"; "the wipes" and "the labels" are things), nor a robot ("get me a
-  robot arm that sorts screws"), nor a request (`_REQUEST`: "give me a cheap way to...", "get me a quote for...",
-  "give me something that stacks cups")): "you" ("u", "ya", "y'all"), "the two of us"; "them" ("'em") and someone,
+  robot arm that sorts screws"), nor a request (`_REQUEST`: a quote, an option, a way, an idea, a plan, a list and the
+  like only when a robot, its design, its cost or a robot's job (`_JOB`: build, make, design, move, sort, stack, pick,
+  place, lift, grip, transfer) follows within six words: "give me a cheap way to move parts", "get me a quote for an
+  arm", "a list of parts for a robot", "a breakdown of the cost"; "get me started", "get me going"; "something
+  that/to/for" and a robot's job: "give me something that stacks cups"; but "bring me my list", "give me the shopping
+  list", "pass me the list", "bring me something for my headache" and "get me a quote" on its own hand a thing to
+  someone)): "you" ("u", "ya", "y'all"), "the two of us"; "them" ("'em") and someone,
   anyone or everyone before a thing ("bring them their drinks", "bring them water"; not "bring them all to the bin",
   "two at a time", "get them done"), whoever and a clause ("give whoever asks a pen"); a title and a name; a person
   word (`_ROLE`: nurse, surgeon, orderly, operator, worker, packer, welder, fitter, stacker, chef, barista, cashier,
