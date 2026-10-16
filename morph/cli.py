@@ -778,8 +778,9 @@ def cmd_study(a) -> int:
         return 1
     try:  # what can't run is said before the banner (the study itself checks again)
         robust.new_study(p.root, a.rev, runs=a.runs, seed=a.seed, stress=a.stress, timestep=a.timestep / 1000.0)
-        if robust.active(p.root) is not None:
-            raise robust.StudyBusy("A robustness study is already running for this project.")
+        doc = robust.active(p.root)
+        if doc is not None:
+            raise robust.busy(doc)
     except robust.StudyError as exc:
         print(f"{a.name}: {exc}", file=sys.stderr)
         return 1

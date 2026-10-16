@@ -101,7 +101,10 @@ class HeavyJobs:
             if cur is not None and not cur.finished.is_set():
                 raise StudyBusy(f"A robustness study is already {'waiting' if cur.status == 'queued' else 'running'} "
                                 f"for {project}.")
-            if robust.active(root):
+            doc = robust.active(root)
+            if robust.held(doc):  # Delete project or Reset demo, in another Studio
+                raise robust.busy(doc)
+            if doc:
                 raise StudyBusy(f"A robustness study is already running for {project} (started from another Studio or a "
                                 "terminal).")
             job = self.jobs[project] = Job(project, root, params, study, by)

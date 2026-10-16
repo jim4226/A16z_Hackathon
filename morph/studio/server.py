@@ -13,6 +13,7 @@ revision.
 from __future__ import annotations
 
 import base64
+import contextlib
 import errno
 import hashlib
 import hmac
@@ -272,13 +273,34 @@ def _report(exc, home: str, line: str):
         traceback.print_exc()
 
 
+@contextlib.contextmanager
+def _no_study(home: str, name: str, root: str, what: str):
+    """`with _no_study(...) as moved:` no robustness study starts in project `name` while it is deleted or reset
+    (`what`; robust.holding). Refused, naming where one runs, when one took the study lock since study_elsewhere looked
+    (or this Studio's own hasn't stopped yet)."""
+    held = robust.holding(root)
+    try:
+        moved = held.__enter__()
+    except robust.StudyBusy:
+        where = study_elsewhere(home, root)
+        if where:
+            raise Refused(f"A robustness study of {name} is running {where}: stop it there, or let it finish, then "
+                          f"{what} {name}.") from None
+        raise Refused(f"A robustness study of {name} is still stopping, or another Morph Studio is deleting or "
+                      "resetting it: try again in a moment.") from None
+    try:
+        yield moved
+    finally:
+        held.__exit__(None, None, None)
+
+
 def study_elsewhere(home: str, root: str) -> str | None:
     """Where a robustness study of project folder `root` runs when another process runs it (robust.active: its lock
     names the process and the computer), for people: "in another Morph Studio on this projects folder (process 4242 on
     this computer)", "in a `morph study` command (process 4242 on this computer)" or "(process 4242 on lab-pc)" for
     another computer sharing the folder. None when no study runs, or this process runs it."""
     study = robust.active(root)
-    if study is None:
+    if study is None or robust.held(study):  # no study: Delete project or Reset demo has the lock for a moment
         return None
     pid, host = study.get("pid"), study.get("host")
     if (pid, host) == (os.getpid(), socket.gethostname()):
@@ -743,8 +765,10 @@ class Studio:
                               f"then delete {name}.")
             from . import jobs
             jobs.stop(self, name)  # its robustness study first (finished runs are kept, in the trash with the project)
-            _tools_gone(self, name)  # and its agent runs that wait or work: none continues in a project of that name
-            trash = projects.delete(self.home, name)
+            with _no_study(self.home, name, root, "delete") as moved:  # none starts until the folder is in the trash
+                _tools_gone(self, name)  # and its agent runs that wait or work: none continues in a project of that name
+                trash = projects.delete(self.home, name)
+                moved(trash)
             with self._rooms:
                 self.rooms.pop(name, None)
         finally:
@@ -1098,10 +1122,12 @@ class Studio:
         the Keewano grip calibration only applies to a fresh build), it is rebuilt now (about 30 s per robot).
         Other projects are never touched. False when a demo project is still building here; Refused (nothing removed)
         while another process builds one, has changes of one waiting or runs a robustness study on one: another Studio
-        on this projects folder (a live queue journal there), or `morph robot` (a revision's build lock)."""
+        on this projects folder (a live queue journal there), or `morph robot` (a revision's build lock). From its
+        checks to its end no study starts in a demo project (_no_study: the study lock, which goes stale after
+        robust.STALE_S during a long rebuild)."""
         names = [p["name"] for p in projects.list_projects(self.home) if p["demo"]]
         rooms = [self.room(n) for n in names]
-        held = []
+        held, holds = [], contextlib.ExitStack()
         try:
             for room in rooms:
                 if room.jobs.busy() or not room.lock.acquire(blocking=False):
@@ -1120,6 +1146,8 @@ class Studio:
             from . import jobs
             for room in rooms:
                 jobs.stop(self, room.name)  # Reset demo stops the project's robustness study too (its runs are kept)
+                holds.enter_context(_no_study(self.home, room.name, room.p.root, "reset"))  # and none starts meanwhile
+            for room in rooms:
                 p = room.p
                 keep = baseline(p)
                 if not keep:
@@ -1144,6 +1172,7 @@ class Studio:
                 room.hub.send({"type": "project", "project": room.name, "reset": True})
             return True
         finally:
+            holds.close()  # the study locks, then the rooms'
             for room in held:
                 room.lock.release()
 

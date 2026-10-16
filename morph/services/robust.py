@@ -694,6 +694,21 @@ def active(root: str) -> dict | None:
     return doc
 
 
+HOLD = "hold-"  # the study lock's id when no study holds it but Delete project or Reset demo (holding)
+
+
+def held(doc: dict | None) -> bool:
+    """Whether the study lock `doc` (active()) is Delete project's or Reset demo's (holding), not a study's."""
+    return isinstance(doc, dict) and str(doc.get("id") or "").startswith(HOLD)
+
+
+def busy(doc: dict) -> StudyBusy:
+    """Why no study can start while the study lock `doc` (active()) is taken."""
+    if held(doc):
+        return StudyBusy("This project is being deleted or reset right now: try again in a moment.")
+    return StudyBusy("A robustness study is already running for this project.")
+
+
 def _lock(root: str, sid: str):
     path = _active_path(root)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -701,8 +716,9 @@ def _lock(root: str, sid: str):
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
-            if active(root) is not None:
-                raise StudyBusy("A robustness study is already running for this project.") from None
+            doc = active(root)
+            if doc is not None:
+                raise busy(doc) from None
             try:
                 os.unlink(path)           # stale: its process stopped
             except OSError:
@@ -712,6 +728,34 @@ def _lock(root: str, sid: str):
             json.dump({"id": sid, "pid": os.getpid(), "host": socket.gethostname(), "started_utc": _utc()}, fh)
         return
     raise StudyBusy("A robustness study is already running for this project.")
+
+
+class holding:
+    """`with holding(root) as moved:` no study starts in project folder `root` meanwhile: Delete project moves it to the
+    trash, Reset demo removes revisions. It takes the study lock the way a study does (StudyBusy while a study, or
+    another holding, has it), so a `morph study` started in between is told the project is being deleted or reset
+    instead of running on in a folder that moves. `moved(new_root)`: the folder moved there, and the lock with it."""
+
+    def __init__(self, root: str):
+        import secrets
+        self.root, self.sid = root, HOLD + secrets.token_hex(6)
+        self.made = not os.path.isdir(os.path.join(root, STUDIES))  # a .studies folder made only for the lock goes too
+
+    def __enter__(self):
+        _lock(self.root, self.sid)
+        return self.moved
+
+    def moved(self, new_root: str):
+        self.root = new_root
+
+    def __exit__(self, *exc):
+        _unlock(self.root, self.sid)
+        if self.made:
+            try:
+                os.rmdir(os.path.join(self.root, STUDIES))
+            except OSError:
+                pass
+        return False
 
 
 def _unlock(root: str, sid: str):

@@ -187,6 +187,96 @@ def test_a_studio_that_never_finished_starting_leaves_neither_of_its_files(tmp_p
     assert not os.path.exists(rooms.start_record(str(home), rooms.OWNER))
 
 
+def test_a_study_started_while_delete_project_runs_never_runs_in_the_trash(tmp_path, builds, monkeypatch):
+    """Delete checked for a study run elsewhere, then stopped this Studio's own study and moved the folder: a `morph
+    study` started in between ran on in a folder moving to the trash. Delete now holds the study lock itself from that
+    check to the move, so such a study is refused ("being deleted or reset"), and a study that took the lock first
+    makes Delete refuse; nothing is moved then."""
+    import subprocess
+    import sys
+    from morph.services import robust
+    from morph.studio import jobs
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "kb")
+    st = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    kb = str(home / "kb")
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    real_stop, path = jobs.stop, robust._active_path(kb)
+    try:
+        def study_starts(studio, name, *a, **k):   # `morph study kb` starts right after the check
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"id": "s1", "pid": sleeper.pid, "host": rooms.HOST, "started_utc": "now"}, fh)
+            return real_stop(studio, name, *a, **k)
+        monkeypatch.setattr(jobs, "stop", study_starts)
+        with pytest.raises(server.Refused) as refused:
+            st.delete_project("kb")
+        assert "A robustness study of kb is running in a `morph study` command" in str(refused.value), refused.value
+        assert (home / "kb" / "r001").exists() and robust.active(kb)["id"] == "s1"   # its lock is untouched
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    os.remove(path)
+    monkeypatch.setattr(jobs, "stop", real_stop)
+    seen = []
+
+    def delete(home_, name):                          # a study that starts during the move itself is refused
+        with pytest.raises(robust.StudyBusy, match="being deleted or reset"):
+            robust._lock(kb, "s2")
+        seen.append(name)
+        return real_delete(home_, name)
+    real_delete = projects.delete
+    monkeypatch.setattr(projects, "delete", delete)
+    st.delete_project("kb")
+    assert seen == ["kb"] and not (home / "kb").exists()
+    trash = home / ".trash" / os.listdir(home / ".trash")[0]
+    assert not os.path.exists(robust._active_path(str(trash)))           # the lock went with the folder, then went
+
+
+def test_a_study_started_while_reset_demo_runs_stops_the_reset_before_it_removes_anything(tmp_path, builds,
+                                                                                              monkeypatch):
+    """Reset demo has the same moment between its check for a study run elsewhere and its work: a `morph study` started
+    then is refused while the reset holds the study lock, and one that took the lock first makes the reset refuse
+    before anything is removed."""
+    import subprocess
+    import sys
+    from morph.services import robust
+    from morph.studio import jobs
+    home = tmp_path / "projects"
+    _demo(home)
+    st = server.Studio(RobotProject(str(home / "my-arm")), str(home))
+    egg = str(home / "egg-picker")
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    real_stop, path = jobs.stop, robust._active_path(egg)
+    try:
+        def study_starts(studio, name, *a, **k):   # `morph study egg-picker` starts right after the check
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"id": "s1", "pid": sleeper.pid, "host": rooms.HOST, "started_utc": "now"}, fh)
+            return real_stop(studio, name, *a, **k)
+        monkeypatch.setattr(jobs, "stop", study_starts)
+        with pytest.raises(server.Refused, match="A robustness study of egg-picker is running in a `morph study`"):
+            st.reset()
+        assert {"r001", "r002", "r003"} <= set(os.listdir(egg)) and robust.active(egg)["id"] == "s1"
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    os.remove(path)
+    monkeypatch.setattr(jobs, "stop", real_stop)
+    seen = []
+    real_remove = server._remove_rev
+
+    def remove(p, rev):                               # a study that starts while revisions go is refused
+        with pytest.raises(robust.StudyBusy, match="being deleted or reset"):
+            robust._lock(egg, "s2")
+        seen.append(rev)
+        return real_remove(p, rev)
+    monkeypatch.setattr(server, "_remove_rev", remove)
+    assert st.reset() is True
+    assert seen == ["r003", "r002"] and robust.active(egg) is None and not os.path.exists(path)
+
+
 def test_a_full_disk_at_the_start_costs_the_start_record_one_line(tmp_path, builds, monkeypatch, capsys):
     """The start record is written when the Studio starts; on a full disk the Studio still starts, and the terminal
     says what that costs in one line (it printed a traceback)."""

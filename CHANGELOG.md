@@ -473,7 +473,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - With two Studios on one projects folder, Reset demo in one no longer deletes the revision the other is building (it
   is refused, and says why), Delete project is refused while another Studio or a `morph study` command runs a
   robustness study of the project, and says which process runs it and on which computer (the study went on in a
-  folder moved to the trash), a Studio no longer deletes the project another running Studio started on, a project
+  folder moved to the trash; a `morph study` started while Delete project or Reset demo is under way is refused for
+  that moment), a Studio no longer deletes the project another running Studio started on, a project
   another Studio deleted and made again under its name opens with its own chat and kept design (the deleted one's were
   shown, written into, and its kept design built as the new project's first revision), and a deleted project's chat no
   longer makes its folder again. `morph studio <project>` on a project of your own whose first build was cut off or

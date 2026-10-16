@@ -218,7 +218,7 @@ class Request:
 
 | Area | Routes |
 |---|---|
-| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, while another process runs a robustness study of it (another Studio on the folder, `morph study`, or either on another computer sharing the folder: `robust.active`'s pid and host, `server.study_elsewhere`, and the message names the process and the computer, as Reset demo's does), for the start project, and for the project another running Studio started on) |
+| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, while another process runs a robustness study of it (another Studio on the folder, `morph study`, or either on another computer sharing the folder: `robust.active`'s pid and host, `server.study_elsewhere`, and the message names the process and the computer, as Reset demo's does; from that check to the move to the trash Delete holds the study lock itself, `server._no_study`, so a study can't start in between, and one that took the lock first makes Delete refuse with nothing moved), for the start project, and for the project another running Studio started on) |
 | W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?, edit?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting; `edit: true` skips the chat routing of section 3); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
 | F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
@@ -1449,7 +1449,11 @@ field failure rate (section 0, honesty).
   elsewhere. Study processes mute MuJoCo's warning handler (it writes `MUJOCO_LOG.TXT` into the current folder) and read
   the warning counters instead.
 - **Storage** (`<p>/.studies/`, a hidden folder: never a project, never exported): `tolerances.json`; `active.json`
-  (the running study's lock, its heartbeat is the file's mtime: older than 30 s means it stopped); `<id>/study.json`
+  (the running study's lock, its heartbeat is the file's mtime: older than 30 s means it stopped; Delete project and
+  Reset demo take it too, with an id `hold-<hex>` (`robust.holding`), from their check for a study run elsewhere to
+  the end of their work, so a study that starts then, here or in `morph study`, is refused with "This project is
+  being deleted or reset right now: try again in a moment."; it goes with the folder to the trash, and it has no
+  heartbeat, so during a Reset demo rebuild longer than 30 s a study may start after those 30 s); `<id>/study.json`
   (definition, effective spec, status `queued|preparing|running|checking|done|cancelled|error`, read back as
   `interrupted` when its process stopped, `model`, `timing`, `summary`); `<id>/runs.jsonl` and `<id>/checks.jsonl`
   (one row per run, about 0.5 KB). `<id>` is 12 hex digits of the sha256 of (revision, design, pipeline version,
