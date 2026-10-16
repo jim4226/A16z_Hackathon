@@ -609,16 +609,26 @@ class Studio:
             return self.rooms[self.start]
         project_name(name)
         room = self.rooms.get(name)
-        if room is not None and room.folder is not None and folder_id(room.p.root) == room.folder:
+        if room is not None and self._kept(room):
             return room
         root = self._root(name)
         if not root:
             raise UnknownProject(f"There is no robot project called {name}.")
-        with self._rooms:  # a room is kept for the folder it was made for: not one another Studio made under its name
+        with self._rooms:
             room = self.rooms.get(name)
-            if room is None or room.folder is None or folder_id(room.p.root) != room.folder:
+            if room is None or not self._kept(room):
                 room = self.rooms[name] = Room(name, root)
             return room
+
+    @staticmethod
+    def _kept(room: Room) -> bool:
+        """Whether cached `room` still serves its project: its folder is there and is the one the room was made for
+        (rooms.folder_id), not a new one another Studio made under the name after deleting the project. A room whose
+        queue has work is kept whatever the id says (another Studio never deletes a project this one builds, and a
+        network folder may number its folders anew)."""
+        now = folder_id(room.p.root)
+        busy = room.jobs.running is not None or bool(room.jobs.pending)  # read without its lock (taken under _rooms)
+        return now is not None and (now == room.folder or room.folder is None or busy)
 
     def broadcast(self, event: dict):
         """An event for every open tab, whatever project it is on (a project was created or deleted)."""

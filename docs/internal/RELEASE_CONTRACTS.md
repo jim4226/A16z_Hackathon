@@ -304,9 +304,10 @@ and a stop in between leaves both journals, never neither. Then:
   study on it. A room is kept only for the folder it was made for (`rooms.folder_id`: the folder's device and file id,
   which a deleted project keeps in `.trash/`): a project another Studio deleted gets no chat or journal line (no
   folder is made again under its name), and a new project another Studio made under the name gets a fresh room, never
-  the deleted one's chat or kept first build (on a file system without file ids, FAT, it is kept as before). In the
-  start project, "Morph kept no design" advises starting the Studio on another project first. `morph studio <project>`
-  on a project of its own with no finished revision (its first build cut off or failed) changes nothing and exits with
+  the deleted one's chat or kept first build (`Studio._kept`; on a file system without file ids, FAT, it is kept as
+  before, and a room whose queue has work is always kept: a network folder may number its folders anew). In the start
+  project, "Morph kept no design" advises starting the Studio on another project first. `morph studio <project>` on a
+  project of its own with no finished revision (its first build cut off or failed) changes nothing and exits with
   "<project> has no finished revision yet, so the Studio can't start on it. Start the Studio on another project
   (`morph studio egg-picker`), then send "build it again" in <project>'s chat, or delete <project> from the project
   menu there." (`cli.cmd_studio`); it built the default template into it and rewrote its meta.json. A demo project, or

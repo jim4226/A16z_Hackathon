@@ -4,6 +4,7 @@ locks (test_restart_recovery.hold)."""
 
 import json
 import os
+import threading
 import time
 
 import pytest
@@ -143,3 +144,22 @@ def test_a_deleted_projects_room_writes_nothing_and_a_new_project_of_its_name_ge
     finish(*(fresh.jobs.get(j["id"]) for j in fresh.jobs.snapshot()))
     assert fresh.completed() == [] and [b[0] for b in builds.built] == ["kb"]  # never the deleted kb's design
     assert "make the gripper" not in json.dumps(texts(fresh))
+
+
+def test_a_room_with_work_is_kept_whatever_its_folder_id_reads(tmp_path, builds, monkeypatch):
+    """A network folder may number a folder anew between two looks: a room whose queue has work is never swapped for
+    a fresh one (its build, its queue and the tabs watching it stay together); an idle one is, as for a replaced
+    project."""
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "kb")
+    a = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    room = a.room("kb")
+    builds.gate = threading.Event()
+    job = a.queue_params(room, {"build.quantity": 9})
+    assert builds.started.wait(5)
+    monkeypatch.setattr(server, "folder_id", lambda root: ("elsewhere", 1))
+    assert a.room("kb") is room                                             # building: kept
+    builds.gate.set()
+    finish(job)
+    assert a.room("kb") is not room                                         # idle, another folder: a fresh room
