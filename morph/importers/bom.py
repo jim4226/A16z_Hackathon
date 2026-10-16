@@ -130,6 +130,17 @@ ACCESSORY = re.compile(r"(?:horns?|brackets?|mounts?|mounting|holders?|plates?|c
                        r"wires?|leads?|harness(?:es)?|hubs?|extensions?|testers?|chargers?|batter(?:y|ies))", re.I)
 _SPEC = re.compile(r"\d+(?:[.,]\d+)?(?:-\d+(?:[.,]\d+)?)?(?:v|vdc|volts?|kg(?:[.]?cm|f)?|n[·.]?m|ncm|m?a|mah|rpm|"
                    r"w|g|kv)", re.I)                                             # 12V, 4.8-7.2V, 30kg.cm, 55g, 340KV
+# the joint or the arm a motor drives, named before its model: "Shoulder STS3215 12V", "Wrist pitch MG996R", "Koch
+# follower XL430-W250-T", "Axis 1 MG996R" (a number or J1 is no plain word); "arm" only after whose arm it is ("Leader
+# arm: 6x STS3215 7.4V"; a "servo arm" is a horn)
+_JOINT = re.compile(r"(?:base|shoulder|elbow|wrist|forearm|pitch|roll|yaw|lift|pan|tilt|swivel|rotation|gripper|grip|"
+                    r"jaws?|claw|leader|follower|master|joints?|axis|axes|koch|moss|aloha|lerobot|lekiwi)", re.I)
+# a stand-in for a motor is no motor: "STS3215 dummy servo (3D printed spacer)"
+_STAND_IN = re.compile(r"(?:dummy|dummies|fake|mock|mockup|mock-up|replica|placeholder|imitation)", re.I)
+_ARM_OWNER = re.compile(r"(?:leader|follower|master|koch|moss|aloha|lerobot|lekiwi)", re.I)
+# a label that names the joint before a ":" or a dash, then the part: "Base (J1): STS3215 12V", "Gripper - XL330-M288-T",
+# "Joint 1 - STS3215 servo", "J1 - Feetech STS3215 12V", "Wrist roll — STS3215", "Base / shoulder: XL430-W250-T"
+_LABEL = re.compile(r"^\s*(?P<label>[^:–—]{1,40}?)\s*(?::|\s[-–—]+\s|[–—])\s*(?P<rest>\S.*)$", re.S)
 _PLAIN = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)*")
 _MODEL_MARK = "§"
 _COUNT = re.compile(r"\s*(?:#\s*\d+|[x×]\s*\d+|\d+\s*[x×])\s*$|^\s*\d+\s*[x×]\s*", re.I)   # "Servo #1", "6x Servo"
@@ -139,6 +150,33 @@ _NOT_MOTOR_REF = re.compile(r"(?:j|p|cn|x|xj|u|ic|c|r|rn|l|d|led|q|f|fb|y|sw|k|b
 # micro servo 10 pack", "MG996R servo x4"
 _PACK = re.compile(r"\((?:x\s*)?(\d+)\s*(?:pcs?|pieces?|x)?\)|\b(\d+)\s*(?:pcs?|pieces?)\b|^\s*(\d+)\s*[x×]\s|"
                    r"\s[x×]\s*(\d+)\s*$|\b(\d+)[\s-]*pack\b|\bpack\s+of\s+(\d+)\b", re.I)
+
+
+def _joint_words(plain: list) -> bool:
+    """Whether every plain word names a joint or whose arm it is (_JOINT; "arm" after _ARM_OWNER), or is ignorable."""
+    for i, w in enumerate(plain):
+        if _JOINT.fullmatch(w) or _ignorable(w) and not _GROUP.fullmatch(w):
+            continue
+        if w in ("arm", "arms") and i and _ARM_OWNER.fullmatch(plain[i - 1]):
+            continue
+        return False
+    return True
+
+
+def _unlabel(item: str) -> str:
+    """A part name without the joint label before its ":" or dash (_LABEL): "Base (J1): STS3215 12V" is the STS3215
+    12 V, "Gripper - cable for SG90" a cable. A label is joint words (_joint_words), numbers and joint references (J1,
+    #2, 1-5) only: "Servo - shoulder" and "Horn - STS3215" keep their heads."""
+    m = _LABEL.match(item or "")
+    if not m:
+        return item
+    words = [w.strip(".,;!?*\"'#") for w in re.split(r"[\s/()\[\],&+]+", m.group("label"))]
+    words = [w for w in words if w]
+    if not words or not all(_PLAIN.fullmatch(w) or re.fullmatch(r"(?:[a-z]{1,2})?\d+(?:-(?:[a-z]{1,2})?\d+)?", w, re.I)
+                            for w in words):
+        return item
+    plain = [w.lower() for w in words if _PLAIN.fullmatch(w)]
+    return m.group("rest") if _joint_words(plain) else item
 
 
 def _head(item: str) -> str:
@@ -181,15 +219,23 @@ def _is_motor_name(item: str) -> bool:
     XL430-W250-T"). Whatever else the head names is the part: "STS3215 servo cable 200 mm" is a cable, "STS3215 servo
     horn aluminum" a horn, "XL430 frame FR12-S102K" a frame."""
     words = _words(_head(item))
-    if not words:
-        return False
+    if not words or any(k == "plain" and _STAND_IN.fullmatch(w) for w, k in words):
+        return False                                   # "STS3215 dummy servo (3D printed spacer)"
     motors = [i for i, (w, k) in enumerate(words) if k == "plain" and _MOTOR_WORD.fullmatch(w)]
     if not motors:
+        model = next((i for i, (w, _) in enumerate(words) if w.startswith(_MODEL_MARK)), len(words))
         plain = [w for w, k in words if k == "plain"]
-        if not all(_BRAND.fullmatch(w) or _MOTOR_BRAND.fullmatch(w) or _KIND.fullmatch(w) or _ignorable(w)
-                   for w in plain):
+        # the joint the model drives may come before it ("Shoulder STS3215 12V", "Koch follower XL430-W250-T"), never
+        # after ("STS3215 gripper") and never with a kit ("Pan tilt kit SG90" is a bracket kit)
+        named = [w for w, k in words[:model] if k == "plain"
+                 and not (_BRAND.fullmatch(w) or _MOTOR_BRAND.fullmatch(w) or _KIND.fullmatch(w) or _ignorable(w))]
+        if named and (not _joint_words(named)
+                      or any(_GROUP.fullmatch(w) for w, k in words[:model] if k == "plain")):
             return False
-        return any(w == _MODEL_MARK for w, _ in words) or any(_MOTOR_BRAND.fullmatch(w) for w in plain)
+        if not all(_BRAND.fullmatch(w) or _MOTOR_BRAND.fullmatch(w) or _KIND.fullmatch(w) or _ignorable(w)
+                   for w, k in words[model:] if k == "plain"):
+            return False
+        return model < len(words) or any(_MOTOR_BRAND.fullmatch(w) for w in plain)
     before = [w for w, k in words[:motors[0]] if k == "plain"]
     for i, w in enumerate(before):
         if ACCESSORY.fullmatch(w) and not (_BUILD.fullmatch(w) and i and _MATERIAL.fullmatch(before[i - 1])):
@@ -225,6 +271,37 @@ def _generic_motor(item: str) -> bool:
     return any(_MOTOR_WORD.fullmatch(w) for w in plain) and _is_motor_name(head)
 
 
+def _joint_head(item: str) -> bool:
+    """Whether a part name's head names only a joint (_joint_words; numbers and J1 too): "Base (MG996R)"."""
+    words = _words(_COUNT.sub("", _head(item)))
+    plain = [w for w, k in words if k == "plain"]
+    return bool(plain) and not any(w.startswith(_MODEL_MARK) for w, _ in words) and _joint_words(plain)
+
+
+def _motor_text(text: str) -> str | None:
+    """The words of a motor named only by its kind or maker (_generic_motor), or of its description, that name its
+    model, read by the same rules as a part name: the head says what it is and a model named after "for" is what it
+    fits. "Servo, STS3215 12V": "STS3215 12V"; a description "Feetech STS3215, 7.4V" or "Shoulder - STS3215 12V": the
+    STS3215; "Bus servo adapter, for STS3215", "U2D2 interface for XL430", "Bus adapter (STS3215)" or "STS3215 servo
+    horn": None (an adapter, an interface, a horn)."""
+    from .autoprofile import MODEL_RX
+    text = _unlabel(text or "")
+    head = _head(text)
+    if MODEL_RX.search(head):
+        return text if _is_motor_name(text) else None
+    own = _FITS.split(text, 1)[0]
+    m = MODEL_RX.search(own)
+    if not m:
+        return None
+    rest = [w for w, k in _words(head) if k == "plain" and not (
+        _BRAND.fullmatch(w) or _MOTOR_BRAND.fullmatch(w) or _KIND.fullmatch(w) or _MOTOR_WORD.fullmatch(w)
+        or _ignorable(w))]
+    if rest and not _joint_words(rest):
+        return None                                    # the head names another part: "Bus adapter (STS3215)"
+    seg = own[m.start():]
+    return seg if _is_motor_name(seg) else None
+
+
 def _not_a_motor_ref(ref: str) -> bool:
     """Reference designators that name only connectors, chips, passive parts or switches ("J2 J3 J4")."""
     refs = [m.group(0) for m in re.finditer(r"[A-Za-z]+(?=\d)", ref or "")]
@@ -250,18 +327,17 @@ def _classify(item: str, mpn: str = "", detail: str = "", ref: str = "") -> tupl
     from .autoprofile import MODEL_RX, TEXT_RX, VARIANT_RX, VARIANTS
     if ref and _not_a_motor_ref(ref):
         return None, False
+    item = _unlabel(item)                              # "Base (J1): STS3215 12V", "Gripper - XL330-M288-T"
     if MODEL_RX.search(_head(item)) or (mpn and MODEL_RX.search(mpn)):
         if not _is_motor_name(item):
             return None, False
         name = " ".join(x for x in (item, mpn) if x)
     elif _generic_motor(item):                         # "Servo, STS3215 12V", "Servo" with a description
-        own = _FITS.split(item, 1)[0]                   # (never what it fits: "Servo for the STS3215 arm")
-        if MODEL_RX.search(own):
-            name = own
-        elif detail and MODEL_RX.search(detail):
-            name = detail
-        else:
+        name = _motor_text(item) or _motor_text(detail)
+        if not name:
             return None, _is_motor_name(item)
+    elif _joint_head(item) and _motor_text(item):     # "Base (MG996R)", "Shoulder (STS3215 12V)": its own model only
+        name = _motor_text(item)                       # ("Gripper" described "SG90" may be the whole gripper)
     else:
         return None, _is_motor_name(item)
     key = next((k for rx, k in TEXT_RX if rx.search(name)), None)
@@ -298,8 +374,9 @@ def _category(item: str, key: str | None, motor: bool = False) -> str:
             return "fastener"
         if re.search(r"\b(?:cables?|wires?|harness(?:es)?|leads?|jumpers?|dupont)\b|\bcable-|\bextension\b(?!\s+board)|\bsplitters?\b", t):
             return "cable"
-        if re.search(r"\b(board|controller|adapter|driver|power supply|psu|smps|battery|arduino|esp32|raspberry pi|"
-                     r"sensor|camera|webcam|u2d2|openrb|urt-?1|esc|odrive|encoder|step-?down|buck|converter|regulator|"
+        if re.search(r"\b(board|controller|adapter|driver|tester|power supply|psu|smps|battery|arduino|esp32|"
+                     r"raspberry pi|sensor|camera|webcam|u2d2|openrb|urt-?1|esc|odrive|encoder|step-?down|buck|"
+                     r"converter|regulator|"
                      r"capacitor|resistor|shifter|buffer|ch340|usb to ttl|shield|interface|module|pcb)s?\b", t):
             return "electronics"
         if re.search(r"filament|pla\b|petg|resin|sheet|plate stock", t):
@@ -381,9 +458,10 @@ def map_table(rows: list) -> tuple[list, dict, list]:
                     "manufacturer": _cell(get("manufacturer"))[0][:80] or None if "manufacturer" in cols else None,
                     "supplier": _cell(get("supplier"))[0][:80] or None if "supplier" in cols else None,
                     "ref": ref[:200] or None, "description": desc[:200] or None, "make_or_buy": "buy",
-                    "category": "electronics" if board and ref and _not_a_motor_ref(ref) else _category(item, key, motor),
+                    "category": "electronics" if board and ref and _not_a_motor_ref(ref) else _category(_unlabel(item),
+                                                                                                     key, motor),
                     "catalog": key, "catalog_name": _catalog_name(key),
-                    "pack": pack_count(item) if motor else None, "source": "import"})
+                    "pack": pack_count(_unlabel(item)) if motor else None, "source": "import"})
     return out, {f: rows[hi][i] if i < len(rows[hi]) else "" for f, i in cols.items()}, warns
 
 

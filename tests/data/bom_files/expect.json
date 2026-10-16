@@ -412,5 +412,42 @@
     0
    ]
   }
+ },
+ "joint_named_follower.csv": {
+  "note": "a hand-made list naming each servo by its joint (bb1fd6b seeded 6)",
+  "lines": {
+   "Base STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Shoulder STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Elbow STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Wrist pitch STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Wrist roll STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "Gripper STS3215 12V": [
+    "sts3215",
+    1
+   ],
+   "FE-URT-1 bus adapter": [
+    null,
+    0
+   ],
+   "12V 5A power supply": [
+    null,
+    0
+   ]
+  }
  }
 }

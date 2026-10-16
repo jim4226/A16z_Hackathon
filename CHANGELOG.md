@@ -35,8 +35,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   the servo on a screw or a driver board don't make it one, and neither does a name for a part of one, whatever follows
   or what it fits ("STS3215 servo cable 200 mm", "SG90 servo arm set", "U2D2 for Dynamixel XL430"); what a servo comes
   with or is built with doesn't change what it is ("STS3215 servo, horn included", "Feetech STS3215 Servo Motor 12V
-  Metal Case"). A line named "Feetech servo", "Gripper servo" or "Servo (x6)" is the motor its description names, and a
-  pack bought once counts its motors. KiCad's grouped CSV and KiBoM parts lists are read too, and a list without prices
+  Metal Case"), and neither does the joint or arm it drives, named before it ("Shoulder STS3215 12V", "Koch follower
+  XL430-W250-T", "Base (J1): STS3215 12V", "Gripper - XL330-M288-T"). A line named "Feetech servo", "Gripper servo" or
+  "Servo (x6)" is the motor its description names, read the same way (just "Dynamixel" described as "U2D2 interface
+  for XL430" is no motor), and a pack bought once counts its motors. KiCad's grouped CSV and KiBoM parts lists are read too, and a list without prices
   shows no total. The preview shows the MPN and the description. An object whose grip would bend the
   fingers gets the thicker beam New robot would give it. An import whose build isn't feasible says why in its project's
   chat, with the fixes Morph can build as buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).

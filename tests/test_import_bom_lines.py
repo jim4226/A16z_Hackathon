@@ -46,6 +46,11 @@ MORE = [  # (part name, catalog key, pack): a servo named in other ways stays on
     ("MG996R Servo Motor Metal Gear Dual Ball Bearing", "mg996r", None),
     ("DS3218 20kg Digital Servo High Torque Full Metal Gear Waterproof", "ds3218", None),
     ("MG996R Servo Motor RC Robot Arm", "mg996r", None), ("MG996R Servo Large Torque", "mg996r", None),
+    # the joint or arm before the model, or before a ":" or a dash (c9f9552's heads read "Shoulder", "Gripper",
+    # "Leader arm" as what the line is: no motor; bb1fd6b and 22bec48 tagged each)
+    ("Shoulder STS3215 12V", "sts3215", None), ("Koch follower XL430-W250-T", "xl430_w250", None),
+    ("Base (J1): STS3215 12V", "sts3215", None), ("Gripper - XL330-M288-T", "xl330_m288", None),
+    ("Leader arm: 6x STS3215 7.4V", "sts3215_7v4", 6), ("Axis 1 MG996R", "mg996r", None),
 ]
 
 
