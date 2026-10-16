@@ -129,9 +129,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same box is never added
   twice, and a box the room holds already is never offered again. The check, the boxes' fit included, has 20 seconds
   (trying the boxes 30 seconds more):
-  the review's desk scan takes 9.9 to 11.5 seconds on a 4-core computer at load 1-4, 13.3 to 14.6 at load 9-10 and 15
-  to 16 at load 11-12, and a generated room of a million triangles 9.8 seconds at load 2 and 11.5 to 12.3 at load 5-10
-  (below: it now measures the arm's own shapes and the motion between its poses).
+  the review's desk scan takes 9.9 to 11.5 seconds to measure on a 4-core computer at load 1-4, 13.3 to 14.6 at load
+  9-10 and 15 to 16 at load 11-12, and trying its box 4.8 to 6.5 seconds more at load 6-10, and a generated room of a
+  million triangles 9.8 seconds at load 2 and 11.5 to 12.3 at load 5-10 (below: it now measures the arm's own shapes and
+  the motion between its poses).
   The boxes' share of the time is set aside only once the check has listed a near miss,
   sized from what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm
   comes within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the
@@ -188,11 +189,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   and simulate would: a box that simulation fails with is not offered and its row says how it fails; one it goes round
   is offered and its row says how close that simulation comes to it, as the simulation after Add box here says (of the
   hunters' cases kept as tests, all 8 failures are caught and the 7 others offered with the clearance their next
-  simulation measured). Boxes offered together are tried together too. When the simulation fails on a box Add box here
-  made, the check names it and says to remove it. Also: a trimmed box is fitted to the near miss's own distance (a 2.0
-  mm near miss's box read 1.9 mm from the path), the scan line in the Studio's progress counts every place, not only the
-  eight listed ("8 near misses" where the check said 12), and where the scan holds the object itself the check adds "or
-  something within 2 mm of it" (a block 0.3 mm beside the egg read as the egg).
+  simulation measured). Boxes offered together are tried together too. Trying a box is a simulation run, so a check that
+  offers one takes longer: on the review's desk scan 4.8 to 6.5 seconds more at load 6-10 (17.6 to 18.7 seconds in all),
+  with the mount moved 15 mm 9.6 to 13.3 seconds more at load 6-12 (21 to 25 seconds in all; 47 seconds in the Studio at
+  load 16). When the simulation fails on a box Add box here made, the check names it and says to remove it. Also: a
+  trimmed box is fitted to the near miss's own distance (a 2.0 mm near miss's box read 1.9 mm from the path), the scan
+  line in the Studio's progress counts every place, not only the eight listed ("8 near misses" where the check said 12),
+  and where the scan holds the object itself the check adds "or something within 2 mm of it" (a block 0.3 mm beside the
+  egg read as the egg).
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the

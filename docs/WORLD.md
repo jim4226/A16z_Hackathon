@@ -114,18 +114,20 @@ near misses closer than the box was fitted to. The same box is never added twice
 never offered again.
 
 The check, the boxes' fit included, has 20 seconds, and trying the boxes 30 seconds more. On a 4-core computer the
-review's desk scan, a vase 8.8 mm from the arm's path, takes 9.9 to 11.5 seconds at load 1-4, 13.3 to 14.6 at load 9-10
-and 15 to 16 at load 11-12 (measured only at the poses, as before, it took 14.7 seconds at load 16: the motion between
-the poses costs about as much again); the same desk with the mount moved 15 mm, the wrist 2.0 mm from the vase, 8.5 to
-9.5 seconds at load 2-10 (one run at load 9-10 took 13.8 to 15.9); a generated room of a million triangles 9.8 seconds
-at load 2 and 11.5 to 12.3 at load 5-10. When a check can't measure the whole path in time, it never claims more room
-than it measured: it says how close the arm comes at most (the closest distance it did measure: "The wrist comes within
-at most 4.6 mm of the scanned surface"), with how close it comes at least when it knows ("no closer than 8.6 mm"), or
-that there wasn't time to measure it, and that only part of the path, or of the motion between its poses, was measured
-(at load 13 to 17 the desk check can run out of time there). It says whether checking again when the computer is less
-busy may finish it, or whether, at that pace, it would take more than twice as long. Its answer is kept until the room,
-the scan or the revision's simulation changes, except an answer cut short, one whose box ran out of time to be fitted,
-or one that ran out of time before every near miss was listed: *Check placement* measures those again.
+review's desk scan, a vase 8.8 mm from the arm's path, takes 9.9 to 11.5 seconds to measure at load 1-4, 13.3 to 14.6 at
+load 9-10 and 15 to 16 at load 11-12 (measured only at the poses, as before, it took 14.7 seconds at load 16: the motion
+between the poses costs about as much again), and trying its box 4.8 to 6.5 seconds more at load 6-10 (17.6 to 18.7
+seconds in all); the same desk with the mount moved 15 mm, the wrist 2.0 mm from the vase, 8.5 to 9.5 seconds to measure
+at load 2-10 (one run at load 9-10 took 13.8 to 15.9), and trying its box 9.6 to 13.3 seconds more at load 6-12 (21 to
+25 seconds in all; in the Studio at load 16 that check took 47 seconds); a generated room of a million triangles 9.8
+seconds at load 2 and 11.5 to 12.3 at load 5-10. When a check can't measure the whole path in time, it never claims more
+room than it measured: it says how close the arm comes at most (the closest distance it did measure: "The wrist comes
+within at most 4.6 mm of the scanned surface"), with how close it comes at least when it knows ("no closer than 8.6
+mm"), or that there wasn't time to measure it, and that only part of the path, or of the motion between its poses, was
+measured (at load 13 to 17 the desk check can run out of time there). It says whether checking again when the computer
+is less busy may finish it, or whether, at that pace, it would take more than twice as long. Its answer is kept until
+the room, the scan or the revision's simulation changes, except an answer cut short, one whose box ran out of time to be
+fitted, or one that ran out of time before every near miss was listed: *Check placement* measures those again.
 
 - Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
   goes counts as a near miss.

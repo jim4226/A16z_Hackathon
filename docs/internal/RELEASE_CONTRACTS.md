@@ -1459,12 +1459,15 @@ field failure rate (section 0, honesty).
   fails (the row says how), so none is offered". The World panel's row adds "tried: the simulation keeps X mm from it"
   ("at least" when its closest box is another). The trial is the next simulation: on the hunters' 15 cases kept in
   tests/data/scan_box_trials.json its failure is word for word the one the simulation after Add box here reports, and
-  its clearance the same number. `worlds.failed_on_box`: when the revision's simulation fails on a box with source
-  "auto", `stats.fails_on` {label, failure} and the check says "The simulation fails on <label>, a box Add box here made
-  (<failure>): remove that box, and move the robot or the thing instead." A trimmed box is fitted to its region's
-  distance plus `SCAN_FIT_TOL_MM` and verified to at least that distance, so `box_clearance_mm` is never under the row's
-  `min_clearance_mm` (a 2.0 mm near miss's box read 1.9). `scan_event_text` counts `stats.places`, not only the rows
-  listed. R8: the check's distance and
+  its clearance the same number. Its cost, measured with `api_world.inspect_world` on this tree (4 cores): the review's
+  desk scan (vase 8.8 mm, the box tried 10.1 mm from the simulation) `try_boxes` 4.8-6.5 s of a 17.6-18.7 s scan check
+  at load 6-10; the same desk with the mount moved 15 mm (2.0 mm, tried 2.1 mm) 9.6-13.3 s of 21-25 s at load 6-12, and
+  the whole Check placement in the Studio 47.0 s at load 16. `worlds.failed_on_box`: when the revision's simulation
+  fails on a box with source "auto", `stats.fails_on` {label, failure} and the check says "The simulation fails on
+  <label>, a box Add box here made (<failure>): remove that box, and move the robot or the thing instead." A trimmed
+  box is fitted to its region's distance plus `SCAN_FIT_TOL_MM` and verified to at least that distance, so
+  `box_clearance_mm` is never under the row's `min_clearance_mm` (a 2.0 mm near miss's box read 1.9).
+  `scan_event_text` counts `stats.places`, not only the rows listed. R8: the check's distance and
   each region's are kept as 0.0 under `SCAN_TOUCH_MM` (`_touch_floor`: `min_clearance_mm`), since there the check stops
   looking closer and the distance it had is one pose's (a speck at 0.197 mm was kept as 0.2); near
   misses within `SCAN_COVER_MM` = 10 mm of one of the world's grey boxes are that box's, and a
