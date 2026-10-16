@@ -596,7 +596,9 @@ def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nom
         if not st["truncated"]:                         # the closest approach is the whole path's
             assert mc == true and res["at"] == full["at"], (limit, res)
             seen.add("listed in part" if st.get("unlisted_mm") is not None else "whole")
-            assert [r["exact"] for r in res["regions"]] == [True] and res["regions"][0]["min_clearance_mm"] == true
+            # the row is the closest approach there, unless the second pass stopped at a touch (then it "touches")
+            assert [r["exact"] for r in res["regions"]] == [true >= worlds.SCAN_TOUCH_MM], res["regions"]
+            assert res["regions"][0]["min_clearance_mm"] == true
             continue
         for r in res["regions"]:                        # a row of a check cut short: the arm comes at most this close
             assert not r["exact"] and r["min_clearance_mm"] >= true - 0.1, (limit, r)
@@ -653,14 +655,14 @@ def test_the_scan_check_rounds_its_numbers_down(mc, status, text):
 
 
 def test_only_the_closest_places_row_is_exact_the_others_are_measured_and_at_most(tmp_path, nominal):
-    """Two near misses: the bin beside the carry arc (touched) and the tall vase (8.0 mm, measured alone). Only the
+    """Two near misses: a bin 50 mm beside the carry arc (7.0 mm) and the tall vase (8.0 mm, measured alone). Only the
     region holding the whole check's closest point has its exact closest approach ("exact"); the other region's
     distance is measured exactly at its own closest points (not the up to rho more of a scan point), so it is a real
     distance the arm comes within there: at least the vase's own closest approach, and what its box is fitted to."""
     rob, doc = nominal
     m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
     alone = measure(glb(tmp_path / "vase.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
-    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE), box_mesh(bin_beside_the_arc(EGG, 0.0))])
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE), box_mesh(bin_beside_the_arc(EGG, 50.0))])
     res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
     first, vase = res["regions"]
     assert first["exact"] and first["min_clearance_mm"] == res["min_clearance_mm"], first

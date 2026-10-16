@@ -1364,27 +1364,27 @@ field failure rate (section 0, honesty).
   scan's own points, up to rho more than its distance to the scan, so each region's points that could be its closest are
   measured exactly (`exact()`, closest first, before the limit): its `min_clearance_mm`, `point`, `t` and `link` are a
   real robot-to-scan distance, the arm coming at least that close there, and the box is fitted to it. Only the region
-  holding the whole check's closest point, in a check not cut short, has `exact: true` (its closest approach); every
-  other region's distance, and every region of a check cut short, is an upper bound the row shows as "at most".
-  `covers.clearance_mm` is that distance, so a later check that measures the place closer offers it again. A region
-  measured closer than the check's own closest (the second pass stops at its first point under 0.5 mm, and a pass cut
-  short measures only part of the path) makes its distance, place, time and link the check's `min_clearance_mm` and
-  `at`: on rD's r004 the check kept 0.2 mm while its row measured 0.0 mm (a vase in the arm's path in the tests: 0.3 and
-  0.0 mm). Measured on the review's desk scan (one region) and a vase beside a bin (two): the rows read as before (8.9
-  mm exact; 0.0 mm exact and 8.0 mm at most), the regions step 0.03-0.12 s with the refinement and 0.04-0.16 s without
-  (one run each, load 5-7). `_fit_boxes` prunes each geom's fine samples by its coarse ones (as pass 2 does), keys
-  points by 0.25 mm cell, and drops points once clear of the shrinking box. R4: the measuring passes run to
-  `time_limit_s` until there is a near miss (R5: until the second pass lists one, a point closer than `near_mm`: a box
-  is fitted only to those, and a first-pass bound alone set the time aside and then cut the first pass short with
-  nothing to fit, as on rD at an 8 s limit, stopped at 6.0 s); from then on they stop early enough for the regions and
-  the fit, `SCAN_FIT_S_PER_POSE` (4 ms) a distinct pose, at least `SCAN_RESERVE_MIN_S` (0.5 s) and at most
-  `SCAN_RESERVE_SHARE` (25 %) of the limit (2.4 s for the desk scan's 607 distinct poses, whose regions and fit took
-  1.3-1.9 s at load 11-14). A region not fitted by then gets `box: None`, `no_box` saying Morph ran out of time, and
-  `stats.fit_timeout`, and the check text says there wasn't time to fit a box (`stats.regions_s` and `stats.fit_s` time
-  the two steps). Cut short (`stats.truncated`), the answer never claims more room than was measured: `min_clearance_mm`
-  is the closest distance measured anywhere, pass 2's exact ones or pass 1's coarse robot samples to the scan's points
-  (a real distance: the arm comes at least that close; `at` names that sample's link, time and scan point),
-  `stats.lower_mm` a lower bound when every pose was bounded, `stats.poses_checked` of `stats.unique_poses`,
+  holding the whole check's closest point, in a check not cut short that found that point (not one stopped at a touch),
+  has `exact: true` (its closest approach); every other region's distance, and every region of a check cut short, is an
+  upper bound the row shows as "at most". `covers.clearance_mm` is that distance, so a later check that measures the
+  place closer offers it again. A region measured closer than the check's own closest (the second pass stops at its
+  first point under 0.5 mm, and a pass cut short measures only part of the path) makes its distance, place, time and
+  link the check's `min_clearance_mm` and `at`: on rD's r004 the check kept 0.2 mm while its row measured 0.0 mm (a vase
+  in the arm's path in the tests: 0.3 and 0.0 mm). Measured on the review's desk scan (one region) and a vase beside a
+  bin (two): the rows read as before (8.9 mm exact; 0.0 mm touching and 8.0 mm at most), the regions step 0.03-0.12 s
+  with the refinement and 0.04-0.16 s without (one run each, load 5-7). `_fit_boxes` prunes each geom's fine samples by
+  its coarse ones (as pass 2 does), keys points by 0.25 mm cell, and drops points once clear of the shrinking box. R4:
+  the measuring passes run to `time_limit_s` until there is a near miss (R5: until the second pass lists one, a point
+  closer than `near_mm`: a box is fitted only to those, and a first-pass bound alone set the time aside and then cut the
+  first pass short with nothing to fit, as on rD at an 8 s limit, stopped at 6.0 s); from then on they stop early enough
+  for the regions and the fit, `SCAN_FIT_S_PER_POSE` (4 ms) a distinct pose, at least `SCAN_RESERVE_MIN_S` (0.5 s) and
+  at most `SCAN_RESERVE_SHARE` (25 %) of the limit (2.4 s for the desk scan's 607 distinct poses, whose regions and fit
+  took 1.3-1.9 s at load 11-14). A region not fitted by then gets `box: None`, `no_box` saying Morph ran out of time,
+  and `stats.fit_timeout`, and the check text says there wasn't time to fit a box (`stats.regions_s` and `stats.fit_s`
+  time the two steps). Cut short (`stats.truncated`), the answer never claims more room than was measured:
+  `min_clearance_mm` is the closest distance measured anywhere, pass 2's exact ones or pass 1's coarse robot samples to
+  the scan's points (a real distance: the arm comes at least that close; `at` names that sample's link, time and scan
+  point), `stats.lower_mm` a lower bound when every pose was bounded, `stats.poses_checked` of `stats.unique_poses`,
   `stats.part_clear` when it looked at a pose and every one it looked at stays beyond 50 mm, and `stats.need_s` about
   what the whole check would take at this pace (cut in the first pass, the second counted as long as the first: it took
   0.5 to 5 times as long in the scans measured). A second pass cut short after the closest point is measured (every pose

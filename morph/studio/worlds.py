@@ -1161,9 +1161,8 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     for while they are no closer than it was fitted to, are left to that box, and so are regions whose box the world
     holds already (stats["covered"] counts those regions): they are not offered again. Once the second pass lists a
     near miss (a box is fitted only to those), it stops early enough for the regions and their boxes to be done within
-    the limit (about
-    SCAN_FIT_S_PER_POSE a pose, at least SCAN_RESERVE_MIN_S, at most SCAN_RESERVE_SHARE of it); a box not fitted in
-    time isn't offered (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps.
+    the limit (about SCAN_FIT_S_PER_POSE a pose, at least SCAN_RESERVE_MIN_S, at most SCAN_RESERVE_SHARE of it); a box
+    not fitted in time isn't offered (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps.
 
     Cut short (stats["truncated"]), the answer never claims more room than was measured: "min_clearance_mm" is the
     closest distance measured anywhere, the second pass's exact ones, the first pass's coarse robot samples to the
@@ -1516,7 +1515,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
                      "point": [round(float(v), 1) for v in to_world(world, close["q"])]}
     t1 = time.monotonic()
     out["regions"] = _scan_regions(world, near, S, best if best["d"] < near_mm else None, m, obj_body, floor_cut_mm, stats,
-                                   refine=exact, rho=rho, final=final, deadline=end)
+                                   refine=exact, rho=rho, final=final and best["d"] >= SCAN_TOUCH_MM, deadline=end)
     stats["regions_s"] = round(time.monotonic() - t1, 2)
     if out["regions"]:                                  # a row measured closer than the check's closest (the second
         r0 = min(out["regions"], key=lambda r: r["_d"])  # pass stops at a touch; a pass cut short): that is the closest
@@ -1753,7 +1752,8 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None, r
     that could be its closest are measured exactly before `deadline`, so its distance ("min_clearance_mm", "_d") is a
     real robot-to-scan distance, the arm coming at least that close there. It is "exact" (the closest approach there,
     not only a distance the arm comes within) for the region holding the whole check's closest point when the check
-    measured all of the path (`final`); every other region's distance is "at most"."""
+    measured all of the path and found that point (`final`; not when it stopped at a touch); every other region's
+    distance is "at most"."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     from scipy.spatial import cKDTree
