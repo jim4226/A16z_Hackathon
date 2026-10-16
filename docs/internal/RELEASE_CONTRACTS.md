@@ -617,7 +617,10 @@ The five feature branches are merged into the release branch and live in the Stu
   `project_created` goes to every tab. When that build ends, `api_brief.on_built` writes `<project>/brief.json` and
   deletes the draft, then `agents.after_build` runs Darwin sourcing (network and sourcing on) and Keewano (its events
   on) on the new room's timeline. The dialog switches its tab to the new project. `capability.warm(block=False)` runs
-  at Studio start. The brief's Claude calls are off while network lookups are off.
+  at Studio start, and so does `brief.warm(block=False)`, which compiles the brief's long request patterns (about 2 s
+  on a 4-core machine) that the first New robot message would otherwise wait for; after it, a first request compiles
+  none of its own (`test_warm_up_leaves_no_long_pattern_for_the_first_requests`). The brief's Claude calls are off
+  while network lookups are off.
 - **Import (F2):** a robot or a Morph export becomes a project through `studio.create_project(origin="import")`; an
   object is a room job (`queue_changes(source="import")`). The importers' home is the Studio's projects folder, set
   at start with the 24 h session cleanup. `morph studio --allow-url-import` keeps links on for a Studio others use.

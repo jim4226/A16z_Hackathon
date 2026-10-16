@@ -20,6 +20,7 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 
@@ -1000,10 +1001,19 @@ _TYPOS = ((r"\bteh\b", "the"), (r"\bn(?:ures|ruse|usre|urce|ursse)(s?)\b", r"nur
           (r"\bid(?=\s+(?:be|have|stand|sit|work|stay|need|like|want|probably|just)\b)", "i'd"))
 
 
+_RX_LOCK = threading.Lock()
+
+
 @functools.lru_cache(maxsize=None)
-def _rx(pattern: str) -> re.Pattern:
-    """A people pattern compiled once (they are long; Python's own cache of compiled patterns can drop them)."""
+def _compiled(pattern: str) -> re.Pattern:
     return re.compile(pattern)
+
+
+def _rx(pattern: str) -> re.Pattern:
+    """A long pattern compiled once per process (Python's own cache of compiled patterns can drop them). One thread
+    compiles it while another that needs it waits, so warm() at Studio start and a first request never both do."""
+    with _RX_LOCK:
+        return _compiled(pattern)
 
 
 def people_text(raw: str, agents: bool = True) -> str:
@@ -1604,6 +1614,27 @@ def harmful(text: str) -> str | None:
             if re.search(r"\b" + _H_NEW_TOOL_GUN + r"[- ]?guns?$", near) and not _gun_harmless(t, g):
                 return g.group(0)          # a tool gun refused before this beta, in no harmless use the request names
     return None
+
+
+def warm(block: bool = True) -> None:
+    """Compile the long request patterns once per process. They take about 2 s on a small machine, which the first
+    request would otherwise wait for; the Studio calls this at start with block=False, as it does capability.warm."""
+    def run():
+        try:
+            for pat in (*HOSTILE, *HOSTILE_WITH_DANGER, *_H_NO_VERB, GUN_CONTEXT, _H_AIMED, _H_AIMED_AT, _H_DANGER_HERE,
+                        _H_ANY_DANGER, HAND_TO_PERSON, PEOPLE_AT_IT, PEOPLE_BESIDE, PEOPLE_AROUND, _FOR_SOMEONE,
+                        ANIMAL_GETS):
+                _rx(pat)
+            for text in ("a robot that hands the operator a cup while I work next to it",
+                         "the nurse loads its tray, my kids watch and it gives my dog a treat"):
+                parse(text)
+        except Exception:  # noqa: BLE001  a warm-up never stops the Studio; the first request compiles what is left
+            pass
+
+    if block:
+        run()
+    else:
+        threading.Thread(target=run, daemon=True, name="brief-warm").start()
 
 
 def person_signals(pt: str, t: str = "") -> dict:

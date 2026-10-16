@@ -1590,8 +1590,9 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
     if team:
         from . import api_team
         api_team.configure(home=studio.home, secure_cookies=False, enabled=True)
-    from . import capability
+    from . import brief, capability
     capability.warm(block=False)  # the brief's envelope from the generator, in the background
+    brief.warm(block=False)       # and its request patterns, which the first New robot message would wait for
     # local Studio: requests must name this server (127.0.0.1/localhost); remote Studio: the access token decides; a team
     # Studio: the member's session decides, so a tunnel's or the LAN's address works too
     allowed = None if token or team else {f"{h}:{port}" for h in ("127.0.0.1", "localhost", host)}

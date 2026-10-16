@@ -400,6 +400,39 @@ def test_a_person_a_pet_feeder_hands_things_to_is_a_person_not_a_pet(text):
     assert B.defaults(b)["people_nearby"] == "yes"
 
 
+_FIRST_REQUESTS = r"""
+import os, re, sys
+for k in list(os.environ):
+    if k.startswith(("ANTHROPIC", "KEEWANO", "SUBQ")):
+        del os.environ[k]
+from morph.studio import agents, brief as B
+if sys.argv[1] == "warm":
+    B.warm()
+compiler = getattr(re, "_compiler", None)
+if compiler is None:
+    import sre_compile as compiler
+seen, compile_ = [], compiler.compile
+compiler.compile = lambda p, flags=0: (seen.append(len(p)) if isinstance(p, str) and len(p) > 5000 else None) or compile_(p, flags)
+for t in ("a robot that waters my plants", "a robot that hands my dad his tea", "my kids watch while it sorts lego",
+          "a robot with a nail gun that sorts screws", "a robot that holds the heat gun on the shrink tubing",
+          "the operator empties it; it feeds the cat", "pick strawberries and give them to my grandma"):
+    agents.run_turn(text=t, deep=False)
+print(len(seen))
+"""
+
+
+def test_warm_up_leaves_no_long_pattern_for_the_first_requests():
+    # the first New robot message in a process waited about 2 s while the long people and harm patterns compiled; the
+    # Studio compiles them at start (brief.warm), and then the first requests compile none of their own
+    import subprocess
+    import sys
+    root = str(Path(__file__).resolve().parent.parent)
+    cold, warm = (subprocess.run([sys.executable, "-c", _FIRST_REQUESTS, how], cwd=root, capture_output=True, text=True,
+                                 timeout=300) for how in ("cold", "warm"))
+    assert cold.returncode == 0 and warm.returncode == 0, (cold.stderr[-500:], warm.stderr[-500:])
+    assert int(cold.stdout.split()[-1]) >= 10 and int(warm.stdout.split()[-1]) == 0, (cold.stdout, warm.stdout)
+
+
 def test_long_requests_read_quickly():
     # the people patterns are long; a 2,000-character request must not make them backtrack for seconds
     B.parse("warm up")
