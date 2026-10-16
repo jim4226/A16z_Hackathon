@@ -1474,7 +1474,12 @@ field failure rate (section 0, honesty).
   Reset demo take it too, with an id `hold-<hex>` (`robust.holding`), from their check for a study run elsewhere to
   the end of their work, so a study that starts then, here or in `morph study`, is refused with "This project is
   being deleted or reset right now: try again in a moment."; it goes with the folder to the trash, and it has no
-  heartbeat, so during a Reset demo rebuild longer than 30 s a study may start after those 30 s); `<id>/study.json`
+  heartbeat, so during a Reset demo rebuild longer than 30 s a study may start after those 30 s. On a full disk
+  (ENOSPC or a quota) the hold can't be written: what was written of it is removed and Delete project and Reset demo
+  go on without it, as before the hold existed (they answered 409 "close any file of it that is open" and 507 with a
+  traceback, and left an empty `active.json`; Reset demo is one way to free space). A study can't write its lock
+  either until space is freed, so only one started in the moments Reset demo has freed space can run meanwhile. A
+  lock write that fails never leaves a partial `active.json`, a study's included); `<id>/study.json`
   (definition, effective spec, status `queued|preparing|running|checking|done|cancelled|error`, read back as
   `interrupted` when its process stopped, `model`, `timing`, `summary`); `<id>/runs.jsonl` and `<id>/checks.jsonl`
   (one row per run, about 0.5 KB). `<id>` is 12 hex digits of the sha256 of (revision, design, pipeline version,

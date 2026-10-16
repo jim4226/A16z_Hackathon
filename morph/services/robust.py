@@ -724,8 +724,15 @@ def _lock(root: str, sid: str):
             except OSError:
                 pass
             continue
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({"id": sid, "pid": os.getpid(), "host": socket.gethostname(), "started_utc": _utc()}, fh)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"id": sid, "pid": os.getpid(), "host": socket.gethostname(), "started_utc": _utc()}, fh)
+        except BaseException:  # a full disk: no lock half written stays behind (it is ours: O_EXCL made it)
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
         return
     raise StudyBusy("A robustness study is already running for this project.")
 
@@ -734,28 +741,42 @@ class holding:
     """`with holding(root) as moved:` no study starts in project folder `root` meanwhile: Delete project moves it to the
     trash, Reset demo removes revisions. It takes the study lock the way a study does (StudyBusy while a study, or
     another holding, has it), so a `morph study` started in between is told the project is being deleted or reset
-    instead of running on in a folder that moves. `moved(new_root)`: the folder moved there, and the lock with it."""
+    instead of running on in a folder that moves. `moved(new_root)`: the folder moved there, and the lock with it.
+    On a full disk (the lock can't be written) it goes on without the lock, as before there was one: a study can't
+    write its lock either until space is freed, and the caller has looked for a study running elsewhere already."""
 
     def __init__(self, root: str):
         import secrets
         self.root, self.sid = root, HOLD + secrets.token_hex(6)
         self.made = not os.path.isdir(os.path.join(root, STUDIES))  # a .studies folder made only for the lock goes too
+        self.locked = False
 
     def __enter__(self):
-        _lock(self.root, self.sid)
+        from .durable import disk_full
+        try:
+            _lock(self.root, self.sid)
+            self.locked = True
+        except OSError as exc:  # never StudyBusy: that is a ValueError
+            if not disk_full(exc):
+                raise
+            self._tidy()
         return self.moved
 
     def moved(self, new_root: str):
         self.root = new_root
 
     def __exit__(self, *exc):
-        _unlock(self.root, self.sid)
+        if self.locked:
+            _unlock(self.root, self.sid)
+        self._tidy()
+        return False
+
+    def _tidy(self):
         if self.made:
             try:
                 os.rmdir(os.path.join(self.root, STUDIES))
             except OSError:
                 pass
-        return False
 
 
 def _unlock(root: str, sid: str):

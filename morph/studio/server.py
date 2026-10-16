@@ -1902,6 +1902,8 @@ def _api_projects_delete(req):
     except Refused as exc:
         raise HTTPError(409, str(exc)) from None
     except OSError as exc:
+        if durable.disk_full(exc):
+            raise HTTPError(507, f"Couldn't move {name} to the trash. {durable.DISK_FULL}") from None
         raise HTTPError(409, f"Couldn't move {name} to the trash ({exc.strerror or exc}); close any file of it that is "
                              "open, then try again.") from None
     _audit(req, "project_deleted", project=name)
