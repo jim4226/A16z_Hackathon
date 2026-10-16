@@ -1507,6 +1507,23 @@ def _numeric_fix(b: Brief) -> tuple[list, dict | None]:
     return notes, no
 
 
+def _so101_misfit(o: dict | None) -> str | None:
+    """Why the stock SO-101 can't take object `o` (above its payload, or wider than its jaws hold in Morph's own
+    simulation), or None."""
+    if not o:
+        return None
+    if o["mass_g"] > cap.SO101_PAYLOAD_G:
+        return (f"The stock SO-101 lifts about {cap.SO101_PAYLOAD_G} g with a 2x torque margin; {o['mass_g']:g} g needs a "
+                "stronger arm.")
+    widest = cap.SO101_MAX_WIDTH_MM.get(o.get("shape"), cap.SO101_MAX_WIDTH_MM["cylinder"])
+    if float(o["diameter_mm"]) > widest:
+        kind = "flat-sided" if o.get("shape") == "box" else "round"
+        return (f"In Morph's simulation the stock SO-101's jaws hold {kind} objects up to about {widest:g} mm across; "
+                f"a {float(o['diameter_mm']):g} mm {o.get('name', 'object')} slips out of them, so it needs a "
+                "Morph-generated arm.")
+    return None
+
+
 def assess_scope(b: Brief) -> dict:
     """{status: ok|adjusted|out_of_scope, notes, nearest}; nearest = {archetype, slots, summary} for out_of_scope."""
     a = _arch(b)
@@ -1527,24 +1544,20 @@ def assess_scope(b: Brief) -> dict:
         if near_obj and near_obj["mass_g"] > cap.payload_g("smart_bus", 4):
             slots["budget"] = 1500.0
         obj = sanitize_object(slots.get("object") or ARCHETYPES[arch].objects[0])
+        misfit = _so101_misfit(obj) if b.get("existing_hardware") == "so101" or arch == "so101" else None
+        if misfit:   # the nearest robot gets the same SO-101 checks as a request inside scope
+            notes.append(misfit)
+            slots.update(existing_hardware="none", object=obj)
+            if arch == "so101":
+                arch = _archetype_for_object(obj) or "generic_arm"
         dims = f"{obj['diameter_mm']:g} mm, {obj['mass_g']:g} g"
         summary = (f"A desk arm that {_verb(ARCHETYPES[arch])} {_object_label(obj, short=True).lower()} ({dims}) on the table plane"
                    + (", with Dynamixel servos and 4 joints (about $1,500 in parts)" if slots.get("budget") else "") + ".")
         return {"status": "out_of_scope", "notes": notes, "nearest": {"archetype": arch, "slots": slots, "summary": summary}}
     ov = b.get("object")
-    if b.get("existing_hardware") == "so101" and ov and ov["mass_g"] > cap.SO101_PAYLOAD_G:
-        return {"status": "out_of_scope",
-                "notes": [f"The stock SO-101 lifts about {cap.SO101_PAYLOAD_G} g with a 2x torque margin; {ov['mass_g']:g} g needs a "
-                          "stronger arm."],
-                "nearest": {"archetype": _archetype_for_object(ov) or "generic_arm", "slots": {"existing_hardware": "none"},
-                            "summary": f"A new Morph-generated desk arm for the {ov.get('name', 'object')}."}}
-    widest = cap.SO101_MAX_WIDTH_MM.get(ov.get("shape") if ov else "", cap.SO101_MAX_WIDTH_MM["cylinder"])
-    if b.get("existing_hardware") == "so101" and ov and float(ov["diameter_mm"]) > widest:
-        kind = "flat-sided" if ov.get("shape") == "box" else "round"
-        return {"status": "out_of_scope",
-                "notes": [f"In Morph's simulation the stock SO-101's jaws hold {kind} objects up to about {widest:g} mm across; "
-                          f"a {float(ov['diameter_mm']):g} mm {ov.get('name', 'object')} slips out of them, so it needs a "
-                          "Morph-generated arm."],
+    misfit = _so101_misfit(ov) if b.get("existing_hardware") == "so101" else None
+    if misfit:
+        return {"status": "out_of_scope", "notes": [misfit],
                 "nearest": {"archetype": _archetype_for_object(ov) or "generic_arm", "slots": {"existing_hardware": "none"},
                             "summary": f"A new Morph-generated desk arm for the {ov.get('name', 'object')}."}}
     why = {k: w for k, _p, w in ADJUSTED}

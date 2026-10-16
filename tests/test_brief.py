@@ -425,3 +425,19 @@ def test_the_so101_keeps_only_objects_its_stock_jaws_hold_in_the_simulation(text
     assert (b.changes.get("arm.source") == "so101") is kept, (b.changes.get("arm.source"), b.changes.get("object.diameter_mm"))
     jaws = [a["text"] for a in b.assumptions if "stock SO-101's jaws" in a["text"]]
     assert bool(jaws) is (not kept), b.assumptions
+
+
+@pytest.mark.parametrize("text, kept, why", [
+    # stacking is out of scope too: the nearest robot kept the SO-101 with a 66 mm, 370 g can or a 50 mm block
+    ("use my SO-101 to stack soda cans", False, "lifts about"), ("use my SO-101 to stack 50 mm wooden blocks", False, "jaws"),
+    ("use my so101 to stack light bulbs", False, "jaws"), ("use my SO-101 to stack 30 mm wooden blocks", True, None),
+    ("use my SO-101 on wheels to tidy 50 mm blocks", False, "jaws")])
+def test_the_so101_checks_its_object_on_the_nearest_robot_too(text, kept, why):
+    b = agents.run_turn(text=text)
+    assert b.scope["status"] == "out_of_scope"
+    assert any("stock SO-101" in n for n in b.scope["notes"]) is (not kept), b.scope["notes"]
+    b = agents.run_turn(b, action="defaults")
+    assert b.status == "ready"
+    assert (b.changes.get("arm.source") == "so101") is kept, (b.changes.get("arm.source"), b.changes.get("object.diameter_mm"))
+    if why:
+        assert any("stock SO-101" in a["text"] and why in a["text"] for a in b.assumptions), b.assumptions

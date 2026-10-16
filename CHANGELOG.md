@@ -565,7 +565,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   bulbs" built an SO-101 with no issue whose own simulation then dropped the 60 mm bulb. In Morph's simulation the
   stock jaws dropped every round object tried from 47 to 60 mm across and flat-sided ones of 36, 40, 44 and 48 mm (a
   38 mm one was placed with 9.6 mm of slip), and placed the ones tried up to 46 mm round and 34 mm flat-sided; for a
-  wider object New robot builds a Morph-generated arm and says why, as it does for one above the SO-101's 100 g.
+  wider object New robot builds a Morph-generated arm and says why, as it does for one above the SO-101's 100 g, also
+  when the request is out of scope in another way and New robot offers the nearest robot ("use my SO-101 to stack soda
+  cans" kept the SO-101 with a 66 mm, 370 g can, and "... to stack 50 mm wooden blocks" with a 50 mm block).
 - Requests that hand someone a tool called a gun are built, not refused as meant to hurt people: "hand the packer the
   tape gun", "pass the rivet gun to the riveter", "hand me the scan gun", "pass me the temp gun" and "hand the
   mechanic the impact gun" (and the tape, grease, soldering, price, screw, barcode and similar guns) were refused.
