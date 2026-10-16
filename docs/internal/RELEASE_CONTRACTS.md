@@ -699,7 +699,8 @@ members; a member can hold several.
   the value of any key saved in the Keys dialog, of `ANTHROPIC_AUTH_TOKEN` and of a chosen `MORPH_TOKEN`
   (`security.SAVED_KEYS`) or of any saved `MORPH_TOOL_*` key, the running remote Studio's own access code
   (`security.ACCESS_CODES`, set by `server.make_handler`), a token with a manifest's key prefix that fits its pattern
-  wherever the prefix starts a run (`key=`, `?api_key=`, glued to other text), JWTs, Morph Teams' script tokens, invite
+  wherever the prefix starts after anything but an ASCII letter or digit (`key=`, `?api_key=`, glued to other text),
+  JWTs, Morph Teams' script tokens, invite
   and sign-in codes, and other services' keys known by a fixed prefix or text that carries a key (`security.OTHER_KEYS`:
   GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq, xAI, Perplexity, ElevenLabs, npm,
   PyPI, SendGrid, DigitalOcean, Mapbox, Telegram and Discord tokens and Twilio key SIDs; a private key block, a link
@@ -1046,8 +1047,9 @@ interrupted; a first turn whose account refuses server-side fallbacks continues 
 used_by, set`), never a value; `save()` accepts a `MORPH_TOOL_*` name only when a loaded manifest declares it, checks the
 value against its pattern and prefix (4 KiB at most, no spaces or quotes) and keeps the lock, the 0600 file and the
 error that never repeats a value. `security.looks_like_secret` also refuses the value of any set `MORPH_TOOL_*` key, a
-token that starts with a manifest's key prefix (wherever it starts a run: `key=fxp_...`, `?api_key=fxp_...&`) and fits
-its pattern, and JWTs (`catalog.looks_like_tool_key`). The Keys dialog
+token that starts with a manifest's key prefix (wherever the prefix starts after anything but an ASCII letter or digit:
+`key=fxp_...`, `?api_key=fxp_...&`) and fits its pattern, and JWTs (`catalog.looks_like_tool_key`; the pattern without
+its anchors is matched once where each prefix starts, so a text full of prefixes is checked in one pass). The Keys dialog
 (`static/keys.js`) groups tool keys under "Tool keys (beta)" by service, with "Get a key", the hosts each key is sent to
 and the tools that use it; `window.dispatchEvent(new CustomEvent("morph:keys", {detail: {key: "MORPH_TOOL_..."}}))` opens
 it on that key; a member who isn't the owner is told to ask the owner. `POST /api/keys` may answer `resumed: [run ids]`
