@@ -282,9 +282,11 @@ _ROLE = (r"(?:nurse|doctor|doc|surgeon|dentist|vet|paramedic|medic|pharmacist|mi
          r"photographer|firefighter|fitter|stacker|stocker|riveter|fabricator|bricklayer|locksmith|blacksmith|goldsmith|"
          r"silversmith|architect|paralegal|attorney|judge|notary|accountant|analyst|executive|consultant|president|"
          r"principal|dean|chaplain|priest|vicar|pastor|rabbi|imam|monk|nun|bishop|captain|cop|sheriff|ranger|scout|"
-         r"cadet|recruit|rookie|veteran|athlete|umpire|shepherd|ceo|vip|emt|"
+         r"cadet|recruit|rookie|veteran|athlete|umpire|shepherd|ceo|vip|emt|passer-?by|bystander|onlooker|pedestrian|"
+         r"spectator|commuter|tourist|"
          r"person|guy|man|woman|lady|gentleman|folk|adult|elder|senior|pensioner|" + _KIN_SLANG + "|" + _KIN + r")")
-_PLURALS = r"people|staff|crew|folks|children|schoolchildren|grandchildren|men|women|ladies|gentlemen|babies|midwives|wives"
+_PLURALS = (r"people|staff|crew|folks|children|schoolchildren|grandchildren|men|women|ladies|gentlemen|babies|midwives|wives|"
+            r"passers-?by|bystanders|onlookers|pedestrians|spectators|commuters|tourists|fans")
 _ROLES = r"(?:" + _PLURALS + "|" + _ROLE + r"(?:s|es)?)"
 _ROLES_PL = r"(?:" + _PLURALS + "|" + _ROLE + r"(?:s|es))"
 _ANYONE = r"(?:someone|somebody|anyone|anybody|everyone|everybody|whoever|whomever)"
@@ -457,6 +459,14 @@ _ACTION = (r"(?:shake|twist|tap|wipe|rinse|check|clean|spin|push|nudge|squeeze|l
 _THING_DET = (r"(?:the|a|an|some|his|her|their|my|your|our|its|this|that|these|those|one|two|three|four|five|six|another|"
               r"more|any|each|every|all|both|enough|[0-9]+)")
 _ROBOT_WORD = r"(?:robot|robotic|arm|bot|cobot|machine|gripper|design|device|gadget|system|setup)s?"
+# a robot asked for is no thing handed over ("give me a robot that sorts screws", "get me a design that packs boxes",
+# "give me robot arms"); the device, the gripper or the machine parts handed to someone are ("hand the nurse the device",
+# "hand the operator the gripper", "a robot that hands the operator the machine parts")
+_NOT_A_ROBOT = (r"(?!\s+(?:(?:a|an|some|any|another|one|two|three|more)\s+)?(?:(?!(?:the|my|your|his|her|their|our|its|this|"
+                r"that|these|those)\b)[a-z-]+\s+){0,2}?" + _ROBOT_WORD + r"\b(?!\s+(?!(?:that|which|who|to|for|with|like|and|or|"
+                r"of|from|in|on|at|by)\b)[a-z0-9]))(?!\s+(?:(?:the|a|an|some|his|her|their|my|your|our|its|this|that|these|"
+                r"those)\s+)?(?:[a-z-]+\s+){0,2}?" + _ROBOT_WORD + r"\s+(?:that|which|who|like|capable|able|so|to\s+(?!(?:the|a|an|"
+                r"my|your|his|her|their|our|me|him|us|them)\b)[a-z]+|for\s+[a-z]+ing)\b)")
 # A request noun is a request only when a robot, its design or its job follows ("a list of parts for a robot", "a quote
 # for an arm", "an option for moving eggs", "a way to move parts", "a breakdown of the cost"): "bring me my list", "give
 # me the shopping list" and "bring me something for my headache" hand a thing to someone
@@ -470,8 +480,7 @@ _REQUEST = (r"(?:(?:quotes?|options?|ways?|ideas?|suggestions?|plans?|estimates?
 _NOT_REQUEST = r"(?!\s+(?:(?:a|an|the|some|any|your|my|me)\s+)?(?:[a-z-]+\s+)?" + _REQUEST + ")"
 _NO_THING = (r"(?!\s+(?:(?:a|an|some|another|one|more|good|quick|little|gentle|final|firm|proper|light)\s+)*"
              r"(?:(?!(?:the|his|her|their|my|your|our|its|this|that|these|those)\b)[a-z-]+\s+)?" + _ACTION + r"\b" +
-             _PHRASE_END + r")(?!\s+(?:" + _THING_DET + r"\s+)?(?:[a-z-]+\s+)?" +
-             _ROBOT_WORD + r"\b)" + _NOT_REQUEST)
+             _PHRASE_END + r")" + _NOT_A_ROBOT + _NOT_REQUEST)
 _THING = (_NO_THING + r"(?=\s+(?:" + _THING_DET + r"\b|(?!(?:" + _NOT_DESCRIBING + "|" + _ADVERB + "|" + _PREPOSITION +
           r"|home|together|apart|closer|forward|started|going|ready|to|all|both|each|separately|individually)\b|"
           r"(?:done|finished|upright|level|flat|dry|wet|clean|last)\b" + _PHRASE_END + r")[a-z][a-z'’-]*\b(?<![a-z]{3}ed)"
@@ -527,7 +536,7 @@ _ANY_NP1 = (r"(?:(?:the|a|an|my|our|your|their|this|that|these|those|each|every|
             r"[a-z0-9][a-z0-9'’-]*\b" + _NOT_THEIRS + _THEN_A_PLACE + _AFTER_NP1 + _THEN_THING)
 # "bring her the cup", "hand me": the thing follows, or nothing
 _RECEIVER = (r"(?:me|him|us|" + _HER_DIRECT + "|" + _PERSON + r")\b" + _NOT_THEIRS +
-             r"(?!\s+(?:" + _THING_DET + r"\s+)?(?:[a-z-]+\s+)?" + _ROBOT_WORD + r"\b)" + _NOT_REQUEST)
+             _NOT_A_ROBOT + _NOT_REQUEST)
 _RECEIVER_THING = (r"(?:(?:me|him|us|" + _YOU + "|" + _GROUP_OF + "|" + _HER_DIRECT + "|" + _PERSON + "|" + _TITLED + "|" +
                    _WHO_NP + "|" + _ROLES_PL + r")\b" + _NOT_THEIRS + _THEN_A_PLACE + _THING +
                    r"|(?:" + _THEM + r"|everyone|everybody|anybody|anyone|someone|somebody)\b(?!\s+(?:all|both|each|together|"
@@ -540,8 +549,8 @@ _RECEIVER_TO = (r"(?:(?:me|myself|him|himself|us|ourselves|" + _YOU + "|yourself
 _RECEIVER_FOR = (r"(?:(?:me|myself|him|us|" + _YOU + r")\b|her\b" + _PHRASE_END + "|" + _WHO + "|(?:" + _KIN_SLANG + "|" +
                  _NAMES + r")\b" + _PHRASE_END + ")")
 # what the thing is between the verb and "to": up to seven words, hyphenated ones too ("the x-ray films", "the freshly
-# washed and dried coffee mugs"), but never a robot or the start of another clause
-_GAP = r"(?:(?!(?:" + _ROBOT_WORD + r"|then|while|when|whenever|until|because|if|so)\b)[\w'’-]+\s+){0,7}?"
+# washed and dried coffee mugs", "the device"), but never the start of another clause
+_GAP = r"(?:(?!(?:then|while|when|whenever|until|because|if|so)\b)[\w'’-]+\s+){0,7}?"
 _GIVE = (r"(?:hand(?:s|ing)?|pass(?:es|ing)?|giv(?:e|es|ing)?|bring(?:s|ing)?|(?:spoon-?)?feed(?:s|ing)?)")  # "hand me", "feed me"
 _GIVE_TO = (r"(?:hand(?:s|ed|ing)?|pass(?:es|ed|ing)?|giv(?:e|es|en|ing)?|gave|bring(?:s|ing)?|brought|fetch(?:es|ed|ing)?|"
             r"get(?:s|ting)?|got|grab(?:s|bed|bing)?|toss(?:es|ed|ing)?|throw(?:s|ing|n)?|threw|offer(?:s|ed|ing)?|"
@@ -553,6 +562,16 @@ _TAKE_TO = (_GIVE_TO[:-1] + r"|deliver(?:s|ed|ing)?|tak(?:e|es|en|ing)|took|carr
             r"transfer(?:s|red|ring)?|return(?:s|ed|ing)?|dispens(?:e|es|ed|ing)|distribut(?:e|es|ed|ing)|dish(?:es|ed|ing)?|"
             r"hold(?:s|ing)?|held|slid(?:e|es|ing)|drop(?:s|ped|ping)?|mov(?:e|es|ed|ing)|push(?:es|ed|ing)?|roll(?:s|ed|ing)?|"
             r"wheel(?:s|ed|ing)?|flick(?:s|ed|ing)?)")
+# handing things out to whoever is there: "hand out the gloves", "pass around the snacks", "a robot that gives out
+# flyers", "hand the biscuits round"; not round an obstacle or a place ("passes around the obstacle"), out of something
+# ("pass the cup out of the box") or a part that gives out
+_HANDS_OUT = (r"(?:hand(?:s|ed|ing)?|pass(?:es|ed|ing)?|giv(?:e|es|en|ing)|gave|dish(?:es|ed|ing)?|dol(?:e|es|ed|ing)|"
+              r"shar(?:e|es|ed|ing)|deal(?:s|t|ing)?)")
+_NOT_ROUND_A_PLACE = (r"(?!\s+(?:(?:the|a|an|this|that|its|my|your|her|his|their|our)\s+)?(?:[a-z-]+\s+){0,2}?(?:obstacles?|"
+                      r"corners?|edges?|bends?|sides?|backs?|fronts?|outside|" + _PLACE + r")\b)")
+HANDS_OUT = (r"\b" + _HANDS_OUT + r"\s+(?:out|around|round)\b(?!\s+(?:of|from)\b)" + _NOT_ROUND_A_PLACE + _THING + r"|\b" +
+             _HANDS_OUT + r"\s+(?:(?!(?:then|while|when|and|or|to|from|of)\b)[\w'’-]+\s+){1,4}?(?:out|around|round)\b"
+             r"(?=\s*(?:$|[.,;:!?)]|(?:to|among|amongst|at|in|during|for|when|while|every|each|and|then)\b))")
 HAND_TO_PERSON = (r"\b" + _GIVE + r"\s+" + _RECEIVER + r"|\b" + _GIVE_TO + r"\s+" + _RECEIVER_THING +
                   r"|\b" + _TAKE_TO + r"\s+" + _GAP + r"(?<!\bnext )(?<!\bclose )(?<!\bdue )(?<!\baccording )to\s+" + _RECEIVER_TO +
                   r"|\b(?:fetch|get|grab|bring)\w*\s+" + _GAP + r"for\s+" + _RECEIVER_FOR +
@@ -565,10 +584,13 @@ HAND_TO_PERSON = (r"\b" + _GIVE + r"\s+" + _RECEIVER + r"|\b" + _GIVE_TO + r"\s+
                   # "the person it hands the cup to", "the operator it passes parts to"
                   r"|\b(?:" + _WHO + r")\s+(?:(?:who|whom|that)\s+)?(?:it|the (?:robot|arm))\s+(?:will\s+|can\s+)?"
                   r"(?:hands?|pass(?:es)?|gives?|brings?|serves?|delivers?)\b" +
-                  # "drops the part into my hand", "recognises my hand and drops the part into it"
-                  r"|\b(?:in|into|onto|on)\s+(?:my|your|her|his|their|someone['’]s|a person['’]s|the person['’]s)\s+"
-                  r"(?:open\s+|outstretched\s+)?(?:hand|palm)s?\b|\b(?:recogni[sz]es?|detects?|sees?|finds?|tracks?)\s+"
-                  r"(?:my|your|her|his|their|a person['’]s|the person['’]s|someone['’]s)\s+hands?\b")
+                  # "drops the part into my hand", "puts the part in the operator's hand", "recognises my hand and drops
+                  # the part into it"
+                  r"|\b(?:in|into|onto|on)\s+(?:my|your|her|his|their|our|(?:(?:the|a|an|my|your|her|his|their|our|each|"
+                  r"every)\s+(?:(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+\s+){0,2}?(?:" + _ROLES + r"|morphagents?|person|people)|"
+                  r"someone|somebody|" + _KIN + "|" + _KIN_SLANG + r")['’]s?)\s+"
+                  r"(?:open\s+|outstretched\s+|waiting\s+)?(?:hand|palm)s?\b|\b(?:recogni[sz]es?|detects?|sees?|finds?|tracks?)\s+"
+                  r"(?:my|your|her|his|their|a person['’]s|the person['’]s|someone['’]s)\s+hands?\b|" + HANDS_OUT)
 # "bring the tools to his workbench", "to grandpa's shed": the things go to a place
 _TO_A_PLACE = (r"\b" + _TAKE_TO + r"\s+" + _GAP + r"(?:to|for|into|onto)\s+"
                r"(?:(?:the|a|an|my|our|your|their|her|his|its)\s+|[a-z-]+['’]s\s+)*(?:[a-z-]+\s+){0,3}?" + _PLACE + r"\b")
@@ -580,8 +602,8 @@ ANIMAL_GETS = (r"\b" + _GIVE + r"\s+(?:" + _AN_ANIMAL + "|" + _ANIMAL_NP + _THEN
 # break" (a hand-over's receiver too: PERSON_NEAR)
 _FOR_SOMEONE = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist|serve|support|accompan(?:y|ies))(?:s|es|ing|ed)?"
                 r"\s+them\b|\b(?:(?:help|assist|serve|support|accompan(?:y|ies))(?:s|es|ing|ed)?\s+|(?:for|to|with)\s+|" + _GIVE_TO +
-                r"\s+)(?:(?:me|him|us)\b|" + _HER_HIS + "|" + _WHO + r")" + _NOT_THEIRS + _THEN_A_PLACE + r"(?!\s+(?:" +
-                _THING_DET + r"\s+)?(?:[a-z-]+\s+)?" + _ROBOT_WORD + r"\b)" + _NOT_REQUEST +
+                r"\s+)(?:(?:me|him|us)\b|" + _HER_HIS + "|" + _WHO + r")" + _NOT_THEIRS + _THEN_A_PLACE + _NOT_A_ROBOT +
+                _NOT_REQUEST +
                 r"|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b" +
                 # unsure, so someone is there: "pours me a coffee", "pass the salt over here", "bring that here", "pass the
                 # butter", "a robot barista in a busy cafe", "serves drinks at a bar"

@@ -10462,6 +10462,185 @@
    "text": "give me a way to move cups",
    "family": "C-request",
    "task": "not_hand_over"
+  },
+  {
+   "text": "hand the nurse the device",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the surgeon the system",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the operator the gripper",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands the operator the machine parts",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring me the machine parts",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand me the robot parts",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand out the gloves",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass out snacks",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass around the snacks",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand round the biscuits",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that gives out flyers",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the leaflets to passers-by",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that puts the part in the operator's hand",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "drop the screw in the mechanic's hand",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "dish out the sweets",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands out samples at the shop",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the gloves out",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the biscuits round",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that gives out free samples to shoppers",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes around the obstacle",
+   "family": "C-not-out",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "pass the parts around the obstacle to the bin",
+   "family": "C-not-out",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "pass the cup out of the box",
+   "family": "C-not-out",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "move the cups around the bowl",
+   "family": "C-not-out",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "give the operator a robot that sorts screws",
+   "family": "C-not-out",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "hand the device to the nurse",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the gripper to the operator",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the machine parts to the fitter",
+   "family": "C-robot-word-and-out",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
   }
  ]
 }

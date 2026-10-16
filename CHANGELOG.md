@@ -571,6 +571,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   person it hands things to beat "nobody"). New robot now reads every sign of a person first, apart from the task,
   and says no one is near only when there is none. That person keeps the emergency stop also when an answer or a
   later message says it works on its own.
+- More hand-overs keep their person and emergency stop: a robot word in the thing handed over ("hand the nurse the
+  device", "pass the surgeon the system", "hand the operator the gripper", "a robot that hands the operator the
+  machine parts"; "give me a robot that sorts screws" is still a request for a robot), handing things out ("hand out
+  the gloves", "pass around the snacks", "hand round the biscuits", "a robot that gives out flyers", "hand the
+  leaflets to passers-by") and "a robot that puts the part in the operator's hand" were built with nobody nearby and
+  no emergency stop.
 - New robot no longer keeps an object on "my SO-101" that the stock jaws can't hold: "use my SO-101 to move light
   bulbs" built an SO-101 with no issue whose own simulation then dropped the 60 mm bulb. In Morph's simulation the
   stock jaws dropped every round object tried from 47 to 60 mm across and flat-sided ones of 36, 40, 44 and 48 mm (a

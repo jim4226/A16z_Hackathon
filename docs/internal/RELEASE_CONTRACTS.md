@@ -1827,8 +1827,10 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   ("hand me", "bring her the cup", "a robot that feeds me"). They and fetch, get, grab, toss, throw, chuck, lob, offer,
   serve, lend, loan and send (not a message: "send me an alert" is none) take every other receiver only with a thing
   after it (`_THING`: a determiner, a possessive or a noun; never a job done to them, a singular after a/an/some ("give
-  them a shake", "give the parts a quick check"; "the wipes" and "the labels" are things), nor a robot ("get me a
-  robot arm that sorts screws"), nor a request (`_REQUEST`: a quote, an option, a way, an idea, a plan, a list and the
+  them a shake", "give the parts a quick check"; "the wipes" and "the labels" are things), nor a robot asked for
+  (`_NOT_A_ROBOT`: a robot word after a/an/some or none, or before that, which, to and a verb: "get me a robot arm
+  that sorts screws", "give me robot arms"; "hand the nurse the device", "hand the operator the gripper" and "the
+  machine parts" are things), nor a request (`_REQUEST`: a quote, an option, a way, an idea, a plan, a list and the
   like only when a robot, its design, its cost or a robot's job (`_JOB`: build, make, design, move, sort, stack, pick,
   place, lift, grip, transfer) follows within six words: "give me a cheap way to move parts", "get me a quote for an
   arm", "a list of parts for a robot", "a breakdown of the cost"; "get me started", "get me going"; "something
@@ -1859,7 +1861,10 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   grab and bring also reach one after up to seven words and "for" ("fetch the remote for my dad"). And: "supply the
   welder with rods", "provide the operator with screws", "keep the operator stocked with screws"; "passes parts back
   and forth with a human"; "the person it hands the cup to", "the operator it passes parts to"; "drops the part into
-  my hand", "recognises my hand". A capitalised word is no name at the start of a sentence, after "the" or "a", for a
+  my hand", "puts the part in the operator's hand"; handing things out (`HANDS_OUT`: "hand out the gloves", "pass
+  around the snacks", "hand round the biscuits", "a robot that gives out flyers", "give the gloves out"; not round an
+  obstacle or a place, out of something, nor a part that gives out); passers-by, bystanders, pedestrians, spectators,
+  commuters and tourists are people. A capitalised word is no name at the start of a sentence, after "the" or "a", for a
   place, person or product word, a department or a brand ("Reception", "Assembly", "Starbucks", "Haas"), a month or a
   day, and when the request is in Title Case or capitals. The patterns are compiled once (`brief._rx`).
   A person's place is no person. A possessive, a family word or a person word before 's or s' owns the place the things
