@@ -250,6 +250,13 @@ def test_a_stopped_studio_process_leaves_without_interpreter_shutdown(tmp_path, 
     assert left == [0]
 
 
+def _signals_as_in_a_terminal():
+    """In the child: Ctrl+C, SIGTERM and SIGHUP as a terminal gives them, whatever this test process ignores (an
+    ignored signal is inherited, and an earlier test in the same pytest worker can leave SIGINT ignored)."""
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        signal.signal(getattr(signal, name), signal.SIG_DFL)
+
+
 _LEAVING = """
 import os, sys, time
 from morph import keys
@@ -283,7 +290,7 @@ def test_a_stop_signal_after_the_studio_stopped_cleanly_changes_nothing(tmp_path
     for k in ("MORPH_TOKEN", "DISPLAY", "WAYLAND_DISPLAY"):
         env.pop(k, None)
     proc = subprocess.Popen([sys.executable, str(script), str(port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=env, cwd=str(tmp_path))
+                            text=True, env=env, cwd=str(tmp_path), preexec_fn=_signals_as_in_a_terminal)
     out = []
     reader = threading.Thread(target=lambda: out.extend(iter(proc.stdout.readline, "")), daemon=True)
     reader.start()
@@ -350,7 +357,8 @@ def test_a_stop_while_the_launcher_builds_the_first_robot_says_so_in_one_line(tm
     for k in ("MORPH_TOKEN", "DISPLAY", "WAYLAND_DISPLAY"):
         env.pop(k, None)
     proc = subprocess.Popen([sys.executable, str(script), name, str(port)], stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, env=env, cwd=str(tmp_path))
+                            stderr=subprocess.PIPE, text=True, env=env, cwd=str(tmp_path),
+                            preexec_fn=_signals_as_in_a_terminal)
     out = []
     threading.Thread(target=lambda: out.extend(iter(proc.stdout.readline, "")), daemon=True).start()
     try:
