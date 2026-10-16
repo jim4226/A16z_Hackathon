@@ -1429,7 +1429,10 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   fill by hand") say "yes". A hand-over (`HAND_TO_PERSON`), a person the robot works for (`brief.PERSON_NEAR`: a
   grandparent, "my mum", "my colleague", "help me", "for him", "for the nurse" and the like) or "no one else" infer
   "yes" for every archetype (a toy or pet archetype keeps its children or pets), so the robot gets an emergency stop
-  and the card says it was assumed. Only then do "on its own", "by itself", "unattended", "enclosed", "fenced" and the
+  and the card says it was assumed. An animal it gives something to (`brief.ANIMAL_GETS`: "hand the dog a bone", "give
+  my parrot seeds", "toss balls to my dog", "bring a toy for the puppy"; not "bring the hamster cage to the table")
+  infers "pets", with the same emergency stop; an animal is never the person of a hand-over ("to my dog" is no "to my
+  cousin"), while "my dog walker" and "my dog's sitter" are people. Only then do "on its own", "by itself", "unattended", "enclosed", "fenced" and the
   robot working alone (`brief.ROBOT_ALONE`; "she lives alone" and "while he is alone" say nothing about the robot)
   infer "no", shown as an assumption ("assumed"), never as "you said". A designer model's "no" never takes away a
   person the words put next to it (`agents.apply_update`). `HAND_TO_PERSON` ("pass my dad", "bring her") sets the task

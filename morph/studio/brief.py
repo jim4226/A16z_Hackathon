@@ -259,7 +259,7 @@ _ROLE = (r"(?:nurse|doctor|doc|surgeon|dentist|vet|paramedic|pharmacist|midwife|
          r"chef|cook|waiter|waitress|barista|bartender|cashier|clerk|receptionist|assistant|helper|cleaner|gardener|"
          r"housekeeper|babysitter|driver|courier|librarian|teacher|tutor|student|pupil|volunteer|attendant|porter|guard|"
          r"steward(?:ess)?|host(?:ess)?|usher|janitor|caretaker|fishmonger|butcher|baker|grocer|florist|farmer|"
-         r"customer|shopper|client|guest|visitor|attendee|passenger|user|owner|"
+         r"customer|shopper|client|guest|visitor|attendee|passenger|user|owner|walker|sitter|groomer|"
          r"neighbou?r|friend|mate|buddy|pal|partner|wife|husband|spouse|boyfriend|girlfriend|fianc[eé]e?|room-?mate|flat-?mate|"
          r"housemate|lodger|tenant|son|daughter|brother|sister|sibling|cousin|nephew|niece|"
          r"(?:mother|father|brother|sister|son|daughter)-in-law|in-laws|step-?(?:mum|mom|mother|dad|father|parent|son|daughter)|"
@@ -300,7 +300,15 @@ _NOT_THEIR_PLACE = (r"(?!" + _OWNS + _A_PLACE + r"|\s+(?:(?!(?:" + _NOT_DESCRIBI
 # itself or through someone ("to her desk", "to my dad's workshop", "to her nurses' station", "to their bedroom shelf")
 _NO_PLACE_OF_THEIRS = r"(?!(?:\s+[a-z-]+" + _OWNS + r")?" + _A_PLACE + r")"
 _HER_HIS = r"(?:her|his)\b" + _NO_PLACE_OF_THEIRS
-_POSS = r"(?:her|his|my|our|your|their)\b" + _NO_PLACE_OF_THEIRS
+# an animal it gives things to ("toss balls to my dog", "hand the dog a bone") is a pet next to it, not a person it hands
+# over to; "my dog walker" and "my dog's sitter" are people
+_ANIMAL = (r"(?:dogs?|dogg(?:y|ie|ies|o)|pupp(?:y|ies)|pups?|cats?|kitt(?:y|ies|ens?)|pets?|rabbits?|bunn(?:y|ies)|"
+           r"hamsters?|gerbils?|guinea pigs?|ferrets?|parrots?|budgies?|parakeets?|birds?|chickens?|hens?|ducks?|geese|"
+           r"goose|goats?|horses?|pon(?:y|ies)|tortoises?|turtles?|lizards?|geckos?|snakes?|goldfish|fish|animals?)")
+_ANIMAL_NP = (r"(?:(?:the|a|an|my|our|your|their|her|his|this|that|these|those)\s+)?(?:(?!" + _NOT_DESCRIBING +
+              r"\b)[a-z'’-]+\s+){0,2}?" + _ANIMAL + r"\b")
+_AN_ANIMAL = _ANIMAL_NP + r"(?:" + _PHRASE_END + r"|(?=\s+its\b))"
+_POSS = r"(?:her|his|my|our|your|their)\b" + _NO_PLACE_OF_THEIRS + r"(?!\s+" + _AN_ANIMAL + ")"
 _PERSON = (r"(?:" + _KIN + r"|(?:elderly|disabled) [a-z]+|(?:my|our|your) (?:(?!" + _NOT_DESCRIBING + r"\b)[a-z'’-]+ ){0,2}?" +
            _ROLES + r")")
 _TITLED = r"(?:dr|mr|mrs|ms|miss|mx|prof)\.?\s+(?!" + _NOT_DESCRIBING + r"\b)[a-z'’-]+"
@@ -344,6 +352,9 @@ HAND_TO_PERSON = (r"\b" + _GIVE + r"\s+" + _RECEIVER + r"|\b" + _GIVE_TO + r"\s+
 # "bring the tools to his workbench", "to grandpa's shed": the things go to a place
 _TO_A_PLACE = (r"\b" + _TAKE_TO + r"\s+" + _GAP + r"(?:to|for|into|onto)\s+"
                r"(?:(?:the|a|an|my|our|your|their|her|his|its)\s+|[a-z-]+['’]s\s+)*(?:[a-z-]+\s+){0,3}?" + _PLACE + r"\b")
+# "hand the dog a bone", "give my parrot seeds", "toss balls to my dog", "bring a toy for the puppy"
+ANIMAL_GETS = (r"\b" + _GIVE + r"\s+(?:" + _AN_ANIMAL + "|" + _ANIMAL_NP + _THEN_A_PLACE + _THING + r")|\b" + _TAKE_TO +
+               r"\s+" + _GAP + r"(?:to|for)\s+" + _AN_ANIMAL)        # not "bring the hamster cage to the table"
 PERSON_NEAR = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist|serve)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|" +
                HAND_TO_PERSON + r"|\b(?:for|to|with)\s+(?:(?:me|him|us)\b|" + _HER_HIS + "|" + _WHO + ")" +
                r"|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b")
@@ -805,6 +816,8 @@ def parse(text: str) -> dict:
     elif hands or re.search(PERSON_NEAR, pt) or re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t):
         # "help my grandma", "pass my dad his pills", "for me": that person is next to it (and a toy robot's children)
         inf["people_nearby"] = ARCHETYPES[key].people if ARCHETYPES[key].people in ("children", "pets") else "yes"
+    elif re.search(ANIMAL_GETS, pt):
+        inf["people_nearby"] = "pets"   # "hand the dog a bone": the animal takes it from the gripper
     elif re.search(ROBOT_ALONE, t):
         inf["people_nearby"] = "no"   # Morph's reading of "on its own" or "enclosed": an assumption on the card
     # precision

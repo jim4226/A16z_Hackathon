@@ -299,6 +299,27 @@ def test_the_hand_over_table(row):
         assert estop
 
 
+@pytest.mark.parametrize("text", ["a robot arm that gives treats to my dog", "pass the treats to my dog",
+                                  "toss balls to my dog", "throw a frisbee to my puppy", "hand the dog a bone",
+                                  "throw the ball to the dog", "give the cat its food", "give my parrot seeds",
+                                  "bring the bone to our old dog every evening", "pass a toy to the kitten"])
+def test_an_animal_it_gives_things_to_is_a_pet_nearby_not_a_person_it_hands_over_to(text):
+    # "to my dog" read as "to my cousin": a robot that "hands over" the treats, as if to a person. Others ("hand the
+    # dog a bone", "give my parrot seeds") built a robot with no one nearby and no emergency stop, though the animal
+    # takes the thing from its gripper
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert b.status == "ready", b.status
+    assert B.value(b, "task") != "hand_over"
+    assert B.value(b, "people_nearby") in ("pets", "children", "yes") and "estop" in b.changes["electronics.extras"]
+
+
+@pytest.mark.parametrize("text", ["pass the leash to my dog walker", "hand the bowl to my dog's sitter",
+                                  "give the treats to my son for the dog"])
+def test_a_person_named_beside_an_animal_is_still_the_one_it_hands_over_to(text):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "task") == "hand_over" and B.value(b, "people_nearby") in ("yes", "children")
+
+
 @pytest.mark.parametrize("text", ["hand me the screwdriver", "bring the meds to her twice a day", "pass my dad his pills"])
 def test_a_hand_over_keeps_its_emergency_stop_when_told_it_works_on_its_own(text):
     # answering people_nearby "It works on its own" on a hand-over took the e-stop away, though a person takes the
