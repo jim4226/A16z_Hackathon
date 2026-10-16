@@ -747,7 +747,8 @@ OUT_OF_SCOPE = (  # (kind, regex, plain reason); the first kind found picks the 
 _TARGET = (r"(?:my |the |a |an |our |his |her |their |some )?(people|persons?|someone|somebody|anyone|humans?|kids?|children|"
            r"brothers?|sisters?|siblings?|neighbou?rs?|intruders?|strangers?|cats?|dogs?|animals?|birds?|pets?|squirrels?|faces?)\b")
 HARM = (  # local pre-filter (SubQ's harm noul and the designer's flag catch the rest); tuned against fragile-food phrasing
-    r"\b(weapons?|firearms?|rifles?|pistols?|tasers?|stun guns?|(?<!bath )bombs?|explosives?|grenades?|missiles?|ammunition|ammo)\b",
+    r"\b(weapons?|firearms?|rifles?|pistols?|tasers?|stun guns?|(?<!bath )bombs?|explosives?|grenades?|missiles?|ammunition|ammo|"
+    r"blowguns?|blowpipes?)\b",
     r"\b(?<!glue )(?<!heat )(?<!caulk )(?<!caulking )(?<!paint )(?<!spray )(?<!nail )(?<!staple )(?<!massage )(?<!label )guns?\b",
     r"\b(shoot\w*|launch\w*|fir(?:e|es|ing)|throw\w*|fling\w*|spray\w*)\b[^.]{0,40}\b(?:at|on)\s+(?:him\b|her\b|them\b|" + _TARGET + ")",
     r"(?<!without )(?<!not )(?<!never )(?<!avoid )(?<!no )\b(hurt\w*|harm\w*|injur\w*|attack\w*|punch\w*|kick\w*|stab\w*|kill\w*|slap\w*|"
@@ -757,11 +758,41 @@ HARM = (  # local pre-filter (SubQ's harm noul and the designer's flag catch the
     r"\b(spy(?:ing)? on|secretly (?:watch|record|film)\w*|covert(?:ly)? (?:watch|record|film|surveil)\w*)\b",
 )
 # workshop, shop and kitchen tools called guns ("hand the packer the tape gun", "pass me the temp gun"): no weapon. A
-# stun gun, an air gun or a gun on its own is still refused.
+# stun gun, an air gun, a blow gun (a dart weapon; an air blow gun is a tool) or a gun on its own is still refused.
 _TOOL_GUN = (r"\b(?:hot\s+)?(?:glue|heat|caulk|caulking|paint|spray|nail|staple|stapler|massage|label|labell?ing|tape|rivet|"
              r"grease|scan|scanner|scanning|barcode|bar[- ]code|solder|soldering|price|pricing|tag|tagging|temp|temperature|"
              r"thermometer|infrared|ir|impact|screw|foam|sealant|silicone|welding|mig|tig|cable[- ]tie|tie|radar|"
-             r"heat[- ]shrink|dispensing|grout|texture|blow|air[- ]blow)[- ]guns?\b")
+             r"heat[- ]shrink|dispensing|grout|texture|air[- ]blow)[- ]guns?\b")
+# ... and only while nothing turns it on someone: aimed, pointed, held, pressed or fired at or on a person, an animal or a
+# body part ("aims a rivet gun at people", "holds a grease gun to his head", "tapes people's mouths shut"), darts, a
+# turret, shooting, scaring or gagging. Then any gun is refused ("a robot that points the nail gun at my brother" was
+# built: the HARM patterns let glue, heat, nail, staple and label guns through). Pointed at a thing, held out to someone,
+# put in a hand or kept away from a face, it stays a tool.
+_BODY = (r"(?:heads?|faces?|eyes?|eyeballs?|foreheads?|temples?|necks?|throats?|mouths?|lips|ears?|nose|noses|chests?|"
+         r"bell(?:y|ies)|backs?|skin|hair|bod(?:y|ies)|arms?|legs?|knees?|feet|foot|toes?|groins?|tails?|paws?|fur)")
+_HAND = r"(?:hands?|palms?|fingers?|thumbs?|wrists?)"
+_GUN_TARGET = (r"(?:people|persons?|someone|somebody|anyone|anybody|everyone|everybody|humans?|intruders?|strangers?|"
+               r"burglars?|thie(?:f|ves)|trespassers?|neighbou?rs?|passers?-?by|crowds?|" + _ROLES + "|" + _KIN + "|" +
+               _ANIMAL + r"|squirrels?|foxes|fox|deer|mice|mouse|rats?|pigeons?|wildlife)")
+_POSS_LIVING = (r"(?:(?:my|your|his|her|their|our)\s+(?:(?!(?:" + _BODY + "|" + _HAND + r")\b)[a-z-]+\s+){0,2}?" + _GUN_TARGET +
+                r"['’]s?|" + _GUN_TARGET + r"['’]s?|my|your|his|her|their|our)")
+_NOT_DONE = r"(?<!\bnever )(?<!\bnot )(?<!n't )(?<!\bwithout )(?<!\bavoid )(?<!\bavoids )(?<!\bavoiding )(?<!\bno )"
+_AT_SOMEONE = (r"(?:(?:the|a|an|my|your|his|her|their|our|some|any|all|every)\s+)?(?:(?!(?:at|to|on|in|into|and|or|with|from)\b)"
+               r"[a-z'’-]+\s+){0,2}?(?:" + _GUN_TARGET + r"\b(?!['’])|" + _POSS_LIVING + r"\s+(?:[a-z-]+\s+)?(?:" + _BODY + "|" +
+               _HAND + r")\b|" + _BODY + r"\b|" + _HAND + r"\b)")
+GUN_TURNED_ON = (_NOT_DONE + r"\b(?:aim|point|hold|held|fir(?:e|es|ed|ing)|shoot|shot|direct|train|level|turn|wave|waving|brandish|"
+                 r"press|push|put|jab|poke|stick|spray|squirt|blast|swing|thrust|us(?:e|es|ed|ing))(?:s|es|ed|ing)?\b"
+                 r"[^.;!?]{0,60}?(?<!\bout )(?<!\baway )\b(?:at|on|onto|against|toward|towards)\s+(?:(?:me|you|him|them|us|"
+                 r"myself|yourself|himself|herself|themselves|ourselves)\b|her\b(?!\s+[a-z])|" + _AT_SOMEONE + r")|" + _NOT_DONE +
+                 r"\b(?:aim|point|hold|held|press|push|put|jab|poke|stick|spray|squirt|blast|shoot|fir(?:e|es|ed|ing))"
+                 r"(?:s|es|ed|ing)?\b[^.;!?]{0,60}?\b(?:to|in|into|up)\s+(?:(?:the|a|an|my|your|his|her|their|our)\s+)?"
+                 r"(?:" + _GUN_TARGET + r"['’]s?\s+)?(?:[a-z-]+\s+)?" + _BODY + r"\b|"
+                 r"(?<!\baway from )(?<!\bclear of )(?<!\bfar from )(?<!\bout of )\b" + _POSS_LIVING + r"\s+(?:[a-z-]+\s+)?" +
+                 r"(?:mouths?|lips|eyes?|eyeballs?|faces?|heads?|foreheads?|temples?|necks?|throats?|ears?|nose|noses)\b|"
+                 r"\b(?:darts?|turrets?|sentry|sentries|shoot\w*|fir(?:e|es|ed|ing)\b(?!\s+(?:extinguisher|alarm|blanket|exit|"
+                 r"door|safety|drill|station|hazard|risk|place|wood|pit|truck|engine)s?)|(?<!\bair )(?<!\bair-)blow[- ]?guns?|"
+                 r"blowpipes?|bullets?|scar(?:e|es|ed|ing)|threat\w*|frighten\w*|intimidat\w*|menac\w*|terrori[sz]\w*|"
+                 r"gag(?:s|ged|ging)?|torment\w*|harass\w*|shut\s+(?:people|someone|anyone|them|him|her)\s+up)\b")
 _STUB = "This robot sounds like it's meant to hurt, threaten or restrain people or animals. Morph doesn't design that."
 
 
@@ -953,7 +984,12 @@ def sanitize_object(v) -> dict | None:
 
 # ------------------------------------------------------------------ rules: read a message
 def harmful(text: str) -> str | None:
-    t = re.sub(_TOOL_GUN, " tool ", (text or "").lower())
+    t = (text or "").lower()
+    if re.search(r"\bguns?\b|\bblow-?guns?\b", t):
+        hostile = _rx(GUN_TURNED_ON).search(t)
+        if hostile:            # a gun turned on someone is refused, whatever the gun is called
+            return hostile.group(0).strip()
+        t = re.sub(_TOOL_GUN, " tool ", t)
     for pat in HARM:
         m = re.search(pat, t)
         if m:

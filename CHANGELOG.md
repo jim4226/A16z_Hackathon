@@ -569,4 +569,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - Requests that hand someone a tool called a gun are built, not refused as meant to hurt people: "hand the packer the
   tape gun", "pass the rivet gun to the riveter", "hand me the scan gun", "pass me the temp gun" and "hand the
   mechanic the impact gun" (and the tape, grease, soldering, price, screw, barcode and similar guns) were refused.
-  A stun gun, an air gun or a gun on its own still is.
+  A stun gun, an air gun, a blow gun or a gun on its own still is, and so is any gun the request turns on someone:
+  "a robot that aims a rivet gun at people", "holds a grease gun to his head", "shoots darts with a blow gun" or
+  "tapes people's mouths shut" with a tape gun. That also refuses hostile glue, nail, staple, heat and label gun
+  requests the filter had always built ("a robot that points the nail gun at my brother", "a staple gun turret",
+  "holds the heat gun on the cat").

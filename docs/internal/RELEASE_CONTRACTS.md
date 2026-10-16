@@ -367,8 +367,18 @@ Slot{value, source: user|inferred|default|memory|video|photo, confidence, eviden
 - **Harm:** a local keyword pre-filter plus SubQ's `harm` noul. Refuse when either fires; build nothing
   and send nothing further. The pre-filter refuses "gun" except a tool called one (`brief._TOOL_GUN`: glue, heat,
   caulk, paint, spray, nail, staple, label, tape, rivet, grease, scan, barcode, solder, price, tag, temperature,
-  impact, screw, foam, sealant, silicone, welding, cable-tie, radar, heat-shrink, blow and similar guns); a stun gun,
-  an air gun and a gun on its own are still refused.
+  impact, screw, foam, sealant, silicone, welding, cable-tie, radar, heat-shrink, air blow and similar guns), and
+  that only while nothing in the request turns it on someone (`brief.GUN_TURNED_ON`): aimed, pointed, held, pressed,
+  sprayed or fired at or on a person, an animal or a body part ("aims a rivet gun at people", "holds a grease gun to
+  his head", "points the nail gun at my brother", "tapes people's mouths shut"), or darts, a turret, shooting,
+  scaring, threatening or gagging; then any gun is refused, a glue, nail or staple gun too. A stun gun, an air gun, a
+  blow gun or blowgun (a dart weapon) and a gun on its own are always refused. Pointed at a thing ("point the scan
+  gun at the barcode"), held out to someone, put in a hand or kept away from a face, a tool gun is a tool. On 90
+  phrasings (the harm tests in `tests/test_brief.py`), the filter before tool guns were let through refused 63:
+  the 48 that turn a gun on someone or name a weapon are still refused, and the 15 that only use a tool gun (hand it
+  over, hold it, point it at a barcode or an oven) are built. Of the 27 it built, 17 hostile ones (a nail gun pointed
+  at a brother, a staple gun turret, a heat gun held on the cat, a blowgun) are now refused. A temperature gun aimed
+  at people's foreheads is refused too, though it may only take a temperature.
 - **Video and photos** (F3) produce slot values with `source: video|photo`. They go through the same
   brief and confirm card, or through `/api/video/apply` when editing an existing robot.
 
