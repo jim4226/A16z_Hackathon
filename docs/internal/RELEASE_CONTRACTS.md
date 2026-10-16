@@ -1395,9 +1395,14 @@ field failure rate (section 0, honesty).
   22bec48 took 16.4-17.8 s and was cut short in 2 of 4 runs, R4 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and
   was never cut short. The same scan with the mount moved 15 mm (the wrist touching the vase, 0.2 mm): R4 9.1-9.8 s at
   load 2-3 (22bec48 stopped in its first pass at 15.7 s and said the part checked stayed more than 50 mm away), 7.8-12.4
-  s at load 2-4 and 17.2 s at load 8, against 21-30 s at load 4-5 before, which a 20 s check always cut short. Per-pose
-  distances, the closest point and the regions are identical to 22bec48 on the desk scan's three revisions (with and
-  without the box, and moved). Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to
+  s at load 2-4 and 17.2 s at load 8, against 21-30 s at load 4-5 before, which a 20 s check always cut short. R4's per-pose
+  distances and closest point are identical to 22bec48's on the desk scan's three revisions (with and without the box,
+  and moved), and so are its regions except on the moved revision (r004) with its own saved world: that world's place
+  has no `clearance_mm`, so R4 ignores it and offers the place (scan-1, 0.0 mm, box half 20.5/20.6/80 mm) where 22bec48
+  called it covered (by design: a place without the distance it was fitted to isn't trusted). R5 against R4 on the
+  same three revisions, untimed, per pose and not: the same per-pose distances, the same boxes, the same closest point
+  except r004 not per pose (now its row's 0.0 mm at 1.62 s, before 0.2 mm at 1.46 s, above), and the distances 0.1
+  mm lower where they were rounded up (9.0 to 8.9 mm on r002 and r003). Measured: within 0.05 mm of `mj_geomDistance` on box fixtures (54 and 106 poses; up to
   0.21 mm over whole runs); a generated room of 998,664 triangles in 10.5 s at load 7.4 (pass 1 1.3 s; `MORPH_SLOW=1`).
   `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`): pass, warn (closer
   than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with `SCAN_NOTE` ("Measured
