@@ -100,8 +100,9 @@ def note_start(home: str, project: str):
     won't delete it (started_elsewhere). Never raises."""
     try:
         durable.write_json(start_record(home, OWNER), {"start": project, "pid": os.getpid(), "host": HOST})
-    except (OSError, TypeError, ValueError):
-        traceback.print_exc()
+    except (OSError, TypeError, ValueError) as exc:  # a full disk at the start: one line, not a traceback
+        print(f"Couldn't note which project this Studio started on, so another Studio on this projects folder could "
+              f"delete {project} while this one runs. {durable.explain(exc, home)}")
 
 
 def started_elsewhere(home: str, project: str) -> bool:

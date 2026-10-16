@@ -163,3 +163,23 @@ def test_a_room_with_work_is_kept_whatever_its_folder_id_reads(tmp_path, builds,
     builds.gate.set()
     finish(job)
     assert a.room("kb") is not room                                         # idle, another folder: a fresh room
+
+
+def test_a_full_disk_at_the_start_costs_the_start_record_one_line(tmp_path, builds, monkeypatch, capsys):
+    """The start record is written when the Studio starts; on a full disk the Studio still starts, and the terminal
+    says what that costs in one line (it printed a traceback)."""
+    from morph.services import durable
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    real = durable.write_json
+
+    def write_json(path, value, *a, **k):
+        if str(path).endswith(f"{rooms.OWNER}.json"):
+            raise OSError(28, "No space left on device", str(path))
+        return real(path, value, *a, **k)
+
+    monkeypatch.setattr(durable, "write_json", write_json)
+    server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    out = capsys.readouterr()
+    assert "could delete egg-picker while this one runs. The disk is full" in out.out
+    assert "Traceback" not in out.out + out.err
