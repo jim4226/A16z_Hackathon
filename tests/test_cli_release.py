@@ -613,17 +613,20 @@ print("still here", flush=True)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from inside the process")
-def test_stops_held_note_a_stop_and_hand_it_on_when_the_context_ends(tmp_path):
+@pytest.mark.parametrize("blas_threads", ["4", "1"])
+def test_stops_held_note_a_stop_and_hand_it_on_when_the_context_ends(tmp_path, blas_threads):
     """cli._stops_held: Ctrl+C inside the context changes nothing there and raises KeyboardInterrupt once it ends
     (twice pressed: once); the handlers are put back; an ignored signal stays ignored; past the limit a stop goes
     through at once; a signal whose default ends the process ends it when the context ends. Blocking the signal for
-    the main thread alone wasn't enough with numpy's threads running."""
+    the main thread alone wasn't enough with numpy's threads running; with none running (one BLAS thread, as on
+    macOS) a blocked stop waited for the context's end, past the limit, and then left a noting handler behind, so the
+    next context's SIGTERM handed itself on for ever (RecursionError)."""
     script = tmp_path / "held.py"
     script.write_text(_HELD, encoding="utf-8")
-    out = subprocess.run([sys.executable, str(script)], env={**os.environ, "PYTHONPATH": CODE}, capture_output=True,
+    env = {**os.environ, "PYTHONPATH": CODE, "OPENBLAS_NUM_THREADS": blas_threads, "OMP_NUM_THREADS": blas_threads}
+    out = subprocess.run([sys.executable, str(script)], env=env, capture_output=True,
                          text=True, timeout=120, preexec_fn=_signals_as_in_a_terminal)
-    assert out.stdout.splitlines() == [
-        "threads True",
+    assert out.stdout.splitlines()[1:] == [
         "int nothing KeyboardInterrupt True True",
         "int-int nothing KeyboardInterrupt True True",
         "none nothing nothing True True",

@@ -449,17 +449,21 @@ def _stops_held(limit: float = 10.0):
         if callable(handler):
             handler(sig, None)
         elif handler == signal.SIG_DFL:
-            try:
-                signal.raise_signal(sig)
-            except (OSError, ValueError):
-                raise KeyboardInterrupt from None
+            try:  # the default action (ending the process) with the default handler, never a noting one
+                signal.signal(sig, signal.SIG_DFL)
+                os.kill(os.getpid(), sig)  # to the process: a thread that doesn't hold it takes it at once
+                time.sleep(1)
+            except (OSError, ValueError, RuntimeError):
+                pass
+            raise KeyboardInterrupt
 
     @contextlib.contextmanager
     def held():
-        old, came, mask, began = {}, [], None, time.monotonic()
+        old, came, mask, began, closing = {}, [], None, time.monotonic(), []
+        done = threading.Event()
 
         def note(signum, frame):
-            if time.monotonic() - began > limit:
+            if not closing and time.monotonic() - began > limit:
                 return hand_on(signum, old[signum])
             came.append(signum)
 
@@ -472,6 +476,10 @@ def _stops_held(limit: float = 10.0):
                 except (OSError, ValueError, RuntimeError):
                     pass
             if old and hasattr(signal, "pthread_sigmask"):
+                # started before the block, so it doesn't hold them: a stop sent to the process reaches it, and Python
+                # runs the handler in the main thread, where nothing else would take it (macOS starts no numeric
+                # library threads), so the limit holds there too
+                threading.Thread(target=done.wait, name="morph-stops", daemon=True).start()
                 try:
                     mask = signal.pthread_sigmask(signal.SIG_BLOCK, set(old))
                 except (OSError, ValueError):
@@ -479,6 +487,7 @@ def _stops_held(limit: float = 10.0):
         try:
             yield
         finally:
+            closing.append(True)  # from here a stop is only noted, and handed on once the handlers are back
             stop = None
             if mask is not None:
                 try:
@@ -494,6 +503,7 @@ def _stops_held(limit: float = 10.0):
                         break
                     except BaseException as exc:  # noqa: BLE001  (a stop to a handler put back: the rest first)
                         stop = stop or exc
+            done.set()
             if stop is not None:
                 raise stop
             for sig in dict.fromkeys(came):  # each once, in the order they came
