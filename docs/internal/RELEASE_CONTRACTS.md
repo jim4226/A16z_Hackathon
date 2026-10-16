@@ -1459,7 +1459,9 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   nothing to an animal ("no one is around, it helps my grandma eat her soup", "nobody nearby, the nurse takes the tray
   from its gripper" and "no people around, students will use it" keep the person). A person word right after "no",
   "not" or "without" is no person ("no humans next to it", "no workers near it"). `merge()` keeps the signals in
-  `flags["person"]`: a later message's "nobody near it" doesn't take that person away, and `brief_to_changes` keeps the
+  `flags["person"]`, those of a typed reply too (`answer()` passes its `person` signals through `merge()`, so "a robot
+  that sorts screws", then "the operator takes the bins from it", then "no one works near it" keeps the operator): a
+  later message's "nobody near it" doesn't take that person away, and `brief_to_changes` keeps the
   emergency stop beside them whatever the people answer is (an answer "It works on its own" gets the assumption "Your
   request puts a person next to it (...), so it has an emergency stop even though no one else works next to it." and
   the card row "Only the person your request names"). Kids, children, toddlers, babies,

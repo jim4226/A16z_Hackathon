@@ -1840,7 +1840,7 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
                                                                          "fragility", "people_nearby", "perception", "connectivity",
                                                                          "environment", "task")},
                 "inferred": p["inferred"], "hints": p["hints"], "oos": p["oos"], "implicit": p["implicit"], "said": p["said"],
-                "adjusted": p["adjusted"]}
+                "adjusted": p["adjusted"], "person": p["person"]}   # a person a later message names stays, like the first's
         merge(b, keep, "user", "answer")
         a2 = _archetype_for_object(b.get("object"))
         if _arch(b).key == "generic_arm" and a2:

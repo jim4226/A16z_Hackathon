@@ -577,6 +577,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   person it hands things to beat "nobody"). New robot now reads every sign of a person first, apart from the task,
   and says no one is near only when there is none. That person keeps the emergency stop also when an answer or a
   later message says it works on its own.
+- A person named in a typed reply is kept like one named in the first message: "a robot that sorts screws", then "the
+  operator takes the bins from it", then "no one works near it" (or the chip "It works on its own") built a robot with
+  nobody nearby and no emergency stop, and so did "a robot that sorts pills", "for my mum", "it works alone". 14 of
+  the release review's 32 such conversations lost the emergency stop that the same words in one message keep; none
+  does now (`tests/fixtures/brief/people_turns.json`).
 - More people keep their place next to the robot, and its emergency stop. A robot word in the thing handed over
   ("hand the nurse the device", "pass the surgeon the system", "hand the operator the gripper", "a robot that hands
   the operator the machine parts"; "give me a robot that sorts screws" is still a request for a robot), handing

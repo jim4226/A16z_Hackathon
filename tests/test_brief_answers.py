@@ -571,3 +571,28 @@ def test_every_width_and_weight_note_gives_the_grippers_real_limit():
         assert f"the {cap.min_width('cylinder'):g} mm" in B.parse(text)["implicit"][0]["note"], text
     assert B.unfit_note(B.object_value("water bottle")) == ("Water bottles (65 mm, 520 g) are too heavy: a desk arm here lifts "
                                                             "500 g at most.")             # it said "outside 26 to 75 mm wide"
+
+
+_CONVERSATIONS = json.loads((Path(__file__).parent / "fixtures" / "brief" / "people_turns.json").read_text("utf-8"))["rows"]
+
+
+def _converse(turns):
+    b = None
+    for kind, v in turns:
+        if b is None:
+            b = agents.run_turn(text=v, deep=False)
+        else:
+            b = agents.run_turn(B.Brief.from_dict(b.to_dict()), deep=False, **({"text": v} if kind == "text" else {"answers": v}))
+    return agents.run_turn(b, action="defaults", deep=False)
+
+
+@pytest.mark.parametrize("row", _CONVERSATIONS, ids=[" | ".join(str(v) for _, v in r["turns"]) for r in _CONVERSATIONS])
+def test_the_people_conversation_table(row):
+    # a person named in a later message ("the operator takes the bins from it", "for my mum") was never stored, so a
+    # later "no one works near it", "it works alone" or the chip "It works on its own" took the person and the
+    # emergency stop away; the same words in one message kept both
+    b = _converse(row["turns"])
+    assert b.status == "ready", b.status
+    card = next(r for r in B.card(b) if r["slot"] == "people_nearby")["text"]
+    got = (B.value(b, "task"), B.value(b, "people_nearby"), "estop" in b.changes["electronics.extras"], card)
+    assert got == (row["task"], row["people"], row["estop"], row["card"])
