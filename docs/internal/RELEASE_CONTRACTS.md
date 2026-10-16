@@ -744,8 +744,9 @@ members; a member can hold several.
   `<` or `>`, is no password, so
   `http://10.0.0.5:8765?user=bob@example.com` and `http://10.0.0.5:8765@evil.com` pass. Not caught: a password with a
   raw `/`, and one that starts with 1 to 5 digits and one of those characters, `postgres://admin:2024?Secret@db`.
-  Still refused: a port followed with no space by `,`, `;` or `&` and text with an `@`,
-  `http://10.0.0.5:8765,bob@example.com`, which RFC 3986 reads as a user and a password), `Bearer` and a token with
+  Still refused: a port followed with no space by another symbol (`,`, `;`, `&`, `)`, `'` ...) and then, before
+  any space or `/`, by text with an `@`, as in `http://10.0.0.5:8765,bob@example.com`, which RFC 3986 reads as a
+  user and a password), `Bearer` and a token with
   a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value has a letter and a digit). A key with no
   prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
   Python reads by Unicode: 是, は and é count as letters), so a key glued to Chinese, Japanese or Korean text is caught.

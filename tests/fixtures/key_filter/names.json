@@ -548,10 +548,11 @@
    "ml_SmolVLM_grasp_detector",
    "ml_SmolVLA_so101_finetune"
   ],
-  "a link with a port and, with no space, a comma, a semicolon or an & before an @": [
+  "a link whose port another symbol than / ? # @ \" < > follows with no space, then an @": [
    "http://10.0.0.5:8765,bob@example.com",
    "http://10.0.0.5:8765;bob@example.com",
-   "http://10.0.0.5:8765&owner=bob@example.com"
+   "http://10.0.0.5:8765&owner=bob@example.com",
+   "[Studio](http://10.0.0.5:8765)(bob@example.com)"
   ]
  }
 }

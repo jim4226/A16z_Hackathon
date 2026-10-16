@@ -465,8 +465,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Ctrl+C pressed once more while the stopped Studio's process ends no longer prints a traceback or leaves its lock
   files behind. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
   failed starts are no tries either.
-- Ctrl+C (or closing the terminal window, or `kill`) while `morph studio` builds the first robot, before the Studio
-  starts, stops in one line, "Stopped before the Studio started: ...", with exit status 130, where it printed a
+- Ctrl+C (or, on macOS and Linux, closing the terminal window or `kill`) while `morph studio` builds the first robot,
+  before the Studio starts, stops in one line, "Stopped before the Studio started: ...", with exit status 130, where it printed a
   traceback from inside MuJoCo. A project that start made and didn't finish is not kept, so the next start builds it
   again: one named other than the demos (`morph studio my-arm`) used to be left without a design, and the Studio
   refused to start on it.
