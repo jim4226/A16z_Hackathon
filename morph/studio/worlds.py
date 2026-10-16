@@ -1989,7 +1989,8 @@ def scan_check(scan: dict) -> dict:
     if stats.get("unlisted_mm") is not None:
         u = float(stats["unlisted_mm"])
         text += (f" Time ran out before every place closer than {SCAN_NEAR_MM:.0f} mm was listed"
-                 + (f"; any other is at least {_mm1(u)} mm from the arm." if u > 0 else "."))
+                 + (f"; any other is at least {_mm1(u)} mm from the arm" if u > 0 else "")
+                 + ": checking again when the computer is less busy may list them all.")
     if cut:
         limit, need = float(stats.get("limit_s") or 20.0), stats.get("need_s")
         text += f" Only part of the path was measured in the {limit:.0f} s a check has (a large scan or a busy computer)"

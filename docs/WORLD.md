@@ -82,8 +82,9 @@ a check can't measure the whole path in time, it never claims more room than it 
 comes at most (the closest distance it did measure: "The wrist comes within at most 4.6 mm of the scanned surface"), or
 that there wasn't time to measure it, and that only part of the path was measured. It says whether checking again when
 the computer is less busy may finish it, or whether, at that pace, it would take more than twice as long. Its answer is
-kept until the room, the scan or the revision's simulation changes, except an answer cut short or one whose box ran out
-of time to be fitted: *Check placement* measures those again.
+kept until the room, the scan or the revision's simulation changes, except an answer cut short, one whose box ran out
+of time to be fitted, or one that ran out of time before every near miss was listed: *Check placement* measures those
+again.
 
 - Scan the room without the robot and without the object it picks up: anything scanned where the arm or the object
   goes counts as a near miss.

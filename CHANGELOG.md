@@ -113,8 +113,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   takes 10.5 seconds at load 7. The boxes' share of the time is set aside only once there is a near miss, sized from
   what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm comes
   within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the path
-  was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short, or
-  whose box ran out of time to be fitted, aren't kept, so Check placement measures them again.
+  was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short, whose
+  box ran out of time to be fitted, or that ran out of time before every near miss was listed (they say so, and that
+  checking again may list them all), aren't kept, so Check placement measures them again.
 - World mode's distances are rounded down, never up, wherever they are kept or shown (the room scan, the simulation's
   clearance, a near miss's row, the base's margin, the room above the arm, the World panel and `morph world`): to 0.1
   mm under 10 mm, to the millimetre from there. Before, 30.68 mm read "At least 31 mm", and a near miss of 9.96 mm was

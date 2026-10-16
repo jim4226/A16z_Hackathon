@@ -441,7 +441,11 @@ def test_the_scan_check_warns_and_never_fails():
               "warn", "In the part of the path checked (less than 1% of it), the arm stays more than 50 mm"),
              # the closest is measured, but time ran out before every other near miss was listed
              ({"min_clearance_mm": 8.0, "at": at, "regions": [region], "stats": {"unlisted_mm": 8.3}}, "warn",
-              "Time ran out before every place closer than 10 mm was listed; any other is at least 8.3 mm from the arm."),
+              "Time ran out before every place closer than 10 mm was listed; any other is at least 8.3 mm from the arm: "
+              "checking again when the computer is less busy may list them all."),
+             ({"min_clearance_mm": 0.2, "at": at, "regions": [region], "stats": {"unlisted_mm": 0.0}}, "warn",
+              "Time ran out before every place closer than 10 mm was listed: checking again when the computer is less "
+              "busy may list them all."),
              ({"min_clearance_mm": 8.0, "at": at, "regions": [{**region, "box": None}], "stats": {"fit_timeout": True}},
               "warn", "1 place closer than 10 mm: there wasn't time to fit a box that keeps clear of the path."),
              ({"skipped": "The room scan has no triangles."}, "skip", "The room scan has no triangles.")]
@@ -796,8 +800,9 @@ def test_the_world_check_measures_the_path_against_the_scan(tmp_path):
     st, body2 = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
     assert {x["id"]: x for x in body2["checks"]}["scan"] == c["scan"]
     assert not [e for e in room.events if e["type"] == "world" and e["stage"] == "scan"]
-    # a check cut short (a busy computer) or a box not fitted in time isn't kept: checking again measures again
-    for stats in ({"truncated": True}, {"fit_timeout": True}):
+    # a check cut short (a busy computer), a box not fitted in time or a list of near misses not finished (R5: the
+    # places not listed may touch) isn't kept: checking again measures again
+    for stats in ({"truncated": True}, {"fit_timeout": True}, {"unlisted_mm": 0.0}, {"unlisted_mm": 8.3}):
         api_world._SCANS.clear()
         calls = []
         real = worlds.scan_clearance

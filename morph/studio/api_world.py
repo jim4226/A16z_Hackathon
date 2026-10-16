@@ -293,7 +293,8 @@ _SCANS_LOCK = threading.Lock()
 
 def _scan(room, rev, w: dict, sims: dict) -> dict | None:
     """The revision's simulated path against the room scan (worlds.scan_clearance), or None when the world has no
-    scan. A revision's simulation never changes, so the answer is kept (in memory) for the same room file."""
+    scan. A revision's simulation never changes, so the answer is kept (in memory) for the same room file, unless it
+    is incomplete: cut short, a box not fitted in time, or near misses not all listed."""
     path = worlds.asset_path(room.p.root)
     if not w.get("asset") or not os.path.isfile(path):
         return None
@@ -337,8 +338,10 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
     _send(room, {"type": "agent", "role": "feasibility", "provider": "code", "status": "skipped" if res.get("skipped") else "done",
                  "ms": ms, "text": text})
     _send(room, {"type": "world", "stage": "scan", "status": "done", "text": text})
-    if (res.get("stats") or {}).get("fit_timeout") or (res.get("stats") or {}).get("truncated"):
-        return res                              # cut short (a busy computer): Check placement again measures again
+    st = res.get("stats") or {}
+    if st.get("fit_timeout") or st.get("truncated") or st.get("unlisted_mm") is not None:
+        return res                              # cut short (a busy computer), a box not fitted or a list of near misses
+                                                # not finished: Check placement again measures again
     with _SCANS_LOCK:
         _SCANS[key] = res
         while len(_SCANS) > 8:

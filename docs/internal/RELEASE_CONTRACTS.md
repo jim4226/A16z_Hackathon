@@ -1397,11 +1397,14 @@ field failure rate (section 0, honesty).
   measuring all of it would take more than twice that, so checking again helps only on a much less busy computer"; a
   near miss without a region adds "There wasn't time to measure that place closely enough to offer a box for it.";
   `unlisted_mm` adds "Time ran out before every place closer than 10 mm was listed; any other is at least X mm from the
-  arm." `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
+  arm" (R5: then ": checking again when the computer is less busy may list them all.") `checks(..., scan=)` and `inspect(..., scan=)` add it after `clearance`; `rules_review` advises on it
   (`_ADVICE["scan"]`). `POST /api/world/inspect` measures it when the world has `room.glb` and the revision was
   simulated in this room as it is now (else a skip saying so), kept in memory per (project, revision, world sha, room
   file size and mtime), the last eight (R3: not when the check was cut short or a box's fit ran out of time, so checking
-  again measures again; R4: an answer whose list of near misses alone was cut short, `unlisted_mm`, is kept); it sends
+  again measures again; R4 kept an answer whose list of near misses alone was cut short, `unlisted_mm`; R5: not any
+  more, since the places not listed may be as close as the arm touching, so Check placement again lists them when the
+  computer is less busy, where the kept answer showed the same short list until the room or the revision changed); it
+  sends
   `world {stage: "scan", status: "start" | "done", text}` ("Closest to the scan: at most 4.6 mm ... (cut short)" when
   cut short) and an `agent` event (`feasibility`, `code`).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
