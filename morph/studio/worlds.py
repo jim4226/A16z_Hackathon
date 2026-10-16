@@ -932,6 +932,7 @@ SCAN_MAX_SAMPLES = 4_000_000
 SCAN_TOL_MM = 0.05           # the closest approach is found to within this (it is shown to 0.1 mm)
 SCAN_BETWEEN_TOL_MM = 0.1    # and the motion between the poses bounded to within this (rounded down)
 SCAN_TOUCH_MM = 0.5          # closer than this the arm touches or passes through the scan: no need to look closer
+SCAN_ON_OBJECT_MM = 2.0      # a scanned point this close to the object where it starts is the object (or touches it)
 SCAN_WORKERS = -1           # threads for the big k-d tree queries (-1: every core)
 SCAN_THREADED = 32_768      # points in a query worth starting threads for (each start costs about a millisecond)
 SCAN_ROBOT_MM, SCAN_COARSE_MM = 1.6, 8.0             # robot surface samples: rows this far apart near the scan; elsewhere
@@ -1931,12 +1932,9 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
 
     fit_model = []                                      # the collision model with a box to fit (made when needed)
 
-    def box_path(c, h, Rb, target, stop_at):
-        """How near the swept path comes to a solid box (centre c, half sizes h, axes Rb; robot base frame, mm), the
-        motion between poses counted as in pass 3, each pose measured by MuJoCo's own distance between the box and
-        each geom near it (mj_geomDistance, as the simulation measures its grey boxes): (a lower bound of it, or None
-        when `stop_at` passed first; (the closest measured, its robot point)). It stops at the first pose found closer
-        than target less SCAN_FIT_TOL_MM (a robot point to trim the box against); else it bounds every move to that."""
+    def fit_box(c, h, Rb):
+        """The collision model with the box (centre c, half sizes h, axes Rb; robot base frame, mm) added as its last
+        geom (made once): (model, data, box geom, put(q, o) posing the robot and the object with the box in place)."""
         if not fit_model:
             spec = mujoco.MjSpec.from_string(robot_xml)
             gb = spec.worldbody.add_body().add_geom()   # last: every robot geom keeps its index
@@ -1947,7 +1945,6 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         m2.geom_size[bg] = h / 1000.0                   # its size in the model, its place in each pose's data (a geom
         m2.geom_rbound[bg] = float(np.linalg.norm(h)) / 1000.0     # on a body without joints isn't moved by kinematics)
         m2.geom_aabb[bg] = np.r_[0.0, 0.0, 0.0, h / 1000.0]
-        ft = np.zeros(6)
 
         def put(q, o):
             pose(q, o)
@@ -1955,6 +1952,18 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             mujoco.mj_kinematics(m2, d2)
             d2.geom_xpos[bg] = c / 1000.0
             d2.geom_xmat[bg] = np.asarray(Rb, float).reshape(-1)
+        return m2, d2, bg, put
+
+    def box_path(c, h, Rb, target, stop_at, mask=None):
+        """How near the swept path comes to a solid box (centre c, half sizes h, axes Rb; robot base frame, mm), the
+        motion between poses counted as in pass 3, each pose measured by MuJoCo's own distance between the box and
+        each geom near it (mj_geomDistance, as the simulation measures its grey boxes): (a lower bound of it, or None
+        when `stop_at` passed first; (the closest measured, its robot point)). It stops at the first pose found closer
+        than target less SCAN_FIT_TOL_MM (a robot point to trim the box against); else it bounds every move to that.
+        With `mask` (one bool a pose) only those poses, and the moves between two of them, count."""
+        m2, d2, bg, put = fit_box(c, h, Rb)
+        ft = np.zeros(6)
+        use = None if mask is None else {first[k] for k in np.nonzero(mask)[0]}
         found = [math.inf, None]
         cut = target - SCAN_FIT_TOL_MM
         loc = (centres[:, col, :] - c) @ Rb
@@ -1974,7 +1983,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
 
         lbb, low = [None] * len(poses), math.inf       # each pose's bounds; the lowest bound left standing
         for k, (_, q, o, ph) in enumerate(poses):
-            if first[k] != k:
+            if first[k] != k or (use is not None and k not in use):
                 continue
             if k % 32 == 0 and time.monotonic() > stop_at:
                 return None, found
@@ -2007,7 +2016,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         nonlocal_low = [low]
         for k in range(len(poses) - 1):
             a, b = first[k], first[k + 1]
-            if a == b:
+            if a == b or (mask is not None and not (mask[k] and mask[k + 1])):
                 continue
             v, gs = split(lbb[a], lbb[b], Lmove[k], [int(g) for g in set_of(poses[k][3], False)])
             if gs:
@@ -2034,6 +2043,50 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
                 if keep:
                     heapq.heappush(heap, (v, next(seq), *x, keep))
         return min(found[0], nonlocal_low[0]), found
+
+    # what no plan can move (the planner's alternatives are for the approach, the carry, the release's opening and the
+    # way back): the arm in its starting pose, going down to the object, grasping and lifting it (from the "above the
+    # object" marker to "lifted"), setting it down and letting go; and the object where it starts and ends
+    marks = {str(mk.get("label")): float(mk["t"]) for mk in doc.get("markers") or []
+             if isinstance(mk, dict) and isinstance(mk.get("t"), (int, float))}
+    t_above, t_lifted = marks.get("above the object"), marks.get("lifted")
+    fixed_moves = {
+        "start": np.arange(len(poses)) == 0,
+        "pick": np.array([ph in ("grasp", "lift") or (t_above is not None and t_lifted is not None
+                                                     and t_above - 1e-6 <= t <= t_lifted + 1e-6)
+                          for t, _, _, ph in poses], bool),
+        "place": np.array([ph in ("place", "release") for _, _, _, ph in poses], bool)}
+
+    def to_object(k, c, h, Rb):
+        """MuJoCo's distance (mm, capped at 10) between a box and the object as it is at pose k."""
+        m2, d2, bg, put = fit_box(c, h, Rb)
+        ft = np.zeros(6)
+        put(poses[k][1], poses[k][2])
+        return min(1000.0 * mujoco.mj_geomDistance(m2, d2, int(g), bg, 0.01, ft) for g in obj_geoms)
+
+    def must_reach(c, h, Rb, stop_at, arm=True, point=None):
+        """What a box (centre c, half sizes h, axes Rb; robot base frame, mm) would meet that no plan can move, or
+        None: "object" or "object_end" when it meets the object where it starts or where it is set down and the
+        scan's own closest point there (`point`, base frame) is on it or next to it (within SCAN_ON_OBJECT_MM: the
+        scan holds the object itself, or something touching it), "object_box" or "object_end_box" when only the box
+        reaches it; with `arm`, "start" (the arm in its starting pose), "pick" (the arm going down to the object,
+        grasping and lifting it) or "place" (setting it down and letting go); False when `stop_at` passed first.
+        Meeting is coming closer than SCAN_TOUCH_MM, by MuJoCo's own distance (as the simulation measures its grey
+        boxes), the motion between poses counted (box_path)."""
+        for k, what in ((0, "object"), (len(poses) - 1, "object_end")) if len(obj_geoms) else ():
+            if to_object(k, c, h, Rb) < SCAN_TOUCH_MM:
+                on = point is not None and to_object(k, np.asarray(point, float), np.full(3, 0.05), np.eye(3)) \
+                    < SCAN_ON_OBJECT_MM
+                return what if on else f"{what}_box"
+        for what in ("start", "pick", "place") if arm else ():
+            if not fixed_moves[what].any():
+                continue
+            lo_b, _ = box_path(c, h, Rb, SCAN_TOUCH_MM, stop_at, mask=fixed_moves[what])
+            if lo_b is None:
+                return False
+            if lo_b < SCAN_TOUCH_MM - SCAN_FIT_TOL_MM:
+                return what
+        return None
 
     t1 = time.monotonic()
 
@@ -2068,7 +2121,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     if out["regions"]:
         t1 = time.monotonic()
         _fit_boxes(world, out["regions"], poses, pose, d, m, shape, fixed, moving, carried, held, end, stats,
-                   verify=box_path)
+                   verify=box_path, must=must_reach)
         stats["fit_s"] = round(time.monotonic() - t1, 2)
         out["regions"] = _already_boxed(world, out["regions"], stats)
     stats["seconds"] = round(time.monotonic() - t0, 2)
@@ -2172,8 +2225,27 @@ def _trim_box(P, lo, hi, need):
     return None
 
 
+# why no box is offered where the arm must go (scan_clearance's must_reach): a box there would fail the simulation
+MUST_REACH = {
+    "object": "the scan holds the object itself here (or something touching it), where it starts: the arm must reach "
+              "it to pick it up, so no box is offered",
+    "object_end": "the scan holds something where the object is set down: the arm must reach there, so no box is "
+                  "offered; move the place spot or what is there",
+    "object_box": "a box over this part of the scan would reach the object where it starts, which the arm must reach, "
+                  "so none is offered; move the robot or the thing",
+    "object_end_box": "a box over this part of the scan would reach where the object is set down, which the arm must "
+                      "reach, so none is offered; move the place spot or the thing",
+    "start": "the arm touches the scan here in its starting pose, which no plan changes, so no box is offered; move the "
+             "robot or the thing",
+    "pick": "the arm must reach here to go down to the object, grasp it and lift it (straight moves no plan changes), so "
+            "no box is offered; move the pick spot or the thing",
+    "place": "the arm must reach here to set the object down and let go (moves no plan changes), so no box is offered; "
+             "move the place spot or the thing",
+}
+
+
 def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried, held, deadline=math.inf, stats=None,
-               verify=None):
+               verify=None, must=None):
     """Trim each region's box (surface axes: region["_lo"], ["_hi"]) on the sides facing the swept path until the
     robot comes no closer to it than the scan did there (the region's distance, "_d"): an axis-aligned box around a
     round thing sticks out at its corners, towards the arm. One pass over the poses collects the robot's surface samples
@@ -2184,7 +2256,14 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
     trimmed against too, and the box measured again, at most SCAN_FIT_ROUNDS times. "box_clearance_mm" is that lower
     bound, rounded down: the box keeps at least that clear of the path. A trimmed region keeps its box before trimming
     as "covers" (rounded outwards). Past `deadline` no box is offered for the regions not yet fitted
-    (stats["fit_timeout"])."""
+    (stats["fit_timeout"]).
+    Where the arm touches or passes through the scan (a distance under SCAN_TOUCH_MM) no box keeps clear of the path:
+    the box is the scanned surface there, untrimmed ("touches"), with "box_clearance_mm" 0.0 unless the whole path was
+    bounded further from it. Such a box is offered only when a plan can go round it: `must`(centre, half sizes, axes,
+    deadline, point=...) says what it would meet that no plan moves (the object where it starts or ends, the arm in its
+    starting pose, going down to the object, grasping and lifting it, setting it down and letting go); then "box" is
+    None, "must_reach" says which and "no_box" says why (MUST_REACH). A trimmed box that would reach the object where
+    it starts or ends isn't offered either."""
     R = regions[0]["_R"]
     boxes = [(r["_lo"].copy(), r["_hi"].copy(), float(r.get("_d", r["min_clearance_mm"]))) for r in regions]
     near = [[] for _ in boxes]
@@ -2242,21 +2321,28 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
             P = P[np.unique(_cell_keys(np.round(P / 0.25).astype(np.int64)), return_index=True)[1]]
         yaw = r["box"]["yaw_deg"]
         if target < SCAN_TOUCH_MM:                      # the arm touches or passes through the scan here: no box keeps
-            saved = _world_box(world, R, lo0, hi0, yaw, rounding="in")    # clear of it, so the box is the thing as
-            lo_b = None                                 # scanned, untrimmed, and the next simulation plans round it
+            saved = _world_box(world, R, lo0, hi0, yaw, rounding="in")    # clear of it, so the box is the scanned
+            lo_b = None                                 # surface there, untrimmed, offered when a plan can go round it
             if verify is not None:
                 b = box_to_base(world, saved, nd=4)
-                lo_b, _ = verify(np.asarray(b["center"], float), np.asarray(b["half"], float),
-                                 _rz(float(b["yaw_deg"])), target, deadline)
-                if lo_b is None:
+                cb, hb, Rb = np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"]))
+                lo_b, _ = verify(cb, hb, Rb, target, deadline)
+                why = None
+                if lo_b is not None and must is not None:
+                    why = must(cb, hb, Rb, deadline, point=to_base(world, r["point"]))
+                if lo_b is None or why is False:
                     late = True
                     r["box"] = None
                     r["no_box"] = ("Morph ran out of time to fit a box here that keeps clear of the path: checking again "
                                    "when the computer is less busy may fit one.")
                     continue
+                if why:
+                    r["box"], r["touches"], r["must_reach"], r["no_box"] = None, True, why, MUST_REACH[why]
+                    continue
             r["box"], r["trimmed"], r["touches"] = saved, False, True
-            if verify is not None:
-                r["box_clearance_mm"] = floor_mm(max(0.0, lo_b)) if lo_b < SCAN_CUT_MM else None
+            if verify is not None:                      # verify stops at the first pose closer than the target: the box
+                r["box_clearance_mm"] = (0.0 if lo_b < target - SCAN_FIT_TOL_MM     # reaches that close or closer
+                                         else floor_mm(max(0.0, lo_b)) if lo_b < SCAN_CUT_MM else None)
             else:
                 dd = _box_dist(P, lo0, hi0)
                 r["box_clearance_mm"] = floor_mm(dd.min()) if len(dd) else None
@@ -2288,6 +2374,14 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
                            f"thinner than {SCAN_FIT_MIN_MM:.0f} mm: move the robot or the thing instead.")
             continue
         lo, hi = fit
+        if must is not None:                            # trimmed clear of the arm's path, but not of the object at rest
+            b = box_to_base(world, _world_box(world, R, lo, hi, yaw, rounding="in"), nd=4)
+            why = must(np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"])), deadline,
+                       arm=False)
+            if why:
+                why = why if why.endswith("_box") else f"{why}_box"
+                r["box"], r["must_reach"], r["no_box"] = None, why, MUST_REACH[why]
+                continue
         r["box"] = _world_box(world, R, lo, hi, yaw, rounding="in")
         r["trimmed"] = bool(np.any(np.abs(lo - lo0) > 1e-6) or np.any(np.abs(hi - hi0) > 1e-6))
         if verify is not None:
@@ -2686,13 +2780,21 @@ def scan_check(scan: dict) -> dict:
         if places > n:
             text += f" (the {n} closest are listed)"
         touch = sum(1 for r in regions if r.get("box") is not None and r.get("touches"))
-        if boxed and touch == boxed:                    # where the arm touches the scan, the box is the thing as scanned
-            text += (f": Add box here turns {'one' if places != 1 else 'it'} into a grey box, the thing as scanned, and "
-                     "the next simulation plans round it.")
+        must = [r for r in regions if r.get("must_reach")]
+        scanned = any(r["must_reach"] == "object" for r in must)
+        if boxed and touch == boxed:                    # where the arm touches the scan, the box is the scanned surface
+            text += (f": Add box here turns {'one' if places != 1 else 'it'} into a grey box over the scanned surface "
+                     f"there (at least {SCAN_MIN_BOX_MM:.0f} mm each way, so it can be larger than what was scanned), "
+                     "and the next simulation tries to plan round it.")
         elif boxed:
             text += (f": Add box here turns {'one' if places != 1 else 'it'} into a grey box the simulation keeps clear "
                      "of, trimmed so it is no closer to the path than the scan"
-                     + (" (where the arm touches the scan, the box is the thing as scanned)." if touch else "."))
+                     + (" (where the arm touches the scan, the box is the scanned surface there, untrimmed, and the "
+                        "next simulation tries to plan round it)." if touch else "."))
+        elif must and len(must) == n:                  # where the arm must go: a box there fails the simulation
+            text += (f": the arm must reach {'there' if n == 1 else 'those places'} to pick or place the object, or "
+                     "stands there in its starting pose, so no box is offered"
+                     + (" (the scan holds the object itself where it starts)." if scanned else "."))
         elif stats.get("fit_timeout"):
             text += ": there wasn't time to fit a box that keeps clear of the path."
         elif any(r.get("boxed") for r in regions):
@@ -2700,6 +2802,9 @@ def scan_check(scan: dict) -> dict:
                      "was fitted to; move the robot or the thing.")
         else:
             text += ": too close to the path for a box; move the robot or the thing."
+        if must and (boxed or len(must) < n):
+            text += (" Where the arm must reach to pick or place the object, or stands in its starting pose, no box is "
+                     "offered" + (": the scan holds the object itself there." if scanned else "."))
     elif cut and mc is not None and floor_mm(mc) < SCAN_NEAR_MM:
         text += " There wasn't time to measure that place closely enough to offer a box for it."
     covered = stats.get("covered") or 0

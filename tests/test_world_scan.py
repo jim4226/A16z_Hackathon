@@ -717,11 +717,12 @@ def test_the_checks_closest_distance_is_never_more_than_one_of_its_rows(tmp_path
     assert "touches or passes through" in worlds.scan_check(res)["text"]
 
 
-def test_a_thing_the_arm_passes_through_gets_its_box_as_scanned(tmp_path, nominal):
-    """Where the arm passes through the scan (the touching vase 10 mm into the path), no box can keep clear of the path,
-    so the box offered is the thing as scanned, untrimmed: added, the next simulation plans round it. R6 trimmed it
-    against MuJoCo's own (negative) distances until nothing was left ("too close to the path for a box"), so the
-    Studio's e2e post the jaw passes 7 mm into on its way back got no box (R5 offered it)."""
+def test_a_thing_the_arm_passes_through_gets_a_box_over_it_when_a_plan_can_go_round_it(tmp_path, nominal):
+    """Where the arm passes through the scan (the touching vase 10 mm into the path, on the carry), no box can keep clear
+    of the path, so the box offered is the scanned surface there, untrimmed, because none of it is where the arm must
+    go: added, the next simulation goes round it. R6 trimmed it against MuJoCo's own (negative) distances until nothing
+    was left ("too close to the path for a box"), so the Studio's e2e post the jaw passes 7 mm into on its way back got
+    no box (R5 offered it). The text promises no more than a try: the planner's detours may not clear every box."""
     rob, doc = nominal
     (cx, cy), r, h = TOUCHING_VASE
     m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh((cx, cy - 10.0), r, h)])
@@ -729,18 +730,116 @@ def test_a_thing_the_arm_passes_through_gets_its_box_as_scanned(tmp_path, nomina
     res = measure(room, ROOM, doc, rob.xml)
     (g,) = res["regions"]
     assert g["min_clearance_mm"] < worlds.SCAN_TOUCH_MM and g["box"] is not None and g["touches"], g
-    assert not g["trimmed"] and g["box_clearance_mm"] == 0.0 and "covers" not in g, g
+    assert not g["trimmed"] and g["box_clearance_mm"] == 0.0 and "covers" not in g and "must_reach" not in g, g
     lo, hi = corners(g["box"])
     assert np.all(lo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= hi + 0.2), g      # over the touch
     c = worlds.scan_check(res)
-    assert "touches or passes through" in c["text"] and "a grey box, the thing as scanned, and the next simulation " \
-        "plans round it" in c["text"], c["text"]
+    assert "touches or passes through" in c["text"] and "a grey box over the scanned surface there (at least 20 mm " \
+        "each way, so it can be larger than what was scanned), and the next simulation tries to plan round it" in \
+        c["text"], c["text"]
+    assert "thing as scanned" not in c["text"] and "plans round it" not in c["text"], c["text"]
     w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
                          "obstacles": [{"id": g["id"], "label": g["label"], **g["box"], "source": "auto"}]})
     rob2, doc2, met2 = simulated(tuple(worlds.sim_world(w)["obstacles"]))
     assert met2["success"] and not met2["world_contacts"] and not met2.get("blocked"), met2.get("failure")
     res2 = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc2, rob2.xml)
     assert res2["min_clearance_mm"] is None or res2["min_clearance_mm"] >= worlds.SCAN_TOUCH_MM, res2
+
+
+def finger_tip_at_the_grasp(rob, doc):
+    """The lowest point of the fingers while the gripper closes on the egg (robot base frame, mm)."""
+    m, dd = rob.model, rob._mj.MjData(rob.model)
+    low = None
+    for _, q, o, ph in worlds._frame_poses(doc):
+        if ph != "grasp":
+            continue
+        dd.qpos[:] = 0
+        dd.qpos[rob.qadr] = q[:rob.n]
+        rob.set_grip(dd, q[-1])
+        rob._mj.mj_kinematics(m, dd)
+        for g in rob.robot_geoms:
+            if m.geom_type[g] != 7 or "finger" not in m.geom(g).name:
+                continue
+            mid = m.geom_dataid[g]
+            V = np.asarray(m.mesh_vert[m.mesh_vertadr[mid]:m.mesh_vertadr[mid] + m.mesh_vertnum[mid]], float)
+            X = (V @ dd.geom_xmat[g].reshape(3, 3).T + dd.geom_xpos[g]) * 1000.0
+            i = int(X[:, 2].argmin())
+            if low is None or X[i, 2] < low[2]:
+                low = X[i].copy()
+    return low
+
+
+def egg_scan(at):
+    egg = trimesh.creation.capsule(height=30.0, radius=21.0, count=[24, 24])
+    egg.apply_translation([at[0], at[1], 21.0 + 15.0 + 0.5])
+    return egg
+
+
+@pytest.mark.parametrize("case", ["the egg scanned where it is picked up", "a nub under a finger at the grasp",
+                                  "something scanned where the egg is set down"])
+def test_where_the_arm_must_go_no_box_is_offered(tmp_path, nominal, case):
+    """The final skeptic's cases (R6): where the arm touches the scan at a place it must go, ef9f65c offered "Add box
+    here" and promised that "the next simulation plans round it", but the box made it fail ("the object touches Scan
+    near miss 1 in the arm's starting pose": the egg itself scanned at the pick spot, and a 4 mm nub 0.2 mm under a
+    finger at the grasp, whose 19.8 x 19.8 x 10.4 mm box reached the egg). The planner can't move the descent, the
+    grasp, the lift, the set-down or the release, the arm's starting pose or the object where it starts and ends: a box
+    that meets one of those isn't offered, and the row and the check say the arm must reach there (for the egg itself,
+    that the scan holds it)."""
+    rob, doc = nominal
+    pick, place = (EGG.task.pick_x_mm, EGG.task.pick_y_mm), (EGG.task.place_x_mm, EGG.task.place_y_mm)
+    if case.startswith("the egg"):
+        thing, want = egg_scan(pick), {"object"}
+    elif case.startswith("a nub"):
+        p = finger_tip_at_the_grasp(rob, doc)
+        thing = trimesh.creation.box(extents=[4.0, 4.0, 4.0],
+                                     transform=trimesh.transformations.translation_matrix([p[0], p[1], p[2] - 2.2]))
+        want = {"object_box", "pick"}
+    else:
+        thing, want = egg_scan(place), {"object_end", "object_end_box", "place"}
+    m = trimesh.util.concatenate([box_mesh(SLAB), thing])
+    res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
+    assert res["min_clearance_mm"] is not None and res["min_clearance_mm"] < worlds.SCAN_TOUCH_MM, res["min_clearance_mm"]
+    (g,) = res["regions"]
+    assert g["box"] is None and g["touches"] and g["must_reach"] in want, g
+    assert g["no_box"] == worlds.MUST_REACH[g["must_reach"]] and "no box is offered" in g["no_box"] or \
+        "none is offered" in g["no_box"], g
+    c = worlds.scan_check(res)
+    assert "Add box here" not in c["text"] and "plans round it" not in c["text"], c["text"]
+    assert "the arm must reach there to pick or place the object, or stands there in its starting pose, so no box is " \
+        "offered" in c["text"], c["text"]
+    assert ("the scan holds the object itself where it starts" in c["text"]) == (g["must_reach"] == "object"), c["text"]
+
+
+@pytest.fixture(scope="module")
+def speck_touch(nominal, tmp_path_factory):
+    """A speck 0.35 mm from the hand on the way to the egg (found by a fuzz of specks in the moves a plan can change):
+    the scan check's answer."""
+    rob, doc = nominal
+    speck = trimesh.creation.box(extents=[0.1] * 3, transform=trimesh.transformations.translation_matrix(
+        [167.1827, 1.1879, 155.2046]))
+    sm = trimesh.util.concatenate([box_mesh(SLAB), speck])
+    return measure(glb(tmp_path_factory.mktemp("speck") / "room.glb", sm.vertices, sm.faces), ROOM, doc, rob.xml)
+
+
+def test_a_touch_box_row_never_claims_room_the_box_does_not_leave(nominal, speck_touch):
+    """The speck's box is offered (the approach is a move the planner can change); as Add box here saves it, it is 20 mm
+    a side and reaches about 8 mm into the path, but its row said "0.1 mm from the path": the box was measured only
+    until the first pose closer than the speck (0.1 mm), and that pose's distance was kept as if it bounded the path.
+    Now a box measured short of the whole path reads 0.0 (touches)."""
+    rob, doc = nominal
+    res = speck_touch
+    (r,) = res["regions"]
+    assert r["touches"] and r["box"] is not None, r
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                         "obstacles": [{"id": r["id"], "label": r["label"], **r["box"], "source": "auto"}]})
+    sz = arm.size(EGG)
+    asm = arm.build(EGG, sz, electronics2.plan(EGG, {**sz, "grip_target_n": 2.34}))
+    boxed = S._make_robot(asm, EGG, True, {"world": {"id": "bench", "sha": "touch-row", "surface": SURFACE,
+                                                     "floor_z": -900.0, "zones": [],
+                                                     "obstacles": worlds.sim_world(w)["obstacles"]}})
+    truth = float(mujoco_clearance(boxed, doc).min())            # the box as saved against the path, pose by pose
+    assert truth < 0.0, truth                                     # it reaches into the path
+    assert r["box_clearance_mm"] == 0.0, (r["box_clearance_mm"], truth)       # before: 0.1
 
 
 def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):
