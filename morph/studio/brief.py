@@ -1184,6 +1184,7 @@ _H_THING_HEAD = (r"(?:house|flap|bed|bowl|feeder|statue|toy|door|food|basket|cag
                r"room|area|zone|table|tray|bin|car|bike|van|truck|window|gate|fence|wall|parcel|package|luggage|suitcase|"
                r"coat|clothes|shoe|hat|glasses|cup|plate|drink|coffee|tea|lunch|dinner|meal|fastball|ball|helmet|uniform|"
                r"locker|counter|booth|kiosk|stall|barcode|screen|monitor|laptop|computer|tablet|camera|lamp|vase|pot|"
+               r"part(?:y|ies)|birthday|wedding|disco|fair|fete|event|show|gig|"
                r"plant|garden|lawn|hedge|yard|porch|roof|gutter|drain|pipe|engine|wheel|tyre|tire|panel|frame|bottle|jar|"
                r"wallet|purse|book|cushion|pillow|sofa|toolbox|tool|kit|equipment|gear|chip|implant|water|milk|hay|straw|"
                r"craft|project|homework|belt|conveyor)"
@@ -1256,9 +1257,11 @@ HOSTILE = (
     _H_NEG + _H_VERB_USE + r"\b" + _H_HURT + r"\s+(?:up\s+|down\s+)?" + _H_SOMEONE,
     # restrained: "ties up the dog", "holds him down", "tapes him to the chair", "locks the kids in their room"
     _H_NEG + _H_VERB_USE + r"\b" + _H_TIE + r"\s+(?:up\s+|down\s+)?" + _H_SOMEONE_NOT_THEM,
+    # held down or still, but not for care: a care purpose ("while i trim its claws", "for the vet") is let through by
+    # _benign_act, which reads the whole clause
     _H_NEG + r"\b(?:hold|holds|holding|held|pin|pins|pinned|pinning|keep|keeps|keeping)\s+" + _H_SOMEONE + r"\s+(?:down|still)\b"
-    r"(?!\s+(?:for|while|so)\s+(?:the\s+|a\s+|her\s+|his\s+|its\s+)?(?:vet|doctor|nurse|groomer|dentist|farrier|check-?up|"
-    r"injection|jab|exam|examination|treatment|vaccination|haircut|trim)\b)",
+    r"(?!\s+(?:for|while|so|until)\s+(?:the\s+|a\s+|her\s+|his\s+|its\s+|my\s+)?(?:vet|doctor|nurse|groomer|dentist|farrier|"
+    r"check-?up|injection|jab|exam|examination|treatment|vaccination|haircut|trim)\b)",
     # a chemical put on or in someone, or in their food: "squirts bleach in the dog's eyes", "puts bleach in my husband's
     # coffee"; drugs only in their food or drink ("drugs my wife's drink", not "puts my dad's pills in his hand")
     r"\b(?:spray|squirt|pour|splash|throw|put|tip|add|mix|slip|drip|sprinkl|rub|smear)\w*\s+(?:[\w'’-]+\s+){0,3}?(?:bleach|"
@@ -1275,23 +1278,43 @@ HOSTILE = (
 # no verb: "a robot with a rivet gun on people", "rivet gun at my brother", "a knife to his throat"
 _H_NO_VERB = (r"\b" + _H_DANGER + r"(?:\s+[\w'’-]+){0,4}?\s+(?:(?:at|on|onto|against|toward|towards)\s+" + _H_TARGET +
               r"|for\s+" + _H_POSS + _H_MOD + r"{0,1}?" + _H_BODY + r"\b)",
-              r"\b" + _H_DANGER + r"(?:\s+[\w'’-]+){0,3}?\s+to\s+" + _H_POSS + _H_MOD + r"{0,1}?" + _H_BODY + r"\b")
+              # "a knife to his throat": "to" names where it goes, not a purpose ("scissors to cut my son's hair"),
+              # so the word after "to" must be a possessive or a determiner, never a bare verb
+              r"\b" + _H_DANGER + r"(?:\s+[\w'’-]+){0,3}?\s+to\s+(?=(?:my|your|his|her|their|our|its|the|a|an|someone|"
+              r"somebody|people|that|this|these|those|[a-z]+['’]s)\b)" + _H_POSS + _H_MOD + r"{0,1}?" + _H_BODY + r"\b")
 _H_ANY_DANGER = r"\b" + _H_DANGER
 _H_DANGER_HERE = r"(?=(" + _H_DANGER_OR_IT + "))"       # every place one starts, overlapping ("point gun")
 # with a weapon or a tool that can hurt in the request: an only-there target, a purpose that turns it on someone, or
 # someone sealed in ("never aims it at the wall, only at people", "uses the impact gun to shut my brother up", "to keep
 # the cat off the counter", "goes off when someone opens the door", "seals them in the room")
+# The danger has to be what the clause does it with: "uses the nail gun to keep the cat off", not "keeps the kids away
+# from the nail gun" or "keeps the dog out of the kitchen while i use the knives"; a robot that stops, slows or switches
+# off when someone comes near guards them, and one that hands over a knife when mum comes home does an errand.
+# the danger must be the instrument of keeping/stopping the person, within a word or two of its use ("uses the nail gun
+# to keep the cat off"), not a tool named later in a different clause ("keep the cat off the counter while i cook with
+# knives", "use the screw gun to build a fence to keep the dog out").
+_H_USE_TO = (_H_NEG + r"\b(?:us(?:e|es|ed|ing)|with|wielding|holding|operat\w+)\s+(?:[\w'’-]+\s+){0,3}?" + _H_DANGER +
+             r"\s+(?:[\w'’-]+\s+){0,2}?to\s+")
+_H_WITH_AFTER = (r"(?:(?!\b(?:while|when|as|so|because|and|but|then|if|for|to)\b).){0,40}?\b(?:with|using)\s+"
+                 r"(?:[\w'’-]+\s+){0,3}?" + _H_DANGER)
+# fired or set off, triggered by a person coming ("fires a nail gun through the door when someone knocks"); a robot that
+# stops, slows or switches off when someone comes near is the opposite, a safety stop, so only discharge verbs count.
+_H_FIRE_TRIG = (r"\b(?:fir(?:es|ing|ed)|shoot\w*|shot|discharg\w*|go(?:es)?\s+off|went\s+off|springs?|sprung|triggers?|"
+                r"releas\w*|zaps?|blasts?|lash\w*|snaps?\s+shut)\b")
+_H_COMES = (r"\s+(?:comes?|came|walks?|gets?|opens?|enters?|steps?|tries|try|goes|knocks?|rings?|arrives?|approaches|"
+            r"approach|moves?|appears?|climbs?|jumps?|breaks?|reaches)\b")
 HOSTILE_WITH_DANGER = (
     r"\b(?:only|but|just|instead|rather|except)\s+(?:at|on|towards?)\s+" + _H_TARGET,
     r"\bshut\s+" + _H_SOMEONE + r"\s+up\b",
     _H_NEG + r"\b(?:tag|label|rivet|screw|spray|squirt|heat|solder|paint|caulk|target|scar|chas|pok|jab|blast|punish|hunt|"
-    r"frighten|sting|disciplin|deter|repel|keep)\w*\s+" + _H_A_LIVING + r"(?!\s+(?:company|warm|safe|fed|happy|clean|dry|"
+    r"frighten|sting|disciplin|deter|repel)\w*\s+" + _H_A_LIVING + r"(?!\s+(?:company|warm|safe|fed|happy|clean|dry|"
     r"busy|cool|entertained)\b)",
-    r"\bkeep(?:s|ing)?\s+" + _H_SOMEONE + r"\s+(?:off|out|away|back)\b",
-    r"\bstop(?:s|ping)?\s+" + _H_SOMEONE + r"\s+(?:from\s+)?[a-z]+ing\b",
-    r"\bgo(?:es)?\s+off\s+(?:when|if|whenever)\s+" + _H_SOMEONE,
-    r"\b(?:when|if|whenever|as soon as)\s+" + _H_A_LIVING + r"\s+(?:comes?|walks?|gets?|opens?|enters?|steps?|tries|try|goes|"
-    r"knocks?|rings?|arrives?|approaches|approach|moves?|appears?|climbs?|jumps?|breaks?)\b",
+    _H_USE_TO + r"keep\s+" + _H_SOMEONE + r"\s+(?:off|out|away|back)\b",
+    r"\bkeep(?:s|ing)?\s+" + _H_SOMEONE + r"\s+(?:off|out|away|back)\b" + _H_WITH_AFTER,
+    _H_USE_TO + r"stop\s+" + _H_SOMEONE + r"\s+(?:from\s+)?[a-z]+ing\b",
+    r"\bstop(?:s|ping)?\s+" + _H_SOMEONE + r"\s+(?:from\s+)?[a-z]+ing\b" + _H_WITH_AFTER,
+    r"\b" + _H_DANGER + _H_CL + r"{0,40}?\bgo(?:es)?\s+off\s+(?:when|if|whenever)\s+" + _H_SOMEONE,
+    _H_NEG + _H_FIRE_TRIG + r"\s+" + _H_CL + r"{0,50}?\b(?:when|if|whenever|as soon as)\s+" + _H_A_LIVING + _H_COMES,
     r"\b" + _H_TIE + r"\s+them\s+(?:in|into|inside)\s+(?:the\s+|a\s+|their\s+|his\s+|her\s+)?(?:room|house|basement|cellar|"
     r"closet|cupboard|cage|shed|garage|car|trunk|attic|bathroom|bedroom|office|toilet|cell)\b",
 )
@@ -1300,14 +1323,25 @@ GUN_CONTEXT = (r"\b(?:defend\w*|defen[cs]e|deter\w*|repel\w*|protect(?:s|ing|ion
                r"their\s+)?(?:[a-z-]+\s+)?(?:door|house|home|yard|garden|gate|entrance|fence|property|shop|store|building|"
                r"room|driveway|garage|car|base|perimeter|area|premises|porch|flat|apartment|office|land|farm|field)s?\b|"
                r"ward(?:s|ed|ing)?\s+off|keep(?:s|ing)?\s+(?:people|intruders|burglars|strangers|thieves|them|everyone)\s+"
-               r"(?:out|away)|darts?|turrets?|sentry|sentries|"
+               r"(?:out|away)|(?<!dress )(?<!fabric )(?<!sewing )(?<!bust )(?<!waist )(?<!chest )darts?|turrets?|sentry|sentries|"
+               r"(?<!the )(?<!a )(?<!camp)(?<!bon)(?<!log )(?<!open )(?<!gas )(?<!coal )(?<!wood )(?<!warm )(?<!by the )"
                r"(?:shoot\w*|fir(?:e|es|ed|ing))\b(?!\s+(?:extinguisher|alarm|blanket|exit|door|safety|drill|station|hazard|risk|place|"
                r"wood|pit|truck|engine|starter|brigade|fighter|man|men|proof|resistant|retardant|works?|up)s?\b)(?!\s+(?:[\w'’-]+\s+)"
                r"{0,4}?(?:into|through|onto)\s+(?!" + _H_SOMEONE + r"))(?!\s+(?:the\s+|a\s+)?(?:[a-z-]+\s+)?(?:nails?|staples?|"
                r"brads?|rivets?|tacks?|pins?|screws?|bolts?|glue|clay|kilns?|pottery|photos?|pictures?|video|hoops?)\b)|"
                r"(?<!\bair )(?<!\bair-)blow[- ]?guns?|blowpipes?|bullets?|scar(?:e|es|ed|ing)|threat\w*|frighten\w*|"
-               r"intimidat\w*|menac\w*|terrori[sz]\w*|gag(?:s|ged|ging)?|torment\w*|harass\w*|intruders?|burglars?|"
-               r"trespassers?|strangers?|robbers?|attackers?|enem(?:y|ies)|as\s+a\s+weapon|weaponi[sz]\w*)\b")
+               r"intimidat\w*|menac\w*|terrori[sz]\w*|gag(?:s|ged|ging)?|torment\w*|harass\w*|(?:intruders?|burglars?)"
+               r"(?!\s+alarms?)|trespassers?|strangers?|robbers?|attackers?|enem(?:y|ies)|as\s+a\s+weapon|weaponi[sz]\w*)\b")
+# the tool gun builds or installs a barrier or a security device, so "guard/protect/keep ... out" is construction, not a
+# weapon: "a nail gun to build a fence to protect the garden", "a screw gun to install a door lock against break-ins"
+_GUN_BUILDS = (r"\b(?:build\w*|fix\w*|mend\w*|repair\w*|erect\w*|put\w*\s+up|install\w*|assembl\w*|fit\w*|screw\w*|mount\w*|"
+               r"attach\w*|fasten\w*|make\w*|replac\w*|hang\w*)\b(?:(?!\bshoot|\bfire|\bweapon|\bturret).){0,40}?"
+               r"\b(?:fenc\w+|wall|gate|enclosure|pen|coop|hutch|run|railing|rail|deck\w*|frame|shed|door|lock|latch|bolt|"
+               r"alarms?|hinge|panel|post|trellis|barrier|cabinet|shelf|shelving|bracket)s?\b")
+# a gun's context that no construction frame makes harmless: turned into a weapon, or set to scare or threaten someone
+_GUN_WEAPONIZE = (r"\b(?:turrets?|sentry|sentries|(?<!dress )(?<!fabric )(?<!sewing )darts?|as\s+a\s+weapon|weaponi[sz]\w*|"
+                  r"bullets?|blow[- ]?guns?|blowpipes?|threat\w*|intimidat\w*|menac\w*|terrori[sz]\w*|scar(?:e|es|ed|ing)|"
+                  r"frighten\w*|harass\w*|torment\w*|gag(?:s|ged|ging)?)\b")
 WEAPONS = (r"\b(?:weapons?|firearms?|rifles?|pistols?|shotguns?|handguns?|revolvers?|ar-?15s?|ak-?47s?|glocks?|uzis?|"
            r"sub-?machine ?guns?|machine ?guns?|snipers?|tasers?|stun ?guns?|(?<!bath )bombs?|pipe ?bombs?|explosives?|"
            r"grenades?|missiles?|warheads?|rocket launchers?|bazookas?|ammunition|ammo|blowguns?|blowpipes?|crossbows?|"
@@ -1540,7 +1574,85 @@ def _gun_harmless(t: str, m: re.Match) -> bool:
 def _self_massage(s: str) -> bool:
     """A massage gun on the requester's own body is what it is for ("uses the massage gun on my back")."""
     return bool(re.search(r"\bmassage[- ]?guns?\b", s) and
-                re.search(r"\b(?:at|on|onto|against|over|to)\s+(?:(?:me|myself)|my\s+(?:[a-z-]+\s+)?" + _H_BODY + r")\s*$", s))
+                re.search(r"\b(?:at|on|onto|against|over|to|into)\s+(?:(?:me|myself)|my\s+(?:[a-z-]+\s+)?" + _H_BODY + r")\s*$", s))
+
+
+# everyday and safety-minded framings the harm filter must never refuse: a game, a tool doing its ordinary job on a
+# person's hair or a body part, a comfort item, taking a temperature, a light, and the robot's own arm or wrist.
+_H_GAME = (r"\b(?:chess|checkers|chequers|draughts|backgammon|dominoes|scrabble|monopoly|cards|poker|tennis|squash|"
+           r"table ?tennis|ping[- ]?pong|pool|snooker|darts|golf|bowling|a game|the game|games|a match|the match|"
+           r"video ?games?|fifa|mario kart|mario|wii|console)\b")
+_H_HAIR_TOOL = r"(?:curling\s+(?:irons?|tongs?|wands?)|hair\s+(?:irons?|dryers?|straighteners?)|straighteners?|flat\s+irons?)"
+_H_AIM_OK = (  # the matched clause is one of these ordinary, body-care or illumination uses
+    r"\b" + _H_HAIR_TOOL + r"\b(?:(?!\bthroat\b).){0,30}?\bhair\b"
+    r"|\b(?:curling\s+(?:irons?|tongs?|wands?)|flat\s+irons?)\b(?:(?!\bthroat\b|\bface\b|\beye).){0,24}?\b(?:hair|head|fringe|curls?)\b"
+    r"|\bhot[- ]water[- ]?bottles?\b"
+    r"|(?<!blow)(?<!blow[- ])\btorch(?:es)?\b(?:(?!\bface\b|\beyes?\b).){0,40}?\b(?:my|your|the|his|her|our|their)\s+"
+    r"(?:[a-z-]+\s+){0,2}?(?:hand|hands|workbench|bench|project|board|car|sink|desk|table|work|cake)s?\b"
+    r"|(?<!blow)(?<!blow[- ])\btorch(?:es)?\b(?:(?!\bface\b).){0,40}?\bwhile\s+(?:i|we|you|they|he|she)\b"
+    r"|\b(?:temp|temperature|thermometer|infrared|ir)[- ]?guns?\b\s+(?:at|on|to|over|near|against)\s+(?:my|your|the|his|"
+    r"her|their|a|each|every)\s+(?:[a-z-]+\s+){0,2}?(?:forehead|temple|wrist)s?\b"
+    r"|\bheat[- ]?guns?\b(?:(?!\bface\b|\beye|\bthroat\b|\bhead\b).){0,40}?\b(?:warm|dry|thaw|defrost|de-?ice)\w*\b")
+
+
+def _benign_aim(pt: str, words: str) -> bool:
+    """Whether an aimed-at / verb-less match is one of these everyday uses, or a tool mounted on the robot's own arm,
+    wrist or hand ("a robot with a heat gun on the arm"), rather than a tool turned on a person or animal. The purpose
+    ("to warm them") can trail the matched words, so the whole clause is read."""
+    idx = pt.find(words)
+    clause = re.split(r"[.;!?\n]", pt[idx:])[0] if idx >= 0 else words
+    if re.search(_H_AIM_OK, clause):
+        return True
+    m = re.search(r"\b(?:mounted\s+)?on\s+(?:the|its)\s+(?:robot\s+|arm['’]s\s+)?(?:arm|wrist|hand|end|effector|gripper|"
+                  r"tool[- ]?head|mount|flange)s?\b\s*$", words)
+    return bool(m and "robot" in pt and not re.search(r"\b(?:my|your|his|her|our|their|someone|somebody)\b|['’]s\b",
+                                                       words[:m.start()]))
+
+
+# benign idioms for the hurt and restraint verb families: a game, whipping up or burning a disc, feeding sports balls,
+# hair pinned or tied, a baby swaddled or strapped into a seat, a joint taped, pests and poultry secured.
+_H_BENIGN_ACT = (
+    r"^whip\w*\s+(?:me|him|her|us|them|my\s+[a-z-]+|the\s+[a-z-]+|[a-z-]+)\s+up\b"
+    r"|^burn\w*\s+(?:(?:me|him|her|us|them)\s+|[a-z-]+\s+)?(?:a|an|the|some|another|\d+)\s+(?:[a-z-]+\s+){0,2}?"
+    r"(?:cds?|dvds?|discs?|disks?|records?|mixtapes?|albums?|playlists?|blu-?rays?)\b"
+    r"|^hit\w*\s+(?:me|him|her|us|them|[a-z-]+)\s+(?:[a-z-]+\s+){0,2}?(?:balls?|serves?|grounders?|flies|fly\s+balls?|"
+    r"pop[- ]?ups?|lobs?|pucks?|shuttlecocks?|birdies?|returns?)\b"
+    r"|^whip\w*\s+(?:me|him|her|us|them|my\s+[a-z-]+|the\s+[a-z-]+|[a-z-]+)\s+(?:up|one|another|something)\b"
+    r"|^(?:pin|pins|pinned|pinning|tie|ties|tied|tying|clip|clips|braid\w*|plait\w*|put\w*)\s+(?:up\s+|back\s+)?"
+    r"(?:my|your|his|her|their|the)\s+(?:[a-z-]+['’]s?\s+){0,2}?(?:hair|fringe|ponytail|bun|curls?)\b"
+    r"|^(?:wrap|wraps|wrapped|wrapping|swaddl\w+)\s+(?:up\s+)?(?:the|my|your|his|her|their|a)\s+(?:[a-z-]+\s+){0,2}?"
+    r"(?:bab(?:y|ies)|newborns?|infants?|child|toddlers?|hands?)\b(?!(?:(?!\btape\b|\bcling|\brope\b|\bcord\b|around).)*?"
+    r"\b(?:neck|throat|mouth|face|head)s?\b)"
+    r"|^strap\w*\s+(?:[a-z'’-]+\s+){0,3}?(?:in|into)\s+(?:a|an|the|his|her|their|its)\s+(?:[a-z-]+\s+){0,2}?"
+    r"(?:wheelchair|car[- ]?seat|carseat|child\s+seat|booster|high[- ]?chair|seat|pushchair|pram|buggy|stroller|harness|"
+    r"carrier|sling|cot|crib)\b"
+    r"|^tap(?:e|es|ed|ing)\s+(?:up\s+)?(?:my|your|his|her|their|the)\s+(?:[a-z-]+['’]s?\s+){0,2}?"
+    r"(?:knee|ankle|wrist|finger|thumb|hand|foot|toe|shoulder|hamstring|calf|elbow|arm|rib)s?\b"
+    r"|^lock\w*\s+(?:up\s+)?(?:the\s+)?(?:chickens?|hens?|chooks?|coop|ducks?|geese|rabbits?|goats?|sheep|cattle|"
+    r"livestock|poultry|animals?|birds?)\b"
+    r"|^trap\w*\s+(?:the\s+)?(?:mice|mouse|rats?|moles?|vermin|pests?|flies|fly|wasps?|hornets?|insects?|bugs?|roaches?|"
+    r"cockroaches?|ants?|slugs?|snails?)\b")
+
+
+_H_CARE = (r"\b(?:for|while|so|until|as|when)\b(?:(?!\bhit\b|\bhurt\b|\bbeat\b|\btickl).){0,40}?\b(?:vet|"
+           r"doctor|nurse|groomer|dentist|farrier|trim\w*|clip\w*|groom\w*|brush\w*|bath\w*|wash\w*|exam\w*|check\w*|"
+           r"treat\w*|medic\w*|inject\w*|vaccin\w*|haircut|claws?|nails?|blood|x-?ray|physio|dress(?:es|ed|ing)?\s+"
+           r"(?:the\s+|a\s+|my\s+|his\s+|her\s+|its\s+)?(?:wound|cut|graze|leg|arm|paw)|bandag\w*|shear\w*|shav\w*)\b")
+
+
+def _benign_act(pt: str, m: "re.Match") -> bool:
+    """Whether a hurt or restraint match is a game, a kitchen or hair idiom, safe securing, or holding an animal or a
+    person still for care ("holds the cat still while i trim its claws"), not harm."""
+    seg = re.split(r"[.;!?\n]", pt[m.start():])[0][:110]
+    if re.search(_H_BENIGN_ACT, seg):
+        return True
+    if re.match(r"(?:hold|holds|holding|held|pin|pins|pinned|pinning|keep|keeps|keeping)\b", seg) and \
+            re.search(r"\b(?:down|still)\b", seg) and re.search(_H_CARE, seg):
+        return True
+    if re.match(r"beat\w*\b", seg) and re.search(_H_GAME, pt) and \
+            not re.search(r"\b(?:up|down|senseless|unconscious|black\s+and\s+blue|to\s+a\s+pulp)\b|\bwith\s+a\b", seg):
+        return True
+    return False
 
 
 def _negated(t: str, start: int) -> bool:
@@ -1591,15 +1703,15 @@ def harmful(text: str) -> str | None:
         if m:
             return m.group(0)
     for words in _aimed_at(pt):
-        if not _self_massage(words):
+        if not _self_massage(words) and not re.search(_H_AIM_OK, words) and not _benign_aim(pt, words):
             return words.strip()
     for pat in HOSTILE:
         for m in _rx(pat).finditer(pt):
-            if not _self_massage(m.group(0)):
+            if not _self_massage(m.group(0)) and not _benign_act(pt, m):
                 return m.group(0).strip()
     for pat in _H_NO_VERB:
         for m in _rx(pat).finditer(pt):
-            if not _self_massage(m.group(0)) and not _negated(pt, m.start()):
+            if not _self_massage(m.group(0)) and not _negated(pt, m.start()) and not _benign_aim(pt, m.group(0)):
                 return m.group(0).strip()
     if _rx(_H_ANY_DANGER).search(pt):
         for pat in HOSTILE_WITH_DANGER:
@@ -1610,7 +1722,15 @@ def harmful(text: str) -> str | None:
     if guns:
         m = _rx(GUN_CONTEXT).search(t)
         if m:
-            return m.group(0).strip()
+            tool_only = all(re.search(r"\b(?:" + _H_OLD_TOOL_GUN + "|" + _H_NEW_TOOL_GUN + r")[- ]?guns?$",
+                                      t[max(0, g.start() - 25):g.end()]) for g in guns)
+            # a tool gun that builds a fence, lock or alarm guards a place by construction, not as a weapon; and a tool
+            # gun handed or passed to people names them as who receives it, not a target
+            recipient = (re.match(r"(?:strangers?|people|customers?|visitors?|guests?|clients?|passers)", m.group(0)) and
+                         re.search(r"\b(?:hand|hands|pass|passes|give|gives|offer|offers|lend|lends|sell|sells)\w*\b.*"
+                                   r"\b(?:to|for)\s+$", t[:m.start()]))
+            if not (tool_only and ((_rx(_GUN_BUILDS).search(t) and not _rx(_GUN_WEAPONIZE).search(t)) or recipient)):
+                return m.group(0).strip()
         for g in guns:
             near = t[max(0, g.start() - 25):g.end()]
             if not re.search(r"\b(?:" + _H_OLD_TOOL_GUN + "|" + _H_NEW_TOOL_GUN + r")[- ]?guns?$", near):
@@ -2423,7 +2543,9 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
     if text and text.strip():
         t = text.strip()[:2000]
         p = parse(t)
-        hit = p["harm"] or harmful(conversation(b, t))   # "a robot that holds a rivet gun", then "point it at my brother"
+        # read harm over the whole conversation, not the reply alone: "a robot that holds a rivet gun" then "point it at
+        # my brother" is caught; "a robot that plays chess" then "it should beat my dad" keeps the game context
+        hit = harmful(conversation(b, t))
         if hit:
             refuse(b, hit, "rules")
             return notes

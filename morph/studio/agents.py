@@ -350,11 +350,14 @@ def run_turn(b: B.Brief | None = None, *, text: str | None = None, answers: dict
     if not new and (answers or words):
         B.answer(b, answers, words or None)
     if words and b.status != "refused":
-        hit = B.harmful(words)                       # the local filter runs before any network call
-        if hit:
-            B.refuse(b, hit, "rules")
-            tl("triage", "rules", "done", "Refused before anything was sent anywhere", ms=0)
-            return b
+        # the local filter runs before any network call; on a later turn answer() has already read the whole
+        # conversation, so a reply ("it should beat my dad") is not re-judged on its own out of context
+        if new:
+            hit = B.harmful(words)
+            if hit:
+                B.refuse(b, hit, "rules")
+                tl("triage", "rules", "done", "Refused before anything was sent anywhere", ms=0)
+                return b
         sq, client = (_subq() if new else None), _claude()
         if new:
             b.request = words
