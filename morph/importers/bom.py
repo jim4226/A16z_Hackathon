@@ -141,13 +141,23 @@ ACCESSORY = re.compile(r"(?:horns?|brackets?|mounts?|mounting|holders?|plates?|c
 _PART_VERB = re.compile(r"(?:uses?|using|used|requires?|required|needs?|needed|holds?|holding|houses?|takes?|accepts?|"
                         r"carries|driven|drives?|mounted|attached|attaches|with|without|w|incl|inkl|by|from|upgrade|"
                         r"alternative|instead|replaces)", re.I)
-_PART = re.compile(r"(?:frames?|idlers?|gearbox(?:es)?|splines?|shafts?|couplers?|couplings?|bearings?|discs?|disks?|"
-                   r"flanges?|spacers?|standoffs?|magnets?|stickers?|labels?|gaskets?|grommets?|potentiometers?|pcbs?|"
-                   r"linkages?|rods?|pushrods?|savers?|stands?|parts?|prints?|printed|pla|petg|tpu|resin|filament|"
-                   r"jigs?|tools?|pulleys?|belts?|springs?|tubes?|sleeves?|bushings?|lids?|enclosures?|box|boxes|"
-                   r"cradles?|trays?|glue|grease|tape|pads?|feet|foot|clamps?|extrusions?|rails?|platforms?|chassis|"
-                   r"shells?|knobs?|sinks?|heatsinks?|fans?|connectors?|plugs?|sockets?|headers?|terminals?|"
-                   r"switch(?:es)?|modules?|sensors?|gimbals?|ball|balls|mechanical|bionic|prosthetic)", re.I)
+_PART = re.compile(  # mechanical parts, then what _category files as electronics, cables, fasteners or material, tools
+    r"(?:frames?|idlers?|gearbox(?:es)?|splines?|shafts?|axles?|couplers?|couplings?|collars?|bearings?|discs?|disks?|"
+    r"flanges?|magnets?|stickers?|labels?|gaskets?|grommets?|potentiometers?|linkages?|rods?|pushrods?|levers?|savers?|"
+    r"stands?|parts?|prints?|printed|jigs?|templates?|tools?|pulleys?|belts?|springs?|tubes?|sleeves?|bushings?|lids?|"
+    r"enclosures?|box|boxes|cradles?|trays?|panels?|pads?|feet|foot|clamps?|extrusions?|rails?|platforms?|chassis|"
+    r"shells?|knobs?|sinks?|heatsinks?|fans?|gimbals?|ball|balls|casters?|tires?|tyres?|omni|mecanum|mechanical|bionic|"
+    r"prosthetic|"
+    r"boards?|shields?|hats?|modules?|pcbs?|sensors?|webcams?|arduinos?|esp32|raspberry|u2d2|openrb|urt-?1|escs?|"
+    r"odrive|"
+    r"step-?down|buck|boost|converters?|regulators?|capacitors?|resistors?|diodes?|transistors?|mosfets?|relays?|"
+    r"leds?|displays?|screens?|lcds?|oleds?|chips?|ics?|mcus?|microcontrollers?|shifters?|buffers?|ch340|interfaces?|"
+    r"fuses?|switch(?:es)?|connectors?|plugs?|sockets?|headers?|terminals?|breadboards?|multimeters?|"
+    r"jumpers?|dupont|splitters?|ties?|"
+    r"inserts?|spacers?|standoffs?|rivets?|fasteners?|dowels?|"
+    r"filament|pla|petg|tpu|resin|sheets?|glue|epoxy|grease|oil|tape|lubricant|loctite|threadlocker|"
+    r"pliers|screwdrivers?|wrench(?:es)?|spanners?|drills?|bits|cutters?|knife|knives|manuals?|guides?|books?|"
+    r"instructions|documentation)", re.I)
 # a part named after the motor it fits, in one word ("Servohorn", "Servo-Halterung", "Motorhalter") or with a German
 # part's ending ("Servokabel", "Grundplatte")
 _COMPOUND_PART = re.compile(r"(?:servo|motor)-?[a-z]+|[a-z]+(?:horn|halter|halterung|kabel|platte|schrauben?|"
@@ -378,9 +388,12 @@ def _is_motor_name(item: str) -> bool:
             return False                               # "Holds STS3215 servo", "Servohalter SG90 Servo"
     rest = words[motors[-1] + 1:]
     model = next((i for i, (w, _) in enumerate(rest) if w.startswith(_MODEL_MARK)), None)
-    if model is not None:                              # "Servo ID 1 STS3215": a label between the motor word and model
-        if not _qualifies(rest[:model]):
-            return False
+    if model is not None:                              # "Servo ID 1 STS3215", "Servo shoulder pan STS3215": only which
+        mid = rest[:model]                             # joint or motor between the motor word and model ("Servo horn
+        named = [w for w, k in mid if k == "plain" and not _descriptive(w)]     # STS3215" is a horn)
+        if not _describes([w for w, k in mid if k == "plain"]) and not (_qualifies(mid) and all(
+                _MOTION.fullmatch(w) or _JOINT_AFTER.fullmatch(w) or w in ("id", "no", "nr", "number") for w in named)):
+            return False                               # ("Servo robot arm STS3215" is a servo for a robot arm)
         rest = rest[model + 1:]
     after = []
     for w, k in rest:

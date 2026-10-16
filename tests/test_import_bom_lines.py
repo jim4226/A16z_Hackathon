@@ -114,6 +114,32 @@ def test_every_hunted_parts_list_line_reads_the_way_its_reader_does():
     assert not bad, bad
 
 
+PART_NOUNS = ["horn", "bracket", "mount", "plate", "adapter", "board", "driver", "cable", "frame", "idler", "spline",
+              "shaft", "coupler", "bearing", "disc", "spacer", "magnet", "sticker", "linkage", "saver", "printed part",
+              "pulley", "enclosure", "clamp", "heatsink", "connector", "module", "sensor", "shield", "hat", "splitter",
+              "fuse", "capacitor", "regulator", "buck converter", "zip tie", "pliers", "screwdriver", "manual", "guide",
+              "gimbal", "omni wheel", "servo arm", "servo horn", "servo shield", "servo hat", "servo wheel",
+              "motor mount", "motor driver", "motor coupler"]
+FORMS = ["{n} {m}", "{N} {m}", "{N}: {m}", "{m} {n}", "{m}: {n}", "[{N}] {m}", "{N} ({m})", "{N} - {m}", "{N} for {m}",
+         "Servo {n} {m}", "{m} servo {n}"]
+
+
+def test_a_part_in_a_labels_place_is_never_a_servo():
+    """A label is open (any words naming the joint, arm or motor), so the words that name other parts are what keeps
+    a part a part, in every place a label goes: before the model, after its ":", in brackets first, before brackets or
+    a dash, and between the motor word and the model. 0033630 read none of these as a motor; the first open rule
+    read 610 of the fixer's 8,790 such lines as motors ("Shield MG996R", "Servo hat SG90", "Splitter: STS3215")."""
+    bad = []
+    for n in PART_NOUNS:
+        for m in ("STS3215", "MG996R", "SG90", "XL430-W250-T", "DS3218"):
+            for f in FORMS:
+                line = f.format(n=n, N=n.capitalize(), m=m)
+                (r,) = bom.map_table([["Part", "Qty", "Notes"], [line, "1", ""]])[0]
+                if r["catalog"]:
+                    bad.append((line, r["catalog"]))
+    assert not bad, bad
+
+
 @pytest.mark.parametrize("name, want", [
     ("aloha_bimanual.csv", {"xm430_w350": 16, "xl430_w250": 10}), ("motor_ids.csv", {"sts3215_7v4": 6}),
     ("lerobot_joint_names.csv", {"sts3215_7v4": 6}), ("lerobot_model_first.csv", {"sts3215": 6}),

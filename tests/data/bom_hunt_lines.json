@@ -1437,5 +1437,19 @@
 {"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["MIT Mini Cheetah actuator", "1", ""], "key": null, "accept": [], "category": "actuator", "pack": null, "wrong_at_0033630": null},
 {"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Stepper motor NEMA 17", "1", ""], "key": null, "accept": [], "category": "actuator", "pack": null, "wrong_at_0033630": null},
 {"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Schrittmotor NEMA 17", "1", ""], "key": null, "accept": [], "category": "actuator", "pack": null, "wrong_at_0033630": null},
-{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Greifer-Servo SG90", "1", ""], "key": "sg90", "accept": [], "category": "actuator", "pack": null, "wrong_at_0033630": null}
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Greifer-Servo SG90", "1", ""], "key": "sg90", "accept": [], "category": "actuator", "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Shield MG996R", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Servo shield SG90", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Servo hat: SG90", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Servo wheel MG996R", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Omni wheel STS3215", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Splitter: STS3215", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["[Fuse] SG90", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Capacitor (MG996R)", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Zip tie - DS3218", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Pliers XL430-W250-T", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Manual: STS3215", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Buck converter SG90", "1", ""], "key": null, "accept": [], "category": null, "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Servo robot arm STS3215", "1", ""], "key": "sts3215_7v4", "accept": [], "category": "actuator", "pack": null, "wrong_at_0033630": null},
+{"group": "FX.fixer", "tag": "fixer", "header": ["Part", "Qty", "Notes"], "line": ["Wheel: STS3215 12V", "1", ""], "key": "sts3215", "accept": [], "category": "actuator", "pack": null, "wrong_at_0033630": null}
 ]
