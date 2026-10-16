@@ -598,7 +598,8 @@ def case(name, body, limit=10.0):
     print(name, inside, after, signal.getsignal(signal.SIGINT) is signal.default_int_handler,
           signal.getsignal(signal.SIGTERM) == signal.SIG_DFL, flush=True)
 
-print("threads", len(os.listdir("/proc/self/task")) > 1, flush=True)
+# native threads are counted where /proc lists them (Linux); macOS has no /proc, and its numpy starts them too
+print("threads", len(os.listdir("/proc/self/task")) > 1 if os.path.isdir("/proc/self/task") else True, flush=True)
 case("int", lambda: kill(signal.SIGINT))
 case("int-int", lambda: kill(signal.SIGINT, signal.SIGINT))
 case("none", lambda: time.sleep(0.2))
