@@ -697,7 +697,15 @@ in sections 3, 4 and 8. The rest that other code relies on:
   charger, battery and the like, in the name before what it comes with: "with", "incl.", "(", "+") is never a catalog
   motor, so "12V 5A power supply for STS3215 servos" or "STS3215 servo horn" isn't one; and a name that is a motor's
   kind with up to three words before it and a count after it (`bom.GENERIC_MOTOR`: "Feetech servo", "Gripper servo",
-  "Servo (x6)") is what its description says. Rows add `description` and `catalog_name`. An object import whose grip would bend the fingers
+  "Servo (x6)") is what its description says. R5: the accessory word counts only as what the name names
+  (`bom._accessory`): its head noun, the last plain word before what it comes with or is described by (also a comma,
+  ";", a spaced dash, "included", "built-in", "for", and after the motor word a spec such as 12V or 30kg.cm; a trailing
+  kit, set or pack word skipped), or a word before the motor word ("Power supply servo"). So "STS3215 servo, horn
+  included", "Feetech STS3215 Servo Motor 12V Metal Case", "STS3215 12V servo - plastic case", "XL430-W250-T servo,
+  cable included", "STS3215 high-torque servo, flange mount" and "Dynamixel XM430-W350-T built-in controller" are
+  catalog motors again (R4 made them none, purchased, cable or electronics), while "STS3215 servo 25T metal horn",
+  "STS3215 servo horn kit" and "STS3215 servo motor driver" aren't; the review's 50-line comparison maps as R4 did.
+  Rows add `description` and `catalog_name`. An object import whose grip would bend the fingers
   gets New robot's repair (`api_import._fit_fingers`: `brief.preflight`'s deflection check, the beam 1.5 mm thicker at
   a time up to 14 mm), said in its reply. When an import's build isn't feasible (a robot's first build, an object's
   revision), `api_import._explain` posts an assistant message in that project's chat (kept in its history) with up to

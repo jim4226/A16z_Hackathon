@@ -94,22 +94,50 @@ def _qty(s: str) -> int | None:
 GENERIC_MOTOR = re.compile(r"(?:[\w.-]+\s+){0,3}?(?:servo|motor|actuator)(?:\s+motor)?s?"
                            r"(?:\s*\(\s*(?:x\s*)?\d+\s*(?:pcs?)?\s*\)|\s+x\s*\d+)?", re.I)
 # a part for a motor, named after it: "STS3215 servo horn", "Bus servo driver board for STS3215", "12V power supply for
-# STS3215 servos", "M3 screw for STS3215". What a line comes with ("... with horn", "(incl. screws)") doesn't count
+# STS3215 servos", "M3 screw for STS3215": the thing the name names is one of these (_accessory). What a
+# line comes with or is described by ("... with horn", "(incl. screws)", "..., horn included", "... - plastic case",
+# "... built-in controller", "... Servo Motor 12V Metal Case") doesn't count
 ACCESSORY = re.compile(r"\b(?:horns?|brackets?|mounts?|mounting|holders?|plates?|covers?|cases?|adapters?|clips?|caps?|"
                        r"boards?|drivers?|controllers?|supply|supplies|psus?|screws?|bolts?|nuts?|washers?|cables?|"
                        r"wires?|harness(?:es)?|hubs?|extensions?|testers?|chargers?|batter(?:y|ies))\b", re.I)
-_COMES_WITH = re.compile(r"\(|\b(?:with|incl|including|includes)\b|\bw/|\+", re.I)
+_COMES_WITH = re.compile(r"\(|\b(?:with|incl|including|includes|included|built[- ]?in|for)\b|\bw/|\+|[,;]|\s[-\u2013\u2014]\s",
+                         re.I)
+_SPEC = re.compile(r"\d+(?:[.,]\d+)?(?:v|vdc|kg(?:[.]?cm|f)?|n[\u00b7.]?m|ncm|m?a|mah|rpm|w|g)", re.I)   # 12V, 30kg.cm
+_MOTOR_WORD = re.compile(r"(?:servo|motor|actuator)s?", re.I)
+_GROUP = re.compile(r"(?:kit|set|pack|pair|bundle|pcs?|pieces?)", re.I)
+
+
+def _accessory(item: str) -> bool:
+    """Whether a part name names an accessory (ACCESSORY): its head noun, the last plain word before what it comes with
+    or is described by ("STS3215 servo horn", "Servo horn kit": horn), or a word before the motor word ("Power supply
+    servo"). After the motor word, a spec ends the name ("Servo Motor 12V Metal Case" is a motor), and part numbers and
+    specs aren't words ("STS3215 12V": none)."""
+    head = re.sub(r"(\d)\s+(v|vdc|a|ma|mah|kg|w|g|rpm)\b", r"\1\2", _COMES_WITH.split(item, 1)[0], flags=re.I)
+    plain, before, motor = [], [], False
+    for w in head.split():
+        w = w.strip(".:")
+        if motor and _SPEC.fullmatch(w):
+            break                                          # "STS3215 Servo Motor 12V Metal Case": what follows describes it
+        if _MOTOR_WORD.fullmatch(w):
+            motor = True
+        if re.fullmatch(r"[A-Za-z]+(?:-[A-Za-z]+)*", w):
+            plain.append(w)
+            if not motor:
+                before.append(w)
+    while plain and _GROUP.fullmatch(plain[-1]):
+        plain.pop()
+    return bool(plain and ACCESSORY.fullmatch(plain[-1])) or any(ACCESSORY.fullmatch(w) for w in before)
 
 
 def _catalog_key(item: str, mpn: str = "", detail: str = "") -> str | None:
     """The catalog actuator a BOM line names. Only its part name and MPN can name one: a screw or a driver board whose
     notes mention the servo it is for is not a servo, and neither is a horn, a bracket, a power supply or a board named
-    after the servo it is for (ACCESSORY, in the name before what it comes with). The description, notes or specs
+    after the servo it is for (ACCESSORY, the name's head noun: not what it comes with). The description, notes or specs
     (`detail`) then only pick the variant of the motor the name already names, when the name doesn't say: "STS3215"
     with "12V" in its description is the 12 V servo. A line named only as a motor ("Servo", "Bus servo", "Feetech
     servo", "Gripper servo", "Servo (x6)") is what its description says."""
     from .autoprofile import TEXT_RX, VARIANT_RX, VARIANTS
-    if ACCESSORY.search(_COMES_WITH.split(item, 1)[0]):
+    if _accessory(item):
         return None
     name = " ".join(x for x in (item, mpn) if x)
     if detail and GENERIC_MOTOR.fullmatch(item.strip()) and not any(rx.search(name) for rx, _ in TEXT_RX):

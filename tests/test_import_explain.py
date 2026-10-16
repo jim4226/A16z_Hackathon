@@ -62,6 +62,16 @@ LINES = [  # (header, line, catalog key): only the part name or MPN names a moto
     # what a servo comes with doesn't make it an accessory
     (["Part", "Qty", "Notes"], ["STS3215 servo with horn and screws", "6", "12V"], "sts3215"),
     (["Part", "Qty", "Notes"], ["STS3215 Servo 7.4V, 1/345 gear (C001, incl. cable)", "6", ""], "sts3215_7v4"),
+    # nor do a comma, a dash, "included" or "built-in", or a spec after the motor word: the review's servo lines (R5)
+    (["Part", "Qty", "Notes"], ["STS3215 servo, horn included", "6", ""], "sts3215_7v4"),
+    (["Part", "Qty", "Notes"], ["Feetech STS3215 Servo Motor 12V Metal Case", "6", ""], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215 servo motor, aluminium case, 12V", "6", ""], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215 12V servo - plastic case", "6", ""], "sts3215"),
+    (["Part", "Qty", "Notes"], ["XL430-W250-T servo, cable included", "4", ""], "xl430_w250"),
+    (["Part", "Qty", "Notes"], ["STS3215 high-torque servo, flange mount", "6", ""], "sts3215_7v4"),
+    (["Part", "Qty", "Notes"], ["Dynamixel XM430-W350-T built-in controller", "4", ""], "xm430_w350"),
+    (["Part", "Qty", "Notes"], ["Feetech STS3215 servo 12 V metal case", "6", ""], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215 servo kit", "6", "12V"], "sts3215"),
     # not motors, whatever their notes say
     (["Part", "Qty", "Comments"], ["M3x8 screw", "20", "for the STS3215 12V horn"], None),
     (["Part", "Qty", "Notes"], ["Waveshare bus servo driver board", "1", "drives the STS3215 12V servos"], None),
@@ -78,6 +88,15 @@ LINES = [  # (header, line, catalog key): only the part name or MPN names a moto
     (["Part", "Qty", "Notes"], ["Gripper servo bracket", "1", "SG90"], None),
     (["Description", "Qty"], ["M3 screw for STS3215 12V", "20"], None),
     (["Description", "Qty"], ["Waveshare servo driver board for the STS3215 12V servos", "1"], None),
+    # what the name names is the part, wherever the servo is in it (R5)
+    (["Part", "Qty", "Notes"], ["STS3215 servo 25T metal horn", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo horn kit", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 bracket set", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["Power supply 12V 5A, for STS3215 servos", "1", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo motor driver", "1", ""], None),
+    (["Part", "Qty", "Notes"], ["Horn - aluminium, fits STS3215", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["Power supply servo", "1", "STS3215 12V"], None),      # an accessory word before the servo
+    (["Part", "Qty", "Notes"], ["Cable servo", "6", "STS3215 12V"], None),
 ]
 
 
