@@ -1,5 +1,5 @@
 {
- "about": "One-line requests and what New robot must read from them (tests/test_brief_answers.py::test_the_hand_over_table). task: hand_over, not_hand_over or null (either); people: yes (yes or children) or children; estop: the build has an emergency stop. Every row also keeps the invariant that a hand-over has people next to it and an emergency stop. From the round-5 release-review hunt.",
+ "about": "One-line requests and what New robot must read from them (tests/test_brief_answers.py::test_the_hand_over_table). task: hand_over, not_hand_over or null (either); people: yes (yes or children) or children; estop: the build has an emergency stop. Every row also keeps the invariant that a hand-over has people next to it and an emergency stop. From the round-5 release-review hunts (the first 573 rows, then the second hunt's rows, families P-*2/P-*3, N-*2, S-*, X-toolgun and the like) and the fixer's own hunt (families A-* and B-*).",
  "rows": [
   {
    "text": "a robot that brings the meds to her",
@@ -3669,6 +3669,6446 @@
    "text": "give her toys to the toy box",
    "family": "N-her-object",
    "task": "not_hand_over"
+  },
+  {
+   "text": "a robot that dispenses pills to my grandma every morning",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the retractor to the scrub nurse",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand sutures to the anaesthetist",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes instruments to the anesthesiologist",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the drill bits to the dentist",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands instruments to the dental hygienist",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the specimen tubes to the phlebotomist",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot arm that passes x-ray cassettes to the radiographer",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the gauze to the midwife during the delivery",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that brings water to patients in bed",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that brings the pill box to the old lady in room 4",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the inhaler to whoever needs it",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "fetch my nan her walking stick",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the bedpan to the orderly",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the syringe to the vet nurse",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring meds to the residents of the care home",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that gives out medicine to the residents",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands out cups of water to the patients",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the oxygen mask to the paramedic",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the eye drops to my aunt",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the thermometer to the sick kid",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands tissues to the person in the hospital bed",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my wife her insulin pen",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the insulin to my diabetic husband",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that brings my blind grandpa his mug",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the cane to granny when she stands up",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the hearing aid to grandpa",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the anesthesiologist the tray",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the optometrist the lenses",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands the chiropractor clean towels",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the physio her resistance bands",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that gives the patient a cup of water after surgery",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a bedside robot that hands my mother her phone",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot to hand my paralysed son his water bottle",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the stroke patient his spoon",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes the pharmacist the pill bottles",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the dialysis nurse the tubing",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the pills to the elderly man in bed 3",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot arm to hand the surgeon whatever instrument she asks for",
+   "family": "P-care2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that feeds me",
+   "family": "P-feed",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that feeds my grandad his dinner",
+   "family": "P-feed",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot arm that spoon-feeds my disabled daughter",
+   "family": "P-feed",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a feeding robot that brings the spoon to my son's mouth",
+   "family": "P-feed",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that feeds soup to patients who can't use their hands",
+   "family": "P-feed",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "an assistive arm that feeds me breakfast",
+   "family": "P-feed",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the remote to my hubby",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand my bestie the controller",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass my roomie the chips",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my kiddo his juice",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my abuela her pills",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the pills to my nonna",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the tea to my oma every afternoon",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the newspaper to my old man",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her husband his coffee",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the toy to her little brother",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the bottle to their newborn",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the keys to his girlfriend",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the snacks to my kids' friends",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the tablet to my grandkid",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that brings my 90 year old mum her tea",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my partner's mum a cup of tea",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand his son the ball",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand their daughter her lunchbox",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give my niece the crayons",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my twin sister her phone",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the bottle to my sister's baby",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand my stepdad his tools",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the salt to my father in law",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand my godmother the cake",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the cake to my godmother",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass my missus her tea",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my other half a coffee",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my hubby a beer",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my mom her coffee in bed",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give my baby girl her bottle",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand my little one his spoon",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my grandpa's carer the keys",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand her boyfriend the controller",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the remote to his flatmate",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the parcel to our lodger",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the post to my landlady",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the rent envelope to our landlord",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give my sweetheart a rose",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my fiancee her ring",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the drink to my date",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my bf his phone charger",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my gf her coffee",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give my grandma's neighbour the spare key",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the medicine to my great grandma",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my great-grandad his slippers",
+   "family": "P-poss2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring granma her tea",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand gramma the remote",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give grampa his pills",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the paper to granpa",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "fetch nanna her glasses",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring pops his coffee",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the cookies to meemaw",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand pop-pop his cane",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the tea to ma",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring pa his boots",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the salt to sis",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give bro the controller",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring mother her shawl",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring father his pipe",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand grandmother her knitting",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass auntie the sugar",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the slippers to grandad",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the bottle to baby",
+   "family": "P-kin2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "hand parts to the fitter",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes totes to the picker",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the boxes to the loader on the dock",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a cobot that hands rivets to the riveter",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass bolts to the line lead",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands components to the solderer",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the finished parts to the QA inspector",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the bags to the bagger",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands totes to the associate",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass trays to the sales associate",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand tools to the electrician",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the pipe fittings to the plumber",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass screws to the carpenter",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand bricks to the bricklayer",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot arm that hands the foreman the clipboard",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the plates to the server",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands dishes to the busboy",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the orders to the food runner",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand cocktails to the waitstaff",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the pizza to the delivery guy",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand parcels to the postman",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass pipettes to the chemist",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the slides to the biologist",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the wafers to the process engineer",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the jeweller the loupe",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the fabric to the seamstress",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass pins to the tailor",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the brushes to the painter",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands the barber his clippers",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands the tattoo artist the ink caps",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes the ball to the player",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands balls to the tennis player",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that feeds tennis balls to the player",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass rackets to the coach",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the climber the rope",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands water bottles to runners at the marathon",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the drive-thru order to the driver",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands cups to the barista",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the parts to whoever is on shift",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the part to the next person in line",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the tray to the operator at station 3",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the soldering iron to the repair tech",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a cobot that hands screws to the assembly worker",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the boxes to the warehouse staff",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands the cashier coins",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands the shelf stacker cans",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the parts to the forklift driver",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the cutlery to the kitchen porter",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the prepped veg to the line cook",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the plates to the sous chef",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the meal tray to the flight attendant",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes the stewardess the drinks",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the sample to the lab manager",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the beakers to the postdoc",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the specimen to the PhD student",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the tools to the handyman",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the camera to the cameraman",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the hose to the fireman",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the keys to the repairman",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the brochure to the salesperson",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the files to the chairperson",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the gavel to the chairman",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the product to the craftsman",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the boxes to the workmen",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the parts to the fabricator",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the finished welds to the inspector on the line",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands the press operator blanks",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that gives the machinist the next stock bar",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands the shop clerk the price labels",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the menus to the hostess",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the ticket to the conductor",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the conductor my ticket",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the baton to the next runner",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands mail to the mailman",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the coffee to the security guard",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands parts to the human on the other side of the bench",
+   "family": "P-work2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands me screws while I solder",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "gimme the screwdriver when I ask",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that can gimme tools",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "can u pass me the tape",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes stuff to u",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring us drinks on the couch",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass him the hammer",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring them water",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring them their meds",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand it to them",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass it to him",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give it to her",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand it back to me",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand those to me",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring it over to me",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass me over the pliers",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the parts over to us",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that throws me a ball",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "chuck me a beer from the cooler",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "lob the ball to me",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "slide the cup over to me",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring everyone a drink",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring everybody their plates",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "serve everyone cake",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring each guest a glass",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand each worker a part",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give whoever asks a pen",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give a pen to whoever asks",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass a cup to each person",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring ya the wrench",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass ya the salt",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand y'all the menus",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give us the screws one at a time",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass 'em the bolts",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand him over the keys",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her over a blanket",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring me and my wife our coffee",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the two of us drinks",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "get her a glass of water",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "get him his jacket",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "get them their coats",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand them their coats",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass them the ketchup",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand me and my buddy the tools",
+   "family": "P-pron2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring grandma a blanket",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "fetch the nurse a towel",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "get the doctor her coffee",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring Mum a cuppa",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "get Dad a beer",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "grab my brother a towel",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "fetch my wife her glasses",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass Grandpa his pipe",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the guests their coats",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "serve the diners their soup",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the patient her lunch tray",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "throw the dog walker the leash",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the kid a balloon",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the welder a new rod",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "toss the mechanic a rag",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the customer her receipt",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "offer the visitors a brochure",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pour me a glass of water and hand it to me",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the old man his cane",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the little girl a sticker",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the boy a cookie",
+   "family": "P-indir2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the pills to mary",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the tea to john every morning",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand sarah the stapler",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand bob the parts",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the meds to Abuela",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand Nurse Jones the gauze",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the clamp to Nurse Kelly",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the scalpel to Doctor Patel",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give Doctor Lee the chart",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the ball to Coach Taylor",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand Chef Marco the knife",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring Uncle Bob his beer",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give Auntie May her tea",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass Professor Chen the slides",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the report to Prof Adams",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the coffee to Captain Smith",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring Father Tom his book",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand Sister Mary the bandages",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "Mary needs a robot that hands her the pills",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "Sarah's robot should bring her the remote",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give Mr. Brown the invoice",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring Ms Garcia her mail",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand Jo the screws",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the meds to Ed at 8pm",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the parts to Raj on the line",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the medicine to Grandpa Joe",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the bottle to Baby Mia",
+   "family": "P-name2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "brign the meds to her",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring teh pills to grandma",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass teh wrench to me",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hnd me the screwdriver",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "giv me the pliers",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "plz hand me stuff while i work on my bike",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "robot that brings grandma her pils",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand teh nurse the gauze",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the scalpel to teh surgeon",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the meds to my grandmum",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "brng me a beer",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pas me the salt",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hadn me the tools",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the pills to my granmother",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the pills to my grandmohter",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the medecine to the nures",
+   "family": "P-typo",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "yo robot pass me a beer",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "can it hand me stuff",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "i want it to pass me nails while im on the ladder",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "something that brings my grandma her meds lol",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand me da wrench",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pls bring me my phone",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring me ma phone",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "BRING THE MEDS TO MY GRANDMA",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "Bring The Meds To Grandma",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "need a bot to pass me parts when i'm soldering",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "an arm that chucks me snacks while i game",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "robot butler-ish thing that brings me drinks",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a lil arm that hands me my vape",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "just want something to pass me screws tbh",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "brings me coffee every morning pls",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "an arm on my desk that gives me pens when i point",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand me the thingy",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the brew to me mam",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the spanner to the fitter, ta",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the lolly to the wee one",
+   "family": "P-casual2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that works alongside my staff",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a cobot that shares the bench with a technician",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I'll be standing right beside it",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I'm next to it the whole time",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "my coworker stands beside the robot",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the robot sits between two packers",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot on a bench where a person also works",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that sorts bolts on the table I work at",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the robot and I share a workbench",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "workers load the bins by hand",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "an operator feeds it parts",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "an operator loads the fixture and the robot unloads it",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "operators work right next to it",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that helps the nurse lift supplies",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that assists the surgeon during operations",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that assists the operator",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that keeps my grandma company and brings her things",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "students will use it in class",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that works with the welders on the line",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the arm works across the table from me",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I sit right in front of it all day",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "my assistant stands next to it",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands off to a human worker",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "people walk past it all the time",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "visitors can touch it at the museum",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "customers grab their order from its gripper",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the nurse takes the tray from the robot",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "my grandma takes the cup from its gripper",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the operator picks the part out of its hand",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the cook takes plates from it",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot I work next to on the bench",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "we work beside it on the line",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the robot is used by my disabled son",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot my elderly mother will use",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot for a wheelchair user",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot to help a blind person sort their mail",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot to help a person with arthritis open jars",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that helps my dad who has parkinsons",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that works next to the cashier",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "kids will be watching",
+   "family": "P-near2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "deliver the mail to the receptionist",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "return the tools to the technician",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "send the parts to the welder",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "supply the welder with rods",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "provide the operator with screws",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "distribute snacks to the kids",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand off the baton to the next runner",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the parcel along to the next worker",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "drop the keys off to my son",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "slide the tray across to the cook",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "lend my neighbour the drill",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hold the cup out to her",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hold the part up to the inspector",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass along samples to the chemist",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give back the remote to my brother",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the jar to whoever is nearest",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "deliver lunch to the nurses",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "present the ring to the bride",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "serve the soup to the diners",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "serve wine to the patrons",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "serve drinks to the guests",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "offer cookies to visitors",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand out programmes to the audience",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that dishes out food to the kids",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "dispense medication to residents at mealtimes",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that delivers drinks to people at the bar",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that sends tools over to the mechanic",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "transfer the instruments to the surgeon",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes on parts to the operator",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "return the cup to my grandma",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand round the sweets to the children",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass round the cups to everyone",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that gets drinks for the guests",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that collects the plates and returns them to the waiter",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring back the tools to the engineer",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the plate back to the chef",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that throws the frisbee to my kids",
+   "family": "P-verb2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "fetch a towel for the nurse",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "get a drink for my dad",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "grab the remote for grandpa",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pick up the dropped items for my mum",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that picks things up off the floor for my disabled wife",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "reach the top shelf for me",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "open jars for my arthritic mum",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pour drinks for the guests",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that makes coffee for my grandma",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that sorts pills for my dad",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that cuts food for my elderly father",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that holds the phone for my quadriplegic brother",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that turns pages for my mum",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that butters toast for the kids",
+   "family": "P-for2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand my toddler his sippy cup",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "a robot that gives the kids their crayons",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "pass the ball to my son",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "give the bottle to the infant",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "hand the blocks to my daughter",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "give the toddlers their snacks",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands out lego bricks to children",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "bring the baby his pacifier",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "pass the blocks to my 3 year old",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": null,
+   "estop": true
+  },
+  {
+   "text": "bring my 5yo her juice",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": null,
+   "estop": true
+  },
+  {
+   "text": "hand the teens their phones",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": null,
+   "estop": true
+  },
+  {
+   "text": "give the schoolkids their lunch",
+   "family": "P-child2",
+   "task": "hand_over",
+   "people": null,
+   "estop": true
+  },
+  {
+   "text": "hand the horse rider her helmet",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the dog trainer the clicker",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the dog handler the leash",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the bird keeper the seed",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the zookeeper the bucket",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the horse trainer the reins",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the chicken farmer the eggs",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the leash to the dog groomer",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the bowl to the cat sitter",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the bone to the dog's owner",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the vet the dog's x-rays",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the fish monger the ice",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the pet owner the receipt",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the cat lady her cat food",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the reins to the jockey",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the vet tech the syringe",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the horse's owner the brush",
+   "family": "P-animal-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a 5 dof arm on smart bus servos that picks pills from the organiser and hands them to my grandma at 8am",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I need a cheap robot that can sit on my desk and pass me components while I solder",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "design a robot for a cafe that hands customers their coffee",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "build me an arm that picks screws from a tray and gives them to the operator",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I'd like a robot arm under $500 that grabs a can from the fridge shelf and gives it to my dad in his recliner",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "make a robot that picks eggs from the carton and passes them to the baker one at a time",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "We run a small bakery and need an arm to hand loaves to the cashier",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "for my lab: an arm that takes tubes out of the rack and hands them to the technician",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "my mum has MS and drops things, I want a robot that picks them up and gives them back to her",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a desk robot with a camera that recognises my hand and drops the part into it",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that takes the cup from the dishwasher and hands it to me",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "an arm at the checkout that bags items and hands the bag to the shopper",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot at the pharmacy counter that passes the prescription to the customer",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot in an assembly cell that hands sub-assemblies to the worker at station 2",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that picks tools off the wall and hands them to the mechanic under the car",
+   "family": "P-long",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand me tools; nobody else is around",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring grandma her pills, nobody else lives here",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a fenced robot that hands parts to the operator through a window",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "an enclosed cell that passes finished parts out to the operator",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "it runs unattended but hands the night nurse her tray",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a caged arm that gives the welder new rods",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a lights-out cell, except it hands the morning shift their parts",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that works by itself handing my dad his pills",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "no one is near it except the person it hands the cup to",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "my grandad lives on his own; a robot to bring him his tea",
+   "family": "P-alone2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a handover robot for my workbench",
+   "family": "P-handword",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a hand-over test rig",
+   "family": "P-handword",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that does hand-overs to nurses",
+   "family": "P-handword",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot arm for human robot handover research",
+   "family": "P-handword",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the mail to her desk drawer",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cup to his bedside table",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the laundry to their bedroom",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the tools to my grandad's shed",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "take the dishes to her sink",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "move the books to her bookshelf",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the parcels to our front door",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cans to his garage fridge",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "deliver the trays to her lab bench",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the bolts to his assembly station",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cups to their kitchen counter",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the pots to her potting bench",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the mail to my mum's letterbox",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the shoes to the nurses' locker room",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the plates to their dining table",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "take the bins to his workstation",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the clean towels to her bathroom shelf",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the jar to my dad's workbench",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the parts to the operator's tray",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the part to the inspector's station",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the coffee to her office",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the mug to his desk next to the window",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the dog bowl to her porch",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the meds to grandmas room",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "take grandma's tray to the kitchen",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring my dad's pills to the kitchen",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring her medicine to the kitchen table",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the samples to the doctor's office",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the parts to the welder's bench",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the files to the manager's office",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the toys to my son's toy box",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the towels to the guest room",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cups to the staff room",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the trays to the nurses station",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the parcels to the customer's car",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the meds to the patient's room",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the remote to his living room",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "take the bottles to their recycling bin",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the tools to my dad's van",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to his workshop shelf",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the screws to her organiser box",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cutlery to their kitchen drawer",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the pens to my desk",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the coffee to my office",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the pills to my nightstand",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cups to our kitchen",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the mail to our lobby",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the parcels to our loading bay",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the bolts to our assembly line",
+   "family": "N-place2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the parts to the next machine",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the boards to the reflow oven",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to the CNC",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the cans to the conveyor",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the trays to the packing station",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the parts to station B",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the plates to the dishwasher",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to the printer",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the pcb to the pick and place machine",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to the next robot",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the boxes to the pallet",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the bottles to the capper",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the samples to the centrifuge",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the screws to the feeder",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the bins to the loading dock",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the cup to the other arm",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the part to the lathe",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the blanks to the press",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the boxes to the outfeed belt",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the trays to the oven",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "move parts from the conveyor to the bin",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pick parts from the tray and put them in the box",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "load the parts into the cnc",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the sample tubes to the rack",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the pallets to the wrapper",
+   "family": "N-station2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that can pass the inspection test",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts a rinse",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the bottles a shake before capping",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the boxes a label",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass a quality check",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give it a spin",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me something that stacks cups",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get me a quote for an arm that moves boxes",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me an option for moving eggs",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me a cheap way to move parts between trays",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get me started with a pick and place robot",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me a robot that sorts screws",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand pick the ripe strawberries",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand wash the cups and stack them",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the wire through the hole",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the dough a knead",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the arm back to home position",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the ball through the hoop",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get the parts to the bin",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the screws a quick count",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the plants water every morning",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the cans a wipe",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the cables under the desk",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "show me a robot that moves cups",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "help me design an arm that moves mugs",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me ideas for a robot that moves cans",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get me a design that packs boxes",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "I want a robot to give my plants water",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the tomatoes a squeeze to check ripeness",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that hands out nothing, it just stacks cups",
+   "family": "N-abstract2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring his glasses to the bedside table",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass his plate to the sink",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring her keys to the hook by the door",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring their shoes to the rack",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "put my mum's pills in the organiser",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring my dad's tools to the garage",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring grandma's cup to the dishwasher",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "take the nurse's tray to the cart",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the patient's meds to the station",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "move the customer's order to the pickup shelf",
+   "family": "N-her-object2",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the files to reception",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the meds to the doctor's",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the tea to grandma's",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the bolts to his bucket",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "deliver the part to the welder's jig",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the shopping to her car boot",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the groceries to his car trunk",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cup to her chair",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to his tool chest",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the water to her bedside",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the butter",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that passes butter",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the salt over here",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring that here",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that pours me a coffee",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that makes me a sandwich",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the operator feedback with a light",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the operator a break",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the plates to the dishwasher",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot barista in a busy cafe",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that serves drinks at a bar",
+   "family": "S-safe2",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the dog walker the dog food",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the vet the cat food",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my mum the dog treats",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the pet food to my neighbour",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the pet sitter the kibble",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a pet feeder that hands the treats to my dad so he can feed the dog",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the kibble to the person feeding the cats",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the dog treats to the trainer",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the bird seed to grandma",
+   "family": "P-petfood-person",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I'm right next to it all day",
+   "family": "P-contraction",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I'll stand beside it",
+   "family": "P-contraction",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "we're next to it on the line",
+   "family": "P-contraction",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "we'll be working beside it",
+   "family": "P-contraction",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I've got my hands near it",
+   "family": "P-contraction",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I'd be sitting next to it",
+   "family": "P-contraction",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "i'm next to it",
+   "family": "P-contraction",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the operator removes the part from the gripper",
+   "family": "P-subject",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "someone takes the part from its hand",
+   "family": "P-subject",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the worker takes parts from the robot",
+   "family": "P-subject",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "customers take their drinks from the arm",
+   "family": "P-subject",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "my dad grabs the cup from it",
+   "family": "P-subject",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a person picks the cup out of the gripper",
+   "family": "P-subject",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "no one is near it except the operator it hands parts to",
+   "family": "P-except",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "nobody else is near it except my dad",
+   "family": "P-except",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "no one works next to it except the operator",
+   "family": "P-except",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "no people around except me",
+   "family": "P-except",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "nobody is around it apart from my grandma",
+   "family": "P-except",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "no kids near it, just me",
+   "family": "P-except",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "no one near it but me",
+   "family": "P-except",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring them water every hour",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "serve everyone cake at the party",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give everyone sweets",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring them snacks",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass them parts",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the grandkids their presents",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the person in the wheelchair their cup",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands cups to wheelchair users",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that passes parts back and forth with a human",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the part to the human",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that gives the human the tool",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the object to the user",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands objects to the study participant",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the cup to the test subject",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands parts to the human operator",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the bottle to the next person",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the twins their bottles",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the toddler her cup",
+   "family": "P-pron3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the cups to Starbucks",
+   "family": "S-caps",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to Haas",
+   "family": "S-caps",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the mail to Reception",
+   "family": "S-caps",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring parts to Assembly",
+   "family": "S-caps",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "deliver parcels to Amazon lockers",
+   "family": "S-caps",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the box to Line 3",
+   "family": "S-caps",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cup to her couch",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cup to his sofa",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the bag to his backpack",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "put the tools in his tote",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the phone to her charger",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the drill to his pegboard",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cup to her cup holder",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the parts to the next stage",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the trays to the next shift",
+   "family": "S-safe3",
+   "task": null,
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that hands t-shirts to my mum",
+   "family": "P-objgap",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the x-ray films to the doctor",
+   "family": "P-objgap",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the pre-cut pieces to the welder",
+   "family": "P-objgap",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the 3d-printed parts to me",
+   "family": "P-objgap",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the small red plastic cup to me",
+   "family": "P-objgap",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the big blue bottle of water to grandma",
+   "family": "P-objgap",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the 10 mm hex key with the yellow handle to the operator",
+   "family": "P-objgap",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the freshly washed and dried coffee mugs to the barista",
+   "family": "P-objgap",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the packer the tape gun",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the rivet gun to the riveter",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that hands me the grease gun",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand me the scan gun",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the soldering gun to me",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the price gun to the cashier",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass me the temp gun",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the mechanic the impact gun",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand me the screw gun",
+   "family": "X-toolgun",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the nurse the wipes",
+   "family": "P-actionthing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the operator the labels",
+   "family": "P-actionthing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the teller the checks",
+   "family": "P-actionthing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the cashier the checks",
+   "family": "P-actionthing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the patient the wipes",
+   "family": "P-actionthing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give grandma her wipes",
+   "family": "P-actionthing",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the kids their shakes",
+   "family": "P-actionthing",
+   "task": "hand_over",
+   "people": "children",
+   "estop": true
+  },
+  {
+   "text": "bring the water bottle to the shelf",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the paper towels to the rack",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the dinner plates to the sink",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the burger buns to the tray",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the computer parts to the bin",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the flower pots to the windowsill",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the marker pens to the cup",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the printer paper to the tray",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the trainer shoes to the closet",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the painter tape to the box",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the starter kit to the bench",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the master key to the drawer",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the server rack parts to the cart",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the player pieces to the box",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the booster seat to the car",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the coffee maker parts to the sink",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the user manual to the shelf",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the guest towels to the shelf",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "move the cups next to the sink",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the jars close to the edge",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the parts up to the top shelf",
+   "family": "A-neg-compound",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the bottles to the sealer",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the cans to the filler machine",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand the parts to the feeder",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the bags to the sealer",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cups to the dryer",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the dough to the mixer",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the blanks to the router",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the boards to the scanner",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the boxes to the palletizer",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the trays to the cooler",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the parts to the grinder",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the sheets to the shredder",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the cups to the dispenser",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the jars to the container",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the parts to the hopper",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the parcels to the chute",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "send the parts to the printer",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "send the data to my phone",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "send me an alert when the bin is full",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "send a notification to the operator when it jams",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to the other arm",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass it to the other one",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cups to the corner",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the bolts to the center",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cans to the counter",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the pucks to the cutter",
+   "family": "A-neg-machine",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pick up the cans and bring them all to the bin",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring them two at a time to the tray",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give them each a quick rinse",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand them both to the tray",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring them one by one to the box",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get them done fast",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring them together on the tray",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give them time to dry",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give them some space on the tray",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring them back to the rack",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the boxes labels",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get the cups the right way up",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the tray the long way round",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts the same spacing",
+   "family": "A-neg-quant",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that delivers parcels to the bin",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot to transfer tubes to the rack",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "offer two sizes of gripper",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that orders the parts by size",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand pick the strawberries",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand wash the mugs",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hand sort the screws",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give way to the conveyor",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring order to the shelf",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that can answer questions about parts",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "it should register each part",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "the robot should filter out bad parts",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "lower the cups into the rack",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "water the plants every morning",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "power the arm from the wall",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "master the stacking of cups",
+   "family": "A-neg-verb",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me a list of parts for a robot that sorts screws",
+   "family": "A-neg-abstract",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get me a price for an arm that moves boxes",
+   "family": "A-neg-abstract",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me some options for gripping eggs",
+   "family": "A-neg-abstract",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me an overview of a robot that stacks cups",
+   "family": "A-neg-abstract",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get me going with sorting socks",
+   "family": "A-neg-abstract",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give me a breakdown of the cost",
+   "family": "A-neg-abstract",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the clamp to the anaesthetist",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the parts to the machinist on the left",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the samples to the pathologist",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the scalpel to the surgical technologist",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the tray to the dietitian",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the files to the paralegal",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the drill to the handyman",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the rods to the welders",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the bags to the baggers",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the mail to the postwoman",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the menu to the sommelier",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the tickets to the ticket inspector",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the trays to the dinner ladies",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the forms to the clinicians",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the parts to the line workers",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the keys to the locksmith",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the toolbox to the electrician",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the plans to the architect",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the wrench to the plumber",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the brushes to the painters",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the boxes to the movers",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the boards to the solderers",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the cards to the dealer",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the bags to the shoppers at the till",
+   "family": "A-pos-agent",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the pilot the map",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the umpire the ball",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the priest the cup",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the bride her bouquet",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the groom the rings",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the dj the cable",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the ceo the report",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the vip a drink",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the athlete a towel",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the knight his sword",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the referee the whistle",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the mayor the scissors",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the jeweller the ring",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the surgeon's assistant the clamp",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the night shift their parts",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the person at the desk their badge",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the man by the door his coat",
+   "family": "A-pos-double",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I'm working right beside it",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "we'll stand next to it",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "she sits next to it all day",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "he's near it most of the time",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the welder takes the part from its gripper",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "an apprentice loads it every morning",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the cashier uses it at the till",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "my dad will use it at the table",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "kids will play with it",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a cobot shared with three machinists",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "nobody near it except the operator",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "no one around it but my son",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "it sits between two welders",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the operator unloads the fixture by hand",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that assists the chef",
+   "family": "A-pos-near",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring nana her tea",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give grandad his paper",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand mum her keys",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass gran the remote",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the pills to oliver",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the paper to peter",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand walter his glasses",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass jennifer the salt",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring my hubby his slippers",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give my bestie the controller",
+   "family": "A-pos-kin",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the hamster a carrot",
+   "family": "A-neg-animal",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": true
+  },
+  {
+   "text": "give the parrot a seed",
+   "family": "A-neg-animal",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": true
+  },
+  {
+   "text": "toss the ball to the dog",
+   "family": "A-neg-animal",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": true
+  },
+  {
+   "text": "give my cat her food",
+   "family": "A-neg-animal",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": true
+  },
+  {
+   "text": "move the cups to the right",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "move the parts from the tray to the bin",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "push the box to the edge of the table",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "roll the ball to the end of the tray",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "hold the cup under the tap",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "drop the parts into the bin",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "drop the pills into the organiser",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "return the cups to the rack",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "return the arm to its home position",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "dispense the screws into the tray",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "distribute the parts across the trays",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "present the parts to the camera",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "feed the parts into the machine",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "feed the cnc with blanks",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "lend the robot a hand",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "slide the tray into the oven",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "carry the box to the shelf",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "take the cups to the dishwasher",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "deliver the parcels to the mailroom",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "transfer the samples to the fridge",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "wheel the cart to the corner",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "send the tray back to the start",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "flick the switch to off",
+   "family": "B-neg-verbs",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the cups a rinse",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give each cup a quick wipe",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the box a label",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the tray the long way",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get the parts the right way round",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the arm a test run",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the gripper more force",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the robot the parts list",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the conveyor the next box",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the printer the paper",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the cups their lids",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the jars their caps",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the boxes their labels",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the plants their water",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the seedlings some water",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the bins their lids",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the eggs a gentle squeeze",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the bolts a turn",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "get the tray some clearance",
+   "family": "B-neg-np1",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the parcels to dispatch",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the parts to assembly",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "send the boxes to shipping",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the trays to storage",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the parts to quality control",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to inspection",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the meds to the nurses station",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the tray to the operator panel",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "bring the box to the worker cell",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "pass the cans to the packer station",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "give the parts to the welding cell",
+   "family": "B-neg-places",
+   "task": "not_hand_over",
+   "people": null,
+   "estop": null
+  },
+  {
+   "text": "a robot that brings the remote to whoever is on the sofa",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the cup to the person on my left",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the medicine to the lady in room 4",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the coffee to the man at the counter",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the scissors to the kid at the table",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the plate to the old man",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the tray to the next guest",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the tea to my nan and grandad",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the bolts to the guy on the line",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the box to someone at the door",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "return the cup to the patient",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "send the parts to the welder on line 2",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "move the cup over to me",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hold the cup up to my mouth",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "drop the keys into my hand",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "put the pill in my hand",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "it puts the cup in her hands",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that feeds my grandma",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "spoon-feed my son his dinner",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the baby his bottle",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the toddler the cup",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring the students their worksheets",
+   "family": "B-pos-misc",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that works alongside the chef",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the line workers stand next to it",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot at my desk while I work",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "I'll be sitting right next to it",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot for my elderly neighbour",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot to help my disabled son eat",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "nurses work beside it",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a cobot that the operator tends",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the robot is loaded by an operator",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "the operator feeds the robot by hand",
+   "family": "B-pos-people",
+   "task": null,
+   "people": "yes",
+   "estop": true
   }
  ]
 }

@@ -537,6 +537,27 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   to is a pet nearby, with an emergency stop, not a person it hands things to: "hand the dog a bone", "give my parrot
   seeds" and "hand the horse a carrot" had no one nearby and no emergency stop, and "toss balls to my dog" and "pass
   the treats to my dog" were robots that "hand over" the things, as if to a person.
+- New robot reads the person it hands things to from how the request is put together, not only from word lists. Of
+  the release review's second hunt, 683 more one-line requests, 183 built a robot with nobody nearby and no
+  emergency stop although a person takes the thing or works beside it, among them job titles not on the lists ("hand
+  parts to the fitter", "pass the hose to the fireman", "hand the optometrist the lenses", "pass the reins to the
+  jockey"), family and casual words ("bring granma her tea", "bring pa his boots", "pass the salt to sis", "hand my
+  bestie the controller"), "hand Nurse Jones the gauze" and names in lower case ("give the pills to mary"), "I'm right
+  next to it", "no one near it but me", "the operator takes the part from its gripper", "bring them water", "chuck me
+  a beer", "supply the welder with rods" and "hand teh nurse the gauze"; a pet feeder's hand-over to a person said
+  pets were nearby ("hand the dog walker the dog food"). 53 more kept the emergency stop but built a pick and place
+  ("hand the x-ray films to the doctor", "return the cup to my grandma"). None does now. A noun phrase between a
+  giving verb and a second one is who gets the second ("hand the bride her bouquet", "give the morning shift their
+  parts") unless it is a thing, a place, the robot or an animal; a word that names someone by what they do (the
+  riveter, the anaesthetist, the librarian, the postman, the salesperson) is a person unless it is a machine, a
+  container or a tool (the capper, the dryer, the coffee maker); and a request that leaves it unsure whether someone
+  is there ("a robot that pours me a coffee", "pass the salt over here", "pass the butter", "a robot barista in a busy
+  cafe") keeps a person nearby, with an emergency stop, as Morph's assumption. The other way round, "bring them all to
+  the bin", "give me a cheap way to move parts", "get me a quote for an arm that moves boxes", "bring her keys to the
+  hook", "bring the shopping to her car boot" and "bring the mail to Reception" are no longer hand-overs. Over the
+  2,697 phrases of all the release review's hunts, 272 readings change: 268 of the second hunt's requests, two
+  hand-overs of pet food to a person (people nearby, not pets) and two Studio labels typed in as requests; none of the
+  first hunt's 573.
 - Requests that hand someone a tool called a gun are built, not refused as meant to hurt people: "hand the packer the
   tape gun", "pass the rivet gun to the riveter", "hand me the scan gun", "pass me the temp gun" and "hand the
   mechanic the impact gun" (and the tape, grease, soldering, price, screw, barcode and similar guns) were refused.

@@ -4,6 +4,7 @@ the wording of questions, summaries and assumptions, and what the timeline says.
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -297,6 +298,66 @@ def test_the_hand_over_table(row):
         assert people == "children" if row["people"] == "children" else people in ("yes", "children"), people
     if row.get("estop"):
         assert estop
+
+
+@pytest.mark.parametrize("raw, read", [
+    # a role or title before a name is part of the name ("hand nurse someone the gauze" read nobody)
+    ("hand Nurse Jones the gauze", "hand someone the gauze"), ("pass the clamp to Doctor Patel", "pass the clamp to someone"),
+    ("bring Father Tom his book", "bring someone his book"),
+    # common misspellings
+    ("hand teh nurse the gauze", "hand the nurse the gauze"), ("brng me a beer", "bring me a beer"),
+    ("bring the meds to the nures", "bring the meds to the nurse"),
+    # someone named by what they do, inside a noun phrase, is a person; a machine, a tool, a verb, an animal or a name isn't
+    ("pass the hose to the fireman", "pass the hose to the morphagent"),
+    ("hand the dog trainer the clicker", "hand the dog morphagent the clicker"), ("next to the buzzer", "next to the buzzer"),
+    ("hands water bottles to runners", "hands water bottles to morphagents"),
+    ("pass the bottles to the capper", "pass the bottles to the capper"), ("bring the cups to the dryer", "bring the cups to the dryer"),
+    ("a robot that delivers drinks to the bar", "a robot that delivers drinks to the bar"),
+    ("hand the hamster a carrot", "hand the hamster a carrot"), ("give it to peter", "give it to peter"),
+    ("bring the paper towels to the shelf", "bring the paper towels to the shelf")])
+def test_people_text_reads_names_titles_typos_and_people_by_what_they_do(raw, read):
+    assert B.people_text(raw) == read
+
+
+@pytest.mark.parametrize("text", ["pick up the cans and bring them all to the bin", "bring them two at a time to the tray",
+                                  "give them each a quick rinse", "get them done fast", "give me a cheap way to move parts",
+                                  "get me a quote for an arm that moves boxes", "give me something that stacks cups",
+                                  "hand pick the strawberries", "send me an alert when the bin is full",
+                                  "a robot that moves cups next to the barista", "hand the user manual to the printer"])
+def test_things_quantities_requests_and_messages_are_no_receivers(text):
+    # "them all" read as people it hands things to ("bring them all to the bin" built a hand-over with an e-stop), and so
+    # did "give me a cheap way to..." and "get me a quote for..."
+    assert not re.search(B.HAND_TO_PERSON, B.people_text(text))
+
+
+@pytest.mark.parametrize("text", ["a robot that pours me a coffee", "a robot that makes me a sandwich", "pass the salt over here",
+                                  "bring that here", "pass the butter", "a robot barista in a busy cafe",
+                                  "a robot that serves drinks at a bar", "give the operator a break"])
+def test_a_request_that_leaves_it_unsure_whether_someone_is_there_keeps_them(text):
+    # the safety rule: when the words leave it unsure, the person is there, as Morph's assumption (no hand-over forced)
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    s = b.slots["people_nearby"]
+    assert (s.value, s.source) == ("yes", "inferred") and "estop" in b.changes["electronics.extras"]
+    assert next(r for r in B.card(b) if r["slot"] == "people_nearby")["badge"] == "assumed"
+
+
+@pytest.mark.parametrize("text", ["hand the dog walker the dog food", "give the vet the cat food", "pass the pet food to my neighbour",
+                                  "hand the kibble to the person feeding the cats"])
+def test_a_person_a_pet_feeder_hands_things_to_is_a_person_not_a_pet(text):
+    # a pet feeder's hand-over said "pets are nearby", against a hand-over's own rule that a person is next to it
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert (B.value(b, "task"), B.value(b, "people_nearby")) == ("hand_over", "yes")
+    assert B.defaults(b)["people_nearby"] == "yes"
+
+
+def test_long_requests_read_quickly():
+    # the people patterns are long; a 2,000-character request must not make them backtrack for seconds
+    B.parse("warm up")
+    for text in ("hand " * 400, "to the " * 300, "give the " * 220, "hand the fitter the " * 100, "the nurse's " * 160,
+                 "nobody near " * 150, "Mary Sarah John " * 120, "next to the operator " * 90):
+        t0 = time.time()
+        B.parse(text[:2000])
+        assert time.time() - t0 < 2.0, text[:20]
 
 
 @pytest.mark.parametrize("text", ["a robot arm that gives treats to my dog", "pass the treats to my dog",

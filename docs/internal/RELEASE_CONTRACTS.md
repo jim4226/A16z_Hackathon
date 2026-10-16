@@ -1424,22 +1424,33 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   twists. An assembly request moves the parts (task `pick_place`, no sorting camera). `CATALOG` has a glass jar
   (65 mm, 300 g) and a pill bottle (35 mm, 40 g), offered by the containers and small-parts archetypes only when the
   request names them (`Archetype.more`).
-- **People the robot works for (UX-3).** `brief.parse` reads `people_nearby` in this order. "Nobody nearby", "no one
-  works next to it" (not "no one else") says "no", unless the request hands something to someone. Kids, children,
-  toddlers, babies, infants, twins, "my son", "my daughter" and "the girl" (not "no kids") say "children". People beside
-  it in so many words (`brief.PEOPLE_BESIDE`: "people work next to it", "next to the operator", "a worker stands next
-  to it", "customers stand in front of it", "where customers pick up their coffee", "shared with two workers", "a bin I
-  fill by hand") say "yes". A hand-over (`HAND_TO_PERSON`), a person the robot works for (`brief.PERSON_NEAR`: a
-  grandparent, "my mum", "my colleague", "help me", "for him", "for the nurse" and the like) or "no one else" infer
-  "yes" for every archetype (a toy or pet archetype keeps its children or pets), so the robot gets an emergency stop
-  and the card says it was assumed. An animal it gives something to (`brief.ANIMAL_GETS`: "hand the dog a bone", "give
+- **People the robot works for (UX-3).** `brief.parse` reads `people_nearby` in this order (the person patterns on
+  `brief.people_text(request)`, E-N8). "Nobody nearby", "no one works next to it" (`brief.NOBODY_NEAR`; not "no one
+  else", nor followed by except, but, apart from, other than, besides, just or only: "no one near it but me", "no kids
+  near it, just me") says "no", unless the request hands something to someone. Kids, children, toddlers, babies,
+  infants, twins, teens, tweens, youngsters, grandkids, schoolkids, "my son", "my daughter", "the girl" and a child's
+  age ("my 5yo", "my 3 year old": 1 to 12, not before an animal, a robot, a car, a house or a tree) (not "no kids")
+  say "children". People
+  beside it in so many words (`brief.PEOPLE_BESIDE`: "people work next to it", "next to the operator", "between two
+  packers", "a worker stands next to it", "I'm right next to it", "we'll be working beside it", "customers stand in
+  front of it", "where customers pick up their coffee", "the table I work at", "shared with two workers", "a bin I fill
+  by hand", "the operator takes the part from its gripper", "an operator feeds it parts", "an operator loads the
+  fixture", "students will use it", "no one near it but me") say "yes". A hand-over (`HAND_TO_PERSON`), a person the
+  robot works for, helps or gives something to (`brief.PERSON_NEAR`: a grandparent, "my mum", "my colleague", "help
+  me", "assists the surgeon", "help a blind person", "for him", "for the nurse", "give the operator a break" and the
+  like), a request that leaves it unsure whether someone is there ("pours me a coffee", "makes me a sandwich", "pass
+  the salt over here", "bring that here", "pass the butter" as the whole request, "a busy cafe", "serves drinks", "a
+  robot barista") or "no one else" infer "yes" for every archetype (a toy archetype keeps its children; a pet
+  archetype's person is a person: "hand the dog walker the dog food"), so the robot gets an emergency stop and the
+  card says it was assumed. An animal it gives something to (`brief.ANIMAL_GETS`: "hand the dog a bone", "give
   my parrot seeds", "toss balls to my dog", "bring a toy for the puppy"; not "bring the hamster cage to the table")
   infers "pets", with the same emergency stop; an animal is never the person of a hand-over ("to my dog" is no "to my
   cousin"), while "my dog walker" and "my dog's sitter" are people. Only then do "on its own", "by itself", "unattended", "enclosed", "fenced" and the
   robot working alone (`brief.ROBOT_ALONE`; "she lives alone" and "while he is alone" say nothing about the robot)
   infer "no", shown as an assumption ("assumed"), never as "you said". A designer model's "no" never takes away a
-  person the words put next to it (`agents.apply_update`). `HAND_TO_PERSON` ("pass my dad", "bring her") sets the task
-  to hand-over. A hand-over has people next to it and always an emergency stop (`brief_to_changes`): the people
+  person the words put next to it (`agents.apply_update`). `HAND_TO_PERSON` ("pass my dad", "bring her") and the word hand-over ("does
+  hand-overs to nurses") set the task to hand-over. A hand-over has people next to it (its default is "yes" on an archetype whose default is "no" or "pets") and
+  always an emergency stop (`brief_to_changes`): the people
   question isn't asked on one, and an answer or a model that says it works on its own keeps the e-stop, with the
   assumption "It hands things to a person, who takes them from the gripper within its reach, so it has an emergency
   stop even though no one else works next to it." and the card row "Only the person it hands things to". A sorting
@@ -1772,24 +1783,51 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   servo and rail, so a 6 mm pad depth on the egg-picker keeps 2.34 N as its build does (it read 2.34 -> 2.17 N). A
   stock jaw takes the preflight's grip, as its gripper stage is that closed form.
 - **Who receives a hand-over (E-N8); unsure is a hand-over.** `brief.HAND_TO_PERSON` reads a receiver after a giving
-  verb. Hand, pass, give and bring (any form) take "me", "him", "her", "us" and `_PERSON` (a family word, "my"/"our"/
-  "your" + a person word, "elderly"/"disabled" + a word) with or without a thing after them ("hand me", "bring her the
-  cup"). They and fetch, get, grab, toss, throw, offer, serve and feed take every other receiver only with a thing
-  after it (`_THING`: a determiner, a possessive or a noun; never a job done to them, "give them a shake", "give the
-  parts a quick check", nor a robot, "get me a robot arm that sorts screws"): "you"; "them" and someone, anyone,
-  everyone or whoever before a determiner ("bring them their drinks"); a title and a name ("hand Dr Smith the clamp");
-  and a person word (`_ROLE`: nurse, surgeon, carer, resident, patient, operator, worker, packer, welder, technician,
-  staff, chef, barista, cashier, customer, guest, visitor, student, teacher, volunteer, courier, neighbour, friend,
-  cousin, baby, girl, man, lady, people and the like, and the family words `_KIN`: grandma, grandad, gran, nan, mum,
-  dad, auntie, uncle, baby, ...) after a determiner or a possessive ("the surgeon", "our packers", "my colleague",
-  "the old man", "their nanny") or in the plural ("customers"). Those verbs, deliver, take, carry and present, and the
-  passive ("parts are handed to the operator") reach a receiver after up to four words and "to" ("hand off the parts
-  to the operator", "offer the tray of snacks to the guests"): any of those, a family word on its own ("pass the
-  remote to mum"), "them", "myself", or her, his, my, our, your or their before anything that isn't their place
-  (`_POSS`: "to my grandma", "to their nanny"). Fetch, get, grab and bring also reach one after up to six words and
-  "for" ("fetch the remote for my dad"). A capitalised name is read as "someone" (`brief.people_text`: "pass Sarah the
-  salt", "give the pills to Mary"), except at the start of a sentence, after "the" or "a", for a place, person or
-  product word, a month or a day, and when the request is in Title Case or capitals.
+  verb, in `brief.people_text(request)`: the request in lower case with a capitalised name, or a role or title and a
+  name ("Nurse Jones", "Doctor Patel", "Dr Smith"), written "someone"; a few misspellings mended ("teh", "brng",
+  "brign", "pas", "nures", "docter"); and a word that names someone by what they do and isn't on the lists below
+  written "morphagent" (`brief._agents`: an -er, -or, -ist, -ian, -man/-men, -person/-people, -folk, -mate or -ee word,
+  "the riveter", "the anaesthetist", "the librarian", "the postman", "the salesperson", "the dog trainer", inside a
+  noun phrase, after a determiner, a possessive or a preposition through up to three describing words, or a plural at
+  the start), unless it is a machine, a container, a tool, a place, a part of the robot, an animal, a verb, a name or
+  another word that ends the same way (`_NOT_AGENT`, `_AGENT_VERBS`: "the capper", "the dryer", "the coffee maker",
+  "the clicker", "the other", "delivers", "offer"); such a word must end its noun phrase or have a second one follow
+  it (`_AGENT_END`: "to the fitter", "hand the fitter the bolts", but "the trainer shoes" are shoes). Hand, pass, give,
+  bring and feed (any form, "spoon-feeds") take "me", "him", "her", "us" and `_PERSON` (a family word, "my"/"our"/
+  "your" + up to three words + a person word, "elderly"/"disabled" + a word) with or without a thing after them
+  ("hand me", "bring her the cup", "a robot that feeds me"). They and fetch, get, grab, toss, throw, chuck, lob, offer,
+  serve, lend, loan and send (not a message: "send me an alert" is none) take every other receiver only with a thing
+  after it (`_THING`: a determiner, a possessive or a noun; never a job done to them, a singular after a/an/some ("give
+  them a shake", "give the parts a quick check"; "the wipes" and "the labels" are things), nor a robot ("get me a
+  robot arm that sorts screws"), nor a request (`_REQUEST`: "give me a cheap way to...", "get me a quote for...",
+  "give me something that stacks cups")): "you" ("u", "ya", "y'all"), "the two of us"; "them" ("'em") and someone,
+  anyone or everyone before a thing ("bring them their drinks", "bring them water"; not "bring them all to the bin",
+  "two at a time", "get them done"), whoever and a clause ("give whoever asks a pen"); a title and a name; a person
+  word (`_ROLE`: nurse, surgeon, orderly, operator, worker, packer, welder, fitter, stacker, chef, barista, cashier,
+  customer, guest, diner, patron, bride, human, participant, the morning shift, the line lead, neighbour, friend,
+  bestie, hubby, cousin, baby, teen, man, lady, people and some 230 more, and the family words `_KIN`: grandma,
+  granma, grampa, nan, mum, mother, dad, father, auntie, uncle, baby, ...) after a determiner or a possessive ("the
+  surgeon", "our packers", "my colleague", "the old man", "their nanny", "my 90 year old mum") or in the plural, with
+  up to two describing words ("customers", "wheelchair users"); and any other noun phrase right after the verb when a
+  second one follows it that starts with a determiner or a possessive (`_ANY_NP1`: "hand the bride her bouquet", "give
+  the morning shift their parts", "hand bob the parts", "give grampa his pills", "hand the person in the wheelchair
+  their cup"), unless it is a thing, a place, the robot, an animal, a plant, a function word, a verb compound ("hand
+  pick the strawberries") or a way ("bring the tray the long way"). Those verbs and deliver, take, carry, present,
+  transfer, return, dispense, distribute, dish out, hold, slide, drop, move, push, roll, wheel and flick, and the
+  passive ("parts are handed to the operator"), reach a receiver after up to seven words, hyphenated ones too, and
+  "to" (not "next to", "close to", "due to"; no "then", "while", "so" or robot word in between: "hand the x-ray films
+  to the doctor", "pass the freshly washed and dried coffee mugs to the barista", "hold the cup out to her", "return
+  the cup to my grandma"): any of those, a family word on its own ("pass the remote to mum"), a short family or casual
+  word ("to ma", "to sis") or a common first name in lower case ("give the pills to mary"; `_NAMES`, without names
+  that are also words, such as "will", "mark", "rose" or "max") at the end of the phrase, "them", "myself", "all of
+  them", a plural word for someone by what they do ("to runners at the marathon"), or her, his, my, our, your or
+  their before anything that isn't their place or an animal (`_POSS`: "to my grandma", "to their nanny"). Fetch, get,
+  grab and bring also reach one after up to seven words and "for" ("fetch the remote for my dad"). And: "supply the
+  welder with rods", "provide the operator with screws", "keep the operator stocked with screws"; "passes parts back
+  and forth with a human"; "the person it hands the cup to", "the operator it passes parts to"; "drops the part into
+  my hand", "recognises my hand". A capitalised word is no name at the start of a sentence, after "the" or "a", for a
+  place, person or product word, a department or a brand ("Reception", "Assembly", "Starbucks", "Haas"), a month or a
+  day, and when the request is in Title Case or capitals. The patterns are compiled once (`brief._rx`).
   A person's place is no person. A possessive, a family word or a person word before 's or s' owns the place the things
   go to when a place, a piece of furniture, a container or a machine (`_PLACE`: desk, room, bedroom, office, workshop,
   kitchen, table, car, door, shed, shelf, drawer, bin, tray, station, line, machine, cell, panel, fridge, printer,
@@ -1810,14 +1848,17 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   person who follows it ("brings the medicine to her home nurse", "to her care home nurse", "to my dad's room mate",
   "to her office manager", "to his lab partner"). These are hand-overs with people nearby and an e-stop, also when
   the request says the person is alone or the robot works on its own ("bring the meds to her twice a day, she lives
-  alone"). The safe errors: "give the ball to her dog", "to her sofa", "to her bed" and "to her armchair" (someone sits
-  or lies there), "bring the cup to my left" and "to her side", a capitalised word that is no name ("bring the tea to
-  Starbucks"), and "give the baby bottles to the sink" (children nearby, no hand-over). A place named after people
+  alone"). The safe errors: "to her sofa", "to her bed" and "to her armchair" (someone sits or lies there), "bring the
+  cup to my left" and "to her side", a capitalised word that is no name and on no list ("bring the tea to Costa"), and
+  "give the baby bottles to the sink" (children nearby, no hand-over). Known misses: a person word on no list, with
+  none of the endings above, after "to" ("pass the bricks to the mason": "the mason jars" are jars), a word for
+  someone by what they do with a bare thing after it ("hand the shelf painter cans"), and misspelt person words other
+  than the few above. A place named after people
   infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
   place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
-  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 573
-  requests from the release review's hunt, each with the task, people and e-stop it must get, run through
-  `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
+  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,493
+  requests from the release review's two hunts and the fixer's, each with the task, people and e-stop it must get,
+  run through `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
   order, failures included; not the ones it carried over or that were blocked), and `reused`: the stages whose
   `stage_status` is "reused", early cutoffs included. Keewano's `StageRecomputed` events (`keewano.events_for`) and
