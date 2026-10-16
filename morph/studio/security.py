@@ -76,10 +76,12 @@ OTHER_KEYS = re.compile(
     # a quote (JSON, a Python or JavaScript string, a shell argument) ends at a quote of that kind followed by , : } or
     # ] (one that closes its string; an escaped one, \", doesn't): in minified JSON the user and password ran on into
     # the next values ({"homepage":"https://example.com","email":"robert.smith@example.com"} was refused)
-    r"|(?<![A-Za-z0-9+.\-\"'])[A-Za-z][A-Za-z0-9+.-]{0,30}://[^\s/?#:\[\]]{0,200}:(?!\d{1,5}[?#/@\"<>])"
-    r"[^\s/\x7f-\x9f\u2000-\U0010ffff]{8,200}@"
-    r"|(?<=(?P<q>[\"']))[A-Za-z][A-Za-z0-9+.-]{0,30}://(?:(?!(?<!\\)(?P=q)[,:}\]])[^\s/?#:\[\]]){0,200}"
-    r":(?!\d{1,5}[?#/@\"<>])(?:(?!(?<!\\)(?P=q)[,:}\]])[^\s/\x7f-\x9f\u2000-\U0010ffff]){8,200}@"
+    # (one alternative, q set after a quote: two scanned a long JSON text twice as slowly)
+    r"|(?:(?<=(?P<q>[\"']))|(?<![A-Za-z0-9+.\-\"']))[A-Za-z][A-Za-z0-9+.-]{0,30}://"
+    r"(?(q)(?:(?!(?<!\\)(?P=q)[,:}\]])[^\s/?#:\[\]]){0,200}|[^\s/?#:\[\]]{0,200})"
+    r":(?!\d{1,5}[?#/@\"<>])"
+    r"(?(q)(?:(?!(?<!\\)(?P=q)[,:}\]])[^\s/\x7f-\x9f\u2000-\U0010ffff]){8,200}"
+    r"|[^\s/\x7f-\x9f\u2000-\U0010ffff]{8,200})@"
     r"|(?i:bearer)[ \t]+(?=[A-Za-z0-9._~+/-]{0,300}[0-9])[A-Za-z0-9._~+/-]{20,}")
 # keys whose value is refused whatever its shape, once set: keys.KEYS but the project id, Claude's other credential and
 # the access code a person chose for remote mode (the one a remote Studio makes itself is in ACCESS_CODES)
