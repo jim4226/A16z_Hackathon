@@ -713,6 +713,9 @@ def test_add_box_here_from_the_room_scan(run, tmp_path):
     assert pg.world("panel.state.result.verdict") != "blocked"                  # a warning, never a verdict
     text = " ".join(pg.pg.inner_text(".wv-panel").split())
     assert "A warning, not a verdict." in text and re.search(r"Scan near miss 1: (touches|(at most )?\d+\.\d mm from) the ", text), text
+    tried = scan["regions"][0]["trial"]                 # the next simulation, run during the check with the box
+    assert tried["ok"] and "a simulation with it, tried here, keeps clear of it" in scan["text"], scan
+    assert re.search(r"tried: the simulation keeps (at least )?\d+(\.\d)? mm from it", text), text
     add = ".wv-panel button[data-a='scanbox'][data-arg='0']"
     assert pg.pg.inner_text(add) == "Add box here"
     pg.ev("() => window.morphWorld.wv.frameOverview(0)")
@@ -728,6 +731,7 @@ def test_add_box_here_from_the_room_scan(run, tmp_path):
     m = pg.metrics()
     assert m["success"] and not m["world_contacts"] and m["min_clearance_at"]["obstacle"] == "Scan near miss 1", m
     assert m["min_clearance_mm"] >= 10.0 and "closest" in pg.status() and "Scan near miss 1" in pg.status(), pg.status()
+    assert m["min_clearance_mm"] == tried["min_clearance_mm"], (m["min_clearance_mm"], tried)    # as the check said
     pg.click(".wv-panel button[data-a='check']")
     until(lambda: pg.world("!panel.state.busy && !!panel.state.result && panel.state.result.rev") == pg.rev(), 120,
           "the check of the new simulation")
@@ -762,7 +766,7 @@ def test_a_box_trimmed_off_a_vase_is_added_once_and_not_offered_again(run, tmp_p
     scan = pg.world("panel.state.result.checks.find(c => c.id === 'scan')")
     assert scan and scan["status"] == "warn" and scan["regions"], scan
     g = scan["regions"][0]
-    assert g["box"] and g["trimmed"] and g["covers"], g
+    assert g["box"] and g["trimmed"] and g["covers"] and g["trial"]["ok"], g
     assert g["covers"]["clearance_mm"] == g["min_clearance_mm"] and g["covers"]["rev"] == pg.rev(), g   # fitted for
     add = ".wv-panel button[data-a='scanbox'][data-arg='0']"
     assert pg.pg.inner_text(add) == "Add box here"
@@ -782,6 +786,7 @@ def test_a_box_trimmed_off_a_vase_is_added_once_and_not_offered_again(run, tmp_p
     pg.save("the vase's box")
     m = pg.metrics()
     assert m["success"] and not m["world_contacts"], m
+    assert m["min_clearance_mm"] == g["trial"]["min_clearance_mm"], (m["min_clearance_mm"], g["trial"])
     with open(os.path.join(studio.home, "egg-picker", "world", "world.json"), encoding="utf-8") as fh:
         saved = json.load(fh)
     assert saved["obstacles"][0]["covers"] == g["covers"], saved["obstacles"]
