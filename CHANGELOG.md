@@ -255,10 +255,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   or a Teams script token, invite or sign-in code before anything is saved, shown or sent. It also refuses a remote
   Studio's own access code (raw or in its access link), a `MORPH_TOKEN` or `ANTHROPIC_AUTH_TOKEN` that is set, other
   services' keys with a fixed prefix (GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq,
-  xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password (a link's password ends at `/`, `?`
-  or `#`, so `http://10.0.0.5:8765?user=bob@example.com`, a port and a query with an e-mail address, passes; 9,201 of
-  20,000 such generated links were refused) and `.env` lines such as `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no space (these keys and JWTs used to slip past),
-  and a tool key after `key=` or inside a link. A key with no prefix of its own pasted alone (an AWS secret key, a bare
+  xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password (also with a raw `?`, `#` or `@` in
+  the password, no user as in `redis://:password@host`, or an e-mail address as the user; a port is no password, so
+  `http://10.0.0.5:8765?user=bob@example.com`, a port and a query with an e-mail address, passes, where 9,201 of
+  20,000 such generated links were refused. Still missed: a password with a raw `/`, and one that starts with 1 to 5
+  digits and a `?`, `#` or `@`, such as `postgres://admin:2024?Secret@db`, 0.5% to 1.6% of 20,000 generated passwords
+  with such symbols) and `.env` lines such as `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no
+  space (these keys and JWTs used to slip past), and a tool key after `key=` or inside a link. A key with no prefix of its own pasted alone (an AWS secret key, a bare
   hex token) is still not caught unless it is saved in the Keys dialog. New robot used to keep such
   a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ
   and tool keys through; drafts saved before this stay until their 7-day cleanup. The filter knows keys and codes by

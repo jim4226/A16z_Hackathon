@@ -210,9 +210,13 @@ def names(scale: int):
 
 
 def links(n: int):
-    """Links that carry an e-mail address or an @ after their host and port (in a query, a fragment or a path): how many
-    the user:password@ rule refuses; and links with a user and a password of 8 to 24 characters RFC 3986 allows there
-    (letters, digits, -._~!$&'()*+,;= and %-escapes such as %40): how many it misses, alone and in a sentence."""
+    """Links that carry an e-mail address or an @ after their host and port (in a query, a fragment or a path, right
+    after the port as in http://10.0.0.5:8765@evil.com, or in Chinese or Japanese text written on after the link with
+    no space): how many the user:password@ rule refuses. Links with a user and a password: how many it misses, alone and
+    in a sentence; passwords of 8 to 24 characters RFC 3986 allows there (letters, digits, -._~!$&'()*+,;= and
+    %-escapes such as %40), also with an empty user (redis://:password@host) or an e-mail address as the user; and
+    passwords of 12 to 20 characters drawn as password managers draw them, with at least one symbol of a set, raw
+    (RFC 3986 says to %-escape ?, #, @ and /, but people paste them as they are)."""
     rnd = random.Random(43)
 
     def host():
@@ -226,24 +230,51 @@ def links(n: int):
     port = lambda: rnd.choice(["", f":{rnd.randint(1, 65535)}", ":8765", ":443", ":554"])  # noqa: E731
     schemes = ["http", "https", "rtsp", "mqtt", "ws", "ftp", "postgres", "mysql", "redis", "amqp", "ssh", "mongodb+srv"]
     mails = ["bob@example.com", "ops@lab.example.org", "jim.k@robotics.example.edu", "a@b.co", "@team"]
+
+    def refused(label, make):
+        count = sum(security.looks_like_secret(make()) for _ in range(n))
+        print(f"{label:76} refused {count:,} of {n:,}")
+
     tails = ["?user={}", "?project=egg-picker&owner={}", "#contact={}", "/?share={}", "/people/{}", "?next=/home#{}"]
-    refused = 0
-    for _ in range(n):
-        link = f"{rnd.choice(schemes[:5])}://{host()}{port()}{rnd.choice(tails).format(rnd.choice(mails))}"
-        refused += security.looks_like_secret(link)
-    print(f"{'links with an @ after the host (http://10.0.0.5:8765?user=bob@example.com)':76} refused {refused:,} of {n:,}")
+    refused("links with an @ after the host (http://10.0.0.5:8765?user=bob@example.com)",
+            lambda: f"{rnd.choice(schemes[:5])}://{host()}{port()}{rnd.choice(tails).format(rnd.choice(mails))}")
+    after_port = ["@evil.com", "@evil.com/", "@evil.com?user={}", "@evil.com#{}", "@{}"]
+    refused("links with an @ right after the port (http://10.0.0.5:8765@evil.com)",
+            lambda: f"{rnd.choice(schemes[:5])}://{host()}:{rnd.randint(1, 65535)}"
+                    f"{rnd.choice(after_port).format(rnd.choice(mails))}")
+    cjk = ["，有问题请发邮件到{}", "。联系{}", "です。連絡先は{}", "、メールは{}まで", "，电话:13800138000，邮箱{}"]
+    refused("a link, then Chinese or Japanese and an e-mail address with no space",
+            lambda: f"我的Studio在{rnd.choice(schemes[:5])}://{host()}{port()}{rnd.choice(cjk).format(rnd.choice(mails))}")
+
+    def missed(label, user, password):
+        alone = in_text = 0
+        for _ in range(n):
+            link = (f"{rnd.choice(schemes)}://{user()}:{password()}@{host()}{port()}"
+                    + rnd.choice(["", "/morph", "/stream1", "/?x=1", "#top"]))
+            alone += not security.looks_like_secret(link)
+            in_text += not security.looks_like_secret(f"connect with {link} please")
+        print(f"{label:76} missed {alone:,} of {n:,} alone, {in_text:,} in a sentence")
+
+    users = lambda: rnd.choice(["admin", "root", "robot", "pi", "jim", "ops", "sensor",  # noqa: E731
+                                run(rnd, LOWDIG, rnd.randint(3, 12))])
     allowed = ALNUM + "-._~!$&'()*+,;="
-    alone = in_text = 0
-    for _ in range(n):
-        password = "".join(rnd.choice(allowed) if rnd.random() > 0.05 else rnd.choice(["%40", "%23", "%3F", "%2F"])
-                           for _ in range(rnd.randint(8, 24)))
-        user = rnd.choice(["admin", "root", "robot", "pi", "jim", "ops", "sensor", run(rnd, LOWDIG, rnd.randint(3, 12))])
-        link = (f"{rnd.choice(schemes)}://{user}:{password}@{host()}{port()}"
-                + rnd.choice(["", "/morph", "/stream1", "/?x=1", "#top"]))
-        alone += not security.looks_like_secret(link)
-        in_text += not security.looks_like_secret(f"connect with {link} please")
-    print(f"{'links with a password of 8 to 24 characters (postgres://admin:...@db:5432)':76} missed {alone:,} of {n:,} "
-          f"alone, {in_text:,} in a sentence")
+    rfc = lambda: "".join(rnd.choice(allowed) if rnd.random() > 0.05 else rnd.choice(["%40", "%23", "%3F", "%2F"])  # noqa: E731
+                          for _ in range(rnd.randint(8, 24)))
+    missed("links with a password of 8 to 24 characters (postgres://admin:...@db:5432)", users, rfc)
+    missed("the same with an empty user (redis://:...@host:6379)", lambda: "", rfc)
+    missed("the same with an e-mail address as the user (smtp://bob@gmail.com:...@)",
+           lambda: rnd.choice(mails[:4]), rfc)
+
+    def drawn(symbols):
+        def make():
+            chars = [rnd.choice(ALNUM + symbols) for _ in range(rnd.randint(11, 19))] + [rnd.choice(symbols)]
+            rnd.shuffle(chars)
+            return "".join(chars)
+        return make
+
+    for symbols, what in (("!@#$%^&*", "symbols !@#$%^&*"), ("!#$%&*+-.:;=?^_~", "symbols !#$%&*+-.:;=?^_~"),
+                          ("?", "a raw ?"), ("#", "a raw #"), ("@", "a raw @"), ("/", "a raw /")):
+        missed(f"a password of 12 to 20 characters with {what}", users, drawn(symbols))
 
 
 if __name__ == "__main__":

@@ -348,6 +348,20 @@
   "http://[::1]:8765/people/bob@example.com",
   "http://[fe80::1]?share=ops@example.com",
   "rtsp://10.0.0.5:554?owner=cam@lab.example.org",
+  "http://10.0.0.5:8765@evil.com",
+  "http://10.0.0.5:8765@evil.com?user=bob@example.com",
+  "http://[::1]:8765@evil.com#bob@example.com",
+  "http://:8765?user=bob@example.com",
+  "ssh://git@github.com:22/org/repo",
+  "http://bob@robot.local:8765?cc=ops@example.com",
+  "http://10.1.2.3:8765#/inbox?u=bob@example.com",
+  "http://10.0.0.5:8765?ref=https://x.example.com/@team",
+  "我的Studio在http://192.168.1.5:8765，有问题请发邮件到bob@example.com",
+  "Studioはhttp://192.168.1.5:8765です。連絡先はbob@example.com",
+  "访问http://robot.local，电话:13800138000，邮箱ops@example.com",
+  "{\"studio\":\"http://10.0.0.5:8765\",\"owner\":\"bob@example.com\"}",
+  "<http://10.0.0.5:8765>,<bob@example.com>",
+  "smtp://bob@example.com:587",
   "https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEFG/edit",
   "https://drive.google.com/file/d/1A2b3C4d5E6f7G8h9I0jKlMnOpQrStUvW/view?usp=sharing",
   "https://www.amazon.com/dp/B07MFK266B",
@@ -533,6 +547,11 @@
    "ml_SmolVLA_grasp_detector",
    "ml_SmolVLM_grasp_detector",
    "ml_SmolVLA_so101_finetune"
+  ],
+  "a link with a port and, with no space, a comma, a semicolon or an & before an @": [
+   "http://10.0.0.5:8765,bob@example.com",
+   "http://10.0.0.5:8765;bob@example.com",
+   "http://10.0.0.5:8765&owner=bob@example.com"
   ]
  }
 }

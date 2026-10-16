@@ -66,9 +66,14 @@ OTHER_KEYS = re.compile(
     r"[ \t]*[=:][ \t]*[\"']?(?=[^\s\"'<>]{0,300}[0-9])(?=[^\s\"'<>]{0,300}[A-Za-z])[^\s\"'<>]{12,300})"  # NAME_KEY=value
     r"|hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]{16,}"
     r"|-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----|(?:AccountKey|SharedAccessKey)=[A-Za-z0-9+/]{30,}"
-    # user:password@ a link's user and password (RFC 3986: they end at the first /, ? or #, so a port and a query or
-    # fragment holding an e-mail address, http://10.0.0.5:8765?user=bob@example.com, is no password)
-    r"|(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,30}://[^\s/?#:@\[\]]{1,200}:[^\s/?#@]{8,200}@"
+    # user:password@, a link's user (empty in redis://:password@host, an e-mail address in smtp://bob@gmail.com:...@)
+    # and password. The password runs to the last @ before a space or a /, so one with a raw ?, # or @, as password
+    # managers draw them and people paste them, is caught whole (and redacted whole); only ASCII, so Chinese or
+    # Japanese written on after a link with no space is not read as one. A port (1 to 5 digits) followed by ?, #, /, @,
+    # " or an angle bracket (the end of a link in JSON or <...>) is no password: http://10.0.0.5:8765?user=
+    # bob@example.com and http://10.0.0.5:8765@evil.com pass, and so does a password that starts that way (2024?x...)
+    r"|(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,30}://[^\s/?#:\[\]]{0,200}:(?!\d{1,5}[?#/@\"<>])"
+    r"[^\s/\x7f-\U0010ffff]{8,200}@"
     r"|(?i:bearer)[ \t]+(?=[A-Za-z0-9._~+/-]{0,300}[0-9])[A-Za-z0-9._~+/-]{20,}")
 # keys whose value is refused whatever its shape, once set: keys.KEYS but the project id, Claude's other credential and
 # the access code a person chose for remote mode (the one a remote Studio makes itself is in ACCESS_CODES)

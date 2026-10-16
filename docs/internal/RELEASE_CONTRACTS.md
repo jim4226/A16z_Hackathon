@@ -718,11 +718,17 @@ members; a member can hold several.
   and sign-in codes, and other services' keys known by a fixed prefix or text that carries a key (`security.OTHER_KEYS`:
   GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq, xAI, Perplexity, ElevenLabs, npm,
   PyPI, SendGrid, DigitalOcean, Mapbox, Telegram and Discord tokens and Twilio key SIDs; a private key block, a link
-  with a password (`scheme://user:password@`, a password of 8 characters or more; the user and password end at the
-  first `/`, `?` or `#`, as RFC 3986 reads a link, so `http://10.0.0.5:8765?user=bob@example.com` passes and a
-  password with an unencoded `?` or `#` in it, which no link can carry, is not caught), `Bearer` and a token with a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value
-  has a letter and a digit). A key with no prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught
-  only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
+  with a password (`scheme://user:password@`: the user may be empty, `redis://:password@host`, or an e-mail address,
+  `smtp://bob@gmail.com:password@smtp.gmail.com`; the password has 8 characters or more and runs to the last `@`
+  before a space or a `/`, so a raw `?`, `#` or `@` in it, which RFC 3986 says to %-escape but people paste as it is,
+  is caught and redacted with the rest; it is ASCII only, so Chinese or Japanese written straight after a link is not
+  read as one; a port, 1 to 5 digits followed by `/`, `?`, `#`, `@`, `"`, `<` or `>`, is no password, so
+  `http://10.0.0.5:8765?user=bob@example.com` and `http://10.0.0.5:8765@evil.com` pass. Not caught: a password with a
+  raw `/`, and one that starts with 1 to 5 digits and one of those characters, `postgres://admin:2024?Secret@db`.
+  Still refused: a port followed with no space by `,`, `;` or `&` and text with an `@`,
+  `http://10.0.0.5:8765,bob@example.com`, which RFC 3986 reads as a user and a password), `Bearer` and a token with
+  a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value has a letter and a digit). A key with no
+  prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
   Python reads by Unicode: 是, は and é count as letters), so a key glued to Chinese, Japanese or Korean text is caught.
   The key shapes, with the contexts each is refused in, are tables in `tests/fixtures/key_filter/keys.json`. Every
   `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital (every Teams code has one) and doesn't
@@ -763,10 +769,16 @@ members; a member can hold several.
   case); whole part numbers 40 of
   270 (mixed case such as `ATmega328P` or `nRF52840`, starting with a digit such as `17HS4401`, and any after `sk-`).
   `names.json` lists the kinds still refused; part runs such as `sk-608zz-608rs-626zz-bearings` (more short codes than
-  words and names) are refused too. Links (`--links`): of 20,000 with an e-mail address or an `@` after their host and
-  port (in a query, a fragment or a path; IPv4, names and IPv6 hosts) none is refused (9,201 were, when the password
-  part read on past `?` and `#`), and of 20,000 with a user and a password of 8 to 24 characters RFC 3986 allows there
-  (`%40` included) none is missed, alone or in a sentence. The tool runner redacts
+  words and names) are refused too. Links (`--links`, 20,000 of each; in brackets, the first rule, whose password ran
+  to the first `/` or `@`, then the second, which also ended it at `?` and `#`): refused, of links with an e-mail
+  address or an `@` after their host and port in a query, a fragment or a path (IPv4, names and IPv6 hosts) 0 (9,201;
+  0), with an `@` right after the port (`http://10.0.0.5:8765@evil.com`) 0 (11,958; 0), and followed with no space by
+  Chinese or Japanese with an e-mail address 0 (18,307; 6,349). Missed, alone or in a sentence: a password of 8 to 24
+  characters RFC 3986 allows there (`%40` included) 0 (0; 0), the same with an empty user 0 (20,000; 20,000) or an
+  e-mail address as the user 0 (20,000; 20,000); a password of 12 to 20 characters drawn as password managers draw
+  them, with at least one raw symbol: of `!@#$%^&*` 145 (3,131; 8,096), of `!#$%&*+-.:;=?^_~` 106 (0; 8,058), a `?`
+  293 (0; 20,000), a `#` 322 (0; 20,000), an `@` 294 (11,431; 11,431), every one of them a password that starts with
+  1 to 5 digits and a `?`, `#` or `@`; with a raw `/` all 20,000 (all; all). The tool runner redacts
   and refuses with the same shapes (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
