@@ -1453,8 +1453,8 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   user asking for one, "give me a robot that sorts screws", is no person). The word hand-over ("a handover robot")
   and "the robot and I share a workbench" are person signals too, and "gimme" is "give me". A robot that works on
   someone's body is next to them ("a robot that brushes my hair", "washes grandma's feet", "dresses him"); one that
-  grooms an animal has a pet next to it ("brushes the dog"). A laser engraver and a case erector are machines. Any of them puts a person next to it; "Nobody nearby", "no one works next to it"
-  (`brief.NOBODY_NEAR`; not "no one else", nor followed by except, but, apart from, other than, besides, just or only:
+  grooms an animal has a pet next to it ("brushes the dog"); a laser engraver and a case erector are machines. Any
+  person signal puts a person next to it; "Nobody nearby", "no one works next to it" (`brief.NOBODY_NEAR`; not "no one else", nor followed by except, but, apart from, other than, besides, just or only:
   "no one near it but me", "no kids near it, just me") says "no" only when the request has none of them and gives
   nothing to an animal ("no one is around, it helps my grandma eat her soup", "nobody nearby, the nurse takes the tray
   from its gripper" and "no people around, students will use it" keep the person). A person word right after "no",
@@ -1771,12 +1771,14 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     30.86 N stall (it read covered, and the compiled firmware put 25.94 N on one 2 % over its size); its probe is
     0.92 mm. Without a damage force the same part covers (1.04 mm probe), and its large end can reach the stall for the
     moment before the jaw opens: the plan's warning, the firmware's comment and the manual say so. So on this hand the
-    only hobby grips without an issue are force-sensing ones on flat-sided parts from 21.5 mm (`capability.MIN_WIDTH_MM`:
+    only hobby grips without an issue are force-sensing ones on flat-sided parts from 21.5 mm
+    (`capability.MIN_WIDTH_MM`:
     the force-sensing fingers close on 21.5 mm flat, 26 mm round; the plan itself raises no issue from 21.01 mm) up to
     25.97 mm wide (from 25.98 mm, reaching the small end of its size would let a dead sensor put 80 % of the stall on
     a gauge-sized one, the probe's cap), with no damage force or one at or above the MG996R's 30.86 N stall (below it
     a dead sensor can put the stall on one at the large end of its size), measured on parts of 5 to 132 g (heavier
-    ones overload the hobby shoulder); the marker covers but is too small for the fingers (a `too_small` issue), and without force sensors no object both covers and fits the
+    ones overload the hobby shoulder); the marker covers but is too small for the fingers (a `too_small` issue), and
+    without force sensors no object both covers and fits the
     fingers (31.5 mm flat, 38 mm round). `probe_n` (stall x probe / band) and `large_n` (stall x min(probe + spread,
     band) / band) are what a gauge-sized object and one at the large end of its size get at the probe with a dead
     sensor until the jaw opens (`reach_large_n` the latter at `reach_mm`); the plan's warning, the firmware's comment
@@ -1884,7 +1886,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   infant products are things (`brief._baby_goods`: "baby carrots", "baby food jars", "baby wipes", "infant formula"),
   except right after a giving or feeding verb with no one else to get them ("feed the baby food", "give the baby
   carrots": the baby may be the one fed). A tray denester and a bottle corker are machines; a grader, a candler, a
-  stacker or a deburrer may be a person and stays one (a safe error: "move the eggs to the grader" is a hand-over). The patterns are compiled once (`brief._rx`).
+  stacker or a deburrer may be a person and stays one (a safe error: "move the eggs to the grader" is a hand-over). The
+  patterns are compiled once (`brief._rx`).
   A person's place is no person. A possessive, a family word or a person word before 's or s' owns the place the things
   go to when a place, a piece of furniture, a container or a machine (`_PLACE`: desk, room, bedroom, office, workshop,
   kitchen, table, car, door, shed, shelf, drawer, bin, tray, station, line, machine, cell, panel, fridge, printer,
@@ -1900,10 +1903,12 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   or on is the thing's (`_PUT_AWAY`: furniture, a container, a machine or a station, not a room or an area: "bring her
   cup to the sink", "give her toys to the toy box", "bring her keys to the hook", "pass the guest towels to the
   shelf"); she is still a person the robot brings things for, so people are nearby, with an emergency stop ("bring
-  her tea to the table", "bring her cup to the sink"). "In" or "on" a place says where the person is or how the thing comes, and a room or an area may be where
+  her tea to the table", "bring her cup to the sink"). "In" or "on" a place says where the person is or how the thing
+  comes, and a room or an area may be where
   the person is, so "bring her tea in the garden", "bring her medicine on a tray", "pass her pills on the tray",
   "bring her tea to the garden", "bring them tea in the garden" and "give the operator parts in the tray" are
-  hand-overs (an animal's thing keeps the older guard, `_THEN_ANY_PLACE`: "bring the dog bowl to her porch"). The tool hand-over archetype's things going to a place are a pick
+  hand-overs (an animal's thing keeps the older guard, `_THEN_ANY_PLACE`: "bring the dog bowl to her porch"). The tool
+  hand-over archetype's things going to a place are a pick
   and place (`_TO_A_PLACE`: "bring the tools to his workbench"; its workshop people keep the e-stop). Otherwise the
   person is the receiver, because a missed hand-over drops the emergency stop beside a person: after "her" or 's comes
   no place ("bring the meds to her twice a day", "gives the medicine to her nurse", "bring breakfast to her bedside
@@ -1920,7 +1925,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
   place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
   nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,613
-  requests from the release review's two hunts and the fixers' rounds, each with the task, people and e-stop it must get,
+  requests from the release review's two hunts and the fixers' rounds, each with the task, people and e-stop it must
+  get,
   run through `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
   order, failures included; not the ones it carried over or that were blocked), and `reused`: the stages whose
