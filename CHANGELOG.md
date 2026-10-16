@@ -461,8 +461,15 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   traceback. Ctrl+C pressed twice or more while the start-up rebuilds it, or again while the Studio writes its stop
   down, is a clean stop as well (the second press counted as a crash, so one real crash and a double Ctrl+C parked the
   design), and a first build that gets its turn while the Studio is stopping is cut off by that stop, not counted as a
-  try. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
+  try, as is the first build of a project made while it stops (a New robot request still being answered at Ctrl+C).
+  Ctrl+C pressed once more while the stopped Studio's process ends no longer prints a traceback or leaves its lock
+  files behind. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
   failed starts are no tries either.
+- Ctrl+C (or closing the terminal window, or `kill`) while `morph studio` builds the first robot, before the Studio
+  starts, stops in one line, "Stopped before the Studio started: ...", with exit status 130, where it printed a
+  traceback from inside MuJoCo. A project that start made and didn't finish is not kept, so the next start builds it
+  again: one named other than the demos (`morph studio my-arm`) used to be left without a design, and the Studio
+  refused to start on it.
 - With two Studios on one projects folder, Reset demo in one no longer deletes the revision the other is building (it
   is refused, and says why), Delete project is refused while another Studio or a `morph study` command runs a
   robustness study of the project, and says which process runs it and on which computer (the study went on in a

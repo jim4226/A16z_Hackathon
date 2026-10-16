@@ -312,6 +312,70 @@ def test_a_stop_signal_after_the_studio_stopped_cleanly_changes_nothing(tmp_path
     assert os.listdir(tmp_path / "projects" / ".studios") == []    # its lock file and its start record both went
 
 
+_FIRST_ROBOT = """
+import os, sys, time
+from morph import keys
+keys.ENV_PATH = sys.argv[0] + ".env"                    # .env in the test's folder, never the checkout's
+sys.argv = ["morph", "studio", sys.argv[1], "--port", sys.argv[2]]
+from morph.robot.pipeline2 import RobotProject
+
+def build(self, rev, design, *a, **k):                  # the launcher's first robot, about a minute
+    os.makedirs(self.rev_dir(rev), exist_ok=True)
+    with open(os.path.join(self.rev_dir(rev), "design.json"), "w") as fh:
+        fh.write(design.dumps())
+    print("<building>", flush=True)
+    time.sleep(120)
+RobotProject._build = build
+from morph import cli
+sys.exit(cli.main())
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from outside the process")
+@pytest.mark.parametrize("name,signals", [("egg-picker", ["SIGINT"]), ("egg-picker", ["SIGINT", "SIGINT"]),
+                                          ("my-arm", ["SIGINT"]), ("my-arm", ["SIGHUP"]), ("my-arm", ["SIGTERM"])])
+def test_a_stop_while_the_launcher_builds_the_first_robot_says_so_in_one_line(tmp_path, name, signals):
+    """Ctrl+C while `morph studio` built the first robot ("generating the first robot (about a minute)...", before
+    serve()) printed MuJoCo's KeyboardInterrupt traceback and ended with -2; for a project of another name than the
+    demos it left a meta.json with no revision, which the next `morph studio <name>` refused to start on and "build it
+    again" couldn't build (no design kept). It now stops in one line, exits 130, and keeps nothing of a project this
+    start made, so the next start generates it again."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    script = tmp_path / "first.py"
+    script.write_text(_FIRST_ROBOT, encoding="utf-8")
+    home = tmp_path / "projects"
+    env = {**os.environ, "PYTHONPATH": CODE, "MORPH_HOME": str(home), "MORPH_OFFLINE": "1", "PYTHONUNBUFFERED": "1"}
+    for k in ("MORPH_TOKEN", "DISPLAY", "WAYLAND_DISPLAY"):
+        env.pop(k, None)
+    proc = subprocess.Popen([sys.executable, str(script), name, str(port)], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env, cwd=str(tmp_path))
+    out = []
+    threading.Thread(target=lambda: out.extend(iter(proc.stdout.readline, "")), daemon=True).start()
+    try:
+        deadline = time.time() + 120
+        while time.time() < deadline and "<building>\n" not in out:
+            assert proc.poll() is None, (out, proc.stderr.read())
+            time.sleep(0.05)
+        assert "<building>\n" in out, out
+        for sig in signals:
+            proc.send_signal(getattr(signal, sig))
+            time.sleep(0.2)
+        rc = proc.wait(60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(20)
+    time.sleep(0.2)
+    err = proc.stderr.read()
+    said = out[out.index("<building>\n") + 1:]
+    assert rc == 130 and "Traceback" not in err, (rc, err)
+    assert len(said) == 1 and said[0].startswith("Stopped before the Studio started"), said
+    assert not (home / name).exists()                   # made by this start, never finished: nothing of it kept
+    assert not (home / ".studios").exists() or os.listdir(home / ".studios") == []
+
+
 def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
     code = ("import multiprocessing as mp, sys, time\n"
             "from morph import cli\n"

@@ -91,6 +91,16 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   stop in twelve. So every record must be on disk when it is written (the rules here), never at exit. A build still
   running is cut off at once (the interpreter used to wait for its helper threads): `serve()` journals a first build
   as `interrupted` first (section 2), and the next start picks it up like any build a stop cut off.
+- Before the Studio starts, `morph studio` builds what it needs (`cli._first_robots`: the named project's first robot,
+  "generating the first robot (about a minute)...", the project switcher's other demo, and either rebuilt for newer
+  Morph code). Ctrl+C there, or SIGTERM, SIGHUP or SIGBREAK (`cli._stops_raise` makes them raise KeyboardInterrupt as
+  Ctrl+C does), stops it in one line, "Stopped before the Studio started: <project> wasn't finished, and the next
+  start builds it again.", with exit status 130 (`cli._stopped_starting`, then `_leave`; stop signals are ignored
+  from then on): the build in progress leaves no revision (`RobotProject.run` discards one it didn't finish), and a
+  project folder this start made (none was there before it) that has no finished revision is removed, so the next
+  start generates it again; nothing else is removed. Not covered: a SIGKILL, a power cut or a closed console window on
+  Windows there leaves that folder with only its `meta.json`; the next start builds a demo again, and refuses a
+  project of another name until it is deleted (from another project's Studio, or by hand).
 - Stopping never waits for the network: lookups run in parallel on `morph/services/background.DaemonPool` (Darwin
   `source`/`suggest`, `keys.check`, BoardRepo), whose daemon threads the interpreter doesn't join at exit, where
   `concurrent.futures` ran every queued lookup to its timeout first. New code that fans network calls out uses it.

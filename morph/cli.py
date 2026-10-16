@@ -200,7 +200,6 @@ def _set_aside_cut_off(proj):
 
 
 def cmd_studio(a):
-    from .robot.pipeline2 import RobotProject
     from .studio.server import access_token, is_loopback, serve
 
     import re
@@ -247,37 +246,16 @@ def cmd_studio(a):
             sys.exit(f"{a.name} is a gripper-only project from the earlier CLI prototype; open "
                      f"{os.path.join(HOME, a.name, 'report.html')} for it. Morph Studio opens whole robots: "
                      "run_studio.bat / ./run_studio.sh, or `python -m morph.cli studio egg-picker --open`.")
-    from . import keys
-    from .studio import projects
-    if keys.ensure_env_file():
-        print("Created .env for your API keys (optional): use the Keys button in the Studio, or edit .env.")
-    projects.backfill_demo(HOME)  # robots this launcher made before 0.2: Reset demo touches only demo projects
-    existing = projects.project_root(HOME, a.name)  # before RobotProject(), which makes the folder
-    for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
-        _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
-    p = RobotProject(os.path.join(HOME, a.name))
-    if not p.finished():
-        if existing and projects.read_meta(existing).get("demo") is not True:
-            # a project of its own whose first build was cut off or failed: the template must never replace its design
-            # (or its first-build record), and serve() opens only a project with a revision
-            sys.exit(f"{a.name} has no finished revision yet, so the Studio can't start on it. Start the Studio on "
-                     f"another project (`morph studio egg-picker`), then send \"build it again\" in {a.name}'s chat, "
-                     f"or delete {a.name} from the project menu there.")
-        print(f"{a.name} has no finished revision yet: building its first robot (about a minute)..." if existing else
-              f"no project {a.name} yet: generating the first robot (about a minute)...")
-        cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
-                                     source="so101" if a.name == "so101" else None, demo=a.name in projects.DEMOS))
-    other = "so101" if a.name != "so101" else "egg-picker"
-    if not RobotProject(os.path.join(HOME, other)).finished():
-        print(f"also preparing the {other} project for the project switcher...")
-        cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
-                                     source="so101" if other == "so101" else None, demo=True))
-    from .robot.pipeline2 import pipeline_version
-    for proj in (p, RobotProject(os.path.join(HOME, other))):
-        last = proj.latest()
-        if last and proj.load_results(last).get("pipeline_version") != pipeline_version(proj.load_design(last).arm.source):
-            print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
-            proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
+    other = "so101" if a.name != "so101" else "egg-picker"  # the project switcher's second project
+    # the folders this start makes: one whose robot a stop cuts off before it is built isn't kept (nothing else is
+    # ever removed), so the next start generates it again
+    fresh = [nm for nm in (a.name, other) if not os.path.lexists(os.path.join(HOME, nm))]
+    building = []  # the project whose robot is being built now
+    try:
+        with _stops_raise():  # a closed terminal window or `kill` stops a build here the way Ctrl+C does
+            p = _first_robots(a, other, building)
+    except KeyboardInterrupt:
+        return _stopped_starting(fresh, building, getattr(a, "last", False))
     owner_link = None
     if team:  # a fresh one-time sign-in link for the owner (made now: it lasts 15 minutes)
         from .services import durable
@@ -301,10 +279,111 @@ def cmd_studio(a):
         threading.Timer(1.5, open_app_window, args=(link,)).start()
     extra = {**({"team": True, "link": owner_link} if team else {}),
              **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {}),
-             **({"token_chosen": False} if token and not fixed else {})}  # Morph's own random code: never locked out
-    serve(p, a.host, a.port, home=HOME, token=token, last=getattr(a, "last", False), **extra)
+             **({"token_chosen": False} if token and not fixed else {}),  # Morph's own random code: never locked out
+             **({"last": True} if getattr(a, "last", False) else {})}  # the process ends with the Studio (_leave)
+    serve(p, a.host, a.port, home=HOME, token=token, **extra)
 
 
+
+
+def _first_robots(a, other: str, building: list):
+    """What `morph studio` does before the Studio starts: the .env file, and the robots it builds: `a.name`'s first one
+    (generated when there is no such project yet), the project switcher's `other` one, and either rebuilt when the Morph
+    code changed since. `building` names the project being built meanwhile. Returns a.name's RobotProject."""
+    from . import keys
+    from .robot.pipeline2 import RobotProject, pipeline_version
+    from .studio import projects
+    if keys.ensure_env_file():
+        print("Created .env for your API keys (optional): use the Keys button in the Studio, or edit .env.")
+    projects.backfill_demo(HOME)  # robots this launcher made before 0.2: Reset demo touches only demo projects
+    existing = projects.project_root(HOME, a.name)  # before RobotProject(), which makes the folder
+    for nm in (a.name, other):
+        _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
+    p = RobotProject(os.path.join(HOME, a.name))
+    if not p.finished():
+        if existing and projects.read_meta(existing).get("demo") is not True:
+            # a project of its own whose first build was cut off or failed: the template must never replace its design
+            # (or its first-build record), and serve() opens only a project with a revision
+            sys.exit(f"{a.name} has no finished revision yet, so the Studio can't start on it. Start the Studio on "
+                     f"another project (`morph studio egg-picker`), then send \"build it again\" in {a.name}'s chat, "
+                     f"or delete {a.name} from the project menu there.")
+        print(f"{a.name} has no finished revision yet: building its first robot (about a minute)..." if existing else
+              f"no project {a.name} yet: generating the first robot (about a minute)...")
+        building[:] = [a.name]
+        cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
+                                     source="so101" if a.name == "so101" else None, demo=a.name in projects.DEMOS))
+    if not RobotProject(os.path.join(HOME, other)).finished():
+        print(f"also preparing the {other} project for the project switcher...")
+        building[:] = [other]
+        cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
+                                     source="so101" if other == "so101" else None, demo=True))
+    for proj in (p, RobotProject(os.path.join(HOME, other))):
+        last = proj.latest()
+        if last and proj.load_results(last).get("pipeline_version") != pipeline_version(proj.load_design(last).arm.source):
+            print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
+            building[:] = [os.path.basename(proj.root)]
+            proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
+    building.clear()
+    return p
+
+
+def _stopped_starting(fresh: list, building: list, last: bool) -> int:
+    """Ctrl+C (or a closed terminal window, `kill`) while `morph studio` built a robot before the Studio started: one
+    line instead of a traceback from inside MuJoCo, and exit status 130 (stopped). The build in progress left nothing
+    (RobotProject.run discards a revision it didn't finish). A project this start made (`fresh`) that has no finished
+    revision is removed: kept, a project named other than the demos would hold no design, and the next `morph studio`
+    would refuse to start on it. So the next start builds it again. `last`: the process ends now (_leave)."""
+    _ignore_stops()  # stopping already: a second Ctrl+C changes nothing
+    import shutil
+    from .robot.pipeline2 import RobotProject
+    for nm in fresh:
+        root = os.path.join(HOME, nm)
+        try:
+            if os.path.isdir(root) and not os.path.islink(root) and not RobotProject(root).finished():
+                shutil.rmtree(root)
+        except OSError:
+            pass
+    what = f": {building[0]} wasn't finished, and the next start builds it again" if building else ""
+    try:
+        print(f"Stopped before the Studio started{what}.", flush=True)
+    except (OSError, ValueError):  # the terminal window is gone
+        pass
+    if last:
+        _leave(130)
+    return 130
+
+
+def _stops_raise():
+    """A context in which SIGTERM, SIGHUP and SIGBREAK (`kill`, a closed terminal window) raise KeyboardInterrupt as
+    Ctrl+C does, so a build before the Studio starts stops the same way; put back afterwards. Only from the main thread;
+    a signal the process ignores (nohup) stays ignored."""
+    import contextlib
+    import signal
+    import threading
+
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+
+    @contextlib.contextmanager
+    def raising():
+        old = {}
+        if threading.current_thread() is threading.main_thread():
+            for name in ("SIGTERM", "SIGHUP", "SIGBREAK"):
+                sig = getattr(signal, name, None)
+                try:
+                    if sig is not None and signal.getsignal(sig) is not signal.SIG_IGN:
+                        old[sig] = signal.signal(sig, stop)
+                except (OSError, ValueError, RuntimeError):
+                    pass
+        try:
+            yield
+        finally:
+            for sig, handler in old.items():
+                try:
+                    signal.signal(sig, handler)
+                except (OSError, ValueError, RuntimeError):
+                    pass
+    return raising()
 
 
 def _ignore_stops():
