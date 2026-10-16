@@ -256,7 +256,11 @@ by pid or host name (a pid is reused after a reboot, a Mac's name changes with i
 until the system frees it when the process ends, however it ends. When a Studio starts (`Studio._recover`, after
 `projects.tidy`), a project with a journal whose Studio's lock is held (`rooms.journal_live`) is left alone ("another
 Morph Studio on this projects folder is still working on it"); otherwise every journal of the project is read
-(`rooms.journals`, `rooms.open_jobs`; an older plain `queue.jsonl` counts as a stopped Studio's) and removed, and:
+(`rooms.journals`, `rooms.open_jobs`; an older plain `queue.jsonl` counts as a stopped Studio's; a job in two journals
+counts once, and of a first build in two the line that counts the most stops) and removed once what is still open is
+written down again (this Studio's own journal line, `JobQueue` `job.journaled`, or `first-build.json`): a journal is the
+only record of a cut-off first design, so a full disk at the start keeps the stopped Studio's journal for the next start,
+and a stop in between leaves both journals, never neither. Then:
 - a first build (`kind: "build"`) of a project with no finished revision is queued again from its design, labelled
   `"<label> (rebuilt after a stop)"`, and the chat says "The Studio stopped before <project>'s first build finished:
   building it again now."; features learn of it through `rooms.RESUMED` hooks `fn(studio, room, job, meta)` (New robot
@@ -274,12 +278,16 @@ Morph Studio on this projects folder is still working on it"); otherwise every j
   "rebuild", "retry") queues it once more (`Studio._no_revision_yet`); sent while a first build of the project waits
   or runs, it is answered at once, never queued: "<project>'s first design is already being built."
   (`Studio.queue_chat`); the record goes once a first revision is built. A first build that ends with an error (not
-  a stop: `Studio.build` caught it) is kept the same way, with its `error` (`Studio._failed_first`; the room keeps it
-  too, should the disk refuse the file): the chat shows the error, every start's terminal says "<project>: its first
+  a stop: `Studio.build` caught it) is kept the same way, with its `error` (`Studio._failed_first`; should the disk
+  refuse the file, the room keeps it and the queue keeps the build's journal lines open, `JobQueue.keep`, so the next
+  start builds it again): the chat shows the error, every start's terminal says "<project>: its first
   build ended with an error, so it has no revision yet. To try once more, send "build it again" ...", and "build it
-  again" queues it once more. "Wait for its first build" is said only while one waits or runs; a project with no
-  revision and nothing kept to build says "... Morph kept no design to build it again: delete the project from the
-  project menu and make it again.". Two Studios on one projects folder (`Studio._no_revision_yet`): while another
+  again" queues it once more. A project with no finished revision, no journal and no record (a full disk, or a stop at
+  the wrong moment, under an older Morph) is built by "build it again" from the newest revision set aside unfinished
+  (`projects.set_aside_design`; `tidy` keeps one a day before it goes to `.trash`). "Wait for its first build" is said
+  only while one waits or runs; a project with no revision and nothing kept to build says "... Morph kept no design to
+  build it again: delete the project from the project menu and make it again.". Two Studios on one projects folder
+  (`Studio._no_revision_yet`): while another
   Studio that still runs has the project's first build queued or building (an open `build` in a live journal), an edit
   and "build it again" are answered "Another Morph Studio on this projects folder is building <project>'s first
   design; wait for it there." and nothing is queued; Delete project is refused (409) while any live journal of another
@@ -287,7 +295,8 @@ Morph Studio on this projects folder is still working on it"); otherwise every j
   left open in its journal counts as kept (`Studio._kept_first`): "build it again" builds it from that design, sets
   the stopped build's revision aside and removes that journal. Whether to queue a first build is decided by one
   process at a time, under an OS lock on `<p>/.morph/first-build.lock` (`rooms.first_build_turn`, also taken by
-  `Studio._recover` for a project with journals), so two Studios asked at once queue it once. A delete in one Studio
+  `Studio._recover` for a project with journals or a revision its start-up set aside, which reads the journals again
+  under it), so two Studios asked at once, or starting at once, queue it once. A delete in one Studio
   and a job queued in another at the same instant are not serialised (the window is the time between the check and
   the move to `.trash`). On a file system that can't lock, every other Studio's journal reads as a stopped one's, as
   the start-up warning says;

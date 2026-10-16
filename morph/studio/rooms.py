@@ -309,6 +309,7 @@ class Job:
         self._done = threading.Event()
         self.answered = threading.Event()  # a conflict got its answer: "resolved" (see successor) or "dropped"
         self.successor = None              # the job a resolved conflict's Apply queued: it builds this request
+        self.journaled = False             # the queue's journal has its line (False: the disk refused it)
 
     def wait(self, timeout: float | None = None) -> bool:
         """True once the job has finished (whatever its status)."""
@@ -363,20 +364,24 @@ class JobQueue:
         self.home = os.path.dirname(p.root) if p is not None else None
         self.claim = None  # this process's lock on the projects folder, taken before the first journal line
         self.cuttable = set()  # ids of jobs journaled "started": a stop from then on cuts them off
+        self.kept = set()  # ids of first builds that ended with an error the disk refused to record: still open
 
     # -- the journal
-    def _log(self, op: str, job: Job, **fields):
-        """One journal line (under self.cond). A journal that can't be written never stops the queue."""
+    def _log(self, op: str, job: Job, **fields) -> bool:
+        """One journal line (under self.cond); False when it couldn't be written (a full disk). A journal that can't be
+        written never stops the queue."""
         if not self.journal:
-            return
+            return True
         try:
             if self.claim is None:  # the lock that tells other Studios this journal's writer still runs
                 self.claim = claim(self.home)
             os.makedirs(os.path.dirname(self.journal), exist_ok=True)
             durable.append_line(self.journal, json.dumps({"op": op, "id": job.id, "studio": OWNER, "pid": os.getpid(),
                                                           "host": HOST, **fields}, default=str))
+            return True
         except (OSError, TypeError, ValueError):
             traceback.print_exc()
+            return False
 
     def started(self, job: Job):
         """`job`'s build has the build slot and starts now (Studio.build): a stop from here on cut it off."""
@@ -397,9 +402,29 @@ class JobQueue:
         self._log("ended", job, status=job.status)
         self._settle()
 
+    def keep(self, job: Job):
+        """`job`, a first build that ended with an error, couldn't be recorded to be asked for again (a full disk): its
+        journal lines stay open ("ended" is never written, the file stays), so the next start still knows its design."""
+        with self.cond:
+            self.kept.add(job.id)
+
+    def built_first(self):
+        """The project has its first revision now: first builds kept open (keep) are over."""
+        with self.cond:
+            for job_id in list(self.kept):
+                self._log_ended(job_id)
+            self.kept.clear()
+            self._settle()
+
+    def _log_ended(self, job_id: str):
+        job = Job("build", None)
+        job.id = job_id
+        self._log("ended", job, status="error")
+
     def _settle(self):
-        """Nothing waits, runs or waits for an answer: the journal has nothing left to tell, so it goes."""
-        if self.journal and self.running is None and not self.pending and not self.waiting:
+        """Nothing waits, runs or waits for an answer (and no first build is kept open): the journal has nothing left to
+        tell, so it goes."""
+        if self.journal and self.running is None and not self.pending and not self.waiting and not self.kept:
             try:
                 os.remove(self.journal)
             except OSError:
@@ -417,7 +442,7 @@ class JobQueue:
             job.finished = time.time()
             job._done.set()
             self.waiting[job.id] = job
-            self._log("held", job, **self._held(job))
+            job.journaled = self._log("held", job, **self._held(job))
         return job
 
     @staticmethod
@@ -445,8 +470,8 @@ class JobQueue:
             self.jobs[job.id] = job
             while len(self.jobs) > self.KEEP + self.MAX_QUEUED + 1:
                 self.jobs.popitem(last=False)
-            self._log("queued", job, kind=kind, label=job.label, by=by, base_rev=base_rev, ts=time.time(),
-                      **(record or {}))
+            job.journaled = self._log("queued", job, kind=kind, label=job.label, by=by, base_rev=base_rev,
+                                      ts=time.time(), **(record or {}))
             self.publish()
             if self.worker is None or not self.worker.is_alive():
                 self.worker = threading.Thread(target=self._work, daemon=True, name=f"morph-room-{self.room.name}")
@@ -566,8 +591,8 @@ class JobQueue:
                 with self.cond:
                     self.running = None
                     self.cuttable.discard(job.id)
-                    if job.status != "conflict":  # a conflict stays open in the journal ("held") until it is answered
-                        self._log("ended", job, status=job.status)
+                    if job.status != "conflict" and job.id not in self.kept:  # a conflict stays open ("held") until
+                        self._log("ended", job, status=job.status)        # it is answered, a kept first build for good
                     self._settle()
                     self.publish(job)
                 job._done.set()

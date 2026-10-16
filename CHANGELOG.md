@@ -435,7 +435,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   each build a first revision, r001 and r002), Delete project is refused while the other Studio builds it or has
   changes of it waiting (it moved the project to `.trash` mid-build), and New robot's Build on that project's brief no
   longer moves it to `.trash` to make a second one. A first build left open by a Studio that stopped while this one
-  ran is built by "build it again" here (it read "Morph kept no design").
+  ran is built by "build it again" here (it read "Morph kept no design"). A full disk when the Studio starts no longer loses a
+  cut-off first build: the stopped Studio's journal, its only record, used to go before anything replaced it, so a
+  rebuild and an error record the disk refused left only "delete the project" (the design survives now until it is
+  written down again, and a first build that fails on a full disk stays journaled). "Build it again" also builds from
+  a revision set aside unfinished when nothing else kept the design, and two Studios starting at once build a cut-off
+  first design once (they could build it twice, r001 and r002).
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

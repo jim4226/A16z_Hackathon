@@ -806,3 +806,119 @@ def test_a_briefs_first_build_asked_for_again_marks_the_brief_built(home, tmp_pa
     settled()
     assert room.completed() == ["r001"] and os.path.exists(after / "berry-bot" / "brief.json")
     assert B.load_draft(str(after), bid) is None
+
+
+# ------------------------------------------------------------------ a full disk, and a stop at the wrong moment
+
+
+def test_a_full_disk_at_a_restart_never_loses_a_cut_off_first_build(home, tmp_path, monkeypatch):
+    """The disk is full when the Studio starts: the rebuild's journal line, the rebuild itself and the error record all
+    fail. The stopped Studio's journal used to go first, leaving the design only in memory ("kept no design ... delete
+    the project"); it stays until what replaces it is written, so the next start, with space again, builds kb1."""
+    from morph.services import durable
+    cut_off_first_build(home)
+    full = [True]
+    real_append, real_write = durable.append_line, durable.write_json
+
+    def append_line(path, line):
+        if full[0] and "kb1" in str(path):
+            raise OSError(28, "No space left on device", str(path))
+        return real_append(path, line)
+
+    def write_json(path, value, *a, **k):
+        if full[0] and "kb1" in str(path):
+            raise OSError(28, "No space left on device", str(path))
+        return real_write(path, value, *a, **k)
+
+    def run(self, design, *a, **k):
+        raise OSError(28, "No space left on device", os.path.join(self.root, "r001", "design.json"))
+
+    monkeypatch.setattr(durable, "append_line", append_line)
+    monkeypatch.setattr(durable, "write_json", write_json)
+    monkeypatch.setattr(RobotProject, "run", run)
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    kb1 = st.room("kb1")
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert kb1.completed() == [] and rooms.journals(str(home / "kb1"))   # the stopped Studio's journal stays
+    assert not (home / "kb1" / ".morph" / "first-build.json").exists()
+    after = tmp_path / "space-again"
+    shutil.copytree(home, after)
+    full[0] = False
+    fake = FakeBuilds()
+    monkeypatch.setattr(RobotProject, "run", lambda self, *a, **k: fake(self, *a, **k))
+    st2 = server.Studio(RobotProject(str(after / "egg")), str(after))
+    kb1 = st2.room("kb1")
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert kb1.completed() == ["r001"] and kb1.p.load_design("r001").build.quantity == 5
+    assert not rooms.journals(str(after / "kb1"))
+
+
+def test_a_stop_between_taking_over_a_journal_and_removing_it_loses_nothing(home, tmp_path, builds, monkeypatch):
+    """The new journal line is written before the stopped Studio's journal goes: a kill in between leaves both (it used
+    to leave neither), and the next start builds the first design once, counting the stop once."""
+    cut_off_first_build(home)
+    snap, may_start = tmp_path / "killed-mid-recovery", threading.Event()
+    real_remove, real_started = server._remove, rooms.JobQueue.started
+
+    def remove(path):
+        if "queue-" in str(path) and not snap.exists():
+            shutil.copytree(home, snap)                                     # killed right here
+            may_start.set()
+        real_remove(path)
+
+    def started(self, job):
+        assert may_start.wait(5)
+        real_started(self, job)
+
+    monkeypatch.setattr(server, "_remove", remove)
+    monkeypatch.setattr(rooms.JobQueue, "started", started)
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    finish(*(st.room("kb1").jobs.get(j["id"]) for j in st.room("kb1").jobs.snapshot()))
+    assert len(rooms.journals(str(snap / "kb1"))) == 2                     # the old journal and the new one
+    monkeypatch.setattr(server, "_remove", real_remove)
+    st2 = server.Studio(RobotProject(str(snap / "egg")), str(snap))
+    kb1 = st2.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert [j.label for j in queued] == ["first design" + REBUILT]          # once, and not parked
+    finish(*queued)
+    assert kb1.completed() == ["r001"] and not rooms.journals(str(snap / "kb1"))
+
+
+def test_build_it_again_finds_a_set_aside_first_design_nothing_else_kept(home, builds):
+    """No journal, no record and no finished revision, but the cut-off revision set aside at an earlier start still
+    holds the design: "build it again" builds it instead of saying Morph kept nothing."""
+    from morph.spec import Design as D
+    root = home / "kb1"
+    (root / f"r001.incomplete-{time.time_ns()}").mkdir(parents=True)
+    (root / "meta.json").write_text(json.dumps({"kind": "robot", "source": "", "need": "kb1"}), encoding="utf-8")
+    aside = next(root.glob("r001.incomplete-*"))
+    (aside / "design.json").write_text(D().with_changes({"build.quantity": 9}).dumps(), encoding="utf-8")
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    kb1 = st.room("kb1")
+    assert not kb1.jobs.busy()
+    finish(st.queue_chat(kb1, "build it again"))
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert kb1.completed() == ["r001"] and kb1.p.load_design("r001").build.quantity == 9
+
+
+def test_a_start_that_set_a_first_build_aside_recovers_it_under_the_lock(home, builds, monkeypatch):
+    """A Studio whose start-up set the cut-off revision aside, and that sees no journal (another starting Studio had
+    just removed the stopped one's and not yet written its own), recovered without the project's first-build lock and
+    built the first design a second time. It now takes the lock and reads the journals again under it."""
+    root = home / "kb1"
+    (root / "r001").mkdir(parents=True)
+    (root / "meta.json").write_text(json.dumps({"kind": "robot", "source": "", "need": "kb1"}), encoding="utf-8")
+    (root / "r001" / "design.json").write_text(Design().with_changes({"build.quantity": 5}).dumps(), encoding="utf-8")
+    locked, real = [], rooms.first_build_turn
+
+    def turn(path, wait=5.0):
+        locked.append(os.path.basename(str(path)))
+        return real(path, wait)
+
+    monkeypatch.setattr(server, "first_build_turn", turn)
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    kb1 = st.room("kb1")
+    assert locked == ["kb1"]
+    finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
+    assert kb1.completed() == ["r001"]
+

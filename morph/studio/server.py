@@ -317,9 +317,11 @@ class Studio:
 
     def _recover_project(self, name: str, set_aside: list):
         root = os.path.join(self.home, name)
-        if not journals(root):
+        if not journals(root) and not set_aside:
             return self._recover_open(name, root, set_aside)
-        with first_build_turn(root):  # a Studio running on this folder may be asked for the same first build right now
+        # a Studio running on this folder may be asked for the same first build right now, or another one starting may
+        # be recovering it: one at a time, each reading the journals again under the lock
+        with first_build_turn(root):
             return self._recover_open(name, root, set_aside)
 
     def _recover_open(self, name: str, root: str, set_aside: list):
@@ -327,7 +329,15 @@ class Studio:
         if any(journal_live(path, self.home) for path in paths):  # that Studio's lock is held: it still runs
             print(f"{name}: another Morph Studio on this projects folder is still working on it; leaving its queue alone")
             return
-        entries = [e for path in paths for e in open_jobs(path)]
+        for i, path in enumerate(paths):  # one with this process's own name (a Studio made again in one process):
+            if journal_owner(path) == OWNER:  # renamed, so this Studio's new lines never go into the file it reads
+                paths[i] = os.path.join(os.path.dirname(path), f"queue-{secrets.token_hex(8)}.jsonl")
+                try:
+                    os.replace(path, paths[i])
+                except OSError:
+                    paths[i] = path
+        # a job in two journals (a start that couldn't record what it took over kept the stopped Studio's) counts once
+        entries = list({e["id"]: e for path in paths for e in open_jobs(path)}.values())
         finished = RobotProject(root).finished()
         parked = projects.parked_first_build(root)
         if parked is not None and finished:
@@ -339,8 +349,7 @@ class Studio:
                 print(self._parked_text(name, parked.get("cut"), terminal=True, error=parked.get("error")))
             return
         room = self.room(name)
-        for path in paths:  # their open jobs are handled here; what still waits is journaled again
-            _remove(path)
+        recorded = True  # what is still open is written down again here (this Studio's journal, first-build.json)
         built = []  # (label, when) of the newest revisions: a job whose revision was written just before the stop
         for rev in finished[-12:]:
             try:
@@ -356,13 +365,13 @@ class Studio:
                 return None
             return next((b for b in built if b[0] == str(e.get("label") or "")[:48] and b[1] >= ts), None)
 
-        first = None
+        firsts = []
         for e in entries:
             if e["op"] == "held":
-                room.jobs.restore(e)
+                recorded = room.jobs.restore(e).journaled and recorded
             elif e.get("kind") == "build":
-                if not finished and first is None and isinstance(e.get("design"), dict):
-                    first = e
+                if not finished and isinstance(e.get("design"), dict):
+                    firsts.append(e)
             elif (hit := built_by(e)) is not None:
                 built.remove(hit)  # it was built; only its journal line was lost with the stop
             else:
@@ -375,8 +384,22 @@ class Studio:
                                "text": f"The Studio stopped before this was built: {what}. Send it again if you still "
                                        "want it." if e.get("kind") != "proposal" else
                                        f"The Studio stopped before {what} was built. {again}"})
-        if finished:
-            return
+        if not finished:
+            # times a stop cut it off mid-build: the line that counted most (a start that kept the stopped Studio's
+            # journal has the first build twice, its own line counting the stop before)
+            first = max(firsts, key=lambda e: _count(e.get("cut")) + (1 if e.get("started") else 0), default=None)
+            recorded = self._first_again(room, name, root, first, set_aside) and recorded
+        if recorded:  # only now: until the work is written down again, the stopped Studio's journal is its one record
+            for path in paths:
+                _remove(path)
+        elif paths:
+            print(f"{name}: Morph couldn't write down the work a stopped Studio left open (is the disk full?); its queue "
+                  "journal stays, so the next start picks it up again")
+
+    def _first_again(self, room: Room, name: str, root: str, first, set_aside: list) -> bool:
+        """A project with no finished revision after a stop: its first build is queued again, or parked (_park), from
+        the journal's line `first` or, without one, the newest revision set aside just now. False when what was decided
+        couldn't be written down (a full disk: the queue's journal line, or first-build.json)."""
         design, label, by, cut = None, "first design", None, 0
         if first is not None:
             design, label, by = first["design"], first.get("label") or label, first.get("by")
@@ -397,21 +420,21 @@ class Studio:
                 room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
                                "finished, and Morph has no design to build it from. Delete this project from the project "
                                "menu, or make it again."})
-            return
+            return True
         try:
             built_design = projects.as_design(design)
         except ValueError as exc:
             room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
                            f"finished, and its design can't be read ({exc}). Delete this project, or make it again."})
-            return
+            return True
         label = label[:-len(self.REBUILT)] if label.endswith(self.REBUILT) else label
         if cut >= self.FIRST_BUILD_TRIES:
-            self._park(room, design, label, by, cut)
-            return
+            return self._park(room, design, label, by, cut)
         room.hub.send({"type": "assistant", "noop": True, "text": f"The Studio stopped before {name}'s first build "
                        "finished: building it again now."})
         job = self.queue_build(room, built_design, label=label[:48 - len(self.REBUILT)] + self.REBUILT, by=by, cut=cut)
         self._resumed(room, job)
+        return job.journaled
 
     def stopping(self):
         """The Studio stops cleanly (Ctrl+C, serve_forever returning; serve() calls this, never for an error escaping
@@ -434,27 +457,35 @@ class Studio:
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
 
-    def _failed_first(self, room: Room, design, label: str, by, cut: int, why: str):
+    def _failed_first(self, room: Room, design, label: str, by, cut: int, why: str) -> bool:
         """A first build that ended with an error (not a stop) left no revision and nothing queued: its design is kept
         like a parked one (projects.FIRST_BUILD, with the error; on the room too, should the disk refuse the record),
-        so "build it again" in the project's chat tries it once more (_no_revision_yet). Never raises."""
+        so "build it again" in the project's chat tries it once more (_no_revision_yet). False when the record couldn't
+        be written (build() then keeps the build open in the queue's journal). Never raises."""
         label = label[:-len(self.REBUILT)] if label.endswith(self.REBUILT) else label
         record = {"design": design.to_dict() if hasattr(design, "to_dict") else design, "label": label, "by": by,
                   "cut": cut, "error": why[:300]}
         room.first_build = record
         try:
             projects.park_first_build(room.p.root, record)
+            return True
         except (OSError, TypeError, ValueError):
             traceback.print_exc()
+            return False
 
-    def _park(self, room: Room, design: dict, label: str, by, cut: int):
+    def _park(self, room: Room, design: dict, label: str, by, cut: int) -> bool:
         """A first build the Studio stopped during `cut` times isn't started again on its own: if something in the
         design stops the Studio (memory, a crash in a native library), it would stop it at every start. Clean stops
         (Ctrl+C) don't count (stopping). It waits in projects.FIRST_BUILD until someone sends "build it again" in the
         project's chat (_no_revision_yet). What people read says only what happened, not that the design did it."""
-        projects.park_first_build(room.p.root, {"design": design, "label": label, "by": by, "cut": cut})
+        try:
+            projects.park_first_build(room.p.root, {"design": design, "label": label, "by": by, "cut": cut})
+        except (OSError, TypeError, ValueError):
+            traceback.print_exc()
+            return False  # the stopped Studio's journal stays its record (_recover_open)
         room.hub.send({"type": "assistant", "noop": True, "text": self._parked_text(room.name, cut)})
         print(self._parked_text(room.name, cut, terminal=True))
+        return True
 
     @staticmethod
     def _parked_text(name: str, cut, terminal: bool = False, error: str | None = None) -> str:
@@ -511,7 +542,7 @@ class Studio:
                 projects.set_aside_unfinished(room.p, say=print)
             again = self.queue_build(room, design, label=label[:48], by=job.by if job is not None else None,
                                      cut=_count(kept.get("cut")))
-            for path in stale:  # built here now: a later start doesn't build it a second time
+            for path in stale if again.journaled else ():  # built here now: a later start doesn't build it twice
                 _remove(path)
         self._resumed(room, again)
         return self._say(room, job, "noop", f"Building {room.name}'s first design again.", noop=True)
@@ -535,7 +566,9 @@ class Studio:
         """(the first build `room` keeps to be asked for again, the stopped Studios' journals that building it here
         settles). It is the parked or failed one (projects.FIRST_BUILD, or the room's record when the disk refused
         the file), else one a Studio that stopped while this one ran left open in its queue journal (the next start
-        would build it again: Studio._recover). (None, []) when there is none."""
+        would build it again: Studio._recover), else the design of the newest revision set aside unfinished
+        (projects.set_aside_design: a first build no journal or record kept, after a full disk or a stop at the wrong
+        moment). (None, []) when there is none."""
         kept, stale = projects.parked_first_build(room.p.root) or room.first_build, []
         for path in journals(room.p.root):
             if journal_owner(path) == OWNER or journal_live(path, self.home):
@@ -548,6 +581,8 @@ class Studio:
             if kept is None:
                 kept = {"design": first["design"], "label": first.get("label"), "by": first.get("by"),
                         "cut": _count(first.get("cut")) + (1 if first.get("started") else 0)}
+        if kept is None and (design := projects.set_aside_design(room.p.root)) is not None:
+            kept = {"design": design, "label": "first design", "cut": 1}
         return kept, stale
 
     @property
@@ -857,6 +892,7 @@ class Studio:
                                      by=job.by if job is not None else None)
                 projects.unpark_first_build(room.p.root)
                 room.first_build = None
+                room.jobs.built_first()  # a first build an earlier error left open in the journal is over
                 room.p.log({"type": "tool_time", "cmd": "studio", "seconds": round(time.time() - t0, 2)})
                 if job is not None:
                     job.result = rev
@@ -867,8 +903,9 @@ class Studio:
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
                 why = durable.explain(exc, self.home)
-                if not room.completed():
-                    self._failed_first(room, design, label, job.by if job is not None else None, cut, why)
+                if (not room.completed() and not self._failed_first(room, design, label, job.by if job is not None
+                                                                    else None, cut, why) and job is not None):
+                    room.jobs.keep(job)  # not recorded (a full disk): its journal lines stay open for the next start
                 self._say(room, job, "error", f"Error: {why}")
                 return None
             finally:
