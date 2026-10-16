@@ -319,6 +319,20 @@ def test_people_text_reads_names_titles_typos_and_people_by_what_they_do(raw, re
     assert B.people_text(raw) == read
 
 
+@pytest.mark.parametrize("text", ["a robot that sorts cards next to the card reader", "scan the parts with the barcode reader",
+                                  "a robot that sorts socks next to the vacuum cleaner", "move the cups next to the floor cleaner"])
+def test_a_reader_or_a_cleaning_machine_is_no_person(text):
+    # "next to the card reader" read the reader as a person (people nearby, an emergency stop), as did "the vacuum cleaner"
+    assert not re.search(B.PERSON_NEAR, B.people_text(text)) and not re.search(B.PEOPLE_BESIDE, B.people_text(text))
+
+
+@pytest.mark.parametrize("text", ["hand the book to the reader", "pass the proofs to the proof reader",
+                                  "pass the proofs to the proofreader", "a robot that hands the cleaner a mop",
+                                  "give the cleaner the bucket", "hand the leaflets to the readers"])
+def test_a_reader_or_a_cleaner_who_is_a_person_still_gets_things(text):
+    assert re.search(B.PERSON_NEAR, B.people_text(text))
+
+
 @pytest.mark.parametrize("text", ["pick up the cans and bring them all to the bin", "bring them two at a time to the tray",
                                   "give them each a quick rinse", "get them done fast", "give me a cheap way to move parts",
                                   "get me a quote for an arm that moves boxes", "give me something that stacks cups",
