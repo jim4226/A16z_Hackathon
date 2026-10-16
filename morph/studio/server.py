@@ -50,7 +50,7 @@ from .rooms import (OWNER, REQUESTER, RESUMED, STARTED, Hub, Job, QueueFull, Roo
                     open_jobs)  # from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
-                       looks_like_secret, param_changes, project_name, secret_refused)
+                       looks_like_secret, param_changes, project_name, remember_access_code, secret_refused)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
@@ -1173,6 +1173,8 @@ def make_handler(studio: Studio, allowed_hosts: set | None = None, token: str | 
     one a person picked (MORPH_TOKEN), so it may be guessable and wrong guesses lock its address out (Guesses);
     False for the code access_token() made."""
     guesses = Guesses()
+    if token and not studio.team:
+        remember_access_code(token)  # people may not paste it anywhere either: it is a Morph access code
     wait_note = ("Too many wrong access codes from this computer. Wait 15 minutes, then try again." if chosen else
                  "Too many wrong access codes from this computer. Open the access link printed where Morph Studio was "
                  "started: it still works.")

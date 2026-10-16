@@ -654,9 +654,18 @@ members; a member can hold several.
   `servo1_servo2_servo3` or `xl330_xl430_xm430`, versioned names such as `Servo1`, `yoloV8`, `jointLimit2`,
   `servoID3`, `so101Arm` or `GraspNet1B` (`security._versioned`), and short codes such as `6x40` or `4f8a`; a key in
   groups of one size such as `sk-live-4f8a-91bc-77de-12ab` is a key unless every group with a digit reads as a
-  numbered word), the value of any key saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a
-  manifest's key prefix that fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in
-  codes. Every `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital or a digit and doesn't read
+  numbered word), the value of any key saved in the Keys dialog, of `ANTHROPIC_AUTH_TOKEN` and of a chosen `MORPH_TOKEN`
+  (`security.SAVED_KEYS`) or of any saved `MORPH_TOOL_*` key, the running remote Studio's own access code
+  (`security.ACCESS_CODES`, set by `server.make_handler`), a token with a manifest's key prefix that fits its pattern
+  wherever the prefix starts a run (`key=`, `?api_key=`, glued to other text), JWTs, Morph Teams' script tokens, invite
+  and sign-in codes, and other services' keys known by a fixed prefix or text that carries a key (`security.OTHER_KEYS`:
+  GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq, xAI, Perplexity, ElevenLabs, npm,
+  PyPI, SendGrid, DigitalOcean, Mapbox, Telegram and Discord tokens and Twilio key SIDs; a private key block, a link
+  with a password, `Bearer` and a token with a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value
+  has a letter and a digit). A key with no prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught
+  only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
+  Python reads by Unicode: 是, は and é count as letters), so a key glued to Chinese, Japanese or Korean text is caught.
+  The key shapes, with the contexts each is refused in, are tables in `tests/fixtures/key_filter/keys.json`. Every `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital or a digit and doesn't read
   as words and part numbers (`_phrase` again), so `mt_shoulder_joint_torque_limit`, `ml_resnet50_backbone_weights`,
   `mt_shoulderJointTorqueLimit` or `ml_policyV1_final_weights` (as long as an invite code) pass. Teams codes are made by
   `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, `security.TEAM_CODE`), which draws again a
@@ -979,7 +988,8 @@ interrupted; a first turn whose account refuses server-side fallbacks continues 
 used_by, set`), never a value; `save()` accepts a `MORPH_TOOL_*` name only when a loaded manifest declares it, checks the
 value against its pattern and prefix (4 KiB at most, no spaces or quotes) and keeps the lock, the 0600 file and the
 error that never repeats a value. `security.looks_like_secret` also refuses the value of any set `MORPH_TOOL_*` key, a
-token that starts with a manifest's key prefix and fits its pattern, and bearer tokens (JWTs). The Keys dialog
+token that starts with a manifest's key prefix (wherever it starts a run: `key=fxp_...`, `?api_key=fxp_...&`) and fits
+its pattern, and JWTs (`catalog.looks_like_tool_key`). The Keys dialog
 (`static/keys.js`) groups tool keys under "Tool keys (beta)" by service, with "Get a key", the hosts each key is sent to
 and the tools that use it; `window.dispatchEvent(new CustomEvent("morph:keys", {detail: {key: "MORPH_TOOL_..."}}))` opens
 it on that key; a member who isn't the owner is told to ask the owner. `POST /api/keys` may answer `resumed: [run ids]`

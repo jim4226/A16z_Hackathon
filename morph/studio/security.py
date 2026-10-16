@@ -33,13 +33,44 @@ WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10
 #   1,000,000 of them, 0 in 200,000 script tokens: tools/key_filter_rates.py), so every code Morph makes is caught:
 #   mt_shoulder_joint_torque_limit, ml_resnet50_backbone_weights, mt_shoulderJointTorqueLimit and
 #   ml_policyV1_final_weights (as long as an invite code) are names, not codes;
-# - the value of a key saved in the Keys dialog (SAVED_KEYS), whatever its shape.
+# - the value of a key saved in the Keys dialog (SAVED_KEYS), whatever its shape, and the running remote Studio's
+#   access code (ACCESS_CODES);
+# - another service's key with a fixed prefix (GitHub's ghp_, Hugging Face's hf_, AWS's AKIA, ...) or text that carries a
+#   key: OTHER_KEYS.
 TEAM_CODE = re.compile(r"(?:m[il]_(?=[A-Za-z0-9_-]{0,21}[A-Z])[A-Za-z0-9_-]{22}"
                        r"|mt_(?=[A-Za-z0-9_-]{0,42}[A-Z])[A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])")
+# Where a key may start: after anything but an ASCII letter, digit or _. Not \b, which Python reads by Unicode: it
+# counts 是, は, 는, а and é as letters, so a key glued to Chinese, Japanese or Korean text (written with no spaces) slipped by.
+START = r"(?<![A-Za-z0-9_])"
 # what may be a key or a code; _is_key decides for the sk- and m*_ runs
-SECRET = re.compile(r"\b(?:sk-ant-[A-Za-z0-9_-]{8,}|kwpat-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-]))"
+SECRET = re.compile(START + r"(?:sk-ant-[A-Za-z0-9_-]{8,}|kwpat-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-]))"
                     r"|(?<![A-Za-z0-9])m[til]_[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])")
-SAVED_KEYS = ("ANTHROPIC_API_KEY", "SUBQ_API_KEY", "KEEWANO_API_KEY", "KEEWANO_PAT")  # keys.KEYS but the project id
+# Other services' keys, known by a fixed prefix and a long random run, and text that carries a key: a private key block,
+# a link with a password in it, a bearer token, an .env line (NAME_KEY=value, NAME_TOKEN=..., which is also how a key
+# with no prefix of its own, such as an AWS secret key, is caught). A key with no prefix pasted on its own is not: only
+# the value of one saved in the Keys dialog (SAVED_KEYS, MORPH_TOOL_*) is.
+OTHER_KEYS = re.compile(
+    START + r"(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}|glpat-[A-Za-z0-9_-]{20,}"  # GitHub, GitLab
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])"                                                    # AWS key ids
+    r"|AIza[A-Za-z0-9_-]{35}|GOCSPX-[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{30,}"  # Google
+    r"|[sr]k_(?:live|test)_[A-Za-z0-9]{20,}|whsec_[A-Za-z0-9+/=]{20,}"                            # Stripe
+    r"|xox[abposr]-[A-Za-z0-9-]{20,}|xapp-[0-9]-[A-Za-z0-9-]{20,}"                                 # Slack
+    r"|hf_[A-Za-z0-9]{30,}|r8_[A-Za-z0-9]{30,}|gsk_[A-Za-z0-9]{40,}|xai-[A-Za-z0-9]{40,}"       # Hugging Face, Replicate,
+    r"|pplx-[A-Za-z0-9]{40,}|sk_[0-9a-f]{40,}"                                                     # Groq, xAI, Perplexity,
+    r"|npm_[A-Za-z0-9]{36,}|pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{20,}"                                # ElevenLabs, npm, PyPI,
+    r"|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{30,}|do[por]_v1_[0-9a-f]{64}"                       # SendGrid, DigitalOcean,
+    r"|sk\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}|[0-9]{8,10}:AA[A-Za-z0-9_-]{30,}"            # Mapbox, Telegram,
+    r"|[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}|SK[0-9a-f]{32}(?![A-Za-z0-9])"  # Discord, Twilio
+    r"|(?:(?:[A-Z][A-Z0-9]*_)+(?:KEY|TOKEN|SECRET|PASSWORD|PAT)|aws_secret_access_key|aws_session_token)"
+    r"[ \t]*[=:][ \t]*[\"']?(?=[^\s\"'<>]{0,300}[0-9])(?=[^\s\"'<>]{0,300}[A-Za-z])[^\s\"'<>]{12,300})"  # NAME_KEY=value
+    r"|hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]{16,}"
+    r"|-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----|(?:AccountKey|SharedAccessKey)=[A-Za-z0-9+/]{30,}"
+    r"|(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,30}://[^\s/:@]{1,200}:[^\s/@]{8,200}@"            # user:password@
+    r"|(?i:bearer)[ \t]+(?=[A-Za-z0-9._~+/-]{0,300}[0-9])[A-Za-z0-9._~+/-]{20,}")
+# keys whose value is refused whatever its shape, once set: keys.KEYS but the project id, Claude's other credential and
+# the access code a person chose for remote mode (the one a remote Studio makes itself is in ACCESS_CODES)
+SAVED_KEYS = ("ANTHROPIC_API_KEY", "SUBQ_API_KEY", "KEEWANO_API_KEY", "KEEWANO_PAT", "ANTHROPIC_AUTH_TOKEN", "MORPH_TOKEN")
+ACCESS_CODES: set = set()  # the running remote Studio's access code (remember_access_code)
 _WORD = re.compile(r"[a-z]+|[A-Z][a-z]*|[A-Z]+")                                  # egg, Steel, DIN
 _CAMEL = re.compile(r"(?:[a-z]{2,}|[A-Z][a-z]{2,})(?:[A-Z][a-z]{2,})+")         # shoulderJointTorqueLimit
 _SAYABLE = re.compile(r"(?=.*[aeiouy])(?!.*[^aeiouy]{5})", re.I)               # a vowel, no 5 other letters in a row
@@ -166,18 +197,27 @@ def _is_key(match) -> bool:
 
 
 def has_key(text: str) -> bool:
-    """True when `text` holds something shaped like a Claude, SubQ or Keewano key or a Morph Teams code (SECRET)."""
-    return isinstance(text, str) and any(_is_key(m) for m in SECRET.finditer(text))
+    """True when `text` holds something shaped like a Claude, SubQ or Keewano key or a Morph Teams code (SECRET), or
+    another service's key or key-bearing text (OTHER_KEYS)."""
+    return isinstance(text, str) and (any(_is_key(m) for m in SECRET.finditer(text)) or bool(OTHER_KEYS.search(text)))
 
 
 def redact_keys(text: str, mark: str = "[redacted]") -> str:
     """`text` with everything has_key() finds replaced by `mark`."""
-    return SECRET.sub(lambda m: mark if _is_key(m) else m.group(0), text)
+    return OTHER_KEYS.sub(mark, SECRET.sub(lambda m: mark if _is_key(m) else m.group(0), text))
+
+
+def remember_access_code(code) -> None:
+    """A remote Studio's access code (server.serve): refused wherever people type, like a saved key. None: no code."""
+    ACCESS_CODES.clear()
+    if code:
+        ACCESS_CODES.add(code)
 
 
 def _saved_key_in(text: str, env=None) -> bool:
     env = os.environ if env is None else env
-    return any(len(v) >= 8 and v in text for v in ((env.get(n) or "").strip() for n in SAVED_KEYS))
+    values = [*((env.get(n) or "").strip() for n in SAVED_KEYS), *ACCESS_CODES]
+    return any(len(v) >= 8 and v in text for v in values)
 
 
 def secret_refused(where: str) -> str:
@@ -229,8 +269,10 @@ def contained_path(root: str, relative: str, decode: bool = True) -> str | None:
 def looks_like_secret(text: str) -> bool:
     """The one filter for free text people type (chat, New robot, Show Morph the job's cards, every Teams text field):
     a Claude, SubQ or Keewano key (by its shape, or the value of one saved in the Keys dialog), a Morph Teams script
-    token, invite or sign-in code, or a tool's key (toolbox: the value of a saved MORPH_TOOL_* key, a token with a
-    manifest's key prefix that fits its pattern, a bearer token). Ordinary names are not keys: see SECRET."""
+    token, invite or sign-in code, the running remote Studio's access code (ACCESS_CODES) or a chosen MORPH_TOKEN,
+    another service's key with a known prefix or text carrying a key (OTHER_KEYS), or a tool's key (toolbox: the value
+    of a saved MORPH_TOOL_* key, a token with a manifest's key prefix that fits its pattern, a JWT). Ordinary names are
+    not keys: see SECRET."""
     if not isinstance(text, str) or not text:
         return False
     if has_key(text) or _saved_key_in(text):

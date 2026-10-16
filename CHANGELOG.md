@@ -252,7 +252,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - One key filter for everything people type: chat, New robot (the request and every answer), Show Morph the job's
   cards, a project's description, a world's labels and every Teams text field (comments, change requests, reviews,
   releases, branch and display names, script token labels) refuse a Claude, SubQ, Keewano or tool key, a bearer token,
-  or a Teams script token, invite or sign-in code before anything is saved, shown or sent. New robot used to keep such
+  or a Teams script token, invite or sign-in code before anything is saved, shown or sent. It also refuses a remote
+  Studio's own access code (raw or in its access link), a `MORPH_TOKEN` or `ANTHROPIC_AUTH_TOKEN` that is set, other
+  services' keys with a fixed prefix (GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq,
+  xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password and `.env` lines such as
+  `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no space (these keys and JWTs used to slip past),
+  and a tool key after `key=` or inside a link. A key with no prefix of its own pasted alone (an AWS secret key, a bare
+  hex token) is still not caught unless it is saved in the Keys dialog. New robot used to keep such
   a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ
   and tool keys through; drafts saved before this stay until their 7-day cleanup. The filter knows keys and codes by
   their random part, so snake_case names and part names that only share a prefix (`mt_shoulder_joint_torque_limit`,

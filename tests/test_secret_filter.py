@@ -170,7 +170,7 @@ def test_every_code_morph_makes_reads_as_no_phrase(monkeypatch):
 def test_a_saved_key_is_refused_whatever_its_shape(monkeypatch):
     """A key saved in the Keys dialog is refused by its value: a Keewano project key has no prefix to know it by."""
     from morph import keys
-    assert set(security.SAVED_KEYS) == set(keys.NAMES) - {"KEEWANO_PROJECT_ID"}
+    assert set(security.SAVED_KEYS) == set(keys.NAMES) - {"KEEWANO_PROJECT_ID"} | {"ANTHROPIC_AUTH_TOKEN", "MORPH_TOKEN"}
     monkeypatch.setenv("KEEWANO_API_KEY", "proj7Hq2Zx9LmP4w")
     assert security.looks_like_secret("the keewano key proj7Hq2Zx9LmP4w, use it")
     monkeypatch.setenv("KEEWANO_PROJECT_ID", "12345678")

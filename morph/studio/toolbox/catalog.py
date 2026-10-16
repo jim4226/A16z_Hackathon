@@ -57,7 +57,7 @@ SIDE_TEXT = {"read": "Read-only: it only looks things up.",
              "write": "It changes something at the provider, so Morph asks the person before every call.",
              "upload": "It sends files or data to the provider, so Morph asks the person before every call.",
              "spend": "It spends money, so Morph asks the person before every call."}
-JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
+JWT = re.compile(r"(?<![A-Za-z0-9_])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")  # not \b: Unicode
 _TOKEN = re.compile(r"[^\s\"'`<>()\[\]{},;|]+")
 
 
@@ -513,9 +513,10 @@ def looks_like_tool_key(text: str, home: str | None = None, env=None) -> bool:
         creds = [c for c in load(home).credentials.values() if c.prefix and c.prefix in text]
     except Exception:  # noqa: BLE001  a chat filter must never break chat
         return False
-    for c in creds:
-        for tok in _TOKEN.findall(text):
-            t = tok.strip(".:!?")
-            if t.startswith(c.prefix) and c.valid(t):
+    for c in creds:  # wherever the prefix starts a run (key=fxp_..., ?api_key=fxp_...&, 密钥是fxp_...), cut where it may end
+        for m in re.finditer(r"(?<![A-Za-z0-9])" + re.escape(c.prefix), text):
+            run = _TOKEN.match(text, m.start()).group(0)[:4096]
+            ends = [i for i, ch in enumerate(run) if i > len(c.prefix) and not (ch.isascii() and (ch.isalnum() or ch in "_-"))]
+            if any(c.valid(run[:i]) for i in [*ends, len(run)]):
                 return True
     return False
