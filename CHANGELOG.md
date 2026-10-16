@@ -282,11 +282,15 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   have a digit (2.75%, about 3 in 100, of all of them, counting those with no digit, which an `sk-` key needs), 1.69%
   (2.28%) of `sk-live-xxxx-xxxx-xxxx-xxxx` and 0.86% (1.14%) of `sk-live-xxxxxx-xxxxxx-xxxxxx`; the first two shapes
   in capitals and digits 2.00% (2.73%) and 1.54% (2.09%), in hex 0.27% and 0.18%; random base64url keys of 20 to 32
-  characters not in groups 0.009% or less of those with a digit. Names still refused: a few model spellings with
-  two-letter pieces or no common word (`ViT`, `UNet`, `MiDaS`, `LoFTR`, `ConvNeXt`, `SmolVLA`, `EfficientNetB0`),
-  part numbers in mixed case or starting with a digit (`ATmega328P`, `nRF52840`, `17HS4401`), whole part numbers after
-  `sk-` (`sk-STM32F405RGT6-breakout-board`), camelCase with `I2C`, a part code beside unusual words of its length, and
-  capitalized names made mostly of numbered words (571 of 4,000 generated `Cam1_Cam2_Cam3_Cam4_Gain`-style names).
+  characters not in groups 0.009% or less of those with a digit. Names still refused (a name under the mi_, ml_ or
+  mt_ prefix only once 20 characters or more follow it): a few model spellings with two-letter pieces or no common
+  word (`ViT`, `UNet`, `MiDaS`, `LoFTR`, `ConvNeXt`, `SmolVLA`, `EfficientNetB0`), part numbers in mixed case or
+  starting with a digit (`ATmega328P`, `nRF52840`, `17HS4401`), whole part numbers after `sk-`
+  (`sk-STM32F405RGT6-breakout-board`), camelCase with `I2C`, a part code beside unusual words of its length, and
+  capitalized names made of a numbered series and one word of three letters or fewer, such as
+  `mi_Max1_Max2_Max3_Max4_Hip` or `mi_Joint1_Joint2_Joint3_Joint4_Max` (all 571 such names among 4,000 generated
+  series of four and a word; none of the other 3,429, whose word has four letters or more and which pass, as
+  `mi_Cam1_Cam2_Cam3_Cam4_Gain` does).
 - Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
   access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
   teammates behind one router don't run into it in normal use. Many addresses together can still fill the slots
@@ -427,8 +431,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Studio would crash it at every start): the chat and the terminal say so, and "build it again" in the project's chat
   tries once more. A team Studio starting while another one runs on the same projects folder leaves the change
   requests that one is building alone (it reopened them, told their people they weren't built, and the finished build
-  left its revision unrecorded). Closing the Studio with Ctrl+C during a first build is no try: only a crash, a kill,
-  a power cut or an error that stops the Studio counts, and the chat no longer suggests the design stopped the
+  left its revision unrecorded). Closing the Studio with Ctrl+C during a first build is no try: only a crash, a
+  SIGKILL (`kill -9`, or the system ending it when memory runs out), a power cut or an error that stops the Studio
+  counts, and the chat no longer suggests the design stopped the
   Studio. "Build it again" sent again while that build runs is answered at once (it is already being built), not with
   "I couldn't map that" once it ends. A first build that ends with an error (not a stop) can be tried again too:
   "build it again" in its chat builds it once more (it was answered "Wait for its first build", for a build that would
@@ -443,8 +448,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   rebuild and an error record the disk refused left only "delete the project" (the design survives now until it is
   written down again, and a first build that fails on a full disk stays journaled). "Build it again" also builds from
   a revision set aside unfinished when nothing else kept the design, and two Studios starting at once build a cut-off
-  first design once (they could build it twice, r001 and r002). Closing the Studio's terminal window, a logout or a
-  `kill` (SIGTERM), and Ctrl+C during the start-up while it rebuilds a cut-off first build, are clean stops too: they
+  first design once (they could build it twice, r001 and r002). Closing the Studio's terminal window (SIGHUP), a
+  logout or a `kill` (SIGTERM), and Ctrl+C during the start-up while it rebuilds a cut-off first build, are clean
+  stops too (on Windows, closing the console window, logging off or shutting down is handled the same way, but that
+  has not been run on Windows yet): they
   used to count as crashes (twice parked the design, "The Studio stopped twice ..."), and Ctrl+C there ended in a
   traceback. Ctrl+C pressed twice or more while the start-up rebuilds it, or again while the Studio writes its stop
   down, is a clean stop as well (the second press counted as a crash, so one real crash and a double Ctrl+C parked the

@@ -197,6 +197,8 @@ DOC_CLAIMS = [
     ("SECURITY.md", "random enough is refused too", "rephrase it", "refused"),
     ("CHANGELOG.md", "Chip, board and model names", "these were refused whole", "pass"),
     ("CHANGELOG.md", "A key written in groups", "under the 20 characters", "refused"),
+    ("CHANGELOG.md", "a numbered series and one word of three letters", "(all 571 such names", "refused"),
+    ("CHANGELOG.md", "none of the other 3,429", "Remote and team Studios", "pass"),
 ]
 
 

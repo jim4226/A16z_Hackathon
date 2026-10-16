@@ -750,7 +750,9 @@ members; a member can hold several.
   200,000 it keeps is missed alone, cut to 20 characters or with `-thanks`, `_backup_copy`, `-please-join-the-team`,
   `-v2` or `_old` joined to it. Names refused (23 characters or more): under `mt_`/`ml_`/`mi_` none in lower case
   (they have no capital); capitalized, or as `sk-` part numbers, a series of 3 and two words 61 of 4,000 (67 as part
-  numbers), a series of 4 and a word 571 of 4,000 (573), two numbered words and two words 84 of 3,958 (72 of 3,938),
+  numbers), a series of 4 and a word 571 of 4,000 (573): every one whose unnumbered word has three letters or fewer
+  (`mi_Max1_Max2_Max3_Max4_Hip`, `sk-layer1-layer2-layer3-layer4-max`) and none whose word has four or more
+  (`mi_Cam1_Cam2_Cam3_Cam4_Gain` passes), two numbered words and two words 84 of 3,958 (72 of 3,938),
   three numbered abbreviations and a word 3 of 2,628 (3 of 2,672); plain words, versioned words and camelCase with a number none; a
   part code and two or three firmware words (`mt_SG90_horn_trim_offset`) none of 12,381, but 905 of 10,459 when the
   words aren't in `words.WORDS`; a number and a unit, a size, a commit hash and a word with an axis capital none;
