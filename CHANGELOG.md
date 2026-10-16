@@ -42,17 +42,18 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   joint, arm or motor ID it drives or is, named before it, in brackets or after it ("Elbow flex: STS3215 C001", "Waist
   XM430-W350-T", "Left master arm - XL430-W250-T", "ID 1: STS3215", "[J1] STS3215", "J1 (STS3215)", "STS3215 C018
   shoulder pan", "MG996R: upper arm", "Servo for gripper (SG90)", "Schulter MG996R"); a label is only joint, motion,
-  arm, side and ID words, so any other noun keeps a line a part ("Shoulder bracket STS3215", "Lift arm MG996R", "Upper
-  arm link (MG996R)", "Gripper rack (SG90)", "Moving jaw SG90", "SG90 gripper"), and a shop's "Upgrade" servo is a servo
-  ("DS3218 Upgrade 20KG Full Metal Gear Digital Servo"). A line named "Feetech servo", "Gripper servo" or "Servo (x6)"
-  is the motor its description names, read the same way (just "Dynamixel" described as "U2D2 interface for XL430" is no
-  motor); a part named only by its joint is the motor its MPN names, or its description when that says it is a servo
-  ("Base" described as "STS3215 12V servo"; "Gripper" described as "SG90" may be a whole gripper); a "Model" or "Motor"
-  column counts as the MPN; and a pack bought once counts its motors ("STS3215 servo ×6 (follower arm)", "Set of 6
-  STS3215 servos"). KiCad's grouped CSV and KiBoM parts lists are read too, and a list without prices shows no total.
-  The preview shows the MPN and the description. An object whose grip would bend the fingers gets the thicker beam New
-  robot would give it. An import whose build isn't feasible says why in its project's chat, with the fixes Morph can
-  build as buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).
+  arm, side and ID words (beside makers', kind, colour and filler words), so without a motor word ("Wheel servo STS3215
+  12V" is the servo) any other noun keeps a line a part ("Shoulder bracket STS3215", "Lift arm MG996R", "Upper arm link
+  (MG996R)", "Gripper rack (SG90)", "Moving jaw SG90", "SG90 gripper"), and a shop's "Upgrade" servo is a servo ("DS3218
+  Upgrade 20KG Full Metal Gear Digital Servo"). A line named "Feetech servo", "Gripper servo" or "Servo (x6)" is the
+  motor its description names, read the same way (just "Dynamixel" described as "U2D2 interface for XL430" is no motor);
+  a part named only by its joint is the motor its MPN names, or its description when that says it is a servo ("Base"
+  described as "STS3215 12V servo"; "Gripper" described as "SG90" may be a whole gripper); a "Model" or "Motor" column
+  counts as the MPN; and a pack bought once counts its motors ("STS3215 servo ×6 (follower arm)", "Set of 6 STS3215
+  servos"). KiCad's grouped CSV and KiBoM parts lists are read too, and a list without prices shows no total. The
+  preview shows the MPN and the description. An object whose grip would bend the fingers gets the thicker beam New robot
+  would give it. An import whose build isn't feasible says why in its project's chat, with the fixes Morph can build as
+  buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).
 - **Show Morph the job** (beta): add a phone video or photos of the task done by hand. Morph picks still frames in
   your browser, estimates the object, the pick and place spots, the cycle time and safety needs, and lists every
   change before Apply. Only the chosen frames are sent, after you agree: to Claude, plus up to 4 to SubQ as an

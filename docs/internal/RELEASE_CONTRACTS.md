@@ -740,7 +740,8 @@ in sections 3, 4 and 8. The rest that other code relies on:
   or a numbered link only before ":" or a dash (`bom._LABEL_ROLE`: "Wheel: STS3215 12V", "Link 2: MG996R"; "Wheel
   STS3215" and "Link 2 MG996R" stay parts); "moving" only in brackets after a joint ("Gripper (moving jaw) STS3215";
   "Moving jaw SG90" is the printed jaw). Any other word makes the line that part ("Leader arm handle STS3215", "Trigger
-  (STS3215)", "Static jaw STS3215", "Palm SG90"). A label qualifies the model after it, before ":" or a dash, in
+  (STS3215)", "Static jaw STS3215", "Palm SG90"), unless a motor word names it a servo ("Wheel servo STS3215 12V").
+  A label qualifies the model after it, before ":" or a dash, in
   brackets first ("[J1] STS3215") and alone before brackets ("J1 (STS3215)"); after the model only joint and motion
   words do (`bom._MOTION`, `bom._JOINT_AFTER`: "STS3215 C018 shoulder pan"; "SG90 gripper" stays a part unless a spec or
   code comes between, and "MG996R: upper arm link" is the link). A kit word with a label ("Pan tilt SG90 kit") and a
