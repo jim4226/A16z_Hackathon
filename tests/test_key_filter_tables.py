@@ -103,6 +103,25 @@ def test_a_tool_key_with_a_manifests_prefix_is_found_anywhere_in_the_text(monkey
         assert not catalog.looks_like_tool_key(fine), fine
 
 
+def test_text_full_of_a_manifests_prefix_is_checked_quickly(monkeypatch):
+    """Each place the prefix starts was cut at every later end and each cut matched on its own: one chat message of
+    8,000 characters ('fxp_.' 1,600 times) took 13 s to check, and a New robot body (up to 1 MiB) far longer."""
+    import time
+    fixtures = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "tools")
+    monkeypatch.setattr(catalog, "CURATED_DIRS", [fixtures])
+    key = "fxp_Q7w8E9r0T1y2U3i4O5p6A7s8"
+    for text, refused in (("fxp_." * 1600, False), ("-fxp_" * 1600, False), ("fxp_" + "." * 7990, False),
+                          ("fxp_a." * 1300 + key, True), ("fxp_." * 1600 + f"?api_key={key}&x=1", True),
+                          ("fxp_" + "a" * 7000, False), ("fxp_" + "a" * 30 + "\\" + "a" * 30, True)):
+        t0 = time.perf_counter()
+        assert security.looks_like_secret(text) is refused, text[:40]
+        assert time.perf_counter() - t0 < 1.0, (text[:40], time.perf_counter() - t0)  # milliseconds; 13 s before
+    body = {"name": "x", "answers": [{"note": "fxp_." * 20000}, {"note": "-fxp_" * 20000}, {"note": key}]}
+    t0 = time.perf_counter()
+    assert security.holds_secret(body)
+    assert time.perf_counter() - t0 < 3.0, time.perf_counter() - t0
+
+
 
 def test_a_remote_studios_chat_refuses_its_own_access_link(tmp_path):
     from test_keys_and_launch import _start
