@@ -1012,7 +1012,7 @@ def test_ctrl_c_pressed_again_and_again_during_the_start_up_is_still_a_clean_sto
 
     def press():
         sent.append(True)
-        os.kill(os.getpid(), signal.SIGINT)
+        signal.raise_signal(signal.SIGINT)  # os.kill on Windows ends the process instead of signalling it
 
     def recover(self, *a, **k):
         real_recover(self, *a, **k)
