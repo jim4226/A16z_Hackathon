@@ -271,7 +271,7 @@ _ROLE = (r"(?:nurse|doctor|doc|surgeon|dentist|vet|paramedic|medic|pharmacist|mi
          r"steward(?:ess)?|host(?:ess)?|usher|janitor|caretaker|fishmonger|butcher|baker|grocer|florist|farmer|"
          r"customer|shopper|client|guest|visitor|attendee|passenger|user|owner|walker|sitter|groomer|diner|patron|"
          r"audience|crowd|bride|groom|bridesmaid|jockey|human|participant|(?:test|study|research) subject|recipient|"
-         r"neighbou?r|friend|mate|buddy|pal|partner|wife|husband|spouse|boyfriend|girlfriend|fianc[eé]e?|room-?mate|flat-?mate|"
+         r"neighbou?r|friend|mate|buddy|pal|partner|lover|wife|husband|spouse|boyfriend|girlfriend|fianc[eé]e?|room-?mate|flat-?mate|"
          r"housemate|lodger|tenant|son|daughter|brother|sister|sibling|cousin|nephew|niece|"
          r"(?:mother|father|brother|sister|son|daughter)-in-law|in-laws|step-?(?:mum|mom|mother|dad|father|parent|son|daughter)|"
          r"god(?:mother|father|parent|child|son|daughter)|other half|significant other|sweetheart|darling|"
@@ -398,7 +398,10 @@ _NOT_AGENT_WORD = ("holder", "maker", "tractor", "order", "matter", "character",
                    "cheaper", "heavier", "wider", "narrower", "thicker", "thinner", "longer", "shorter", "nearer", "newer",
                    "fewer", "lesser", "greater", "deeper", "flatter", "quieter", "louder", "hotter", "colder", "wetter",
                    "parameter", "perimeter", "diameter", "kilometer", "centimeter", "millimeter",
-                   "thermometer", "barometer", "liter", "calendar", "omen", "barrier", "frontier", "terrier", "dumpster")
+                   "thermometer", "barometer", "liter", "calendar", "omen", "barrier", "frontier", "terrier", "dumpster",
+                   # a hand-over, a changeover or a takeover is no one ("a handover robot")
+                   "handover", "hand-over", "takeover", "changeover", "crossover", "leftover", "pullover", "rollover",
+                   "turnover", "hangover", "stopover", "sleepover", "makeover", "layover", "flyover", "spillover", "carryover")
 _NOT_AGENT = (r"(?:[a-z'’-]*(?:" + "|".join(_NOT_AGENT_END) + r")|(?:" + "|".join(w for w in _NOT_AGENT_WORD if w) +
               r")|" + _PLACE + r"|" + r"(?:robot|robotic|arm|bot|cobot|machine|gripper|design|device|gadget|system|setup)" +
               r")s?\b")
@@ -660,7 +663,10 @@ PEOPLE_BESIDE = (r"\b(?:next to me|beside me|near me|" + _NOT_NO + r"with people
                  r"|\s+" + _MODAL + r"(?:load|unload|feed|fill|refill|restock|tend|top up)(?:s|es|ed|ing)?\b"
                  r"|\s+" + _MODAL + r"(?:stock|sort|pack|place|put|set|lay)(?:s|es|ed|ing)?\b(?:\s+[\w'’-]+){0,4}?\s+"
                  r"(?:by hand|for it|for the robot)\b)|"
-                 r"\bacross\s+(?:the\s+\w+\s+)?from\s+(?:me|us|him|her|them)\b|" + _NOT_NO +
+                 r"\bacross\s+(?:the\s+\w+\s+)?from\s+(?:me|us|him|her|them)\b|"
+                 # "the robot and I share a workbench"
+                 r"\b(?:robot|arm|cobot|it)\s+and\s+(?:i|we|me|us)\b|\b(?:i|we|me|us)\s+and\s+(?:the\s+|my\s+|this\s+)?"
+                 r"(?:robot|arm|cobot)\b|" + _NOT_NO +
                  # "customers collect their orders from the tray", "the operator takes his parts"
                  r"\b(?:" + _ANYONE + "|" + _WHO_NP + "|" + _ROLES_PL + r")\s+" + _MODAL + r"(?:collect|pick(?:s|ed|ing)? up|"
                  r"take|grab|receive|fetch|get)(?:s|es|ed|ing)?\s+(?:their|his|her|the|my|our|your|its)\b|"
@@ -708,7 +714,7 @@ _TITLE_WORDS = (r"(?:Nurse|Doctor|Doc|Dr|Chef|Professor|Prof|Father|Mother|Siste
                 r"Pastor|Rabbi|Imam|Judge|Sergeant|Sgt|Detective|Inspector|Chief|Madam|Madame|Teacher|Coach|Agent|Pilot)")
 # a few misspellings common enough to matter: "teh nurse", "brng me a beer", "pas me the salt"
 _TYPOS = ((r"\bteh\b", "the"), (r"\bn(?:ures|ruse|usre|urce|ursse)(s?)\b", r"nurse\1"), (r"\bdoct(?:er|r)(s?)\b", r"doctor\1"), (r"\b(?:brng|brign|bribg)\b", "bring"), (r"\b(?:brngs|brigns)\b", "brings"),
-          (r"\bpas\b", "pass"), (r"\b(?:hnd|hadn|hnad)\b", "hand"), (r"\b(?:gve|giev)\b", "give"))
+          (r"\bpas\b", "pass"), (r"\b(?:hnd|hadn|hnad)\b", "hand"), (r"\b(?:gve|giev)\b", "give"), (r"\bgimme\b", "give me"))
 
 
 @functools.lru_cache(maxsize=None)
@@ -1105,7 +1111,8 @@ def person_signals(pt: str, t: str = "") -> dict:
     ("no one else is around"). `pt` is people_text(request), `t` the request in lower case. Empty means no person."""
     found = {}
     kids = re.search(_KIDS, re.sub(r"\b(?:no|without|not any)\s+(?:kids|children|toddlers|babies)\b", " ", pt))
-    for kind, m in (("children", kids), ("beside", _rx(PEOPLE_BESIDE).search(pt)), ("receiver", _rx(HAND_TO_PERSON).search(pt)),
+    receiver = _rx(HAND_TO_PERSON).search(pt) or re.search(r"\bhand[- ]?overs?\b", pt)   # "a handover robot": someone takes it
+    for kind, m in (("children", kids), ("beside", _rx(PEOPLE_BESIDE).search(pt)), ("receiver", receiver),
                     ("near", _rx(_FOR_SOMEONE).search(pt)), ("else", re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t or pt))):
         if m:
             found[kind] = m.group(0).strip()

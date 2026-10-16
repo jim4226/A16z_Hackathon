@@ -10733,6 +10733,62 @@
    "text": "take the parts to the bin",
    "family": "C-hunt",
    "task": "not_hand_over"
+  },
+  {
+   "text": "no one is around; gimme the screwdriver when I ask",
+   "family": "C-hunt2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that can gimme tools. nobody is around it",
+   "family": "C-hunt2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "nobody is near it, the robot and I share a workbench",
+   "family": "C-hunt2",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a handover robot for my workbench, no one near it",
+   "family": "C-hunt2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "nobody nearby - a hand-over test rig",
+   "family": "C-hunt2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the boxes to the movers. nobody is around it",
+   "family": "C-hunt2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the coat to the drover",
+   "family": "C-hunt2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the rose to my lover",
+   "family": "C-hunt2",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
   }
  ]
 }

@@ -1450,7 +1450,8 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   from the task; someone who collects from it, checks on, calibrates, services or empties it is beside it ("customers
   collect their orders from the tray", "a technician calibrates it daily", "a nurse checks on it"), and someone else
   given a robot works with it ("give the operator a system that sorts parts", "get my grandma a robot arm"; only the
-  user asking for one, "give me a robot that sorts screws", is no person). Any of them puts a person next to it; "Nobody nearby", "no one works next to it"
+  user asking for one, "give me a robot that sorts screws", is no person). The word hand-over ("a handover robot")
+  and "the robot and I share a workbench" are person signals too, and "gimme" is "give me". Any of them puts a person next to it; "Nobody nearby", "no one works next to it"
   (`brief.NOBODY_NEAR`; not "no one else", nor followed by except, but, apart from, other than, besides, just or only:
   "no one near it but me", "no kids near it, just me") says "no" only when the request has none of them and gives
   nothing to an animal ("no one is around, it helps my grandma eat her soup", "nobody nearby, the nurse takes the tray
@@ -1915,7 +1916,7 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   than the few above. A place named after people
   infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
   place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
-  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,589
+  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,597
   requests from the release review's two hunts and the fixers' rounds, each with the task, people and e-stop it must get,
   run through `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
