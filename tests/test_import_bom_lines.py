@@ -74,7 +74,7 @@ def test_a_part_for_a_servo_named_like_a_listing_is_still_no_servo(item):
 
 with open(os.path.join(DATA, "bom_hunt_lines.json"), encoding="utf-8") as _fh:
     HUNT = json.load(_fh)   # the third round's hunters (1313 lines and 55 probes, expectations written before any run)
-                            # and the fixer's 71 probes: header, line, catalog key, other keys also right ("accept"),
+                            # and the fixer's 85 probes: header, line, catalog key, other keys also right ("accept"),
                             # category (None: any), pack (None: any) and the class of the lines 0033630 read wrong
 KNOWN_GAPS = {"Hiwonder LX-16A"}  # a servo the catalog lacks, named by maker and code alone: listed as purchased
 
@@ -138,6 +138,71 @@ def test_a_part_in_a_labels_place_is_never_a_servo():
                 if r["catalog"]:
                     bad.append((line, r["catalog"]))
     assert not bad, bad
+
+
+PART_LABELS = [  # round 7's final skeptic: catalog motors at 1f6b690, whose open label took any noun but a listed one
+    "Upper arm link (MG996R)", "Wrist link (STS3215)", "Link 2 MG996R", "Gripper rack (SG90)", "Gripper pinion (SG90)",
+    "Counterweight (MG996R)", "Leader arm handle STS3215", "Trigger (STS3215)", "Static jaw STS3215", "Moving jaw SG90",
+    "Fixed jaw SG90", "Palm SG90", "Finger link SG90", "MG996R: upper arm link", "SG90: gripper rack",
+    # the same open label let a pack word, a lone "Tower" and a board's name ("ESP32", read as a reference like J1) through
+    "Upper arm piece MG996R", "Shoulder tower (MG996R)", "ESP32 (MG996R)", "Wheel STS3215", "Leg MG996R"]
+JOINT_LABELS = [  # labels whose every word names a joint, motion, arm, side or ID (or a role set off by ":" or a dash),
+    # a count or a maker
+    ("Link 2: MG996R", "mg996r"), ("Wheel: STS3215 12V", "sts3215"), ("Gripper (moving jaw) STS3215", "sts3215_7v4"),
+    ("Leg 2 MG996R", "mg996r"), ("Front left leg MG996R", "mg996r"), ("Index finger (SG90)", "sg90"),
+    ("End effector (SG90)", "sg90"), ("Optional: STS3215 12V", "sts3215"), ("Set of 6 STS3215", "sts3215_7v4"),
+    ("Tower Pro MG996R", "mg996r"), ("Shoulder jaw (STS3215)", "sts3215_7v4")]
+
+
+@pytest.mark.parametrize("item", PART_LABELS)
+def test_a_label_with_a_parts_noun_is_that_part(item):
+    """A label is positive evidence: every word names a joint, motion, arm, side or ID. 1f6b690 read each of these as
+    a catalog motor (8fd3662's open label: any noun outside a list of part words)."""
+    (r,) = bom.map_table([["Part", "Qty", "Notes"], [item, "1", ""]])[0]
+    assert r["catalog"] is None and r["category"] != "actuator", r
+
+
+def test_a_part_named_by_a_label_with_the_servo_as_its_model_is_that_part():
+    """["Upper arm link", Model "MG996R"]: the MPN names the servo the link holds (1f6b690: mg996r)."""
+    (r,) = bom.map_table([["Part", "Qty", "Model"], ["Upper arm link", "1", "MG996R"]])[0]
+    assert r["catalog"] is None, r
+    (r,) = bom.map_table([["Part", "Qty", "Model"], ["Shoulder pan", "1", "STS3215-C001"]])[0]
+    assert r["catalog"] == "sts3215_7v4", r
+
+
+@pytest.mark.parametrize("item, key", JOINT_LABELS, ids=[j[0] for j in JOINT_LABELS])
+def test_a_label_of_joint_arm_side_or_id_words_keeps_its_motor(item, key):
+    (r,) = bom.map_table([["Part", "Qty", "Notes"], [item, "1", ""]])[0]
+    assert (r["catalog"], r["category"]) == (key, "actuator"), r
+
+
+SWEEP_NOUNS = [  # the final skeptic's 90 part nouns (round 7, out_old_6/out_new_6)
+    "link", "links", "handle", "trigger", "palm", "jaw", "cam", "crank", "rocker", "slider", "carriage", "block", "beam",
+    "bar", "strut", "pipe", "boss", "clevis", "yoke", "cup", "skin", "stopper", "bumper", "guard", "cage", "bed", "deck",
+    "body", "spine", "rib", "tendon", "string", "cord", "sprocket", "chain", "rack", "pinion", "worm", "crossbar", "tab",
+    "tip", "fingertip", "nozzle", "suction cup", "endstop", "stop", "counterweight", "weight", "ballast", "damper",
+    "shock", "cushion", "foam", "rubber", "sole", "toe", "heel", "shin", "thigh", "calf", "segment", "section", "piece",
+    "member", "arm piece", "upper arm piece", "shell half", "half", "top", "bottom", "side", "lid half", "insert nut",
+    "base plate", "baseplate", "mount plate", "tower", "column", "post", "pillar", "riser", "bridge", "truss", "gantry",
+    "carriage plate", "shuttle", "bed plate", "wrist cuff", "cuff", "socket cap"]
+
+
+def test_no_part_noun_in_a_label_gains_a_motor():
+    """The final skeptic's sweep: 90 part nouns, alone and after "Shoulder", "Gripper", "Leader arm" and "J2", before
+    an MG996R or an STS3215, with and without brackets (1,800 lines). 1f6b690 read 1,564 of them as motors that 0033630
+    read as parts, and none the other way. Only a label of joint words may be a motor ("Gripper jaw (STS3215)", as
+    0033630 read it too)."""
+    bad, lines = [], 0
+    for n in SWEEP_NOUNS:
+        for pre in ("", "Shoulder ", "Gripper ", "Leader arm ", "J2 "):
+            label = pre + n if pre else n[0].upper() + n[1:]
+            for m in ("mg996r", "sts3215"):
+                for line in (f"{label} {m}", f"{label} ({m})"):
+                    lines += 1
+                    (r,) = bom.map_table([["Part", "Qty", "Notes"], [line, "1", ""]])[0]
+                    if r["catalog"] and n != "jaw":
+                        bad.append((line, r["catalog"]))
+    assert lines == 1800 and not bad, bad
 
 
 @pytest.mark.parametrize("name, want", [

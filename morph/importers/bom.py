@@ -108,8 +108,8 @@ _COLOUR = re.compile(r"(?:black|white|silver|grey|gray|red|blue|green|yellow|ora
                      r"transparent|translucent|natural)", re.I)
 _MATERIAL = re.compile(r"(?:metal|aluminium|aluminum|alu|alloy|steel|stainless|brass|copper|titanium|plastic|nylon|"
                        r"carbon|abs|pom|cnc|anodized|anodised)", re.I)
-_FILLER = re.compile(r"(?:replacement|spare|original|genuine|new|rev|revision|ver|version|type|model|single|double|"
-                     r"style|edition|an?|the|of|and|or|in)", re.I)
+_FILLER = re.compile(r"(?:replacement|spare|optional|original|genuine|new|rev|revision|ver|version|type|model|single|"
+                     r"double|style|edition|an?|the|of|and|or|in)", re.I)
 _GROUP = re.compile(r"(?:kits?|sets?|packs?|pairs?|bundles?|pcs?|pieces?|lots?|units?)", re.I)
 _KIT = re.compile(r"(?:kits?|sets?|bundles?)", re.I)
 # besides its model, a motor's name holds its maker and what kind of motor it is ("Feetech STS3215 Serial Bus Servo
@@ -176,8 +176,30 @@ _MOTION = re.compile(r"(?:shoulder|elbow|wrist|waist|forearm|pitch|roll|yaw|lift
                      r"twist|swivel|joints?|axis|axes)", re.I)
 _JOINT_AFTER = re.compile(r"(?:base|gripper|grip|jaws?|claw|leader|follower|master|puppet|slave|left|right|upper|"
                           r"lower|arm|hand|head|neck|torso|camera|finger|thumb)", re.I)
+# a label is positive evidence (_label_words): every plain word names a joint or the motion it makes, whose or which
+# arm or side, a motor ID or number, or is a maker's, kind, unit, colour or filler word. Any other noun ("Upper arm
+# link", "Gripper rack", "Counterweight", "Leader arm handle", "Trigger", "Moving jaw", "Palm") makes the line that
+# part, so a word nobody listed is a part, never a servo
+_LABEL_JOINT = re.compile(r"(?:shoulders?|elbows?|wrists?|waists?|forearms?|base|grippers?|grip|grabbers?|jaws?|claws?|"
+                          r"hands?|fingers?|thumbs?|effectors?|head|neck|torso|camera|hips?|knees?|ankles?|turntables?|"
+                          r"pitch|roll|yaw|lift|pan|tilt|flex|bend|rotate|rotation|twist|swivel|angle|"
+                          r"joints?|axis|axes|dofs?|id|no|nr|number|"
+                          r"schulter|ellenbogen|handgelenk|unterarm|oberarm|greifer|basis|drehteller|gelenk|achse|nick|"
+                          r"drehung|neigung|schwenk|kopf|hals|daumen)", re.I)
+# words that name a joint only before their own noun: "End effector", "Index finger"
+_LABEL_BEFORE = {"end": re.compile(r"effectors?", re.I), "index": re.compile(r"fingers?", re.I),
+                 "middle": re.compile(r"fingers?", re.I), "ring": re.compile(r"fingers?", re.I),
+                 "little": re.compile(r"fingers?", re.I), "pinky": re.compile(r"fingers?", re.I)}
+# a limb is a label after whose or which it is or before its number ("Left arm", "Upper arm", "Front leg", "Leg 2");
+# "Lift arm" and "Leg" alone are parts
+_LIMB = re.compile(r"arms?|legs?", re.I)
+# set off by ":" or a dash before the model, a label may also name the motor's role: a drive wheel or a numbered link
+# ("Wheel: STS3215 12V", "LeKiwi wheel: STS3215 12V", "Link 2: MG996R"); without it "Wheel STS3215" and "Link 2 MG996R"
+# may be the wheel or the link for that servo
+_LABEL_ROLE = re.compile(r"wheels?", re.I)
+_LABEL_NUMBERED = re.compile(r"links?", re.I)
 # a joint reference (J1, #2, M3, A1, ID1, 1-6) and a robot's name with its number (SO-101, SO-ARM100)
-_REF = re.compile(r"#?(?:[a-z]{1,3})?\d{1,3}(?:-(?:[a-z]{1,3})?\d{1,3})?", re.I)
+_REF = re.compile(r"#?(?:[a-z]{1,2})?\d{1,3}(?:-(?:[a-z]{1,2})?\d{1,3})?", re.I)    # not "ESP32"
 _ROBOT = re.compile(r"so-?(?:arm)?-?\d{2,3}", re.I)
 # a stand-in for a motor is no motor: "STS3215 dummy servo (3D printed spacer)"
 _STAND_IN = re.compile(r"(?:dummy|dummies|fake|mock|mockup|mock-up|replica|placeholder|imitation)", re.I)
@@ -204,36 +226,64 @@ def _descriptive(w: str) -> bool:
     return bool(_BRAND.fullmatch(w) or _MOTOR_BRAND.fullmatch(w) or _KIND.fullmatch(w) or _ignorable(w))
 
 
-def _label_words(words: list) -> bool:
-    """Whether words [(word, kind)] can name the joint, the arm or the motor a line's motor drives or is: any plain
-    words ("Shoulder", "Elbow flex", "Waist", "Camera pan", "ID", "Torso yaw", "Schulter") and joint references (J1,
-    #2, 1-6), but no motor word (except before its number: "Motor ID 2", "Servo 1"), kit or count, part (ACCESSORY,
-    _PART, _COMPOUND_PART: "Bracket", "Frame", "printed", "Servohorn"), what a part does with a motor (_PART_VERB:
-    "uses", "holds") or what a whole kit is for (_USE: "Robot", "RC car"), and "arm" only after whose or which arm it
-    is (_ARM_OWNER)."""
+def _descriptive_at(words: list, i: int) -> bool:
+    """_descriptive for the word at i of words [(word, kind)], read with its neighbours: "Tower" is Tower Pro's only
+    before "Pro" ("Shoulder tower (MG996R)" is a printed tower), and a pack word only as a count ("4 pcs", "6x pieces",
+    "Set of 6", "Pair of"; "Upper arm piece MG996R" is a part)."""
+    w = words[i][0]
+    prev = words[i - 1][0] if i else ""
+    nxt = words[i + 1][0] if i + 1 < len(words) else ""
+    if w == "tower" and nxt != "pro":
+        return False
+    if _GROUP.fullmatch(w) and not (re.fullmatch(r"pcs?|x?\d+x?|[x×]", prev) or re.fullmatch(r"pcs?", w)
+                                    or nxt == "of"):
+        return False
+    return _descriptive(w)
+
+
+def _label_words(words: list, sep: bool = False, gloss: bool = False) -> bool:
+    """Whether words [(word, kind)] name only the joint, the arm or the motor a line's motor drives or is, positive
+    evidence word by word: joints and motions ("Shoulder", "Elbow flex", "Waist", "Camera pan", "Torso yaw",
+    "Turntable", "Schulter"; _LABEL_JOINT), whose or which arm and side ("Leader", "Left master"; _ARM_OWNER), an arm or
+    leg after whose it is or a leg before its number (_LIMB: "Upper arm", "Leg 2"), IDs and joint references (J1, #2,
+    1-6, "ID 1"), a motor word before its number ("Motor ID 2", "Servo 1"), and makers', kind, unit, colour and filler
+    words ("Optional"). Any other word is a part's ("Upper arm link", "Gripper rack", "Counterweight", "Leader arm
+    handle", "Static jaw", "Palm"), and so is a motor word elsewhere, a kit or count word. `sep`: the label is set off by
+    ":" or a dash before the model, so it may also name a drive's role (_LABEL_ROLE: "Wheel: STS3215 12V") or a
+    numbered link ("Link 2: MG996R"). `gloss`: the words are in brackets after a joint's name, where "moving" says which
+    jaw the joint's motor moves ("Gripper (moving jaw) STS3215"; "Moving jaw SG90" is the printed jaw)."""
     for i, (w, k) in enumerate(words):
         if k != "plain":
             continue
+        prev = words[i - 1][0] if i else ""
         nxt = words[i + 1] if i + 1 < len(words) else ("", "")
-        if _MOTOR_WORD.fullmatch(w) and (nxt[0] in ("id", "no", "nr", "number") or nxt[1] != "plain" and
-                                         _REF.fullmatch(nxt[0])):
+        numbered = nxt[1] != "plain" and bool(_REF.fullmatch(nxt[0]))
+        if _MOTOR_WORD.fullmatch(w) and (nxt[0] in ("id", "no", "nr", "number") or numbered):
             continue                                   # "Motor ID 2", "Servo 1", "Servo #2": which motor it is
-        if (_MOTOR_WORD.fullmatch(w) or _GROUP.fullmatch(w) or ACCESSORY.fullmatch(w) or _PART.fullmatch(w)
-                or _PART_VERB.fullmatch(w) or _BUILD.fullmatch(w) or _COMPOUND_PART.fullmatch(w) or _USE.fullmatch(w)):
+        if _MOTOR_WORD.fullmatch(w) or _GROUP.fullmatch(w):
             return False
-        if w in ("arm", "arms") and not (i and _ARM_OWNER.fullmatch(words[i - 1][0])):
-            return False
+        if _LABEL_JOINT.fullmatch(w) or _ARM_OWNER.fullmatch(w) or _descriptive_at(words, i):
+            continue
+        if w in _LABEL_BEFORE and _LABEL_BEFORE[w].fullmatch(nxt[0]):
+            continue                                   # "End effector", "Index finger"
+        if _LIMB.fullmatch(w) and (_ARM_OWNER.fullmatch(prev) or w.startswith("leg") and numbered):
+            continue                                   # "Left arm", "Upper arm", "Front leg", "Leg 2"
+        if sep and (_LABEL_ROLE.fullmatch(w) or _LABEL_NUMBERED.fullmatch(w) and numbered):
+            continue                                   # "Wheel: STS3215 12V", "Link 2: MG996R"
+        if gloss and w == "moving":
+            continue                                   # "Gripper (moving jaw) STS3215"
+        return False
     return True
 
 
-def _qualifies(words: list) -> bool:
+def _qualifies(words: list, gloss: bool = False) -> bool:
     """Whether the words [(word, kind)] before a motor's model (or in a bracket before it) only qualify it: its maker,
     kind or a material's case or gear ("Feetech", "Metal gear"), or a label naming the joint, arm or motor
     (_label_words; "Shoulder", "Left master", "Motor ID 2") with no kit or set word ("Pan tilt kit SG90" is a bracket
     kit)."""
     named = []
     for i, (w, k) in enumerate(words):
-        if k == "plain" and _descriptive(w):
+        if k == "plain" and _descriptive_at(words, i):
             continue
         if k == "plain" and _BUILD.fullmatch(w) and i and _MATERIAL.fullmatch(words[i - 1][0]):
             continue                                   # "Metal gear MG996R"
@@ -242,7 +292,7 @@ def _qualifies(words: list) -> bool:
         return True
     if any(k == "plain" and _KIT.fullmatch(w) for w, k in words):
         return False
-    return _label_words(named)
+    return _label_words(named, gloss=gloss)
 
 
 def _joint_tail(plain: list, near: list = ()) -> bool:
@@ -253,9 +303,10 @@ def _joint_tail(plain: list, near: list = ()) -> bool:
             and any(_MOTION.fullmatch(w) for w in list(plain) + list(near)))
 
 
-def _is_label(text: str) -> bool:
-    """Whether text only names a joint, arm or motor (_label_words): plain words, joint references (J1, #2, 1-5) and a
-    robot's name (SO-101), and no motor model ("SG90" is the servo, not a joint reference)."""
+def _is_label(text: str, sep: bool = False) -> bool:
+    """Whether text only names a joint, arm or motor (_label_words; `sep`: before a ":" or a dash): plain words, joint
+    references (J1, #2, 1-5) and a robot's name (SO-101), and no motor model ("SG90" is the servo, not a joint
+    reference)."""
     from .autoprofile import MODEL_RX
     if MODEL_RX.search(text):
         return False
@@ -268,7 +319,7 @@ def _is_label(text: str) -> bool:
             toks.append((w.lower(), "ref"))
         else:
             return False
-    return bool(toks) and _label_words(toks)
+    return bool(toks) and _label_words(toks, sep=sep)
 
 
 def _unlabel(item: str) -> str:
@@ -282,7 +333,7 @@ def _unlabel(item: str) -> str:
     m = _LABEL.match(item or "")
     if not m:
         return item
-    label, rest = _is_label(m.group("label")), _is_label(m.group("rest"))
+    label, rest = _is_label(m.group("label"), sep=True), _is_label(m.group("rest"))
     if label and not rest:
         return m.group("rest")
     if rest and not label:
@@ -447,7 +498,7 @@ def _motor_text(text: str) -> str | None:
         hw = _words(head)
         if not any(k == "plain" and _MOTOR_WORD.fullmatch(w) for w, k in hw) and not _qualifies(hw):
             return None                                # the head names another part: "Bus adapter (STS3215)"
-        if not _qualifies(_words(own[len(head):m.start()])):
+        if not _qualifies(_words(own[len(head):m.start()]), gloss=True):
             return None                                # "Gripper (uses SG90)", "Base (PLA, holds STS3215)"
         seg = own[m.start():]
         return seg if _is_motor_name(seg) else None
