@@ -120,8 +120,9 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   terminal says it in one plain line, never a traceback: the agents' toolbox at the start (`api_tools.attach`;
   `Toolbox.recover` tries every run and the drafts, leaves what the disk refused for the next start, then raises the
   disk-full error), a chat line or queue journal line the disk refused (once per project until a write succeeds
-  again), a failed build or edit and a first build's error record (`server._report`). Other errors keep their
-  traceback.
+  again), a failed build or edit and a first build's error record (`server._report`), and the owner's one-time
+  sign-in link at a team start (`cli.cmd_studio`: the team Studio starts without it, a session cookie being only read,
+  and the line names `morph team link --url <its address>`). Other errors keep their traceback.
 
 ## 2. Server routing contract (W0b implements; everyone else uses)
 
