@@ -44,18 +44,17 @@ decisions lives outside the repo; the essentials are summarized here.
 | `<p>/meta.json` | W0b | `{kind:"robot", source, need, origin: default\|brief\|import\|fork, demo: bool, created_utc, created_by?, forked_from?: {project, rev}, brief_id?}`. `projects.create(meta=)` adds keys but never sets kind, created_utc, created_by, origin, demo or source (those come from its own arguments) |
 | `<p>/rNNN/` | pipeline | unchanged; names sort numerically (W0b) |
 | `<p>/ledger.jsonl` | pipeline | unchanged; new entries carry `ts` in UTC with a `Z` suffix, plus `by` (member id) when Teams is on |
-| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs; `.morph/queue-<studio>.jsonl`: a Studio's queue journal for the room while jobs are open; `.morph/first-build.json`: a first build that waits to be asked for again (W3, section 2) |
+| `<p>/.morph/chat.jsonl` | W0b | persisted chat for the project room; `.morph/build-rNNN.lock`: the lock a build holds while it runs; `.morph/queue-<studio>.jsonl`: a Studio's queue journal for the room while jobs are open; `.morph/first-build.json`: a first build that waits to be asked for again (W3, section 2); `.morph/first-build.lock`: the OS lock one Studio at a time holds while it decides whether to queue a first build (W3, section 2) |
 | `<p>/brief.json` | F1 | the final brief that created the project |
 | `<p>/world/world.json` + assets, `<p>/world/saved/<sha>.json` | F5 | world mode; every saved world is also kept under its hash, and a design's `world.sha` picks the one its simulation runs in (I2b) |
 | `<p>/.studies/tolerances.json`, `<p>/.studies/active.json`, `<p>/.studies/<id>/study.json`, `runs.jsonl`, `checks.jsonl` | B2-S1 | robustness studies (section 16): the project's edited tolerances, the running study's lock and heartbeat, each study's record and one row per run; never inside `rNNN/` |
 | `<p>/.team/comments.jsonl`, `reviews.jsonl`, `proposals.jsonl`, `branches.json`, `releases.json` | F4 | Teams |
 | `.briefs/<id>.json` | F1 | brief drafts (deleted after 7 days) |
-| `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h). An upload counts in `session.json` `files` only once it is all there; while it streams it is a reservation in `pending` (limits count both), and at startup `Session.tidy()` removes `*.part-*` files and reservations a stop left, keeping
-those of an upload another running Studio is streaming (each reservation names its Studio, `rooms.owner_live`) (W3) |
+| `.imports/<id>/` | F2 | import sessions (cleared at startup after 24 h). An upload counts in `session.json` `files` only once it is all there; while it streams it is a reservation in `pending` (limits count both), and at startup `Session.tidy()` removes `*.part-*` files and reservations a stop left, keeping those of an upload another running Studio is streaming (each reservation names its Studio, `rooms.owner_live`) (W3) |
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
-| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; files nobody holds are removed after 10 minutes |
+| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; a Studio stopped with Ctrl+C removes its own (`cli._leave`), and files nobody holds (a crash, a kill) are removed by a later start after 10 minutes; `.studios/<id>.json`: `{start, pid, host}`, the project that Studio started on (`rooms.note_start`), which no other Studio deletes while that one runs (`rooms.started_elsewhere`), removed and swept the same way |
 | `.team/` | F4 | `team.json` (+ `team.json.bak`: the copy before its last change, 0600, W3), `secret` (0600), `audit.jsonl` |
 | `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
 | `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
@@ -81,9 +80,13 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   with `cut` (line numbers) and `note` for such lines and keeps reporting an edited, removed, moved or truncated line
   as before; `morph team audit --verify` prints the note.
 - `morph studio` (the command line: `main()` without argv) ends its process with `cli._leave` once `serve()` has
-  returned (Ctrl+C): study workers ended, stdout and stderr flushed, then `os._exit`. Interpreter shutdown added nothing
-  but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one stop in twelve. So every
-  record must be on disk when it is written (the rules here), never at exit.
+  returned (Ctrl+C, a closed terminal window, SIGTERM: `server._Stop`): study workers ended, the process's
+  `.studios/<id>.lock` files released and removed (`rooms.release_claims`, what the Claims' finalizers did), stdout
+  and stderr flushed, then `os._exit`. Interpreter
+  shutdown added nothing but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one
+  stop in twelve. So every record must be on disk when it is written (the rules here), never at exit. A build still
+  running is cut off at once (the interpreter used to wait for its helper threads): `serve()` journals a first build
+  as `interrupted` first (section 2), and the next start picks it up like any build a stop cut off.
 - Stopping never waits for the network: lookups run in parallel on `morph/services/background.DaemonPool` (Darwin
   `source`/`suggest`, `keys.check`, BoardRepo), whose daemon threads the interpreter doesn't join at exit, where
   `concurrent.futures` ran every queued lookup to its timeout first. New code that fans network calls out uses it.
@@ -195,7 +198,7 @@ class Request:
 
 | Area | Routes |
 |---|---|
-| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds and for the start project) |
+| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, for the start project, and for the project another running Studio started on) |
 | W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?, edit?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting; `edit: true` skips the chat routing of section 3); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
 | F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
@@ -254,30 +257,95 @@ by pid or host name (a pid is reused after a reboot, a Mac's name changes with i
 until the system frees it when the process ends, however it ends. When a Studio starts (`Studio._recover`, after
 `projects.tidy`), a project with a journal whose Studio's lock is held (`rooms.journal_live`) is left alone ("another
 Morph Studio on this projects folder is still working on it"); otherwise every journal of the project is read
-(`rooms.journals`, `rooms.open_jobs`; an older plain `queue.jsonl` counts as a stopped Studio's) and removed, and:
+(`rooms.journals`, `rooms.open_jobs`; an older plain `queue.jsonl` counts as a stopped Studio's; a job in two journals
+counts once, and of a first build in two the line that counts the most stops) and removed once what is still open is
+written down again (this Studio's own journal line, `JobQueue` `job.journaled`, or `first-build.json`): a journal is the
+only record of a cut-off first design, so a full disk at the start keeps the stopped Studio's journal for the next start,
+and a stop in between leaves both journals, never neither. Then:
 - a first build (`kind: "build"`) of a project with no finished revision is queued again from its design, labelled
   `"<label> (rebuilt after a stop)"`, and the chat says "The Studio stopped before <project>'s first build finished:
   building it again now."; features learn of it through `rooms.RESUMED` hooks `fn(studio, room, job, meta)` (New robot
   marks its brief built when it ends). Without a journal (an older Morph, `morph robot new` stopped in a terminal), the
   design of the first revision `tidy()` just set aside is used. Its `cut` counts the times a stop cut it off after it
-  had started; at `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
+  had started; a clean stop is no try: `serve()` calls `Studio.stopping`, which journals the first build it cuts off as
+  `interrupted` (`JobQueue.stopping`), and only a crash, a SIGKILL, a power cut or an error escaping `serve_forever`
+  (or the start-up) counts. A clean stop is one a person asks for: Ctrl+C (SIGINT), a closed terminal window
+  (SIGHUP), a logout, shutdown or `kill` (SIGTERM), Ctrl+Break (SIGBREAK) and, on Windows, a closed console window
+  (the console's close event journals the stop before Windows ends the process; written for Windows, not run there in
+  these tests). `server._Stop` handles them from before the start-up's recovery to the end of `serve()`: the first
+  ends `serve_forever` (or keeps it from starting), a second raises KeyboardInterrupt; a signal the process ignores
+  (nohup) stays ignored. `serve()` listens before the Studio's start-up recovers anything, so a start that can't
+  listen (a busy port, a mistyped `--host`) leaves every journal as it was. At
+  `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
   at every start): it is kept in `<p>/.morph/first-build.json` (`projects.park_first_build`), the chat and the terminal
   say "The Studio stopped twice while building <project>'s first design, so Morph won't start it again on its own ...
-  send "build it again" here ... delete <project> from the project menu", the terminal repeats it at every start, an
+  send "build it again" here ... delete <project> from the project menu" (no more than that: it never says the design
+  stopped the Studio), the terminal repeats it at every start, an
   edit is answered with how to go on, and the chat message "build it again" (`Studio.AGAIN`: also "try again",
-  "rebuild", "retry") queues it once more (`Studio._no_revision_yet`); the record goes once a first revision is built;
+  "rebuild", "retry") queues it once more (`Studio._no_revision_yet`); sent while a first build of the project waits
+  or runs, it is answered at once, never queued: "<project>'s first design is already being built."
+  (`Studio.queue_chat`); the record goes once a first revision is built. A first build that ends with an error (not
+  a stop: `Studio.build` caught it) is kept the same way, with its `error` (`Studio._failed_first`; should the disk
+  refuse the file, the room keeps it and the queue keeps the build's journal lines open, `JobQueue.keep`, so the next
+  start builds it again): the chat shows the error, every start's terminal says "<project>: its first
+  build ended with an error, so it has no revision yet. To try once more, send "build it again" ...", and "build it
+  again" queues it once more. A project with no finished revision, no journal and no record (a full disk, or a stop at
+  the wrong moment, under an older Morph) is built by "build it again" from the newest revision set aside unfinished
+  (`projects.set_aside_design`; `tidy` keeps one a day before it goes to `.trash`). "Wait for its first build" is said
+  only while one waits or runs; a project with no revision and nothing kept to build says "... Morph kept no design to
+  build it again: delete the project from the project menu and make it again.". Two Studios on one projects folder
+  (`Studio._no_revision_yet`): while another
+  Studio that still runs has the project's first build queued or building (an open `build` in a live journal), an edit
+  and "build it again" are answered "Another Morph Studio on this projects folder is building <project>'s first
+  design; wait for it there." and nothing is queued; Delete project is refused (409) while any live journal of another
+  Studio is in the project (`Studio.held_elsewhere`), and for a project another running Studio started on; Reset demo
+  is refused (409 `{ok: false, error}`, nothing removed) while another Studio has a demo project queued or building (a
+  live journal), a `morph robot` build holds one of its revisions' build locks, or another process runs a robustness
+  study on it. A room is kept only for the folder it was made for (`rooms.folder_id`: the folder's device and file id,
+  which a deleted project keeps in `.trash/`): a project another Studio deleted gets no chat or journal line (no
+  folder is made again under its name), and a new project another Studio made under the name gets a fresh room, never
+  the deleted one's chat or kept first build (`Studio._kept`; on a file system without file ids, FAT, it is kept as
+  before, and a room whose queue has work is always kept: a network folder may number its folders anew). In the start
+  project, "Morph kept no design" advises starting the Studio on another project first. `morph studio <project>` on a
+  project of its own with no finished revision (its first build cut off or failed) changes nothing and exits with
+  "<project> has no finished revision yet, so the Studio can't start on it. Start the Studio on another project
+  (`morph studio egg-picker`), then send "build it again" in <project>'s chat, or delete <project> from the project
+  menu there." (`cli.cmd_studio`); it built the default template into it and rewrote its meta.json. A demo project, or
+  a name with no project, is still built from its template. A first build that a Studio which stopped while this one
+  ran left open in its journal counts as kept (`Studio._kept_first`): "build it again" builds it from that design,
+  sets the stopped build's revision aside and removes that journal. Whether to queue a first build is decided by one
+  process at a time, under an OS lock on `<p>/.morph/first-build.lock` (`rooms.first_build_turn`, also taken by
+  `Studio._recover` for a project with journals or a revision its start-up set aside, which reads the journals again
+  under it), so two Studios asked at once, or starting at once, queue it once. A delete in one Studio
+  and a job queued in another at the same instant are not serialised (the window is the time between the check and
+  the move to `.trash`). On a file system that can't lock, every other Studio's journal reads as a stopped one's, as
+  the start-up warning says;
 - every other open job gets one assistant line, "The Studio stopped before this was built: “<label>”. Send it again if
   you still want it." (a change request: "... It is open again: apply it again ..."); it is never re-run on its own.
   A job whose revision was written before the stop took its `ended` line with it (one of the newest 12 finished
   revisions has its label, cut to 48 characters, and a results.json newer than the job; each revision accounts for one
   job) is skipped: it was built;
 - a conflict waiting for an answer waits again (`JobQueue.restore`, same id: the page draws its Apply / Drop again);
-- then `rooms.STARTED` hooks `fn(studio)` run: a team Studio reopens every change request that is applied but has no
-  revision (`api_team.reopen_stopped`, `last_error` "the Studio stopped before it finished. Apply it again") and tells
-  whoever applied it and its author in their inbox.
-New robot's Build on a brief that reads "building" answers `already: true` only while its project builds or has a
-finished revision (`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's
-own empty project goes to `.trash` first, so the name is kept).
+- then `rooms.STARTED` hooks `fn(studio)` run: a team Studio settles every change request that is applied but has no
+  revision (`api_team.reopen_stopped` → `settle_stopped`) and tells whoever applied it and its author in their inbox:
+  it is recorded built ("Change request #<n> built <rev>.") when a finished revision has its label (`#<n> <title>`,
+  cut to 48 characters) and its author (`proposed_by`) and a results.json no older than a second before it was
+  applied (`api_team.built_after_all`: the stop came between the build and its record), else opened again
+  (`last_error` "the Studio stopped before it finished. Apply it again"). One applied in another Studio that still
+  runs on the same projects folder is left alone: the `apply` line names the Studio (`studio`: its `rooms.OWNER`,
+  `applied_in` on the request) and `rooms.owner_live` leaves it to that Studio, as for the queue journals. A Studio
+  that keeps running settles them too, each time it lists, applies or closes a project's change requests (one this
+  Studio applied, or one applied with no Studio named, it leaves to its own queue), so a request a stopped Studio
+  applied never stays "applied" with no revision until some Studio starts. Each request is decided under the
+  project's Teams lock (`teams.store.locked`), read again there, so one another running Studio opened and applied
+  again meanwhile is left to that Studio. A request whose change the head revision
+  already has (the build ends `noop`) is applied at the head revision, not opened again with "nothing to change". A
+  build that ends after its request was reopened anyway (a file system that can't lock) still records its revision:
+  `done` with a revision makes an open request applied again (`collab._proposal_state`).
+New robot's Build on a brief that reads "building" answers `already: true` only while its project builds (here, or
+in another Studio still running on the same projects folder: `Studio.held_elsewhere`) or has a finished revision
+(`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's own empty project
+goes to `.trash` first, so the name is kept).
 
 ## 3. Live events (SSE)
 
@@ -579,7 +647,17 @@ members; a member can hold several.
   team Studio answers 503 with it to every request and page (nobody is signed in) until the file is fixed. Browsers
   get `TeamFileError.public`, which names the file from the projects folder (`projects/.team/team.json`), never the
   server's own path; the terminal gets the full text once (`api_team.team_problem`). Build errors in the chat name
-  files the same way (`durable.explain(exc, home)`).
+  files the same way (`durable.explain(exc, home)`), and so does every other error text a browser gets from an
+  exception Morph didn't word itself (one caught as any `Exception` or `OSError`, or a Morph error that carries such
+  an exception's text): a queued job that raised (`JobQueue` worker: the chat line and `job.error`, which New robot,
+  Import and Teams pass on), a chat message that couldn't be read, Find agents' `sourcing` error event, a robustness
+  study's `error` (the job's, the study record's, a robot that couldn't be prepared for it, a replayed run's), a build
+  stage's error or warning in `results.json` (`RobotProject._why`: the pipeline strip and the issue list; machine
+  files and a simulation scenario likewise), every import error (the download, unpacking, each candidate file, Create;
+  `Session._why`) and an import's build failure, ffmpeg's decode error, the Teams impact preview, Apply's "couldn't
+  queue the build" (and the request's `last_error`), New robot's "couldn't create the project" and its preflight
+  issues, a tool manifest that didn't load (the Keys dialog) and a route's 500 ("The Studio hit an error: ..."); the
+  terminal keeps the full traceback. A time card that can't be made says only its error's type.
 
 ## 9. Security rules for all features
 
@@ -610,14 +688,66 @@ members; a member can hold several.
 - **Keys.** Requests carrying an API key use `security.open_keyed()` (never follow a redirect with the key).
   One filter, `security.looks_like_secret(text)` (`holds_secret(value)` for every string of a structured value), covers
   Claude (`sk-ant-`) and Keewano (`kwpat-`) keys, other `sk-` keys (20 or more token characters with a digit, unless
-  they read as a hyphenated phrase such as `sk-6x40-stainless-steel-screws`: `security._phrase`), the value of any key
-  saved in the Keys dialog (`security.SAVED_KEYS`) or any saved `MORPH_TOOL_*` key, a token with a manifest's key
-  prefix that fits its pattern, bearer tokens (JWTs) and Morph Teams' script tokens, invite and sign-in codes. Teams
-  codes are made by `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, always with a capital
-  letter), so `security.TEAM_CODE` knows each one; any other `mi_`/`ml_`/`mt_` run of 20 or more characters counts
-  when it has a capital or a digit and doesn't read as a snake_case phrase, so `mt_shoulder_joint_torque_limit` or
-  `ml_inference_pipeline_enabled` pass. The tool runner redacts and refuses with the same shapes
-  (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
+  they read as words and part numbers such as `sk-6x40-stainless-steel-screws`: `security._phrase`, which counts
+  words (camelCase too, with an acronym or an axis capital such as `maxPWMFreq` or `offsetX` when one of its words is
+  a common one, `words.WORDS`), numbers (with a unit, `3000rpm`, `400kHz`, `3300mAh`, or a size, `1280x720`), model
+  names such as `stm32f405` or `YOLOv8n`, numbered names such as `arm2` or a series such as `servo1_servo2_servo3` or
+  `xl330_xl430_xm430`, versioned names such as `Servo1`, `yoloV8`, `jointLimit2`, `servoID3`, `so101Arm` or
+  `GraspNet1B` (`security._versioned`), and short codes such as `6x40` or `4f8a`; a key in groups of one size such as
+  `sk-live-4f8a-91bc-77de-12ab` is a key unless every group with a digit reads as a numbered word, and three parts of
+  one size count as groups only when none is a common word, so `mt_SG90_horn_trim_offset` passes; fewer than 20
+  characters after `sk-` are judged as groups only, so `sk-4f8a-91bc-77de-12ab` is caught and `sk-short1` passes),
+  the value of any key saved in the Keys dialog, of `ANTHROPIC_AUTH_TOKEN` and of a chosen `MORPH_TOKEN`
+  (`security.SAVED_KEYS`) or of any saved `MORPH_TOOL_*` key, the running remote Studio's own access code
+  (`security.ACCESS_CODES`, set by `server.make_handler`), a token with a manifest's key prefix that fits its pattern
+  wherever the prefix starts after anything but an ASCII letter or digit (`key=`, `?api_key=`, glued to other text),
+  JWTs, Morph Teams' script tokens, invite
+  and sign-in codes, and other services' keys known by a fixed prefix or text that carries a key (`security.OTHER_KEYS`:
+  GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq, xAI, Perplexity, ElevenLabs, npm,
+  PyPI, SendGrid, DigitalOcean, Mapbox, Telegram and Discord tokens and Twilio key SIDs; a private key block, a link
+  with a password, `Bearer` and a token with a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value
+  has a letter and a digit). A key with no prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught
+  only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
+  Python reads by Unicode: 是, は and é count as letters), so a key glued to Chinese, Japanese or Korean text is caught.
+  The key shapes, with the contexts each is refused in, are tables in `tests/fixtures/key_filter/keys.json`. Every
+  `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital (every Teams code has one) and doesn't
+  read as words and part numbers (`_phrase` again; there a whole part number of one case such as `STM32F405RGT6` is a
+  name too), so `mt_shoulder_joint_torque_limit`, `ml_policy_weights_3f9a2c1e`, `mt_motor_max_speed_3000rpm`,
+  `mt_shoulderJointTorqueLimit` or `ml_policyV1_final_weights` (as long as an invite code) pass. Teams codes are made by
+  `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, `security.TEAM_CODE`), which draws again a
+  code with no capital letter, one `security.has_key` doesn't catch whole or cut short to 20 characters or more, or
+  one with no part that reads as random (`security.random_part`), so every code Morph makes is caught, alone, cut short
+  or with text joined to it by `-` or `_` (`mi_<code>-thanks`). Both rules are heuristics checked against tables of
+  keys and names (`tests/test_secret_filter.py` KEYS and ORDINARY; `tests/fixtures/key_filter/names.json`, from the
+  release review's 485 realistic strings and its examples), and measured by `tools/key_filter_rates.py` (seeded;
+  100,000 random keys per shape). Keys missed, as a share of the keys with a digit (the phrase rule's misses), then of
+  all keys of the shape (adding the keys with no digit, which the `sk-` rule never takes): in groups behind a word,
+  lower-case letters and digits `sk-live-xxxxx-xxxxx-xxxxx` 2.02% / 2.75%, `sk-live-xxxx-xxxx-xxxx-xxxx` 1.69% /
+  2.28%, `sk-live-xxxxxx-xxxxxx-xxxxxx` 0.86% / 1.14%, five groups of 4 0.68% / 0.81%, four of 5 0.68% / 0.82%, four
+  of 6 0.21% / 0.26%, three of 8 0.15% / 0.19% (missed when every group with a digit reads as a numbered word, such
+  as `sk-live-jeta3-poni9-zijkw-dxb52`); capitals and digits 2.00% / 2.73% (three groups of 5) and 1.54% / 2.09%
+  (four of 4); hex 0.27% (three of 5), 0.18% (four of 4), 0.03% (five of 4); mixed-case letters and digits 0.017% /
+  7.17% (three of 5) and 0.017% / 6.09% (four of 4). With no word in front: `sk-xxxxx-xxxxx-xxxxx` 1.98% / 2.75%,
+  `sk-xxxx-xxxx-xxxx-xxxx` 1.64% / 2.17% and in hex 0.19% (all of them were missed before: under 20 characters). Not
+  in groups: `sk-` and 20 base64url characters 0.009% / 3.42%, 24 0.001% / 1.67%, 32 0.000% / 0.44%; two words and 12
+  random capitals or lower-case letters and digits (`sk-live-test-K3F9ABQX77DE`) 19.2% / 21.2%, as before. Teams codes:
+  of 1,000,259 invite or sign-in codes drawn, `new_code` draws again 8 with no capital, 160 that (or a piece of which
+  cut short) read as a phrase and 91 with no random part; of 200,035 script tokens, 35; none of the 1,000,000 and
+  200,000 it keeps is missed alone, cut to 20 characters or with `-thanks`, `_backup_copy`, `-please-join-the-team`,
+  `-v2` or `_old` joined to it. Names refused (23 characters or more): under `mt_`/`ml_`/`mi_` none in lower case
+  (they have no capital); capitalized, or as `sk-` part numbers, a series of 3 and two words 61 of 4,000 (67 as part
+  numbers), a series of 4 and a word 571 of 4,000 (573), two numbered words and two words 84 of 3,958 (72 of 3,938),
+  three numbered abbreviations and a word 3 of 2,628 (3 of 2,672); plain words, versioned words and camelCase with a number none; a
+  part code and two or three firmware words (`mt_SG90_horn_trim_offset`) none of 12,381, but 905 of 10,459 when the
+  words aren't in `words.WORDS`; a number and a unit, a size, a commit hash and a word with an axis capital none;
+  camelCase with an acronym 236 of 3,393 (every one with `I2C`: an acronym with a digit); model names as their authors
+  write them 41 of 183 (`ViT`, `UNet`, `NeRF`, `DeiT`, `MiDaS`, `LoFTR`, `ConvNeXt`, `MobileViT`, `SmolVLA`,
+  `SmolVLM`, `EfficientNetB0`, `BiSeNetV2`, `pi0FAST`, `VQBeT`: pieces of two letters, or no common word, in mixed
+  case); whole part numbers 40 of
+  270 (mixed case such as `ATmega328P` or `nRF52840`, starting with a digit such as `17HS4401`, and any after `sk-`).
+  `names.json` lists the kinds still refused; part runs such as `sk-608zz-608rs-626zz-bearings` (more short codes than
+  words and names) are refused too. The tool runner redacts
+  and refuses with the same shapes (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
   label), a project's `need`, a world's labels, an import's name and answers (`POST /api/import/<id>/commit`), and
@@ -918,7 +1048,9 @@ interrupted; a first turn whose account refuses server-side fallbacks continues 
 used_by, set`), never a value; `save()` accepts a `MORPH_TOOL_*` name only when a loaded manifest declares it, checks the
 value against its pattern and prefix (4 KiB at most, no spaces or quotes) and keeps the lock, the 0600 file and the
 error that never repeats a value. `security.looks_like_secret` also refuses the value of any set `MORPH_TOOL_*` key, a
-token that starts with a manifest's key prefix and fits its pattern, and bearer tokens (JWTs). The Keys dialog
+token that starts with a manifest's key prefix (wherever the prefix starts after anything but an ASCII letter or digit:
+`key=fxp_...`, `?api_key=fxp_...&`) and fits its pattern, and JWTs (`catalog.looks_like_tool_key`; the pattern without
+its anchors is matched once where each prefix starts, so a text full of prefixes is checked in one pass). The Keys dialog
 (`static/keys.js`) groups tool keys under "Tool keys (beta)" by service, with "Get a key", the hosts each key is sent to
 and the tools that use it; `window.dispatchEvent(new CustomEvent("morph:keys", {detail: {key: "MORPH_TOOL_..."}}))` opens
 it on that key; a member who isn't the owner is told to ask the owner. `POST /api/keys` may answer `resumed: [run ids]`

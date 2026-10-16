@@ -25,6 +25,8 @@ effect, cost and key), only ever as a tool definition: nothing from a manifest g
 
 from __future__ import annotations
 
+import bisect
+import functools
 import hashlib
 import json
 import os
@@ -34,6 +36,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
+from ...services import durable
 from . import http_tool, store
 from .http_tool import DEFAULT_POLICY, SpecError
 
@@ -56,8 +59,9 @@ SIDE_TEXT = {"read": "Read-only: it only looks things up.",
              "write": "It changes something at the provider, so Morph asks the person before every call.",
              "upload": "It sends files or data to the provider, so Morph asks the person before every call.",
              "spend": "It spends money, so Morph asks the person before every call."}
-JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
+JWT = re.compile(r"(?<![A-Za-z0-9_])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")  # not \b: Unicode
 _TOKEN = re.compile(r"[^\s\"'`<>()\[\]{},;|]+")
+_REFUSED = re.compile(r"[\\\x00-\x1f\x7f]")  # what Credential.valid() never accepts besides _TOKEN's breaks
 
 
 class ManifestError(ValueError):
@@ -356,8 +360,9 @@ def _build(files, policy) -> Catalog:
             clash = [t.name for t in tools if t.name in cat.tools] + [c.env for c in creds if c.env in cat.credentials]
             if clash:
                 raise ManifestError(f"already in the catalog: {clash[:5]}")
-        except (OSError, UnicodeError, ValueError, RecursionError) as exc:
-            cat.errors.append({"source": source, "curated": curated, "error": str(exc)[:300] or exc.__class__.__name__})
+        except (OSError, UnicodeError, ValueError, RecursionError) as exc:  # the Keys dialog lists it
+            projects = os.path.dirname(os.path.dirname(os.path.dirname(p)))  # <projects>/.tools/catalog/<file>
+            cat.errors.append({"source": source, "curated": curated, "error": durable.explain(exc, projects)[:300]})
             continue
         info["warnings"] = sorted({w for t in tools for w in t.warnings})
         cat.providers[info["id"]] = info
@@ -496,6 +501,17 @@ def key_entries(home: str | None = None) -> list:
     return sorted(out, key=lambda e: (e["service"].lower(), e["label"].lower()))
 
 
+@functools.lru_cache(maxsize=64)
+def _in_text(pattern: str):
+    """A manifest's key pattern (^...$; _pattern allows no groups or alternation) without its anchors, so it matches a
+    key where its prefix starts inside a longer text, up to where no letter, digit, _ or - goes on. One match per place
+    a prefix starts, so a text full of prefixes is checked in one pass."""
+    body = pattern[1:]
+    if body.endswith("$") and (len(body) - 1 - len(body[:-1].rstrip("\\"))) % 2 == 0:
+        body = body[:-1]  # the end anchor, not an escaped $
+    return re.compile("(?:" + body + r")(?![A-Za-z0-9_-])")
+
+
 def looks_like_tool_key(text: str, home: str | None = None, env=None) -> bool:
     """True when `text` holds a tool key: the value of any MORPH_TOOL_* key that is set, a token that starts with a
     manifest's key prefix and fits its pattern, or a bearer token (JWT). Never raises."""
@@ -511,9 +527,18 @@ def looks_like_tool_key(text: str, home: str | None = None, env=None) -> bool:
         creds = [c for c in load(home).credentials.values() if c.prefix and c.prefix in text]
     except Exception:  # noqa: BLE001  a chat filter must never break chat
         return False
-    for c in creds:
-        for tok in _TOKEN.findall(text):
-            t = tok.strip(".:!?")
-            if t.startswith(c.prefix) and c.valid(t):
+    runs = [m.span() for m in _TOKEN.finditer(text)]  # once: a run is never scanned again for each prefix in it
+    starts = [a for a, _ in runs]
+    refused = [m.start() for m in _REFUSED.finditer(text)]
+    for c in creds:  # wherever the prefix starts (key=fxp_..., ?api_key=fxp_...&, 密钥是fxp_...), up to where it may end
+        key = _in_text(c.pattern)
+        for m in re.finditer(r"(?<![A-Za-z0-9])" + re.escape(c.prefix), text):
+            i = bisect.bisect_right(starts, m.start()) - 1
+            if i < 0 or runs[i][1] <= m.start():
+                continue
+            j = bisect.bisect_left(refused, m.start())
+            end = min(runs[i][1], m.start() + 4096, refused[j] if j < len(refused) else len(text))
+            found = key.match(text, m.start(), end)
+            if found and c.valid(found.group(0)):
                 return True
     return False

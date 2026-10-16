@@ -28,10 +28,11 @@ from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 from ..services import durable
+from . import rooms
 from .rooms import STARTED
 from .teams import activity, audit, auth, collab, roles
 from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing, watching
-from .teams.store import TeamFileError, TeamStore, exists
+from .teams.store import TeamFileError, TeamStore, exists, locked, parse_ts, project_dir
 
 CONFIG = {"home": None, "secure": False, "enabled": False}
 MAX_FORM = 8192
@@ -671,13 +672,15 @@ def _decorate_proposal(root: str, p: dict, members: dict, policy: dict, reviews=
     if rv is not None and member:
         rv = {**rv, "mine": collab.decision_scope(root, rv, members.get(member.get("id")) or member, members, policy)}
     conflicts = collab.head_conflicts(root, p) if p.get("status") == "open" else []
-    return {**p, "author": _author(members, p.get("by")), "routing": r, "review": rv, "conflicts": conflicts,
+    return {**{k: v for k, v in p.items() if k != "applied_in"}, "author": _author(members, p.get("by")), "routing": r,
+            "review": rv, "conflicts": conflicts,
             "shown": collab.shown_changes(p.get("diff")), "built": collab.built_summary(root, p)}
 
 
 @_safe
 def proposals_get(req):
     root, members, pol = _root(req), _members(req), _policy(req)
+    settle_stopped(root, _home(req))
     status = _q(req, "status")
     items = collab.proposals(root, status=status if status in ("open", "applied", "closed") else None)
     rvs = collab.reviews(root, members=members, policy=pol)
@@ -725,10 +728,10 @@ def _enqueue(req, job: dict) -> bool:
         root, home, send = room.p.root, _home(req), room.hub.send
 
         def finished(q):
-            error = None if q.result else (q.error or {"noop": "nothing to change: the design already has these values",
-                                                       "dropped": "it clashed with a newer change and was dropped"}
-                                           .get(q.status, f"the build ended as {q.status}"))
-            job_finished(root, job, rev=q.result, error=error, home=home, send=send)
+            rev = q.result or (room.latest() if q.status == "noop" else None)  # the design already has these values:
+            error = None if rev else (q.error or {"dropped": "it clashed with a newer change and was dropped"}  # applied
+                                      .get(q.status, f"the build ended as {q.status}"))                     # there
+            job_finished(root, job, rev=rev, error=error, home=home, send=send)
         studio.when_done(q, finished)
         return True
     apply = getattr(room, "apply", None) or getattr(getattr(req, "studio", None), "apply", None)
@@ -750,12 +753,14 @@ def _enqueue(req, job: dict) -> bool:
 @_safe
 def proposals_apply(req):
     m, b, root, members = _me(req), _body(req), _root(req), _members(req)
-    job = collab.apply_proposal(root, str(b.get("id") or ""), m["id"], members=members)
+    settle_stopped(root, _home(req))  # applied in a Studio that has stopped since: open again (or built after all)
+    job = collab.apply_proposal(root, str(b.get("id") or ""), m["id"], members=members, studio=rooms.OWNER)
     try:
         queued = _enqueue(req, job)
     except Exception as exc:  # noqa: BLE001  (a full queue, a stopped room: reopen the request and say why)
-        collab.proposal_done(root, job["proposal"], error=f"couldn't queue the build ({exc})")
-        return _err(getattr(exc, "status", 409), f"Couldn't queue change request #{job['n']}: {exc}")
+        why = durable.explain(exc, _home(req))
+        collab.proposal_done(root, job["proposal"], error=f"couldn't queue the build ({why})")
+        return _err(getattr(exc, "status", 409), f"Couldn't queue change request #{job['n']}: {why}")
     if not queued:
         collab.proposal_done(root, job["proposal"], error="this Studio can't build edits")
         return _err(503, "This Studio can't build edits right now, so the change request stays open.")
@@ -768,6 +773,7 @@ def proposals_apply(req):
 @_safe
 def proposals_close(req):
     m, b, root, members = _me(req), _body(req), _root(req), _members(req)
+    settle_stopped(root, _home(req))
     p = collab.get_proposal(root, str(b.get("id") or ""))
     if p is None:
         return _err(404, "No such change request.")
@@ -785,22 +791,66 @@ STOPPED = "the Studio stopped before it finished. Apply it again"
 
 def reopen_stopped(studio) -> list:
     """When a team Studio starts: a change request that was applied but has no revision was being built (or waited to
-    be) when the Studio stopped, so nothing will finish it; it is opened again with why, and the person who applied it
-    and its author are told. No build of this Studio is running yet, so none is cut short. Returns [(project, id)]."""
+    be) when the Studio that applied it stopped, so nothing will finish it (settle_stopped). No build of this Studio is
+    running yet, so none is cut short. Returns [(project, id)]."""
     if not getattr(studio, "team", False):
         return []
     from . import projects
+    return [(info["name"], pid) for info in projects.list_projects(studio.home)
+            for pid in settle_stopped(os.path.join(studio.home, info["name"]), studio.home, starting=True)]
+
+
+def built_after_all(root: str, p: dict) -> str | None:
+    """The finished revision an applied change request built when its Studio stopped before it recorded it (the record
+    comes a few ms after results.json): one labelled with the request's number and title, for its author, finished
+    after it was applied. None when there is none."""
+    from ..robot.pipeline2 import RobotProject
+    label = f"#{p.get('n')} {p.get('title')}"[:48]
+    since = (parse_ts(p.get("applied_ts")) or 0.0) - 1  # its times are to the second
+    proj = RobotProject(root)
+    for rev in reversed(proj.finished()[-50:]):
+        try:
+            res = proj.load_results(rev)
+            when = os.path.getmtime(os.path.join(proj.rev_dir(rev), "results.json"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(res, dict) and res.get("label") == label and res.get("proposed_by") == p.get("by") and when >= since:
+            return rev
+    return None
+
+
+def settle_stopped(root: str, home: str | None, *, starting: bool = False) -> list:
+    """Change requests of project folder `root` applied in a Studio that has stopped since (its lock is free:
+    rooms.owner_live) and never recorded as built: nothing will finish them, so each is recorded as built when its
+    revision exists after all (built_after_all: the stop came between the build and its record), else opened again
+    with why; the person who applied it and its author are told. At a start (`starting`) a request applied with no
+    Studio named counts too; one this Studio applied is its own queue's. Read before a request is listed, applied or
+    closed, so a request a stopped Studio applied never stays "applied" in one that keeps running. Returns the ids."""
     out = []
-    for info in projects.list_projects(studio.home):
-        root = os.path.join(studio.home, info["name"])
-        for p in collab.proposals(root, status="applied"):
-            if p.get("applied_rev"):
+    try:
+        applied = collab.proposals(root, status="applied")
+    except Exception:  # noqa: BLE001  (an unreadable record is reported by the call that reads it next)
+        return out
+    project = os.path.basename(os.path.normpath(root))
+
+    def stopped(p: dict) -> bool:
+        who = p.get("applied_in")
+        return (p.get("status") == "applied" and not p.get("applied_rev") and not rooms.owner_live(home, who)
+                and (starting or who not in (None, rooms.OWNER)))
+    for p in applied:
+        if not stopped(p):
+            continue
+        rev = built_after_all(root, p)
+        with locked(project_dir(root)):  # read again: another Studio may have opened and applied it again meanwhile
+            now = collab.get_proposal(root, p["id"])
+            if now is None or not stopped(now) or now.get("applied_ts") != p.get("applied_ts"):
                 continue
-            collab.proposal_done(root, p["id"], error=STOPPED)
-            out.append((info["name"], p["id"]))
-            text = f"Change request #{p.get('n')} wasn't built: the Studio stopped. It is open again, to apply again."
-            for mid in {p.get("applied_by"), p.get("by")} - {None}:
-                activity.notify(studio.home, mid, "job", text, project=info["name"], ref={"proposal": p["id"]})
+            collab.proposal_done(root, p["id"], rev=rev, error=None if rev else STOPPED)
+        out.append(p["id"])
+        text = (f"Change request #{p.get('n')} built {rev}." if rev else
+                f"Change request #{p.get('n')} wasn't built: the Studio stopped. It is open again, to apply again.")
+        for mid in {p.get("applied_by"), p.get("by")} - {None}:
+            activity.notify(home, mid, "job", text, project=project, ref={"proposal": p["id"], "rev": rev})
     return out
 
 

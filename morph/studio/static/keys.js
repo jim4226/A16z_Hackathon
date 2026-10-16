@@ -246,14 +246,14 @@ export class KeysDialog {
     btn.classList.remove('warnbtn');
     btn.innerHTML = '<span class="spin"></span>Rebuilding both robots…';
     this.note(this.row('busy', 'Rebuilding both robots from their original design with your keys (about a minute; the terminal shows each stage)…'));
-    const ok = await this.a.reset(true).catch(() => false);
-    this.a.toast(ok ? 'Both robots rebuilt with your keys' : 'Still regenerating; try again when the pipeline is idle');
+    const res = await this.a.reset(true).catch(() => false), ok = res === true;
+    this.a.toast(ok ? 'Both robots rebuilt with your keys' : res || 'Still regenerating; try again when the pipeline is idle');
     await sleep(100);
     if (!this.el.classList.contains('on')) return;
     await this.refresh().catch(() => {});
     this.render();
     this.note(ok ? this.row('good', 'Rebuilt. The grip-force window (right panel) shows the Keewano calibration when your project has 3 or more logged builds for this pad and material.')
-      : this.row('bad', 'The pipeline is busy with another change. Try again when the strip at the top is idle.'));
+      : this.row('bad', res ? esc(res) : 'The pipeline is busy with another change. Try again when the strip at the top is idle.'));
   }
 }
 

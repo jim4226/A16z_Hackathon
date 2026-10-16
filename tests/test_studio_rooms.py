@@ -50,7 +50,7 @@ class FakeBuilds:
         emit({"type": "node", "node": "sizing", "status": "computed", "seconds": 0.01})
         with open(os.path.join(p.rev_dir(rev), "results.json"), "w", encoding="utf-8") as fh:
             json.dump({"rev": rev, "parent": parent, "label": label, "summary": {}, "by": by,
-                       "cad": {"parts": 1, "urdf": "cad/urdf/robot.urdf"}}, fh)
+                       "proposed_by": kw.get("proposed_by"), "cad": {"parts": 1, "urdf": "cad/urdf/robot.urdf"}}, fh)
         with self.lock:
             self.active -= 1
             self.built.append((os.path.basename(p.root), rev, parent, label))

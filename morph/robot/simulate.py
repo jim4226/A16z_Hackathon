@@ -2851,8 +2851,10 @@ def run_all(asm, design, outdir: str, scenarios=None, fast: bool = False, **opts
         try:
             doc = _run_one(rob, design, name, fast)
         except Exception as exc:  # noqa: BLE001  keep the other scenarios alive; surface the error
+            from ..services.durable import explain  # sent to the page: the projects folder by name (<rev>/sim here)
+            why = explain(exc, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(outdir)))))
             out["scenarios"][name] = {"file": None, "title": TITLES.get(name, name),
-                                      "metrics": {"success": False, "error": f"{exc.__class__.__name__}: {exc}"}}
+                                      "metrics": {"success": False, "error": f"{exc.__class__.__name__}: {why}"}}
             continue
         doc["info"]["wall_s"] = round(time.time() - t0, 2)
         _write(outdir, name, doc)

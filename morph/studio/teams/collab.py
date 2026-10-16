@@ -556,12 +556,17 @@ def _proposal_state(root: str) -> "collections.OrderedDict":
         if p is None:
             continue
         if kind == "apply":
-            p.update(status="applied", applied_by=op.get("by"), applied_ts=op.get("ts"), job=op.get("job"), last_error=None)
+            p.update(status="applied", applied_by=op.get("by"), applied_ts=op.get("ts"), job=op.get("job"), last_error=None,
+                     applied_in=op.get("studio"))
         elif kind == "done" and p.get("status") == "applied":
             if op.get("error"):
                 p.update(status="open", last_error=op.get("error"), applied_rev=None)
             else:
                 p.update(status="applied", applied_rev=op.get("rev"))
+        elif kind == "done" and p.get("status") == "open" and op.get("rev"):
+            # built after all: reopened meanwhile by a Studio that took the one building it for a stopped one (a file
+            # system without locks), its revision still holds the change
+            p.update(status="applied", applied_rev=op.get("rev"), last_error=None)
         elif kind == "close":
             p.update(status="closed", closed_by=op.get("by"), closed_ts=op.get("ts"), close_reason=op.get("reason") or "")
     return state
@@ -652,9 +657,10 @@ def head_conflicts(root: str, p: dict) -> list:
     return [k for k, v in (p.get("changes") or {}).items() if k in moved and moved[k][1] != v]
 
 
-def apply_proposal(root: str, pid: str, by: str, members=None) -> dict:
+def apply_proposal(root: str, pid: str, by: str, members=None, studio: str | None = None) -> dict:
     """Mark an open change request applied and return the job spec for the room's queue: the edit is built by the
-    applier (`by`) on behalf of the author (`proposed_by`)."""
+    applier (`by`) on behalf of the author (`proposed_by`), in the Studio `studio` (rooms.OWNER: while that Studio runs,
+    another one starting on the same projects folder leaves the request alone)."""
     with locked(project_dir(root)):
         p = _proposal_state(root).get(pid)
         if p is None:
@@ -671,7 +677,8 @@ def apply_proposal(root: str, pid: str, by: str, members=None) -> dict:
                "design_sha256": p.get("design_sha256"), "conflicts": head_conflicts(root, p), "source": "proposal",
                "text": f"Change request #{p.get('n')} from {names.get(p.get('by')) or 'a teammate'}: {p.get('title')}"}
         append_jsonl(_file(root, "proposals.jsonl"), {"op": "apply", "id": pid, "by": by, "ts": utc(),
-                                                      "job": {k: job[k] for k in ("base_rev", "head_rev", "branch", "conflicts")}})
+                                                      "job": {k: job[k] for k in ("base_rev", "head_rev", "branch", "conflicts")},
+                                                      **({"studio": studio} if studio else {})})
     return job
 
 

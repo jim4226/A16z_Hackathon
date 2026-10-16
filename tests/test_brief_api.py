@@ -93,6 +93,22 @@ def test_build_now_stops_at_the_confirm_card_when_the_preflight_has_issues(tmp_p
     assert st == 200 and out["project"] == "sock-sorter" and "stopped" not in out
 
 
+def test_a_project_that_couldnt_be_created_names_files_from_the_projects_folder(tmp_path):
+    """The project service failing with an OSError: the 409 names the file from the projects folder, never the
+    server's own path."""
+    where = str(tmp_path / "box-picker" / "meta.json")
+
+    def refuse(payload):
+        raise PermissionError(13, "Permission denied", where)
+
+    _, out, _ = post(tmp_path, {"text": "make me a robot arm"})
+    st, out, _ = post(tmp_path, {"brief_id": out["brief_id"], "action": "build"}, create_project=refuse)
+    name = os.path.basename(tmp_path)
+    assert st == 409 and f"couldn't create the project: [Errno 13] Permission denied: '{name}/box-picker/meta.json'" \
+        == out["error"], out
+    assert str(tmp_path) not in out["error"]
+
+
 def test_out_of_scope_then_nearest(tmp_path):
     _, out, _ = post(tmp_path, {"text": "a drone that delivers packages"})
     assert out["brief"]["status"] == "out_of_scope" and out["brief"]["scope"]["nearest"]

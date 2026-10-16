@@ -243,8 +243,11 @@ def test_idle_connections_from_one_address_leave_room_for_everyone_else(remote):
     t0 = time.monotonic()
     ok = signed(connect, port, "/api/state")               # the person with the code is answered straight away
     assert head(ok).startswith(b"HTTP/1.0 200") and time.monotonic() - t0 < 1.0
-    streams = [signed(connect, port, "/api/events") for _ in range(5)]   # signed-in tabs don't count against an address
-    assert all(head(s).startswith(b"HTTP/1.0 200") for s in streams)
+    streams = []                                           # signed-in tabs don't count against an address: 5 of them,
+    for _ in range(5):                                     # each signed in before the next connects (a burst would hold
+        s = signed(connect, port, "/api/events")           # more than 3 unsigned at once on a slow machine)
+        assert head(s).startswith(b"HTTP/1.0 200")
+        streams.append(s)
     assert wait_for(lambda: httpd.streams == 5 and httpd.unsigned_by == {"127.0.0.2": 3})
     nocode = [connect("127.0.0.1") for _ in range(3)]      # the cap is per address: this one has its own 3
     assert wait_for(lambda: httpd.unsigned_by == {"127.0.0.2": 3, "127.0.0.1": 3})

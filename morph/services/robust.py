@@ -879,6 +879,13 @@ def _norm_xml(xml: str) -> str:
     return ET.tostring(root, encoding="unicode")
 
 
+def _explain(exc, root: str) -> str:
+    """An error's text for the Robustness card: files named from the projects folder (the folder holding project
+    `root`), never the server's own path (durable.explain)."""
+    from .durable import explain
+    return explain(exc, os.path.dirname(os.path.abspath(root)))
+
+
 def prepare(root: str, rev: str, timestep: float = 0.001) -> dict:
     """The revision's robot and its nominal pick-and-place plan, packed for the workers (pickled: it only ever travels
     between this study's own processes, never through a file). Checks the rebuilt model against the revision's
@@ -899,7 +906,8 @@ def prepare(root: str, rev: str, timestep: float = 0.001) -> dict:
     except StudyError:
         raise
     except Exception as exc:  # noqa: BLE001  (a robot the generator can't rebuild: say so)
-        raise StudyError(f"{rev}'s robot couldn't be rebuilt for the study: {exc.__class__.__name__}: {exc}") from exc
+        raise StudyError(f"{rev}'s robot couldn't be rebuilt for the study: {exc.__class__.__name__}: "
+                         f"{_explain(exc, root)}") from exc
     try:
         with open(os.path.join(p.rev_dir(rev), "sim", "robot.xml"), encoding="utf-8") as fh:
             saved = fh.read()
@@ -1138,7 +1146,7 @@ def _preparer(conn, nice, root, rev, timestep):
         msg = ("failed", str(exc))
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
-        msg = ("failed", f"{exc.__class__.__name__}: {exc}")
+        msg = ("failed", f"{exc.__class__.__name__}: {_explain(exc, root)}")
     try:
         conn.send(msg)
     except (OSError, EOFError):      # the study was cancelled, or the process that started it ended, meanwhile
@@ -1621,7 +1629,7 @@ def run_study(root: str, rev: str | None = None, *, runs: int = 200, seed: int =
             pool.close(kill=True)
             pool = None
         cut = isinstance(exc, KeyboardInterrupt)
-        doc.update({"status": "cancelled" if cut else "error", "error": None if cut else str(exc)[:500]})
+        doc.update({"status": "cancelled" if cut else "error", "error": None if cut else _explain(exc, root)[:500]})
         try:
             save()
         except OSError:
@@ -1685,7 +1693,9 @@ def replay(root: str, sid: str, run: int, variant: str | None = None, cache: dic
             timer.cancel()
             pool.close(kill=True)
     if "robustness" not in out:        # the run stopped with an error: its row, no frames
-        raise StudyError(f"Run {run} stopped with an error in the simulation: {out.get('error') or 'unknown'}")
+        from .durable import relative  # the run's own error text: files named from the projects folder
+        why = relative(str(out.get("error") or "unknown"), os.path.dirname(os.path.abspath(root)))
+        raise StudyError(f"Run {run} stopped with an error in the simulation: {why}")
     out["robustness"].update({"study": sid, "run": run, "seed": doc["seed"], "stress": doc["stress"]})
     return out
 

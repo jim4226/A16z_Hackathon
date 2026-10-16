@@ -20,6 +20,9 @@ TOOL_VALUE = "a1b2c3d4e5f6g7h8"  # a saved MORPH_TOOL_* key with no prefix: foun
 KEYS = {
     "claude": "sk-ant-api03-ABCDEFGH012345",
     "subq": "sk-live-9f3kd02kfiq0alz7vnm4xq",
+    # keys in groups of one size: the word in front doesn't make them a phrase
+    "subq_grouped": "sk-live-4f8a-91bc-77de-12ab", "subq_grouped_digits": "sk-test-1234-5678-90ab-cdef",
+    "subq_grouped_pairs": "sk-subq-a1b2-c3d4-e5f6-a7b8-c9d0",
     "keewano": "kwpat-ABCDEFGH0123",
     "team_script_token": "mt_" + "Q" * 43,
     "team_invite": "mi_inviteCode0123456789ab",
@@ -35,7 +38,24 @@ ORDINARY = ("make it thin-and-light", "use an sk-thin-and-light finger", "format
             "the firmware flag ml_inference_pipeline_enabled is off", "set mi_gripper_force_threshold_value lower",
             "use sk-6x40-stainless-steel-screws", "order sk-m3x12-din912-a2-70-stainless-steel bolts",
             "mount it on sk-2020-aluminium-extrusion-500mm", "SO101 kit: sk-SO101-follower-arm-kit-v2",
-            "mt_servo2_torque_limit_value and ml_model_v2_inference_enabled", "mi_wrist_roll_offset_deg = 3")
+            "mt_servo2_torque_limit_value and ml_model_v2_inference_enabled", "mi_wrist_roll_offset_deg = 3",
+            # chip, board and model names, and camelCase
+            "flash mt_stm32f405_firmware_build to the board", "mi_esp32s3_wifi_module_config",
+            "load ml_resnet50_backbone_weights", "ml_yolov8n_grasp_detector_v2", "ml_mobilenetv3_small_quantized",
+            "mt_joint_limits_so101arm", "mt_dynamixel_xl330_m288_limits", "ml_PID_gains_for_joint3_wrist",
+            "mt_shoulderJointTorqueLimit", "ml_InferencePipelineEnabled", "SKU sk-NEMA17-stepper-42x40mm",
+            "sk-M3x12-DIN912-socket-head-cap", "order sk-2024-10-15-order-12345", "part sk-608zz-bearing-pack-of-10",
+            "sk-2x-M3-nylon-standoffs-20mm-long", "sk-0402-100nF-capacitors-reel", "sk-1N4148-diodes-x100",
+            # numbered names: a series (servo1_servo2_servo3, xl330_xl430_xm430) or a word and its number (arm2)
+            "set mt_servo1_servo2_servo3_torque_limit", "ml_joint1_joint2_joint3_gains",
+            "mt_left_knee_arm2_torque_limit", "ml_pose_left_arm1_offset_deg", "mt_hip2_knee_gain_value",
+            "mt_xl330_xl430_xm430_limits", "mt_m3x12_m4x12_m5x12_screws", "mt_j1_j2_j3_j4_j5_j6_limits_deg",
+            # a part mixing capitals, small letters and a number: a version (yoloV8), camelCase words and a number
+            # (jointLimit2), a model and a word (so101Arm); ml_policyV1_final_weights is as long as an invite code
+            "ml_yoloV8_grasp_detector", "ml_resnetV2_backbone_weights", "ml_gripperV2_checkpoint_final",
+            "ml_policyV1_final_weights", "mt_so101Arm_follower_calib", "mt_servoID3_offset_degrees",
+            "ml_GraspNet1B_weights_file", "mt_jointLimit2_shoulder_gain", "use sk-GraspNet1B-weights-file-v2",
+            "mt_Servo1_torque_limit_value")
 
 
 @pytest.fixture(autouse=True)
@@ -95,17 +115,62 @@ def test_every_code_morph_makes_is_caught_and_snake_case_names_are_not(tmp_path)
 def test_an_sk_key_is_told_from_a_part_name_by_its_random_run():
     for key in ("sk-live-9f3kd02kfiq0alz7vnm4xq", "sk-AbCdEf0123456789ghIJkl", "sk-test0123456789abcdefghij",
                 "sk-proj-Ab3_dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3z-a5B7c9D1", "sk-" + "a1b2c3d4" * 4,
-                "sk-ant-api03-abcdefghijkl", "kwpat-ABCDEFGH0123"):
+                "sk-ant-api03-abcdefghijkl", "kwpat-ABCDEFGH0123", "sk-live-4f8a-91bc-77de-12ab",
+                "sk-test-1234-5678-90ab-cdef", "sk-subq-a1b2-c3d4-e5f6-a7b8-c9d0", "sk-123e4567-e89b-12d3-a456-426614174000",
+                "sk-live-k3f9-abqx-77de-zkfp", "sk-proj-5gzHO1-GcH-mropdskmtOkmw", "sk-cO-11pR4F4s_xyt-VLCB"):
         assert security.has_key(f"key: {key}") and security.looks_like_secret(key), key
+    random = __import__("random").Random(1)
+    hexes = "0123456789abcdef"
+    for _ in range(2000):  # a key in groups of one size, with or without a word in front, is never a phrase
+        groups = "-".join("".join(random.choice(hexes) for _ in range(4)) for _ in range(5))
+        assert security.has_key(f"sk-live-{groups}") and security.has_key(f"sk-{groups}"), groups
+    random, lowdig = __import__("random").Random(2), "abcdefghijklmnopqrstuvwxyz0123456789"
+    keys = ["sk-live-" + "-".join("".join(random.choice(lowdig) for _ in range(5)) for _ in range(4)) for _ in range(2000)]
+    missed = [key for key in keys if any(c.isdigit() for c in key) and not security.has_key(key)]
+    assert len(missed) <= 20, missed  # 14: every group with a digit reads as a numbered word (sk-live-ehro0-taky8-...)
     for name in ("sk-6x40-stainless-steel-screws", "sk-thin-and-light-but-strong", "sk-M6x40-DIN912-A2-70-stainless",
-                 "sk-2020-aluminium-extrusion-500mm", "sk-short1"):
+                 "sk-2020-aluminium-extrusion-500mm", "sk-short1", "sk-NEMA17-stepper-42x40mm", "sk-1N4148-diodes-x100",
+                 "sk-2020-2040-4040-extrusion-set", "SKU sk-M3x10-M3x12-M3x16-screws"):
         assert not security.has_key(name), name
+
+
+def test_mixed_case_names_with_a_number_pass_and_keys_in_their_shape_are_still_caught():
+    """<word>V<n> and <word><Word><n> names were refused whole (a part mixing capitals, small letters and digits read
+    as a random run); keys whose groups happen to look like that are still caught."""
+    random = __import__("random").Random(3)
+    words = ("joint servo motor link wrist elbow shoulder gripper finger camera axis layer encoder sensor torque limit "
+             "gain offset speed current force threshold weights model config calib pose home left right base arm knee "
+             "policy detector backbone").split()
+    for _ in range(1500):
+        part = random.choice(words) + (f"V{random.randint(1, 9)}" if random.random() < 0.5
+                                       else random.choice(words).capitalize() + str(random.randint(1, 9)))
+        name = random.choice(("mt_", "ml_", "mi_")) + "_".join([part] + random.sample(words, 2))
+        assert not security.looks_like_secret(name), name
+    random, b64 = __import__("random").Random(4), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    alnum = b64[:-2]
+    keys = ["sk-live-" + "-".join("".join(random.choice(alnum) for _ in range(5)) for _ in range(4)) for _ in range(3000)]
+    keys += ["sk-" + "".join(random.choice(b64) for _ in range(24)) for _ in range(3000)]
+    missed = [key for key in keys if any(c.isdigit() for c in key) and not security.has_key(key)]
+    assert len(missed) <= 2, missed  # 0 when this was written: 0 of 100,000 of each in the simulation
+    for key in ("sk-live-AbcD1-EfgH2-IjkL3-MnoP4", "sk-live-Xq3Lp9-Ab7cD2-k9QzWm", "ml_pfuek3Ly-Novmd8ibockj-umcoithJ11"):
+        assert security.has_key(key), key  # a single capital before a number is no version, a word after it no camelCase
+
+
+def test_every_code_morph_makes_reads_as_no_phrase(monkeypatch):
+    """A Teams code is drawn again in the rare case it reads as a phrase (33 in 1,000,000 invite and sign-in codes):
+    the filter judges a run of an invite code's length by how random it reads, so a name such as
+    ml_policyV1_final_weights passes, and every code Morph makes is still caught."""
+    draws = iter(["policyV1_final_weights", "Xq3_Lp9ZbN2wV7aR5kT1mC"])
+    monkeypatch.setattr(auth, "secrets", type("Draws", (), {"token_urlsafe": staticmethod(lambda n: next(draws))}))
+    code = auth.new_code("ml_", 16)
+    assert code == "ml_Xq3_Lp9ZbN2wV7aR5kT1mC" and security.looks_like_secret(code)
+    assert not security.looks_like_secret("ml_policyV1_final_weights")
 
 
 def test_a_saved_key_is_refused_whatever_its_shape(monkeypatch):
     """A key saved in the Keys dialog is refused by its value: a Keewano project key has no prefix to know it by."""
     from morph import keys
-    assert set(security.SAVED_KEYS) == set(keys.NAMES) - {"KEEWANO_PROJECT_ID"}
+    assert set(security.SAVED_KEYS) == set(keys.NAMES) - {"KEEWANO_PROJECT_ID"} | {"ANTHROPIC_AUTH_TOKEN", "MORPH_TOKEN"}
     monkeypatch.setenv("KEEWANO_API_KEY", "proj7Hq2Zx9LmP4w")
     assert security.looks_like_secret("the keewano key proj7Hq2Zx9LmP4w, use it")
     monkeypatch.setenv("KEEWANO_PROJECT_ID", "12345678")

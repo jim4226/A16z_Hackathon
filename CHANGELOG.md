@@ -268,12 +268,40 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - One key filter for everything people type: chat, New robot (the request and every answer), Show Morph the job's
   cards, a project's description, a world's labels and every Teams text field (comments, change requests, reviews,
   releases, branch and display names, script token labels) refuse a Claude, SubQ, Keewano or tool key, a bearer token,
-  or a Teams script token, invite or sign-in code before anything is saved, shown or sent. New robot used to keep such
+  or a Teams script token, invite or sign-in code before anything is saved, shown or sent. It also refuses a remote
+  Studio's own access code (raw or in its access link), a `MORPH_TOKEN` or `ANTHROPIC_AUTH_TOKEN` that is set, other
+  services' keys with a fixed prefix (GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq,
+  xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password and `.env` lines such as
+  `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no space (these keys and JWTs used to slip past),
+  and a tool key after `key=` or inside a link. A key with no prefix of its own pasted alone (an AWS secret key, a bare
+  hex token) is still not caught unless it is saved in the Keys dialog. New robot used to keep such
   a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ
   and tool keys through; drafts saved before this stay until their 7-day cleanup. The filter knows keys and codes by
   their random part, so snake_case names and part names that only share a prefix (`mt_shoulder_joint_torque_limit`,
   `ml_inference_pipeline_enabled`, `sk-6x40-stainless-steel-screws`) are no longer refused, and a key saved in the
-  Keys dialog is refused whatever its shape.
+  Keys dialog is refused whatever its shape. Chip, board and model names (`mt_stm32f405_firmware_build`,
+  `ml_resnet50_backbone_weights`, `ml_YOLOv8n_grasp_detector`, `mt_STM32F405RGT6_firmware_build_config`), numbered
+  names (`mt_servo1_servo2_servo3_torque_limit`, `mt_left_knee_arm2_torque_limit`), camelCase names
+  (`mt_shoulderJointTorqueLimit`, `mt_maxPWMFreq_default_hz`, `mt_camera_offsetX_mm_value`), versioned names
+  (`ml_yoloV8_grasp_detector`, `ml_gripperV2_checkpoint_final`, `mt_servoID3_offset_degrees`,
+  `mt_so101Arm_follower_calib`, `ml_GraspNet1B_weights_file`, `mt_Servo1_torque_limit_value`), numbers with a unit or
+  a size (`mt_motor_max_speed_3000rpm`, `mi_camera_intrinsics_1280x720`), a part code beside words of its length
+  (`mt_SG90_horn_trim_offset`) and lower-case names with a commit hash or a run id (`ml_policy_weights_3f9a2c1e`) pass
+  too (these were refused whole), and so does a name as long as a Teams invite code (`ml_policyV1_final_weights`):
+  Morph draws a code again when it, a piece of it cut short, or the code with text joined to it (`mi_<code>-thanks`)
+  could read as words, so every code it makes is still refused. A key written in groups (`sk-live-4f8a-91bc-77de-12ab`)
+  is refused, now also with no word in front (`sk-4f8a-91bc-77de-12ab`, under the 20 characters the `sk-` rule
+  needs). The filter goes by how random text looks, so it misses some keys and refuses some names
+  (`tools/key_filter_rates.py`, 100,000 random keys per shape): keys written in groups of lower-case letters and digits
+  are missed when every group with a digit reads as a numbered word, 2.02% of `sk-live-xxxxx-xxxxx-xxxxx` keys that
+  have a digit (2.75%, about 3 in 100, of all of them, counting those with no digit, which an `sk-` key needs), 1.69%
+  (2.28%) of `sk-live-xxxx-xxxx-xxxx-xxxx` and 0.86% (1.14%) of `sk-live-xxxxxx-xxxxxx-xxxxxx`; the first two shapes
+  in capitals and digits 2.00% (2.73%) and 1.54% (2.09%), in hex 0.27% and 0.18%; random base64url keys of 20 to 32
+  characters not in groups 0.009% or less of those with a digit. Names still refused: a few model spellings with
+  two-letter pieces or no common word (`ViT`, `UNet`, `MiDaS`, `LoFTR`, `ConvNeXt`, `SmolVLA`, `EfficientNetB0`),
+  part numbers in mixed case or starting with a digit (`ATmega328P`, `nRF52840`, `17HS4401`), whole part numbers after
+  `sk-` (`sk-STM32F405RGT6-breakout-board`), camelCase with `I2C`, a part code beside unusual words of its length, and
+  capitalized names made mostly of numbered words (571 of 4,000 generated `Cam1_Cam2_Cam3_Cam4_Gain`-style names).
 - Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
   access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
   teammates behind one router don't run into it in normal use. Many addresses together can still fill the slots
@@ -283,6 +311,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   `MORPH_TOKEN` you chose still makes that address wait). A script's live updates no longer end when someone at the
   same address mistypes links. Each address keeps only its last 10 wrong codes, so a flood of them costs the Studio
   no more memory or time per request than ten.
+- Error messages a browser gets (a job that failed, a chat message that couldn't be read, Find agents, a robustness
+  study, a build stage, an import, a video ffmpeg couldn't read, the Teams preview and Apply, New robot, a tool that
+  didn't load, an unexpected server error) name files from the projects folder (`projects/egg/r002/...`), never where
+  the server keeps them; the terminal still prints the whole error.
 
 ### Fixes
 
@@ -406,7 +438,41 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   stopped Studio's work is never left alone because its process number was reused after a reboot or the computer's
   name changed. A first build the Studio stopped during twice is not started again on its own (one that crashes the
   Studio would crash it at every start): the chat and the terminal say so, and "build it again" in the project's chat
-  tries once more.
+  tries once more. A team Studio starting while another one runs on the same projects folder leaves the change
+  requests that one is building alone (it reopened them, told their people they weren't built, and the finished build
+  left its revision unrecorded). Closing the Studio with Ctrl+C during a first build is no try: only a crash, a kill,
+  a power cut or an error that stops the Studio counts, and the chat no longer suggests the design stopped the
+  Studio. "Build it again" sent again while that build runs is answered at once (it is already being built), not with
+  "I couldn't map that" once it ends. A first build that ends with an error (not a stop) can be tried again too:
+  "build it again" in its chat builds it once more (it was answered "Wait for its first build", for a build that would
+  never come). With two Studios on one projects folder, a project whose first build the other Studio is running is
+  answered "Another Morph Studio on this projects folder is building <project>'s first design; wait for it there." (it
+  was told Morph kept no design and to delete the project), "build it again" there queues nothing (two Studios could
+  each build a first revision, r001 and r002), Delete project is refused while the other Studio builds it or has
+  changes of it waiting (it moved the project to `.trash` mid-build), and New robot's Build on that project's brief no
+  longer moves it to `.trash` to make a second one. A first build left open by a Studio that stopped while this one
+  ran is built by "build it again" here (it read "Morph kept no design"). A full disk when the Studio starts no longer loses a
+  cut-off first build: the stopped Studio's journal, its only record, used to go before anything replaced it, so a
+  rebuild and an error record the disk refused left only "delete the project" (the design survives now until it is
+  written down again, and a first build that fails on a full disk stays journaled). "Build it again" also builds from
+  a revision set aside unfinished when nothing else kept the design, and two Studios starting at once build a cut-off
+  first design once (they could build it twice, r001 and r002). Closing the Studio's terminal window, a logout or a
+  `kill` (SIGTERM), and Ctrl+C during the start-up while it rebuilds a cut-off first build, are clean stops too: they
+  used to count as crashes (twice parked the design, "The Studio stopped twice ..."), and Ctrl+C there ended in a
+  traceback. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
+  failed starts are no tries either.
+- With two Studios on one projects folder, Reset demo in one no longer deletes the revision the other is building (it
+  is refused, and says why), a Studio no longer deletes the project another running Studio started on, a project
+  another Studio deleted and made again under its name opens with its own chat and kept design (the deleted one's were
+  shown, written into, and its kept design built as the new project's first revision), and a deleted project's chat no
+  longer makes its folder again. `morph studio <project>` on a project of your own whose first build was cut off or
+  failed says how to go on instead of building the default robot into it ("no project ... yet").
+- Teams: a change request applied in a Studio that stopped before building it no longer stays "applied" with no
+  revision in another Studio that keeps running on the same projects folder (Apply and Close answered "already
+  applied" until some Studio restarted): that Studio opens it again, with why, as soon as the requests are listed,
+  applied or closed. A request whose revision was written just before the stop is recorded built there (it was opened
+  again, and applying it again ended "nothing to change"), and a request whose change the design already has is
+  applied at the head revision (it stayed open with "nothing to change" for good).
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.
@@ -428,7 +494,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Network lookups (Darwin, Test keys, BoardRepo) now run on threads the process never waits for when it stops.
 - Stopping the Studio with Ctrl+C no longer ends now and then with "Segmentation fault" (exit code -11) after the
   launcher built a robot before serving: the stopped Studio's process ends without the interpreter's shutdown, whose
-  clean-up of the 3D libraries crashed. Everything was already saved; nothing else changes.
+  clean-up of the 3D libraries crashed. Everything was already saved. A build still running at Ctrl+C now stops at
+  once, where the interpreter could wait for it to finish; the next start picks it up like any build a stop cut off.
 - A `gripper=` entry in `arm.actuator_overrides` reaches the gripper stage too: its force plan, grasp simulation and
   the servo stall force it shows used the family's default servo while the CAD hand and the electronics used the
   override. A hobby arm asked for an MG90S gripper servo (not in the robot catalog) gets the MG996R its hand is

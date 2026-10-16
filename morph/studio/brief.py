@@ -1345,7 +1345,9 @@ def preflight(changes: dict) -> dict:
                    gripper_actuator=sz.get("gripper_actuator") or (sz.get("gripper") or {}).get("actuator"),
                    supply=(ep.get("supply") or {}).get("key"))
     except Exception as exc:  # noqa: BLE001  a preflight bug must read as an issue, never as a pass
-        issues.append(f"preflight could not run ({exc.__class__.__name__}: {exc})")
+        from ..importers.common import home  # the projects folder (imported robots' files are in it)
+        from ..services import durable
+        issues.append(f"preflight could not run ({exc.__class__.__name__}: {durable.explain(exc, home())})")
     return {"issues": list(dict.fromkeys(issues)), "ms": round((time.perf_counter() - t0) * 1000), **out}
 
 

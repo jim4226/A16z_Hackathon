@@ -274,11 +274,19 @@ def cmd_studio(a):
     if keys.ensure_env_file():
         print("Created .env for your API keys (optional): use the Keys button in the Studio, or edit .env.")
     projects.backfill_demo(HOME)  # robots this launcher made before 0.2: Reset demo touches only demo projects
+    existing = projects.project_root(HOME, a.name)  # before RobotProject(), which makes the folder
     for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
         _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
     if not p.finished():
-        print(f"no project {a.name} yet: generating the first robot (about a minute)...")
+        if existing and projects.read_meta(existing).get("demo") is not True:
+            # a project of its own whose first build was cut off or failed: the template must never replace its design
+            # (or its first-build record), and serve() opens only a project with a revision
+            sys.exit(f"{a.name} has no finished revision yet, so the Studio can't start on it. Start the Studio on "
+                     f"another project (`morph studio egg-picker`), then send \"build it again\" in {a.name}'s chat, "
+                     f"or delete {a.name} from the project menu there.")
+        print(f"{a.name} has no finished revision yet: building its first robot (about a minute)..." if existing else
+              f"no project {a.name} yet: generating the first robot (about a minute)...")
         cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if a.name == "so101" else None, demo=a.name in projects.DEMOS))
     other = "so101" if a.name != "so101" else "egg-picker"
@@ -318,12 +326,19 @@ def _leave(rc: int):
     is waiting for threads nothing needs any more and running native libraries' finalizers. After a build in this
     process (the launcher's first robot), MuJoCo's and the OSMesa renderer's crashed now and then while shutdown
     collected them ("Segmentation fault", exit code -11, after Ctrl+C). Study workers still running are ended, as the
-    multiprocessing exit handler would, and the terminal output is flushed first."""
+    multiprocessing exit handler would, the Studio's lock files are removed, as the finalizers would, and the terminal
+    output is flushed first. A build still running is cut off at once (serve() has journaled a first build as
+    "interrupted"); the next start picks it up like any build a stop cut off."""
     try:
         import multiprocessing
         for child in multiprocessing.active_children():
             child.terminate()
     except Exception:  # noqa: BLE001  (leaving must not fail)
+        pass
+    try:  # its lock files in projects/.studios go now, not ten minutes into a later start (rooms._sweep)
+        if "morph.studio.rooms" in sys.modules:
+            sys.modules["morph.studio.rooms"].release_claims()
+    except Exception:  # noqa: BLE001
         pass
     for stream in (sys.stdout, sys.stderr):
         try:

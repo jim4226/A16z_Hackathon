@@ -10,6 +10,7 @@ pipeline builds run at once across rooms.
 from __future__ import annotations
 
 import collections
+import contextlib
 import contextvars
 import json
 import os
@@ -78,6 +79,51 @@ def claim(home: str) -> Claim:
         return held
 
 
+def release_claims():
+    """This process ends now (cli._leave, which skips the interpreter's shutdown and so the Claims' finalizers): every
+    lock it holds on a projects folder is released and its file removed, as a Studio that stops cleanly leaves it."""
+    with _CLAIMS_LOCK:
+        for key, held in list(_CLAIMS.items()):
+            held.lock.release()
+            try:
+                os.remove(start_record(key, OWNER))
+            except OSError:
+                pass
+
+
+def start_record(home: str, owner: str) -> str:
+    return os.path.join(home, STUDIOS, f"{owner}.json")
+
+
+def note_start(home: str, project: str):
+    """The project this process's Studio started on, beside its lock (claim): another Studio on the same projects folder
+    won't delete it (started_elsewhere). Never raises."""
+    try:
+        durable.write_json(start_record(home, OWNER), {"start": project, "pid": os.getpid(), "host": HOST})
+    except (OSError, TypeError, ValueError) as exc:  # a full disk at the start: one line, not a traceback
+        print(f"Couldn't note which project this Studio started on, so another Studio on this projects folder could "
+              f"delete {project} while this one runs. {durable.explain(exc, home)}")
+
+
+def started_elsewhere(home: str, project: str) -> bool:
+    """True when another Studio still running on projects folder `home` (its lock is held) started on `project`."""
+    try:
+        names = os.listdir(os.path.join(home, STUDIOS))
+    except OSError:
+        return False
+    for n in names:
+        owner = n[:-5] if n.endswith(".json") else None
+        if not owner or not owner_live(home, owner):
+            continue
+        try:
+            with open(os.path.join(home, STUDIOS, n), encoding="utf-8") as fh:
+                if (json.load(fh) or {}).get("start") == project:
+                    return True
+        except (OSError, ValueError, AttributeError):
+            continue
+    return False
+
+
 def _sweep(home: str):
     folder, now = os.path.join(home, STUDIOS), time.time()
     try:
@@ -86,10 +132,10 @@ def _sweep(home: str):
         return
     for n in names:
         path = os.path.join(folder, n)
-        if n == f"{OWNER}.lock" or not n.endswith(".lock"):
+        if n in (f"{OWNER}.lock", f"{OWNER}.json") or not n.endswith((".lock", ".json")):
             continue
         try:
-            if now - os.path.getmtime(path) < STALE_LOCK_S or durable.BuildLock.held(path):
+            if now - os.path.getmtime(path) < STALE_LOCK_S or durable.BuildLock.held(owner_lock(home, n.rsplit(".", 1)[0])):
                 continue
             os.remove(path)
         except OSError:
@@ -131,11 +177,47 @@ def journal_live(path: str, home: str) -> bool:
     return owner_live(home, journal_owner(path))
 
 
+def folder_id(root: str):
+    """What tells project folder `root` from another made since under the same name (another Studio deleted the
+    project and a new one took the name): its device and file id. A deleted project's folder keeps its id in `.trash/`
+    (projects.delete moves it), so a new folder of its name has another. Nothing in the folder counts (a meta.json
+    being replaced, or rewritten when a failed first build is made again, is still the same folder). None: no
+    folder. A file system without file ids (FAT: 0) reads every folder as the same one, as before."""
+    try:
+        st = os.stat(root)
+    except OSError:
+        return None
+    return st.st_dev, st.st_ino
+
+
+FIRST_BUILD_TURN = os.path.join(".morph", "first-build.lock")
+
+
+@contextlib.contextmanager
+def first_build_turn(root: str, wait: float = 5.0):
+    """One process at a time decides whether project folder `root` gets its first build queued (Studio._recover_project
+    at a start, Studio._no_revision_yet on "build it again"): an OS lock on <root>/.morph/first-build.lock, held while
+    it reads the other Studios' journals and writes its own, so two Studios asked at once never both queue it. The file
+    stays (removing it would let two processes each lock a file of their own). After `wait` seconds (a process that
+    hangs holding it) it goes on without the lock."""
+    if not os.path.isdir(root):  # deleted meanwhile (another Studio): no folder to lock, and none to make again
+        yield
+        return
+    lock = durable.BuildLock(os.path.join(root, FIRST_BUILD_TURN))
+    end = time.monotonic() + wait
+    while not lock.acquire() and time.monotonic() < end:
+        time.sleep(0.01)
+    try:
+        yield
+    finally:
+        lock.release(remove=False)
+
+
 def open_jobs(path: str) -> list:
     """The jobs a queue journal (JobQueue.journal) says were still open when its Studio stopped, in the order they were
     queued: the last line of each job, `op` "queued" (waiting or building) or "held" (a conflict waiting for an answer),
-    with `started: True` when its build had started (a first build cut off mid-build). Lines that don't parse are
-    skipped."""
+    with `started: True` when its build had started (a first build cut off mid-build) and no clean stop of the Studio
+    ended it ("interrupted": Ctrl+C is no sign the build stopped the Studio). Lines that don't parse are skipped."""
     last = collections.OrderedDict()
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -146,9 +228,9 @@ def open_jobs(path: str) -> list:
                     continue
                 if not isinstance(e, dict) or not isinstance(e.get("id"), str):
                     continue
-                if e.get("op") == "started":
+                if e.get("op") in ("started", "interrupted"):  # interrupted: a clean stop cut it off, no try
                     if e["id"] in last:
-                        last[e["id"]]["started"] = True
+                        last[e["id"]]["started"] = e["op"] == "started"
                 elif e.get("op") in ("queued", "held", "ended"):
                     last[e["id"]] = {**last.get(e["id"], {}), **e}  # what each line adds; the newest op wins
     except OSError:
@@ -203,8 +285,11 @@ class Hub:
         return out[-self.MAX_HISTORY:], len(raw)
 
     def _save(self, event: dict):
-        """Append one message to chat.jsonl; past 2 x MAX_HISTORY lines, rewrite it with the last MAX_HISTORY."""
+        """Append one message to chat.jsonl; past 2 x MAX_HISTORY lines, rewrite it with the last MAX_HISTORY. Nothing
+        is written once the project's folder is gone (another Studio deleted it): a ghost folder would keep its name."""
         try:
+            if not os.path.isdir(os.path.dirname(os.path.dirname(self.path))):
+                return
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             if self._lines >= 2 * self.MAX_HISTORY:
                 durable.write_text(self.path, "".join(json.dumps(e) + "\n" for e in self.history))
@@ -280,10 +365,16 @@ class Job:
         self._done = threading.Event()
         self.answered = threading.Event()  # a conflict got its answer: "resolved" (see successor) or "dropped"
         self.successor = None              # the job a resolved conflict's Apply queued: it builds this request
+        self.journaled = False             # the queue's journal has its line (False: the disk refused it)
 
     def wait(self, timeout: float | None = None) -> bool:
         """True once the job has finished (whatever its status)."""
         return self._done.wait(timeout)
+
+    def end(self, status: str):
+        """A request answered at once, never queued (Studio.queue_chat): it is over, with `status`."""
+        self.status, self.finished = status, time.time()
+        self._done.set()
 
     def answer(self, status: str, successor: "Job | None" = None):
         """This conflict was answered: Apply queued `successor` ("resolved"), or it was dropped."""
@@ -328,33 +419,70 @@ class JobQueue:
         self.journal = os.path.join(p.root, ".morph", f"queue-{OWNER}.jsonl") if p is not None else None
         self.home = os.path.dirname(p.root) if p is not None else None
         self.claim = None  # this process's lock on the projects folder, taken before the first journal line
+        self.cuttable = set()  # ids of jobs journaled "started": a stop from then on cuts them off
+        self.kept = set()  # ids of first builds that ended with an error the disk refused to record: still open
 
     # -- the journal
-    def _log(self, op: str, job: Job, **fields):
-        """One journal line (under self.cond). A journal that can't be written never stops the queue."""
+    def _log(self, op: str, job: Job, **fields) -> bool:
+        """One journal line (under self.cond); False when it couldn't be written (a full disk). A journal that can't be
+        written never stops the queue."""
         if not self.journal:
-            return
+            return True
         try:
             if self.claim is None:  # the lock that tells other Studios this journal's writer still runs
                 self.claim = claim(self.home)
+            if not os.path.isdir(os.path.dirname(os.path.dirname(self.journal))):
+                return False  # the project's folder is gone (deleted by another Studio): never made again here
             os.makedirs(os.path.dirname(self.journal), exist_ok=True)
             durable.append_line(self.journal, json.dumps({"op": op, "id": job.id, "studio": OWNER, "pid": os.getpid(),
                                                           "host": HOST, **fields}, default=str))
+            return True
         except (OSError, TypeError, ValueError):
             traceback.print_exc()
+            return False
 
     def started(self, job: Job):
         """`job`'s build has the build slot and starts now (Studio.build): a stop from here on cut it off."""
         with self.cond:
+            self.cuttable.add(job.id)
             self._log("started", job)
+
+    def stopping(self):
+        """The Studio stops cleanly (Ctrl+C, serve_forever returning): a first build running now is cut off by that stop, not
+        by anything in its design, so the journal says so ("interrupted") and the next start doesn't count it as a try
+        (open_jobs). Never raises."""
+        with self.cond:
+            job = self.running
+            if job is not None and job.id in self.cuttable:
+                self._log("interrupted", job)
 
     def _ended(self, job: Job):
         self._log("ended", job, status=job.status)
         self._settle()
 
+    def keep(self, job: Job):
+        """`job`, a first build that ended with an error, couldn't be recorded to be asked for again (a full disk): its
+        journal lines stay open ("ended" is never written, the file stays), so the next start still knows its design."""
+        with self.cond:
+            self.kept.add(job.id)
+
+    def built_first(self):
+        """The project has its first revision now: first builds kept open (keep) are over."""
+        with self.cond:
+            for job_id in list(self.kept):
+                self._log_ended(job_id)
+            self.kept.clear()
+            self._settle()
+
+    def _log_ended(self, job_id: str):
+        job = Job("build", None)
+        job.id = job_id
+        self._log("ended", job, status="error")
+
     def _settle(self):
-        """Nothing waits, runs or waits for an answer: the journal has nothing left to tell, so it goes."""
-        if self.journal and self.running is None and not self.pending and not self.waiting:
+        """Nothing waits, runs or waits for an answer (and no first build is kept open): the journal has nothing left to
+        tell, so it goes."""
+        if self.journal and self.running is None and not self.pending and not self.waiting and not self.kept:
             try:
                 os.remove(self.journal)
             except OSError:
@@ -372,7 +500,7 @@ class JobQueue:
             job.finished = time.time()
             job._done.set()
             self.waiting[job.id] = job
-            self._log("held", job, **self._held(job))
+            job.journaled = self._log("held", job, **self._held(job))
         return job
 
     @staticmethod
@@ -400,8 +528,8 @@ class JobQueue:
             self.jobs[job.id] = job
             while len(self.jobs) > self.KEEP + self.MAX_QUEUED + 1:
                 self.jobs.popitem(last=False)
-            self._log("queued", job, kind=kind, label=job.label, by=by, base_rev=base_rev, ts=time.time(),
-                      **(record or {}))
+            job.journaled = self._log("queued", job, kind=kind, label=job.label, by=by, base_rev=base_rev,
+                                      ts=time.time(), **(record or {}))
             self.publish()
             if self.worker is None or not self.worker.is_alive():
                 self.worker = threading.Thread(target=self._work, daemon=True, name=f"morph-room-{self.room.name}")
@@ -511,16 +639,18 @@ class JobQueue:
                 if job.status == "running":
                     job.status = "done"
             except Exception as exc:  # noqa: BLE001  (the room keeps working after a failed job)
-                traceback.print_exc()
-                job.status, job.error = "error", f"{exc.__class__.__name__}: {exc}"
-                self.room.hub.send({"type": "assistant", "text": f"Error: {exc}", "job": job.id})
+                traceback.print_exc()  # the terminal gets the whole error; tabs, the job and Teams its public text
+                why = durable.explain(exc, self.home)
+                job.status, job.error = "error", f"{exc.__class__.__name__}: {why}"
+                self.room.hub.send({"type": "assistant", "text": f"Error: {why}", "job": job.id})
             finally:
                 job.finished = time.time()
                 job.after = ()  # read when it started; a chain of quick edits keeps no finished job alive through it
                 with self.cond:
                     self.running = None
-                    if job.status != "conflict":  # a conflict stays open in the journal ("held") until it is answered
-                        self._log("ended", job, status=job.status)
+                    self.cuttable.discard(job.id)
+                    if job.status != "conflict" and job.id not in self.kept:  # a conflict stays open ("held") until
+                        self._log("ended", job, status=job.status)        # it is answered, a kept first build for good
                     self._settle()
                     self.publish(job)
                 job._done.set()
@@ -533,12 +663,14 @@ class Room:
     def __init__(self, name: str, project: RobotProject | str):
         self.name = name
         self.p = project if isinstance(project, RobotProject) else RobotProject(project)
+        self.folder = folder_id(self.p.root)  # the folder this room was made for (Studio.room: not one made since)
         self.hub = Hub(name, os.path.join(self.p.root, ".morph", "chat.jsonl"))
         self.lock = threading.RLock()
         self.jobs = JobQueue(self)
         self.sourcing = threading.Lock()
         self.live = None  # the revision being built: {rev, parent, dirty, nodes: {node: status}}
         self.last_target = None  # chat: the grip target (N) "gentler grip" scales when a revision reports none
+        self.first_build = None  # a first build that ended with an error, when the disk refused its record (Studio)
 
     def emit(self, event: dict):
         """Send a pipeline event, remembering the build's progress for tabs that open the project mid-build."""

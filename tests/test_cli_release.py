@@ -251,7 +251,9 @@ def test_a_stopped_studio_process_leaves_without_interpreter_shutdown(tmp_path, 
 def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
     code = ("import multiprocessing as mp, sys, time\n"
             "from morph import cli\n"
+            "from morph.studio import rooms\n"
             "if __name__ == '__main__':\n"
+            f"    claim = rooms.claim({str(tmp_path / 'projects')!r})\n"
             "    child = mp.get_context('spawn').Process(target=time.sleep, args=(600,), daemon=True)\n"
             "    child.start()\n"
             "    print(child.pid, end=' ')\n"
@@ -263,6 +265,7 @@ def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
                          capture_output=True, text=True, timeout=60)
     pid, said = out.stdout.split()
     assert out.returncode == 0 and said == "saved"
+    assert os.listdir(tmp_path / "projects" / ".studios") == []   # its lock file went with it, not 10 min later
     from morph.services.durable import process_alive
     for _ in range(100):                                  # the worker was ended, not left behind
         if not process_alive(int(pid)):
@@ -270,3 +273,27 @@ def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
         time.sleep(0.05)
     else:
         pytest.fail("the study worker outlived the Studio")
+
+
+def test_studio_on_a_project_with_no_finished_revision_never_replaces_its_design(home, monkeypatch, capsys):
+    """`morph studio boom-kb` on a project whose first build failed (its design kept in first-build.json): it said "no
+    project boom-kb yet", built the default template into it as r001 and rewrote its meta.json; the Studio then dropped
+    the kept design. It now says how to go on and changes nothing."""
+    from morph.spec import Design
+    from morph.studio import projects
+    info = projects.create(str(home), "boom-kb", design=Design().with_changes({"arm.dof": 6}), need="Pick strawberries")
+    root = os.path.join(str(home), "boom-kb")
+    projects.park_first_build(root, {"design": info["design"].to_dict(), "label": "first design", "cut": 0,
+                                     "error": "PermissionError"})
+    before = {n: open(os.path.join(root, n), encoding="utf-8").read() for n in ("meta.json", projects.FIRST_BUILD)}
+    built = []
+    monkeypatch.setattr(cli, "cmd_robot", lambda a: built.append(a.name))
+    monkeypatch.setattr(cli, "HOME", str(home))
+    a = argparse.Namespace(name="boom-kb", host="127.0.0.1", port=1, open=False, remote=False, team=False,
+                           allow_url_import=False)
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_studio(a)
+    assert "boom-kb has no finished revision yet" in str(exc.value) and "build it again" in str(exc.value)
+    assert "no project boom-kb yet" not in capsys.readouterr().out and built == []
+    assert {n: open(os.path.join(root, n), encoding="utf-8").read() for n in before} == before
+    assert not [n for n in os.listdir(root) if n.startswith("r0")]

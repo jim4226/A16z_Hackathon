@@ -25,6 +25,7 @@ import threading
 import time
 import traceback
 
+from ..services import durable
 from . import agents
 from . import brief as B
 from . import capability, routes
@@ -239,7 +240,7 @@ def _build(b: B.Brief, home, name, send, create_project, revive=None, stop_on_is
             b.status = "ready"
             STORE.put(home, b)
             send(event(b))
-            return _err(409, f"couldn't create the project: {exc}")
+            return _err(409, f"couldn't create the project: {durable.explain(exc, home)}")
     STORE.put(home, b)
     send(event(b))
     return 200, out
@@ -326,9 +327,9 @@ def _studio_create(req):
 
 def _studio_revive(req):
     """The Studio's answer to "is this brief's project still on its way?" for a brief that reads "building": True while
-    the project builds or has a finished revision. False when it is gone, or when it is empty and idle (a stop cut its
-    first build off and nothing will build it): this brief's own empty project then goes to .trash first, so Build makes
-    it again under the same name."""
+    the project builds (here, or in another Studio still running on this projects folder) or has a finished revision.
+    False when it is gone, or when it is empty and idle (a stop cut its first build off and nothing will build it): this
+    brief's own empty project then goes to .trash first, so Build makes it again under the same name."""
     studio = getattr(req, "studio", None)
     if studio is None or not callable(getattr(studio, "room", None)):
         return None
@@ -338,7 +339,8 @@ def _studio_revive(req):
             room = studio.room(project)
         except (ValueError, LookupError):
             return False
-        if room.jobs.busy() or room.completed():
+        held = getattr(studio, "held_elsewhere", None)  # another Studio on this projects folder builds it
+        if room.jobs.busy() or room.completed() or (callable(held) and held(room.p.root)):
             return True
         from . import projects
         if projects.read_meta(room.p.root).get("brief_id") == brief_id and room.name != studio.start:

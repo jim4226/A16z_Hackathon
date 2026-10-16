@@ -172,19 +172,40 @@ def set_aside_unfinished(p: RobotProject, say=None) -> list:
 
 
 # A first build the Studio stopped during more than once (Studio._recover) isn't started again on its own: if something
-# in the design stops the Studio (memory, a crash in a native library), it would stop it at every start. It waits here
-# until someone asks for it again (chat "build it again") or the project is deleted.
+# in the design stops the Studio (memory, a crash in a native library), it would stop it at every start. Neither is one
+# that ended with an error (Studio._failed_first). It waits here until someone asks for it again (chat "build it
+# again") or the project is deleted.
 FIRST_BUILD = os.path.join(".morph", "first-build.json")
 
 
 def parked_first_build(root: str) -> dict | None:
-    """{design, label, by, cut, utc} of a first build that waits to be asked for again, or None."""
+    """{design, label, by, cut, utc, and error for one that ended with an error} of a first build that waits to be
+    asked for again, or None."""
     try:
         with open(os.path.join(root, FIRST_BUILD), encoding="utf-8") as fh:
             rec = json.load(fh)
     except (OSError, ValueError):
         return None
     return rec if isinstance(rec, dict) and isinstance(rec.get("design"), dict) else None
+
+
+def set_aside_design(root: str) -> dict | None:
+    """The design of the newest revision of project folder `root` set aside unfinished (rNNN.incomplete-<time>, kept a
+    day before it goes to the trash), or None: in a project with no finished revision, the first design a stop or an
+    error cut off, when no journal or record kept it (a full disk, a power cut in between)."""
+    best = None
+    for entry in os.listdir(root) if os.path.isdir(root) else []:
+        m = SET_ASIDE.fullmatch(entry)
+        if not m or m.group(2) != "incomplete":
+            continue
+        try:
+            with open(os.path.join(root, entry, "design.json"), encoding="utf-8") as fh:
+                design = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if isinstance(design, dict) and (best is None or int(m.group(3)) > best[0]):
+            best = (int(m.group(3)), design)
+    return best[1] if best else None
 
 
 def park_first_build(root: str, record: dict):

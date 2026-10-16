@@ -98,7 +98,8 @@ class ServerBackend {
   params(changes, base_rev) { return post(this.q('/api/params'), { changes, base_rev }); }
   source(rev) { return post(this.q('/api/source'), { rev }); }
   resolve(job, action) { return post(this.q('/api/jobs/resolve'), { job, action }); }
-  async reset(rebuild) { const r = await send('POST', '/api/reset', { rebuild: !!rebuild }); return r.ok; }
+  // true, or why it was refused (another Studio on the projects folder works on a demo project), or false (busy here)
+  async reset(rebuild) { const r = await send('POST', '/api/reset', { rebuild: !!rebuild }); return r.ok || (await r.json().catch(() => ({}))).error || false; }
   setProject(name) { this.name = name; return this.onEvent ? this.connect(this.onEvent, this.onStatus) : Promise.resolve(); }
   // Resolves once the stream is open (the server subscribes it before answering), or at the latest after 3 s or a
   // failed try (it keeps trying, and its next open reloads the state): load the state after it and no event is lost.
@@ -1004,10 +1005,10 @@ function presentApi() {
     params: (c) => applyChanges(c),
     tourOn: () => $('#tour').checked,
     project: (name) => openProject(name),  // this tab only
-    async reset(rebuild) {  // back to the start project, in this tab
-      const ok = await backend.reset?.(rebuild).catch(() => false);
-      if (ok) { if (S.start && S.project !== S.start) await openProject(S.start); else await reloadProject().catch(() => {}); }
-      return ok;
+    async reset(rebuild) {  // back to the start project, in this tab; true, or why not (backend.reset)
+      const res = await backend.reset?.(rebuild).catch(() => false);
+      if (res === true) { if (S.start && S.project !== S.start) await openProject(S.start); else await reloadProject().catch(() => {}); }
+      return res;
     },
     robot(o) {
       if ('motion' in o && !!panels.robot.motionOn !== o.motion) b('motion').click();
