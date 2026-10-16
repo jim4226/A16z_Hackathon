@@ -375,8 +375,7 @@ _NOT_AGENT_END = ("washer", "dryer", "drier", "mixer", "blender", "toaster", "ro
                   "wrapper", "voucher", "sleeper", "drawer", "filler", "liner", "batter", "blister", "cluster", "polyester",
                   "barrier", "carrier bag", "stroller", "pushchair", "walker frame", "clicker", "buzzer", "beeper", "pager",
                   "rocker", "skimmer", "corer", "zester", "masher", "squeezer", "holster", "spatter", "splitter", "adapter",
-                  "dropper", "eyedropper", "atomi[sz]er", "inhaler", "spacer", "applicator", "scooper", "pooper", "kicker",
-                  "e-reader")
+                  "dropper", "eyedropper", "atomi[sz]er", "inhaler", "spacer", "applicator", "scooper", "pooper", "kicker")
 _NOT_AGENT_WORD = ("holder", "maker", "tractor", "order", "matter", "character", "chapter", "summer", "winter", "october",
                    "november", "december", "september", "power", "river", "silver", "copper", "leather", "feather",
                    "weather", "powder", "solder", "plaster", "glitter", "clutter", "litter", "timber", "lumber", "polymer",
@@ -400,10 +399,19 @@ _AGENT_SHAPE = re.compile(r"(?!" + _NOT_AGENT + r")(?:[a-z][a-z-]{2,}(?:er|or|ia
                           r"[a-z][a-z-]+(?:m[ae]n|persons?|people|folks?)|(?:class|school|work|team|crew|ship|play|bunk|cell|"
                           r"room|flat|house|soul|in)-?mates?|(?:farm|deck|stage|ranch)-?hands?|(?:employ|refer|retir|evacu|"
                           r"refug|interview|nomin|invit|ment|train|attend|enroll|examin|detain|pay|devot)ees?)")
-# A reader after one of these words is a machine ("the card reader"); "the reader" or "the proof reader" is a person.
-_READER_MACHINE = re.compile(r"(?:card|smartcard|barcode|bar-code|code|qr|rfid|nfc|badge|tag|chip|fingerprint|ebook|e-book|"
+# A reader after one of these words is a machine ("the card reader", "the card-reader", "the e-reader"); "the reader" or
+# "the proof reader" is a person.
+_READER_MACHINE = re.compile(r"(?:card|smartcard|barcode|bar-code|code|qr|rfid|nfc|badge|tag|chip|fingerprint|ebook|e-book|e|"
                              r"kindle|screen|sd|usb|magnetic|swipe|stripe|label|disc|disk|dvd|cd|microfiche|microfilm|optical|"
                              r"pass|ticket|id)")
+
+
+def _machine_reader(toks: list, i: int) -> bool:
+    """Whether word i is a reader that is a machine: "card reader(s)", "card-reader(s)", "e-reader"."""
+    head, _, last = toks[i].group(0).rpartition("-")
+    if last not in ("reader", "readers"):
+        return False
+    return bool(_READER_MACHINE.fullmatch(head) if head else i and _READER_MACHINE.fullmatch(toks[i - 1].group(0)))
 # Common first names written in lower case ("give the pills to mary"); a capitalised name is read anywhere (people_text).
 # Names that are also everyday words ("will", "mark", "rose", "max", "jack") are left out.
 _NAMES = (r"(?:mary|john|sarah|james|david|michael|robert|william|richard|thomas|charles|daniel|matthew|anthony|paul|steven|"
@@ -695,7 +703,7 @@ def _agents(text: str) -> str:
         w = m.group(0)
         if not w[0].isalpha() or not _AGENT_SHAPE.fullmatch(w) or _AGENT_VERBS.fullmatch(w) or \
                 re.fullmatch(_ROLES + "|" + _NAMES + "|" + _ANIMAL, w) or \
-                (w in ("reader", "readers") and i and _READER_MACHINE.fullmatch(toks[i - 1].group(0))):
+                _machine_reader(toks, i):
             continue
         plural = bool(re.search(r"(?:men|people|folks|s)$", w))
         slot = plural and (i == 0 or not toks[i - 1].group(0)[0].isalpha())
