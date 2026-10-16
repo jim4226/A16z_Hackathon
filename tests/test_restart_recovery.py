@@ -876,10 +876,12 @@ def test_a_stop_between_taking_over_a_journal_and_removing_it_loses_nothing(home
     finish(*(st.room("kb1").jobs.get(j["id"]) for j in st.room("kb1").jobs.snapshot()))
     assert len(rooms.journals(str(snap / "kb1"))) == 2                     # the old journal and the new one
     monkeypatch.setattr(server, "_remove", real_remove)
+    builds.gate = threading.Event()                                         # the rebuild waits until looked at
     st2 = server.Studio(RobotProject(str(snap / "egg")), str(snap))
     kb1 = st2.room("kb1")
     queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
     assert [j.label for j in queued] == ["first design" + REBUILT]          # once, and not parked
+    builds.gate.set()
     finish(*queued)
     assert kb1.completed() == ["r001"] and not rooms.journals(str(snap / "kb1"))
 
@@ -978,13 +980,13 @@ def test_a_stop_asked_for_during_the_start_up_is_a_clean_one(home, tmp_path, bui
     assert ops[-2:] == ["started", "interrupted"], ops
     after = stopped(home, tmp_path, builds)                                 # the process ends here
     monkeypatch.setattr(server.Studio, "_recover", real)
-    builds.gate.set()
-    builds.gate = threading.Event()
-    builds.gate.set()
+    builds.gate.set()                                                       # the stopped Studio's build ends
+    builds.gate = threading.Event()                                         # this one's waits until looked at
     st = server.Studio(RobotProject(str(after / "egg")), str(after))
     kb1 = st.room("kb1")
     queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
     assert [j.label for j in queued] == ["first design" + REBUILT] and "stopped twice" not in " ".join(texts(kb1))
+    builds.gate.set()
     finish(*queued)
 
 
@@ -1005,3 +1007,64 @@ def test_a_start_that_cant_listen_changes_no_journal(home, monkeypatch):
     assert journal.read_text(encoding="utf-8") == before and rooms.journals(str(home / "kb1")) == [str(journal)]
     assert os.listdir(home / "kb1" / "r001") == ["design.json"]             # not even set aside
 
+
+_STUDIO = """
+import sys, threading
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[2])
+from morph.robot.pipeline2 import RobotProject
+from morph.studio import capability, server
+from test_studio_rooms import FakeBuilds
+fake = FakeBuilds()
+fake.gate = SimpleNamespace(wait=lambda timeout=None: threading.Event().wait())  # builds until the process ends
+RobotProject.run = lambda self, *a, **k: fake(self, *a, **k)
+capability.warm = lambda block=True: None
+threading.Thread(target=lambda: fake.started.wait() and print("<build started>", flush=True), daemon=True).start()
+server.serve(RobotProject(sys.argv[1] + "/egg"), port=0, home=sys.argv[1])
+print("serve() returned", flush=True)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from outside the process")
+@pytest.mark.parametrize("sig", ["SIGINT", "SIGTERM", "SIGHUP"])
+def test_a_studio_process_stopped_twice_by_a_signal_mid_first_build_builds_it_again(home, builds, sig):
+    """Closing the Studio's terminal window (SIGHUP), a logout or `kill` (SIGTERM) while it served and rebuilt a cut-off
+    first build ended the process with nothing journaled, so each stop counted as a crash and the second parked the
+    design ("The Studio stopped twice ..."). A real Studio process, signalled from outside twice, now journals each stop
+    as "interrupted", exits 0 without a traceback, and the next start builds the design again (SIGINT as control)."""
+    import signal
+    cut_off_first_build(home)
+    tests = os.path.dirname(os.path.abspath(__file__))
+    dfl = lambda: [signal.signal(getattr(signal, s), signal.SIG_DFL) for s in ("SIGINT", "SIGTERM", "SIGHUP")]  # noqa: E731
+    for _ in range(2):
+        proc = subprocess.Popen([sys.executable, "-c", _STUDIO, str(home), tests], cwd=ROOT, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", preexec_fn=dfl)
+        lines = []
+        reader = threading.Thread(target=lambda: lines.extend(proc.stdout), daemon=True)
+        reader.start()
+        try:
+            t0 = time.time()
+            while not ("Morph Studio:" in "".join(lines) and "<build started>" in "".join(lines)):  # any order
+                assert proc.poll() is None and time.time() - t0 < 60, "".join(lines)
+                time.sleep(0.05)
+            proc.send_signal(getattr(signal, sig))
+            rc = proc.wait(30)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(10)
+        reader.join(10)
+        out = "".join(lines)
+        assert rc == 0 and "serve() returned" in out and "Traceback" not in out, (rc, out)
+        ops = [json.loads(line)["op"] for path in rooms.journals(str(home / "kb1"))
+               for line in open(path, encoding="utf-8")]
+        assert ops[-2:] == ["started", "interrupted"], ops
+    builds.gate = threading.Event()                                         # the rebuild waits until looked at
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    kb1 = st.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert [j.label for j in queued] == ["first design" + REBUILT] and "stopped twice" not in " ".join(texts(kb1))
+    assert not (home / "kb1" / ".morph" / "first-build.json").exists()
+    builds.gate.set()
+    finish(*queued)
+    assert kb1.completed() == ["r001"]
