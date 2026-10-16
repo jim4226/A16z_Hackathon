@@ -32,7 +32,7 @@ from . import rooms
 from .rooms import STARTED
 from .teams import activity, audit, auth, collab, roles
 from .teams.disciplines import DISCIPLINES, GENERALIST, LABELS, STAGE_TITLES, STAGES, routing, watching
-from .teams.store import TeamFileError, TeamStore, exists, parse_ts
+from .teams.store import TeamFileError, TeamStore, exists, locked, parse_ts, project_dir
 
 CONFIG = {"home": None, "secure": False, "enabled": False}
 MAX_FORM = 8192
@@ -832,12 +832,20 @@ def settle_stopped(root: str, home: str | None, *, starting: bool = False) -> li
     except Exception:  # noqa: BLE001  (an unreadable record is reported by the call that reads it next)
         return out
     project = os.path.basename(os.path.normpath(root))
-    for p in applied:
+
+    def stopped(p: dict) -> bool:
         who = p.get("applied_in")
-        if p.get("applied_rev") or rooms.owner_live(home, who) or (not starting and who in (None, rooms.OWNER)):
+        return (p.get("status") == "applied" and not p.get("applied_rev") and not rooms.owner_live(home, who)
+                and (starting or who not in (None, rooms.OWNER)))
+    for p in applied:
+        if not stopped(p):
             continue
         rev = built_after_all(root, p)
-        collab.proposal_done(root, p["id"], rev=rev, error=None if rev else STOPPED)
+        with locked(project_dir(root)):  # read again: another Studio may have opened and applied it again meanwhile
+            now = collab.get_proposal(root, p["id"])
+            if now is None or not stopped(now) or now.get("applied_ts") != p.get("applied_ts"):
+                continue
+            collab.proposal_done(root, p["id"], rev=rev, error=None if rev else STOPPED)
         out.append(p["id"])
         text = (f"Change request #{p.get('n')} built {rev}." if rev else
                 f"Change request #{p.get('n')} wasn't built: the Studio stopped. It is open again, to apply again.")

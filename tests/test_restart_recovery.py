@@ -1114,6 +1114,34 @@ def test_a_change_request_a_stopped_studio_applied_opens_again_in_one_that_runs(
         httpd.server_close()
 
 
+def test_a_request_another_studio_applied_again_meanwhile_is_not_opened_again(home, builds, monkeypatch):
+    """Studios B and C both list a request a Studio that has stopped applied. C opens it again and applies it again (C
+    runs and builds it) after B read it as the stopped Studio's and before B wrote it open again: B's late write made the
+    request C was building "open", so it could be applied a third time, and told both people again."""
+    from test_team_util import make_team, members
+    ids, _ = make_team(str(home))
+    root = str(home / "egg")
+    p = collab.create_proposal(root, ids["Vic"], "Quantity to 77", {"build.quantity": 77}, members=members(home))
+    collab.apply_proposal(root, p["id"], ids["Ana"], members=members(home), studio="deadbeefdeadbeef")  # A: stopped
+    c = hold(home / ".studios" / "c0ffeec0ffeec0ff.lock")                       # Studio C, running
+    real = api_team.built_after_all
+
+    def meanwhile(root_, q):  # B has read the request as A's; C opens it again and applies it now
+        monkeypatch.setattr(api_team, "built_after_all", real)
+        collab.proposal_done(root, p["id"], error=api_team.STOPPED)
+        collab.apply_proposal(root, p["id"], ids["Ana"], members=members(home), studio="c0ffeec0ffeec0ff")
+        return real(root_, q)
+    monkeypatch.setattr(api_team, "built_after_all", meanwhile)
+    try:
+        assert api_team.settle_stopped(root, str(home)) == []
+        q = collab.get_proposal(root, p["id"])
+        assert q["status"] == "applied" and q.get("applied_in") == "c0ffeec0ffeec0ff", q
+        assert not any("wasn't built" in i["text"] for i in activity.inbox(str(home), ids["Vic"])["items"])
+    finally:
+        c.stdin.close()
+        c.wait(10)
+
+
 def test_a_change_request_built_just_before_a_stop_is_recorded_built(home, builds):
     """A stop in the few ms between a request's revision (results.json) and its "done" record: the next start reopened
     it ("wasn't built: the Studio stopped") though r002 held the change, and applying it again said "Nothing to change"
