@@ -1667,7 +1667,12 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     twice its radius' growth) or more, where the servo's own
     position loop holds it at stall: `metrics["grip_stalled"]` {wider_mm, squeeze_mm} and `metrics["failure"]`; a
     robustness study counts it as `stalled` ("Held the gripper servo at stall ..."), unless the object was also
-    crushed (`over_force`). The plan keeps a margin the simulation doesn't (80 % of the stall against the stall
+    crushed (`over_force`). It also crushes a trial (`simulate._open_loop_crushes`: `intact` false,
+    `metrics["grip_crushed"]` {force_n, wider_mm, squeeze_mm}, a named failure, `over_force` in a study) whose servo
+    model squeeze, `grip_stall_n` x min(`grip_squeeze_mm` + wider, `GRIP_SAT_MM`) / `GRIP_SAT_MM`, is above the
+    object's damage force, at its nominal size too: MuJoCo's soft contact measures far less on a light or rigid
+    object (a light bulb 2 % over its size: 10.35 N against the model's 15.66 N; a ping pong ball's least close, 3.31 N
+    against 0.28 N), and both are labels from that model, not from the measured grip (`docs/ROBUSTNESS.md`). The plan keeps a margin the simulation doesn't (80 % of the stall against the stall
     itself), as its hold margin does. A floored squeeze (two position commands) above `limit_n` is a plan issue of
     the `hobby_gripper` kind that names the lowest of the three ("... the least it can close past the <object> (two
     position commands, <mm> at the jaw) squeezes about <N> N per finger, above <the object's limit | the <N> N it

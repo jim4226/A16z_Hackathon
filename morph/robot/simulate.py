@@ -331,6 +331,7 @@ class _Info:
     grip_force_max: float = 0.0     # per-finger force at the gripper actuator's full effort (N)
     grip_open_loop: bool = False    # a hobby servo held grip_close past contact: its position loop sets the squeeze
     grip_squeeze_mm: float = 0.0    # ... that far past the gauge contact (mm at the jaw): _open_loop_stalls
+    grip_stall_n: float = 0.0       # ... with its stall force per finger GRIP_SAT_MM past contact: _open_loop_crushes
     grip_probe_mm: float | None = None   # a hobby servo's force-sensing close reads no further past the gauge contact
                                          # (mm at the jaw) than this, then gives up and opens (_probe_gives_up)
     excluded: list = field(default_factory=list)
@@ -890,6 +891,7 @@ def _describe(asm, design, opts: SimOptions, grasp_only: bool = False):
                  grip_kind=kind, grip_contact=float(contact), grasp_offset=offset, lever_mm=lever, grip_speed=speed,
                  grip_effort=effort, grip_force_max=fmax, grip_open_loop=bool(open_mm) and kind in ("prismatic", "revolute"),
                  grip_squeeze_mm=open_mm if kind in ("prismatic", "revolute") else 0.0,
+                 grip_stall_n=stall_n if open_mm and kind in ("prismatic", "revolute") else 0.0,
                  grip_probe_mm=(float(asm.meta["grip_probe_mm"]) if (asm.meta or {}).get("grip_probe_mm") is not None
                                 and opts.grip_force_n is None and kind in ("prismatic", "revolute") else None),
                  excluded=sorted(set(excluded)), dropped_parts=dropped, geoms=specs, notes=notes)
@@ -2317,10 +2319,34 @@ def _open_loop_stalls(rob: _Robot, perturb) -> dict | None:
     s = (perturb or {}).get("size_scale")
     if not info.grip_open_loop or s is None:
         return None
-    wider = rob.R * (float(s) - 1.0) * (2.0 if info.grip_kind == "revolute" else 1.0)
+    wider = _open_loop_wider(rob, perturb)
     if info.grip_squeeze_mm + wider < GRIP_SAT_MM - 1e-9:
         return None
     return {"wider_mm": round(wider, 3), "squeeze_mm": round(info.grip_squeeze_mm, 4)}
+
+
+def _open_loop_wider(rob: _Robot, perturb) -> float:
+    """How much further past its own contact a trial's object is held than a gauge-sized one, at the jaw that closes
+    on it: R(s - 1) per jaw of a rack, twice that at a stock jaw's one moving jaw (negative: narrower)."""
+    s = (perturb or {}).get("size_scale")
+    return 0.0 if s is None else rob.R * (float(s) - 1.0) * (2.0 if rob.info.grip_kind == "revolute" else 1.0)
+
+
+def _open_loop_crushes(rob: _Robot, design, perturb) -> dict | None:
+    """A hobby servo without force sensors or a torque limit squeezes what its own position loop gives for how far past
+    the object's contact it is held: grip_stall_n x min(grip_squeeze_mm + wider, GRIP_SAT_MM) / GRIP_SAT_MM (the
+    firmware's and the plan's servo model). MuJoCo's soft contact measures far less on a light or rigid object (a light
+    bulb 2 % over its size: 10.35 N against the model's 15.66 N), so a trial whose model squeeze is above the object's
+    damage force is crushed whatever the contact says: {force_n, wider_mm, squeeze_mm}, or None."""
+    info = rob.info
+    lim = float(design.object.max_force_n or 0.0)
+    if not info.grip_open_loop or lim <= 0 or info.grip_stall_n <= 0:
+        return None
+    wider = _open_loop_wider(rob, perturb)
+    force = info.grip_stall_n * min(max(info.grip_squeeze_mm + wider, 0.0), GRIP_SAT_MM) / GRIP_SAT_MM
+    if force <= lim + 1e-9:
+        return None
+    return {"force_n": round(force, 2), "wider_mm": round(wider, 3), "squeeze_mm": round(info.grip_squeeze_mm, 4)}
 
 
 def _given_up(rob: _Robot, plan, gave_up: dict):
@@ -2407,6 +2433,21 @@ def _run_pick_place(rob: _Robot, design, plan, at, perturb=None, on_step=None):
                                 f"reads to before it gives up (GRIP_PROBE): its firmware opens with !GRIP no force "
                                 f"reading and leaves the {name}"))
         plan.mark("!GRIP no force reading: the jaws open", at["t_move"])
+    crushed = _open_loop_crushes(rob, design, perturb)
+    if crushed:
+        name = design.object.name or "object"
+        metrics.update(success=False, intact=False, grip_crushed=crushed)
+        if "egg_intact" in metrics:
+            metrics["egg_intact"] = False
+        off = abs(crushed["wider_mm"])
+        size = ("" if off < 5e-4 else
+                f", {off:.2f} mm {'wider' if crushed['wider_mm'] > 0 else 'narrower'} "
+                f"{'at the moving jaw' if info.grip_kind == 'revolute' else 'per jaw'} than the calibration gauge,")
+        metrics.setdefault("failure", f"the hobby gripper servo, closed {crushed['squeeze_mm']:.2f} mm past the gauge, "
+                                      f"squeezes the {name}{size} with about {crushed['force_n']:g} N per finger (its "
+                                      f"position loop's force for how far past contact it is held), above the "
+                                      f"{design.object.max_force_n:g} N that damages it")
+        plan.mark("the gripper crushes the object", at["t_move"])
     stalled = _open_loop_stalls(rob, perturb)
     if stalled:
         name = design.object.name or "object"

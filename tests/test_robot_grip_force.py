@@ -641,6 +641,48 @@ def test_a_dead_sensor_never_crushes_the_large_end_of_a_covered_hobby_grips_size
                 + " for that moment") in w, w
 
 
+@pytest.mark.parametrize("obj, scale", [("light bulb", 1.02), ("ping pong ball", None), ("raw egg", 1.08)])
+def test_the_simulation_crushes_what_a_sensorless_hobby_close_would_crush(obj, scale):
+    """Without force sensors the simulation judged crushing by MuJoCo's soft-contact grip force, which runs well below
+    the servo model the firmware closes by: a light bulb 2 % over its size, closed 0.76 mm past its contact (15.66 N in
+    the servo model, above its 15 N damage force), measured 10.35 N and was placed, and so did a ping pong ball at its
+    nominal size (3.31 N from the least close, above its 2 N; measured 0.28 N). The trial is now crushed when the servo
+    model squeezes past the damage force, as it fails one the model holds at stall, and names it."""
+    from morph import electronics
+
+    d = template("egg-picker").with_changes({**object_changes(obj), "arm.actuator_family": "hobby_pwm",
+                                             "finger.sensor": "none"})
+    sz = arm.size(d)
+    ep = electronics2.plan(d, sz, grip=pipeline2.gripper_stage(d, sz, simulate=False)["force"])
+    g, ol, band = ep["grip"], ep["grip"]["open_loop"], electronics.SERVO_BAND_MM
+    wider = d.object.diameter_mm / 2 * ((scale or 1.0) - 1.0)
+    model = g["stall_force_n"] * min(max(ol["squeeze_mm"] + wider, 0.0), band) / band
+    assert model > d.object.max_force_n
+    m = simulate.run(arm.build(d, sz, ep), d, "pick_place", perturb={"size_scale": scale} if scale else None,
+                     fast=True)["metrics"]
+    assert not m["intact"] and not m["success"], m
+    assert m["grip_crushed"]["force_n"] == pytest.approx(model, abs=0.02), m["grip_crushed"]
+    assert f"above the {d.object.max_force_n:g} N that damages it" in m["failure"], m["failure"]
+
+
+@pytest.mark.parametrize("obj, why", [("grape", "64 % of its stall force, above the 2 N that damages it"),
+                                      ("soda can", "its whole stall force")])
+def test_the_manual_names_why_a_sensorless_hobby_grips_large_end_is_an_issue(obj, why):
+    """The manual said every uncovered sensorless hobby grip's large end was 'at or near stall', also for a grape at
+    19.77 N, 64 % of the MG996R's stall: its issue is the 2 N that damages it. It now says what the plan says."""
+    from morph.robot import manual
+
+    d = template("egg-picker").with_changes({**object_changes(obj), "arm.actuator_family": "hobby_pwm",
+                                             "finger.sensor": "none"})
+    sz = arm.size(d)
+    ep = electronics2.plan(d, sz, grip=pipeline2.gripper_stage(d, sz, simulate=False)["force"])
+    ol = ep["grip"]["open_loop"]
+    assert not ol["covers"]
+    sent = manual._grip_sentence(ep["grip"], d.object.name)
+    assert f"gets about {ol['large_n']:g} N per finger, {why}: the plan lists this as an issue." in sent, sent
+    assert "at or near stall" not in sent
+
+
 @pytest.mark.parametrize("obj", ["raw egg", "soda can"])
 def test_hobby_servos_on_the_stock_jaws_say_their_least_close_squeezes_past_what_they_hold(tmp_path, obj):
     """The SO-101's stock jaw on hobby PWM servos: one PCA9685 count is about 0.48 mm at its 62-80 mm lever, so the least

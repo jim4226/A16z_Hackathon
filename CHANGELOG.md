@@ -487,7 +487,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   can (a can at the large end is 2.64 mm per jaw over and would be held at stall, as would an egg or a water bottle)
   the plan says so as an issue, New robot uses smart-bus servos and chat's "make it cheaper" stops before hobby
   servos. The simulation and robustness studies fail a trial that holds the servo at stall ("Held the gripper servo
-  at stall"); they counted a can 4 % over its size placed. F sets that distance, up to the servo's rated torque, the
+  at stall"); they counted a can 4 % over its size placed. They also crush a trial whose squeeze in the servo model
+  the firmware closes by is above the object's damage force ("Squeezed harder than the object can take"): the
+  simulated contact measured a light bulb 2 % over its size at 10.35 N, under its 15 N, where that model gives
+  15.66 N, and the study counted it placed; both labels come from that model, not from the measured grip. F sets that distance, up to the servo's rated torque, the
   object's limit or what keeps the large end of its size under 80 % of the stall, whichever is lowest. With force
   sensors a close that has read nothing by GRIP_PROBE stops there and opens (it went on to the stop): far enough to
   reach the object at the small end of its size (8 % under nominal) where a dead sensor then leaves a gauge-sized

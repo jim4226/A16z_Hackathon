@@ -453,6 +453,35 @@ def test_a_sensorless_hobby_grip_that_holds_its_servo_at_stall_is_a_failure_with
                                                     "position-only close allows")
 
 
+def test_a_sensorless_hobby_grip_that_would_crush_its_object_is_over_force_not_placed(tmp_path):
+    """A hobby PWM gripper without force sensors on a light bulb: one 2 % over its size is held 0.76 mm past its contact,
+    15.66 N in the servo model the firmware closes by, above the bulb's 15 N damage force, while MuJoCo's soft contact
+    measured 10.35 N, so the study counted it placed. It is now over_force, as the simulation's own crush check says."""
+    from morph.cli import EGG_ROBOT
+    from morph.robot import pipeline2
+    from morph.studio.intent import object_changes
+
+    d = Design().with_changes({**EGG_ROBOT, **object_changes("light bulb"), "finger.sensor": "none",
+                               "arm.actuator_family": "hobby_pwm"})
+    info = projects.create(str(tmp_path), "hobby-bulb", origin="default", demo=False, unique=False)
+    root, sz = info["root"], arm.size(d)
+    force = pipeline2.gripper_stage(d, sz, simulate=False)["force"]
+    ep = electronics2.plan(d, sz, grip=force)
+    rev = os.path.join(root, "r001")
+    os.makedirs(rev)
+    with open(os.path.join(rev, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(d.dumps())
+    doc = simulate.run(arm.build(d, sz, ep), d, "pick_place", os.path.join(rev, "sim"), fast=True)
+    res = {"rev": "r001", "kind": "robot", "stage_status": {"sim": "computed"}, "provenance": {"sim": "computed"},
+           "gripper": {"force": force}, "sims": {"mjcf": "robot.xml", "scenarios": {"pick_place": {
+               "file": "sim_pick_place.json", "title": "Pick and place", "metrics": doc["metrics"]}}}}
+    with open(os.path.join(rev, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    runner = robust.Runner(robust.prepare(root, "r001", 0.002)["blob"])
+    row = runner.run({"i": 0, "params": {"object_size": 1.02}, "perturb": {"size_scale": 1.02}})
+    assert row["outcome"] == "over_force" and not row["success"], row
+
+
 # ------------------------------------------------------------------ acceptance (MORPH_SLOW=1)
 
 @pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: 200 runs at 1 ms plus the solver checks (minutes)")
