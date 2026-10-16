@@ -1111,6 +1111,23 @@ def test_the_world_check_measures_the_path_against_the_scan(tmp_path):
         finally:
             worlds.scan_clearance = real
         assert len(calls) == 2, stats
+    # a revision whose robot can't be simulated again (a preview, its results missing) or whose trial raised: no box is
+    # offered untried, the check says why (not that the computer was busy), and the answer isn't kept
+    real = api_world._box_trial
+    for broken, why in ((lambda room, rev: None, "this revision is a preview, or its results are missing"),
+                        (lambda room, rev: 1 / 0, "ZeroDivisionError")):
+        api_world._SCANS.clear()
+        api_world._box_trial = broken
+        try:
+            st, body_u = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+        finally:
+            api_world._box_trial = real
+        s_u = {x["id"]: x for x in body_u["checks"]}["scan"]
+        g_u = s_u["regions"][0]
+        assert g_u["box"] is None and not g_u.get("covers") and not g_u.get("trial"), g_u
+        assert g_u["no_box"] == f"A simulation with a box here couldn't be tried ({why}), so none is offered.", g_u
+        assert f"a simulation with a box there couldn't be tried ({why}), so none is offered." in s_u["text"], s_u
+        assert "less busy" not in s_u["text"] and not api_world._SCANS, s_u
     # Reset demo reuses revision names: another simulation under the same name is measured again, never served from
     # memory (here the arm stays where it starts, well away from the post)
     sim = os.path.join(root, "r001", "sim", "sim_pick_place.json")

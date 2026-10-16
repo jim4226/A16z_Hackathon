@@ -1450,7 +1450,9 @@ field failure rate (section 0, honesty).
   so none is offered: move the robot or the thing instead."; one it goes round keeps it, with `trial` {ok,
   min_clearance_mm (the simulation's own: its run and plan against every box, so no more than its distance to this one),
   at_box, fails}. Two or more kept are tried together (`stats.together`: the failure, or None). Out of time
-  (`SCAN_TRIAL_S` = 30 s of its own) a box isn't offered (`TRIAL_LATE`, `stats.trial_timeout`), and the answer isn't
+  (`SCAN_TRIAL_S` = 30 s of its own) a box isn't offered (`TRIAL_LATE`, `stats.trial_timeout`), nor when the
+  revision's robot can't be simulated again (a preview, its results missing, or the trial raised: `stats.untried`, the
+  reason, and "a simulation with a box there couldn't be tried (<reason>), so none is offered"), and the answer isn't
   kept. The check says, tried: "Add box here turns it into <the box>; a simulation with it, tried here, keeps clear of
   it (the row says how close it comes)." (untried: "; the next simulation tries to plan round it, and may take another
   way, closer to it, or fail."), and with none offered for that reason "a simulation with a grey box there, tried here,

@@ -362,19 +362,21 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
     if any(g.get("box") for g in res.get("regions") or []):     # Add box here's promise, tried: the next simulation
         _send(room, {"type": "world", "stage": "scan", "status": "start",     # run here with each box
                      "text": "Trying a simulation with each box Add box here would make"})
+        why = "this revision is a preview, or its results are missing"
         try:
             trial = _box_trial(room, rev)
-            if trial is None:
-                raise RuntimeError("this revision can't be simulated again (a preview, or its results are missing)")
-            worlds.try_boxes(res, w, trial, time.monotonic() + worlds.SCAN_TRIAL_S,
-                             baseline_ok=(doc.get("metrics") or {}).get("success"))
+            if trial is not None:
+                worlds.try_boxes(res, w, trial, time.monotonic() + worlds.SCAN_TRIAL_S,
+                                 baseline_ok=(doc.get("metrics") or {}).get("success"))
         except Exception as exc:  # noqa: BLE001  (never a box promised without the simulation tried)
+            trial, why = None, f"{exc.__class__.__name__}"
+        if trial is None:
             for g in res.get("regions") or []:
                 if g.get("box"):
-                    g["box"], g["no_box"] = None, ("A simulation with a box here couldn't be tried "
-                                                   f"({exc.__class__.__name__}), so none is offered.")
+                    g["box"] = None
+                    g["no_box"] = f"A simulation with a box here couldn't be tried ({why}), so none is offered."
                     g.pop("covers", None)
-            res.setdefault("stats", {})["trial_timeout"] = True
+            res.setdefault("stats", {})["untried"] = why
     ms = int((time.time() - t0) * 1000)
     for g in res.get("regions") or []:          # a trimmed box's place names the revision whose path it was fitted to
         if isinstance(g.get("covers"), dict) and re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", rev):
@@ -384,7 +386,8 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
                  "ms": ms, "text": text})
     _send(room, {"type": "world", "stage": "scan", "status": "done", "text": text})
     st = res.get("stats") or {}
-    if st.get("fit_timeout") or st.get("truncated") or st.get("unlisted_mm") is not None or st.get("trial_timeout"):
+    if st.get("fit_timeout") or st.get("truncated") or st.get("unlisted_mm") is not None or st.get("trial_timeout") \
+            or st.get("untried"):
         return res                              # cut short (a busy computer), a box not fitted or not tried, or a list
                                                 # of near misses not finished: Check placement again measures again
     with _SCANS_LOCK:

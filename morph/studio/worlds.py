@@ -2914,6 +2914,9 @@ def scan_check(scan: dict) -> dict:
         elif failed and len(failed) + len(must) == n:   # try_boxes: the simulation fails with each box
             text += (": a simulation with a grey box there, tried here, fails (the row says how), so none is offered; "
                      "move the robot or the thing.")
+        elif stats.get("untried"):                      # api_world: the revision's robot couldn't be simulated again
+            text += (f": a simulation with a box there couldn't be tried ({str(stats['untried']).rstrip('.')}), so none "
+                     "is offered.")
         elif stats.get("trial_timeout"):
             text += (": there wasn't time to try a simulation with a box there: checking again when the computer is "
                      "less busy may try it.")
