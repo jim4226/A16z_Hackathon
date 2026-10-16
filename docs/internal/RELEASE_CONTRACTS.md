@@ -725,6 +725,25 @@ in sections 3, 4 and 8. The rest that other code relies on:
   motors of a pack bought once (`actuator_keys`: Qty 1 and "(6 pcs)" is 6); KiCad 5-7's grouped CSV (its "Source:"
   rows, "Qnty") and KiBoM (the value, not the group number in "Component") are read; `total` is None when no line has a
   price. The hunters' 418-line corpus and 14 whole parts lists are data in tests/data (tests/test_import_bom_lines.py).
+  R9 (the third round's hunters: 0033630 read 345 of their 1,439 lines and 13 of their 16 whole lists wrong, most of
+  them because a joint word outside a closed list lost the motor): a line's label, the words naming the joint, arm or
+  motor ID its motor drives or is, is open (`bom._label_words`): any plain words and joint references (J1, #2, ID 1,
+  SO-101) except a motor word (unless before its number: "Motor ID 2"), a kit or count word, a part's noun
+  (`bom.ACCESSORY`, `bom._PART`, `bom._COMPOUND_PART`: "Frame", "printed", "Servohorn"), what a part does with a motor
+  (`bom._PART_VERB`: "uses", "holds", "with"), what a whole kit is for (`bom._USE`: "Robot", "RC car"), and "arm" only
+  after whose arm (`bom._ARM_OWNER`: "Left arm", "Upper arm"; "Lift arm" is a part). A label qualifies the model after
+  it, before ":" or a dash, in brackets first ("[J1] STS3215") and alone before brackets ("J1 (STS3215)"); after the
+  model only joint and motion words do (`bom._MOTION`, `bom._JOINT_AFTER`: "STS3215 C018 shoulder pan"; "SG90
+  gripper" stays a part unless a spec or code comes between). A kit word with a label ("Pan tilt SG90 kit") and a
+  part's verb before the model ("Gripper (uses SG90)") make no motor. "Servo for <label> (<model>)" reads the model; a
+  part named only by its label is the motor of a model MPN, or of a description that says servo ("Base" described as
+  "STS3215 12V servo"; "Gripper" described as "SG90" stays no motor); "Model", "Motor", "Servo" and "Actuator"
+  columns are the MPN; the head's own model is the key (`bom._own_key`: "DS3218 servo (MG996R compatible)" is the
+  DS3218); notes about another arm or against a variant pick nothing (`bom._own_words`); `bom._PACK` also reads "×6 (",
+  "(qty 6)", "set of 6" and "(6x"; "DS3218MG", "MG", "NEMA 17" and "stroke" are a motor's own words; a head whose last
+  noun holds something (`bom._HOLDER`: "Wrist camera mount") or names a stand-in is "purchased", and only the head says
+  "material". The corpus, both probe sets and the whole lists are data (tests/data/bom_hunt_lines.json, bom_files); the
+  one known gap is a servo the catalog lacks named by maker and code alone ("Hiwonder LX-16A" is "purchased").
   Rows add `description` and `catalog_name`. An object import whose grip would bend the fingers
   gets New robot's repair (`api_import._fit_fingers`: `brief.preflight`'s deflection check, the beam 1.5 mm thicker at
   a time up to 14 mm), said in its reply. When an import's build isn't feasible (a robot's first build, an object's

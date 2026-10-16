@@ -72,6 +72,70 @@ def test_a_part_for_a_servo_named_like_a_listing_is_still_no_servo(item):
     assert r["catalog"] is None and r["category"] != "actuator", r
 
 
+with open(os.path.join(DATA, "bom_hunt_lines.json"), encoding="utf-8") as _fh:
+    HUNT = json.load(_fh)   # the third round's hunters (1313 lines and 55 probes, expectations written before any run)
+                            # and the fixer's 71 probes: header, line, catalog key, other keys also right ("accept"),
+                            # category (None: any), pack (None: any) and the class of the lines 0033630 read wrong
+KNOWN_GAPS = {"Hiwonder LX-16A"}  # a servo the catalog lacks, named by maker and code alone: listed as purchased
+
+
+def _reads_as_expected(row):
+    (r,) = bom.map_table([row["header"], row["line"]])[0]
+    accept = [row["key"]] + row["accept"]
+    cat = (row["category"] is None or r["category"] == row["category"]
+           or r["catalog"] is not None and r["catalog"] in row["accept"]
+           or r["catalog"] is None and None in row["accept"])
+    return r["catalog"] in accept and cat and (row["pack"] is None or r["pack"] == row["pack"]), r
+
+
+def _hunt_id(r):
+    return f"{r['wrong_at_0033630'] or 'FIXER'}:{' / '.join(x for x in r['line'] if x)[:50]}"
+
+
+@pytest.mark.parametrize("row", [r for r in HUNT if r["wrong_at_0033630"] or r["group"] == "FX.fixer"], ids=_hunt_id)
+def test_a_servo_named_after_its_joint_arm_or_id_keeps_its_motor_and_a_part_named_like_one_doesnt(row):
+    """0033630 read 345 of these lines wrong: a label word outside a closed list of joints ("Elbow flex", "Waist", "Left
+    arm", "ID 1", "Camera pan"), a label in brackets first ("[J1] STS3215"), a joint reference alone before brackets
+    ("J1 (STS3215)"), "DS3218MG", a joint in the part column with the servo in the MPN, "Servo for gripper (SG90)", the
+    joint after the model ("STS3215 C018 shoulder pan", "MG996R: upper arm"), packs ("×6 (", "(qty 6)", "set of 6"),
+    German joint words, steppers named "NEMA 17" after the motor word, two models in a line, notes about the other arm;
+    and joint-named kits and printed parts read as servos ("Pan tilt SG90 kit", "Base (PLA, holds STS3215)")."""
+    if row["line"][0] in KNOWN_GAPS:
+        pytest.xfail("known gap")
+    ok, r = _reads_as_expected(row)
+    assert ok, r
+
+
+def test_every_hunted_parts_list_line_reads_the_way_its_reader_does():
+    """The whole round-3 corpus, the lines 0033630 read right too (bracket, accessory, kit, stand-in, two-model and
+    German lines among them), so a looser label rule can't turn a horn, frame or kit into a servo unseen."""
+    bad = [(" / ".join(x for x in row["line"] if x), row["key"], r["catalog"], r["category"], r["pack"])
+           for row in HUNT if row["line"][0] not in KNOWN_GAPS for ok, r in [_reads_as_expected(row)] if not ok]
+    assert not bad, bad
+
+
+@pytest.mark.parametrize("name, want", [
+    ("aloha_bimanual.csv", {"xm430_w350": 16, "xl430_w250": 10}), ("motor_ids.csv", {"sts3215_7v4": 6}),
+    ("lerobot_joint_names.csv", {"sts3215_7v4": 6}), ("lerobot_model_first.csv", {"sts3215": 6}),
+    ("joint_motor_columns.csv", {"mg996r": 3, "sg90": 3}), ("part_desc_joints.csv", {"sts3215": 6}),
+    ("packs_mixed.md", {"sts3215": 12, "sts3215_7v4": 6, "mg996r": 6, "sg90": 4})])
+def test_the_import_dialog_seeds_the_motors_a_joint_named_list_lists(name, want, tmp_path, monkeypatch):
+    """The Import dialog's path (add_file, detect, commit): ALOHA's waist and wrist-angle servos, motor IDs, LeRobot's
+    own joint names, the model before the joint, a Joint/Motor table, the joint as the part with the servo described,
+    and packs written as shops write them. 0033630 seeded {} for the first two and 4 of 6 for LeRobot's names."""
+    h = tmp_path / "projects"
+    h.mkdir()
+    monkeypatch.setenv("MORPH_HOME", str(h))
+    from morph.importers import common
+    monkeypatch.setattr(common, "_HOME", None)
+    s = sess.Session.create(str(h))
+    with open(os.path.join(DATA, "bom_files", name), "rb") as fh:
+        data = fh.read()
+    s.add_file(name, io.BytesIO(data), len(data))
+    c = next(i for i, x in enumerate(s.detect()["candidates"]) if x["kind"] == "bom")
+    assert s.commit(c)["actuators"] == want
+
+
 def _row(res, item):
     if item.startswith("#"):                # KiBoM: the line's group number
         return res["rows"][int(item[1:]) - 1]
