@@ -2223,7 +2223,8 @@ class _Stop:
         return self
 
     def __exit__(self, *exc):
-        leaving = self.last and self.clean  # the stop is written down and the process ends now: nothing to stop
+        # the stop is written down and the process ends now (no error escaping serve()): nothing left to stop
+        leaving = self.last and self.clean and exc[0] is None
         for sig, old in self.old.items():
             try:
                 signal.signal(sig, signal.SIG_IGN if leaving else old)

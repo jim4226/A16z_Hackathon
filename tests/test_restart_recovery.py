@@ -1363,3 +1363,29 @@ def test_a_start_on_a_full_disk_says_so_in_one_line_and_still_recovers(home, bui
     assert [j.label for j in queued] == ["first design" + REBUILT] and st.toolbox is not None
     builds.gate.set()
     finish(*queued)
+
+
+def test_a_last_studio_ignores_stop_signals_only_after_a_clean_stop():
+    """serve(last=True) (`morph studio`, whose process ends with it) ignores stop signals from the end of a clean stop
+    on; after an error escaping serve(), or for any other caller, the handlers it found are put back."""
+    import signal
+    names = [n for n in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, n)]
+    before = {n: signal.getsignal(getattr(signal, n)) for n in names}
+    try:
+        with pytest.raises(RuntimeError):
+            with server._Stop(None, last=True) as stop:
+                stop.end(True)
+                raise RuntimeError("an error escaping serve()")
+        assert {n: signal.getsignal(getattr(signal, n)) for n in names} == before
+        with server._Stop(None) as stop:                                   # a script or a test calling serve()
+            stop.end(True)
+        assert {n: signal.getsignal(getattr(signal, n)) for n in names} == before
+        with server._Stop(None, last=True) as stop:
+            stop.end(False)                                                # not a clean stop
+        assert {n: signal.getsignal(getattr(signal, n)) for n in names} == before
+        with server._Stop(None, last=True) as stop:
+            stop.end(True)
+        assert all(signal.getsignal(getattr(signal, n)) is signal.SIG_IGN for n in names)
+    finally:
+        for n, handler in before.items():
+            signal.signal(getattr(signal, n), handler)
