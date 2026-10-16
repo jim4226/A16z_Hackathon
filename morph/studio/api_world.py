@@ -329,12 +329,7 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
     for g in res.get("regions") or []:          # a trimmed box's place names the revision whose path it was fitted to
         if isinstance(g.get("covers"), dict) and re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", rev):
             g["covers"]["rev"] = rev
-    mc, n = res.get("min_clearance_mm"), len(res.get("regions") or [])
-    cut = bool((res.get("stats") or {}).get("truncated"))
-    text = (res["skipped"] if res.get("skipped") else
-            (f"Closest to the scan: {'at most ' if cut else ''}{worlds.floor_mm(mc):.1f} mm" if mc is not None else
-             "Not all measured in time" if cut else f"Nothing within {worlds.SCAN_CUT_MM:.0f} mm of the scan")
-            + (f", {n} near miss{'es' if n != 1 else ''}" if n else "") + (" (cut short)" if cut and mc is not None else ""))
+    text = worlds.scan_event_text(res)
     _send(room, {"type": "agent", "role": "feasibility", "provider": "code", "status": "skipped" if res.get("skipped") else "done",
                  "ms": ms, "text": text})
     _send(room, {"type": "world", "stage": "scan", "status": "done", "text": text})

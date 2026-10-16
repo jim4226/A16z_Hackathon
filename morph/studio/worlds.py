@@ -1923,7 +1923,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         stats["beyond_mm"] = floor_mm(lo_path)                   # between the poses bounded only to just short of it
     elif close["d"] < SCAN_CUT_MM or (final and lo_path < SCAN_CUT_MM):
         b = m.geom_bodyid[close["g"]]
-        out["min_clearance_mm"] = floor_mm(max(0.0, shown))         # rounded down: never more room than measured
+        out["min_clearance_mm"] = _touch_floor(shown)               # rounded down: never more room than measured
         out["at"] = {"t": round(float(close["t"]), 2), "link": "object" if b == obj_body else m.body(b).name,
                      "point": [round(float(v), 1) for v in to_world(world, close["q"])]}
     ids = np.array(sorted(shape), int)                  # the shapes' bounding spheres at every pose, for the boxes
@@ -2116,7 +2116,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     if out["regions"]:                                  # a row measured closer than the check's closest (the second
         r0 = min(out["regions"], key=lambda r: r["_d"])  # pass stops at a touch; a pass cut short): that is the closest
         if r0["_d"] < (shown if out["min_clearance_mm"] is not None else math.inf) - 1e-9:
-            out["min_clearance_mm"] = floor_mm(max(0.0, r0["_d"]))
+            out["min_clearance_mm"] = _touch_floor(r0["_d"])
             out["at"] = {"t": r0["t"], "link": r0["link"], "point": list(r0["point"])}
     if out["regions"]:
         t1 = time.monotonic()
@@ -2617,7 +2617,7 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None, r
                     P[c[i]] = Px[i]
         b = m.geom_bodyid[G[j]]
         centre = to_world(world, R @ ((lo_ + hi_) / 2.0))
-        regions.append({"min_clearance_mm": floor_mm(max(0.0, d)), "_d": max(0.0, d), "exact": bool(final and B[idx].any()),
+        regions.append({"min_clearance_mm": _touch_floor(d), "_d": max(0.0, d), "exact": bool(final and B[idx].any()),
                         "t": round(float(TT[j]), 2), "link": "object" if b == obj_body else m.body(b).name,
                         "point": [round(float(v), 1) for v in to_world(world, q)],
                         "box": {"center": [round(float(v), 1) for v in centre],
@@ -2713,6 +2713,30 @@ def floor_mm(v) -> float:
     """A measured distance (mm) kept or shown to 0.1 mm, rounded down: never more room than was measured (9.96 mm is
     9.9, not the 10.0 that would be clear). Float noise aside: 2.3 stays 2.3."""
     return math.floor(float(v) * 10.0 + 1e-6) / 10.0
+
+
+def _touch_floor(v) -> float:
+    """A scan distance as kept: 0.0 under SCAN_TOUCH_MM, where the check stops looking closer (it touches; the distance
+    measured there is one pose's, not a bound of the path), else rounded down to 0.1 mm."""
+    return 0.0 if float(v) < SCAN_TOUCH_MM else floor_mm(v)
+
+
+def scan_event_text(res: dict) -> str:
+    """The scan check's line in the Studio's progress (the "world" and "agent" events): what scan_check says, short."""
+    if res.get("skipped"):
+        return str(res["skipped"])
+    mc, n = res.get("min_clearance_mm"), len(res.get("regions") or [])
+    st = res.get("stats") or {}
+    cut = bool(st.get("truncated"))
+    if mc is not None:
+        text = ("The arm touches or passes through the scan" if mc < SCAN_TOUCH_MM else
+                f"Closest to the scan: {'at most ' if cut else ''}{_mm1(mc)} mm")
+    elif cut:
+        text = "Not all measured in time"
+    else:                                               # as scan_check: more than the bound, never more than measured
+        text = f"Nothing within {mm_text(min(SCAN_CUT_MM, float(st.get('beyond_mm') or SCAN_CUT_MM)))} mm of the scan"
+    return (text + (f", {n} near miss{'es' if n != 1 else ''}" if n else "")
+            + (" (cut short)" if cut and mc is not None else ""))
 
 
 def mm_text(v) -> str:

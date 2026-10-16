@@ -842,6 +842,31 @@ def test_a_touch_box_row_never_claims_room_the_box_does_not_leave(nominal, speck
     assert r["box_clearance_mm"] == 0.0, (r["box_clearance_mm"], truth)       # before: 0.1
 
 
+def test_a_touch_is_kept_as_nothing_to_spare_and_the_event_says_so(speck_touch):
+    """Under 0.5 mm the check stops looking closer (the arm touches the scan), so the distance it had there is one
+    pose's, not a bound of the path: it was kept as 0.2 mm (and the final skeptic's 0.197 mm speck on the review's desk
+    likewise), and the scan event read "Closest to the scan: 0.2 mm". Now the check keeps 0.0 there, its rows too, and
+    the event says the arm touches the scan."""
+    res = speck_touch
+    assert res["min_clearance_mm"] == 0.0 and all(r["min_clearance_mm"] == 0.0 for r in res["regions"]), res
+    assert worlds.scan_event_text(res) == "The arm touches or passes through the scan, 1 near miss"
+    assert "touches or passes through" in worlds.scan_check(res)["text"]
+
+
+@pytest.mark.parametrize("beyond, says", [(None, "50"), (49.96, "49"), (12.34, "12")])
+def test_the_scan_event_never_says_more_room_than_the_check(beyond, says):
+    """Nothing measured within 50 mm, but the motion between two poses bounded only to just under it: the check says
+    "more than 49 mm" (stats beyond_mm) and the event said "Nothing within 50 mm of the scan". Both now say the bound."""
+    res = {"min_clearance_mm": None, "regions": [], "stats": {"truncated": False, **({"beyond_mm": beyond} if beyond else {})}}
+    assert worlds.scan_event_text(res) == f"Nothing within {says} mm of the scan"
+    assert f"The arm stays more than {says} mm from the scanned surface." in worlds.scan_check(res)["text"]
+    assert worlds.scan_event_text({"min_clearance_mm": 3.47, "regions": [{}], "stats": {}}) == \
+        "Closest to the scan: 3.4 mm, 1 near miss"
+    assert worlds.scan_event_text({"min_clearance_mm": 3.47, "regions": [], "stats": {"truncated": True}}) == \
+        "Closest to the scan: at most 3.4 mm (cut short)"
+    assert worlds.scan_event_text({"skipped": "The room scan has no triangles."}) == "The room scan has no triangles."
+
+
 def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):
     """Cut short before the first pose is measured (the clock runs out while the scan is prepared), the check has
     measured nothing: it says there wasn't time, never that the part of the path checked is clear."""
