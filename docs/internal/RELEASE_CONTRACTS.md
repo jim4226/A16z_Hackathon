@@ -738,8 +738,10 @@ members; a member can hold several.
   with a password (`scheme://user:password@`: the user may be empty, `redis://:password@host`, or an e-mail address,
   `smtp://bob@gmail.com:password@smtp.gmail.com`; the password has 8 characters or more and runs to the last `@`
   before a space or a `/`, so a raw `?`, `#` or `@` in it, which RFC 3986 says to %-escape but people paste as it is,
-  is caught and redacted with the rest; it is ASCII only, so Chinese or Japanese written straight after a link is not
-  read as one; a port, 1 to 5 digits followed by `/`, `?`, `#`, `@`, `"`, `<` or `>`, is no password, so
+  is caught and redacted with the rest; it may hold letters such as é, ñ or ж but nothing from U+2000 on (Chinese,
+  Japanese, Korean, full-width punctuation, emoji), so Chinese or Japanese written straight after a link is not read
+  as one (Thai, written without spaces too, still can be); a port, 1 to 5 digits followed by `/`, `?`, `#`, `@`, `"`,
+  `<` or `>`, is no password, so
   `http://10.0.0.5:8765?user=bob@example.com` and `http://10.0.0.5:8765@evil.com` pass. Not caught: a password with a
   raw `/`, and one that starts with 1 to 5 digits and one of those characters, `postgres://admin:2024?Secret@db`.
   Still refused: a port followed with no space by `,`, `;` or `&` and text with an `@`,
@@ -795,7 +797,8 @@ members; a member can hold several.
   e-mail address as the user 0 (20,000; 20,000); a password of 12 to 20 characters drawn as password managers draw
   them, with at least one raw symbol: of `!@#$%^&*` 145 (3,131; 8,096), of `!#$%&*+-.:;=?^_~` 106 (0; 8,058), a `?`
   293 (0; 20,000), a `#` 322 (0; 20,000), an `@` 294 (11,431; 11,431), every one of them a password that starts with
-  1 to 5 digits and a `?`, `#` or `@`; with a raw `/` all 20,000 (all; all). The tool runner redacts
+  1 to 5 digits and a `?`, `#` or `@`; with a raw `/` all 20,000 (all; all); with a letter outside ASCII (é, ñ, ü, ß,
+  ж) 0 (0; 0). The tool runner redacts
   and refuses with the same shapes (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the

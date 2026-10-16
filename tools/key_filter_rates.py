@@ -273,7 +273,8 @@ def links(n: int):
         return make
 
     for symbols, what in (("!@#$%^&*", "symbols !@#$%^&*"), ("!#$%&*+-.:;=?^_~", "symbols !#$%&*+-.:;=?^_~"),
-                          ("?", "a raw ?"), ("#", "a raw #"), ("@", "a raw @"), ("/", "a raw /")):
+                          ("?", "a raw ?"), ("#", "a raw #"), ("@", "a raw @"), ("/", "a raw /"),
+                          ("éñüßж", "a letter outside ASCII (é, ñ, ü, ß, ж)")):
         missed(f"a password of 12 to 20 characters with {what}", users, drawn(symbols))
 
 

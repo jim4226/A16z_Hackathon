@@ -70,6 +70,8 @@ RAW_PASSWORD_LINKS = [
     ("redis://default:Pa@ss#w0rd!Xy@redis.example.com:6379/0", "Pa@ss#w0rd!Xy"),
     ("https://bob:Secr3t?Pass@github.com?cc=ops@example.com", "Secr3t?Pass"),
     ("smtp://robots.lab@gmail.com:Xk9fP2qL#mB7@smtp.gmail.com:587", "Xk9fP2qL#mB7"),
+    ("postgres://admin:Contraseña2024!@db.example.com:5432/morph", "Contraseña2024!"),
+    ("mysql://root:Пароль2024секрет@localhost/morph", "Пароль2024секрет"),
 ]
 
 

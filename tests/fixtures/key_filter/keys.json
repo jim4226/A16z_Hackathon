@@ -77,6 +77,7 @@
   {"family": "url_with_password_raw_at", "make": "redis://default:{alpha:3}@{alnum:10}@redis.example.com:6379/0", "caught": "everywhere"},
   {"family": "url_with_password_empty_user", "make": "redis://:{alnum:16}@redis.example.com:6379/0", "caught": "everywhere"},
   {"family": "url_with_password_email_user", "make": "smtp://robots.lab@gmail.com:{alnum:14}@smtp.gmail.com:587", "caught": "everywhere"},
+  {"family": "url_with_password_latin_letters", "make": "postgres://admin:{alpha:4}ñ{alnum:6}é@db.example.com:5432/morph", "caught": "everywhere"},
   {"family": "opaque_bearer", "make": "Authorization: Bearer {alnum:40}", "caught": "everywhere"},
   {"family": "aws_secret_key", "make": "{base64:40}", "caught": "env_line"},
   {"family": "wandb", "make": "{hex:40}", "caught": "env_line"},
