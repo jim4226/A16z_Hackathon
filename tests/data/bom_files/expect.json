@@ -1061,5 +1061,83 @@
     1
    ]
   }
+ },
+ "hobby_printed_parts.csv": {
+  "note": "round 7's final skeptic: printed parts named for their joint with the servo they hold, noted \"printed PLA\" (1f6b690 seeded {mg996r: 7, sg90: 3})",
+  "lines": {
+   "MG996R servo": [
+    "mg996r",
+    3
+   ],
+   "SG90 micro servo": [
+    "sg90",
+    1
+   ],
+   "Base (MG996R)": [
+    null,
+    0
+   ],
+   "Upper arm link (MG996R)": [
+    null,
+    0
+   ],
+   "Forearm link (MG996R)": [
+    null,
+    0
+   ],
+   "Gripper rack (SG90)": [
+    null,
+    0
+   ],
+   "Gripper pinion (SG90)": [
+    null,
+    0
+   ],
+   "Counterweight (MG996R)": [
+    null,
+    0
+   ],
+   "Bearing 6807": [
+    null,
+    0
+   ],
+   "M3 screw 10 mm": [
+    null,
+    0
+   ]
+  }
+ },
+ "so101_printed.csv": {
+  "note": "round 7's final skeptic: SO-101 printed parts named with the servo, noted \"printed\" (1f6b690 seeded a phantom 7.4 V STS3215 x4)",
+  "lines": {
+   "STS3215 servo 12V": [
+    "sts3215",
+    6
+   ],
+   "Moving jaw (STS3215)": [
+    null,
+    0
+   ],
+   "Static jaw STS3215": [
+    null,
+    0
+   ],
+   "Wrist link STS3215": [
+    null,
+    0
+   ],
+   "Upper arm STS3215": [
+    null,
+    0
+   ],
+   "Motor holder STS3215": [
+    null,
+    0
+   ],
+   "Waveshare bus servo adapter": [
+    null,
+    0
+   ]
+  }
  }
 }

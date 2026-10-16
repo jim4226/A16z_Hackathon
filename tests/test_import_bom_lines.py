@@ -228,11 +228,38 @@ def test_an_upgrade_kit_or_a_drive_part_is_no_servo(item):
     assert r["catalog"] is None and r["category"] != "actuator", r
 
 
+PRINTED = [  # (part name, notes): printed parts named for their joint with the model, the printed note after it
+    ("Base MG996R (printed)", ""), ("Forearm STS3215 (printed)", ""), ("Gripper SG90 (PLA)", ""),
+    ("Wrist STS3215 - printed part", ""), ("Base MG996R, printed", ""), ("Gripper: SG90 (printed housing)", ""),
+    ("STS3215 shoulder pan (printed)", ""), ("MG996R elbow - printed", ""), ("Base MG996R (3D printed)", ""),
+    ("Upper arm (PETG) MG996R", ""), ("Shoulder STS3215 (resin)", ""), ("Elbow MG996R STL", ""),
+    ("Base (MG996R)", "printed PLA"), ("Upper arm STS3215", "printed"), ("Moving jaw (STS3215)", "printed"),
+    ("Gripper (SG90)", "ABS"), ("Shoulder pan", "3D printed, holds STS3215 12V servo")]
+
+
+@pytest.mark.parametrize("item, notes", PRINTED, ids=[" / ".join(x for x in p if x) for p in PRINTED])
+def test_a_printed_part_is_never_a_motor(item, notes):
+    """"printed", "3D printed", "PLA", "PETG", "ABS", "resin" or "STL" anywhere in a line's name or notes makes it a part
+    (1f6b690 read 14 of these 17 as catalog motors, "STS3215 shoulder pan (printed)" and "MG996R elbow - printed" new
+    since 0033630)."""
+    (r,) = bom.map_table([["Part", "Qty", "Notes"], [item, "1", notes]])[0]
+    assert r["catalog"] is None and r["category"] != "actuator", r
+
+
+def test_a_servo_for_a_printed_arm_is_still_a_servo():
+    """A print word in what a servo fits says what the arm is, not the line."""
+    for item, notes in (("MG996R servo for 3D printed arm", ""), ("MG996R servo", "for the printed arm"),
+                        ("STS3215 12V servo (fits the 3D printed SO-101)", "")):
+        (r,) = bom.map_table([["Part", "Qty", "Notes"], [item, "1", notes]])[0]
+        assert r["catalog"] in ("mg996r", "sts3215"), r
+
+
 @pytest.mark.parametrize("name, want", [
     ("aloha_bimanual.csv", {"xm430_w350": 16, "xl430_w250": 10}), ("motor_ids.csv", {"sts3215_7v4": 6}),
     ("lerobot_joint_names.csv", {"sts3215_7v4": 6}), ("lerobot_model_first.csv", {"sts3215": 6}),
     ("joint_motor_columns.csv", {"mg996r": 3, "sg90": 3}), ("part_desc_joints.csv", {"sts3215": 6}),
-    ("packs_mixed.md", {"sts3215": 12, "sts3215_7v4": 6, "mg996r": 6, "sg90": 4})])
+    ("packs_mixed.md", {"sts3215": 12, "sts3215_7v4": 6, "mg996r": 6, "sg90": 4}),
+    ("hobby_printed_parts.csv", {"mg996r": 3, "sg90": 1}), ("so101_printed.csv", {"sts3215": 6})])
 def test_the_import_dialog_seeds_the_motors_a_joint_named_list_lists(name, want, tmp_path, monkeypatch):
     """The Import dialog's path (add_file, detect, commit): ALOHA's waist and wrist-angle servos, motor IDs, LeRobot's
     own joint names, the model before the joint, a Joint/Motor table, the joint as the part with the servo described,

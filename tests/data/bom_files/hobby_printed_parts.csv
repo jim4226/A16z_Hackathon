@@ -1,0 +1,11 @@
+Part,Qty,Notes
+MG996R servo,3,base shoulder elbow
+SG90 micro servo,1,gripper
+Base (MG996R),1,printed PLA
+Upper arm link (MG996R),1,printed PLA
+Forearm link (MG996R),1,printed PLA
+Gripper rack (SG90),1,printed PLA
+Gripper pinion (SG90),1,printed PLA
+Counterweight (MG996R),1,printed PLA
+Bearing 6807,1,
+M3 screw 10 mm,20,

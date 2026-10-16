@@ -145,6 +145,12 @@ _PART_VERB = re.compile(r"(?:uses?|using|used|requires?|required|needs?|needed|h
                         r"carries|driven|drives?|mounted|attached|attaches|with|without|w|incl|inkl|by|from|"
                         r"alternative|instead|replaces)", re.I)
 _UPGRADE = re.compile(r"upgrades?|upgraded", re.I)
+# a printed part is never a motor, whatever joint it is named for and whatever model it holds ("Base MG996R (printed)",
+# "Gripper SG90 (PLA)", "STS3215 shoulder pan (printed)", "Upper arm STS3215" noted "printed"): a print word anywhere
+# in the name or the notes, except in a clause about what a servo fits ("MG996R servo for the 3D printed arm")
+_PRINTED = re.compile(r"\b(?:3d[- ]?print(?:ed|s)?|printed(?!\s+circuit)|prints?|pla|petg|abs|asa|tpu|resin|stls?)\b",
+                      re.I)
+_CLAUSE_BREAK = re.compile(r"[,;()\[\]]|\s[-–—]+\s|[–—]")
 _PART = re.compile(  # mechanical parts, then what _category files as electronics, cables, fasteners or material, tools
     r"(?:frames?|idlers?|gearbox(?:es)?|splines?|shafts?|axles?|couplers?|couplings?|collars?|bearings?|discs?|disks?|"
     r"flanges?|magnets?|stickers?|labels?|gaskets?|grommets?|potentiometers?|linkages?|rods?|pushrods?|levers?|savers?|"
@@ -553,6 +559,16 @@ def _says_motor(detail: str) -> str | None:
     return text if any(k == "plain" and _MOTOR_WORD.fullmatch(w) for w, k in _words(_head(_unlabel(detail)))) else None
 
 
+def _printed(text: str) -> bool:
+    """Whether a part name or its notes say the part is printed (_PRINTED: "printed", "3D printed", "PLA", "PETG",
+    "ABS", "resin", "STL"), outside a clause about what it fits ("MG996R servo for the 3D printed arm" is a servo)."""
+    for m in _PRINTED.finditer(text or ""):
+        fits = list(_FITS.finditer(text, 0, m.start()))
+        if not (fits and not _CLAUSE_BREAK.search(text, fits[-1].end(), m.start())):
+            return True
+    return False
+
+
 def _not_a_motor_ref(ref: str) -> bool:
     """Reference designators that name only connectors, chips, passive parts or switches ("J2 J3 J4")."""
     refs = [m.group(0) for m in re.finditer(r"[A-Za-z]+(?=\d)", ref or "")]
@@ -602,6 +618,8 @@ def _classify(item: str, mpn: str = "", detail: str = "", ref: str = "") -> tupl
     from .autoprofile import MODEL_RX, VARIANT_RX, VARIANTS
     if ref and _not_a_motor_ref(ref):
         return None, False
+    if _printed(item) or _printed(detail):
+        return None, False                             # "Base MG996R (printed)", "Upper arm STS3215" noted "printed"
     item = _unlabel(item)                              # "Base (J1): STS3215 12V", "Gripper - XL330-M288-T"
     mpn_model = bool(mpn and MODEL_RX.search(mpn))
     if MODEL_RX.search(_head(item)) or mpn_model:
