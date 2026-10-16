@@ -1762,9 +1762,12 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     30.86 N stall (it read covered, and the compiled firmware put 25.94 N on one 2 % over its size); its probe is
     0.92 mm. Without a damage force the same part covers (1.04 mm probe), and its large end can reach the stall for the
     moment before the jaw opens: the plan's warning, the firmware's comment and the manual say so. So on this hand the
-    only hobby grips without an issue are force-sensing ones on flat-sided parts 21.5-25 mm wide with no damage force
-    (`capability.MIN_WIDTH_MM`: the force-sensing fingers close on 21.5 mm flat, 26 mm round); the marker covers but is
-    too small for the fingers (a `too_small` issue), and without force sensors no object both covers and fits the
+    only hobby grips without an issue are force-sensing ones on flat-sided parts from 21.5 mm (`capability.MIN_WIDTH_MM`:
+    the force-sensing fingers close on 21.5 mm flat, 26 mm round; the plan itself raises no issue from 21.01 mm) up to
+    25.97 mm wide (from 25.98 mm, reaching the small end of its size would let a dead sensor put 80 % of the stall on
+    a gauge-sized one, the probe's cap), with no damage force or one at or above the MG996R's 30.86 N stall (below it
+    a dead sensor can put the stall on one at the large end of its size), measured on parts of 5 to 132 g (heavier
+    ones overload the hobby shoulder); the marker covers but is too small for the fingers (a `too_small` issue), and without force sensors no object both covers and fits the
     fingers (31.5 mm flat, 38 mm round). `probe_n` (stall x probe / band) and `large_n` (stall x min(probe + spread,
     band) / band) are what a gauge-sized object and one at the large end of its size get at the probe with a dead
     sensor until the jaw opens (`reach_large_n` the latter at `reach_mm`); the plan's warning, the firmware's comment
@@ -1904,8 +1907,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   than the few above. A place named after people
   infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
   place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
-  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,493
-  requests from the release review's two hunts and the fixer's, each with the task, people and e-stop it must get,
+  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,575
+  requests from the release review's two hunts and the fixers' rounds, each with the task, people and e-stop it must get,
   run through `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
   order, failures included; not the ones it carried over or that were blocked), and `reused`: the stages whose

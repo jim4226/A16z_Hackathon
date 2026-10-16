@@ -500,8 +500,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   19.77 N on a 2 N grape, and at a 22 mm part's 1.04 mm the MG996R's whole 30.86 N stall on one 8 % over its size,
   above its 25 N damage force) it stops where a gauge-sized object gets the force limit, or two position commands
   (0.92 mm for the egg, 0.16 mm for the grape), a narrower object isn't gripped, and the plan says so as an issue.
-  On the generated MG996R hand that leaves force-sensing grips on flat-sided parts 21.5-25 mm wide with no damage
-  force as the only hobby grips without an issue; without force sensors none fits the fingers and covers its size.
+  On the generated MG996R hand that leaves force-sensing grips on flat-sided parts from 21.5 mm (the least those
+  fingers close on; the plan itself raises no issue from 21.01 mm) up to 25.97 mm wide, with no damage force or one
+  at or above the servo's 30.86 N stall, as the only hobby grips without an issue (measured on parts of 5 to 132 g;
+  heavier ones overload the hobby shoulder); without force sensors none fits the fingers and covers its size.
   The simulation and robustness studies let such an object go too, as "Let go with !GRIP"; New robot then uses
   smart-bus servos and says why. The
   power budget, the plan's warning, the manual and the simulation use that squeeze, and a hold above the servo's
@@ -523,8 +525,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   the medicine to her home nurse", "to her office manager", "to my dad's room mate") stay hand-overs with an emergency
   stop.
 - New robot reads far more people as the person it hands things to, or works beside, and keeps the emergency stop
-  next to them. Of the release review's 573 one-line requests, 157 that put a person next to the robot built it with
-  nobody nearby and no emergency stop, among them "pass the clamp to the surgeon", "a robot that hands parts to the
+  next to them. Of the release review's 573 one-line requests, 151 that put a person next to the robot built it with
+  nobody nearby and no emergency stop (6 more had an emergency stop but nobody nearby), among them "pass the clamp to the surgeon", "a robot that hands parts to the
   operator", "bring them their drinks", "give the pills to Mary", "bring dad his slippers", "give the baby her bottle",
   "get me a drink from the fridge", "a robot that works next to the operator" and "bring the meds to her twice a day,
   she lives alone"; 77 more kept the e-stop but not the hand-over ("bring the meds to my grandma"), and 12 that hand
@@ -539,15 +541,17 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   seeds" and "hand the horse a carrot" had no one nearby and no emergency stop, and "toss balls to my dog" and "pass
   the treats to my dog" were robots that "hand over" the things, as if to a person.
 - New robot reads the person it hands things to from how the request is put together, not only from word lists. Of
-  the release review's second hunt, 683 more one-line requests, 183 built a robot with nobody nearby and no
-  emergency stop although a person takes the thing or works beside it, among them job titles not on the lists ("hand
+  the release review's second hunt, 683 more one-line requests, 165 built a robot with nobody nearby and no
+  emergency stop although a person takes the thing or works beside it (18 more said only pets, or nobody, were nearby,
+  with an emergency stop), among them job titles not on the lists ("hand
   parts to the fitter", "pass the hose to the fireman", "hand the optometrist the lenses", "pass the reins to the
   jockey"), family and casual words ("bring granma her tea", "bring pa his boots", "pass the salt to sis", "hand my
   bestie the controller"), "hand Nurse Jones the gauze" and names in lower case ("give the pills to mary"), "I'm right
   next to it", "no one near it but me", "the operator takes the part from its gripper", "bring them water", "chuck me
   a beer", "supply the welder with rods" and "hand teh nurse the gauze"; a pet feeder's hand-over to a person said
-  pets were nearby ("hand the dog walker the dog food"). 53 more kept the emergency stop but built a pick and place
-  ("hand the x-ray films to the doctor", "return the cup to my grandma"). None does now. A noun phrase between a
+  pets were nearby ("hand the dog walker the dog food"). 44 more kept the emergency stop but built a pick and place,
+  a sort or a transfer ("hand the x-ray films to the doctor", "return the cup to my grandma"), and 9 hand-overs of
+  tool guns were refused. None does now. A noun phrase between a
   giving verb and a second one is who gets the second ("hand the bride her bouquet", "give the morning shift their
   parts") unless it is a thing, a place, the robot or an animal; a word that names someone by what they do (the
   riveter, the anaesthetist, the librarian, the postman, the salesperson) is a person unless it is a machine, a
