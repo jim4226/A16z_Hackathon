@@ -508,6 +508,7 @@ def _joint_head(item: str) -> bool:
     """Whether a part name's head names only a joint, arm or motor (_label_words; joint references too): "Base
     (MG996R)", "Waist (XM430-W350-T)", "J1 (STS3215)", "J1 (base) STS3215 12V"."""
     words = _words(_COUNT.sub("", _head(item))) or _words(_head(item))       # "#1 (STS3215)"
+    words = [(w, k) for w, k in words if w != "&"]                           # "Shoulder & elbow (MG996R)"
     if not words or any(k != "plain" and not (_REF.fullmatch(w) or _ROBOT.fullmatch(w)) for w, k in words):
         return False                                   # a model or a part number: "U2D2 (XL430)"
     return _label_words(words)

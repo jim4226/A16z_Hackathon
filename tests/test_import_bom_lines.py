@@ -151,7 +151,8 @@ JOINT_LABELS = [  # labels whose every word names a joint, motion, arm, side or 
     ("Link 2: MG996R", "mg996r"), ("Wheel: STS3215 12V", "sts3215"), ("Gripper (moving jaw) STS3215", "sts3215_7v4"),
     ("Leg 2 MG996R", "mg996r"), ("Front left leg MG996R", "mg996r"), ("Index finger (SG90)", "sg90"),
     ("End effector (SG90)", "sg90"), ("Optional: STS3215 12V", "sts3215"), ("Set of 6 STS3215", "sts3215_7v4"),
-    ("Tower Pro MG996R", "mg996r"), ("Shoulder jaw (STS3215)", "sts3215_7v4")]
+    ("Tower Pro MG996R", "mg996r"), ("Shoulder jaw (STS3215)", "sts3215_7v4"),
+    ("Shoulder & elbow (MG996R)", "mg996r")]     # 0033630: mg996r; 1f6b690: no motor ("&" read as a part number)
 
 
 @pytest.mark.parametrize("item", PART_LABELS)
