@@ -562,8 +562,13 @@ def test_the_panel_fits_three_window_sizes_and_nothing_draws_while_idle(run):
             pg.shot(f"e2e_layout_{size[0]}_inspector")
             pg.click(".inspbtn")
     # idle: once the camera's damping has run out (fast-forwarded here: software WebGL draws ~1 frame a second),
-    # nothing is drawn while nothing moves, in the room, walking or not; a hidden 3D view stops the walk
+    # nothing is drawn while nothing moves, in the room, walking or not; a hidden 3D view stops the walk. The settle's
+    # last step still moves the camera a little (a 'change': one frame owed), and under load that frame came more than
+    # 1.5 s later, inside the count (it drew 1 frame at load 6-17): the count starts once that frame is drawn
     settle = "() => { const c = window.morph.viewer.v.controls; for (let i = 0; i < 600; i++) c.update(); return true; }"
+    drawn = """() => new Promise((done) => { const v = window.morph.viewer.v;
+      const tick = () => requestAnimationFrame(() => (v._dirty ? tick() : requestAnimationFrame(() => done(true))));
+      tick(); })"""
     pg.ev(COUNT)
     for what in ("the room, panel open", "walking, no key held"):
         if what.startswith("walking"):
@@ -571,6 +576,7 @@ def test_the_panel_fits_three_window_sizes_and_nothing_draws_while_idle(run):
             until(lambda: pg.world("!!wv.walking"), 20, "walking")
             time.sleep(1.5)
         pg.ev(settle)
+        pg.ev(drawn)
         time.sleep(1.5)
         n0 = pg.ev(COUNT)
         time.sleep(4.0)
