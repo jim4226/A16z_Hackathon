@@ -451,6 +451,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   shown, written into, and its kept design built as the new project's first revision), and a deleted project's chat no
   longer makes its folder again. `morph studio <project>` on a project of your own whose first build was cut off or
   failed says how to go on instead of building the default robot into it ("no project ... yet").
+- Teams: a change request applied in a Studio that stopped before building it no longer stays "applied" with no
+  revision in another Studio that keeps running on the same projects folder (Apply and Close answered "already
+  applied" until some Studio restarted): that Studio opens it again, with why, as soon as the requests are listed,
+  applied or closed. A request whose revision was written just before the stop is recorded built there (it was opened
+  again, and applying it again ended "nothing to change"), and a request whose change the design already has is
+  applied at the head revision (it stayed open with "nothing to change" for good).
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

@@ -325,13 +325,20 @@ and a stop in between leaves both journals, never neither. Then:
   revisions has its label, cut to 48 characters, and a results.json newer than the job; each revision accounts for one
   job) is skipped: it was built;
 - a conflict waiting for an answer waits again (`JobQueue.restore`, same id: the page draws its Apply / Drop again);
-- then `rooms.STARTED` hooks `fn(studio)` run: a team Studio reopens every change request that is applied but has no
-  revision (`api_team.reopen_stopped`, `last_error` "the Studio stopped before it finished. Apply it again") and tells
-  whoever applied it and its author in their inbox, except one applied in another Studio that still runs on the same
-  projects folder: the `apply` line names the Studio (`studio`: its `rooms.OWNER`, `applied_in` on the request) and
-  `rooms.owner_live` leaves it to that Studio, as for the queue journals. A build that ends after its request was
-  reopened anyway (a file system that can't lock) still records its revision: `done` with a revision makes an open
-  request applied again (`collab._proposal_state`).
+- then `rooms.STARTED` hooks `fn(studio)` run: a team Studio settles every change request that is applied but has no
+  revision (`api_team.reopen_stopped` → `settle_stopped`) and tells whoever applied it and its author in their inbox:
+  it is recorded built ("Change request #<n> built <rev>.") when a finished revision has its label (`#<n> <title>`,
+  cut to 48 characters) and its author (`proposed_by`) and a results.json no older than a second before it was
+  applied (`api_team.built_after_all`: the stop came between the build and its record), else opened again
+  (`last_error` "the Studio stopped before it finished. Apply it again"). One applied in another Studio that still
+  runs on the same projects folder is left alone: the `apply` line names the Studio (`studio`: its `rooms.OWNER`,
+  `applied_in` on the request) and `rooms.owner_live` leaves it to that Studio, as for the queue journals. A Studio
+  that keeps running settles them too, each time it lists, applies or closes a project's change requests (one this
+  Studio applied, or one applied with no Studio named, it leaves to its own queue), so a request a stopped Studio
+  applied never stays "applied" with no revision until some Studio starts. A request whose change the head revision
+  already has (the build ends `noop`) is applied at the head revision, not opened again with "nothing to change". A
+  build that ends after its request was reopened anyway (a file system that can't lock) still records its revision:
+  `done` with a revision makes an open request applied again (`collab._proposal_state`).
 New robot's Build on a brief that reads "building" answers `already: true` only while its project builds (here, or
 in another Studio still running on the same projects folder: `Studio.held_elsewhere`) or has a finished revision
 (`api_brief._studio_revive`); a project that is gone, or empty and idle, is built anew (this brief's own empty project

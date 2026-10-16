@@ -1068,3 +1068,88 @@ def test_a_studio_process_stopped_twice_by_a_signal_mid_first_build_builds_it_ag
     builds.gate.set()
     finish(*queued)
     assert kb1.completed() == ["r001"]
+
+
+# ------------------------------------------------------------------ change requests a stopped Studio left
+
+
+def _team_server(home):
+    from morph.studio.teams import auth
+    from test_studio_features import caller, start
+    from test_team_util import make_team
+    ids, cookies = make_team(str(home))
+    st = server.Studio(RobotProject(str(home / "egg")), str(home), team=True)
+    httpd = start(st)
+    port = httpd.server_address[1]
+    jar = {n: {"Cookie": f"{auth.cookie_name(port)}={c}"} for n, c in cookies.items()}
+    return st, httpd, caller(httpd), ids, jar
+
+
+def test_a_change_request_a_stopped_studio_applied_opens_again_in_one_that_runs(home, builds):
+    """Two team Studios: Olivia applies a request in A, and A is killed mid-build. B, still running, showed it
+    "applied" with no revision; Apply and Close both answered "already applied", and nothing built it until some Studio
+    restarted. B now opens it again (or records it built) as soon as it is listed, applied or closed."""
+    from test_team_util import members
+    st, httpd, call, ids, jar = _team_server(home)
+    try:
+        root = str(home / "egg")
+        p = collab.create_proposal(root, ids["Vic"], "Quantity to 77", {"build.quantity": 77}, members=members(home))
+        other = hold(home / ".studios" / "feedfacecafebeef.lock")               # Studio A, running
+        collab.apply_proposal(root, p["id"], ids["Ana"], members=members(home), studio="feedfacecafebeef")
+        s, out, _ = call("GET", "/api/proposals", headers=jar["Ana"])
+        assert s == 200 and out["proposals"][0]["status"] == "applied"           # A's to build while it runs
+        other.stdin.close()
+        other.wait(10)                                                           # A is gone, r002 never built
+        s, out, _ = call("GET", "/api/proposals", headers=jar["Ana"])
+        assert out["proposals"][0]["status"] == "open" and out["proposals"][0]["last_error"] == api_team.STOPPED
+        assert any("wasn't built: the Studio stopped" in i["text"] for i in activity.inbox(str(home), ids["Vic"])["items"])
+        s, out, _ = call("POST", "/api/proposals/apply", {"id": p["id"]}, headers=jar["Ana"])
+        assert s == 202, out
+        finish(*(st.room().jobs.get(j["id"]) for j in st.room().jobs.snapshot()))
+        settled()
+        q = collab.get_proposal(root, p["id"])
+        assert q["status"] == "applied" and q["applied_rev"] == "r002"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_a_change_request_built_just_before_a_stop_is_recorded_built(home, builds):
+    """A stop in the few ms between a request's revision (results.json) and its "done" record: the next start reopened
+    it ("wasn't built: the Studio stopped") though r002 held the change, and applying it again said "Nothing to change"
+    and left it open for good. The start now finds r002 and records the request built there."""
+    from test_team_util import make_team, members
+    ids, _ = make_team(str(home))
+    root = str(home / "egg")
+    p = collab.create_proposal(root, ids["Vic"], "Quantity to 77", {"build.quantity": 77}, members=members(home))
+    collab.apply_proposal(root, p["id"], ids["Ana"], members=members(home))
+    time.sleep(1.1)                                                              # applied a second before it was built
+    egg = RobotProject(root)
+    rev = egg.run(egg.load_design("r001").with_changes({"build.quantity": 77}), parent="r001",
+                  label=f"#{p['n']} {p['title']}"[:48], by=ids["Ana"], proposed_by=ids["Vic"])
+    assert rev == "r002"                                                         # ... and the Studio stopped here
+    server.Studio(RobotProject(root), str(home), team=True)
+    q = collab.get_proposal(root, p["id"])
+    assert q["status"] == "applied" and q["applied_rev"] == "r002" and not q.get("last_error")
+    texts_ = [i["text"] for i in activity.inbox(str(home), ids["Vic"])["items"]]
+    assert any("built r002" in t for t in texts_) and not any("wasn't built" in t for t in texts_)
+
+
+def test_applying_a_change_the_design_already_has_marks_it_applied(home, builds):
+    """A request whose change the head already has (built by hand, or by a request recorded before) used to end "Nothing
+    to change" and stay open, its last error "nothing to change", for good: it is applied, at the head revision."""
+    from test_team_util import members
+    st, httpd, call, ids, jar = _team_server(home)
+    try:
+        root = str(home / "egg")
+        p = collab.create_proposal(root, ids["Vic"], "Quantity to 77", {"build.quantity": 77}, members=members(home))
+        finish(st.queue_params(st.room(), {"build.quantity": 77}))               # the head has it now (r002)
+        s, out, _ = call("POST", "/api/proposals/apply", {"id": p["id"]}, headers=jar["Ana"])
+        assert s == 202, out
+        finish(*(st.room().jobs.get(j["id"]) for j in st.room().jobs.snapshot()))
+        settled()
+        q = collab.get_proposal(root, p["id"])
+        assert q["status"] == "applied" and q["applied_rev"] == "r002" and not q.get("last_error")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
