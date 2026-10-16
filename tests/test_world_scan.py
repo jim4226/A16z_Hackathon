@@ -669,6 +669,26 @@ def test_only_the_closest_places_row_is_exact_the_others_are_measured_and_at_mos
     assert vase["covers"]["clearance_mm"] == vase["min_clearance_mm"] and [g["id"] for g in res["regions"]] == ["scan-1", "scan-2"]
 
 
+def test_the_boxes_time_is_set_aside_only_once_the_second_pass_lists_a_near_miss(tmp_path, nominal, monkeypatch):
+    """The first pass's bounds show the tall vase's near miss early, but a box is fitted only to what the second pass
+    lists. Set aside from the first pass on, the boxes' share (2.4 s for these poses) cut the first pass short at a
+    limit just past where it ends and went unused; now the first pass runs to the limit and measures every pose. (A
+    clock that moves one second a reading.)"""
+    rob, doc = nominal
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+
+    def at(limit):
+        with monkeypatch.context() as mp:
+            mp.setattr(worlds, "time", types.SimpleNamespace(monotonic=Clock().monotonic))
+            return worlds.scan_clearance(room, ROOM, doc, rob.xml, time_limit_s=float(limit))
+    full = at(1e9)["stats"]
+    end1 = math.ceil(full["prepare_s"] + full["pass1_s"])          # clock readings to the end of the first pass
+    assert full["regions_s"] is not None and worlds.SCAN_FIT_S_PER_POSE * full["unique_poses"] >= 2.0, full
+    st = at(end1)["stats"]                                         # before: 542 of 544 poses at this limit
+    assert st["poses_checked"] == st["unique_poses"] and st["truncated"], st      # cut in the second pass, not the first
+
+
 def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):
     """Cut short before the first pose is measured (the clock runs out while the scan is prepared), the check has
     measured nothing: it says there wasn't time, never that the part of the path checked is clear."""

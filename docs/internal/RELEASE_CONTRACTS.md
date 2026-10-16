@@ -1362,8 +1362,10 @@ field failure rate (section 0, honesty).
   exact and 8.0 mm at most), the regions step 0.03-0.12 s with the refinement and 0.04-0.16 s without (one run each,
   load 5-7). `_fit_boxes` prunes each geom's fine samples by its coarse ones
   (as pass 2 does), keys points by 0.25 mm cell, and drops points once clear of the shrinking box. R4: the measuring
-  passes run to `time_limit_s` until there is a near miss (a first-pass bound or a second-pass point closer than
-  `near_mm`); from then on they stop early enough for the regions and the fit, `SCAN_FIT_S_PER_POSE` (4 ms) a distinct
+  passes run to `time_limit_s` until there is a near miss (R5: until the second pass lists one, a point closer than
+  `near_mm`: a box is fitted only to those, and a first-pass bound alone set the time aside and then cut the first pass
+  short with nothing to fit, as on rD at an 8 s limit, stopped at 6.0 s); from then on they stop early enough for the
+  regions and the fit, `SCAN_FIT_S_PER_POSE` (4 ms) a distinct
   pose, at least `SCAN_RESERVE_MIN_S` (0.5 s) and at most `SCAN_RESERVE_SHARE` (25 %) of the limit (2.4 s for the desk
   scan's 607 distinct poses, whose regions and fit took 1.3-1.9 s at load 11-14). A region not fitted by then gets `box:
   None`, `no_box` saying Morph ran out of time, and `stats.fit_timeout`, and the check text says there wasn't time to

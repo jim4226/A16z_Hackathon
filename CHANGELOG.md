@@ -110,8 +110,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   twice, and a box the room holds already is never offered again. The check, the boxes' fit included, stays within its
   20 seconds: the review's desk scan takes 7.5 to 8.5 seconds on a 4-core computer at load 4-7 (12 to 13 before) and 10
   to 11.5 at load 11-13, where it used to take 16 to 18 and was often cut short; a generated room of a million triangles
-  takes 10.5 seconds at load 7. The boxes' share of the time is set aside only once there is a near miss, sized from
-  what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm comes
+  takes 10.5 seconds at load 7. The boxes' share of the time is set aside only once the check has listed a near miss,
+  sized from what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm comes
   within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the path
   was measured, and says whether checking again when the computer is less busy may finish it. Answers cut short, whose
   box ran out of time to be fitted, or that ran out of time before every near miss was listed (they say so, and that

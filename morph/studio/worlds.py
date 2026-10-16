@@ -1159,8 +1159,9 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     "covers" (its box before trimming, with "clearance_mm", the distance it was fitted to), which Add box here saves
     with it. Near misses within SCAN_COVER_MM of one of the world's grey boxes, or of the place a grey box was added
     for while they are no closer than it was fitted to, are left to that box, and so are regions whose box the world
-    holds already (stats["covered"] counts those regions): they are not offered again. Once there are near misses,
-    the measuring passes stop early enough for the regions and their boxes to be done within the limit (about
+    holds already (stats["covered"] counts those regions): they are not offered again. Once the second pass lists a
+    near miss (a box is fitted only to those), it stops early enough for the regions and their boxes to be done within
+    the limit (about
     SCAN_FIT_S_PER_POSE a pose, at least SCAN_RESERVE_MIN_S, at most SCAN_RESERVE_SHARE of it); a box not fitted in
     time isn't offered (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps.
 
@@ -1399,7 +1400,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         if np.array_equal(poses[k][1], poses[k - 1][1]) and np.array_equal(poses[k][2], poses[k - 1][2]):
             first[k] = first[k - 1]
     unique = sum(1 for k, k0 in enumerate(first) if k == k0)
-    # the boxes' share of the time: only once there are near misses to fit them to, and about what the fit needs
+    # the boxes' share of the time: only once the second pass lists a near miss to fit one to, about what the fit needs
     reserve = min(SCAN_RESERVE_SHARE * time_limit_s, max(SCAN_RESERVE_MIN_S, SCAN_FIT_S_PER_POSE * unique))
     for k in _spread(len(poses)):
         if first[k] != k:
@@ -1416,8 +1417,6 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             seen[k] = (gs, dq)                        # pass 2 visits only these, with a tighter bound: reused
             if close is not None:
                 ub_at[k] = close
-            if ubk[k] < near_mm:                        # a near miss: leave time for its box
-                deadline = min(deadline, end - reserve)
     ub = float(ubk.min())
     cut1 = bool(stats["truncated"])
     stats["pass1_s"] = round(time.monotonic() - t0 - stats["prepare_s"], 2)
