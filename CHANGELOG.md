@@ -123,6 +123,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   sides, no further than the box's own size, and with the distance it was fitted to. A world saved through the API
   with a 10 mm cube and a place 50 mm past it on every side could hide a real 9.0 mm near miss; now that place is
   ignored and the near miss is offered.
+- A room-scan near miss's row says "at most X mm" unless it is the check's closest place measured along the whole path,
+  and its distance is measured exactly at its own closest points: before, a row read "2.2 mm from the wrist" in a check
+  cut short where the wrist comes within 2.1 mm, and a box added from it kept 2.2 mm as its fit.
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the

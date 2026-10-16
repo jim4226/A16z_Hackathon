@@ -1328,7 +1328,7 @@ field failure rate (section 0, honesty).
   regions, stats, note}`, with `per_pose` also `poses [[t, mm|None]]`; never raises for a bad scan or model:
   `{"skipped": reason, "note"}`. `regions` (at most `SCAN_MAX_REGIONS` = 8, the closest first): the near misses (closer
   than `near_mm`) grouped by 30 mm, each `{id: "scan-k", label: "Scan near miss k", min_clearance_mm, t, link, point,
-  points, box {center, half, yaw_deg}}`: the scanned surface within 30 mm of them in the world frame along the mount
+  points, box {center, half, yaw_deg}}` (R5: and `exact`, below): the scanned surface within 30 mm of them in the world frame along the mount
   surface's axes, at least 20 mm thick (grown away from the arm), down to the surface when it or the scan under it
   nearly reaches it (W3: then trimmed on the sides facing the swept path until no robot point at any pose comes closer
   to it than the region's `min_clearance_mm`, `box_clearance_mm` and `trimmed` saying so; `box: None` with `no_box` when
@@ -1351,7 +1351,16 @@ field failure rate (section 0, honesty).
   `stats.covered`, the rest numbered again (`_already_boxed`): an API client that saves boxes without `covers` can't get
   the same box offered twice. Measured on the review's desk with the trimmed box and its place saved and the mount moved
   15 mm in -x: the wrist comes within 2.2 mm, above the box, and that place is offered with a box fitted to the new
-  path, where 22bec48 said it had a grey box already. `_fit_boxes` prunes each geom's fine samples by its coarse ones
+  path, where 22bec48 said it had a grey box already. R5: a near miss is listed by its distance to the nearest of the
+  scan's own points, up to rho more than its distance to the scan, so each region's points that could be its closest
+  are measured exactly (`exact()`, closest first, before the limit): its `min_clearance_mm`, `point`, `t` and `link`
+  are a real robot-to-scan distance, the arm coming at least that close there, and the box is fitted to it. Only the
+  region holding the whole check's closest point, in a check not cut short, has `exact: true` (its closest approach);
+  every other region's distance, and every region of a check cut short, is an upper bound the row shows as "at most".
+  `covers.clearance_mm` is that distance, so a later check that measures the place closer offers it again. Measured
+  on the review's desk scan (one region) and a vase beside a bin (two): the rows read as before (8.9 mm exact; 0.0 mm
+  exact and 8.0 mm at most), the regions step 0.03-0.12 s with the refinement and 0.04-0.16 s without (one run each,
+  load 5-7). `_fit_boxes` prunes each geom's fine samples by its coarse ones
   (as pass 2 does), keys points by 0.25 mm cell, and drops points once clear of the shrinking box. R4: the measuring
   passes run to `time_limit_s` until there is a near miss (a first-pass bound or a second-pass point closer than
   `near_mm`); from then on they stop early enough for the regions and the fit, `SCAN_FIT_S_PER_POSE` (4 ms) a distinct
@@ -1396,7 +1405,8 @@ field failure rate (section 0, honesty).
   `world {stage: "scan", status: "start" | "done", text}` ("Closest to the scan: at most 4.6 mm ... (cut short)" when
   cut short) and an `agent` event (`feasibility`, `code`).
 - **Add box here (B2-S3, H3; `static/world.js`).** Under the scan check, each region has a row (what is near, when,
-  the box size, its distance from the path and whether it was trimmed, or why there is no box) and **Add box here**
+  the box size, its distance from the path and whether it was trimmed, or why there is no box; R5: "at most X mm from"
+  unless the region is `exact`) and **Add box here**
   (only with a box): the box joins the world's grey boxes as `{id: region id (made unique), label,
   center, half, yaw_deg, source: "auto", covers?}` (`covers` when the region has one, with its `clearance_mm` and
   `rev`; `worlds.validate` keeps it as a box with `clearance_mm` from 0 to 10 mm and `rev` a revision name, the

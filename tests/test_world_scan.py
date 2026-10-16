@@ -592,7 +592,11 @@ def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nom
         if not st["truncated"]:                         # the closest approach is the whole path's
             assert mc == true and res["at"] == full["at"], (limit, res)
             seen.add("listed in part" if st.get("unlisted_mm") is not None else "whole")
+            assert [r["exact"] for r in res["regions"]] == [True] and res["regions"][0]["min_clearance_mm"] == true
             continue
+        for r in res["regions"]:                        # a row of a check cut short: the arm comes at most this close
+            assert not r["exact"] and r["min_clearance_mm"] >= true - 0.1, (limit, r)
+            assert (r.get("covers") or {}).get("clearance_mm", r["min_clearance_mm"]) == r["min_clearance_mm"], r
         seen.add("pass 1" if st["poses_checked"] < st["unique_poses"] else "pass 2")
         assert "Only part of the path was measured" in c["text"] and "Check placement again" not in c["text"], c
         assert "more than 50 mm" not in c["text"] and "At least" not in c["text"], (limit, c["text"])
@@ -642,6 +646,23 @@ def test_the_scan_check_rounds_its_numbers_down(mc, status, text):
     assert "within at most 9.9 mm" in cut["text"] and "no closer than 3.0 mm" in cut["text"], cut
     part = worlds.scan_check({"min_clearance_mm": 8.0, "at": at, "regions": [], "stats": {"unlisted_mm": 8.39}})
     assert "any other is at least 8.3 mm" in part["text"], part
+
+
+def test_only_the_closest_places_row_is_exact_the_others_are_measured_and_at_most(tmp_path, nominal):
+    """Two near misses: the bin beside the carry arc (touched) and the tall vase (8.0 mm, measured alone). Only the
+    region holding the whole check's closest point has its exact closest approach ("exact"); the other region's
+    distance is measured exactly at its own closest points (not the up to rho more of a scan point), so it is a real
+    distance the arm comes within there: at least the vase's own closest approach, and what its box is fitted to."""
+    rob, doc = nominal
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
+    alone = measure(glb(tmp_path / "vase.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE), box_mesh(bin_beside_the_arc(EGG, 0.0))])
+    res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
+    first, vase = res["regions"]
+    assert first["exact"] and first["min_clearance_mm"] == res["min_clearance_mm"], first
+    assert not vase["exact"] and vase["min_clearance_mm"] >= alone["min_clearance_mm"], (vase, alone["min_clearance_mm"])
+    assert vase["min_clearance_mm"] <= alone["min_clearance_mm"] + 0.2, (vase, alone["min_clearance_mm"])
+    assert vase["covers"]["clearance_mm"] == vase["min_clearance_mm"] and [g["id"] for g in res["regions"]] == ["scan-1", "scan-2"]
 
 
 def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):

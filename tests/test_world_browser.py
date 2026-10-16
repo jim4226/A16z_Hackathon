@@ -238,7 +238,7 @@ def test_the_panel_waits_on_the_other_tabs_and_a_walk_stops_there(server, browse
 def test_the_panels_clearances_are_never_rounded_up(server, browser):
     """The World panel's numbers round a clearance down, never up: the status line's closest box (9.97 mm reads 9.9,
     next to "Under 10 mm"; before, "closest 10 mm"), the marker on the closest place, and a scan near miss's row and
-    its box's distance from the path (to 0.1 mm)."""
+    its box's distance from the path (to 0.1 mm). A row says "at most" unless it is the place's exact closest approach."""
     page = _page(browser)
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -267,8 +267,14 @@ def test_the_panels_clearances_are_never_rounded_up(server, browser):
     rows = page.evaluate("""(c) => { const p = window.demo.panel;
       p.state.result = {...p.state.result, checks: [c], verdict: 'ready', review: {findings: [], source: 'rules'}};
       p.render(); return [...document.querySelectorAll('.wv-panel .wv-scan')].map((e) => e.textContent); }""", scan)
-    assert len(rows) == 1 and "9.9 mm from the wrist" in rows[0] and "9.9 mm from the path" in rows[0], rows
+    assert len(rows) == 1 and "at most 9.9 mm from the wrist" in rows[0] and "9.9 mm from the path" in rows[0], rows
     assert "10.0" not in rows[0], rows
+    # the row of the place holding the check's closest point, measured all along the path, is its closest approach
+    scan["regions"] = [{**region, "exact": True}]
+    rows = page.evaluate("""(c) => { const p = window.demo.panel;
+      p.state.result = {...p.state.result, checks: [c]}; p.render();
+      return [...document.querySelectorAll('.wv-panel .wv-scan')].map((e) => e.textContent); }""", scan)
+    assert ": 9.9 mm from the wrist" in rows[0] and "at most" not in rows[0], rows
     assert not errors, errors
     page.close()
 

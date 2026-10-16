@@ -1515,7 +1515,8 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         out["at"] = {"t": round(float(close["t"]), 2), "link": "object" if b == obj_body else m.body(b).name,
                      "point": [round(float(v), 1) for v in to_world(world, close["q"])]}
     t1 = time.monotonic()
-    out["regions"] = _scan_regions(world, near, S, best if best["d"] < near_mm else None, m, obj_body, floor_cut_mm, stats)
+    out["regions"] = _scan_regions(world, near, S, best if best["d"] < near_mm else None, m, obj_body, floor_cut_mm, stats,
+                                   refine=exact, rho=rho, final=final, deadline=end)
     stats["regions_s"] = round(time.monotonic() - t1, 2)
     if out["regions"]:
         t1 = time.monotonic()
@@ -1733,28 +1734,36 @@ def _near_grey_box(P, D, boxes) -> np.ndarray:
     return out
 
 
-def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None) -> list:
+def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None, refine=None, rho=0.0, final=False,
+                  deadline=math.inf) -> list:
     """The near misses grouped into regions (scan points within 30 mm of each other), the closest SCAN_MAX_REGIONS, each
     as a box in the world frame along the mount surface's axes: the scanned surface within SCAN_GROW_MM of its points,
     at least SCAN_MIN_BOX_MM thick (grown away from the arm: a scan shows only the side facing it) and down to the
     surface when it, or the scan under it, nearly reaches it (a thing standing there). Near misses next to one of the
     world's grey boxes (SCAN_COVER_MM), or to the place one was added for, are that box's (one Add box here fitted
     only while no closer than it was fitted to): a region of nothing else is left out (counted in stats["covered"]).
-    Each region keeps its box in surface axes ("_lo", "_hi", "_R") for _fit_boxes."""
+    Each region keeps its box in surface axes ("_lo", "_hi", "_R") for _fit_boxes.
+    A near miss is listed by its distance to the nearest of the scan's own points, which can be up to rho more than the
+    distance to the scan. With `refine` (exact distances of robot points, as pass 2 has them), each region's points
+    that could be its closest are measured exactly before `deadline`, so its distance ("min_clearance_mm", "_d") is a
+    real robot-to-scan distance, the arm coming at least that close there. It is "exact" (the closest approach there,
+    not only a distance the arm comes within) for the region holding the whole check's closest point when the check
+    measured all of the path (`final`); every other region's distance is "at most"."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     from scipy.spatial import cKDTree
 
-    parts = [(S[a], p, dd, tt, g) for a, p, dd, tt, g in near]
+    parts = [(S[a], p, dd, tt, g, np.zeros(len(dd), bool)) for a, p, dd, tt, g in near]
     if best is not None:
-        parts.append((best["q"][None], best["p"][None], np.array([best["d"]]), np.array([best["t"]]), np.array([best["g"]])))
+        parts.append((best["q"][None], best["p"][None], np.array([best["d"]]), np.array([best["t"]]), np.array([best["g"]]),
+                      np.ones(1, bool)))
     if not parts:
         return []
-    Q, P, D, TT, G = (np.concatenate([x[i] for x in parts]) for i in range(5))
+    Q, P, D, TT, G, B = (np.concatenate([x[i] for x in parts]) for i in range(6))
     keys = _cell_keys(np.floor(Q / 5.0).astype(np.int64))        # one point per 5 mm cell: its closest approach
-    o = np.lexsort((D, keys))
+    o = np.lexsort((~B, D, keys))                                  # (the closest point itself on a tie)
     o = o[np.r_[True, keys[o][1:] != keys[o][:-1]]]
-    Q, P, D, TT, G = Q[o], P[o], D[o], TT[o], G[o]
+    Q, P, D, TT, G, B = Q[o], P[o], D[o], TT[o], G[o], B[o]
     pairs = cKDTree(Q).query_pairs(30.0, output_type="ndarray")
     adj = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(len(Q), len(Q))) if len(pairs) else \
         coo_matrix((len(Q), len(Q)))
@@ -1790,14 +1799,28 @@ def _scan_regions(world, near, S, best, m, obj_body, floor_cut_mm, stats=None) -
         if min(lo[2], under.min() if len(under) else math.inf) < SCAN_GROW_MM:     # it stands on the surface (z = 0)
             lo[2] = 0.0
         j = idx[np.argmin(D[idx])]
+        d, q = float(D[j]), Q[j]
+        if refine is not None:                          # exact distances, closest first, while one could be closer
+            o, done = idx[np.argsort(D[idx], kind="stable")], 0
+            while done < len(o) and time.monotonic() < deadline:
+                c = o[done:done + 64]
+                c = c[D[c] - rho < d - SCAN_TOL_MM]
+                if not len(c):
+                    break
+                done += 64
+                Dx, Qx = refine(P[c], D[c])
+                i = int(np.argmin(Dx))
+                if Dx[i] < d:
+                    j, d, q = int(c[i]), float(Dx[i]), Qx[i]
         b = m.geom_bodyid[G[j]]
         centre = to_world(world, R @ ((lo + hi) / 2.0))
-        regions.append({"min_clearance_mm": floor_mm(D[j]), "_d": float(D[j]), "t": round(float(TT[j]), 2),
-                        "link": "object" if b == obj_body else m.body(b).name,
-                        "point": [round(float(v), 1) for v in to_world(world, Q[j])],
+        regions.append({"min_clearance_mm": floor_mm(d), "_d": d, "exact": bool(final and B[idx].any()),
+                        "t": round(float(TT[j]), 2), "link": "object" if b == obj_body else m.body(b).name,
+                        "point": [round(float(v), 1) for v in to_world(world, q)],
                         "box": {"center": [round(float(v), 1) for v in centre],
                                 "half": [round(float(max(v, 1.0)), 1) for v in (hi - lo) / 2.0], "yaw_deg": round(float(yaw), 2)},
                         "points": int(len(idx)), "_lo": lo.copy(), "_hi": hi.copy(), "_R": R})
+    regions.sort(key=lambda r: r["_d"])                 # measured exactly, the closest first again
     for i, r in enumerate(regions, 1):
         r.update({"id": f"scan-{i}", "label": f"Scan near miss {i}"})
     return regions

@@ -706,7 +706,7 @@ def test_add_box_here_from_the_room_scan(run, tmp_path):
     assert scan and scan["status"] == "warn" and scan["value"] < 10 and scan["regions"], scan
     assert pg.world("panel.state.result.verdict") != "blocked"                  # a warning, never a verdict
     text = " ".join(pg.pg.inner_text(".wv-panel").split())
-    assert "A warning, not a verdict." in text and re.search(r"Scan near miss 1: (touches|\d+\.\d mm from) the ", text), text
+    assert "A warning, not a verdict." in text and re.search(r"Scan near miss 1: (touches|(at most )?\d+\.\d mm from) the ", text), text
     add = ".wv-panel button[data-a='scanbox'][data-arg='0']"
     assert pg.pg.inner_text(add) == "Add box here"
     pg.ev("() => window.morphWorld.wv.frameOverview(0)")
