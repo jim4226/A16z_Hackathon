@@ -650,11 +650,15 @@ members; a member can hold several.
   One filter, `security.looks_like_secret(text)` (`holds_secret(value)` for every string of a structured value), covers
   Claude (`sk-ant-`) and Keewano (`kwpat-`) keys, other `sk-` keys (20 or more token characters with a digit, unless
   they read as words and part numbers such as `sk-6x40-stainless-steel-screws`: `security._phrase`, which counts
-  words, numbers, model names such as `stm32f405`, numbered names such as `arm2` or a series such as
-  `servo1_servo2_servo3` or `xl330_xl430_xm430`, versioned names such as `Servo1`, `yoloV8`, `jointLimit2`,
-  `servoID3`, `so101Arm` or `GraspNet1B` (`security._versioned`), and short codes such as `6x40` or `4f8a`; a key in
-  groups of one size such as `sk-live-4f8a-91bc-77de-12ab` is a key unless every group with a digit reads as a
-  numbered word), the value of any key saved in the Keys dialog, of `ANTHROPIC_AUTH_TOKEN` and of a chosen `MORPH_TOKEN`
+  words (camelCase too, with an acronym or an axis capital such as `maxPWMFreq` or `offsetX` when one of its words is
+  a common one, `words.WORDS`), numbers (with a unit, `3000rpm`, `400kHz`, `3300mAh`, or a size, `1280x720`), model
+  names such as `stm32f405` or `YOLOv8n`, numbered names such as `arm2` or a series such as `servo1_servo2_servo3` or
+  `xl330_xl430_xm430`, versioned names such as `Servo1`, `yoloV8`, `jointLimit2`, `servoID3`, `so101Arm` or
+  `GraspNet1B` (`security._versioned`), and short codes such as `6x40` or `4f8a`; a key in groups of one size such as
+  `sk-live-4f8a-91bc-77de-12ab` is a key unless every group with a digit reads as a numbered word, and three parts of
+  one size count as groups only when none is a common word, so `mt_SG90_horn_trim_offset` passes; fewer than 20
+  characters after `sk-` are judged as groups only, so `sk-4f8a-91bc-77de-12ab` is caught and `sk-short1` passes),
+  the value of any key saved in the Keys dialog, of `ANTHROPIC_AUTH_TOKEN` and of a chosen `MORPH_TOKEN`
   (`security.SAVED_KEYS`) or of any saved `MORPH_TOOL_*` key, the running remote Studio's own access code
   (`security.ACCESS_CODES`, set by `server.make_handler`), a token with a manifest's key prefix that fits its pattern
   wherever the prefix starts a run (`key=`, `?api_key=`, glued to other text), JWTs, Morph Teams' script tokens, invite
@@ -665,28 +669,44 @@ members; a member can hold several.
   has a letter and a digit). A key with no prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught
   only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
   Python reads by Unicode: 是, は and é count as letters), so a key glued to Chinese, Japanese or Korean text is caught.
-  The key shapes, with the contexts each is refused in, are tables in `tests/fixtures/key_filter/keys.json`. Every `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital or a digit and doesn't read
-  as words and part numbers (`_phrase` again), so `mt_shoulder_joint_torque_limit`, `ml_resnet50_backbone_weights`,
+  The key shapes, with the contexts each is refused in, are tables in `tests/fixtures/key_filter/keys.json`. Every
+  `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital (every Teams code has one) and doesn't
+  read as words and part numbers (`_phrase` again; there a whole part number of one case such as `STM32F405RGT6` is a
+  name too), so `mt_shoulder_joint_torque_limit`, `ml_policy_weights_3f9a2c1e`, `mt_motor_max_speed_3000rpm`,
   `mt_shoulderJointTorqueLimit` or `ml_policyV1_final_weights` (as long as an invite code) pass. Teams codes are made by
   `auth.new_code` (base64url, `mi_`/`ml_` + 22 and `mt_` + 43 characters, `security.TEAM_CODE`), which draws again a
-  code with no capital letter or one `security.has_key` doesn't catch (it reads as a phrase), so every code Morph
-  makes is caught. Both rules are heuristics checked against tables of keys and names (`tests/test_secret_filter.py`,
-  KEYS and ORDINARY), and measured by `tools/key_filter_rates.py` (seeded; 100,000 random keys per shape). Keys missed,
-  as a share of the keys with a digit (the phrase rule's misses), then of all keys of the shape (adding the keys with
-  no digit, which the `sk-` rule never takes): in groups behind a word, lower-case letters and digits
-  `sk-live-xxxxx-xxxxx-xxxxx` 2.01% / 2.75%, `sk-live-xxxx-xxxx-xxxx-xxxx` 1.66% / 2.25%,
-  `sk-live-xxxxxx-xxxxxx-xxxxxx` 0.86% / 1.14%, five groups of 4 0.67% / 0.80%, four of 5 0.67% / 0.82%, four of 6
-  0.21% / 0.26%, three of 8 0.15% / 0.19% (missed when every group with a digit reads as a numbered word, such as
-  `sk-live-jeta3-poni9-zijkw-dxb52`); capitals and digits 2.00% / 2.73% (three groups of 5) and 1.51% / 2.07% (four
-  of 4); hex 0.27% (three of 5), 0.18% (four of 4), 0.03% (five of 4); mixed-case letters and digits 0.017% / 7.17%
-  (three of 5) and 0.015% / 6.09% (four of 4). Not in groups: `sk-` and 20 base64url characters 0.007% / 3.38%, 24 0.001% / 1.69%, 32
-  0.001% / 0.43%. Teams codes drawn without `new_code`'s redraw: 33 in 1,000,000 invite or sign-in codes and 0 in
-  200,000 script tokens read as a phrase. Names refused (`mt_`/`ml_`/`mi_` and parts joined by `_`, 23 characters or
-  more): plain words 0 of 2,726; a series of 3 and two words 61 of 4,000; a series of 4 and a word 571 of 4,000; two
-  numbered words and two words 84 of 3,958; a versioned word (`gripperV2`) and two words 0 of 1,908; camelCase and a
-  number (`jointLimit2`) and two words 0 of 2,963; three numbered abbreviations (`pwm1`) and a word 2 of 2,634. Every
-  name refused in these sets has no plain word of 4 letters or more (a phrase needs one); part runs such as
-  `sk-608zz-608rs-626zz-bearings` (more short codes than words and names) are refused too. The tool runner redacts
+  code with no capital letter, one `security.has_key` doesn't catch whole or cut short to 20 characters or more, or
+  one with no part that reads as random (`security.random_part`), so every code Morph makes is caught, alone, cut short
+  or with text joined to it by `-` or `_` (`mi_<code>-thanks`). Both rules are heuristics checked against tables of
+  keys and names (`tests/test_secret_filter.py` KEYS and ORDINARY; `tests/fixtures/key_filter/names.json`, from the
+  release review's 485 realistic strings and its examples), and measured by `tools/key_filter_rates.py` (seeded;
+  100,000 random keys per shape). Keys missed, as a share of the keys with a digit (the phrase rule's misses), then of
+  all keys of the shape (adding the keys with no digit, which the `sk-` rule never takes): in groups behind a word,
+  lower-case letters and digits `sk-live-xxxxx-xxxxx-xxxxx` 2.02% / 2.75%, `sk-live-xxxx-xxxx-xxxx-xxxx` 1.69% /
+  2.28%, `sk-live-xxxxxx-xxxxxx-xxxxxx` 0.86% / 1.14%, five groups of 4 0.68% / 0.81%, four of 5 0.68% / 0.82%, four
+  of 6 0.21% / 0.26%, three of 8 0.15% / 0.19% (missed when every group with a digit reads as a numbered word, such
+  as `sk-live-jeta3-poni9-zijkw-dxb52`); capitals and digits 2.00% / 2.73% (three groups of 5) and 1.54% / 2.09%
+  (four of 4); hex 0.27% (three of 5), 0.18% (four of 4), 0.03% (five of 4); mixed-case letters and digits 0.017% /
+  7.17% (three of 5) and 0.017% / 6.09% (four of 4). With no word in front: `sk-xxxxx-xxxxx-xxxxx` 1.98% / 2.75%,
+  `sk-xxxx-xxxx-xxxx-xxxx` 1.64% / 2.17% and in hex 0.19% (all of them were missed before: under 20 characters). Not
+  in groups: `sk-` and 20 base64url characters 0.009% / 3.42%, 24 0.001% / 1.67%, 32 0.000% / 0.44%; two words and 12
+  random capitals or lower-case letters and digits (`sk-live-test-K3F9ABQX77DE`) 19.2% / 21.2%, as before. Teams codes:
+  of 1,000,259 invite or sign-in codes drawn, `new_code` draws again 8 with no capital, 160 that (or a piece of which
+  cut short) read as a phrase and 91 with no random part; of 200,035 script tokens, 35; none of the 1,000,000 and
+  200,000 it keeps is missed alone, cut to 20 characters or with `-thanks`, `_backup_copy`, `-please-join-the-team`,
+  `-v2` or `_old` joined to it. Names refused (23 characters or more): under `mt_`/`ml_`/`mi_` none in lower case
+  (they have no capital); capitalized, or as `sk-` part numbers, a series of 3 and two words 61 of 4,000 (67 as part
+  numbers), a series of 4 and a word 571 of 4,000 (573), two numbered words and two words 84 of 3,958 (72 of 3,938),
+  three numbered abbreviations and a word 3 of 2,628 (3 of 2,672); plain words, versioned words and camelCase with a number none; a
+  part code and two or three firmware words (`mt_SG90_horn_trim_offset`) none of 12,381, but 905 of 10,459 when the
+  words aren't in `words.WORDS`; a number and a unit, a size, a commit hash and a word with an axis capital none;
+  camelCase with an acronym 236 of 3,393 (every one with `I2C`: an acronym with a digit); model names as their authors
+  write them 41 of 183 (`ViT`, `UNet`, `NeRF`, `DeiT`, `MiDaS`, `LoFTR`, `ConvNeXt`, `MobileViT`, `SmolVLA`,
+  `SmolVLM`, `EfficientNetB0`, `BiSeNetV2`, `pi0FAST`, `VQBeT`: pieces of two letters, or no common word, in mixed
+  case); whole part numbers 40 of
+  270 (mixed case such as `ATmega328P` or `nRF52840`, starting with a digit such as `17HS4401`, and any after `sk-`).
+  `names.json` lists the kinds still refused; part runs such as `sk-608zz-608rs-626zz-bearings` (more short codes than
+  words and names) are refused too. The tool runner redacts
   and refuses with the same shapes (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the

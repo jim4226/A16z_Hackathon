@@ -12,6 +12,7 @@ import string
 import pytest
 
 from morph.studio import security, server
+from morph.studio.teams import auth
 from morph.studio.toolbox import catalog
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "key_filter")
@@ -117,3 +118,53 @@ def test_a_remote_studios_chat_refuses_its_own_access_link(tmp_path):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+NAMES = json.load(open(os.path.join(DATA, "names.json"), encoding="utf-8"))
+
+
+@pytest.mark.parametrize("text", NAMES["pass"])
+def test_a_realistic_name_passes(text):
+    """Names with a key's prefix and words, units (3000rpm, 400kHz), sizes (1280x720), commit hashes, model spellings
+    (YOLOv8n, SmolVLA), camelCase acronyms (maxPWMFreq), axis capitals (offsetX) and part numbers (STM32F405RGT6 under
+    mt_) were refused whole as keys."""
+    assert not security.looks_like_secret(text)
+    assert not security.looks_like_secret(f"please rename {text} today")
+    assert not security.holds_secret({"answers": [{"name": text}]})
+
+
+@pytest.mark.parametrize("kind", sorted(NAMES["refused"]))
+def test_the_names_the_docs_say_are_refused_are(kind):
+    for text in NAMES["refused"][kind]:
+        assert security.looks_like_secret(text), text
+
+
+def test_a_teams_code_with_text_joined_to_it_or_cut_short_is_still_caught(monkeypatch):
+    """A code whose every part reads as a word, number, name or code (WaiHKP0-W6J6HI-78Mh70A) was caught alone and missed
+    with text joined to it (-thanks): auth.new_code draws such a code again, and one a piece of which cut short reads as a
+    phrase."""
+    weak = "WaiHKP0-W6J6HI-78Mh70A"
+    assert security.has_key("mi_" + weak) and not security.random_part(weak)
+    draws = iter([weak, "Xq3_Lp9ZbN2wV7aR5kT1mC"])
+    monkeypatch.setattr(auth, "secrets", type("Draws", (), {"token_urlsafe": staticmethod(lambda n: next(draws))}))
+    assert auth.new_code("mi_", 16) == "mi_Xq3_Lp9ZbN2wV7aR5kT1mC"
+    monkeypatch.undo()
+    for prefix, n in (("mi_", 16), ("ml_", 16), ("mt_", 32)):
+        for _ in range(1500):
+            code = auth.new_code(prefix, n)
+            for text in (code, code + "-thanks", code + "_backup_copy", code + "-please-join-the-team", code + "_old",
+                         code[:23], code[:24], f"我的邀请码是{code}"):
+                assert security.looks_like_secret(text), text
+
+
+def test_a_short_key_in_groups_is_caught():
+    """sk- and fewer than 20 characters was never checked, so a key in groups with no word in front
+    (sk-4f8a-91bc-77de-12ab) passed; such a run is now judged as groups (SKUs that short still pass)."""
+    for key in ("sk-4f8a-91bc-77de-12ab", "sk-k3f9-abqx-77de-zkfp", "sk-9x2k1-p0q7m-a8z3c"):
+        assert security.looks_like_secret(f"key {key}"), key
+    rnd, hexes = random.Random(5), "0123456789abcdef"
+    keys = ["sk-" + "-".join("".join(rnd.choice(hexes) for _ in range(4)) for _ in range(4)) for _ in range(2000)]
+    missed = [k for k in keys if not security.has_key(k)]
+    assert len(missed) <= 10, missed  # 0.18% of 100,000 in tools/key_filter_rates.py
+    for fine in ("sk-short1", "sk-2020-2040-4040", "sk-m3x8-m4x8-m5x8", "sk-608zz-bearing", "sk-6x40-steel-screws"):
+        assert not security.looks_like_secret(fine), fine

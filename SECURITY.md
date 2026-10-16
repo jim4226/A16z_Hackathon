@@ -42,9 +42,11 @@ Morph Studio is a local app: a small web server on your computer, used from your
   more), private key blocks, links with a password in them, `Bearer` tokens and `.env` lines such as `NAME_KEY=value`.
   A key with no prefix of its own pasted on its own (an AWS secret key, a bare hex token) is not caught unless you saved
   it in the Keys dialog. Keys and codes are random, so names that only share their prefix
-  (`mt_shoulder_joint_torque_limit`, `ml_resnet50_backbone_weights`, `sk-6x40-stainless-steel-screws`) usually pass.
-  The filter goes by how random the text looks: a name that looks random enough is refused too (rephrase it), and a key
-  that happens to read like words and part numbers can get through, so don't rely on it to catch every key.
+  (`mt_shoulder_joint_torque_limit`, `ml_resnet50_backbone_weights`, `mt_motor_max_speed_3000rpm`,
+  `sk-6x40-stainless-steel-screws`) usually pass. The filter goes by how random the text looks: a name that looks
+  random enough is refused too (some model and part spellings such as `ml_ViT_B_16_weights` or
+  `mt_ATmega328P_fuse_settings`: rephrase it), and a key that happens to read like words and part numbers can get
+  through, so don't rely on it to catch every key.
 - Every optional service (Claude, Keewano, Darwin, SubQ) can be switched off; [docs/PRIVACY.md](docs/PRIVACY.md)
   lists what each one receives.
 - Imports treat every file and link as hostile: archive limits (entries, sizes, compression ratio, no links or nested
