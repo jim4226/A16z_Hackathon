@@ -558,6 +558,11 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   2,697 phrases of all the release review's hunts, 272 readings change: 268 of the second hunt's requests, two
   hand-overs of pet food to a person (people nearby, not pets) and two Studio labels typed in as requests; none of the
   first hunt's 573.
+- New robot no longer keeps an object on "my SO-101" that the stock jaws can't hold: "use my SO-101 to move light
+  bulbs" built an SO-101 with no issue whose own simulation then dropped the 60 mm bulb. In Morph's simulation the
+  stock jaws dropped every round object tried from 47 to 60 mm across and flat-sided ones of 36, 40, 44 and 48 mm (a
+  38 mm one was placed with 9.6 mm of slip), and placed the ones tried up to 46 mm round and 34 mm flat-sided; for a
+  wider object New robot builds a Morph-generated arm and says why, as it does for one above the SO-101's 100 g.
 - Requests that hand someone a tool called a gun are built, not refused as meant to hurt people: "hand the packer the
   tape gun", "pass the rivet gun to the riveter", "hand me the scan gun", "pass me the temp gun" and "hand the
   mechanic the impact gun" (and the tape, grease, soldering, price, screw, barcode and similar guns) were refused.

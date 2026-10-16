@@ -198,6 +198,12 @@ under 2 at the start), the cancel, restart and build timings beside other work (
   most* in Details); there are no interaction or variance-based sensitivity indices yet.
 - The solver checks re-run at most 20 runs of a group and 15 successes, not every run.
 - No GPU: MuJoCo on the CPU. Tested on Linux; the processes are started the same way on Windows and macOS.
+- Some designs fail at their nominal size, so every run of their study fails the same way, with no plan issue to say
+  so beforehand: the stock SO-101 misses the round objects tried from 47 to 60 mm across and flat-sided ones of 36, 40,
+  44 and 48 mm ("Missed the grasp"; New robot no longer builds a round object over 46 mm or a flat-sided one over 34 mm
+  on the SO-101, but an import or a chat edit can), and the generated smart-bus arm without force sensors squeezes a
+  strawberry with up to 3.82 N in the simulation, above its 3 N damage force, although its torque limit is set for
+  0.66 N ("Squeezed harder than the strawberry can take").
 
 ## Where it is kept
 

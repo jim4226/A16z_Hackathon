@@ -377,3 +377,18 @@ def test_build_payload(tmp_path):
     p = B.write_final(b, str(tmp_path))
     with open(p, encoding="utf-8") as fh:
         assert json.load(fh)["status"] == "built"
+
+
+@pytest.mark.parametrize("text, kept", [
+    # in Morph's own simulation the stock SO-101 jaws drop round objects wider than 46 mm and flat-sided ones wider than
+    # 34 mm (a 60 mm light bulb was kept on the SO-101 with no issue, and its build's simulation then missed the grasp)
+    ("use my so101 to move light bulbs", False), ("use my SO-101 to pick up 50 mm balls", False),
+    ("use my so101 to move 40 mm wooden blocks", False),
+    ("use my so101 to pick up eggs", True), ("use my so101 to pick strawberries", True),
+    ("use my so101 to move 30 mm wooden blocks", True), ("use my so101 to pick up 46 mm balls", True)])
+def test_the_so101_keeps_only_objects_its_stock_jaws_hold_in_the_simulation(text, kept):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert b.status == "ready"
+    assert (b.changes.get("arm.source") == "so101") is kept, (b.changes.get("arm.source"), b.changes.get("object.diameter_mm"))
+    jaws = [a["text"] for a in b.assumptions if "stock SO-101's jaws" in a["text"]]
+    assert bool(jaws) is (not kept), b.assumptions

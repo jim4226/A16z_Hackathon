@@ -30,6 +30,11 @@ PAYLOAD_G = {"hobby_pwm": {4: 100, 5: 100, 6: 0},   # the DS3218s run at 6 V (an
              "smart_bus": {4: 300, 5: 200, 6: 100},
              "dynamixel": {4: 500, 5: 300, 6: 200}}
 SO101_PAYLOAD_G = 100  # the stock SO-101 (7.4 V STS3215s on its 6 V rail) by imported.size(); 150 g fails its shoulder
+# Widest object (mm) the stock SO-101's jaws hold in Morph's own pick-and-place simulation (simulate.run, a 30 g object
+# at its nominal size): cylinders of 30, 35, 40, 44 and 46 mm and spheres of 40, 44 and 46 mm are placed, cylinders of
+# 47, 48, 50, 54, 56, 58 and 60 mm and spheres of 48 and 52 mm slip out; boxes of 30, 32 and 34 mm are placed, boxes of
+# 36, 40, 44 and 48 mm slip out (38 mm is placed with 9.6 mm of slip)
+SO101_MAX_WIDTH_MM = {"cylinder": 46.0, "sphere": 46.0, "box": 34.0}
 # Narrowest object (mm, 0.5 mm steps) the rack-and-pinion gripper closes on: arm._grip_plan() reports no issue.
 # The FSR 402 finger's thicker pad stack is what makes 26-38 mm round objects fit.
 MIN_WIDTH_MM = {("cylinder", "fsr402"): 26.0, ("sphere", "fsr402"): 26.0, ("box", "fsr402"): 21.5,
@@ -87,6 +92,7 @@ def envelope() -> dict:
                    "mass_g": {"max": max(max(v.values()) for v in pay.values())}},
         "payload_g": {f: {str(k): v for k, v in t.items()} for f, t in pay.items()},
         "so101_payload_g": SO101_PAYLOAD_G,
+        "so101_max_width_mm": dict(SO101_MAX_WIDTH_MM),
         "reach_mm": {"effective": list(REACH_MM),
                      "param": [params["arm.reach_mm"]["min"], params["arm.reach_mm"]["max"]]},
         "table_mm": {"x": [params["task.pick_x_mm"]["min"], params["task.pick_x_mm"]["max"]],

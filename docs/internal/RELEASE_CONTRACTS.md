@@ -317,7 +317,13 @@ clamping.
 
 - **Robot:** one stationary tabletop arm, 4/5/6 DOF.
 - **Grasp:** a two-finger parallel gripper, top-down pick and place on the table plane.
-- **Object width:** about 26 to 75 mm.
+- **Object width:** about 26 to 75 mm. The stock SO-101's jaws are narrower in Morph's own simulation (a 30 g object at
+  its nominal size, `capability.SO101_MAX_WIDTH_MM`): the cylinders tried from 30 to 46 mm and spheres from 40 to 46 mm
+  are placed, those from 47 to 60 mm and spheres of 48, 52 and 60 mm (a light bulb) slip out; boxes of 30, 32 and 34 mm
+  are placed, boxes of 36, 40, 44 and 48 mm slip out and a 38 mm one is placed with 9.6 mm of slip. So New robot
+  builds a Morph-generated arm, with a note saying why, for a round object over 46 mm or a flat-sided one over 34 mm
+  on "my SO-101" (`brief.assess_scope`), as it does for one above its payload. Chat edits and imports of the SO-101
+  don't apply the limit; its build's simulation reports the miss.
 - **Payload at 2× torque margin** (at the servo rail each arm gets, section 18; the stock SO-101 about 100 g):
 
   | | 4-DOF | 5-DOF | 6-DOF |

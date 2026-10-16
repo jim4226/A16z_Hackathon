@@ -1490,6 +1490,15 @@ def assess_scope(b: Brief) -> dict:
                           "stronger arm."],
                 "nearest": {"archetype": _archetype_for_object(ov) or "generic_arm", "slots": {"existing_hardware": "none"},
                             "summary": f"A new Morph-generated desk arm for the {ov.get('name', 'object')}."}}
+    widest = cap.SO101_MAX_WIDTH_MM.get(ov.get("shape") if ov else "", cap.SO101_MAX_WIDTH_MM["cylinder"])
+    if b.get("existing_hardware") == "so101" and ov and float(ov["diameter_mm"]) > widest:
+        kind = "flat-sided" if ov.get("shape") == "box" else "round"
+        return {"status": "out_of_scope",
+                "notes": [f"In Morph's simulation the stock SO-101's jaws hold {kind} objects up to about {widest:g} mm across; "
+                          f"a {float(ov['diameter_mm']):g} mm {ov.get('name', 'object')} slips out of them, so it needs a "
+                          "Morph-generated arm."],
+                "nearest": {"archetype": _archetype_for_object(ov) or "generic_arm", "slots": {"existing_hardware": "none"},
+                            "summary": f"A new Morph-generated desk arm for the {ov.get('name', 'object')}."}}
     why = {k: w for k, _p, w in ADJUSTED}
     notes = [why[k] for k, _ in b.flags.get("adjusted") or [] if k in why]
     notes += [imp["note"] for imp in b.flags.get("implicit") or []]
