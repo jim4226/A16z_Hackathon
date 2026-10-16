@@ -480,6 +480,76 @@ def test_the_so101_keeps_only_objects_its_stock_jaws_hold_in_the_simulation(text
     assert bool(jaws) is (not kept), b.assumptions
 
 
+with open(os.path.join(os.path.dirname(__file__), "fixtures", "brief", "so101_hunt.json"), encoding="utf-8") as _f:
+    _SO101_HUNT = [r for r in json.load(_f)["rows"] if r.get("want") != "either"]
+
+
+def _so101_conversation(row):
+    """The request, a chip the person picks and typed replies through agents.run_turn offline, to the end (the nearest
+    robot when out of scope, the defaults when asking); (whether the first turn offered the chips, the Brief)."""
+    b = agents.run_turn(text=row["turns"][0], deep=False)
+    offered = b.status == "asking"
+    if row.get("answers") and offered:
+        b = agents.run_turn(b, answers=row["answers"], deep=False)
+    for t in row["turns"][1:]:
+        b = agents.run_turn(b, text=t, deep=False)
+    for _ in range(3):
+        if b.status not in ("out_of_scope", "asking"):
+            break
+        b = agents.run_turn(b, action="nearest" if b.status == "out_of_scope" else "defaults", deep=False)
+    return offered, b
+
+
+def _so101_problem(row, offered, b) -> str | None:
+    """The hunt's own judgement: why the conversation's SO-101 decision is wrong, or None. A row with "kept" says what
+    to build (and the object's d and m where the request states them); a sweep row gives the object as the request
+    states it, and the SO-101 must be kept exactly when that object fits it, never on a stand-in, and a generated arm
+    must say why."""
+    ch = b.changes or {}
+    kept = ch.get("arm.source") == "so101"
+    d, m, shape = float(ch.get("object.diameter_mm") or 0), float(ch.get("object.mass_g") or 0), ch.get("object.shape")
+    if "kept" in row:
+        if kept is not row["kept"]:
+            return f"kept {kept}, built {shape} {d:g} mm {m:g} g"
+        for k, v in (("d", d), ("m", m)):
+            if k in row and abs(v - row[k]) > 0.6:
+                return f"built {k}={v:g}, stated {row[k]:g}"
+        return None
+    wide = {"cylinder": 46.0, "sphere": 46.0, "box": 34.0}
+    fits = lambda s, w, g: w <= wide.get(s, 46.0) and g <= 100.0 and not (s == "box" and w < 22.5)   # noqa: E731
+    built_ok, said_ok = fits(shape, d, m), row["d"] <= wide[row["shape"]] and row["m"] <= 100.0
+    notes = [n for n in list((b.scope or {}).get("notes") or []) + [a.get("text", "") for a in b.assumptions] if "SO-101" in n]
+    if kept and not built_ok:
+        return f"kept with {shape} {d:g} mm {m:g} g"
+    if kept and not said_ok:
+        return f"kept for {shape} {d:g} mm {m:g} g, the request's object is {row['d']} mm {row['m']} g"
+    picked = not row.get("answers") or offered
+    if not kept and picked and b.status == "ready":
+        if not notes:
+            return "a generated arm and no note names the SO-101"
+        if said_ok and (row["shape"] != "box" or row["d"] >= 22.5):
+            return f"a generated arm for an object the SO-101 holds: {notes[0][:90]}"
+    return None
+
+
+@pytest.mark.parametrize("row", _SO101_HUNT, ids=[" || ".join(r["turns"]) for r in _SO101_HUNT])
+def test_the_so101_hunt_table(row, monkeypatch):
+    # the round-6 hunt: the SO-101 was kept for flat-sided objects read as round ("40 mm wide phones"), for masses with a
+    # thousands separator ("1,050 g" read as 50 g), and for sizes or weights it didn't read ("50 mm, 30 g tubes", "tubes
+    # (50 mm)", "half a kilo"); a 22 mm box its jaws drop was kept; the nearest robot's stand-in object, not the person's,
+    # decided ("pour out 30 mm cylinders" got a generated arm for a 330 ml bottle); and "I have an SO-101" typed later
+    # was ignored. The plan's repair is stubbed: it never changes the arm or the object
+    monkeypatch.setattr(B, "repair", lambda ch, b, **k: (ch, [], {"issues": [], "ms": 0, "checks": 0}))
+    offered, b = _so101_conversation(row)
+    assert _so101_problem(row, offered, b) is None
+
+
+@pytest.mark.parametrize("row", _SO101_HUNT[::500], ids=[" || ".join(r["turns"]) for r in _SO101_HUNT[::500]])
+def test_the_so101_hunt_table_holds_with_the_real_repair(row):
+    offered, b = _so101_conversation(row)
+    assert _so101_problem(row, offered, b) is None
+
+
 @pytest.mark.parametrize("text, kept, why", [
     # stacking is out of scope too: the nearest robot kept the SO-101 with a 66 mm, 370 g can or a 50 mm block
     ("use my SO-101 to stack soda cans", False, "lifts about"), ("use my SO-101 to stack 50 mm wooden blocks", False, "jaws"),

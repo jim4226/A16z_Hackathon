@@ -42,6 +42,21 @@ def test_units_normalize_to_mm_and_g(text, norm):
     assert normalize_units(text) == norm
 
 
+@pytest.mark.parametrize("text,norm", [
+    # a thousands separator was read as two numbers ("1,050 g" as 50 g), and number words, "half a kilo", "a pound",
+    # "300 gm" and a hyphen between a number and its unit were not read at all
+    ("weighing 1,050 g", "weighing 1050 g"), ("1,080 grams", "1080 g"), ("1 000 g", "1000 g"), ("1.000 g", "1000 g"),
+    ("2,000 mm", "2000 mm"), ("half a kilo", "500 g"), ("a pound", "453.6 g"), ("one pound", "453.6 g"), ("300 gm", "300 g"),
+    ("300-gram", "300 g"), ("three hundred grams", "300 g"), ("twenty-five grams", "25 g"), ("two-inch tubes", "50.8 mm tubes"),
+    ("2-inch tubes", "50.8 mm tubes"), ("50-mm tubes", "50 mm tubes"), ("50mm-wide tubes", "50mm wide tubes"),
+    ("weighing .3 kg", "weighing 300 g"),
+    # and what stays as it was: two numbers ("3 100 g bags"), a decimal ("1.500 g", "1.5 kg"), a list, a price
+    ("3 100 g bags", "3 100 g bags"), ("2 500 g weights", "2 500 g weights"), ("1.500 g", "1.500 g"), ("1.5 kg", "1500 g"),
+    ("sort 1,2,3 parts", "sort 1,2,3 parts"), ("$1,500", "$1,500"), ("half a metre", "half a metre")])
+def test_units_read_thousands_words_and_hyphens(text, norm):
+    assert normalize_units(text) == norm
+
+
 def test_units_reach_mass_and_dimensions():
     assert rules("lift 2 kg", D)[0] == {"object.mass_g": 2000.0}
     assert rules("lift 1 lb", D)[0]["object.mass_g"] == pytest.approx(453.6)

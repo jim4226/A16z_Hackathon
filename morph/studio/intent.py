@@ -58,8 +58,57 @@ _UNITS = [  # every length becomes "<n> mm" and every mass "<n> g", so the rules
 ]
 
 
+_UNIT_AHEAD = (r"(?=\s*-?\s*(?:kgs?|kilos?|kilograms?|lbs?|pounds?|oz|ounces?|grams?|gr|gms?|g|cm|centimet(?:er|re)s?|mm|"
+               r"millimet(?:er|re)s?|inch(?:es)?|in)\b)")
+_ONES = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+                                    "fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if i > 1}
+_NUM_WORD = r"(?:" + "|".join(list(_ONES) + list(_TENS)) + r"|hundred|thousand)"
+
+
+def _words_value(words: str) -> float | None:
+    """'three hundred' -> 300, 'twenty-five' -> 25, 'two thousand five hundred' -> 2500."""
+    total, part = 0, 0
+    for w in re.split(r"[\s-]+(?:and[\s-]+)?", words.strip()):
+        if w in _ONES:
+            part += _ONES[w]
+        elif w in _TENS:
+            part += _TENS[w]
+        elif w == "hundred":
+            part = (part or 1) * 100
+        elif w == "thousand":
+            total, part = total + (part or 1) * 1000, 0
+        else:
+            return None
+    return float(total + part)
+
+
+def _plain_numbers(text: str) -> str:
+    """Numbers before a unit written so the unit rules read them: thousands separators ("1,050 g", "1 000 g", and
+    "1.000 g" for grams, where three decimals of a gram would be odd), number words ("three hundred grams", "two-inch"),
+    "half a kilo", "a pound" and a hyphen or none between the number and its unit ("300-gram", "50mm-wide")."""
+    sep = r"(?:,|[\u00a0\u202f\u2009])"
+    text = re.sub(r"(?<![\d.,])(\d{1,3})((?:" + sep + r"\d{3})+)(?![\d,]|\.\d)" + _UNIT_AHEAD,
+                  lambda m: m.group(1) + re.sub(r"\D", "", m.group(2)), text)
+    text = re.sub(r"(?<![\d.,])(\d{1,3})((?: 000)+)(?![\d,]|\.\d)" + _UNIT_AHEAD, lambda m: m.group(1) + m.group(2).replace(" ", ""),
+                  text)                                                            # "1 000 g"; never "3 100 g bags"
+    text = re.sub(r"(?<![\d.,])([1-9]\d{0,2})((?:\.000)+)(?![\d,]|\.\d)(?=\s*(?:grams?|gr|gms?|g)\b)",
+                  lambda m: m.group(1) + m.group(2).replace(".", ""), text)
+    text = re.sub(r"(?<![\w.])\.(\d+)" + _UNIT_AHEAD, r"0.\1", text)                     # ".3 kg"
+    text = re.sub(r"\bhalf\s+an?\s+(?=(?:kilo|kilogram|pound|lb)s?\b)", "0.5 ", text)
+    text = re.sub(r"\b(?:a|an|one)\s+(?=(?:kilo|kilogram|pound|ounce|inch)\b)", "1 ", text)
+    text = re.sub(r"\b(" + _NUM_WORD + r"(?:[\s-]+(?:and[\s-]+)?" + _NUM_WORD + r"){0,7})" + _UNIT_AHEAD,
+                  lambda m: f"{_words_value(m.group(1)):g}" if _words_value(m.group(1)) is not None else m.group(1), text)
+    text = re.sub(r"(\d)\s*-\s*(?=(?:kgs?|kilos?|kilograms?|lbs?|pounds?|oz|ounces?|grams?|gms?|g|cm|centimet(?:er|re)s?|mm|"
+                  r"millimet(?:er|re)s?|inch(?:es)?)\b)", r"\1 ", text)
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*gms?\b", r"\1 g", text)
+    return re.sub(r"(\d\s*(?:mm|cm|in|inch(?:es)?))-(?=(?:wide|across|thick|diameter|long|high|tall|deep)\b)", r"\1 ", text)
+
+
 def normalize_units(text: str) -> str:
-    """'38 cm' -> '380 mm', '2 kg' -> '2000 g', '1.5 lb' -> '680 g', '2 in wide' -> '51 mm wide' (text is lower case)."""
+    """'38 cm' -> '380 mm', '2 kg' -> '2000 g', '1.5 lb' -> '680 g', '2 in wide' -> '51 mm wide' (text is lower case),
+    after _plain_numbers ("1,050 g" -> "1050 g", "half a kilo" -> "500 g", "two-inch" -> "50.8 mm")."""
+    text = _plain_numbers(text)
     for pat, k, unit in _UNITS:
         text = re.sub(pat, lambda m: f"{round(float(m.group(1)) * k, 1):g} {unit}", text)
     return text

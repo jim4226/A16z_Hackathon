@@ -35,6 +35,9 @@ SO101_PAYLOAD_G = 100  # the stock SO-101 (7.4 V STS3215s on its 6 V rail) by im
 # 47, 48, 50, 54, 56, 58 and 60 mm and spheres of 48 and 52 mm slip out; boxes of 30, 32 and 34 mm are placed, boxes of
 # 36, 40, 44 and 48 mm slip out (38 mm is placed with 9.6 mm of slip)
 SO101_MAX_WIDTH_MM = {"cylinder": 46.0, "sphere": 46.0, "box": 34.0}
+# Narrowest flat-sided object (mm) the stock SO-101's jaws hold in the same simulation: a 21.5 mm box drops out (at 30 g
+# and at 100 g), a 22 mm one slips 11 mm at 30 g, boxes of 22.5, 23, 24, 25, 28, 30 and 34 mm slip 0.5-0.7 mm
+SO101_MIN_FLAT_MM = 22.5
 # Narrowest object (mm, 0.5 mm steps) the rack-and-pinion gripper closes on: arm._grip_plan() reports no issue.
 # The FSR 402 finger's thicker pad stack is what makes 26-38 mm round objects fit.
 MIN_WIDTH_MM = {("cylinder", "fsr402"): 26.0, ("sphere", "fsr402"): 26.0, ("box", "fsr402"): 21.5,
@@ -93,6 +96,7 @@ def envelope() -> dict:
         "payload_g": {f: {str(k): v for k, v in t.items()} for f, t in pay.items()},
         "so101_payload_g": SO101_PAYLOAD_G,
         "so101_max_width_mm": dict(SO101_MAX_WIDTH_MM),
+        "so101_min_flat_mm": SO101_MIN_FLAT_MM,
         "reach_mm": {"effective": list(REACH_MM),
                      "param": [params["arm.reach_mm"]["min"], params["arm.reach_mm"]["max"]]},
         "table_mm": {"x": [params["task.pick_x_mm"]["min"], params["task.pick_x_mm"]["max"]],

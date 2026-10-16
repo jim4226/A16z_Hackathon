@@ -643,6 +643,21 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   wider object New robot builds a Morph-generated arm and says why, as it does for one above the SO-101's 100 g, also
   when the request is out of scope in another way and New robot offers the nearest robot ("use my SO-101 to stack soda
   cans" kept the SO-101 with a 66 mm, 370 g can, and "... to stack 50 mm wooden blocks" with a 50 mm block).
+- "My SO-101" is kept only for the object the person describes, read in more of the ways people write it. It was kept
+  for flat-sided objects read as round ("use my SO-101 to move 40 mm wide phones weighing 90 g", "... soap bars",
+  "... tiles", "... square tubes"; bars, phones, tiles, cards, wallets, cases, trays, crates, bins, dice and square,
+  rectangular or hex things are now flat-sided, and an object whose shape the request doesn't give is held to the
+  flat-sided limit, with a note that saying it is round keeps the SO-101), for masses written with a thousands
+  separator ("1,050 g" was built as 50 g, "1,000 g", "1 000 g" and "1.000 g" as 1 g), and for sizes and weights it didn't read
+  ("50 mm, 30 g tubes", "tubes (50 mm)", "tubes of 50 mm", "50 mm oranges", "2-inch tubes", "half a kilo", "a pound",
+  "300 gm", "three hundred grams"; with two sizes, "60 mm and 30 mm cylinders", the larger now counts). Its stock jaws
+  drop a 21.5 mm box in Morph's simulation and let a 22 mm one slip 11 mm, so a flat-sided object under 22.5 mm gets a
+  Morph-generated arm too. For a request that is out of scope in another way, the nearest robot carries the person's
+  own object instead of its stand-in: "use my SO-101 to pour out 30 mm cylinders weighing 50 g" got a generated arm
+  blamed on a 330 ml bottle nobody mentioned, and "use my SO-101 to cook" kept the SO-101 with eggs whatever the
+  object weighed. "I have an SO-101" or "use my SO-101" typed in a later message was ignored, and "I don't have an
+  SO-101" read as having one. Of the release review's sweep of 18,753 SO-101 conversations, graded by its own rules,
+  3,079 were wrong; none is now (`tests/fixtures/brief/so101_hunt.json`).
 - Requests that hand someone a tool called a gun are built, not refused as meant to hurt people: "hand the packer the
   tape gun", "pass the rivet gun to the riveter", "hand me the scan gun", "pass me the temp gun" and "hand the
   mechanic the impact gun" (and the tape, grease, soldering, price, screw, barcode and similar guns) were refused.

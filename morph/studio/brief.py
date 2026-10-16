@@ -1706,6 +1706,64 @@ _SPECIFIC = ((r"\b(?:50 ?ml|falcon|centrifuge) tubes?\b", "tube_50ml"), (r"\bvia
              (r"\b(?:cups? of (?:cat |dog |pet )?food|kibble|food cups?)\b", "food_cup"), (r"\btreat balls?\b", "treat_ball"))
 
 
+# where a size or a shape word names a destination, not the object ("into 100 mm cups", "sort parts into bins")
+_DET = r"(?:a|an|the|my|your|our|their|its|each|every|two|three|some)"
+_TO_A_THING = re.compile(r"(?:\b(?:into|onto|inside|out of|next to|beside)\s+(?:" + _DET + r"\s+)?|\b(?:in|on|to|from|off)\s+" +
+                         _DET + r"\s+)(?:[a-z-]+\s+){0,2}$")
+_NOT_A_SIZE = re.compile(r"reach|finger|hole|mount|spacing|longer|shorter|apart|away|from the base|travel|stroke|clearance|"
+                         r"\bgap\b|height|depth|length|\blift|\braise|\blower")
+_NOT_A_SIZE_JUST_BEFORE = re.compile(r"accura|precis|toleran|resolution|repeatab|within|error|offset")
+# a length the request gives the object: "50 mm wide", "Ø50 mm", "(50 mm)", "tubes of 50 mm", "measuring 50 mm", "50 mm,
+# 30 g tubes", "50 mm oranges", "about 50 mm"; not a distance, a reach or a part of the robot
+_WIDTH = re.compile(
+    r"(?:ø|⌀|diameter(?: of)?|dia\.?|measuring|\(|\bof)\s*(\d+(?:\.\d+)?)\s*mm(?!\s*(?:away|apart|from|reach|long|high|tall|"
+    r"deep|of travel|travel|stroke))"
+    r"|(\d+(?:\.\d+)?)\s*mm\s*(?:(?:glass|plastic|metal|wooden|paper|steel|heavy|light|round|square)\s+)*(?:wide|across|"
+    r"in diameter|diameter|dia\b|thick|ball|sphere|cube|box(?:es)?|block|brick|cylinder|tubes?|objects?|cans?|bottles?|jars?|"
+    r"cups?|parts?)"
+    r"|(\d+(?:\.\d+)?)\s*mm\s*(?=(?:[,/]|\s+and)?\s*\d+(?:\.\d+)?\s*g\b)"                       # "50 mm, 30 g tubes", "40 mm 300 g cans"
+    r"|(\d+(?:\.\d+)?)\s*mm\s*(?:,|and|or|to|-|–)\s*(?=\d+(?:\.\d+)?\s*mm\b)"            # "60 mm and 30 mm cylinders"
+    r"|(\d+(?:\.\d+)?)\s*mm\s+(?:on\s+)?(?:each|a|every|per)\s+side\b"                    # "boxes 40 mm on each side"
+    r"|(?:\bx|\bby|×)\s*(\d+(?:\.\d+)?)\s*mm\b"                                            # "boxes that are 40 by 40 mm"
+    r"|(\d+(?:\.\d+)?)\s*mm\s+(?!(?:away|apart|from|to|into|onto|in|on|at|of|per|each|and|or|up|down|left|right|forwards?|"
+    r"backwards?|back|higher|lower|further|farther|more|less|above|below|over|under|off|high|tall|long|deep|reach|travel|"
+    r"stroke|gap|clearance|spacing|steps?|increments?|accuracy|precision|tolerance|resolution|then|so|but|with|by|for|is|are|"
+    r"was|were|be|it|them|the|a|an|max|maximum|min|minimum|radius|x|holes?|arm|robot|gripper|base|table|bench|desk|shelf|"
+    r"shelves|conveyor|belt|rail|track|workspace|area|zone|stand|platform|column|link|fingers?|jaws?|camera|servos?|motors?|"
+    r"screws?|bolts?|drill)\b)[a-z][a-z-]+"
+    r"|\b(?:about|around|roughly|approximately|~)\s*(\d+(?:\.\d+)?)\s*mm\b(?!\s*(?:away|apart|from|reach|long|high|tall))")
+
+
+def _sizes(t: str) -> tuple:
+    """(width mm, mass g) the request gives its object, the largest of each when it gives several ("60 mm and 30 mm
+    cylinders", "30 mm, 50 g cylinders and 300 g jars"), or None; never a size that names where things go ("into
+    100 mm cups") or a distance, reach or part of the robot. `t` is normalize_units(text)."""
+    widths = [float(next(g for g in m.groups() if g)) for m in _WIDTH.finditer(t)
+              if not _NOT_A_SIZE.search(t[max(0, m.start() - 24):m.end()]) and not _NOT_A_SIZE_JUST_BEFORE.search(t[max(0, m.start() - 16):m.start()])
+              and not _TO_A_THING.search(t[max(0, m.start() - 40):m.start()])]
+    masses = [] if re.search(r"\bg-?force|\bgs\b", t) else \
+        [float(m.group(1)) for m in re.finditer(r"(\d+(?:\.\d+)?)\s*g\b", t) if not _TO_A_THING.search(t[max(0, m.start() - 40):m.start()])]
+    return (max(widths) if widths else None), (max(masses) if masses else None)
+
+
+_FLAT_WORDS = (r"box(?:es)?|cubes?|blocks?|bricks?|cartons?|packages?|parcels?|bars?|phones?|smartphones?|tiles?|cards?|"
+               r"wallets?|remotes?|cases?|trays?|crates?|bins?|dominos?|dominoes|dice|cuboids?|rectangular|square|hex|hexagonal|"
+               r"cassettes?|erasers?|books?|packs?|flat|slabs?|boards?|panels?|sheets?|envelopes?|sachets?|pouches|pouch")
+_BALL_WORDS = r"balls?|spheres?|spherical|fruits?|oranges?|apples?|marbles?|beads?|globes?|pebbles?"
+_ROUND_WORDS = (r"cylinders?|cylindrical|tubes?|rods?|dowels?|pipes?|cans?|tins?|bottles?|jars?|cups?|mugs?|vials?|rolls?|"
+                r"reels?|spools?|pucks?|discs?|disks?|coins?|pens?|pencils?|candles?|batter(?:y|ies)|round")
+
+
+def _shape_said(t: str) -> str | None:
+    """The shape the request's words give its object: "box" (flat-sided: boxes, bars, phones, tiles, square or hex ones),
+    "sphere" (balls, oranges, marbles) or "cylinder" (tubes, cans, bottles, round ones), or None when they don't say;
+    a word that names where things go ("into bins") is not the object's."""
+    for shape, words in (("box", _FLAT_WORDS), ("sphere", _BALL_WORDS), ("cylinder", _ROUND_WORDS)):
+        if any(not _TO_A_THING.search(t[max(0, m.start() - 40):m.start()]) for m in re.finditer(r"\b(?:" + words + r")\b", t)):
+            return shape
+    return None
+
+
 def parse(text: str) -> dict:
     """Offline extraction: keywords, numbers and units only. Values here are what the user said (source user),
     except the layout, which is inferred from where things go."""
@@ -1743,25 +1801,15 @@ def parse(text: str) -> dict:
     if unfit:
         out["implicit"].append({"note": unfit_note(obj), "alt": None})
         obj = None
-    dia = None
-    m = re.search(r"(?:ø|⌀|diameter(?: of)?|dia\.?)\s*(\d+(?:\.\d+)?)\s*mm|(\d+(?:\.\d+)?)\s*mm\s*(?:(?:glass|plastic|metal|wooden|paper)\s+)?"
-                  r"(?:wide|across|diameter|dia\b|thick|"
-                  r"ball|sphere|cube|box(?:es)?|block|brick|cylinder|tubes?|objects?|cans?|bottles?|jars?|cups?|parts?)|"
-                  r"\b(?:about|around|roughly|approximately|~)\s*(\d+(?:\.\d+)?)\s*mm\b(?!\s*(?:away|apart|from|reach|long|high|tall))", t)
-    if m and not re.search(r"reach|finger|hole|mount|spacing|longer|shorter|apart|away|from the base", t[max(0, m.start() - 24):m.end()]):
-        dia = float(m.group(1) or m.group(2) or m.group(3))
-    mass = None
-    mm = re.search(r"(\d+(?:\.\d+)?)\s*g\b", t)
-    if mm and not re.search(r"\bg-?force|\bgs\b", t):
-        mass = float(mm.group(1))
+    dia, mass = _sizes(t)
     if dia is not None or mass is not None:
+        shape = None
         if obj is None:
             obj = {"key": None, "name": "object", "shape": "cylinder", "diameter_mm": 45.0, "length_mm": 60.0,
                    "mass_g": 100.0, "friction": 0.5, "max_force_n": 0.0}
-            if re.search(r"\b(box(?:es)?|cubes?|blocks?|bricks?|cartons?|packages?|parcels?)\b", t):
-                obj.update(shape="box", name="box")
-            elif re.search(r"\b(balls?|spheres?|fruits?|oranges?|apples?)\b", t):
-                obj.update(shape="sphere", name="ball")
+            shape = _shape_said(t)
+            if shape:
+                obj.update(shape=shape, name={"box": "box", "sphere": "ball"}.get(shape, "object"))
             elif re.search(r"\b(dumbbells?|weights?)\b", t):
                 obj.update(name="dumbbell")
             noun = _noun(t)
@@ -1773,7 +1821,7 @@ def parse(text: str) -> dict:
             obj["length_mm"] = max(obj.get("length_mm", dia), dia)
         if mass is not None:
             obj["mass_g"] = mass
-        obj["stated"] = [k for k, v in (("diameter_mm", dia), ("mass_g", mass)) if v is not None]
+        obj["stated"] = [k for k, v in (("diameter_mm", dia), ("mass_g", mass), ("shape", shape)) if v is not None]
     if obj is not None:
         s["object"] = obj
     # fragility (the words it came from are kept: a damage force they set is explained in those words)
@@ -1875,8 +1923,10 @@ def parse(text: str) -> dict:
     elif re.search(r"\b(small batch|a few of them|pilot run)\b", t):
         s["quantity"] = 10
     # existing hardware
-    if re.search(r"\bso[- ]?10[01]\b|\ble ?robot\b", t):
-        s["existing_hardware"] = "so101"
+    if re.search(r"\bso[- ]?10[01]\b|\ble ?robot\b", t):   # "I don't have an SO-101" is a new arm
+        s["existing_hardware"] = "none" if re.search(r"\b(?:no|not|don'?t|do not|doesn'?t|haven'?t|have not|without|instead "
+                                                     r"of|rather than|isn'?t|never)\b[^.;!?]{0,30}?\b(?:so[- ]?10[01]|le ?robot)\b",
+                                                     t) else "so101"
     # tasks
     if re.search(r"\bsort(?:s|ing|er)?\b", t):
         s["task"] = "sort"
@@ -2185,12 +2235,23 @@ def _so101_misfit(o: dict | None) -> str | None:
     if o["mass_g"] > cap.SO101_PAYLOAD_G:
         return (f"The stock SO-101 lifts about {cap.SO101_PAYLOAD_G} g with a 2x torque margin; {o['mass_g']:g} g needs a "
                 "stronger arm.")
+    d, name = float(o["diameter_mm"]), o.get("name", "object")
+    if o.get("key") is None and o.get("stated") is not None and "shape" not in o["stated"]:
+        # the request gave its object's size but not its shape: it may be flat-sided ("40 mm wide phones")
+        if d > cap.SO101_MAX_WIDTH_MM["box"]:
+            return (f"In Morph's simulation the stock SO-101's jaws hold round objects up to about "
+                    f"{cap.SO101_MAX_WIDTH_MM['cylinder']:g} mm across but flat-sided ones only up to about "
+                    f"{cap.SO101_MAX_WIDTH_MM['box']:g} mm; the request doesn't say whether a {d:g} mm {name} is round, so "
+                    f"it needs a Morph-generated arm (say it is round, as in \"{d:g} mm cylinders\", to keep the SO-101).")
+        return None
     widest = cap.SO101_MAX_WIDTH_MM.get(o.get("shape"), cap.SO101_MAX_WIDTH_MM["cylinder"])
-    if float(o["diameter_mm"]) > widest:
+    if d > widest:
         kind = "flat-sided" if o.get("shape") == "box" else "round"
         return (f"In Morph's simulation the stock SO-101's jaws hold {kind} objects up to about {widest:g} mm across; "
-                f"a {float(o['diameter_mm']):g} mm {o.get('name', 'object')} slips out of them, so it needs a "
-                "Morph-generated arm.")
+                f"a {d:g} mm {name} slips out of them, so it needs a Morph-generated arm.")
+    if o.get("shape") == "box" and d < cap.SO101_MIN_FLAT_MM:
+        return (f"In Morph's simulation the stock SO-101's jaws drop flat-sided objects narrower than about "
+                f"{cap.SO101_MIN_FLAT_MM:g} mm; a {d:g} mm {name} slips out of them, so it needs a Morph-generated arm.")
     return None
 
 
@@ -2209,7 +2270,7 @@ def assess_scope(b: Brief) -> dict:
                 arch = a.key  # a real desk task asked in an unsupported way: keep it, on the table plane
             slots = dict(over) if arch != a.key else {"object": a.objects[0]}
         o = near_obj or b.get("object")
-        if o and fits(o) and arch == a.key:
+        if o and fits(o):   # the person's own object, not the nearest robot's stand-in, whatever robot is offered
             slots["object"] = o
         if near_obj and near_obj["mass_g"] > cap.payload_g("smart_bus", 4):
             slots["budget"] = 1500.0
@@ -2306,6 +2367,17 @@ def _typed_answer(b: Brief, p: dict, t: str):
         m = _BARE_S.fullmatch(part)
         if m and "throughput" not in s:
             s["throughput"] = float(m.group(1))
+    cur = b.get("object")
+    if cur and cur.get("key") is None and cur.get("stated") is not None:   # a described object the person refines
+        if o is None and dia is None and _shape_said(t):                   # "they are round"
+            s["object"] = dict(cur, shape=_shape_said(t), stated=sorted(set(cur["stated"]) | {"shape"}))
+            return
+        if o is not None and o.get("key") is None:     # "40 mm cylinders" after "40 mm containers weighing 90 g": 90 g stays
+            for k in cur["stated"]:
+                if k not in (o.get("stated") or []) and k in cur:
+                    o[k] = cur[k]
+            o["stated"] = sorted(set(o.get("stated") or []) | set(cur["stated"]))
+            o["length_mm"] = max(float(o.get("length_mm") or 0), float(o["diameter_mm"]))
     if not generic:  # a named object ("eggs, 50 mm"): the bare width is its width
         if dia is not None:
             o.update(diameter_mm=dia, length_mm=max(float(o.get("length_mm") or 0), dia),
@@ -2353,10 +2425,15 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
         _typed_answer(b, p, normalize_units(t.lower()))
         keep = {"slots": {k: v for k, v in p["slots"].items() if k in ("object", "throughput", "budget", "quantity", "precision",
                                                                          "fragility", "people_nearby", "perception", "connectivity",
-                                                                         "environment", "task")},
+                                                                         "environment", "task", "existing_hardware")},
                 "inferred": p["inferred"], "hints": p["hints"], "oos": p["oos"], "implicit": p["implicit"], "said": p["said"],
                 "adjusted": p["adjusted"], "person": p["person"]}   # a person a later message names stays, like the first's
         merge(b, keep, "user", "answer")
+        hw = p["slots"].get("existing_hardware")   # "I have an SO-101" or "use my SO-101", typed in a later message
+        if hw == "so101":
+            set_archetype(b, "so101", 0.9, "user")
+        elif hw == "none" and _arch(b).key == "so101":
+            set_archetype(b, _archetype_for_object(b.get("object")) or "generic_arm", 0.9, "user")
         a2 = _archetype_for_object(b.get("object"))
         if _arch(b).key == "generic_arm" and a2:
             set_archetype(b, a2, 0.9, "user")

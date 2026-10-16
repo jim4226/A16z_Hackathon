@@ -323,8 +323,27 @@ clamping.
   are placed, boxes of 36, 40, 44 and 48 mm slip out and a 38 mm one is placed with 9.6 mm of slip. So New robot
   builds a Morph-generated arm, with a note saying why, for a round object over 46 mm or a flat-sided one over 34 mm
   on "my SO-101" (`brief.assess_scope`, `brief._so101_misfit`), as it does for one above its payload, also for the
-  nearest robot it offers when the request is out of scope in another way ("use my SO-101 to stack soda cans"). Chat
-  edits and imports of the SO-101 don't apply the limit; its build's simulation reports the miss.
+  nearest robot it offers when the request is out of scope in another way ("use my SO-101 to stack soda cans"). The
+  narrow end: a 21.5 mm box drops out of the stock jaws (at 30 g and at 100 g), a 22 mm one slips 11 mm at 30 g, and
+  boxes of 22.5, 23, 24, 25, 28, 30 and 34 mm slip 0.5 to 0.7 mm (`capability.SO101_MIN_FLAT_MM`), so a flat-sided
+  object under 22.5 mm gets the generated arm too, whose sensing fingers close on boxes from 21.5 mm. A described object whose shape the request
+  doesn't give (`brief._shape_said`: "40 mm wide containers") is held to the flat-sided 34 mm, and the note says that
+  saying it is round keeps the SO-101 ("they are round" in a reply does). The nearest robot for an out-of-scope
+  request carries the person's own object when they gave one and it fits a generated arm ("use my SO-101 to pour out
+  30 mm cylinders weighing 50 g" keeps the SO-101 with them; "... to cook 300 g steaks" gets a generated arm for 300 g),
+  and its stand-in otherwise ("fold towels": folded washcloths). An SO-101 named in a typed reply ("I have an SO-101")
+  is used like one in the request, and "I don't have an SO-101" is a new arm. The request's sizes are read in more
+  forms (`brief._sizes`, after `intent.normalize_units`): "50 mm, 30 g tubes", "50mm/30g", "(50 mm)", "tubes of 50 mm",
+  "measuring 50 mm", "50 mm oranges", "two-inch", "50-mm", "half a kilo", "a pound", "300 gm", "three hundred grams",
+  "1,050 g", "1 000 g" and "1.000 g" (thousands; a dot only before grams and "000"), and the largest of several
+  ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach. In
+  the round-6 hunt's sweep of 18,753 SO-101 conversations, graded by its own rules, 3,169 were wrong at bd19c43 (a
+  generated arm blamed on a stand-in, the SO-101 kept for a stand-in or for a size it didn't read, a typed SO-101
+  ignored), 90 of them only because the sweep's SO-101 chip was never offered (the request was already out of scope);
+  those 90 are the only ones now. `tests/fixtures/brief/so101_hunt.json` (`test_the_so101_hunt_table`) holds a sample of
+  2,859 of the sweep's conversations, graded the same way, and 159 rows of the hunt's phrasing, shape and thousands
+  lists and the fixer's probes. Chat edits and imports of the SO-101 don't apply the limit; its build's simulation
+  reports the miss.
 - **Payload at 2× torque margin** (at the servo rail each arm gets, section 18; the stock SO-101 about 100 g):
 
   | | 4-DOF | 5-DOF | 6-DOF |
