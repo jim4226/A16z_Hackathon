@@ -134,7 +134,7 @@ def _bundle_hash(source: str) -> str:
     import hashlib
 
     try:
-        from .imported import robot_dir
+        from ..importers.robots import robot_dir  # never robot.imported here: it loads trimesh (BUILD_MODULES)
         root = robot_dir(source)
     except (ValueError, OSError, ImportError):
         return "missing"

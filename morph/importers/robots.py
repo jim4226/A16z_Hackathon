@@ -40,11 +40,24 @@ LICENSE_FILE = re.compile(r"^(licen[sc]e|copying|notice)([._-].*)?$", re.I)
 
 
 def shipped_root() -> str:
+    """The robots/ folder shipped with Morph (the repo's, or its copy inside an installed wheel): robot.imported.ROOT,
+    found without importing the robot pipeline (it loads trimesh)."""
+    from .. import resources
+    return resources.path("robots")
+
+
+def robot_dir(source: str) -> str:
+    """The bundle folder for arm.source; ValueError for anything but the name of a robot in the shipped robots/ or
+    MORPH_HOME/.robots/. The lookup is resolve(): shipped robots win, and an imported bundle's profile must name files
+    inside it. Light: pipeline2.pipeline_version runs it at every `morph studio` start, in the main thread, where
+    importing trimesh (robot.imported) let a Ctrl+C be swallowed or break trimesh."""
+    from ..studio.security import robot_source
+
+    name = robot_source(source)
     try:
-        from ..robot import imported
-        return imported.ROOT
-    except Exception:  # noqa: BLE001  (the pipeline package failed to import: fall back to the repo folder)
-        return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "robots")
+        return resolve(name, shipped_root())
+    except FileNotFoundError:
+        raise ValueError(f"no robot called {name}: arm.source must name a folder in robots/ (or an imported robot)") from None
 
 
 def robots_dir(home_dir: str | None = None) -> str:

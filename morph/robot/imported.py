@@ -15,7 +15,8 @@ import os
 import numpy as np
 
 from .. import resources
-from ..studio.security import contained_path, robot_source
+from ..importers.robots import robot_dir  # arm.source -> its bundle folder (light: pipeline2 reads it too)
+from ..studio.security import contained_path
 from . import catalog, catalog_extra  # noqa: F401  (registers extra catalog keys)
 from . import components
 from .assembly import Cable, Part, trans
@@ -40,18 +41,6 @@ def roots() -> list:
 
     user = robots_dir()
     return [ROOT] + ([user] if os.path.isdir(user) else [])
-
-
-def robot_dir(source: str) -> str:
-    """The bundle folder for arm.source; ValueError for anything but the name of a robot in roots(). The lookup is
-    importers.robots.resolve(): shipped robots win, and an imported bundle's profile must name files inside it."""
-    from ..importers.robots import resolve
-
-    name = robot_source(source)
-    try:
-        return resolve(name, ROOT)
-    except FileNotFoundError:
-        raise ValueError(f"no robot called {name}: arm.source must name a folder in robots/ (or an imported robot)") from None
 
 
 def bundle_file(d: str, rel) -> str:

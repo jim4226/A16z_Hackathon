@@ -478,8 +478,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   that left the project unstartable. The launcher now loads them before it prints "generating the first robot" (or
   "rebuilding with the latest Morph code"), holding a stop until they are loaded (10 s at most), and then stops in the
   same line; `morph robot new`, `morph robot change`, a one-liner and `morph world --starter`/`--off` load them the same
-  way before they build. A stop during the rebuild for newer Morph code says that rebuild was cut off and the
-  finished revision is kept (it said the project wasn't finished).
+  way before they build. Every start was exposed too, with nothing to build: the check for newer Morph code loaded
+  trimesh for so101, and a Ctrl+C then could leave the Studio running with trimesh half-made; that check no longer
+  loads it. A stop during the rebuild for newer Morph code says that rebuild was cut off and the finished revision
+  is kept (it said the project wasn't finished).
 - With two Studios on one projects folder, Reset demo in one no longer deletes the revision the other is building (it
   is refused, and says why), Delete project is refused while another Studio or a `morph study` command runs a
   robustness study of the project, and says which process runs it and on which computer (the study went on in a

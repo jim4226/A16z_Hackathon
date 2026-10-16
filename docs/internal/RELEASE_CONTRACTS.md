@@ -103,8 +103,8 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   start generates it again; nothing else is removed. Not covered: a SIGKILL, a power cut or a closed console window on
   Windows there leaves that folder with only its `meta.json`; the next start builds a demo again, and refuses a
   project of another name until it is deleted (from another project's Studio, or by hand).
-- A build from the main thread (the launcher's first robots and rebuilds, `morph robot new|change`, a one-liner,
-  `morph world --starter|--off`) first loads what it imports (`pipeline2.BUILD_MODULES`: morph.robot.arm with
+- A build from the main thread (the launcher's first robots and rebuilds, `morph robot new|change`, a one-liner
+  before its brief's checks, `morph world --starter|--off`) first loads what it imports (`pipeline2.BUILD_MODULES`: morph.robot.arm with
   trimesh, cascadio and manifold3d, the stage modules, MuJoCo with OpenGL, Pillow; 0.5-0.7 s warm here) through
   `cli._load_build`, with SIGINT, SIGTERM, SIGHUP and SIGBREAK held (`cli._stops_held`); the launcher prints its
   "generating the first robot" or "rebuilding" line after that. trimesh catches BaseException around its optional
@@ -115,9 +115,18 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   (KeyboardInterrupt, so the one line above), and a signal the process ignores stays ignored. On POSIX the main
   thread also blocks them meanwhile, which alone isn't enough: numpy's OpenBLAS threads take a signal the main
   thread blocks, and Python runs its handler in the main thread all the same. After 10 s a stop is handed on at
-  once, so an import that hangs can still be stopped. Not covered: trimesh also catches BaseException in a few
-  one-line steps the build runs later (a centroid, a mask); a press landing exactly there is swallowed, the build goes
-  on, and the next press stops it.
+  once, so an import that hangs can still be stopped. The launcher's check for newer Morph code, at every start,
+  finds an imported robot's bundle (so101) with `importers.robots.robot_dir` and never imports `robot.imported`, which
+  loads trimesh: it did, in the main thread, so a Ctrl+C at a normal start was exposed the same way (24 presses
+  0.3-2.6 s after starting a Studio with nothing to build: 3 swallowed, the Studio starting with trimesh half-made,
+  1 TypeError, 1 segmentation fault; now 22 clean stops of the running Studio and, at 0.3-0.4 s, 2 of Python's own
+  KeyboardInterrupt tracebacks while it imports Morph, before anything is made). A Studio with nothing to build first
+  imports trimesh in a background thread (`capability-warm`), where a stop never lands, and `morph study`'s checks
+  in the main thread don't import it. Not covered: trimesh also catches BaseException in a few one-line steps the
+  build runs later (a centroid, a mask); a press landing exactly there is swallowed, the build goes on, and the next
+  press stops it; a Ctrl+C in the first half second, while Python imports Morph itself, prints Python's
+  KeyboardInterrupt traceback (nothing is made yet); other commands that load trimesh in the main thread (`morph
+  export`, `morph import`) were not checked.
 - Stopping never waits for the network: lookups run in parallel on `morph/services/background.DaemonPool` (Darwin
   `source`/`suggest`, `keys.check`, BoardRepo), whose daemon threads the interpreter doesn't join at exit, where
   `concurrent.futures` ran every queued lookup to its timeout first. New code that fans network calls out uses it.

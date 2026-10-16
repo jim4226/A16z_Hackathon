@@ -520,17 +520,59 @@ def test_a_stop_while_the_launcher_first_imports_the_build_stops_in_one_line(tmp
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from outside the process")
-def test_ctrl_c_while_morph_robot_new_first_imports_the_build_is_not_swallowed(tmp_path):
-    """`morph robot new my-arm` in a terminal: Ctrl+C while trimesh was first imported was swallowed the same way (the
-    build went on) or broke trimesh. It now stops before the project is made."""
+@pytest.mark.parametrize("argv", ['["morph", "robot", "new", sys.argv[1]]',
+                                  '["morph", "robot", "new", "a robot arm that picks eggs from a tray", "--defaults"]'],
+                         ids=["name", "one-liner"])
+def test_ctrl_c_while_morph_robot_new_first_imports_the_build_is_not_swallowed(tmp_path, argv):
+    """`morph robot new my-arm` (or a one-liner, whose brief checks import the arm generator before anything is built)
+    in a terminal: Ctrl+C while trimesh was first imported was swallowed the same way (the build went on) or broke
+    trimesh. It now stops before the project is made."""
     script = _SLOW_TRIMESH.replace('sys.argv = ["morph", "studio", sys.argv[1], "--port", sys.argv[2]]',
-                                   'sys.argv = ["morph", "robot", "new", sys.argv[1]]')
+                                   f"sys.argv = {argv}")
     proc, out = _start_studio_script(tmp_path, script, "my-arm")
     rc = _stop_at(proc, out, "<importing>\n", ["SIGINT"])
     err = proc.stderr.read()
     assert rc == -signal.SIGINT and err.rstrip().endswith("KeyboardInterrupt"), (rc, out, err)
     assert "<swallowed>\n" not in out and "<building>\n" not in out, out
-    assert not (tmp_path / "projects" / "my-arm").exists()
+    assert not (tmp_path / "projects").exists() or os.listdir(tmp_path / "projects") == []
+
+
+_CHECK_ONLY = """
+import sys
+from morph import keys
+keys.ENV_PATH = sys.argv[0] + ".env"
+from morph.studio import server
+server.serve = lambda *a, **k: print("<serve>", sorted(m for m in ("trimesh", "morph.robot.imported", "morph.robot.arm")
+                                                       if m in sys.modules), flush=True)
+from morph import cli
+sys.exit(cli.main(["studio", "egg-picker", "--port", sys.argv[1]]))
+"""
+
+
+def test_the_launcher_checks_an_imported_robot_without_loading_the_build(tmp_path):
+    """Every `morph studio` start checks whether each robot was built by older Morph code. For a robot from a bundle
+    (so101) that check imported morph.robot.imported, and with it trimesh, in the main thread, where trimesh's own
+    BaseException catches swallow a Ctrl+C or break on it (the Studio then started with trimesh half-made). The
+    bundle is now found without loading the build."""
+    from morph.studio import projects
+    home = tmp_path / "projects"
+    _studio_home(home)
+    design = projects.template("so101", "so101")
+    (home / "so101" / "r001" / "design.json").write_text(design.dumps(), encoding="utf-8")
+    (home / "so101" / "r001" / "results.json").write_text(json.dumps(
+        {"parent": None, "summary": {}, "pipeline_version": pipeline2.pipeline_version("so101")}), encoding="utf-8")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    script = tmp_path / "check.py"
+    script.write_text(_CHECK_ONLY, encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": CODE, "MORPH_HOME": str(home), "MORPH_OFFLINE": "1"}
+    for k in ("MORPH_TOKEN", "DISPLAY", "WAYLAND_DISPLAY"):
+        env.pop(k, None)
+    out = subprocess.run([sys.executable, str(script), str(port)], env=env, cwd=str(tmp_path), capture_output=True,
+                         text=True, timeout=120)
+    assert "<serve> []" in out.stdout.splitlines(), (out.stdout, out.stderr)
+    assert "rebuilding" not in out.stdout, out.stdout
 
 _HELD = """
 import os, signal, sys, time

@@ -622,6 +622,7 @@ def cmd_robot_brief(a) -> int:
                     "code": "Morph's code"}.get(ev.get("provider"), ev.get("provider"))
             print(f"  {ev['role']:<11} {prov}: {ev.get('text', '')}")
 
+    _load_build()  # the brief's checks import morph.robot.arm (and trimesh) too
     print(f"New robot: {text}")
     b = agents.run_turn(text=text, on_event=timeline, home=HOME)
     while b.status in ("asking", "out_of_scope"):
@@ -668,7 +669,6 @@ def cmd_robot_brief(a) -> int:
     changes, notes = capability.clamp(pay["changes"], allow=("name", "arm.source", "arm.actuator_overrides"))
     for n in notes:
         print(f"  adjusted: {n}")
-    _load_build()
     try:
         info = projects.create(HOME, pay["name"], design=Design().with_changes(changes), need=pay["meta"]["need"],
                                origin="brief", meta={"brief_id": b.id}, unique=not name)
