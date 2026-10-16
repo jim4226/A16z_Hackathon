@@ -215,7 +215,7 @@ def _bundle_hash(source: str) -> str:
     import hashlib
 
     try:
-        from .imported import robot_dir
+        from ..importers.robots import robot_dir  # never robot.imported here: it loads trimesh (BUILD_MODULES)
         root = robot_dir(source)
     except (ValueError, OSError, ImportError):
         return "missing"
@@ -261,6 +261,25 @@ def _mod(name):
         return importlib.import_module(f"morph.robot.{name}")
     except ImportError:
         return None
+
+
+# What a build imports the first time one runs in a process (about a second): morph.robot.arm and the robots imported
+# from a bundle (trimesh, manifold3d, shapely, cascadio), the stage modules, MuJoCo (and OpenGL with it) and Pillow.
+# trimesh catches BaseException around its own optional imports, so a Ctrl+C landing there was swallowed, or left
+# trimesh half-made (a TypeError later, or a segmentation fault in cascadio's start-up): a program that builds from its
+# main thread loads these first with its stop signals held (cli._load_build).
+BUILD_MODULES = ("morph.robot.arm", "morph.robot.imported", "morph.robot.electronics2", "morph.robot.simulate",
+                 "morph.robot.manufacturing", "morph.robot.manual", "morph.robot.schematic", "mujoco", "PIL.Image")
+
+
+def load_build_modules():
+    """Import BUILD_MODULES now. One that can't be imported is left for the build to meet and report, as it does
+    without this: never raises an Exception."""
+    for name in BUILD_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 OUTPUT_KEYS = {"sizing": "sizing", "gripper": "gripper", "electronics": "eplan", "cad": "cad", "sim": "sims",

@@ -559,14 +559,16 @@ def _proposal_state(root: str) -> "collections.OrderedDict":
             p.update(status="applied", applied_by=op.get("by"), applied_ts=op.get("ts"), job=op.get("job"), last_error=None,
                      applied_in=op.get("studio"))
         elif kind == "done" and p.get("status") == "applied":
+            p.pop("noop", None)
             if op.get("error"):
                 p.update(status="open", last_error=op.get("error"), applied_rev=None)
             else:
-                p.update(status="applied", applied_rev=op.get("rev"))
+                p.update(status="applied", applied_rev=op.get("rev"), **({"noop": True} if op.get("noop") else {}))
         elif kind == "done" and p.get("status") == "open" and op.get("rev"):
             # built after all: reopened meanwhile by a Studio that took the one building it for a stopped one (a file
             # system without locks), its revision still holds the change
-            p.update(status="applied", applied_rev=op.get("rev"), last_error=None)
+            p.pop("noop", None)
+            p.update(status="applied", applied_rev=op.get("rev"), last_error=None, **({"noop": True} if op.get("noop") else {}))
         elif kind == "close":
             p.update(status="closed", closed_by=op.get("by"), closed_ts=op.get("ts"), close_reason=op.get("reason") or "")
     return state
@@ -628,7 +630,8 @@ def create_proposal(root: str, by: str, title=None, changes=None, base_rev: str 
 def built_summary(root: str, p: dict) -> dict | None:
     """What an applied change request's revision actually built, next to its base revision: {rev, base_rev, feasible,
     issues, min_torque_margin: [base, built], unit_cost: [base, built], tooling_cost: [base, built], quantity: [base,
-    built]}; None until it is built. A unit cost includes its mold tooling spread over the build quantity."""
+    built], noop}; None until it is built. A unit cost includes its mold tooling spread over the build quantity.
+    `noop`: it needed no build, `rev` already had its values."""
     rev, base = p.get("applied_rev"), p.get("base_rev")
     a = rev_info(root, rev) if rev else None
     if a is None:
@@ -639,7 +642,8 @@ def built_summary(root: str, p: dict) -> dict | None:
             "min_torque_margin": [s0.get("min_torque_margin"), s1.get("min_torque_margin")],
             "unit_cost": [s0.get("unit_cost"), s1.get("unit_cost")],
             "tooling_cost": [s0.get("tooling_cost"), s1.get("tooling_cost")],
-            "quantity": [(i0.get("flat") or {}).get("build.quantity"), (a.get("flat") or {}).get("build.quantity")]}
+            "quantity": [(i0.get("flat") or {}).get("build.quantity"), (a.get("flat") or {}).get("build.quantity")],
+            "noop": bool(p.get("noop"))}
 
 
 def proposal_name(root: str, pid) -> str:
@@ -682,13 +686,16 @@ def apply_proposal(root: str, pid: str, by: str, members=None, studio: str | Non
     return job
 
 
-def proposal_done(root: str, pid: str, rev: str | None = None, error: str | None = None) -> dict | None:
-    """The queue reports how an applied change request ended: the revision it built, or an error (which reopens it)."""
+def proposal_done(root: str, pid: str, rev: str | None = None, error: str | None = None,
+                  noop: bool = False) -> dict | None:
+    """The queue reports how an applied change request ended: the revision it built, or an error (which reopens it).
+    `noop`: it needed no build, `rev` (the head) already has its values; it is applied there all the same."""
     with locked(project_dir(root)):
         if pid not in _proposal_state(root):
             return None
         append_jsonl(_file(root, "proposals.jsonl"), {"op": "done", "id": pid, "rev": rev if isinstance(rev, str) else None,
-                                                      "error": str(error)[:300] if error else None, "ts": utc()})
+                                                      "error": str(error)[:300] if error else None, "ts": utc(),
+                                                      **({"noop": True} if noop and rev and not error else {})})
     return get_proposal(root, pid)
 
 

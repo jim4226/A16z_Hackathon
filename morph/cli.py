@@ -216,7 +216,6 @@ def _studio_argv(argv: list) -> list:
 
 
 def cmd_studio(a):
-    from .robot.pipeline2 import RobotProject
     from .studio.server import access_token, is_loopback, serve
 
     import re
@@ -269,15 +268,66 @@ def cmd_studio(a):
             sys.exit(f"{a.name} is a gripper-only project from the earlier CLI prototype; open "
                      f"{os.path.join(HOME, a.name, 'report.html')} for it. Morph Studio opens whole robots: "
                      "run_studio.bat / ./run_studio.sh, or `python -m morph.cli studio egg-picker --open`.")
+    other = "so101" if a.name != "so101" else "egg-picker"  # the project switcher's second project
+    # the folders this start makes: one whose robot a stop cuts off before it is built isn't kept (nothing else is
+    # ever removed), so the next start generates it again
+    fresh = [nm for nm in (a.name, other) if not os.path.lexists(os.path.join(HOME, nm))]
+    building = []  # the project whose robot is being built now
+    try:
+        with _stops_raise():  # a closed terminal window or `kill` stops a build here the way Ctrl+C does
+            p = _first_robots(a, other, building)
+    except KeyboardInterrupt:
+        return _stopped_starting(fresh, building, getattr(a, "last", False))
+    owner_link = None
+    if team:  # a fresh one-time sign-in link for the owner (made now: it lasts 15 minutes)
+        from .services import durable
+        from .studio.server import lan_address
+        from .studio.teams import cli as teams_cli
+        # with --remote, at the address teammates reach: the invite links Share makes start with the page's address
+        lan = lan_address() if a.host in ("0.0.0.0", "") else None
+        base = f"http://{lan or local}:{a.port}"
+        try:
+            link = owner_link = teams_cli.team_link(home=HOME, base_url=base, out=None)["url"]
+        except ValueError as exc:  # team.json can't be read (teams.store.TeamFileError): never "no owner", never a traceback
+            sys.exit(str(exc))
+        except OSError as exc:  # a full disk: the Studio still starts (a session is only read), with no link to print
+            if not durable.disk_full(exc):
+                raise
+            print(f"Morph couldn't make the owner's one-time sign-in link. {durable.explain(exc, HOME)} The Studio "
+                  f"starts anyway (a browser signed in to it before still is); once there is space, "
+                  f"`morph team link --url {base}` prints a link.")
+    if a.open and not headless:  # a server without a screen: the link printed below is opened from another computer
+        import threading
+        threading.Timer(1.5, open_app_window, args=(link,)).start()
+    extra = {**({"team": True, "link": owner_link} if team else {}),
+             **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {}),
+             **({"token_chosen": False} if token and not fixed else {}),  # Morph's own random code: never locked out
+             **({"last": True} if getattr(a, "last", False) else {})}  # the process ends with the Studio (_leave)
+    serve(p, a.host, a.port, home=HOME, token=token, **extra)
+
+
+
+
+def _first_robots(a, other: str, building: list):
+    """What `morph studio` does before the Studio starts: the .env file, and the robots it builds: `a.name`'s first one
+    (generated when there is no such project yet), the project switcher's `other` one, and either rebuilt when the Morph
+    code changed since. `building` names the project being built meanwhile, followed by its finished revision when
+    the build is a rebuild for newer Morph code. Returns a.name's RobotProject."""
     from . import keys
+    from .robot.pipeline2 import RobotProject, pipeline_version
     from .studio import projects
     if keys.ensure_env_file():
         print("Created .env for your API keys (optional): use the Keys button in the Studio, or edit .env.")
     projects.backfill_demo(HOME)  # robots this launcher made before 0.2: Reset demo touches only demo projects
     existing = projects.project_root(HOME, a.name)  # before RobotProject(), which makes the folder
-    for nm in (a.name, "so101" if a.name != "so101" else "egg-picker"):
+    for nm in (a.name, other):
         _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
+
+    def first(name, *rev):  # a build starts: what it imports is loaded before its line is printed
+        building[:] = [name, *rev]
+        _load_build()
+
     if not p.finished():
         if existing and projects.read_meta(existing).get("demo") is not True:
             # a project of its own whose first build was cut off or failed: the template must never replace its design
@@ -285,39 +335,182 @@ def cmd_studio(a):
             sys.exit(f"{a.name} has no finished revision yet, so the Studio can't start on it. Start the Studio on "
                      f"another project (`morph studio egg-picker`), then send \"build it again\" in {a.name}'s chat, "
                      f"or delete {a.name} from the project menu there.")
+        first(a.name)
         print(f"{a.name} has no finished revision yet: building its first robot (about a minute)..." if existing else
               f"no project {a.name} yet: generating the first robot (about a minute)...")
         cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if a.name == "so101" else None, demo=a.name in projects.DEMOS))
-    other = "so101" if a.name != "so101" else "egg-picker"
     if not RobotProject(os.path.join(HOME, other)).finished():
+        first(other)
         print(f"also preparing the {other} project for the project switcher...")
         cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if other == "so101" else None, demo=True))
-    from .robot.pipeline2 import pipeline_version
     for proj in (p, RobotProject(os.path.join(HOME, other))):
         last = proj.latest()
         if last and proj.load_results(last).get("pipeline_version") != pipeline_version(proj.load_design(last).arm.source):
+            first(os.path.basename(proj.root), last)
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
             proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
-    if team:  # a fresh one-time sign-in link for the owner (made now: it lasts 15 minutes)
-        from .studio.server import lan_address
-        from .studio.teams import cli as teams_cli
-        # with --remote, at the address teammates reach: the invite links Share makes start with the page's address
-        lan = lan_address() if a.host in ("0.0.0.0", "") else None
+    building.clear()
+    return p
+
+
+def _stopped_starting(fresh: list, building: list, last: bool) -> int:
+    """Ctrl+C (or a closed terminal window, `kill`) while `morph studio` built a robot before the Studio started: one
+    line instead of a traceback from inside MuJoCo, and exit status 130 (stopped). The build in progress left nothing
+    (RobotProject.run discards a revision it didn't finish); a rebuild for newer Morph code keeps the finished revision
+    it started from, and the line says so. A project this start made (`fresh`) that has no finished
+    revision is removed: kept, a project named other than the demos would hold no design, and the next `morph studio`
+    would refuse to start on it. So the next start builds it again. `last`: the process ends now (_leave), and a stop
+    signal from here on is ignored (a second Ctrl+C changes nothing); a script calling main(argv) keeps its handlers."""
+    if last:
+        _ignore_stops()
+    import shutil
+    from .robot.pipeline2 import RobotProject
+    for nm in fresh:
+        root = os.path.join(HOME, nm)
         try:
-            link = teams_cli.team_link(home=HOME, base_url=f"http://{lan or local}:{a.port}", out=None)["url"]
-        except ValueError as exc:  # team.json can't be read (teams.store.TeamFileError): never "no owner", never a traceback
-            sys.exit(str(exc))
-    if a.open and not headless:  # a server without a screen: the link printed below is opened from another computer
-        import threading
-        threading.Timer(1.5, open_app_window, args=(link,)).start()
-    extra = {**({"team": True, "link": link} if team else {}),
-             **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {}),
-             **({"token_chosen": False} if token and not fixed else {})}  # Morph's own random code: never locked out
-    serve(p, a.host, a.port, home=HOME, token=token, **extra)
+            if os.path.isdir(root) and not os.path.islink(root) and not RobotProject(root).finished():
+                shutil.rmtree(root)
+        except OSError:
+            pass
+    if len(building) > 1:  # a rebuild for newer Morph code: the project's finished revision is as it was
+        what = (f": {building[0]}'s rebuild with the latest Morph code was cut off; its finished revision {building[1]} "
+                "is kept, and the next start rebuilds it")
+    else:
+        what = f": {building[0]} wasn't finished, and the next start builds it again" if building else ""
+    try:
+        print(f"Stopped before the Studio started{what}.", flush=True)
+    except (OSError, ValueError):  # the terminal window is gone
+        pass
+    if last:
+        _leave(130)
+    return 130
 
 
+def _stops_raise():
+    """A context in which SIGTERM, SIGHUP and SIGBREAK (`kill`, a closed terminal window) raise KeyboardInterrupt as
+    Ctrl+C does, so a build before the Studio starts stops the same way; put back afterwards. Only from the main thread;
+    a signal the process ignores (nohup) stays ignored."""
+    import contextlib
+    import signal
+    import threading
+
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+
+    @contextlib.contextmanager
+    def raising():
+        old = {}
+        if threading.current_thread() is threading.main_thread():
+            for name in ("SIGTERM", "SIGHUP", "SIGBREAK"):
+                sig = getattr(signal, name, None)
+                try:
+                    if sig is not None and signal.getsignal(sig) is not signal.SIG_IGN:
+                        old[sig] = signal.signal(sig, stop)
+                except (OSError, ValueError, RuntimeError):
+                    pass
+        try:
+            yield
+        finally:
+            for sig, handler in old.items():
+                try:
+                    signal.signal(sig, handler)
+                except (OSError, ValueError, RuntimeError):
+                    pass
+    return raising()
+
+
+def _load_build():
+    """Load what a robot build imports (pipeline2.BUILD_MODULES, about a second the first time) with Ctrl+C, a closed
+    terminal window and `kill` held until it is loaded, then let a stop that came meanwhile through as if it came now
+    (_stops_held). trimesh catches BaseException around its optional imports: a stop landing there was swallowed (the
+    build went on), or left trimesh half-made, which ended in a TypeError or a segmentation fault, and a project of its
+    own the next start refused."""
+    from .robot.pipeline2 import load_build_modules
+    with _stops_held():
+        load_build_modules()
+
+
+def _stops_held(limit: float = 10.0):
+    """A context during which SIGINT, SIGTERM, SIGHUP and SIGBREAK are only noted; on leaving it, the handlers there
+    were are put back, and each signal noted is handed to its handler, in the order they came, as if it came then
+    (KeyboardInterrupt for Ctrl+C, and under _stops_raise for the others too; a default action, such as ending the
+    process, is taken). After `limit` seconds a stop is no longer held but handed on at once: one that hangs can still
+    be stopped. Only from the main thread; a signal the process ignores stays ignored. On POSIX they are also blocked
+    for the main thread meanwhile, so native code there isn't interrupted; blocking alone isn't enough: another thread,
+    such as one of the numeric library's (OpenBLAS), then takes the signal, and Python runs its handler in the main
+    thread all the same."""
+    import contextlib
+    import signal
+    import threading
+
+    def hand_on(sig, handler):
+        if callable(handler):
+            handler(sig, None)
+        elif handler == signal.SIG_DFL:
+            try:
+                signal.raise_signal(sig)
+            except (OSError, ValueError):
+                raise KeyboardInterrupt from None
+
+    @contextlib.contextmanager
+    def held():
+        old, came, mask, began = {}, [], None, time.monotonic()
+
+        def note(signum, frame):
+            if time.monotonic() - began > limit:
+                return hand_on(signum, old[signum])
+            came.append(signum)
+
+        if threading.current_thread() is threading.main_thread():
+            for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
+                sig = getattr(signal, name, None)
+                try:
+                    if sig is not None and signal.getsignal(sig) not in (signal.SIG_IGN, None):
+                        old[sig] = signal.signal(sig, note)
+                except (OSError, ValueError, RuntimeError):
+                    pass
+            if old and hasattr(signal, "pthread_sigmask"):
+                try:
+                    mask = signal.pthread_sigmask(signal.SIG_BLOCK, set(old))
+                except (OSError, ValueError):
+                    mask = None
+        try:
+            yield
+        finally:
+            stop = None
+            if mask is not None:
+                try:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, mask)  # one held for the main thread is noted now
+                except (OSError, ValueError):
+                    pass
+            for sig, handler in old.items():
+                for _ in range(3):  # signal.signal runs pending handlers before it changes one
+                    try:
+                        signal.signal(sig, handler)
+                        break
+                    except (OSError, ValueError, RuntimeError):
+                        break
+                    except BaseException as exc:  # noqa: BLE001  (a stop to a handler put back: the rest first)
+                        stop = stop or exc
+            if stop is not None:
+                raise stop
+            for sig in dict.fromkeys(came):  # each once, in the order they came
+                hand_on(sig, old[sig])
+    return held()
+
+
+def _ignore_stops():
+    """Ctrl+C, a closed terminal window and `kill` (SIGINT, SIGHUP, SIGTERM, SIGBREAK) ignored from now on. Never raises."""
+    import signal
+    for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        try:
+            if sig is not None:
+                signal.signal(sig, signal.SIG_IGN)
+        except (OSError, ValueError, RuntimeError):
+            pass
 
 
 def _leave(rc: int):
@@ -328,7 +521,10 @@ def _leave(rc: int):
     collected them ("Segmentation fault", exit code -11, after Ctrl+C). Study workers still running are ended, as the
     multiprocessing exit handler would, the Studio's lock files are removed, as the finalizers would, and the terminal
     output is flushed first. A build still running is cut off at once (serve() has journaled a first build as
-    "interrupted"); the next start picks it up like any build a stop cut off."""
+    "interrupted"); the next start picks it up like any build a stop cut off. A stop signal from here on is ignored
+    (serve() already ignores them from the end of a clean stop): the process is ending, and one that came now would
+    print a traceback and leave the lock files behind."""
+    _ignore_stops()
     try:
         import multiprocessing
         for child in multiprocessing.active_children():
@@ -458,6 +654,7 @@ def cmd_robot_brief(a) -> int:
                     "code": "Morph's code"}.get(ev.get("provider"), ev.get("provider"))
             print(f"  {ev['role']:<11} {prov}: {ev.get('text', '')}")
 
+    _load_build()  # the brief's checks import morph.robot.arm (and trimesh) too
     print(f"New robot: {text}")
     b = agents.run_turn(text=text, on_event=timeline, home=HOME)
     while b.status in ("asking", "out_of_scope"):
@@ -552,6 +749,7 @@ def cmd_robot(a) -> int:
             it = interpret(a.need, design)
             design = _checked(design, {k: v for k, v in it["changes"].items() if k not in ("name", "arm.source")})
             print(it["reply"])
+        _load_build()  # before anything is created: a Ctrl+C meanwhile stops it here, never inside trimesh's import
         try:
             info = projects.create(HOME, a.name, source=source, design=design, need=a.need, demo=getattr(a, "demo", False),
                                    unique=False)
@@ -573,6 +771,7 @@ def cmd_robot(a) -> int:
             if bad or not a.changes:
                 sys.exit("Give each change as dotted.key=value, for example arm.dof=6" + (f" (not {bad[0]})" if bad else "."))
             design = _checked(p.load_design(base), dict(kv.split("=", 1) for kv in a.changes))
+            _load_build()
             rev = p.run(design, parent=base, label=" ".join(a.changes)[:48], n_trials=a.trials, fast_sim=a.fast)
             failed = _robot_summary(p, rev)
         elif a.action == "show":
@@ -668,6 +867,7 @@ def cmd_world(a) -> int:
             changes, label = {"world.id": w["id"], "world.sha": sha}, f"world: {w['name']}"
         design = _checked(design, changes)
         p.log(worlds.ledger_entry(w))  # the kind of room and its counts (Keewano, when its events are on)
+        _load_build()
         rev = p.run(design, parent=base, label=label, n_trials=a.trials, fast_sim=a.fast)
         base, design = rev, p.load_design(rev)
     try:
@@ -707,8 +907,9 @@ def cmd_study(a) -> int:
         return 1
     try:  # what can't run is said before the banner (the study itself checks again)
         robust.new_study(p.root, a.rev, runs=a.runs, seed=a.seed, stress=a.stress, timestep=a.timestep / 1000.0)
-        if robust.active(p.root) is not None:
-            raise robust.StudyBusy("A robustness study is already running for this project.")
+        doc = robust.active(p.root)
+        if doc is not None:
+            raise robust.busy(doc)
     except robust.StudyError as exc:
         print(f"{a.name}: {exc}", file=sys.stderr)
         return 1
@@ -1386,9 +1587,10 @@ def main(argv=None) -> int:
     s.set_defaults(fn=cmd_demo)
 
     a = ap.parse_args(_studio_argv(sys.argv[1:] if argv is None else list(argv)))
+    a.last = a.cmd == "studio" and argv is None  # `morph studio`: the process ends with the Studio (_leave)
     t0 = time.time()
     rc = a.fn(a)
-    if a.cmd == "studio" and argv is None:  # the Studio stopped (Ctrl+C) with everything saved: this process is done
+    if a.last:  # the Studio stopped (Ctrl+C) with everything saved: this process is done
         _leave(rc if isinstance(rc, int) else 0)
     # every pipeline command's wall-clock goes into the time study
     if a.cmd in ("new", "explore", "change") and getattr(a, "name", None):

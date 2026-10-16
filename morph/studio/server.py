@@ -13,6 +13,7 @@ revision.
 from __future__ import annotations
 
 import base64
+import contextlib
 import errno
 import hashlib
 import hmac
@@ -48,7 +49,7 @@ from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import (OWNER, REQUESTER, RESUMED, STARTED, Hub, Job, QueueFull, Room,  # noqa: F401  (Hub: older code
                     UnknownProject, claim, first_build_turn, folder_id, journal_live, journal_owner,  # imports it
-                    journals, note_start, open_jobs, started_elsewhere)  # from here)
+                    journals, note_start, open_jobs, started_elsewhere, studio_process)  # from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
                        looks_like_secret, param_changes, project_name, remember_access_code, secret_refused)
@@ -263,6 +264,55 @@ class Refused(RuntimeError):
     """A project change the Studio won't make now (the project is building, or it is the start project)."""
 
 
+def _report(exc, home: str, line: str):
+    """The terminal's word on an error a person sees in the chat: a full disk in one plain line (`line`, then "The disk
+    is full: ..."), anything else with its whole traceback."""
+    if durable.disk_full(exc):
+        print(f"{line} {durable.explain(exc, home)}")
+    else:
+        traceback.print_exc()
+
+
+@contextlib.contextmanager
+def _no_study(home: str, name: str, root: str, what: str):
+    """`with _no_study(...) as moved:` no robustness study starts in project `name` while it is deleted or reset
+    (`what`; robust.holding). Refused, naming where one runs, when one took the study lock since study_elsewhere looked
+    (or this Studio's own hasn't stopped yet)."""
+    held = robust.holding(root)
+    try:
+        moved = held.__enter__()
+    except robust.StudyBusy:
+        where = study_elsewhere(home, root)
+        if where:
+            raise Refused(f"A robustness study of {name} is running {where}: stop it there, or let it finish, then "
+                          f"{what} {name}.") from None
+        raise Refused(f"A robustness study of {name} is still stopping, or another Morph Studio is deleting or "
+                      "resetting it: try again in a moment.") from None
+    try:
+        yield moved
+    finally:
+        held.__exit__(None, None, None)
+
+
+def study_elsewhere(home: str, root: str) -> str | None:
+    """Where a robustness study of project folder `root` runs when another process runs it (robust.active: its lock
+    names the process and the computer), for people: "in another Morph Studio on this projects folder (process 4242 on
+    this computer)", "in a `morph study` command (process 4242 on this computer)" or "(process 4242 on lab-pc)" for
+    another computer sharing the folder. None when no study runs, or this process runs it."""
+    study = robust.active(root)
+    if study is None or robust.held(study):  # no study: Delete project or Reset demo has the lock for a moment
+        return None
+    pid, host = study.get("pid"), study.get("host")
+    if (pid, host) == (os.getpid(), socket.gethostname()):
+        return None
+    where = "this computer" if host == socket.gethostname() else str(host or "another computer")
+    if studio_process(home, pid, host):
+        return f"in another Morph Studio on this projects folder (process {pid} on {where})"
+    if host == socket.gethostname():
+        return f"in a `morph study` command (process {pid} on {where})"
+    return f"in another Morph Studio or a `morph study` command (process {pid} on {where})"
+
+
 class Studio:
     """Every project the Studio serves, one Room each (rooms.py), created on first use. Requests name their project
     with ?project= (default: `start`, the project the Studio was started on), so switching projects in one tab
@@ -271,7 +321,9 @@ class Studio:
     `allow_url_import`: importing from a link stays on even when other computers can use this Studio."""
 
     def __init__(self, project: RobotProject, home: str | None = None, max_builds: int | None = None, *,
-                 team: bool = False, allow_url_import: bool = False):
+                 team: bool = False, allow_url_import: bool = False, recover: bool = True):
+        """`recover`: pick up the work a stopped Studio left now (recover()); serve() passes False and calls recover()
+        once its stop handling has this Studio, so a stop that lands in the recovery is journaled as a clean one."""
         self.home = os.path.realpath(home or os.path.dirname(project.root))
         self.start = os.path.basename(project.root)
         self.remote = False  # set by serve() when other computers may use this Studio
@@ -279,6 +331,7 @@ class Studio:
         self.builds = threading.BoundedSemaphore(max_builds or _env_int("MORPH_MAX_BUILDS", 1))
         self.rooms = {self.start: Room(self.start, project)}
         self._rooms = threading.Lock()
+        self.stopped = False  # a clean stop is under way (stopping): every room, and every room opened from now on, too
         projects.clear_uploads(self.home)  # uploads an earlier run never finished with
         self.claim = claim(self.home)  # the lock that tells another Studio on this folder that this one runs
         note_start(self.home, self.start)  # and which project it started on (that Studio won't delete it)
@@ -289,7 +342,14 @@ class Studio:
         _start_features(self.home)
         self.toolbox = None
         _start_tools(self)
-        self._recover(tidied)
+        self._tidied = [tidied]  # what the start-up set aside, for recover() (once)
+        if recover:
+            self.recover()
+
+    def recover(self):
+        """Pick up the work a stopped Studio left (_recover), once."""
+        if self._tidied:
+            self._recover(self._tidied.pop())
 
     # -- a Studio that stopped with work open (Ctrl+C, a closed window, a crash)
     REBUILT = " (rebuilt after a stop)"
@@ -442,8 +502,12 @@ class Studio:
         """The Studio stops cleanly (Ctrl+C, serve_forever returning; serve() calls this, never for an error escaping
         serve_forever): each room's queue journals a first build this stop cuts off as "interrupted", so only stops
         that came from elsewhere (a crash, a kill, a power cut, the system running out of memory, an error) count
-        towards FIRST_BUILD_TRIES. Never raises."""
-        for room in list(self.rooms.values()):
+        towards FIRST_BUILD_TRIES. A room opened from now on (a New robot request still being answered) is stopping
+        from the start (room), so the clean stop is written down whole. Never raises."""
+        with self._rooms:  # a room opened at the same time is in this list, or sees the flag
+            self.stopped = True
+            stopping = list(self.rooms.values())
+        for room in stopping:
             try:
                 room.jobs.stopping()
             except Exception:  # noqa: BLE001  (stopping must not fail)
@@ -471,8 +535,8 @@ class Studio:
         try:
             projects.park_first_build(room.p.root, record)
             return True
-        except (OSError, TypeError, ValueError):
-            traceback.print_exc()
+        except (OSError, TypeError, ValueError) as exc:
+            _report(exc, self.home, f"{room.name}: Morph couldn't record that its first build failed.")
             return False
 
     def _park(self, room: Room, design: dict, label: str, by, cut: int) -> bool:
@@ -617,7 +681,10 @@ class Studio:
         with self._rooms:
             room = self.rooms.get(name)
             if room is None or not self._kept(room):
-                room = self.rooms[name] = Room(name, root)
+                room = Room(name, root)
+                if self.stopped:  # a project made (or opened) while the Studio stops cleanly: that stop cuts it off too
+                    room.jobs.stopping()
+                self.rooms[name] = room
             return room
 
     @staticmethod
@@ -673,8 +740,9 @@ class Studio:
 
     def delete_project(self, name: str) -> str:
         """Move a project to MORPH_HOME/.trash (projects.delete) and close its room; tabs on it are told. Refused while
-        it builds or has changes waiting, here or in another Studio still running on this projects folder, and for the
-        project the Studio started on."""
+        it builds or has changes waiting, here or in another Studio still running on this projects folder, while
+        another process (another Studio, `morph study`) runs a robustness study of it, and for the project this or
+        another running Studio started on. This Studio's own study stops first (its finished runs are kept)."""
         if name == self.start:
             raise Refused(f"{name} is the project this Studio started on; start the Studio on another project "
                                   "to delete it.")
@@ -691,10 +759,16 @@ class Studio:
             if started_elsewhere(self.home, name):
                 raise Refused(f"{name} is the project another Morph Studio on this projects folder started on: stop "
                               "that Studio first, or start it on another project.")
+            where = study_elsewhere(self.home, root)
+            if where:
+                raise Refused(f"A robustness study of {name} is running {where}: stop it there, or let it finish, "
+                              f"then delete {name}.")
             from . import jobs
             jobs.stop(self, name)  # its robustness study first (finished runs are kept, in the trash with the project)
-            _tools_gone(self, name)  # and its agent runs that wait or work: none continues in a project of that name
-            trash = projects.delete(self.home, name)
+            with _no_study(self.home, name, root, "delete") as moved:  # none starts until the folder is in the trash
+                _tools_gone(self, name)  # and its agent runs that wait or work: none continues in a project of that name
+                trash = projects.delete(self.home, name)
+                moved(trash)
             with self._rooms:
                 self.rooms.pop(name, None)
         finally:
@@ -831,7 +905,7 @@ class Studio:
                 _after_build(self, room, rev)
                 return rev
             except Exception as exc:  # noqa: BLE001  (shown in the chat; the room keeps working)
-                traceback.print_exc()
+                _report(exc, self.home, f"{room.name}: an edit couldn't be built.")
                 self._say(room, job, "error", f"Error: {durable.explain(exc, self.home)}")
                 return None
             finally:
@@ -917,7 +991,7 @@ class Studio:
                 _after_build(self, room, rev)
                 return rev
             except Exception as exc:  # noqa: BLE001
-                traceback.print_exc()
+                _report(exc, self.home, f"{room.name}: its first build stopped.")
                 why = durable.explain(exc, self.home)
                 if (not room.completed() and not self._failed_first(room, design, label, job.by if job is not None
                                                                     else None, cut, why) and job is not None):
@@ -1048,19 +1122,23 @@ class Studio:
         the Keewano grip calibration only applies to a fresh build), it is rebuilt now (about 30 s per robot).
         Other projects are never touched. False when a demo project is still building here; Refused (nothing removed)
         while another process builds one, has changes of one waiting or runs a robustness study on one: another Studio
-        on this projects folder (a live queue journal there), or `morph robot` (a revision's build lock)."""
+        on this projects folder (a live queue journal there), or `morph robot` (a revision's build lock). From its
+        checks to its end no study starts in a demo project (_no_study: the study lock, which goes stale after
+        robust.STALE_S during a long rebuild)."""
         names = [p["name"] for p in projects.list_projects(self.home) if p["demo"]]
         rooms = [self.room(n) for n in names]
-        held = []
+        held, holds = [], contextlib.ExitStack()
         try:
             for room in rooms:
                 if room.jobs.busy() or not room.lock.acquire(blocking=False):
                     return False
                 held.append(room)
             for room in rooms:  # under the room locks: nothing here starts meanwhile
-                study = robust.active(room.p.root)
-                theirs = study is not None and (study.get("pid"), study.get("host")) != (os.getpid(), socket.gethostname())
-                if (theirs or self.held_elsewhere(room.p.root)
+                where = study_elsewhere(self.home, room.p.root)
+                if where:
+                    raise Refused(f"A robustness study of {room.name} is running {where}: reset the demo when it is "
+                                  "done.")
+                if (self.held_elsewhere(room.p.root)
                         or any(durable.BuildLock.held(room.p.build_lock(r)) for r in room.p.revs())):
                     raise Refused(f"Another Morph Studio on this projects folder (or a `morph` command) is building "
                                   f"{room.name}, has changes of it waiting or runs a study on it: reset the demo when "
@@ -1068,6 +1146,8 @@ class Studio:
             from . import jobs
             for room in rooms:
                 jobs.stop(self, room.name)  # Reset demo stops the project's robustness study too (its runs are kept)
+                holds.enter_context(_no_study(self.home, room.name, room.p.root, "reset"))  # and none starts meanwhile
+            for room in rooms:
                 p = room.p
                 keep = baseline(p)
                 if not keep:
@@ -1092,6 +1172,7 @@ class Studio:
                 room.hub.send({"type": "project", "project": room.name, "reset": True})
             return True
         finally:
+            holds.close()  # the study locks, then the rooms'
             for room in held:
                 room.lock.release()
 
@@ -1821,6 +1902,8 @@ def _api_projects_delete(req):
     except Refused as exc:
         raise HTTPError(409, str(exc)) from None
     except OSError as exc:
+        if durable.disk_full(exc):
+            raise HTTPError(507, f"Couldn't move {name} to the trash. {durable.DISK_FULL}") from None
         raise HTTPError(409, f"Couldn't move {name} to the trash ({exc.strerror or exc}); close any file of it that is "
                              "open, then try again.") from None
     _audit(req, "project_deleted", project=name)
@@ -2078,20 +2161,43 @@ class _Server(ThreadingHTTPServer):
 class _Stop:
     """How a Studio is asked to stop: Ctrl+C (SIGINT), a closed terminal window (SIGHUP), a logout, shutdown or `kill`
     (SIGTERM), Ctrl+Break (SIGBREAK) or a closed console window on Windows. The first one ends serve_forever (or keeps
-    it from starting, during the start-up), so serve() journals a clean stop (Studio.stopping: a first build it cuts
-    off is no try) and returns; a second one stops at once (KeyboardInterrupt). A signal the process ignores (nohup)
-    stays ignored. Handlers are only set from the main thread, and put back afterwards."""
+    it from starting, during the start-up), so serve() journals a clean stop (end: Studio.stopping, a first build it
+    cuts off is no try) and returns. A second one stops at once: it raises KeyboardInterrupt where the start-up or
+    serve_forever is (only once, and never once serve() is ending, so it always lands where serve() turns it into the
+    same clean stop), and cuts short the wait for studies to stop. However many come, and wherever they land, the stop
+    is written down whole: serve() gives this the Studio before its recovery queues anything. A signal the process
+    ignores (nohup) stays ignored. Handlers are only set from the main thread, and put back afterwards; with `last`
+    (the process ends right after serve(): cli._leave), a clean stop ignores them from its end on instead, so one that
+    comes while the process leaves prints no traceback and leaves no lock file."""
     NAMES = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
 
-    def __init__(self, httpd):
-        self.httpd, self.requested, self.serving, self.studio, self.old, self.console = httpd, False, False, None, {}, None
+    def __init__(self, httpd, last: bool = False):
+        self.httpd, self.studio, self.old, self.console, self.last = httpd, None, {}, None, last
+        self.requested = self.serving = self.raised = self.ending = self.clean = False
+        self.hurry = threading.Event()  # asked again: studies aren't waited for
 
     def __call__(self, signum=None, frame=None):
-        if self.requested:
+        if not self.requested:
+            self.requested = True
+            if self.serving:  # shutdown() waits for serve_forever, which runs on this (the main) thread
+                threading.Thread(target=self.httpd.shutdown, daemon=True, name="morph-stop").start()
+            return
+        self.hurry.set()
+        if not (self.raised or self.ending):
+            self.raised = True
             raise KeyboardInterrupt  # asked again: stop now
-        self.requested = True
-        if self.serving:  # shutdown() waits for serve_forever, which runs on this (the main) thread
-            threading.Thread(target=self.httpd.shutdown, daemon=True, name="morph-stop").start()
+
+    def end(self, clean: bool):
+        """serve() is done (`clean`: a stop someone asked for, not an error escaping it): the Studio journals the first
+        builds the stop cuts off as no try (Studio.stopping), then its studies stop (jobs.shutdown). From here on a
+        signal never raises: it only cuts the wait for the studies short."""
+        self.ending, self.clean = True, clean
+        if self.studio is None:
+            return  # the start-up stopped before the Studio existed: it queued nothing
+        if clean:
+            self.studio.stopping()
+        from . import jobs
+        jobs.shutdown(self.studio, hurry=self.hurry)  # robustness studies stop and keep their runs
 
     def __enter__(self):
         if threading.current_thread() is not threading.main_thread():
@@ -2119,9 +2225,11 @@ class _Stop:
         return self
 
     def __exit__(self, *exc):
+        # the stop is written down and the process ends now (no error escaping serve()): nothing left to stop
+        leaving = self.last and self.clean and exc[0] is None
         for sig, old in self.old.items():
             try:
-                signal.signal(sig, old)
+                signal.signal(sig, signal.SIG_IGN if leaving else old)
             except (OSError, ValueError, RuntimeError):
                 pass
         if self.console is not None:
@@ -2134,13 +2242,15 @@ class _Stop:
 
 
 def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None, token: str | None = None, *,
-          team: bool = False, allow_url_import: bool = False, link: str | None = None, token_chosen: bool | None = None):
+          team: bool = False, allow_url_import: bool = False, link: str | None = None, token_chosen: bool | None = None,
+          last: bool = False):
     """Run the Studio. `team`: Morph Teams (members sign in with invite or sign-in links; MORPH_TOKEN plays no part),
     `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers.
     `token_chosen`: False when `token` is one access_token() made (the CLI makes it to print the link first), so wrong
     guesses never lock out its address (Guesses); default: a given token is the person's own. It listens before the
     Studio's start-up picks up work a stopped Studio left (a start that can't listen leaves every journal as it was),
-    and every stop it is asked for, from the start-up on, is a clean one (_Stop)."""
+    and every stop it is asked for, from the start-up on, is a clean one (_Stop). `last`: the process ends once this
+    returns (cli._leave), so after a clean stop the stop signals stay ignored instead of being put back."""
     if not project.finished():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     chosen = bool(token) if token_chosen is None else token_chosen
@@ -2156,10 +2266,13 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
                              "(Ctrl+C in its terminal, or close that window), then start again.") from None
         raise SystemExit(f"Morph Studio couldn't listen on {host}:{port} ({exc}).") from None
     httpd.daemon_threads = True
-    stop, studio = _Stop(httpd), None
-    try:
-        with stop:
-            studio = stop.studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
+    stop = _Stop(httpd, last=last)
+    with stop:
+        clean = False  # an error escaping is no clean stop (a first build it cut off counts as a try)
+        try:
+            # the Studio's recovery (a cut-off first build queued again) runs once `stop` has the Studio
+            studio = stop.studio = Studio(project, home, team=team, allow_url_import=allow_url_import, recover=False)
+            studio.recover()
             studio.remote = bool(token) or (team and not is_loopback(host))
             if team:
                 from . import api_team
@@ -2171,15 +2284,14 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
             stop.serving = True
             if not stop.requested:
                 httpd.serve_forever()
-    except KeyboardInterrupt:
-        if studio is not None:
-            studio.stopping()  # asked twice, or Ctrl+C where no handler could be set: still a person stopping it
-    else:
-        studio.stopping()  # serve_forever returned (asked to stop), or a stop came during the start-up: a clean stop;
-    finally:               # an error escaping is none (a first build it cut off counts as a try)
-        if studio is not None:
-            from . import jobs
-            jobs.shutdown(studio)  # robustness studies stop and keep their runs; the same settings carry on next time
+            clean = stop.ending = True  # serve_forever returned (asked to stop), or a stop came during the start-up
+        except KeyboardInterrupt:
+            clean = True  # asked twice, or Ctrl+C where no handler could be set: still a person stopping it
+        except BaseException:
+            stop.ending = True
+            raise
+        finally:
+            stop.end(clean)  # the same settings of a study carry on next time
 
 
 def _announce(project, host, port, token, team, link):

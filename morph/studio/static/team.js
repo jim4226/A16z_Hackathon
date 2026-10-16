@@ -876,6 +876,7 @@ export class Team {
   }
   builtHtml(b) {
     if (!b) return '';
+    if (b.noop) return `<div class="tm-built">${icon('check')}<span>Needed no build: ${this.esc(b.rev)} already has it</span></div>`;
     const [m0, m1] = b.min_torque_margin || [], [c0, c1] = b.unit_cost || [];
     const bits = [m1 != null ? `weakest joint ${m0 != null ? `${m0}× → ` : ''}${m1}×` : '', c1 != null ? `${c0 != null ? `${money(c0)} → ` : ''}${money(c1)} per unit${toolingNote((b.tooling_cost || [])[1], (b.quantity || [])[1]) ? ` (${toolingNote((b.tooling_cost || [])[1], (b.quantity || [])[1])})` : ''}` : '',
       b.feasible === false ? `${b.issues} issue${b.issues === 1 ? '' : 's'}` : b.feasible ? 'software checks pass' : ''].filter(Boolean);

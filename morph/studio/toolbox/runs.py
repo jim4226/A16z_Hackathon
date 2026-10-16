@@ -46,6 +46,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from ...services import durable
 from .. import security
 from . import audit, catalog, http_tool, policy, store
 
@@ -508,11 +509,20 @@ class Toolbox:
     # ---------------------------------------------------------------- start of a Studio
     def recover(self) -> dict:
         """At Studio start: a run left `running` (the Studio stopped mid-run) becomes an interrupted pause, and runs
-        untouched for 7 days are deleted. Runs another process drives right now are left alone."""
+        untouched for 7 days are deleted. Runs another process drives right now are left alone. On a full disk every
+        run and the drafts are still tried, what couldn't be written stays as it was for the next start, and then the
+        disk-full OSError is raised (api_tools.attach says so in one line)."""
         out = {"interrupted": [], "expired": []}
         now = time.time()
+        full = None  # the first disk-full error
         for run_id in self._ids():
-            claim = self._claim(run_id)
+            try:
+                claim = self._claim(run_id)
+            except OSError as exc:
+                if not durable.disk_full(exc):
+                    raise
+                full = full or exc
+                continue
             if claim is None:
                 continue
             try:
@@ -530,6 +540,10 @@ class Toolbox:
                 elif run.get("status") == "running":
                     self._interrupt(run, "restart", "The Studio stopped while this run was working.")
                     out["interrupted"].append(run_id)
+            except OSError as exc:
+                if not durable.disk_full(exc):
+                    raise
+                full = full or exc  # it stays as it was: the next start tries it again
             finally:
                 claim.release()
             if run_id in out["expired"]:
@@ -545,7 +559,14 @@ class Toolbox:
                         os.remove(os.path.join(folder, fn))
                 except OSError:
                     pass
-        self.drafts.recover()  # drafts a stopped Studio left drafting fail; old ones go
+        try:
+            self.drafts.recover()  # drafts a stopped Studio left drafting fail; old ones go
+        except OSError as exc:
+            if not durable.disk_full(exc):
+                raise
+            full = full or exc
+        if full is not None:
+            raise full
         return out
 
     # ---------------------------------------------------------------- the loop

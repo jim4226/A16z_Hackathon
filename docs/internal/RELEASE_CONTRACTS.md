@@ -54,7 +54,7 @@ decisions lives outside the repo; the essentials are summarized here.
 | `.uploads/` | W0a | temporary uploads: `Request.upload_path(suffix)` names a new file there for `Request.save()`; move the file where it belongs or delete it. The Studio clears entries older than an hour when it starts |
 | `.trash/<name>-<UTC time>/` | W0b | deleted projects, moved whole (never erased by Morph); `.trash/<project>-<rev>-<UTC time>/`: a build a stop cut off, a day after it was set aside (W3) |
 | `.robots/<name>/` | F2 | user-imported robot bundles (`morph_profile.json`, URDF/MJCF, meshes, LICENSE). `arm.source` resolves the shipped `robots/` first, then `.robots/` |
-| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; a Studio stopped with Ctrl+C removes its own (`cli._leave`), and files nobody holds (a crash, a kill) are removed by a later start after 10 minutes; `.studios/<id>.json`: `{start, pid, host}`, the project that Studio started on (`rooms.note_start`), which no other Studio deletes while that one runs (`rooms.started_elsewhere`), removed and swept the same way |
+| `.studios/<id>.lock` | W3 | the OS lock each running Studio process holds (`rooms.claim`; `<id>` is `rooms.OWNER`, 16 hex digits), freed by the system when the process ends; a Studio stopped with Ctrl+C, a closed terminal window (SIGHUP) or `kill` (SIGTERM) removes its own (`cli._leave`), and files nobody holds (a crash, a SIGKILL) are removed by a later start after 10 minutes; `.studios/<id>.json`: `{start, pid, host}`, the project that Studio started on (`rooms.note_start`), which no other Studio deletes while that one runs (`rooms.started_elsewhere`), removed and swept the same way |
 | `.team/` | F4 | `team.json` (+ `team.json.bak`: the copy before its last change, 0600, W3), `secret` (0600), `audit.jsonl` |
 | `.runs/<id>.json` + `<id>.lock` | B2-T1 | agent runs (section 15): 0600, deleted at Studio start 7 days after their last change |
 | `.tools/` | B2-T1, B2-T3 | agent tools (sections 15 and 15.2): `catalog/*.json` (the owner's manifests), `state.json`, `approvals.json`, `pins.json`, `drafts/`, `requests.jsonl`, `audit.jsonl` + `audit.head` |
@@ -81,12 +81,53 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   as before; `morph team audit --verify` prints the note.
 - `morph studio` (the command line: `main()` without argv) ends its process with `cli._leave` once `serve()` has
   returned (Ctrl+C, a closed terminal window, SIGTERM: `server._Stop`): study workers ended, the process's
-  `.studios/<id>.lock` files released and removed (`rooms.release_claims`, what the Claims' finalizers did), stdout
-  and stderr flushed, then `os._exit`. Interpreter
+  `.studios/<id>.lock` and `.json` files released and removed (`rooms.release_claims`; a Claim's finalizer does the
+  same for both when it is dropped, as when a second Ctrl+C inside `Studio()` leaves no Studio to hold it), stdout and
+  stderr flushed, then `os._exit`. From the end of a clean stop (`serve(last=True)`, `_Stop.__exit__`)
+  to `os._exit` SIGINT, SIGTERM, SIGHUP and SIGBREAK are ignored: the stop is written down by then, and a Ctrl+C
+  pressed again while the process leaves printed a KeyboardInterrupt traceback, ended it with -2 and left
+  `.studios/<id>.json`. Interpreter
   shutdown added nothing but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one
   stop in twelve. So every record must be on disk when it is written (the rules here), never at exit. A build still
   running is cut off at once (the interpreter used to wait for its helper threads): `serve()` journals a first build
   as `interrupted` first (section 2), and the next start picks it up like any build a stop cut off.
+- Before the Studio starts, `morph studio` builds what it needs (`cli._first_robots`: the named project's first robot,
+  "generating the first robot (about a minute)...", the project switcher's other demo, and either rebuilt for newer
+  Morph code). Ctrl+C there, or SIGTERM, SIGHUP or SIGBREAK (`cli._stops_raise` makes them raise KeyboardInterrupt as
+  Ctrl+C does), stops it in one line, "Stopped before the Studio started: <project> wasn't finished, and the next
+  start builds it again." (for a rebuild for newer Morph code: "<project>'s rebuild with the latest Morph code was cut
+  off; its finished revision rNNN is kept, and the next start rebuilds it."), with exit status 130
+  (`cli._stopped_starting`, then `_leave`; stop signals are ignored
+  from then on): the build in progress leaves no revision (`RobotProject.run` discards one it didn't finish), and a
+  project folder this start made (none was there before it) that has no finished revision is removed, so the next
+  start generates it again; nothing else is removed. Not covered: a SIGKILL, a power cut or a closed console window on
+  Windows there leaves that folder with only its `meta.json`; the next start builds a demo again, and refuses a
+  project of another name until it is deleted (from another project's Studio, or by hand).
+- A build from the main thread (the launcher's first robots and rebuilds, `morph robot new|change`, a one-liner
+  before its brief's checks, `morph world --starter|--off`) first loads what it imports (`pipeline2.BUILD_MODULES`: morph.robot.arm with
+  trimesh, cascadio and manifold3d, the stage modules, MuJoCo with OpenGL, Pillow; 0.5-0.7 s warm here) through
+  `cli._load_build`, with SIGINT, SIGTERM, SIGHUP and SIGBREAK held (`cli._stops_held`); the launcher prints its
+  "generating the first robot" or "rebuilding" line after that. trimesh catches BaseException around its optional
+  imports, so a stop landing there was swallowed (the build went on) or left trimesh half-made: a TypeError, or a
+  segmentation fault in cascadio's start-up, and a project the next start refused (the real launcher, 16 presses
+  0.05-0.44 s after the line: 6 swallowed, 6 segmentation faults, 1 TypeError, 3 clean). Held means a handler that
+  only notes the signal; on leaving, the old handlers are put back and each noted signal is handed to its own
+  (KeyboardInterrupt, so the one line above), and a signal the process ignores stays ignored. On POSIX the main
+  thread also blocks them meanwhile, which alone isn't enough: numpy's OpenBLAS threads take a signal the main
+  thread blocks, and Python runs its handler in the main thread all the same. After 10 s a stop is handed on at
+  once, so an import that hangs can still be stopped. The launcher's check for newer Morph code, at every start,
+  finds an imported robot's bundle (so101) with `importers.robots.robot_dir` and never imports `robot.imported`, which
+  loads trimesh: it did, in the main thread, so a Ctrl+C at a normal start was exposed the same way (24 presses
+  0.3-2.6 s after starting a Studio with nothing to build: 3 swallowed, the Studio starting with trimesh half-made,
+  1 TypeError, 1 segmentation fault; now 22 clean stops of the running Studio and, at 0.3-0.4 s, 2 of Python's own
+  KeyboardInterrupt tracebacks while it imports Morph, before anything is made). A Studio with nothing to build first
+  imports trimesh in a background thread (`capability-warm`), where a stop never lands, and `morph study`'s checks
+  in the main thread don't import it. Not covered: trimesh also catches BaseException in a few one-line steps the
+  build runs later (a centroid, a mask); a press landing exactly there is swallowed, the build goes on, and the next
+  press stops it; a Ctrl+C in the first half second or so (0.65 s on a machine at load 13 to 18), while Python
+  imports Morph itself, prints Python's
+  KeyboardInterrupt traceback (nothing is made yet); other commands that load trimesh in the main thread (`morph
+  export`, `morph import`) were not checked.
 - Stopping never waits for the network: lookups run in parallel on `morph/services/background.DaemonPool` (Darwin
   `source`/`suggest`, `keys.check`, BoardRepo), whose daemon threads the interpreter doesn't join at exit, where
   `concurrent.futures` ran every queued lookup to its timeout first. New code that fans network calls out uses it.
@@ -116,7 +157,13 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   `rNNN.deleted-*` leftovers of a deletion a locked file stopped are deleted.
 - A full disk (ENOSPC, EDQUOT) reads `durable.DISK_FULL` ("The disk is full: free some space on this computer, then try
   again."): routes answer 507 with it (the generic handler, Teams' `_safe`, settings and keys), a build's chat error says
-  it. The Teams and toolbox lock files close their descriptor and remove themselves when their first write fails.
+  it. The Teams and toolbox lock files close their descriptor and remove themselves when their first write fails. The
+  terminal says it in one plain line, never a traceback: the agents' toolbox at the start (`api_tools.attach`;
+  `Toolbox.recover` tries every run and the drafts, leaves what the disk refused for the next start, then raises the
+  disk-full error), a chat line or queue journal line the disk refused (once per project until a write succeeds
+  again), a failed build or edit and a first build's error record (`server._report`), and the owner's one-time
+  sign-in link at a team start (`cli.cmd_studio`: the team Studio starts without it, a session cookie being only read,
+  and the line names `morph team link --url <its address>`). Other errors keep their traceback.
 
 ## 2. Server routing contract (W0b implements; everyone else uses)
 
@@ -198,7 +245,7 @@ class Request:
 
 | Area | Routes |
 |---|---|
-| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, for the start project, and for the project another running Studio started on) |
+| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, while another process runs a robustness study of it (another Studio on the folder, `morph study`, or either on another computer sharing the folder: `robust.active`'s pid and host, `server.study_elsewhere`, and the message names the process and the computer, as Reset demo's does; from that check to the move to the trash Delete holds the study lock itself, `server._no_study`, so a study can't start in between, and one that took the lock first makes Delete refuse with nothing moved), for the start project, and for the project another running Studio started on) |
 | W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?, edit?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting; `edit: true` skips the chat routing of section 3); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
 | F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
@@ -272,10 +319,18 @@ and a stop in between leaves both journals, never neither. Then:
   (or the start-up) counts. A clean stop is one a person asks for: Ctrl+C (SIGINT), a closed terminal window
   (SIGHUP), a logout, shutdown or `kill` (SIGTERM), Ctrl+Break (SIGBREAK) and, on Windows, a closed console window
   (the console's close event journals the stop before Windows ends the process; written for Windows, not run there in
-  these tests). `server._Stop` handles them from before the start-up's recovery to the end of `serve()`: the first
-  ends `serve_forever` (or keeps it from starting), a second raises KeyboardInterrupt; a signal the process ignores
-  (nohup) stays ignored. `serve()` listens before the Studio's start-up recovers anything, so a start that can't
-  listen (a busy port, a mistyped `--host`) leaves every journal as it was. At
+  these tests). `server._Stop` handles them from before the start-up's recovery to the end of `serve()` (`serve()`
+  makes the Studio with `recover=False` and runs `Studio.recover()` once `_Stop` has it, so a stop that lands in the
+  recovery is journaled too): the first ends `serve_forever` (or keeps it from starting); a second raises
+  KeyboardInterrupt where the start-up or `serve_forever` is, only once and never once `serve()` is ending
+  (`_Stop.end`: `Studio.stopping`, then `jobs.shutdown`), and every later one only cuts the wait for studies short
+  (`jobs.shutdown(hurry=)`), so however many come and wherever they land, the clean stop is written down whole. A first
+  build that takes the build slot after `Studio.stopping` (`JobQueue.stopped`: the build ahead of it ended while studies
+  stopped) journals `started` and `interrupted` together, and so does the first build of a project made once
+  `Studio.stopping` ran (a New robot request still being answered at Ctrl+C): `Studio.stopped` makes every room opened
+  from then on stopping too (`Studio.room`). A signal the process ignores (nohup) stays ignored. `serve()` listens
+  before the Studio's start-up recovers anything, so a start that can't listen (a busy port, a mistyped `--host`)
+  leaves every journal as it was. At
   `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
   at every start): it is kept in `<p>/.morph/first-build.json` (`projects.park_first_build`), the chat and the terminal
   say "The Studio stopped twice while building <project>'s first design, so Morph won't start it again on its own ...
@@ -339,7 +394,10 @@ and a stop in between leaves both journals, never neither. Then:
   applied never stays "applied" with no revision until some Studio starts. Each request is decided under the
   project's Teams lock (`teams.store.locked`), read again there, so one another running Studio opened and applied
   again meanwhile is left to that Studio. A request whose change the head revision
-  already has (the build ends `noop`) is applied at the head revision, not opened again with "nothing to change". A
+  already has (the build ends `noop`) is applied at the head revision, not opened again with "nothing to change"; it
+  built nothing, so its `done` line carries `noop: true` (the request's `noop`, `built.noop` on the page) and the
+  inbox, the activity feed and its card say "Change request #<n> needed no build: <rev> already has it", as the chat
+  says "Nothing to change: <rev> already has that" (`api_team.job_finished(noop=True)`). A
   build that ends after its request was reopened anyway (a file system that can't lock) still records its revision:
   `done` with a revision makes an open request applied again (`collab._proposal_state`).
 New robot's Build on a brief that reads "building" answers `already: true` only while its project builds (here, or
@@ -705,9 +763,39 @@ members; a member can hold several.
   and sign-in codes, and other services' keys known by a fixed prefix or text that carries a key (`security.OTHER_KEYS`:
   GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq, xAI, Perplexity, ElevenLabs, npm,
   PyPI, SendGrid, DigitalOcean, Mapbox, Telegram and Discord tokens and Twilio key SIDs; a private key block, a link
-  with a password, `Bearer` and a token with a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value
-  has a letter and a digit). A key with no prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught
-  only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
+  with a password (`scheme://user:password@`: the user may be empty, `redis://:password@host`, or an e-mail address,
+  `smtp://bob@gmail.com:password@smtp.gmail.com`; the password has 8 characters or more and runs to the last `@`
+  before a space or a `/`, so a raw `?`, `#` or `@` in it, which RFC 3986 says to %-escape but people paste as it is,
+  is caught and redacted with the rest; it may hold letters such as é, ñ or ж but nothing from U+2000 on (Chinese,
+  Japanese, Korean, full-width punctuation, emoji), so Chinese or Japanese written straight after a link is not read
+  as one (Thai, written without spaces too, still can be); a port, 1 to 5 digits followed by `/`, `?`, `#`, `@`, `"`,
+  `<` or `>`, is no password, so
+  `http://10.0.0.5:8765?user=bob@example.com` and `http://10.0.0.5:8765@evil.com` pass; a link right after a `"` or
+  `'` (JSON, a Python or JavaScript string, a shell argument) ends at that quote followed by `,`, `:`, `}` or `]` (one
+  that closes its string; an escaped `\"` doesn't), so minified JSON in which a link comes before an e-mail value,
+  `{"homepage":"https://example.com","email":"robert.smith@example.com"}`, passes (the user and password ran on into
+  the next values), and a password in such a link is redacted without the values after it. Not caught: a password
+  with a raw `/` (`openssl rand -base64` passwords hold one 22% to 40% of the time, by length: 1,250 of 4,000
+  generated), one that starts with 1 to 5 digits and one of those characters, `postgres://admin:2024?Secret@db` or
+  `postgres://admin:2024"Secret!x@db`, one with any character from U+2000 on (€, an emoji: 389 of 4,000 generated
+  passwords with é, ñ, ü, ß, ж, ø, ç, €, £ or §, every one of them a €), one under 8 characters, and, in a link right
+  after a quote, one holding that quote unescaped (a CSV `""` counts as unescaped) and then `,`, `:`, `}` or `]`
+  (not valid JSON), and a link written with escaped slashes, `postgres:\/\/admin:S3cret!Passw0rd@db`, as PHP's
+  `json_encode` writes it by default.
+  Still refused: a port followed with no space by another symbol (`,`, `;`, `&`, `)`, `'` ...) and then, before
+  any space or `/`, by text with an `@`, as in `http://10.0.0.5:8765,bob@example.com`, which RFC 3986 reads as a
+  user and a password; and minified JSON in which text comes before a link with no port and no path in its string
+  and an e-mail value follows, `{"bio":"Robotics at https://rsmith.dev","email":"robert.smith@gmail.com"}` (15 of 25
+  such objects: the link isn't right after the quote, so the rule doesn't know the string ends; stopping every link
+  at `",` would miss Dashlane and KeePass passwords holding `",` or `":`, 6 more of kf_measure's seed-7 draws); the
+  same JSON written inside another JSON string with escaped quotes, as a log body holds it,
+  `{"body":"{\"homepage\":\"https://example.com\",\"email\":\"robert.smith@example.com\"}"}` (1,304 of 3,000
+  generated); and a link in which a `;` or other symbol is followed by 1 to 5 digits after a colon, such as a time,
+  and later an `@`: `https://example.com;time=12:30;by=robert.smith@example.com` reads `12:30` as a port and a
+  password),
+  `Bearer` and a token with
+  a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value has a letter and a digit). A key with no
+  prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
   Python reads by Unicode: 是, は and é count as letters), so a key glued to Chinese, Japanese or Korean text is caught.
   The key shapes, with the contexts each is refused in, are tables in `tests/fixtures/key_filter/keys.json`. Every
   `mi_`/`ml_`/`mt_` run of 20 or more characters counts when it has a capital (every Teams code has one) and doesn't
@@ -736,7 +824,9 @@ members; a member can hold several.
   200,000 it keeps is missed alone, cut to 20 characters or with `-thanks`, `_backup_copy`, `-please-join-the-team`,
   `-v2` or `_old` joined to it. Names refused (23 characters or more): under `mt_`/`ml_`/`mi_` none in lower case
   (they have no capital); capitalized, or as `sk-` part numbers, a series of 3 and two words 61 of 4,000 (67 as part
-  numbers), a series of 4 and a word 571 of 4,000 (573), two numbered words and two words 84 of 3,958 (72 of 3,938),
+  numbers), a series of 4 and a word 571 of 4,000 (573): every one whose unnumbered word has three letters or fewer
+  (`mi_Max1_Max2_Max3_Max4_Hip`, `sk-layer1-layer2-layer3-layer4-max`) and none whose word has four or more
+  (`mi_Cam1_Cam2_Cam3_Cam4_Gain` passes), two numbered words and two words 84 of 3,958 (72 of 3,938),
   three numbered abbreviations and a word 3 of 2,628 (3 of 2,672); plain words, versioned words and camelCase with a number none; a
   part code and two or three firmware words (`mt_SG90_horn_trim_offset`) none of 12,381, but 905 of 10,459 when the
   words aren't in `words.WORDS`; a number and a unit, a size, a commit hash and a word with an axis capital none;
@@ -746,7 +836,17 @@ members; a member can hold several.
   case); whole part numbers 40 of
   270 (mixed case such as `ATmega328P` or `nRF52840`, starting with a digit such as `17HS4401`, and any after `sk-`).
   `names.json` lists the kinds still refused; part runs such as `sk-608zz-608rs-626zz-bearings` (more short codes than
-  words and names) are refused too. The tool runner redacts
+  words and names) are refused too. Links (`--links`, 20,000 of each; in brackets, the first rule, whose password ran
+  to the first `/` or `@`, then the second, which also ended it at `?` and `#`): refused, of links with an e-mail
+  address or an `@` after their host and port in a query, a fragment or a path (IPv4, names and IPv6 hosts) 0 (9,201;
+  0), with an `@` right after the port (`http://10.0.0.5:8765@evil.com`) 0 (11,958; 0), and followed with no space by
+  Chinese or Japanese with an e-mail address 0 (18,307; 6,349). Missed, alone or in a sentence: a password of 8 to 24
+  characters RFC 3986 allows there (`%40` included) 0 (0; 0), the same with an empty user 0 (20,000; 20,000) or an
+  e-mail address as the user 0 (20,000; 20,000); a password of 12 to 20 characters drawn as password managers draw
+  them, with at least one raw symbol: of `!@#$%^&*` 145 (3,131; 8,096), of `!#$%&*+-.:;=?^_~` 106 (0; 8,058), a `?`
+  293 (0; 20,000), a `#` 322 (0; 20,000), an `@` 294 (11,431; 11,431), every one of them a password that starts with
+  1 to 5 digits and a `?`, `#` or `@`; with a raw `/` all 20,000 (all; all); with a letter outside ASCII (é, ñ, ü, ß,
+  ж) 0 (0; 0). The tool runner redacts
   and refuses with the same shapes (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
@@ -1400,7 +1500,16 @@ field failure rate (section 0, honesty).
   elsewhere. Study processes mute MuJoCo's warning handler (it writes `MUJOCO_LOG.TXT` into the current folder) and read
   the warning counters instead.
 - **Storage** (`<p>/.studies/`, a hidden folder: never a project, never exported): `tolerances.json`; `active.json`
-  (the running study's lock, its heartbeat is the file's mtime: older than 30 s means it stopped); `<id>/study.json`
+  (the running study's lock, its heartbeat is the file's mtime: older than 30 s means it stopped; Delete project and
+  Reset demo take it too, with an id `hold-<hex>` (`robust.holding`), from their check for a study run elsewhere to
+  the end of their work, so a study that starts then, here or in `morph study`, is refused with "This project is
+  being deleted or reset right now: try again in a moment."; it goes with the folder to the trash, and it has no
+  heartbeat, so during a Reset demo rebuild longer than 30 s a study may start after those 30 s. On a full disk
+  (ENOSPC or a quota) the hold can't be written: what was written of it is removed and Delete project and Reset demo
+  go on without it, as before the hold existed (they answered 409 "close any file of it that is open" and 507 with a
+  traceback, and left an empty `active.json`; Reset demo is one way to free space). A study can't write its lock
+  either until space is freed, so only one started in the moments Reset demo has freed space can run meanwhile. A
+  lock write that fails never leaves a partial `active.json`, a study's included); `<id>/study.json`
   (definition, effective spec, status `queued|preparing|running|checking|done|cancelled|error`, read back as
   `interrupted` when its process stopped, `model`, `timing`, `summary`); `<id>/runs.jsonl` and `<id>/checks.jsonl`
   (one row per run, about 0.5 KB). `<id>` is 12 hex digits of the sha256 of (revision, design, pipeline version,
@@ -1452,7 +1561,8 @@ field failure rate (section 0, honesty).
     (`robust.SENSITIVE`) and example run. `NOTES["none"]`: "One nominal run. Small differences in placement or hardware
     aren't tested."
   - The Studio stops a project's study before Delete project and Reset demo (`jobs.stop(studio, name)`, up to 5 s; its
-    runs are kept, in the trash with a deleted project) and every study when it stops (`jobs.shutdown(studio)`).
+    runs are kept, in the trash with a deleted project) and every study when it stops (`jobs.shutdown(studio)`). A study
+    another process runs (another Studio, `morph study`) refuses both instead (409, saying where: section 2).
   - `robust.load()` adds `rev_changed`; `studies()` reads each revision's spec once.
 - **The card (`static/study.js`, feature `study`):** under the pick-and-place result in the Simulation tab (section 4):
   the note where no study exists; live progress (`study` events: phase, run k of n, the success rate so far with its

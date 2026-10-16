@@ -58,6 +58,58 @@ def test_every_key_shape_is_refused_in_every_context(family, i, row):
         assert key not in security.redact_keys(f"answer: {key} end"), key
 
 
+# (a link, its password): passwords as password managers draw them, with a raw ?, # or @ that RFC 3986 says to %-escape
+# but people paste anyway, the empty user of the usual Redis link and a user that is an e-mail address
+RAW_PASSWORD_LINKS = [
+    ("postgres://admin:Xk9fP2qL#mB7wQ@db.example.com:5432/morph", "Xk9fP2qL#mB7wQ"),
+    ("mysql://root:My?Secret2024@localhost/morph", "My?Secret2024"),
+    ("amqp://guest:S3cr3t#Pass99@rabbit:5672", "S3cr3t#Pass99"),
+    ("mongodb://app:Qz8#$%^&*?Lm2x@10.0.0.5:27017/morph", "Qz8#$%^&*?Lm2x"),
+    ("redis://:Xk9fP2qLmB7wQ3zT@redis.example.com:6379/0", "Xk9fP2qLmB7wQ3zT"),
+    ("redis://:Ab?c#d!e12@10.0.0.5:6379", "Ab?c#d!e12"),
+    ("redis://default:Pa@ss#w0rd!Xy@redis.example.com:6379/0", "Pa@ss#w0rd!Xy"),
+    ("https://bob:Secr3t?Pass@github.com?cc=ops@example.com", "Secr3t?Pass"),
+    ("smtp://robots.lab@gmail.com:Xk9fP2qL#mB7@smtp.gmail.com:587", "Xk9fP2qL#mB7"),
+    ("postgres://admin:Contraseña2024!@db.example.com:5432/morph", "Contraseña2024!"),
+    ("mysql://root:Пароль2024секрет@localhost/morph", "Пароль2024секрет"),
+]
+
+
+@pytest.mark.parametrize("link,password", RAW_PASSWORD_LINKS, ids=[p for _, p in RAW_PASSWORD_LINKS])
+def test_a_link_password_with_a_raw_question_mark_hash_or_at_is_refused_and_redacted(link, password):
+    """postgres://admin:Xk9fP2qL#mB7wQ@db... and mysql://root:My?Secret2024@... were let through once the password part
+    ended at the first ? or #, and redis://:password@host (no user) and smtp://bob@gmail.com:password@... (an e-mail
+    address as the user) always were. The tool runner's redaction uses the same shape: what is refused is redacted,
+    password and all."""
+    for text in (link, f"DATABASE_URL is {link} on the lab box", f"连接{link}就行", f'{{"url": "{link}"}}'):
+        assert security.looks_like_secret(text), text
+        redacted = security.redact_keys(text)
+        assert password not in redacted and not security.has_key(redacted), redacted
+
+
+
+# (a link with a password, quoted as JSON, a Python or JavaScript literal or a shell argument, then more text)
+QUOTED_LINKS = [
+    ('{"url":"postgres://admin:S3cr3t!pass@db.example.com","owner":"robert.smith@example.com"}', "S3cr3t!pass"),
+    ('{"url":"redis://:Xk9fP2qL#mB7@redis.internal:6379","by":"robert.smith@example.com"}', "Xk9fP2qL#mB7"),
+    ('{"url":"postgres://admin:pa\\",ss1234@db","owner":"robert.smith@example.com"}', 'pa\\",ss1234'),
+    ("{'url':'mysql://root:Tr0ub4dor&3x@10.0.0.12:3306/db','by':'robert.smith@example.com'}", "Tr0ub4dor&3x"),
+    ('psql "postgres://admin:c0rrect\'horse@db/x" -c "select 1" # robert.smith@example.com', "c0rrect'horse"),
+]
+
+
+@pytest.mark.parametrize("text,password", QUOTED_LINKS, ids=[p for _, p in QUOTED_LINKS])
+def test_a_quoted_link_s_password_ends_at_the_quote_that_closes_its_string(text, password):
+    """In minified JSON a link with no port and no path followed by an e-mail value was refused
+    ({"homepage":"https://example.com","email":"robert.smith@example.com"}: the link's user and password ran on
+    through the closing quote to the e-mail's @), and a refused link took the next values with it when redacted. A
+    link after a quote now ends at a quote of that kind followed by , : } or ]: a password there is still refused and
+    redacted (an escaped quote, \\", stays in it), and the values after it are kept."""
+    assert security.looks_like_secret(text), text
+    redacted = security.redact_keys(text)
+    assert password not in redacted and not security.has_key(redacted), redacted
+    assert "robert.smith@example.com" in redacted, redacted
+
 @pytest.mark.parametrize("glue", ["我的密钥是", "キーは", "는", "а", "κλειδί", "clé", "是"])
 def test_a_key_glued_to_a_non_ascii_letter_is_refused_and_redacted(glue):
     """Python's \\b counts 是, は, 는, а and é as word characters: a key right after them, with no space (how Chinese,
@@ -197,7 +249,39 @@ DOC_CLAIMS = [
     ("SECURITY.md", "random enough is refused too", "rephrase it", "refused"),
     ("CHANGELOG.md", "Chip, board and model names", "these were refused whole", "pass"),
     ("CHANGELOG.md", "A key written in groups", "under the 20 characters", "refused"),
+    ("CHANGELOG.md", "a numbered series and one word of three letters", "(all 571 such names", "refused"),
+    ("CHANGELOG.md", "none of the other 3,429", "Remote and team Studios", "pass"),
 ]
+
+
+# the sentences about links with a password, and what each link they give as an example does
+DOC_LINKS = [
+    ("CHANGELOG.md", "links with a password (also", "and `.env` lines such as",
+     {"redis://:password@host": "refused", "http://10.0.0.5:8765?user=bob@example.com": "pass",
+      '{"homepage":"https://example.com","email":"robert.smith@example.com"}': "pass",
+      "postgres://admin:2024?Secret@db": "pass", "https://example.com;time=12:30;by=bob@example.com": "refused"}),
+    ("docs/internal/RELEASE_CONTRACTS.md", "with a password (`scheme://user:password@`", "`Bearer` and a token",
+     {"redis://:password@host": "refused", "smtp://bob@gmail.com:password@smtp.gmail.com": "refused",
+      "http://10.0.0.5:8765?user=bob@example.com": "pass", "http://10.0.0.5:8765@evil.com": "pass",
+      '{"homepage":"https://example.com","email":"robert.smith@example.com"}': "pass",
+      "postgres://admin:2024?Secret@db": "pass", 'postgres://admin:2024"Secret!x@db': "pass",
+      "http://10.0.0.5:8765,bob@example.com": "refused",
+      "https://example.com;time=12:30;by=robert.smith@example.com": "refused",
+      '{"body":"{\\"homepage\\":\\"https://example.com\\",\\"email\\":\\"robert.smith@example.com\\"}"}': "refused"}),
+]
+
+
+@pytest.mark.parametrize("doc,start,end,says", DOC_LINKS, ids=[d for d, *_ in DOC_LINKS])
+def test_the_links_the_docs_give_as_examples_do_what_they_say(doc, start, end, says):
+    """The contracts said a password with a raw ? or # 'which no link can carry' is not caught: it is pasted all the
+    same. Every link the sentences give as an example is listed here and is refused or passes as they say."""
+    text = " ".join(open(os.path.join(ROOT, doc), encoding="utf-8").read().split())
+    i = text.index(start)
+    span = text[i:text.index(end, i)]
+    links = {n for n in re.findall(r"`([^`\s]+)`", span) if "://" in n and n != "scheme://user:password@"}
+    assert links == set(says), (doc, links ^ set(says))
+    wrong = [n for n, s in says.items() if security.looks_like_secret(n) is not (s == "refused")]
+    assert wrong == [], (doc, wrong)
 
 
 @pytest.mark.parametrize("doc,start,end,says", DOC_CLAIMS, ids=[f"{d}-{s}" for d, _, _, s in DOC_CLAIMS])

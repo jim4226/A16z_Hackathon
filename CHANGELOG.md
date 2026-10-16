@@ -271,9 +271,24 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   or a Teams script token, invite or sign-in code before anything is saved, shown or sent. It also refuses a remote
   Studio's own access code (raw or in its access link), a `MORPH_TOKEN` or `ANTHROPIC_AUTH_TOKEN` that is set, other
   services' keys with a fixed prefix (GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq,
-  xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password and `.env` lines such as
-  `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no space (these keys and JWTs used to slip past),
-  and a tool key after `key=` or inside a link. A key with no prefix of its own pasted alone (an AWS secret key, a bare
+  xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password (also with a raw `?`, `#` or `@` in
+  the password, no user as in `redis://:password@host`, or an e-mail address as the user; a port is no password, so
+  `http://10.0.0.5:8765?user=bob@example.com`, a port and a query with an e-mail address, passes, where 9,201 of
+  20,000 such generated links were refused; so does minified JSON in which a link starts a string and an e-mail
+  value follows, `{"homepage":"https://example.com","email":"robert.smith@example.com"}`, but not yet one with text
+  before the link in its string, `{"bio":"Robotics at https://rsmith.dev","email":"robert.smith@gmail.com"}`, nor
+  JSON written inside another JSON string with escaped quotes (as log bodies hold it), nor a link in which a `;` or
+  other symbol is followed by a time such as `12:30` and later an `@`
+  (`https://example.com;time=12:30;by=bob@example.com`, read as a port and a password). Still missed: a password
+  with a raw `/`,
+  which `openssl rand -base64` passwords hold 22% (12 bytes) to 40% (24 bytes) of the time; one that starts with 1 to
+  5 digits and a `?`, `#`, `@`, `"`, `<` or `>`, such as `postgres://admin:2024?Secret@db` (0.5% to 1.6% of 20,000
+  generated passwords with such symbols); one with any character from U+2000 on, such as € or an emoji; one under 8
+  characters; in a link inside quotes, one holding that quote unescaped (a CSV `""` counts as unescaped) and then
+  `,`, `:`, `}` or `]`; and a link written with escaped slashes, `postgres:\/\/admin:...@db`, as PHP's
+  `json_encode` writes it) and `.env`
+  lines such as `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no
+  space (these keys and JWTs used to slip past), and a tool key after `key=` or inside a link. A key with no prefix of its own pasted alone (an AWS secret key, a bare
   hex token) is still not caught unless it is saved in the Keys dialog. New robot used to keep such
   a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ
   and tool keys through; drafts saved before this stay until their 7-day cleanup. The filter knows keys and codes by
@@ -297,11 +312,15 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   have a digit (2.75%, about 3 in 100, of all of them, counting those with no digit, which an `sk-` key needs), 1.69%
   (2.28%) of `sk-live-xxxx-xxxx-xxxx-xxxx` and 0.86% (1.14%) of `sk-live-xxxxxx-xxxxxx-xxxxxx`; the first two shapes
   in capitals and digits 2.00% (2.73%) and 1.54% (2.09%), in hex 0.27% and 0.18%; random base64url keys of 20 to 32
-  characters not in groups 0.009% or less of those with a digit. Names still refused: a few model spellings with
-  two-letter pieces or no common word (`ViT`, `UNet`, `MiDaS`, `LoFTR`, `ConvNeXt`, `SmolVLA`, `EfficientNetB0`),
-  part numbers in mixed case or starting with a digit (`ATmega328P`, `nRF52840`, `17HS4401`), whole part numbers after
-  `sk-` (`sk-STM32F405RGT6-breakout-board`), camelCase with `I2C`, a part code beside unusual words of its length, and
-  capitalized names made mostly of numbered words (571 of 4,000 generated `Cam1_Cam2_Cam3_Cam4_Gain`-style names).
+  characters not in groups 0.009% or less of those with a digit. Names still refused (a name under the mi_, ml_ or
+  mt_ prefix only once 20 characters or more follow it): a few model spellings with two-letter pieces or no common
+  word (`ViT`, `UNet`, `MiDaS`, `LoFTR`, `ConvNeXt`, `SmolVLA`, `EfficientNetB0`), part numbers in mixed case or
+  starting with a digit (`ATmega328P`, `nRF52840`, `17HS4401`), whole part numbers after `sk-`
+  (`sk-STM32F405RGT6-breakout-board`), camelCase with `I2C`, a part code beside unusual words of its length, and
+  capitalized names made of a numbered series and one word of three letters or fewer, such as
+  `mi_Max1_Max2_Max3_Max4_Hip` or `mi_Joint1_Joint2_Joint3_Joint4_Max` (all 571 such names among 4,000 generated
+  series of four and a word; none of the other 3,429, whose word has four letters or more and which pass, as
+  `mi_Cam1_Cam2_Cam3_Cam4_Gain` does).
 - Remote and team Studios: one address may hold at most 16 connections that haven't signed in. Someone without the
   access link could lock every signed-in person out by holding 64 idle connections; signed-in pages don't count, so
   teammates behind one router don't run into it in normal use. Many addresses together can still fill the slots
@@ -424,8 +443,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Studio starts, such a revision and any build a stop cut off are set aside (named in the terminal; after a day they
   move to `projects/.trash/`), a revision Morph can't read is never shown or built on, and every record is synced to
   the disk before it replaces the old one. A build that fails before it finishes (a full disk) removes its revision
-  folder, so the space comes back; a full disk reads "The disk is full" in the chat and in dialogs, and a full disk no
-  longer leaves Teams and tool files "busy" for 30 seconds afterwards. A build another Studio or the CLI is still
+  folder, so the space comes back; a full disk reads "The disk is full" in the chat and in dialogs, and in one plain
+  line in the terminal (a Studio starting on a full disk printed a traceback for the agents' tools, each chat and
+  queue line and the failed rebuild, and the first run the disk refused kept the agents' other runs and drafts from
+  being marked stopped; `morph studio --team` didn't start at all, with a traceback for the owner's sign-in link: it
+  starts without the link now and names `morph team link` for one once there is space), and a full disk no longer
+  leaves Teams and tool files "busy" for 30 seconds afterwards. A build another Studio or the CLI is still
   running is never set aside.
 - A Studio stopped during a build (Ctrl+C, a closed window, a crash) no longer strands what it was doing. When it
   starts again, a new, imported or forked project whose first build was cut off is built again (labelled "rebuilt
@@ -440,8 +463,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   Studio would crash it at every start): the chat and the terminal say so, and "build it again" in the project's chat
   tries once more. A team Studio starting while another one runs on the same projects folder leaves the change
   requests that one is building alone (it reopened them, told their people they weren't built, and the finished build
-  left its revision unrecorded). Closing the Studio with Ctrl+C during a first build is no try: only a crash, a kill,
-  a power cut or an error that stops the Studio counts, and the chat no longer suggests the design stopped the
+  left its revision unrecorded). Closing the Studio with Ctrl+C during a first build is no try: only a crash, a
+  SIGKILL (`kill -9`, or the system ending it when memory runs out), a power cut or an error that stops the Studio
+  counts, and the chat no longer suggests the design stopped the
   Studio. "Build it again" sent again while that build runs is answered at once (it is already being built), not with
   "I couldn't map that" once it ends. A first build that ends with an error (not a stop) can be tried again too:
   "build it again" in its chat builds it once more (it was answered "Wait for its first build", for a build that would
@@ -456,13 +480,37 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   rebuild and an error record the disk refused left only "delete the project" (the design survives now until it is
   written down again, and a first build that fails on a full disk stays journaled). "Build it again" also builds from
   a revision set aside unfinished when nothing else kept the design, and two Studios starting at once build a cut-off
-  first design once (they could build it twice, r001 and r002). Closing the Studio's terminal window, a logout or a
-  `kill` (SIGTERM), and Ctrl+C during the start-up while it rebuilds a cut-off first build, are clean stops too: they
+  first design once (they could build it twice, r001 and r002). Closing the Studio's terminal window (SIGHUP), a
+  logout or a `kill` (SIGTERM), and Ctrl+C during the start-up while it rebuilds a cut-off first build, are clean
+  stops too (on Windows, closing the console window, logging off or shutting down is handled the same way, but that
+  has not been run on Windows yet): they
   used to count as crashes (twice parked the design, "The Studio stopped twice ..."), and Ctrl+C there ended in a
-  traceback. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
+  traceback. Ctrl+C pressed twice or more while the start-up rebuilds it, or again while the Studio writes its stop
+  down, is a clean stop as well (the second press counted as a crash, so one real crash and a double Ctrl+C parked the
+  design), and a first build that gets its turn while the Studio is stopping is cut off by that stop, not counted as a
+  try, as is the first build of a project made while it stops (a New robot request still being answered at Ctrl+C).
+  Ctrl+C pressed once more while the stopped Studio's process ends no longer prints a traceback or leaves its lock
+  files behind. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
   failed starts are no tries either.
+- Ctrl+C (or, on macOS and Linux, closing the terminal window or `kill`) while `morph studio` builds the first robot,
+  before the Studio starts, stops in one line, "Stopped before the Studio started: ...", with exit status 130, where it printed a
+  traceback from inside MuJoCo. A project that start made and didn't finish is not kept, so the next start builds it
+  again: one named other than the demos (`morph studio my-arm`) used to be left without a design, and the Studio
+  refused to start on it. That includes the first second or so of the build, while Morph first loads trimesh and
+  MuJoCo: a Ctrl+C then was swallowed (the Studio started anyway) or ended in a segmentation fault or a TypeError
+  that left the project unstartable. The launcher now loads them before it prints "generating the first robot" (or
+  "rebuilding with the latest Morph code"), holding a stop until they are loaded (10 s at most), and then stops in the
+  same line; `morph robot new`, `morph robot change`, a one-liner and `morph world --starter`/`--off` load them the same
+  way before they build. Every start was exposed too, with nothing to build: the check for newer Morph code loaded
+  trimesh for so101, and a Ctrl+C then could leave the Studio running with trimesh half-made; that check no longer
+  loads it. A stop during the rebuild for newer Morph code says that rebuild was cut off and the finished revision
+  is kept (it said the project wasn't finished).
 - With two Studios on one projects folder, Reset demo in one no longer deletes the revision the other is building (it
-  is refused, and says why), a Studio no longer deletes the project another running Studio started on, a project
+  is refused, and says why), Delete project is refused while another Studio or a `morph study` command runs a
+  robustness study of the project, and says which process runs it and on which computer (the study went on in a
+  folder moved to the trash; a `morph study` started while Delete project or Reset demo is under way is refused for
+  that moment, except on a full disk, where neither can write that hold and both go on without it), a Studio no
+  longer deletes the project another running Studio started on, a project
   another Studio deleted and made again under its name opens with its own chat and kept design (the deleted one's were
   shown, written into, and its kept design built as the new project's first revision), and a deleted project's chat no
   longer makes its folder again. `morph studio box-picker`, for a project of your own whose first build was cut off or
@@ -472,7 +520,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   applied" until some Studio restarted): that Studio opens it again, with why, as soon as the requests are listed,
   applied or closed. A request whose revision was written just before the stop is recorded built there (it was opened
   again, and applying it again ended "nothing to change"), and a request whose change the design already has is
-  applied at the head revision (it stayed open with "nothing to change" for good).
+  applied at the head revision (it stayed open with "nothing to change" for good); its inbox notice, record, activity
+  feed and card say it needed no build because that revision already has it (they said it built the revision).
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

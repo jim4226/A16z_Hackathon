@@ -65,7 +65,18 @@ class Claim:
         self.lock = durable.BuildLock(owner_lock(home, OWNER))
         self.lock.acquire()
         self.real = self.lock.real
-        weakref.finalize(self, self.lock.release)
+        weakref.finalize(self, _let_go, self.lock, home)
+
+
+def _let_go(lock, home: str):
+    """A Claim nobody holds any more (its Studio gone, or never made whole: a second Ctrl+C inside Studio()), or this
+    process ending (release_claims): its lock and, beside it, the note of the project this process's Studio started on
+    (note_start) go together. Never raises."""
+    lock.release()
+    try:
+        os.remove(start_record(home, OWNER))
+    except OSError:
+        pass
 
 
 def claim(home: str) -> Claim:
@@ -84,11 +95,7 @@ def release_claims():
     lock it holds on a projects folder is released and its file removed, as a Studio that stops cleanly leaves it."""
     with _CLAIMS_LOCK:
         for key, held in list(_CLAIMS.items()):
-            held.lock.release()
-            try:
-                os.remove(start_record(key, OWNER))
-            except OSError:
-                pass
+            _let_go(held.lock, key)
 
 
 def start_record(home: str, owner: str) -> str:
@@ -105,23 +112,36 @@ def note_start(home: str, project: str):
               f"delete {project} while this one runs. {durable.explain(exc, home)}")
 
 
-def started_elsewhere(home: str, project: str) -> bool:
-    """True when another Studio still running on projects folder `home` (its lock is held) started on `project`."""
+def _other_studios(home: str) -> list:
+    """The start records (note_start: {start, pid, host}) of the other Studios still running on projects folder `home`
+    (their lock is held)."""
     try:
         names = os.listdir(os.path.join(home, STUDIOS))
     except OSError:
-        return False
+        return []
+    out = []
     for n in names:
         owner = n[:-5] if n.endswith(".json") else None
         if not owner or not owner_live(home, owner):
             continue
         try:
             with open(os.path.join(home, STUDIOS, n), encoding="utf-8") as fh:
-                if (json.load(fh) or {}).get("start") == project:
-                    return True
-        except (OSError, ValueError, AttributeError):
+                record = json.load(fh)
+        except (OSError, ValueError):
             continue
-    return False
+        if isinstance(record, dict):
+            out.append(record)
+    return out
+
+
+def started_elsewhere(home: str, project: str) -> bool:
+    """True when another Studio still running on projects folder `home` (its lock is held) started on `project`."""
+    return any(r.get("start") == project for r in _other_studios(home))
+
+
+def studio_process(home: str, pid, host) -> bool:
+    """True when process `pid` on computer `host` is another Studio still running on projects folder `home`."""
+    return any(r.get("pid") == pid and r.get("host") == host for r in _other_studios(home))
 
 
 def _sweep(home: str):
@@ -261,6 +281,7 @@ class Hub:
         self.project, self.path = project, path
         self.clients, self.lock = {}, threading.Lock()  # queue -> member id (None: not signed in as a member)
         self.history, self._lines = self._load()
+        self._full = False  # the disk refused a chat line (said once, until one is saved again)
 
     def _load(self) -> tuple[list, int]:
         if not self.path:
@@ -297,8 +318,13 @@ class Hub:
             else:
                 durable.append_line(self.path, json.dumps(event))  # a cut-off last line never swallows this one
                 self._lines += 1
-        except (OSError, TypeError, ValueError):
-            traceback.print_exc()  # a full disk loses saved chat, never the build
+            self._full = False
+        except (OSError, TypeError, ValueError) as exc:  # a full disk loses saved chat, never the build
+            if not durable.disk_full(exc):
+                traceback.print_exc()
+            elif not self._full:  # said once, until a message is saved again
+                self._full = True
+                print(f"{self.project}: its chat isn't saved for now. {durable.DISK_FULL}")
 
     def clear_history(self):
         with self.lock:
@@ -421,6 +447,8 @@ class JobQueue:
         self.claim = None  # this process's lock on the projects folder, taken before the first journal line
         self.cuttable = set()  # ids of jobs journaled "started": a stop from then on cuts them off
         self.kept = set()  # ids of first builds that ended with an error the disk refused to record: still open
+        self.stopped = False  # the Studio is stopping cleanly (stopping): a build starting now is cut off by that stop
+        self.full = False  # the disk refused a journal line (said once, until one is written again)
 
     # -- the journal
     def _log(self, op: str, job: Job, **fields) -> bool:
@@ -436,22 +464,31 @@ class JobQueue:
             os.makedirs(os.path.dirname(self.journal), exist_ok=True)
             durable.append_line(self.journal, json.dumps({"op": op, "id": job.id, "studio": OWNER, "pid": os.getpid(),
                                                           "host": HOST, **fields}, default=str))
+            self.full = False
             return True
-        except (OSError, TypeError, ValueError):
-            traceback.print_exc()
+        except (OSError, TypeError, ValueError) as exc:
+            if not durable.disk_full(exc):
+                traceback.print_exc()
+            elif not self.full:  # said once, until a line is written again
+                self.full = True
+                print(f"{self.room.name}: Morph can't write down its queue for now. {durable.DISK_FULL}")
             return False
 
     def started(self, job: Job):
-        """`job`'s build has the build slot and starts now (Studio.build): a stop from here on cut it off."""
+        """`job`'s build has the build slot and starts now (Studio.build): a stop from here on cut it off. Once the
+        Studio is stopping cleanly (stopping: the build ahead ended while its studies stopped), that stop cuts it off."""
         with self.cond:
             self.cuttable.add(job.id)
             self._log("started", job)
+            if self.stopped:
+                self._log("interrupted", job)
 
     def stopping(self):
         """The Studio stops cleanly (Ctrl+C, serve_forever returning): a first build running now is cut off by that stop, not
         by anything in its design, so the journal says so ("interrupted") and the next start doesn't count it as a try
-        (open_jobs). Never raises."""
+        (open_jobs); so is one that starts from now on (started). Never raises."""
         with self.cond:
+            self.stopped = True
             job = self.running
             if job is not None and job.id in self.cuttable:
                 self._log("interrupted", job)

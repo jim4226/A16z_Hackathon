@@ -616,3 +616,47 @@ def test_keys_changing_in_another_thread_never_break_a_run(home):
         t.join(5)
         os.environ.pop("MORPH_TOOL_CHURN_KEY", None)
     assert n > 100
+
+
+def test_a_full_disk_at_a_restart_leaves_what_it_cant_write_for_the_next_start(home, monkeypatch):
+    """A Studio starting on a full disk: the first run whose pause couldn't be written stopped the recovery of every
+    run after it and of the drafts. Each run and the drafts are tried now; what the disk refused stays as it was for
+    the next start, and recover() then raises the disk-full error (api_tools.attach says it in one line)."""
+    import errno
+    from morph.studio.toolbox import draft as draft_mod
+
+    def die(body):
+        raise Crash()
+
+    claude = ScriptedClaude(search_and_call(BOMCALL), die, search_and_call(BOMCALL), die)
+    tb = toolbox(home, claude)
+    for _ in range(2):
+        with pytest.raises(Crash):
+            start(tb)
+    first, second = sorted(r["id"] for r in tb.runs())
+    full = OSError(errno.ENOSPC, "No space left on device")
+    real_save, real_locked, real_ids, drafts_tried = runs.Toolbox._save, draft_mod.store.locked, runs.Toolbox._ids, []
+    drafts = os.path.join(draft_mod.store.tools_dir(str(home)), "drafts")
+
+    def save(self, run):
+        if run["id"] == first:
+            raise full
+        real_save(self, run)
+
+    def locked(folder):  # only the drafts' folder is refused (the audit log's lock still works)
+        if os.path.realpath(folder) == os.path.realpath(drafts):
+            drafts_tried.append(folder)
+            raise full
+        return real_locked(folder)
+
+    monkeypatch.setattr(runs.Toolbox, "_ids", lambda self, newest_first=False: [first, second])  # the refused one first
+    monkeypatch.setattr(runs.Toolbox, "_save", save)
+    monkeypatch.setattr(draft_mod.store, "locked", locked)
+    assert sorted(real_ids(tb)) == [first, second]
+    tb2 = toolbox(home, claude)
+    with pytest.raises(OSError) as raised:
+        tb2.recover()
+    assert raised.value is full and drafts_tried                            # the drafts were tried too
+    assert {r["id"]: r["status"] for r in tb2.runs()} == {first: "running", second: "paused"}
+    monkeypatch.undo()
+    assert toolbox(home, claude).recover()["interrupted"] == [first]       # space again: the next start does it

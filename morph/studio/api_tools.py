@@ -32,6 +32,7 @@ import re
 import threading
 import traceback
 
+from ..services import durable
 from .routes import HTTPError, route
 from .toolbox import Toolbox, ToolboxError
 from .toolbox.draft import DRAFT_ID, STATUSES as DRAFT_STATUSES
@@ -57,8 +58,12 @@ def attach(studio) -> Toolbox:
             tb = studio.toolbox = Toolbox(studio.home, emit=lambda ev: _emit(studio, ev))
             try:
                 tb.recover()
-            except Exception:  # noqa: BLE001  (a damaged run file never stops the Studio)
-                traceback.print_exc()
+            except Exception as exc:  # noqa: BLE001  (a damaged run file never stops the Studio)
+                if durable.disk_full(exc):  # one line, as for every other record the disk refuses at a start
+                    print("Agent tools: Morph couldn't check the runs and tool drafts a stopped Studio left; the next "
+                          f"start does. {durable.explain(exc, studio.home)}")
+                else:
+                    traceback.print_exc()
         return tb
 
 

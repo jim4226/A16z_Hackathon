@@ -343,7 +343,7 @@ def unique_name(home: str, base: str) -> str:
 
 def _check_source(source: str):
     robot_source(source)
-    from ..robot.imported import robot_dir
+    from ..importers.robots import robot_dir
     robot_dir(source)  # ValueError: no robot bundle of that name
 
 

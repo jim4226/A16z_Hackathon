@@ -369,6 +369,44 @@ def test_morph_studio_team_needs_a_team_and_the_team_commands_work(tmp_path, mon
     assert got == {"token": "a-fixed-access-code", "allow_url_import": True}
 
 
+@pytest.mark.parametrize("remote", [False, True])
+def test_a_team_studio_starting_on_a_full_disk_says_so_in_one_line_and_starts(tmp_path, monkeypatch, capsys, remote):
+    """`morph studio --team` on a full disk ended in a traceback before the Studio started: the owner's one-time
+    sign-in link couldn't be written (the team folder's lock, OSError 28), so the start-up never recovered anything. It
+    starts all the same now (a browser signed in before still is: a session is only read), and the terminal says in one
+    line why there is no link and which command prints one once there is space."""
+    import argparse
+    import errno
+
+    from morph import cli, keys
+    from morph.services import durable
+    from morph.studio.teams import auth
+    from test_keys_and_launch import _robots
+    home = tmp_path / "projects"
+    _robots(home)
+    monkeypatch.setattr(cli, "HOME", str(home))
+    monkeypatch.setenv("MORPH_HOME", str(home))
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+    assert cli.main(["team", "init", "--owner", "Jim"]) == 0
+    capsys.readouterr()
+    got = {}
+    monkeypatch.setattr(server, "serve", lambda p, host, port, home=None, token=None, **kw: got.update(**kw))
+    monkeypatch.setattr(server, "lan_address", lambda: "192.168.1.20")
+
+    def full(*a, **k):
+        raise OSError(errno.ENOSPC, "No space left on device", str(home / ".team" / ".lock"))
+
+    monkeypatch.setattr(auth, "create_link", full)
+    cli.cmd_studio(argparse.Namespace(name="egg-picker", host="127.0.0.1", port=8765, open=False, remote=remote,
+                                      team=True, allow_url_import=False))
+    out = capsys.readouterr()
+    assert got["team"] is True and got["link"] is None                   # it starts, with no link to print
+    said = [line for line in out.out.splitlines() if "sign-in link" in line]
+    where = "192.168.1.20" if remote else "127.0.0.1"
+    assert "Traceback" not in out.out + out.err and len(said) == 1, out
+    assert durable.DISK_FULL in said[0] and f"`morph team link --url http://{where}:8765`" in said[0], said
+
+
 # ------------------------------------------------------------------ the page: every feature module mounts in app.js
 
 

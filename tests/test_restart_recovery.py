@@ -19,7 +19,7 @@ import pytest
 from morph.robot.pipeline2 import RobotProject
 from morph.services import robust
 from morph.spec import Design
-from morph.studio import api_brief, api_team, jobs, rooms, server
+from morph.studio import api_brief, api_team, jobs, projects, rooms, server
 from morph.studio import brief as B
 from morph.studio.teams import activity, collab
 from test_studio_rooms import FakeBuilds, finish, make_project
@@ -286,7 +286,7 @@ def test_only_a_clean_stop_of_serve_journals_its_first_builds_as_no_try(home, mo
     monkeypatch.setattr(server, "_Server", Server)
     monkeypatch.setattr(capability, "warm", lambda block=True: None)
     monkeypatch.setattr(server.Studio, "stopping", lambda self: calls.append("stopping"))
-    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0: calls.append("studies stopped"))
+    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0, hurry=None: calls.append("studies stopped"))
     run = lambda: server.serve(RobotProject(str(home / "egg")), port=0, home=str(home))  # noqa: E731
     if isinstance(ends, Exception):
         with pytest.raises(type(ends)):
@@ -811,10 +811,11 @@ def test_a_briefs_first_build_asked_for_again_marks_the_brief_built(home, tmp_pa
 # ------------------------------------------------------------------ a full disk, and a stop at the wrong moment
 
 
-def test_a_full_disk_at_a_restart_never_loses_a_cut_off_first_build(home, tmp_path, monkeypatch):
+def test_a_full_disk_at_a_restart_never_loses_a_cut_off_first_build(home, tmp_path, monkeypatch, capsys):
     """The disk is full when the Studio starts: the rebuild's journal line, the rebuild itself and the error record all
     fail. The stopped Studio's journal used to go first, leaving the design only in memory ("kept no design ... delete
-    the project"); it stays until what replaces it is written, so the next start, with space again, builds kb1."""
+    the project"); it stays until what replaces it is written, so the next start, with space again, builds kb1. The
+    terminal says each in one plain line (it printed a traceback for each: h5_diskfull)."""
     from morph.services import durable
     cut_off_first_build(home)
     full = [True]
@@ -841,6 +842,8 @@ def test_a_full_disk_at_a_restart_never_loses_a_cut_off_first_build(home, tmp_pa
     finish(*(kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()))
     assert kb1.completed() == [] and rooms.journals(str(home / "kb1"))   # the stopped Studio's journal stays
     assert not (home / "kb1" / ".morph" / "first-build.json").exists()
+    out = capsys.readouterr()
+    assert "Traceback" not in out.out + out.err and "kb1: its first build stopped. The disk is full" in out.out, out
     after = tmp_path / "space-again"
     shutil.copytree(home, after)
     full[0] = False
@@ -966,7 +969,7 @@ def test_a_stop_asked_for_during_the_start_up_is_a_clean_one(home, tmp_path, bui
     monkeypatch.setattr(server, "_Server", _Listener)
     monkeypatch.setattr(server.Studio, "_recover", recover)
     monkeypatch.setattr(capability, "warm", lambda block=True: None)
-    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0: None)
+    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0, hurry=None: None)
     def unhandled(signum, frame):  # what an unhandled stop would do, without ending the test run
         raise RuntimeError(f"{sig} reached no handler of serve()")
 
@@ -988,6 +991,114 @@ def test_a_stop_asked_for_during_the_start_up_is_a_clean_one(home, tmp_path, bui
     assert [j.label for j in queued] == ["first design" + REBUILT] and "stopped twice" not in " ".join(texts(kb1))
     builds.gate.set()
     finish(*queued)
+
+
+@pytest.mark.parametrize("presses", [2, 3, 6])
+def test_ctrl_c_pressed_again_and_again_during_the_start_up_is_still_a_clean_stop(home, tmp_path, builds, monkeypatch,
+                                                                                presses):
+    """Ctrl+C pressed twice while the start-up rebuilt a cut-off first build (after one real crash): the second press
+    raised KeyboardInterrupt inside Studio(), before serve() had the Studio, so nothing journaled the stop
+    "interrupted" and the next start parked the design ("The Studio stopped twice ...") after one crash. Presses that
+    keep coming (one landing while the stop is written down, more while studies stop) never cut the stop short or
+    escape serve() either: a person stopping the Studio is never a try, however often they press."""
+    import signal
+    if threading.current_thread() is not threading.main_thread():
+        pytest.skip("signals reach the main thread only")
+    from morph.studio import capability
+    cut_off_first_build(home)                                               # one real crash: one try
+    builds.gate = threading.Event()
+    real_recover, real_stopping = server.Studio._recover, server.Studio.stopping
+    sent = []
+
+    def press():
+        sent.append(True)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    def recover(self, *a, **k):
+        real_recover(self, *a, **k)
+        assert builds.started.wait(5)                                       # the rebuild has started
+        press()                                                             # the first: a clean stop is asked for
+        press()                                                             # the second: stop now
+        raise AssertionError("the second Ctrl+C didn't stop the start-up")
+
+    def stopping(self):
+        if len(sent) < presses:
+            press()                                                         # one more, while the stop is written down
+        real_stopping(self)
+
+    def shutdown(studio, timeout=5.0, hurry=None):
+        while len(sent) < presses:
+            press()                                                         # and the rest while studies stop
+        assert hurry is None or hurry.is_set()                              # asked again: no waiting for them
+
+    _Listener.fail, _Listener.served = None, []
+    monkeypatch.setattr(server, "_Server", _Listener)
+    monkeypatch.setattr(server.Studio, "_recover", recover)
+    monkeypatch.setattr(server.Studio, "stopping", stopping)
+    monkeypatch.setattr(capability, "warm", lambda block=True: None)
+    monkeypatch.setattr(jobs, "shutdown", shutdown)
+
+    def unhandled(signum, frame):
+        raise RuntimeError("a Ctrl+C reached no handler of serve()")
+
+    before = signal.signal(signal.SIGINT, unhandled)
+    try:
+        server.serve(RobotProject(str(home / "egg")), port=0, home=str(home))  # returns: nothing escapes it
+        assert _Listener.served == [] and len(sent) == presses
+    finally:
+        signal.signal(signal.SIGINT, before)
+    ops = [json.loads(line)["op"] for path in rooms.journals(str(home / "kb1")) for line in open(path, encoding="utf-8")]
+    assert ops[-2:] == ["started", "interrupted"], ops
+    after = stopped(home, tmp_path, builds)                                 # the process ends here
+    monkeypatch.setattr(server.Studio, "_recover", real_recover)
+    builds.gate.set()
+    builds.gate = threading.Event()
+    st = server.Studio(RobotProject(str(after / "egg")), str(after))
+    kb1 = st.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert [j.label for j in queued] == ["first design" + REBUILT] and "stopped twice" not in " ".join(texts(kb1))
+    assert not (after / "kb1" / ".morph" / "first-build.json").exists()
+    builds.gate.set()
+    finish(*queued)
+
+
+def test_a_first_build_that_starts_after_a_clean_stop_was_written_down_is_no_try(home, builds):
+    """A first build waiting for the build slot when the Studio stops cleanly: Studio.stopping journaled nothing for
+    it (it hadn't started), then the build ahead of it ended while studies stopped, it took the slot and journaled
+    "started", and the process ended: the next start counted the clean stop as a try. A first build that starts once
+    the clean stop is under way is cut off by that stop, and its journal says so."""
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    builds.gate = threading.Event()
+    ahead = st.queue_params(st.room(), {"build.quantity": 40})             # takes the only build slot
+    assert builds.started.wait(5)
+    room, job = st.create_project("kb2", design=Design().with_changes({"build.quantity": 7}))
+    st.stopping()                                                           # Ctrl+C: what serve() calls
+    first, builds.gate = builds.gate, threading.Event()                     # kb2's build will wait at this one
+    builds.started.clear()
+    first.set()                                                             # the build ahead ends; kb2's starts
+    assert builds.started.wait(5)
+    entries = rooms.open_jobs(rooms.journals(str(home / "kb2"))[0])
+    assert [(e["id"], e["started"]) for e in entries] == [(job.id, False)]  # cut off by a clean stop: no try
+    builds.gate.set()
+    finish(ahead, job)
+
+
+def test_a_project_made_while_the_studio_stops_cleanly_gets_no_try(home, builds):
+    """A New robot request (POST /api/projects) still being answered when Ctrl+C came: Studio.stopping marked only the
+    rooms that were open, so the new project's room started with stopped=False, its first build journaled "started"
+    and nothing more, and the next start counted the clean stop as a try. A room opened once the clean stop is under
+    way is stopping too, and so is a room of an existing project opened then."""
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    projects.create(str(home), "kb4", design=Design().with_changes({"build.quantity": 5}))
+    st.stopping()                                                           # Ctrl+C: what serve() calls
+    builds.gate = threading.Event()
+    room, job = st.create_project("kb3", design=Design().with_changes({"build.quantity": 7}))  # in flight at Ctrl+C
+    assert builds.started.wait(5)
+    entries = rooms.open_jobs(rooms.journals(str(home / "kb3"))[0])
+    assert [(e["id"], e["started"]) for e in entries] == [(job.id, False)]  # cut off by a clean stop: no try
+    assert st.room("kb4").jobs.stopped                                     # opened after the stop began
+    builds.gate.set()
+    finish(job)
 
 
 def test_a_start_that_cant_listen_changes_no_journal(home, monkeypatch):
@@ -1181,3 +1292,100 @@ def test_applying_a_change_the_design_already_has_marks_it_applied(home, builds)
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_a_change_request_that_needed_no_build_never_says_it_built_one(home, builds):
+    """h12d_noop: two requests asking for the same change; #1 built r002, then #2 was applied. The chat said "Nothing to
+    change: r002 already has that", but the inbox said "Change request #2 built r002", and its record, the activity
+    feed and the card's "Built r002" said the same. Each now says #2 needed no build, as the chat does."""
+    from test_team_util import members
+    st, httpd, call, ids, jar = _team_server(home)
+    try:
+        root, ms = str(home / "egg"), members(home)
+        p1 = collab.create_proposal(root, ids["Vic"], "Quantity to 77", {"build.quantity": 77}, members=ms)
+        p2 = collab.create_proposal(root, ids["Vic"], "77 of them", {"build.quantity": 77}, members=ms)
+        for p in (p1, p2):
+            s, out, _ = call("POST", "/api/proposals/apply", {"id": p["id"]}, headers=jar["Ana"])
+            assert s == 202, out
+            finish(*(st.room().jobs.get(j["id"]) for j in st.room().jobs.snapshot()))
+            settled()
+        assert st.room().completed() == ["r001", "r002"]                         # #1 built r002; #2 built nothing
+        assert texts(st.room())[-1].startswith("Nothing to change")
+        q1, q2 = collab.get_proposal(root, p1["id"]), collab.get_proposal(root, p2["id"])
+        assert (q1["status"], q1["applied_rev"], q1.get("noop")) == ("applied", "r002", None)
+        assert (q2["status"], q2["applied_rev"], q2.get("noop")) == ("applied", "r002", True)
+        for who in ("Vic", "Ana"):
+            said = [i["text"] for i in activity.inbox(str(home), ids[who])["items"]]
+            assert f"Change request #{p1['n']} built r002" in said, said
+            assert f"Change request #{p2['n']} needed no build: r002 already has it" in said, said
+            assert not any(t.startswith(f"Change request #{p2['n']} built") for t in said), said
+        feed = [i["text"] for i in activity.feed(root, ms)]
+        assert f"Change request #{p2['n']} needed no build: r002 already has it" in feed, feed
+        s, out, _ = call("GET", "/api/proposals", headers=jar["Ana"])
+        built = {x["id"]: x["built"] for x in out["proposals"]}
+        assert built[p2["id"]]["noop"] is True and built[p1["id"]]["noop"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+@pytest.mark.parametrize("full", ["tools", "tools, chat and journal"])
+def test_a_start_on_a_full_disk_says_so_in_one_line_and_still_recovers(home, builds, monkeypatch, capsys, full):
+    """h5_diskfull: a Studio starting on a full disk printed a five-frame traceback from the agents' toolbox
+    (api_tools.attach -> Toolbox.recover -> drafts.recover -> store.locked, OSError 28), and one more for each chat
+    line and queue journal line the disk refused. Each says so in one plain line now, and the Studio starts and
+    rebuilds a cut-off first build all the same (keeping the stopped Studio's journal while its own can't be written)."""
+    import errno
+    from morph.services import durable
+    from morph.studio.toolbox import draft as draft_mod
+
+    def no_space(path, *a, **k):
+        raise OSError(errno.ENOSPC, "No space left on device", str(path))
+
+    cut_off_first_build(home)
+    monkeypatch.setattr(draft_mod.store, "locked", no_space)
+    if full != "tools":
+        real_append = durable.append_line
+        monkeypatch.setattr(durable, "append_line", lambda path, line: no_space(path) if "kb1" in str(path)
+                            else real_append(path, line))
+    builds.gate = threading.Event()
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    out = capsys.readouterr()
+    text = out.out + out.err
+    said = [line for line in text.splitlines() if durable.DISK_FULL in line]
+    assert "Traceback" not in text and said and [s for s in said if s.startswith("Agent tools:")] == said[:1], text
+    if full == "tools":
+        assert len(said) == 1, text
+    else:
+        assert any(s.startswith("kb1: ") for s in said) and rooms.journals(str(home / "kb1")), text
+    kb1 = st.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert [j.label for j in queued] == ["first design" + REBUILT] and st.toolbox is not None
+    builds.gate.set()
+    finish(*queued)
+
+
+def test_a_last_studio_ignores_stop_signals_only_after_a_clean_stop():
+    """serve(last=True) (`morph studio`, whose process ends with it) ignores stop signals from the end of a clean stop
+    on; after an error escaping serve(), or for any other caller, the handlers it found are put back."""
+    import signal
+    names = [n for n in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, n)]
+    before = {n: signal.getsignal(getattr(signal, n)) for n in names}
+    try:
+        with pytest.raises(RuntimeError):
+            with server._Stop(None, last=True) as stop:
+                stop.end(True)
+                raise RuntimeError("an error escaping serve()")
+        assert {n: signal.getsignal(getattr(signal, n)) for n in names} == before
+        with server._Stop(None) as stop:                                   # a script or a test calling serve()
+            stop.end(True)
+        assert {n: signal.getsignal(getattr(signal, n)) for n in names} == before
+        with server._Stop(None, last=True) as stop:
+            stop.end(False)                                                # not a clean stop
+        assert {n: signal.getsignal(getattr(signal, n)) for n in names} == before
+        with server._Stop(None, last=True) as stop:
+            stop.end(True)
+        assert all(signal.getsignal(getattr(signal, n)) is signal.SIG_IGN for n in names)
+    finally:
+        for n, handler in before.items():
+            signal.signal(getattr(signal, n), handler)
