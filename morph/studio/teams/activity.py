@@ -89,6 +89,9 @@ def feed(root: str, members=None, limit: int = 50, before: float | None = None) 
                 f"{_name(members, op.get('by'))} {'applied' if k == 'apply' else 'closed'} change request #{n}: {title}", {"id": pid, "n": n})
         elif k == "done" and pid in titles and op.get("error"):
             add("proposal", op.get("ts"), None, f"Change request #{titles[pid][0]} failed to build: {str(op.get('error'))[:120]}", {"id": pid})
+        elif k == "done" and pid in titles and op.get("noop") and op.get("rev"):  # no revision of its own to list it
+            add("proposal", op.get("ts"), None, f"Change request #{titles[pid][0]} needed no build: {op['rev']} already has it",
+                {"id": pid, "rev": op["rev"]})
     reviews = {}
     for op in read_jsonl(collab._file(root, "reviews.jsonl")):
         k = op.get("op")

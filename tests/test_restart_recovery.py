@@ -1271,3 +1271,38 @@ def test_applying_a_change_the_design_already_has_marks_it_applied(home, builds)
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_a_change_request_that_needed_no_build_never_says_it_built_one(home, builds):
+    """h12d_noop: two requests asking for the same change; #1 built r002, then #2 was applied. The chat said "Nothing to
+    change: r002 already has that", but the inbox said "Change request #2 built r002", and its record, the activity
+    feed and the card's "Built r002" said the same. Each now says #2 needed no build, as the chat does."""
+    from test_team_util import members
+    st, httpd, call, ids, jar = _team_server(home)
+    try:
+        root, ms = str(home / "egg"), members(home)
+        p1 = collab.create_proposal(root, ids["Vic"], "Quantity to 77", {"build.quantity": 77}, members=ms)
+        p2 = collab.create_proposal(root, ids["Vic"], "77 of them", {"build.quantity": 77}, members=ms)
+        for p in (p1, p2):
+            s, out, _ = call("POST", "/api/proposals/apply", {"id": p["id"]}, headers=jar["Ana"])
+            assert s == 202, out
+            finish(*(st.room().jobs.get(j["id"]) for j in st.room().jobs.snapshot()))
+            settled()
+        assert st.room().completed() == ["r001", "r002"]                         # #1 built r002; #2 built nothing
+        assert texts(st.room())[-1].startswith("Nothing to change")
+        q1, q2 = collab.get_proposal(root, p1["id"]), collab.get_proposal(root, p2["id"])
+        assert (q1["status"], q1["applied_rev"], q1.get("noop")) == ("applied", "r002", None)
+        assert (q2["status"], q2["applied_rev"], q2.get("noop")) == ("applied", "r002", True)
+        for who in ("Vic", "Ana"):
+            said = [i["text"] for i in activity.inbox(str(home), ids[who])["items"]]
+            assert f"Change request #{p1['n']} built r002" in said, said
+            assert f"Change request #{p2['n']} needed no build: r002 already has it" in said, said
+            assert not any(t.startswith(f"Change request #{p2['n']} built") for t in said), said
+        feed = [i["text"] for i in activity.feed(root, ms)]
+        assert f"Change request #{p2['n']} needed no build: r002 already has it" in feed, feed
+        s, out, _ = call("GET", "/api/proposals", headers=jar["Ana"])
+        built = {x["id"]: x["built"] for x in out["proposals"]}
+        assert built[p2["id"]]["noop"] is True and built[p1["id"]]["noop"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

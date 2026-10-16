@@ -459,7 +459,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   applied" until some Studio restarted): that Studio opens it again, with why, as soon as the requests are listed,
   applied or closed. A request whose revision was written just before the stop is recorded built there (it was opened
   again, and applying it again ended "nothing to change"), and a request whose change the design already has is
-  applied at the head revision (it stayed open with "nothing to change" for good).
+  applied at the head revision (it stayed open with "nothing to change" for good); its inbox notice, record, activity
+  feed and card say it needed no build because that revision already has it (they said it built the revision).
 - A project whose `meta.json` was cut off no longer disappears (listed nowhere, every request 404, its name still
   taken, impossible to delete from the Studio): it stays in the project menu, and when the Studio starts it gets a new
   `meta.json` made from its revisions, with the damaged one kept beside it.

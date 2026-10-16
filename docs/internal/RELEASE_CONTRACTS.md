@@ -344,7 +344,10 @@ and a stop in between leaves both journals, never neither. Then:
   applied never stays "applied" with no revision until some Studio starts. Each request is decided under the
   project's Teams lock (`teams.store.locked`), read again there, so one another running Studio opened and applied
   again meanwhile is left to that Studio. A request whose change the head revision
-  already has (the build ends `noop`) is applied at the head revision, not opened again with "nothing to change". A
+  already has (the build ends `noop`) is applied at the head revision, not opened again with "nothing to change"; it
+  built nothing, so its `done` line carries `noop: true` (the request's `noop`, `built.noop` on the page) and the
+  inbox, the activity feed and its card say "Change request #<n> needed no build: <rev> already has it", as the chat
+  says "Nothing to change: <rev> already has that" (`api_team.job_finished(noop=True)`). A
   build that ends after its request was reopened anyway (a file system that can't lock) still records its revision:
   `done` with a revision makes an open request applied again (`collab._proposal_state`).
 New robot's Build on a brief that reads "building" answers `already: true` only while its project builds (here, or

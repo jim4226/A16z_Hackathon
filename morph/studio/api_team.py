@@ -728,10 +728,11 @@ def _enqueue(req, job: dict) -> bool:
         root, home, send = room.p.root, _home(req), room.hub.send
 
         def finished(q):
-            rev = q.result or (room.latest() if q.status == "noop" else None)  # the design already has these values:
-            error = None if rev else (q.error or {"dropped": "it clashed with a newer change and was dropped"}  # applied
-                                      .get(q.status, f"the build ended as {q.status}"))                     # there
-            job_finished(root, job, rev=rev, error=error, home=home, send=send)
+            noop = not q.result and q.status == "noop"  # the design already has these values: applied there,
+            rev = q.result or (room.latest() if noop else None)  # with no build
+            error = None if rev else (q.error or {"dropped": "it clashed with a newer change and was dropped"}
+                                      .get(q.status, f"the build ended as {q.status}"))
+            job_finished(root, job, rev=rev, error=error, home=home, send=send, noop=noop)
         studio.when_done(q, finished)
         return True
     apply = getattr(room, "apply", None) or getattr(getattr(req, "studio", None), "apply", None)
@@ -854,20 +855,24 @@ def settle_stopped(root: str, home: str | None, *, starting: bool = False) -> li
     return out
 
 
-def job_finished(project_root: str, job: dict, rev: str | None = None, error: str | None = None, home: str | None = None, send=None):
+def job_finished(project_root: str, job: dict, rev: str | None = None, error: str | None = None, home: str | None = None,
+                 send=None, noop: bool = False):
     """The room's queue calls this when a team job ends: records the change request's revision (or reopens it on an
-    error), moves its branch, and tells the applier and the author."""
+    error), moves its branch, and tells the applier and the author. `noop`: it needed no build, `rev` (the head)
+    already has its values, and every record and notice says so (the chat says "Nothing to change")."""
     home = home or CONFIG["home"]
     project = os.path.basename(os.path.normpath(project_root))
+    noop = bool(noop and rev and not error)
     if job.get("proposal"):
-        collab.proposal_done(project_root, job["proposal"], rev=rev, error=error)
+        collab.proposal_done(project_root, job["proposal"], rev=rev, error=error, noop=noop)
     if rev and job.get("branch") and job["branch"] != "main":
         try:
             collab.advance_branch(project_root, job["branch"], rev, by=job.get("by"))
         except collab.CollabError:
             pass
     what = f"change request #{job.get('n')}" if job.get("proposal") else "your edit"
-    text = f"{what} built {rev}" if rev else f"{what} failed: {str(error or 'unknown error')[:160]}"
+    text = (f"{what} needed no build: {rev} already has it" if noop else f"{what} built {rev}" if rev else
+            f"{what} failed: {str(error or 'unknown error')[:160]}")
     for mid in {job.get("by"), job.get("proposed_by")} - {None}:
         activity.notify(home, mid, "job", text[0].upper() + text[1:], project=project, ref={"rev": rev, "proposal": job.get("proposal")})
     if send:
