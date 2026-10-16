@@ -278,19 +278,28 @@ def cmd_studio(a):
         if last and proj.load_results(last).get("pipeline_version") != pipeline_version(proj.load_design(last).arm.source):
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
             proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
+    owner_link = None
     if team:  # a fresh one-time sign-in link for the owner (made now: it lasts 15 minutes)
+        from .services import durable
         from .studio.server import lan_address
         from .studio.teams import cli as teams_cli
         # with --remote, at the address teammates reach: the invite links Share makes start with the page's address
         lan = lan_address() if a.host in ("0.0.0.0", "") else None
+        base = f"http://{lan or local}:{a.port}"
         try:
-            link = teams_cli.team_link(home=HOME, base_url=f"http://{lan or local}:{a.port}", out=None)["url"]
+            link = owner_link = teams_cli.team_link(home=HOME, base_url=base, out=None)["url"]
         except ValueError as exc:  # team.json can't be read (teams.store.TeamFileError): never "no owner", never a traceback
             sys.exit(str(exc))
+        except OSError as exc:  # a full disk: the Studio still starts (a session is only read), with no link to print
+            if not durable.disk_full(exc):
+                raise
+            print(f"Morph couldn't make the owner's one-time sign-in link. {durable.explain(exc, HOME)} The Studio "
+                  f"starts anyway (a browser signed in to it before still is); once there is space, "
+                  f"`morph team link --url {base}` prints a link.")
     if a.open and not headless:  # a server without a screen: the link printed below is opened from another computer
         import threading
         threading.Timer(1.5, open_app_window, args=(link,)).start()
-    extra = {**({"team": True, "link": link} if team else {}),
+    extra = {**({"team": True, "link": owner_link} if team else {}),
              **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {}),
              **({"token_chosen": False} if token and not fixed else {})}  # Morph's own random code: never locked out
     serve(p, a.host, a.port, home=HOME, token=token, **extra)
