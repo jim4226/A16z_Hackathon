@@ -579,8 +579,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   device", "pass the surgeon the system", "hand the operator the gripper", "a robot that hands the operator the
   machine parts"; "give me a robot that sorts screws" is still a request for a robot), handing things out ("hand out
   the gloves", "pass around the snacks", "hand round the biscuits", "a robot that gives out flyers", "hand the
-  leaflets to passers-by") and "a robot that puts the part in the operator's hand" were built with nobody nearby and
-  no emergency stop.
+  leaflets to passers-by"), "a robot that puts the part in the operator's hand", "take her a cup of tea" and "take the
+  nurse the tray" were built with nobody nearby and no emergency stop. So were "nobody near the robot, a technician
+  calibrates it daily" and "no one near it; customers collect their orders from the tray", and "give the operator a
+  system that sorts parts" had no one next to the robot the operator gets.
 - New robot no longer reads a department or a packing machine as a person it hands things to, nor baby products as
   children nearby: "bring the bottles to Recycling", "bring the parcels to Goods In", "bring the samples to
   Pathology", "move the trays to the denester" and "pass the bottles to the corker" were hand-overs, and "a robot

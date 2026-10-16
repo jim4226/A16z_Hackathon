@@ -463,13 +463,20 @@ _THING_DET = (r"(?:the|a|an|some|his|her|their|my|your|our|its|this|that|these|t
               r"more|any|each|every|all|both|enough|[0-9]+)")
 _ROBOT_WORD = r"(?:robot|robotic|arm|bot|cobot|machine|gripper|design|device|gadget|system|setup)s?"
 # a robot asked for is no thing handed over ("give me a robot that sorts screws", "get me a design that packs boxes",
-# "give me robot arms"); the device, the gripper or the machine parts handed to someone are ("hand the nurse the device",
-# "hand the operator the gripper", "a robot that hands the operator the machine parts")
-_NOT_A_ROBOT = (r"(?!\s+(?:(?:a|an|some|any|another|one|two|three|more)\s+)?(?:(?!(?:the|my|your|his|her|their|our|its|this|"
-                r"that|these|those)\b)[a-z-]+\s+){0,2}?" + _ROBOT_WORD + r"\b(?!\s+(?!(?:that|which|who|to|for|with|like|and|or|"
-                r"of|from|in|on|at|by)\b)[a-z0-9]))(?!\s+(?:(?:the|a|an|some|his|her|their|my|your|our|its|this|that|these|"
+# "give me robot arms": a robot word after a/an/some or none, said to the user, or before that, which or to and a verb);
+# the device, the gripper or the machine parts handed to someone are ("hand the nurse the device", "hand the nurse a
+# device", "hand the operator the gripper", "a robot that hands the operator the machine parts")
+_ME = r"(?:(?<=\bme)|(?<=\bus)|(?<=\byou)|(?<=\bya)|(?<=\bu)|(?<=\bmyself)|(?<=\bourselves))"   # right after the user
+_ROBOT_HEAD = r"\b(?!\s+(?!(?:that|which|who|to|for|with|like|and|or|of|from|in|on|at|by)\b)[a-z0-9])"  # ends its noun phrase
+_INDEF_NP = (r"\s+(?:(?:a|an|some|any|another|one|two|three|more)\s+)?(?:(?!(?:the|my|your|his|her|their|our|its|this|that|"
+             r"these|those)\b)[a-z-]+\s+){0,2}?")
+_NOT_A_ROBOT = (r"(?!" + _ME + _INDEF_NP + _ROBOT_WORD + _ROBOT_HEAD + r")(?!" + _INDEF_NP +
+                r"(?:robot|robotic|bot|cobot)s?(?:\s+" + _ROBOT_WORD + r")?" + _ROBOT_HEAD + r")(?!\s+(?:(?:the|a|an|some|his|her|their|my|your|our|its|this|that|these|"
                 r"those)\s+)?(?:[a-z-]+\s+){0,2}?" + _ROBOT_WORD + r"\s+(?:that|which|who|like|capable|able|so|to\s+(?!(?:the|a|an|"
                 r"my|your|his|her|their|our|me|him|us|them)\b)[a-z]+|for\s+[a-z]+ing)\b)")
+# ... and someone else given a robot will work with it ("give the operator a system that sorts parts"): only the user
+# asking for one is no person next to it
+_NOT_A_ROBOT_FOR_ME = (r"(?!" + _ME + r"\s+(?:" + _THING_DET + r"\s+)?(?:[a-z-]+\s+){0,2}?" + _ROBOT_WORD + r"\b)")
 # A request noun is a request only when a robot, its design or its job follows ("a list of parts for a robot", "a quote
 # for an arm", "an option for moving eggs", "a way to move parts", "a breakdown of the cost"): "bring me my list", "give
 # me the shopping list" and "bring me something for my headache" hand a thing to someone
@@ -558,6 +565,10 @@ _GIVE = (r"(?:hand(?:s|ing)?|pass(?:es|ing)?|giv(?:e|es|ing)?|bring(?:s|ing)?|(?
 _GIVE_TO = (r"(?:hand(?:s|ed|ing)?|pass(?:es|ed|ing)?|giv(?:e|es|en|ing)?|gave|bring(?:s|ing)?|brought|fetch(?:es|ed|ing)?|"
             r"get(?:s|ting)?|got|grab(?:s|bed|bing)?|toss(?:es|ed|ing)?|throw(?:s|ing|n)?|threw|offer(?:s|ed|ing)?|"
             r"serv(?:e|es|ed|ing)|feed(?:s|ing)?|fed|chuck(?:s|ed|ing)?|lob(?:s|bed|bing)?|lend(?:s|ing)?|lent|loan(?:s|ed|ing)?|"
+            r"(?:tak(?:e|es|ing)|took)(?!\s+(?:\w+\s+)?(?:(?:a|an|one|two|three|four|five|ten|twenty|thirty|[0-9]+(?:\.[0-9]+)?|"
+            r"about|around|over|under|nearly|almost|half|a few|several|many|more|less|longer|so|too|very)\s+)*(?:seconds?|"
+            r"secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|while|moment|ages|forever|long|time|turns?|"
+            r"breaks?)\b)|"   # "take her a cup of tea", "take the nurse the tray"; not "it takes me 10 minutes"
             r"send(?:s|ing)?(?!\s+(?:(?:me|him|her|us|them|you|the|a|an|my|your)\s+)?(?:\w+\s+)?(?:alerts?|messages?|"
             r"notifications?|emails?|e-mails?|texts?|signals?|data|reports?|results?|photos?|pictures?|images?|videos?|"
             r"updates?|pings?|sms|notices?|warnings?|reminders?|readings?|logs?|files?)\b)|sent)")                       # "get me a drink", "serve the guests coffee", "chuck me a beer"
@@ -605,7 +616,7 @@ ANIMAL_GETS = (r"\b" + _GIVE + r"\s+(?:" + _AN_ANIMAL + "|" + _ANIMAL_NP + _THEN
 # break" (a hand-over's receiver too: PERSON_NEAR)
 _FOR_SOMEONE = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist|serve|support|accompan(?:y|ies))(?:s|es|ing|ed)?"
                 r"\s+them\b|\b(?:(?:help|assist|serve|support|accompan(?:y|ies))(?:s|es|ing|ed)?\s+|(?:for|to|with)\s+|" + _GIVE_TO +
-                r"\s+)(?:(?:me|him|us)\b|" + _HER_HIS + "|" + _WHO + r")" + _NOT_THEIRS + _THEN_A_PLACE + _NOT_A_ROBOT +
+                r"\s+)(?:(?:me|him|us)\b|" + _HER_HIS + "|" + _WHO + r")" + _NOT_THEIRS + _THEN_A_PLACE + _NOT_A_ROBOT_FOR_ME +
                 _NOT_REQUEST +
                 r"|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b" +
                 # unsure, so someone is there: "pours me a coffee", "pass the salt over here", "bring that here", "pass the
@@ -641,12 +652,18 @@ PEOPLE_BESIDE = (r"\b(?:next to me|beside me|near me|" + _NOT_NO + r"with people
                  _NOT_NO + r"\b" + _SOMEBODY + r"(?:(?:\s+[\w'’]+){0,4}?\s+(?:" + _NEAR + r"|by|past)\s+" + _IT +
                  r"|\s+" + _MODAL + r"(?:take|grab|remove|pick|collect|get|receive|pull|lift)(?:s|es|ed|ing)?\s+(?:[\w'’-]+\s+){0,4}?"
                  r"(?:from|out of|off)\s+" + _IT +
-                 r"|\s+" + _MODAL + r"(?:use|touch|operate|tend|watch|supervise|program|teach|play with|work with|share|clean)"
-                 r"(?:s|es|ed|ing)?\s+" + _IT +
+                 r"|\s+" + _MODAL + r"(?:use|touch|operate|tend|watch|supervise|program|teach|play with|work with|share|clean|"
+                 r"calibrate|maintain|service|repair|adjust|check|inspect|reset|restart|start|stop|empty|clear|fix|control|"
+                 r"mind|configure|monitor|oversee|refill|wipe|oil)(?:s|es|ed|d|ing)?\s+" + _IT +
+                 r"|\s+" + _MODAL + r"(?:check|look|attend|set|switch|turn|keep an eye)(?:s|es|ed|ing)?\s+(?:on|after|to|up|off|"
+                 r"over)\s+" + _IT +
                  r"|\s+" + _MODAL + r"(?:load|unload|feed|fill|refill|restock|tend|top up)(?:s|es|ed|ing)?\b"
                  r"|\s+" + _MODAL + r"(?:stock|sort|pack|place|put|set|lay)(?:s|es|ed|ing)?\b(?:\s+[\w'’-]+){0,4}?\s+"
                  r"(?:by hand|for it|for the robot)\b)|"
-                 r"\bacross\s+(?:the\s+\w+\s+)?from\s+(?:me|us|him|her|them)\b|"
+                 r"\bacross\s+(?:the\s+\w+\s+)?from\s+(?:me|us|him|her|them)\b|" + _NOT_NO +
+                 # "customers collect their orders from the tray", "the operator takes his parts"
+                 r"\b(?:" + _ANYONE + "|" + _WHO_NP + "|" + _ROLES_PL + r")\s+" + _MODAL + r"(?:collect|pick(?:s|ed|ing)? up|"
+                 r"take|grab|receive|fetch|get)(?:s|es|ed|ing)?\s+(?:their|his|her|the|my|our|your|its)\b|"
                  r"\b(?:robot|arm|cobot|one|it|bench|table|desk|counter|station|line|cell)\s+(?:that\s+)?(?:i|we)\s+(?:\w+\s+)?"
                  r"(?:work|sit|stand)s?\s+(?:at|on|by|beside|next to|near|with|alongside)\b|"
                  r"\bwhere\s+(?:(?:i|we)\b|" + _ANYONE + "|" + _WHO_NP + "|" + _ROLES_PL + r"\b)\s*"

@@ -10641,6 +10641,98 @@
    "task": "hand_over",
    "people": "yes",
    "estop": true
+  },
+  {
+   "text": "no one near it; customers collect their orders from the tray",
+   "family": "C-hunt",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "nobody near the robot, a technician calibrates it daily",
+   "family": "C-hunt",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "nobody nearby, a nurse checks on it",
+   "family": "C-hunt",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the operator a system that sorts parts",
+   "family": "C-hunt",
+   "task": "not_hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "get my grandma a robot arm",
+   "family": "C-hunt",
+   "task": "not_hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "take her a cup of tea",
+   "family": "C-hunt",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "take grandma her pills",
+   "family": "C-hunt",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "take the nurse the tray",
+   "family": "C-hunt",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "take me a coffee",
+   "family": "C-hunt",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the nurse a device",
+   "family": "C-hunt",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "hand the operator robot parts",
+   "family": "C-hunt",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "take them home",
+   "family": "C-hunt",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "take the lid off the jar",
+   "family": "C-hunt",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "take the parts to the bin",
+   "family": "C-hunt",
+   "task": "not_hand_over"
   }
  ]
 }

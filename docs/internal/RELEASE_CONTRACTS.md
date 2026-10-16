@@ -1444,7 +1444,10 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
 - **People the robot works for (UX-3).** `brief.parse` reads `people_nearby` from the person signals first
   (`brief.person_signals(people_text, text)`: children, someone beside it, someone it hands things to, someone it
   helps, serves or works for, "no one else"; the person patterns run on `brief.people_text(request)`, E-N8), apart
-  from the task. Any of them puts a person next to it; "Nobody nearby", "no one works next to it"
+  from the task; someone who collects from it, checks on, calibrates, services or empties it is beside it ("customers
+  collect their orders from the tray", "a technician calibrates it daily", "a nurse checks on it"), and someone else
+  given a robot works with it ("give the operator a system that sorts parts", "get my grandma a robot arm"; only the
+  user asking for one, "give me a robot that sorts screws", is no person). Any of them puts a person next to it; "Nobody nearby", "no one works next to it"
   (`brief.NOBODY_NEAR`; not "no one else", nor followed by except, but, apart from, other than, besides, just or only:
   "no one near it but me", "no kids near it, just me") says "no" only when the request has none of them and gives
   nothing to an animal ("no one is around, it helps my grandma eat her soup", "nobody nearby, the nurse takes the tray
@@ -1831,9 +1834,10 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   serve, lend, loan and send (not a message: "send me an alert" is none) take every other receiver only with a thing
   after it (`_THING`: a determiner, a possessive or a noun; never a job done to them, a singular after a/an/some ("give
   them a shake", "give the parts a quick check"; "the wipes" and "the labels" are things), nor a robot asked for
-  (`_NOT_A_ROBOT`: a robot word after a/an/some or none, or before that, which, to and a verb: "get me a robot arm
-  that sorts screws", "give me robot arms"; "hand the nurse the device", "hand the operator the gripper" and "the
-  machine parts" are things), nor a request (`_REQUEST`: a quote, an option, a way, an idea, a plan, a list and the
+  (`_NOT_A_ROBOT`: a robot word after a/an/some or none said to the user, a robot or cobot after a/an to anyone, or a
+  robot word before that, which, to and a verb: "get me a robot arm that sorts screws", "give me robot arms", "get my
+  grandma a robot arm"; "hand the nurse the device", "hand the nurse a device", "hand the operator the gripper" and
+  "the machine parts" are things), nor a request (`_REQUEST`: a quote, an option, a way, an idea, a plan, a list and the
   like only when a robot, its design, its cost or a robot's job (`_JOB`: build, make, design, move, sort, stack, pick,
   place, lift, grip, transfer) follows within six words: "give me a cheap way to move parts", "get me a quote for an
   arm", "a list of parts for a robot", "a breakdown of the cost"; "get me started", "get me going"; "something
@@ -1864,7 +1868,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   grab and bring also reach one after up to seven words and "for" ("fetch the remote for my dad"). And: "supply the
   welder with rods", "provide the operator with screws", "keep the operator stocked with screws"; "passes parts back
   and forth with a human"; "the person it hands the cup to", "the operator it passes parts to"; "drops the part into
-  my hand", "puts the part in the operator's hand"; handing things out (`HANDS_OUT`: "hand out the gloves", "pass
+  my hand", "puts the part in the operator's hand"; "take" with two objects ("take her a cup of tea", "take the nurse
+  the tray"; not "it takes me 10 minutes"); handing things out (`HANDS_OUT`: "hand out the gloves", "pass
   around the snacks", "hand round the biscuits", "a robot that gives out flyers", "give the gloves out"; not round an
   obstacle or a place, out of something, nor a part that gives out); passers-by, bystanders, pedestrians, spectators,
   commuters and tourists are people. A capitalised word is no name at the start of a sentence, after "the" or "a", for a
@@ -1907,7 +1912,7 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   than the few above. A place named after people
   infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
   place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
-  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,575
+  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,589
   requests from the release review's two hunts and the fixers' rounds, each with the task, people and e-stop it must get,
   run through `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
