@@ -322,9 +322,17 @@ def test_people_text_reads_names_titles_typos_and_people_by_what_they_do(raw, re
 @pytest.mark.parametrize("text", ["a robot that sorts cards next to the card reader", "scan the parts with the barcode reader",
                                   "a robot that sorts socks next to the vacuum cleaner", "move the cups next to the floor cleaner",
                                   "a robot that sorts cards next to the card-reader", "a robot next to the e-reader",
-                                  "a robot that stacks badges next to the badge readers"])
+                                  "a robot that stacks badges next to the badge readers",
+                                  "move the plates to the plate reader", "move the tubes to the sequencer",
+                                  "move the tubes to the analyser", "a robot that loads the thermocycler next to the vortexer",
+                                  "move the samples to the sonicator", "move the vials next to the evaporator",
+                                  "move the tubes to the homogenizer", "put the tips next to the pipettor",
+                                  "move the plates to the degasser", "move the dishes next to the desiccator",
+                                  "move the parts to the ionizer", "move the boxes to the strapper",
+                                  "move the packs to the checkweigher", "move the cards to the embosser"])
 def test_a_reader_or_a_cleaning_machine_is_no_person(text):
-    # "next to the card reader" read the reader as a person (people nearby, an emergency stop), as did "the vacuum cleaner"
+    # "next to the card reader" read the reader as a person (people nearby, an emergency stop), as did "the vacuum cleaner";
+    # "move the tubes to the sequencer" became a hand-over to the sequencer
     assert not re.search(B.PERSON_NEAR, B.people_text(text)) and not re.search(B.PEOPLE_BESIDE, B.people_text(text))
 
 

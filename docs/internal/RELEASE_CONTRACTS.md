@@ -1797,8 +1797,9 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   "the riveter", "the anaesthetist", "the librarian", "the postman", "the salesperson", "the dog trainer", inside a
   noun phrase, after a determiner, a possessive or a preposition through up to three describing words, or a plural at
   the start), unless it is a machine, a container, a tool, a place, a part of the robot, an animal, a verb, a name or
-  another word that ends the same way (`_NOT_AGENT`, `_AGENT_VERBS`: "the capper", "the dryer", "the coffee maker",
-  "the clicker", "the other", "delivers", "offer"); such a word must end its noun phrase or have a second one follow
+  another word that ends the same way (`_NOT_AGENT`, `_AGENT_VERBS`, `_machine_reader`: "the capper", "the dryer", "the
+  coffee maker", "the sequencer", "the card reader", "the plate reader", "the clicker", "the other", "delivers",
+  "offer"; "the reader" on its own stays a person); such a word must end its noun phrase or have a second one follow
   it (`_AGENT_END`: "to the fitter", "hand the fitter the bolts", but "the trainer shoes" are shoes). Hand, pass, give,
   bring and feed (any form, "spoon-feeds") take "me", "him", "her", "us" and `_PERSON` (a family word, "my"/"our"/
   "your" + up to three words + a person word, "elderly"/"disabled" + a word) with or without a thing after them

@@ -375,7 +375,10 @@ _NOT_AGENT_END = ("washer", "dryer", "drier", "mixer", "blender", "toaster", "ro
                   "wrapper", "voucher", "sleeper", "drawer", "filler", "liner", "batter", "blister", "cluster", "polyester",
                   "barrier", "carrier bag", "stroller", "pushchair", "walker frame", "clicker", "buzzer", "beeper", "pager",
                   "rocker", "skimmer", "corer", "zester", "masher", "squeezer", "holster", "spatter", "splitter", "adapter",
-                  "dropper", "eyedropper", "atomi[sz]er", "inhaler", "spacer", "applicator", "scooper", "pooper", "kicker")
+                  "dropper", "eyedropper", "atomi[sz]er", "inhaler", "spacer", "applicator", "scooper", "pooper", "kicker",
+                  # lab and packing machines ("move the tubes to the sequencer")
+                  "sequencer", "analy[sz]er", "cycler", "sonicator", "evaporator", "homogeni[sz]er", "vortexer",
+                  "pipett?or", "degasser", "desiccator", "ioni[sz]er", "strapper", "checkweigher", "embosser")
 _NOT_AGENT_WORD = ("holder", "maker", "tractor", "order", "matter", "character", "chapter", "summer", "winter", "october",
                    "november", "december", "september", "power", "river", "silver", "copper", "leather", "feather",
                    "weather", "powder", "solder", "plaster", "glitter", "clutter", "litter", "timber", "lumber", "polymer",
@@ -399,9 +402,10 @@ _AGENT_SHAPE = re.compile(r"(?!" + _NOT_AGENT + r")(?:[a-z][a-z-]{2,}(?:er|or|ia
                           r"[a-z][a-z-]+(?:m[ae]n|persons?|people|folks?)|(?:class|school|work|team|crew|ship|play|bunk|cell|"
                           r"room|flat|house|soul|in)-?mates?|(?:farm|deck|stage|ranch)-?hands?|(?:employ|refer|retir|evacu|"
                           r"refug|interview|nomin|invit|ment|train|attend|enroll|examin|detain|pay|devot)ees?)")
-# A reader after one of these words is a machine ("the card reader", "the card-reader", "the e-reader"); "the reader" or
-# "the proof reader" is a person.
+# A reader after one of these words is a machine ("the card reader", "the card-reader", "the plate reader"); "the reader"
+# or "the proof reader" is a person.
 _READER_MACHINE = re.compile(r"(?:card|smartcard|barcode|bar-code|code|qr|rfid|nfc|badge|tag|chip|fingerprint|ebook|e-book|e|"
+                             r"plate|microplate|elisa|"
                              r"kindle|screen|sd|usb|magnetic|swipe|stripe|label|disc|disk|dvd|cd|microfiche|microfilm|optical|"
                              r"pass|ticket|id)")
 
