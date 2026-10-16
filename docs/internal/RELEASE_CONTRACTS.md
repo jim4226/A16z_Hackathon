@@ -1441,10 +1441,19 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   twists. An assembly request moves the parts (task `pick_place`, no sorting camera). `CATALOG` has a glass jar
   (65 mm, 300 g) and a pill bottle (35 mm, 40 g), offered by the containers and small-parts archetypes only when the
   request names them (`Archetype.more`).
-- **People the robot works for (UX-3).** `brief.parse` reads `people_nearby` in this order (the person patterns on
-  `brief.people_text(request)`, E-N8). "Nobody nearby", "no one works next to it" (`brief.NOBODY_NEAR`; not "no one
-  else", nor followed by except, but, apart from, other than, besides, just or only: "no one near it but me", "no kids
-  near it, just me") says "no", unless the request hands something to someone. Kids, children, toddlers, babies,
+- **People the robot works for (UX-3).** `brief.parse` reads `people_nearby` from the person signals first
+  (`brief.person_signals(people_text, text)`: children, someone beside it, someone it hands things to, someone it
+  helps, serves or works for, "no one else"; the person patterns run on `brief.people_text(request)`, E-N8), apart
+  from the task. Any of them puts a person next to it; "Nobody nearby", "no one works next to it"
+  (`brief.NOBODY_NEAR`; not "no one else", nor followed by except, but, apart from, other than, besides, just or only:
+  "no one near it but me", "no kids near it, just me") says "no" only when the request has none of them and gives
+  nothing to an animal ("no one is around, it helps my grandma eat her soup", "nobody nearby, the nurse takes the tray
+  from its gripper" and "no people around, students will use it" keep the person). A person word right after "no",
+  "not" or "without" is no person ("no humans next to it", "no workers near it"). `merge()` keeps the signals in
+  `flags["person"]`: a later message's "nobody near it" doesn't take that person away, and `brief_to_changes` keeps the
+  emergency stop beside them whatever the people answer is (an answer "It works on its own" gets the assumption "Your
+  request puts a person next to it (...), so it has an emergency stop even though no one else works next to it." and
+  the card row "Only the person your request names"). Kids, children, toddlers, babies,
   infants, twins, teens, tweens, youngsters, grandkids, schoolkids, "my son", "my daughter", "the girl" and a child's
   age ("my 5yo", "my 3 year old": 1 to 12, not before an animal, a robot, a car, a house or a tree) (not "no kids")
   say "children". People
@@ -1462,7 +1471,8 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   card says it was assumed. An animal it gives something to (`brief.ANIMAL_GETS`: "hand the dog a bone", "give
   my parrot seeds", "toss balls to my dog", "bring a toy for the puppy"; not "bring the hamster cage to the table")
   infers "pets", with the same emergency stop; an animal is never the person of a hand-over ("to my dog" is no "to my
-  cousin"), while "my dog walker" and "my dog's sitter" are people. Only then do "on its own", "by itself", "unattended", "enclosed", "fenced" and the
+  cousin"), while "my dog walker" and "my dog's sitter" are people. Only then does "nobody nearby" say "no", and only
+  then do "on its own", "by itself", "unattended", "enclosed", "fenced" and the
   robot working alone (`brief.ROBOT_ALONE`; "she lives alone" and "while he is alone" say nothing about the robot)
   infer "no", shown as an assumption ("assumed"), never as "you said". A designer model's "no" never takes away a
   person the words put next to it (`agents.apply_update`). `HAND_TO_PERSON` ("pass my dad", "bring her") and the word hand-over ("does

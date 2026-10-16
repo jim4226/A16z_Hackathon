@@ -418,6 +418,30 @@ def test_a_hand_over_keeps_its_emergency_stop_when_told_it_works_on_its_own(text
     assert (row["text"], row["badge"]) == ("Only the person it hands things to", "you said")
 
 
+@pytest.mark.parametrize("text", ["no one is around, it helps my grandma eat her soup", "no people around it, it assists the surgeon",
+                                  "nobody nearby, the nurse takes the tray from its gripper",
+                                  "no one near it; an operator loads the parts by hand", "no people around, students will use it"])
+def test_nobody_nearby_never_drops_a_person_the_request_names(text):
+    # "nobody nearby" beat every person signal but a hand-over's receiver: these built a robot with no one nearby and
+    # no emergency stop, though grandma eats from it, the nurse takes the tray and the operator loads it by hand
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "people_nearby") == "yes" and "estop" in b.changes["electronics.extras"]
+    # the person stays there when the answer, or a later message, says no one works next to it
+    b = agents.run_turn(agents.run_turn(agents.run_turn(text=text), answers={"people_nearby": "no"}), action="defaults")
+    assert "estop" in b.changes["electronics.extras"], b.changes["electronics.extras"]
+    assert any(a["text"].startswith("Your request puts a person next to it") for a in b.assumptions if a.get("slot") == "people_nearby")
+    assert next(r for r in B.card(b) if r["slot"] == "people_nearby")["text"] == "Only the person your request names"
+    b = agents.run_turn(agents.run_turn(agents.run_turn(text=text), text="nobody will be near it"), action="defaults")
+    assert B.value(b, "people_nearby") == "yes" and "estop" in b.changes["electronics.extras"]
+
+
+def test_nobody_nearby_with_no_person_named_is_no_one():
+    for text in ("a robot that sorts screws, nobody nearby", "no one is near it, it sorts bolts", "no people around it"):
+        b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+        assert (B.value(b, "people_nearby"), b.slots["people_nearby"].source) == ("no", "user"), text
+        assert "estop" not in b.changes["electronics.extras"] and not b.flags.get("person"), text
+
+
 @pytest.mark.parametrize("later", ["it hands them to my grandma", "it gives the cups to the nurse", "hand them to the operator"])
 def test_a_hand_over_typed_in_a_later_turn_is_a_hand_over(later):
     b = agents.run_turn(agents.run_turn(agents.run_turn(text="a robot that moves pill bottles"), text=later), action="defaults")

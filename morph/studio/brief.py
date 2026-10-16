@@ -443,8 +443,10 @@ _NAMES = (r"(?:mary|john|sarah|james|david|michael|robert|william|richard|thomas
           r"sanjay|ravi|arjun|rohan|vikram|deepak|sunita|ananya|ahmad|hassan|hussein|yusuf|ibrahim|omar|khalid|leila|"
           r"zara|noor|sofia|lucia|carmen|rosa|ana|elena|marta|giulia|francesca|sara|ingrid|astrid|freya|ebony|kiara|"
           r"tyrone|darnell|jamal|malik|keisha|latoya|shanice)")
+_NOT_NO = r"(?<!\bno )(?<!\bnot )(?<!\bwithout )(?<!\bnever )(?<!\bnot any )(?<!n't any )"   # "no people around it" is no one
 _WHO = (r"(?:" + _ANYONE + "|" + _KIN + r"|(?:elderly|disabled) [a-z]+|" + _TITLED + "|" + _WHO_NP + "|(?:(?!(?:" +
-        _NOT_DESCRIBING + "|" + _PREPOSITION + r")\b)[a-z'’-]+\s+){0,2}?(?:" + _ROLES_PL + r"|morphagents\b" + _AGENT_END +
+        _NOT_DESCRIBING + "|" + _PREPOSITION + r"|no|not|none|without)\b)[a-z'’-]+\s+){0,2}?" + _NOT_NO + r"(?:" + _ROLES_PL +
+        r"|morphagents\b" + _AGENT_END +
         r"))\b" + _NOT_THEIR_PLACE)
 # what follows the receiver in "hand the nurse the gauze", "hands the operator parts": a thing, never a job done to them
 # ("give them a shake", "give the parts a quick check", but "hand the nurse the wipes" and "the labels" are things), nor a
@@ -584,17 +586,17 @@ _IT = r"(?:it|its\s+[a-z]+|the\s+(?:robot|arm|cobot|gripper|machine)|this\s+(?:r
 # "I'm next to it all day", "where customers pick up their coffee", "a bench shared with two workers", "a bin I fill by
 # hand", "the operator takes the part from its gripper", "an operator feeds it parts", "students will use it"
 _MODAL = r"(?:(?:will|can|could|would|may|might|must|to|then|also|just)\s+)?"
-PEOPLE_BESIDE = (r"\b(?:next to me|beside me|near me|with people|around people|coworkers?|colleagues?|hands? me|pass(?:es)? me|"
-                 r"while i work|people around)\b|"
+PEOPLE_BESIDE = (r"\b(?:next to me|beside me|near me|" + _NOT_NO + r"with people|" + _NOT_NO + r"around people|coworkers?|"
+                 r"colleagues?|hands? me|pass(?:es)? me|while i work|" + _NOT_NO + r"people around)\b|" + _NOT_NO +
                  r"\b(?:people|someone|staff|workers|operators|users|humans|others)\b(?:\s+\w+){0,3}?\s*" + _NEAR + r"\b|"
                  # "next to the operator", "between two packers", "no one near it but me"
-                 r"\b(?:" + _NEAR + r"\s+(?:to\s+)?|(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b[^.;!?]{0,40}?"
+                 r"\b(?:" + _NOT_NO + _NEAR + r"\s+(?:to\s+)?|(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b[^.;!?]{0,40}?"
                  r"\b(?:except|but|apart from|aside from|other than|besides|save|bar|just|only)\s+(?:for\s+)?)"
-                 r"(?:(?:people|staff|workers|operators|users|humans|others|me|us|him)\b|" + _HER_HIS + "|" + _WHO + ")|"
+                 r"(?:(?:people|staff|workers|operators|users|humans|others|me|us|him)\b|" + _HER_HIS + "|" + _WHO + ")|" +
                  # someone near it, taking from it, using, loading or feeding it: "I'm right next to it", "the operator takes
                  # the part from its gripper", "students will use it", "an operator loads the fixture", "workers load the
                  # bins by hand"
-                 r"\b" + _SOMEBODY + r"(?:(?:\s+[\w'’]+){0,4}?\s+(?:" + _NEAR + r"|by|past)\s+" + _IT +
+                 _NOT_NO + r"\b" + _SOMEBODY + r"(?:(?:\s+[\w'’]+){0,4}?\s+(?:" + _NEAR + r"|by|past)\s+" + _IT +
                  r"|\s+" + _MODAL + r"(?:take|grab|remove|pick|collect|get|receive|pull|lift)(?:s|es|ed|ing)?\s+(?:[\w'’-]+\s+){0,4}?"
                  r"(?:from|out of|off)\s+" + _IT +
                  r"|\s+" + _MODAL + r"(?:use|touch|operate|tend|watch|supervise|program|teach|play with|work with|share|clean)"
@@ -997,6 +999,20 @@ def harmful(text: str) -> str | None:
     return None
 
 
+def person_signals(pt: str, t: str = "") -> dict:
+    """Every sign of a person next to the robot in a request, read apart from what the robot does: {kind: words} for
+    children, beside (someone works next to it, takes from, loads or uses it, "next to me"), receiver (someone it hands
+    things to), near (someone it helps, serves or works for, or an unsure request that leaves someone there) and else
+    ("no one else is around"). `pt` is people_text(request), `t` the request in lower case. Empty means no person."""
+    found = {}
+    kids = re.search(_KIDS, re.sub(r"\b(?:no|without|not any)\s+(?:kids|children|toddlers|babies)\b", " ", pt))
+    for kind, m in (("children", kids), ("beside", _rx(PEOPLE_BESIDE).search(pt)), ("receiver", _rx(HAND_TO_PERSON).search(pt)),
+                    ("near", _rx(_FOR_SOMEONE).search(pt)), ("else", re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t or pt))):
+        if m:
+            found[kind] = m.group(0).strip()
+    return found
+
+
 def adjusted_kinds(text: str) -> list:
     """[[kind, words]] for the jobs in ADJUSTED a request asks for (unscrewing says it all for an opening that twists)."""
     t = (text or "").lower()
@@ -1054,7 +1070,7 @@ def parse(text: str) -> dict:
     raw = (text or "")[:2000]
     t = normalize_units(raw.lower())
     out = {"slots": {}, "inferred": {}, "hints": {}, "implicit": [], "oos": out_of_scope_kinds(t), "harm": harmful(t), "said": {},
-           "adjusted": adjusted_kinds(t)}
+           "adjusted": adjusted_kinds(t), "person": {}}
     s, inf = out["slots"], out["inferred"]
     key, conf = detect_archetype(t)
     out["archetype"] = (key, conf)
@@ -1160,22 +1176,27 @@ def parse(text: str) -> dict:
         if re.search(pat, t):
             s["environment"] = env
             break
-    # who is next to it. A receiver outranks every word for "on its own": the person it hands things to takes them from
-    # the gripper ("hand me tools, no one else is nearby", "bring the meds to her twice a day, she lives alone")
+    # who is next to it. The person signals are read on their own, apart from the task: someone it hands things to,
+    # children, someone working beside it, taking from, loading or using it, someone it helps, serves or works for.
+    # Any of them keeps a person next to it, and so the emergency stop; "nobody nearby" says no one only when none of
+    # them is anywhere in the request (a missed person is a safety failure, an extra emergency stop a small cost):
+    # "hand me tools, no one else is nearby", "nobody nearby, the nurse takes the tray from its gripper", "no one is
+    # around, it helps my grandma eat her soup"
     pt = normalize_units(people_text(raw))         # names read as "someone", "the fitter" as "the morphagent"
     hands = _rx(HAND_TO_PERSON).search(pt)
-    if re.search(NOBODY_NEAR, t) and not hands:
-        s["people_nearby"] = "no"   # "nobody nearby", "no one works next to it"; not "no one near it but me"
-    elif re.search(_KIDS, re.sub(r"\b(?:no|without|not any)\s+(?:kids|children|toddlers|babies)\b", " ", pt)):
+    people = out["person"] = person_signals(pt, t)
+    if people.get("children"):
         s["people_nearby"] = "children"
-    elif _rx(PEOPLE_BESIDE).search(pt):
+    elif people.get("beside"):
         s["people_nearby"] = "yes"  # "people nearby", "people work next to it", "near people", "next to the operator"
-    elif hands or _rx(_FOR_SOMEONE).search(pt) or re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t):
+    elif people:
         # "help my grandma", "pass my dad his pills", "for me": that person is next to it (and a toy robot's children; a
         # pet feeder's person is a person, not a pet: "hand the dog walker the dog food")
         inf["people_nearby"] = "children" if ARCHETYPES[key].people == "children" else "yes"
     elif _rx(ANIMAL_GETS).search(pt):
         inf["people_nearby"] = "pets"   # "hand the dog a bone": the animal takes it from the gripper
+    elif re.search(NOBODY_NEAR, t):
+        s["people_nearby"] = "no"   # "nobody nearby", "no one works next to it"; not "no one near it but me"
     elif re.search(ROBOT_ALONE, t):
         inf["people_nearby"] = "no"   # Morph's reading of "on its own" or "enclosed": an assumption on the card
     # precision
@@ -1321,14 +1342,19 @@ def _archetype_for_object(o: dict) -> str | None:
 def merge(b: Brief, parsed: dict, source: str = "user", evidence: str = ""):
     """Apply a parse() result: user-stated slots, inferred layout, design hints, scope flags."""
     said = parsed.get("said") or {}
+    named = b.flags.get("person") or {}   # a person an earlier turn put next to it stays there ("nobody near it" later)
     for name, v in parsed.get("slots", {}).items():
         v2 = coerce(name, v)
+        if name == "people_nearby" and v2 == "no" and named:
+            continue
         if v2 is not None:
             if name == "object" and isinstance(v, dict) and v.get("stated"):
                 v2["stated"] = list(v["stated"])
             set_slot(b, name, v2, source, 1.0, f"{evidence}: {said[name]}" if name in said else evidence)
     for name, v in parsed.get("inferred", {}).items():
         v2 = coerce(name, v)
+        if name == "people_nearby" and v2 == "no" and named:
+            continue
         if v2 is not None:
             set_slot(b, name, v2, "inferred", 0.7, evidence)
     for k, v in parsed.get("hints", {}).items():
@@ -1337,6 +1363,8 @@ def merge(b: Brief, parsed: dict, source: str = "user", evidence: str = ""):
         else:
             b.hints[k] = v
     fl = b.flags
+    if parsed.get("person"):
+        fl["person"] = {**{k: str(w)[:80] for k, w in parsed["person"].items()}, **named}
     for kind in parsed.get("oos") or []:
         if kind not in fl.setdefault("oos", []):
             fl["oos"].append(kind)
@@ -1783,8 +1811,8 @@ def brief_to_changes(b: Brief) -> dict:
                "task.place_y_mm": lay["place"][1], "task.cycle_time_s": float(value(b, "throughput"))})
     extras = set()
     if value(b, "people_nearby") in ("yes", "children", "pets") or value(b, "environment") in ("lab", "kitchen", "classroom") \
-            or value(b, "task") == "hand_over":   # a hand-over's receiver takes the thing from the gripper, whatever was said
-        extras.add("estop")
+            or value(b, "task") == "hand_over" or b.flags.get("person"):
+        extras.add("estop")   # a hand-over's receiver, or a person the request names, is next to it whatever was said
     if value(b, "perception") == "wrist_camera":
         extras.add("wrist_camera")
     if value(b, "connectivity") == "wifi":
@@ -2154,10 +2182,11 @@ def assumptions_for(b: Brief, ch: dict) -> list:
                 cat = {"fragile": "fragile", "care": "needing care"}[s.value]
                 add(slot, f"I read '{_fragility_words(s)}' as {cat}: damaged above about {maxf:g} N per finger.", "inferred")
             continue
-        handed = slot == "people_nearby" and value(b, "task") == "hand_over" and value(b, slot) == "no"
+        handed = slot == "people_nearby" and value(b, slot) == "no" and (value(b, "task") == "hand_over" or b.flags.get("person"))
+        kept = (_HANDED if value(b, "task") == "hand_over" else _named_person(b)) if handed else ""
         if s is not None and s.source in ("user", "video", "photo") or (s is not None and s.source == "memory"):
-            if handed:   # "It works on its own" on a hand-over: the receiver is still there
-                add(slot, _HANDED, "inferred")
+            if handed:   # "It works on its own" on a hand-over or beside a person the request names: they are still there
+                add(slot, kept, "inferred")
             continue
         kind = "inferred" if s is not None and s.source == "inferred" else "default"
         v = value(b, slot)
@@ -2176,7 +2205,7 @@ def assumptions_for(b: Brief, ch: dict) -> list:
             elif v in ("yes", "children", "pets"):
                 add(slot, f"I assumed {PEOPLE[v]}, so it has an emergency stop.", kind)
             elif handed:
-                add(slot, _HANDED, kind)
+                add(slot, kept, kind)
             elif env not in ("lab", "kitchen", "classroom"):   # the request asked for one
                 add(slot, f"I assumed {PEOPLE[v]}; it has the emergency stop you asked for.", kind)
             else:  # the e-stop comes with the place: say whether the place was the person's or Morph's guess
@@ -2195,6 +2224,13 @@ def assumptions_for(b: Brief, ch: dict) -> list:
 
 _HANDED = ("It hands things to a person, who takes them from the gripper within its reach, so it has an emergency stop "
            "even though no one else works next to it.")
+
+
+def _named_person(b: Brief) -> str:
+    """The card's line for a person the request puts next to the robot when the people answer says no one."""
+    words = next(iter((b.flags.get("person") or {}).values()), "")
+    return (f"Your request puts a person next to it (\"{words}\"), so it has an emergency stop even though no one else "
+            "works next to it.")
 
 
 def summary_text(b: Brief, ch: dict, pre: dict) -> str:
@@ -2275,7 +2311,8 @@ def card(b: Brief) -> list:
             elif slot == "environment":
                 txt = ENVIRONMENTS[v].capitalize()
             elif slot == "people_nearby":   # a hand-over's receiver is next to it whatever else was said
-                txt = "Only the person it hands things to" if v == "no" and value(b, "task") == "hand_over" else PEOPLE[v].capitalize()
+                txt = "Only the person it hands things to" if v == "no" and value(b, "task") == "hand_over" else \
+                    "Only the person your request names" if v == "no" and b.flags.get("person") else PEOPLE[v].capitalize()
             elif slot == "precision":
                 txt = PRECISION[v].capitalize()
             elif slot == "budget":

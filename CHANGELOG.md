@@ -561,6 +561,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - New robot no longer reads a vacuum, floor or steam cleaner next to the robot as a person who cleans there: "move
   the boxes next to the floor cleaner" and "a robot that sorts mail next to the steam cleaner" were built with
   people nearby and an emergency stop.
+- "Nobody nearby" no longer takes away a person the same request puts next to the robot: "no one is around, it helps
+  my grandma eat her soup", "no people around it, it assists the surgeon", "nobody nearby, the nurse takes the tray
+  from its gripper", "nobody near it, I stand next to it to load it", "no one near it; an operator loads the parts by
+  hand" and "no people around, students will use it" were built with nobody nearby and no emergency stop (only a
+  person it hands things to beat "nobody"). New robot now reads every sign of a person first, apart from the task,
+  and says no one is near only when there is none. That person keeps the emergency stop also when an answer or a
+  later message says it works on its own.
 - New robot no longer keeps an object on "my SO-101" that the stock jaws can't hold: "use my SO-101 to move light
   bulbs" built an SO-101 with no issue whose own simulation then dropped the 60 mm bulb. In Morph's simulation the
   stock jaws dropped every round object tried from 47 to 60 mm across and flat-sided ones of 36, 40, 44 and 48 mm (a
