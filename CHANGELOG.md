@@ -255,8 +255,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   or a Teams script token, invite or sign-in code before anything is saved, shown or sent. It also refuses a remote
   Studio's own access code (raw or in its access link), a `MORPH_TOKEN` or `ANTHROPIC_AUTH_TOKEN` that is set, other
   services' keys with a fixed prefix (GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq,
-  xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password and `.env` lines such as
-  `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no space (these keys and JWTs used to slip past),
+  xAI, Perplexity, npm, PyPI and more), private key blocks, links with a password (a link's password ends at `/`, `?`
+  or `#`, so `http://10.0.0.5:8765?user=bob@example.com`, a port and a query with an e-mail address, passes; 9,201 of
+  20,000 such generated links were refused) and `.env` lines such as `HF_TOKEN=...`; a key glued to Chinese, Japanese or Korean text with no space (these keys and JWTs used to slip past),
   and a tool key after `key=` or inside a link. A key with no prefix of its own pasted alone (an AWS secret key, a bare
   hex token) is still not caught unless it is saved in the Keys dialog. New robot used to keep such
   a key in its draft, show it to every tab on the project and send it to SubQ and Claude, and Teams comments let SubQ

@@ -2,13 +2,15 @@
 
     python tools/key_filter_rates.py            # the figures RELEASE_CONTRACTS.md section 9 (Keys) quotes
     python tools/key_filter_rates.py --quick    # a tenth of the samples
+    python tools/key_filter_rates.py --links    # only the links (a password in a link, an @ after a port)
 
 Keys: the share of random keys of each shape that has_key() misses. "with a digit" counts the misses of the phrase
 rule (security._phrase: the key read as words and part numbers); "all" adds the keys with no digit at all, which the
 sk- rule never takes for keys. Codes: how often a Teams code drawn as secrets.token_urlsafe draws it is drawn again by
 auth.new_code, and whether the codes it keeps are caught cut short or with text joined to them. Names: how many
 plausible names looks_like_secret() refuses, under mt_/ml_/mi_ (which only judge a run with a capital: every Teams code
-has one) and as sk- part numbers. Every draw is seeded, so a run gives the same figures until the filter changes. Keys
+has one) and as sk- part numbers. Links: how many with an @ after their host and port are refused as links with a
+password, and how many with a password are missed. Every draw is seeded, so a run gives the same figures until the filter changes. Keys
 saved in the Keys dialog are ignored (their environment variables are cleared first).
 """
 
@@ -207,8 +209,49 @@ def names(scale: int):
         print(f"{label:76} refused {refused:,} of {total:,}")
 
 
+def links(n: int):
+    """Links that carry an e-mail address or an @ after their host and port (in a query, a fragment or a path): how many
+    the user:password@ rule refuses; and links with a user and a password of 8 to 24 characters RFC 3986 allows there
+    (letters, digits, -._~!$&'()*+,;= and %-escapes such as %40): how many it misses, alone and in a sentence."""
+    rnd = random.Random(43)
+
+    def host():
+        kind = rnd.randrange(5)
+        if kind == 0:
+            return ".".join(str(rnd.randint(1, 254)) for _ in range(4))
+        if kind == 1:
+            return rnd.choice(["localhost", "robot.local", "studio.lab.example.com", "pi4", "jetson-nano.lan"])
+        return rnd.choice([f"[2001:db8::{rnd.randint(1, 0xffff):x}]", "[::1]", f"[fe80::{rnd.randint(1, 0xffff):x}]"])
+
+    port = lambda: rnd.choice(["", f":{rnd.randint(1, 65535)}", ":8765", ":443", ":554"])  # noqa: E731
+    schemes = ["http", "https", "rtsp", "mqtt", "ws", "ftp", "postgres", "mysql", "redis", "amqp", "ssh", "mongodb+srv"]
+    mails = ["bob@example.com", "ops@lab.example.org", "jim.k@robotics.example.edu", "a@b.co", "@team"]
+    tails = ["?user={}", "?project=egg-picker&owner={}", "#contact={}", "/?share={}", "/people/{}", "?next=/home#{}"]
+    refused = 0
+    for _ in range(n):
+        link = f"{rnd.choice(schemes[:5])}://{host()}{port()}{rnd.choice(tails).format(rnd.choice(mails))}"
+        refused += security.looks_like_secret(link)
+    print(f"{'links with an @ after the host (http://10.0.0.5:8765?user=bob@example.com)':76} refused {refused:,} of {n:,}")
+    allowed = ALNUM + "-._~!$&'()*+,;="
+    alone = in_text = 0
+    for _ in range(n):
+        password = "".join(rnd.choice(allowed) if rnd.random() > 0.05 else rnd.choice(["%40", "%23", "%3F", "%2F"])
+                           for _ in range(rnd.randint(8, 24)))
+        user = rnd.choice(["admin", "root", "robot", "pi", "jim", "ops", "sensor", run(rnd, LOWDIG, rnd.randint(3, 12))])
+        link = (f"{rnd.choice(schemes)}://{user}:{password}@{host()}{port()}"
+                + rnd.choice(["", "/morph", "/stream1", "/?x=1", "#top"]))
+        alone += not security.looks_like_secret(link)
+        in_text += not security.looks_like_secret(f"connect with {link} please")
+    print(f"{'links with a password of 8 to 24 characters (postgres://admin:...@db:5432)':76} missed {alone:,} of {n:,} "
+          f"alone, {in_text:,} in a sentence")
+
+
 if __name__ == "__main__":
     quick = "--quick" in sys.argv
+    if "--links" in sys.argv:  # only the links
+        links(2000 if quick else 20000)
+        sys.exit(0)
     keys(10000 if quick else 100000)
     codes(10000 if quick else 100000)
     names(10 if quick else 1)
+    links(2000 if quick else 20000)

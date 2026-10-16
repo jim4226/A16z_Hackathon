@@ -712,7 +712,9 @@ members; a member can hold several.
   and sign-in codes, and other services' keys known by a fixed prefix or text that carries a key (`security.OTHER_KEYS`:
   GitHub, GitLab, Hugging Face, AWS key ids, Google, Stripe, Slack, Replicate, Groq, xAI, Perplexity, ElevenLabs, npm,
   PyPI, SendGrid, DigitalOcean, Mapbox, Telegram and Discord tokens and Twilio key SIDs; a private key block, a link
-  with a password, `Bearer` and a token with a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value
+  with a password (`scheme://user:password@`, a password of 8 characters or more; the user and password end at the
+  first `/`, `?` or `#`, as RFC 3986 reads a link, so `http://10.0.0.5:8765?user=bob@example.com` passes and a
+  password with an unencoded `?` or `#` in it, which no link can carry, is not caught), `Bearer` and a token with a digit, an .env line `NAME_KEY=value` or `NAME_TOKEN=value` whose value
   has a letter and a digit). A key with no prefix of its own pasted alone (an AWS secret key, a bare hex token) is caught
   only on such a line or once saved. A key may start after anything but an ASCII letter, digit or `_` (never `\b`, which
   Python reads by Unicode: 是, は and é count as letters), so a key glued to Chinese, Japanese or Korean text is caught.
@@ -753,7 +755,10 @@ members; a member can hold several.
   case); whole part numbers 40 of
   270 (mixed case such as `ATmega328P` or `nRF52840`, starting with a digit such as `17HS4401`, and any after `sk-`).
   `names.json` lists the kinds still refused; part runs such as `sk-608zz-608rs-626zz-bearings` (more short codes than
-  words and names) are refused too. The tool runner redacts
+  words and names) are refused too. Links (`--links`): of 20,000 with an e-mail address or an `@` after their host and
+  port (in a query, a fragment or a path; IPv4, names and IPv6 hosts) none is refused (9,201 were, when the password
+  part read on past `?` and `#`), and of 20,000 with a user and a password of 8 to 24 characters RFC 3986 allows there
+  (`%40` included) none is missed, alone or in a sentence. The tool runner redacts
   and refuses with the same shapes (`security.has_key`, `redact_keys`). Every free-text field people type uses it and refuses with 400
   (`security.secret_refused(where)`) before anything is stored, queued, emitted or sent: chat, `morph robot new`, New
   robot's request, name and every typed answer, Show Morph the job's cards (preview answers, applied changes and the
