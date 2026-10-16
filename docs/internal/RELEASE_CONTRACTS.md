@@ -1686,7 +1686,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
     | N, x % of it> ..."); with `band_capped` a squeeze below the window's low end is an issue too. On an MG996R
     egg-picker hand (1.2 mm room): a 370 g soda can (2.64 mm spread) and a water bottle (2.60 mm) get the issue, an
     egg too (1.76 mm; it also has the gripper stage's "add finger.sensor=fsr402"), an 18 mm marker (0.72 mm) covers
-    (0.16 mm squeeze, 18.13 N at its large end, above the 10 N rated torque: a warning). The firmware's
+    (0.16 mm squeeze, 18.13 N at its large end, above the 10 N rated torque: a warning) but is too small for the
+    fingers (a `too_small` issue): without force sensors no object both covers and fits them (below). The firmware's
     `GRIP_SQUEEZE` (in the joint's unit) is that distance and G commands `GRIP_CLOSED - GRIP_SQUEEZE`, never
     `GRIP_MIN`; F sets it (`GRIP_SQUEEZE_PER_N` = band / stall, at least `GRIP_SQUEEZE_LEAST`).
     `eplan.grip.limit_n` (`GRIP_LIMIT_N`, F's cap) is min(the object's limit, `rated_n`, and `band_n` when `covers`): F
