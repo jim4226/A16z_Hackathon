@@ -750,6 +750,10 @@ def plan(design, sizing: dict, grip: dict | None = None) -> dict:
                             + ("its whole stall force" if whole(ol["large_n"]) else f"about {ol['large_n']:g} N per finger")
                             + " for that moment"
                             + (f" (above the {dmg:g} N that damages it)" if dmg and ol["large_n"] > dmg else ""))
+            if grip["limit_n"] > ol["rated_n"] + 0.005:   # F's cap is the loop's hard stop, not the servo's rated torque
+                warnings.append(f"F <newtons> can raise the force loop's target up to {grip['limit_n']:g} N, above the "
+                                f"{ol['rated_n']:g} N the hobby gripper servo holds continuously (its rated torque): "
+                                "above that it runs warm on long carries")
         if not grip.get("torque_limit") and grip.get("stall_force_n") and design.object.max_force_n and \
                 grip["stall_force_n"] > design.object.max_force_n:
             warnings.append(f"the hobby gripper servo has no torque limit to back up the force sensors: a sensor that reads "

@@ -683,6 +683,25 @@ def test_the_manual_names_why_a_sensorless_hobby_grips_large_end_is_an_issue(obj
     assert "at or near stall" not in sent
 
 
+def test_a_hobby_force_sensing_grip_says_f_can_ask_for_more_than_the_servo_holds():
+    """F on a hobby force-sensing gripper raises the force loop's target up to GRIP_LIMIT_N (19 N for an egg on the
+    MG996R hand), nearly twice the 10 N the servo holds continuously, while without sensors F stops at that rated
+    torque; neither the plan nor the manual said so. They now do (the loop's hard stop stays where the object's
+    damage force puts it, so a window that needs more than the rated torque stays reachable)."""
+    from morph.robot import manual
+
+    d = template("egg-picker").with_changes({"arm.actuator_family": "hobby_pwm"})
+    sz = arm.size(d)
+    ep = electronics2.plan(d, sz, grip=pipeline2.gripper_stage(d, sz, simulate=False)["force"])
+    g, ol = ep["grip"], ep["grip"]["open_loop"]
+    assert g["sensor"] == "fsr402" and g["limit_n"] > ol["rated_n"]
+    warm = (f"F <newtons> can raise the force loop's target up to {g['limit_n']:g} N, above the {ol['rated_n']:g} N "
+            "the hobby gripper servo holds continuously (its rated torque): above that it runs warm on long carries")
+    assert warm in ep["warnings"], ep["warnings"]
+    assert (f"above {ol['rated_n']:g} N, what its hobby servo holds continuously, it runs warm on long carries"
+            in manual._grip_sentence(g, d.object.name))
+
+
 @pytest.mark.parametrize("obj", ["raw egg", "soda can"])
 def test_hobby_servos_on_the_stock_jaws_say_their_least_close_squeezes_past_what_they_hold(tmp_path, obj):
     """The SO-101's stock jaw on hobby PWM servos: one PCA9685 count is about 0.48 mm at its 62-80 mm lever, so the least

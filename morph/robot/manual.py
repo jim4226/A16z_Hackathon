@@ -720,6 +720,9 @@ def _grip_sentence(grip: dict, name: str) -> str:
     if grip.get("sensor") == "fsr402":
         out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
         out += "; to change the target send F followed by newtons" + within
+        if ol.get("rated_n") is not None and lim is not None and lim > ol["rated_n"] + 0.005:
+            out += (f" F goes up to {lim:g} N, but above {ol['rated_n']:g} N, what its hobby servo holds continuously, it "
+                    f"runs warm on long carries.")
         if ol.get("probe_mm"):
             out += (f" Its hobby servo has no torque limit, so a close that has read no force by {ol['probe_mm']:.2f} mm "
                     f"past the calibration gauge stops there and opens with !GRIP: a {name} up to that much narrower per "

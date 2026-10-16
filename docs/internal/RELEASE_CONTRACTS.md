@@ -1379,7 +1379,12 @@ Fixes of the release review's engineering findings. What other code relies on si
   it is the grip (the target at the jaw's lever; a rack jaw per finger F = torque x 0.6 / 2r), with them a cap at the
   firmware's hard stop. A sensorless grip the servo can't reach is an issue, and so is a hobby PWM gripper whose stall
   force exceeds the object's limit. The firmware writes it at start-up and when the e-stop clears (`gripTorque()`:
-  Feetech register 48 in 0.1 %, DYNAMIXEL Goal PWM in percent) and F re-sets it on a sensorless gripper. A sensorless
+  Feetech register 48 in 0.1 %, DYNAMIXEL Goal PWM in percent) and F re-sets it on a sensorless gripper, up to
+  `GRIP_LIMIT_N`: for an object with no damage force that is the jaws' stall force, so F 1000 writes the whole stall
+  torque (register 1000 on the sensorless egg-picker hand with a soda can) and the bus servo holds it for the carry; F is the
+  person's choice there, and the servo's own torque register is what stops it. A hobby force-sensing gripper's F
+  raises the loop's target up to `GRIP_LIMIT_N` too (19 N on the egg-picker hand's egg), above the 10 N its MG996R
+  holds continuously: the plan's warning and the manual say it then runs warm on long carries. A sensorless
   revolute jaw is simulated with that torque (`asm.meta["grip_torque_nm"]`). Firmware with force sensors that read
   under `GRIP_SENSE_N` through a whole close probes to `GRIP_MIN` (`GRIP_PROBE` is the whole overtravel past
   `GRIP_CLOSED`, section 20), goes back to `GRIP_CLOSED` and prints `!GRIP no force reading down to GRIP_MIN`. `tests/fw_stubs/grip_harness.cpp` runs the

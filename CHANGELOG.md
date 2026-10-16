@@ -505,7 +505,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   The simulation and robustness studies let such an object go too, as "Let go with !GRIP"; New robot then uses
   smart-bus servos and says why. The
   power budget, the plan's warning, the manual and the simulation use that squeeze, and a hold above the servo's
-  rated torque is a warning.
+  rated torque is a warning, as is a force-sensing grip whose F can ask for more than that (up to 19 N for an egg,
+  against the MG996R's 10 N).
 - Teams' change-request preview no longer shows a grip change the build won't make: a new servo supply, servo family
   or build level on the egg-picker read "Grip: grip force target 2.34 → 2.17 N" (New robot's estimate without the
   grasp simulation) and planned the electronics with it. The build keeps the 2.34 N its grasp simulation found, and
