@@ -81,8 +81,11 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   as before; `morph team audit --verify` prints the note.
 - `morph studio` (the command line: `main()` without argv) ends its process with `cli._leave` once `serve()` has
   returned (Ctrl+C, a closed terminal window, SIGTERM: `server._Stop`): study workers ended, the process's
-  `.studios/<id>.lock` files released and removed (`rooms.release_claims`, what the Claims' finalizers did), stdout
-  and stderr flushed, then `os._exit`. Interpreter
+  `.studios/<id>.lock` and `.json` files released and removed (`rooms.release_claims`), stdout and stderr flushed,
+  then `os._exit`. From the end of a clean stop (`serve(last=True)`, `_Stop.__exit__`)
+  to `os._exit` SIGINT, SIGTERM, SIGHUP and SIGBREAK are ignored: the stop is written down by then, and a Ctrl+C
+  pressed again while the process leaves printed a KeyboardInterrupt traceback, ended it with -2 and left
+  `.studios/<id>.json`. Interpreter
   shutdown added nothing but native finalizers (MuJoCo, OSMesa after an in-process build) that crashed it about one
   stop in twelve. So every record must be on disk when it is written (the rules here), never at exit. A build still
   running is cut off at once (the interpreter used to wait for its helper threads): `serve()` journals a first build

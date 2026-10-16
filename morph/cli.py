@@ -302,9 +302,21 @@ def cmd_studio(a):
     extra = {**({"team": True, "link": owner_link} if team else {}),
              **({"allow_url_import": True} if getattr(a, "allow_url_import", False) else {}),
              **({"token_chosen": False} if token and not fixed else {})}  # Morph's own random code: never locked out
-    serve(p, a.host, a.port, home=HOME, token=token, **extra)
+    serve(p, a.host, a.port, home=HOME, token=token, last=getattr(a, "last", False), **extra)
 
 
+
+
+def _ignore_stops():
+    """Ctrl+C, a closed terminal window and `kill` (SIGINT, SIGHUP, SIGTERM, SIGBREAK) ignored from now on. Never raises."""
+    import signal
+    for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        try:
+            if sig is not None:
+                signal.signal(sig, signal.SIG_IGN)
+        except (OSError, ValueError, RuntimeError):
+            pass
 
 
 def _leave(rc: int):
@@ -315,7 +327,10 @@ def _leave(rc: int):
     collected them ("Segmentation fault", exit code -11, after Ctrl+C). Study workers still running are ended, as the
     multiprocessing exit handler would, the Studio's lock files are removed, as the finalizers would, and the terminal
     output is flushed first. A build still running is cut off at once (serve() has journaled a first build as
-    "interrupted"); the next start picks it up like any build a stop cut off."""
+    "interrupted"); the next start picks it up like any build a stop cut off. A stop signal from here on is ignored
+    (serve() already ignores them from the end of a clean stop): the process is ending, and one that came now would
+    print a traceback and leave the lock files behind."""
+    _ignore_stops()
     try:
         import multiprocessing
         for child in multiprocessing.active_children():
@@ -1356,9 +1371,10 @@ def main(argv=None) -> int:
     s.set_defaults(fn=cmd_demo)
 
     a = ap.parse_args(argv)
+    a.last = a.cmd == "studio" and argv is None  # `morph studio`: the process ends with the Studio (_leave)
     t0 = time.time()
     rc = a.fn(a)
-    if a.cmd == "studio" and argv is None:  # the Studio stopped (Ctrl+C) with everything saved: this process is done
+    if a.last:  # the Studio stopped (Ctrl+C) with everything saved: this process is done
         _leave(rc if isinstance(rc, int) else 0)
     # every pipeline command's wall-clock goes into the time study
     if a.cmd in ("new", "explore", "change") and getattr(a, "name", None):

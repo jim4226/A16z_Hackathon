@@ -6,9 +6,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -246,6 +248,68 @@ def test_a_stopped_studio_process_leaves_without_interpreter_shutdown(tmp_path, 
     assert left == [0]
     cli.main(["studio", "egg-picker", "--port", "1"])
     assert left == [0]
+
+
+_LEAVING = """
+import os, sys, time
+from morph import keys
+keys.ENV_PATH = sys.argv[0] + ".env"                    # .env in the test's folder, never the checkout's
+sys.argv = ["morph", "studio", "egg-picker", "--port", sys.argv[1]]
+from morph import cli
+from morph.studio import rooms
+release = rooms.release_claims
+def slow():                                             # the few bytecodes after serve() returned, widened
+    print("<leaving>", flush=True)
+    time.sleep(3)
+    release()
+rooms.release_claims = slow
+sys.exit(cli.main())
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from outside the process")
+def test_a_stop_signal_after_the_studio_stopped_cleanly_changes_nothing(tmp_path):
+    """Ctrl+C pressed again once serve() had returned (in cli._leave, before os._exit): the handlers serve() set were
+    put back, so it printed a KeyboardInterrupt traceback, the process ended with -2 and .studios/<id>.json stayed. The
+    stop is written down by then: from the end of a clean serve() to os._exit, stop signals are ignored."""
+    _studio_home(tmp_path / "projects")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    script = tmp_path / "leaving.py"
+    script.write_text(_LEAVING, encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": CODE, "MORPH_HOME": str(tmp_path / "projects"), "MORPH_OFFLINE": "1",
+           "PYTHONUNBUFFERED": "1"}
+    for k in ("MORPH_TOKEN", "DISPLAY", "WAYLAND_DISPLAY"):
+        env.pop(k, None)
+    proc = subprocess.Popen([sys.executable, str(script), str(port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=str(tmp_path))
+    out = []
+    reader = threading.Thread(target=lambda: out.extend(iter(proc.stdout.readline, "")), daemon=True)
+    reader.start()
+
+    def wait_for(text, seconds=120):
+        deadline = time.time() + seconds
+        while time.time() < deadline and not any(text in line for line in out):
+            assert proc.poll() is None, (out, proc.stderr.read())
+            time.sleep(0.05)
+        assert any(text in line for line in out), out
+
+    try:
+        wait_for("Ctrl+C to stop")
+        proc.send_signal(signal.SIGINT)                         # the clean stop
+        wait_for("<leaving>")
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):  # and again, while it leaves
+            proc.send_signal(sig)
+            time.sleep(0.1)
+        rc = proc.wait(60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(20)
+    err = proc.stderr.read()
+    assert rc == 0 and "Traceback" not in err, (rc, err)
+    assert os.listdir(tmp_path / "projects" / ".studios") == []    # its lock file and its start record both went
 
 
 def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):

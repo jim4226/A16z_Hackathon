@@ -2135,12 +2135,14 @@ class _Stop:
     serve_forever is (only once, and never once serve() is ending, so it always lands where serve() turns it into the
     same clean stop), and cuts short the wait for studies to stop. However many come, and wherever they land, the stop
     is written down whole: serve() gives this the Studio before its recovery queues anything. A signal the process
-    ignores (nohup) stays ignored. Handlers are only set from the main thread, and put back afterwards."""
+    ignores (nohup) stays ignored. Handlers are only set from the main thread, and put back afterwards; with `last`
+    (the process ends right after serve(): cli._leave), a clean stop ignores them from its end on instead, so one that
+    comes while the process leaves prints no traceback and leaves no lock file."""
     NAMES = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
 
-    def __init__(self, httpd):
-        self.httpd, self.studio, self.old, self.console = httpd, None, {}, None
-        self.requested = self.serving = self.raised = self.ending = False
+    def __init__(self, httpd, last: bool = False):
+        self.httpd, self.studio, self.old, self.console, self.last = httpd, None, {}, None, last
+        self.requested = self.serving = self.raised = self.ending = self.clean = False
         self.hurry = threading.Event()  # asked again: studies aren't waited for
 
     def __call__(self, signum=None, frame=None):
@@ -2158,7 +2160,7 @@ class _Stop:
         """serve() is done (`clean`: a stop someone asked for, not an error escaping it): the Studio journals the first
         builds the stop cuts off as no try (Studio.stopping), then its studies stop (jobs.shutdown). From here on a
         signal never raises: it only cuts the wait for the studies short."""
-        self.ending = True
+        self.ending, self.clean = True, clean
         if self.studio is None:
             return  # the start-up stopped before the Studio existed: it queued nothing
         if clean:
@@ -2192,9 +2194,10 @@ class _Stop:
         return self
 
     def __exit__(self, *exc):
+        leaving = self.last and self.clean  # the stop is written down and the process ends now: nothing to stop
         for sig, old in self.old.items():
             try:
-                signal.signal(sig, old)
+                signal.signal(sig, signal.SIG_IGN if leaving else old)
             except (OSError, ValueError, RuntimeError):
                 pass
         if self.console is not None:
@@ -2207,13 +2210,15 @@ class _Stop:
 
 
 def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None = None, token: str | None = None, *,
-          team: bool = False, allow_url_import: bool = False, link: str | None = None, token_chosen: bool | None = None):
+          team: bool = False, allow_url_import: bool = False, link: str | None = None, token_chosen: bool | None = None,
+          last: bool = False):
     """Run the Studio. `team`: Morph Teams (members sign in with invite or sign-in links; MORPH_TOKEN plays no part),
     `link` the owner's sign-in link to print; `allow_url_import`: imports from a link stay on for other computers.
     `token_chosen`: False when `token` is one access_token() made (the CLI makes it to print the link first), so wrong
     guesses never lock out its address (Guesses); default: a given token is the person's own. It listens before the
     Studio's start-up picks up work a stopped Studio left (a start that can't listen leaves every journal as it was),
-    and every stop it is asked for, from the start-up on, is a clean one (_Stop)."""
+    and every stop it is asked for, from the start-up on, is a clean one (_Stop). `last`: the process ends once this
+    returns (cli._leave), so after a clean stop the stop signals stay ignored instead of being put back."""
     if not project.finished():
         raise SystemExit(f"{project.root} has no revisions yet: run `python -m morph.cli robot new {os.path.basename(project.root)}` first")
     chosen = bool(token) if token_chosen is None else token_chosen
@@ -2229,7 +2234,7 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
                              "(Ctrl+C in its terminal, or close that window), then start again.") from None
         raise SystemExit(f"Morph Studio couldn't listen on {host}:{port} ({exc}).") from None
     httpd.daemon_threads = True
-    stop = _Stop(httpd)
+    stop = _Stop(httpd, last=last)
     with stop:
         clean = False  # an error escaping is no clean stop (a first build it cut off counts as a try)
         try:
