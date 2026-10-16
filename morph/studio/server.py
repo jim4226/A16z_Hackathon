@@ -48,7 +48,7 @@ from . import labels, projects, routes
 from .intent import CHAT_FORBIDDEN, OBJECTS, interpret, object_changes
 from .rooms import (OWNER, REQUESTER, RESUMED, STARTED, Hub, Job, QueueFull, Room,  # noqa: F401  (Hub: older code
                     UnknownProject, claim, first_build_turn, folder_id, journal_live, journal_owner,  # imports it
-                    journals, note_start, open_jobs, started_elsewhere)  # from here)
+                    journals, note_start, open_jobs, started_elsewhere, studio_process)  # from here)
 from .routes import HTTPError, route
 from .security import (MAX_MESSAGE, BodyError, contained_path, content_length, design_values, json_object,
                        looks_like_secret, param_changes, project_name, remember_access_code, secret_refused)
@@ -261,6 +261,25 @@ def _start_tools(studio):
 
 class Refused(RuntimeError):
     """A project change the Studio won't make now (the project is building, or it is the start project)."""
+
+
+def study_elsewhere(home: str, root: str) -> str | None:
+    """Where a robustness study of project folder `root` runs when another process runs it (robust.active: its lock
+    names the process and the computer), for people: "in another Morph Studio on this projects folder (process 4242 on
+    this computer)", "in a `morph study` command (process 4242 on this computer)" or "(process 4242 on lab-pc)" for
+    another computer sharing the folder. None when no study runs, or this process runs it."""
+    study = robust.active(root)
+    if study is None:
+        return None
+    pid, host = study.get("pid"), study.get("host")
+    if (pid, host) == (os.getpid(), socket.gethostname()):
+        return None
+    where = "this computer" if host == socket.gethostname() else str(host or "another computer")
+    if studio_process(home, pid, host):
+        return f"in another Morph Studio on this projects folder (process {pid} on {where})"
+    if host == socket.gethostname():
+        return f"in a `morph study` command (process {pid} on {where})"
+    return f"in another Morph Studio or a `morph study` command (process {pid} on {where})"
 
 
 class Studio:
@@ -682,8 +701,9 @@ class Studio:
 
     def delete_project(self, name: str) -> str:
         """Move a project to MORPH_HOME/.trash (projects.delete) and close its room; tabs on it are told. Refused while
-        it builds or has changes waiting, here or in another Studio still running on this projects folder, and for the
-        project the Studio started on."""
+        it builds or has changes waiting, here or in another Studio still running on this projects folder, while
+        another process (another Studio, `morph study`) runs a robustness study of it, and for the project this or
+        another running Studio started on. This Studio's own study stops first (its finished runs are kept)."""
         if name == self.start:
             raise Refused(f"{name} is the project this Studio started on; start the Studio on another project "
                                   "to delete it.")
@@ -700,6 +720,10 @@ class Studio:
             if started_elsewhere(self.home, name):
                 raise Refused(f"{name} is the project another Morph Studio on this projects folder started on: stop "
                               "that Studio first, or start it on another project.")
+            where = study_elsewhere(self.home, root)
+            if where:
+                raise Refused(f"A robustness study of {name} is running {where}: stop it there, or let it finish, "
+                              f"then delete {name}.")
             from . import jobs
             jobs.stop(self, name)  # its robustness study first (finished runs are kept, in the trash with the project)
             _tools_gone(self, name)  # and its agent runs that wait or work: none continues in a project of that name
@@ -1067,9 +1091,11 @@ class Studio:
                     return False
                 held.append(room)
             for room in rooms:  # under the room locks: nothing here starts meanwhile
-                study = robust.active(room.p.root)
-                theirs = study is not None and (study.get("pid"), study.get("host")) != (os.getpid(), socket.gethostname())
-                if (theirs or self.held_elsewhere(room.p.root)
+                where = study_elsewhere(self.home, room.p.root)
+                if where:
+                    raise Refused(f"A robustness study of {room.name} is running {where}: reset the demo when it is "
+                                  "done.")
+                if (self.held_elsewhere(room.p.root)
                         or any(durable.BuildLock.held(room.p.build_lock(r)) for r in room.p.revs())):
                     raise Refused(f"Another Morph Studio on this projects folder (or a `morph` command) is building "
                                   f"{room.name}, has changes of it waiting or runs a study on it: reset the demo when "

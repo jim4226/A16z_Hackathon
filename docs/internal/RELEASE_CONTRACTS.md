@@ -198,7 +198,7 @@ class Request:
 
 | Area | Routes |
 |---|---|
-| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, for the start project, and for the project another running Studio started on) |
+| W0b projects | `GET /api/projects` → `{projects, start}`; `POST /api/projects {name?, from: "default"\|"so101"\|"design", design?, need?, brief_id?}` → 202 `{project, job}` (the first build is queued in the new room); `POST /api/projects/fork {project, rev?, name?}` → 201 when copied, 202 `{job}` when rebuilt; `DELETE /api/projects?project=` (owner; moves to `.trash/`; 409 while it builds or has changes waiting, here or in another Studio still running on the same projects folder, while another process runs a robustness study of it (another Studio on the folder, `morph study`, or either on another computer sharing the folder: `robust.active`'s pid and host, `server.study_elsewhere`, and the message names the process and the computer, as Reset demo's does), for the start project, and for the project another running Studio started on) |
 | W0b rooms | Every `/api` route takes `?project=` (default: the start project). `GET /api/state` (adds `start`, `queue`, `building`); `GET /api/rev?rev=`; `GET /api/events`; `POST /api/chat {message, base_rev?, edit?}` and `POST /api/params {changes, base_rev?}` → 202 `{job}` (429 when 10 are waiting; `edit: true` skips the chat routing of section 3); `GET /api/jobs`; `POST /api/jobs/cancel {job}`; `POST /api/jobs/resolve {job, action: "apply"\|"drop"}`; files at `/files/<project>/<rev>/...` (`/files/<rev>/...` is the start project) |
 | F1 brief | `POST /api/brief {text?, brief_id?, answers?: {slot: value}, action?: "defaults"\|"build"\|"cancel"}`; `GET /api/brief?id=` |
 | F2 import | `POST /api/import {url?}` → `{id}`; `PUT /api/import/<id>/file?path=` (raw, ≤300 MB); `POST /api/import/<id>/detect`; `GET /api/import/<id>/preview.glb?candidate=`; `POST /api/import/<id>/commit {candidate, name, answers}`; `DELETE /api/import/<id>`; `GET /api/export?project=&rev=&full=` |
@@ -1464,7 +1464,8 @@ field failure rate (section 0, honesty).
     (`robust.SENSITIVE`) and example run. `NOTES["none"]`: "One nominal run. Small differences in placement or hardware
     aren't tested."
   - The Studio stops a project's study before Delete project and Reset demo (`jobs.stop(studio, name)`, up to 5 s; its
-    runs are kept, in the trash with a deleted project) and every study when it stops (`jobs.shutdown(studio)`).
+    runs are kept, in the trash with a deleted project) and every study when it stops (`jobs.shutdown(studio)`). A study
+    another process runs (another Studio, `morph study`) refuses both instead (409, saying where: section 2).
   - `robust.load()` adds `rev_changed`; `studies()` reads each revision's spec once.
 - **The card (`static/study.js`, feature `study`):** under the pick-and-place result in the Simulation tab (section 4):
   the note where no study exists; live progress (`study` events: phase, run k of n, the success rate so far with its

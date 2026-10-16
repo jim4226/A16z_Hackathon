@@ -105,23 +105,36 @@ def note_start(home: str, project: str):
               f"delete {project} while this one runs. {durable.explain(exc, home)}")
 
 
-def started_elsewhere(home: str, project: str) -> bool:
-    """True when another Studio still running on projects folder `home` (its lock is held) started on `project`."""
+def _other_studios(home: str) -> list:
+    """The start records (note_start: {start, pid, host}) of the other Studios still running on projects folder `home`
+    (their lock is held)."""
     try:
         names = os.listdir(os.path.join(home, STUDIOS))
     except OSError:
-        return False
+        return []
+    out = []
     for n in names:
         owner = n[:-5] if n.endswith(".json") else None
         if not owner or not owner_live(home, owner):
             continue
         try:
             with open(os.path.join(home, STUDIOS, n), encoding="utf-8") as fh:
-                if (json.load(fh) or {}).get("start") == project:
-                    return True
-        except (OSError, ValueError, AttributeError):
+                record = json.load(fh)
+        except (OSError, ValueError):
             continue
-    return False
+        if isinstance(record, dict):
+            out.append(record)
+    return out
+
+
+def started_elsewhere(home: str, project: str) -> bool:
+    """True when another Studio still running on projects folder `home` (its lock is held) started on `project`."""
+    return any(r.get("start") == project for r in _other_studios(home))
+
+
+def studio_process(home: str, pid, host) -> bool:
+    """True when process `pid` on computer `host` is another Studio still running on projects folder `home`."""
+    return any(r.get("pid") == pid and r.get("host") == host for r in _other_studios(home))
 
 
 def _sweep(home: str):

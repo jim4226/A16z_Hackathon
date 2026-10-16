@@ -4,6 +4,7 @@ locks (test_restart_recovery.hold)."""
 
 import json
 import os
+import re
 import threading
 import time
 
@@ -68,7 +69,10 @@ def test_reset_demo_leaves_a_demo_project_another_process_works_on(tmp_path, bui
                 json.dump({"id": "s1", "pid": os.getppid(), "host": "another-computer", "started_utc": "now"}, fh)
             assert study and robust.active(str(home / "egg-picker"))
         st = server.Studio(RobotProject(str(home / "my-arm")), str(home))
-        with pytest.raises(server.Refused, match="is building egg-picker, has changes of it waiting or runs a study"):
+        said = ("A robustness study of egg-picker is running in another Morph Studio or a `morph study` command "
+                f"(process {os.getppid()} on another-computer)" if what == "study" else
+                "is building egg-picker, has changes of it waiting or runs a study")
+        with pytest.raises(server.Refused, match=re.escape(said)):
             st.reset()
         assert egg.revs() == ["r001", "r002", "r003"]
     finally:
@@ -183,3 +187,49 @@ def test_a_full_disk_at_the_start_costs_the_start_record_one_line(tmp_path, buil
     out = capsys.readouterr()
     assert "could delete egg-picker while this one runs. The disk is full" in out.out
     assert "Traceback" not in out.out + out.err
+
+
+@pytest.mark.parametrize("where", ["another Studio", "morph study", "another computer"])
+def test_delete_project_is_refused_while_another_process_runs_a_study_of_it(tmp_path, builds, where):
+    """Delete project stopped only this Studio's own robustness study: one that another Studio on the projects folder,
+    or `morph study` in a terminal, ran on the project went on in a folder moved to the trash (Reset demo refused that
+    already). It is refused now, saying where the study runs; nothing is moved."""
+    import subprocess
+    import sys
+    from morph.services import robust
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "kb")
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    other = None
+    try:
+        host = "lab-pc" if where == "another computer" else rooms.HOST
+        if where == "another Studio":  # that Studio's start record names its process, and it holds its lock
+            record = home / ".studios" / f"{OTHER}.json"
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text(json.dumps({"start": "egg-picker", "pid": sleeper.pid, "host": host}), encoding="utf-8")
+            other = hold(home / ".studios" / f"{OTHER}.lock")
+        path = robust._active_path(str(home / "kb"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"id": "s1", "pid": sleeper.pid, "host": host, "started_utc": "now"}, fh)
+        assert robust.active(str(home / "kb"))
+        st = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+        said = {"another Studio": f"in another Morph Studio on this projects folder (process {sleeper.pid} on this "
+                                  "computer)",
+                "morph study": f"in a `morph study` command (process {sleeper.pid} on this computer)",
+                "another computer": f"(process {sleeper.pid} on lab-pc)"}[where]
+        with pytest.raises(server.Refused) as refused:
+            st.delete_project("kb")
+        assert str(refused.value).startswith("A robustness study of kb is running ") and said in str(refused.value), \
+            str(refused.value)
+        assert (home / "kb" / "r001").exists()
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+        if other is not None:
+            other.stdin.close()
+            other.wait(10)
+    os.remove(path)
+    st.delete_project("kb")                                                 # once it is done
+    assert not (home / "kb").exists()
