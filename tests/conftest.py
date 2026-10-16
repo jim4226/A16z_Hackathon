@@ -50,16 +50,29 @@ class StrayConnection(UserWarning):
 RUN = {"test": None, "network": False, "attempts": []}
 
 
+def _owner(starter: threading.Thread):
+    """The test a thread `starter` starts now belongs to: the running test, or, when `starter` is one of Morph's own
+    background threads (morph-after-*, morph-room-*, morph-lookup-*, ...), the test that started it. A test's server
+    answers each request on a thread its serve_forever thread starts: that one belongs to the running test."""
+    if starter is not threading.main_thread() and starter.name.startswith("morph-"):
+        mine = getattr(starter, "_morph_test", None)
+        if mine is not None:
+            return mine
+    return RUN["test"]
+
+
 def _guard():
     """Refuse non-loopback connections for the whole run. Each thread remembers the test it was started in; one
-    that outlives its test is refused with a warning naming that test, never charged to the test running now."""
+    that outlives its test is refused with a warning naming that test, never charged to the test running now. A
+    thread one of Morph's own background threads starts (a build's follow-up starting its lookup pool) belongs to
+    that thread's test, whenever it starts."""
     if getattr(socket.socket.connect, "_morph_guard", False):
         return
     connect, connect_ex, create_connection, start = (socket.socket.connect, socket.socket.connect_ex,
                                                      socket.create_connection, threading.Thread.start)
 
     def started(self, *a, **k):
-        self._morph_test = RUN["test"]
+        self._morph_test = _owner(threading.current_thread())
         return start(self, *a, **k)
 
     def check(address):

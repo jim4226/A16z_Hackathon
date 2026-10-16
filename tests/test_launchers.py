@@ -195,13 +195,16 @@ def test_parse_args_drops_a_pasted_comment(tmp_path):
 
 @needs_bash
 def test_the_shell_launcher_starts_the_studio_without_the_comment(tmp_path):
-    """The whole launcher, with a stand-in .venv whose python prints what it was asked to run."""
+    """The whole launcher, with a stand-in .venv whose python prints what it was asked to run (and runs natively,
+    as on Apple silicon, when the launcher asks a Mac's Python what it runs as)."""
     for name in ("run_studio.sh", "requirements.txt", "constraints.txt", "pyproject.toml"):
         shutil.copy(REPO / name, tmp_path / name)
     bin_dir = tmp_path / ".venv" / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "activate").write_text(f'PATH="{bin_dir}:$PATH"\nexport PATH\n', encoding="utf-8")
-    (bin_dir / "python").write_text('#!/bin/sh\n[ "$1" = "-c" ] && exit 0\necho "python $*"\n', encoding="utf-8")
+    (bin_dir / "python").write_text('#!/bin/sh\nif [ "$1" = "-c" ]; then\n'
+                                    '  case "$2" in *platform.machine*) echo arm64 ;; esac\n  exit 0\nfi\n'
+                                    'echo "python $*"\n', encoding="utf-8")
     (bin_dir / "python").chmod(0o755)
     want = _bash("cat requirements.txt constraints.txt pyproject.toml | cksum", tmp_path).stdout
     (tmp_path / ".venv" / ".morph-installed").write_text(want, encoding="utf-8")

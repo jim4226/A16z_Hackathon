@@ -815,3 +815,24 @@ def test_the_so101_checks_its_object_on_the_nearest_robot_too(text, kept, why):
     assert (b.changes.get("arm.source") == "so101") is kept, (b.changes.get("arm.source"), b.changes.get("object.diameter_mm"))
     if why:
         assert any("stock SO-101" in a["text"] and why in a["text"] for a in b.assumptions), b.assumptions
+
+
+def test_a_draft_windows_holds_open_for_a_moment_is_still_replaced_and_deleted(tmp_path, monkeypatch):
+    """Windows refuses to replace or delete a file another thread has open (the page polling a building brief reads
+    its draft): the draft is tried again for up to a second, so a built brief's draft never stays, reading "building"."""
+    b, home = B.start("a robot that sorts socks"), str(tmp_path)
+    refused = []
+
+    def busy(real):
+        def op(*a):
+            if len(refused) < 3:
+                refused.append(a)
+                raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+            return real(*a)
+        return op
+    monkeypatch.setattr(os, "replace", busy(os.replace))
+    B.save_draft(b, home)
+    assert B.load_draft(home, b.id) is not None and len(refused) == 3
+    refused.clear()
+    monkeypatch.setattr(os, "remove", busy(os.remove))
+    assert B.delete_draft(home, b.id) and B.load_draft(home, b.id) is None and len(refused) == 3

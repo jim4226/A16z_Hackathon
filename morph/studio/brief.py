@@ -3505,8 +3505,20 @@ def save_draft(b: Brief, home: str) -> str | None:
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(b.to_dict(), fh, ensure_ascii=False, default=str)
-    os.replace(tmp, p)
+    _retry_on_windows(lambda: os.replace(tmp, p))
     return p
+
+
+def _retry_on_windows(op):
+    """op(), tried again for up to a second while it raises PermissionError: Windows refuses to replace or delete a
+    file another thread or process has open (a page polling the brief's status reads its draft)."""
+    for attempt in range(20):
+        try:
+            return op()
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
 
 
 def load_draft(home: str, bid: str) -> Brief | None:
@@ -3524,7 +3536,7 @@ def delete_draft(home: str, bid: str) -> bool:
     p = draft_path(home, bid)
     try:
         if p and os.path.isfile(p):
-            os.remove(p)
+            _retry_on_windows(lambda: os.remove(p))   # else a built brief's draft stays, reading "building"
             return True
     except OSError:
         pass

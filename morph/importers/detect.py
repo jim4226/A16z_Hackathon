@@ -158,8 +158,11 @@ def sniff(path: str, name: str | None = None) -> str:
         return "markdown"
     if ext in (".csv", ".tsv", ".txt") or "\t" in text[:2048] or text.count(",") > 4:
         try:
-            dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
-            rows = [r for r in csv.reader(io.StringIO(text[:8192]), dialect) if r]
+            # Windows line ends ("\r\n") as "\n": Python 3.10 and 3.12's csv.Sniffer can't place the delimiter in a
+            # file saved on Windows whose quoted cells hold commas ("waist, shoulder (x2), elbow")
+            sample = text[:8192].replace("\r\n", "\n").replace("\r", "\n")
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            rows = [r for r in csv.reader(io.StringIO(sample), dialect) if r]
             lead = 0                                   # a KiCad grouped BOM starts "Source:", "Date:", "Tool:", ...
             while lead < min(10, len(rows) - 2) and len(rows[lead]) <= 2 and rows[lead][0].strip().endswith(":"):
                 lead += 1

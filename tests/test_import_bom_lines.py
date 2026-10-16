@@ -349,3 +349,32 @@ def test_the_import_dialog_reads_a_kicad_grouped_bom(tmp_path, monkeypatch):
     assert c["kind"] == "bom" and c["count"] == 4 and c["total"] is None
     res = s.commit(0)
     assert res["actuators"] == {"mg996r": 2} and res["total"] is None
+
+
+@pytest.mark.parametrize("name", sorted(n for n in os.listdir(os.path.join(DATA, "bom_files")) if n.endswith(".csv")))
+def test_a_parts_list_saved_on_windows_reads_as_the_same_table(tmp_path, name):
+    """A CSV with Windows line ends ("\\r\\n", as a Windows checkout or Excel saves it) is the same parts list: Python
+    3.10 and 3.12's csv.Sniffer couldn't place the delimiter in aloha_bimanual.csv saved that way."""
+    path = os.path.join(DATA, "bom_files", name)
+    with open(path, "rb") as fh:
+        data = fh.read()
+    crlf = tmp_path / name
+    crlf.write_bytes(data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    assert detect.sniff(str(crlf)) == detect.sniff(path), name
+    assert bom.parse(str(crlf))["rows"] == bom.parse(path)["rows"], name
+
+
+def test_the_csv_sniffer_never_sees_windows_line_ends(tmp_path, monkeypatch):
+    """Whatever Python runs it: csv.Sniffer is handed "\\n" line ends only."""
+    import csv
+    real = csv.Sniffer.sniff
+
+    def strict(self, sample, delimiters=None):
+        assert "\r" not in sample
+        return real(self, sample, delimiters)
+    monkeypatch.setattr(csv.Sniffer, "sniff", strict)
+    with open(os.path.join(DATA, "bom_files", "aloha_bimanual.csv"), "rb") as fh:
+        crlf = tmp_path / "aloha_bimanual.csv"
+        crlf.write_bytes(fh.read().replace(b"\n", b"\r\n"))
+    assert detect.sniff(str(crlf)) == "csv"
+    assert len(bom.parse(str(crlf))["rows"]) >= 10

@@ -480,6 +480,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 
 ### Fixes
 
+- Import: a parts list saved with Windows line ends (as Excel, Notepad or a Windows checkout saves it) is read as a
+  table on every Python: with Python 3.10 and 3.12 one whose quoted cells hold commas ("waist, shoulder (x2), elbow")
+  was read as plain text, and the import found nothing it could use.
+- New robot on Windows: a built brief's draft is deleted even when the page is reading it at that moment (Windows
+  refuses to delete or replace a file that is open; it is tried again for up to a second), so the brief no longer
+  stays "building" after its robot is built.
 - World mode: the AI review no longer brings back the move arrows of a box you had deselected (they floated where the
   box had been); a box still selected keeps them.
 - A failed stage stays failed instead of being reused as feasible by a later edit; required output files are

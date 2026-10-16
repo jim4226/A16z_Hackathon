@@ -815,7 +815,7 @@ def _decode(data: bytes) -> str:
 
 
 def csv_rows(text: str, fmt: str) -> list:
-    sample = text[:16384]
+    sample = text[:16384].replace("\r\n", "\n").replace("\r", "\n")   # Windows line ends: see detect.sniff
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters="\t" if fmt == "tsv" else ",;\t|")
     except csv.Error:
