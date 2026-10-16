@@ -1200,6 +1200,17 @@ _H_HER = r"her\b(?!\s+(?!(?:" + _NOT_DESCRIBING + "|" + _PREPOSITION + "|" + _AD
 _H_SOMEONE = r"(?:(?:me|you|him|them|us|myself|yourself|himself|herself|themselves|ourselves|ya|u)\b|" + _H_HER + "|" + \
     _H_POSS + _H_MOD + r"{0,1}?" + _H_BODY + r"\b|" + _H_A_LIVING + ")"
 _H_SOMEONE_NOT_THEM = _H_SOMEONE.replace("(?:me|you|him|them|us|", "(?:me|you|him|us|", 1)
+# a person or a companion animal, for the cut/stab rules: not a farm or food animal (a cut "chicken" or "ham" is food,
+# a cut "cat" is harm), not a possessive thing ("the cat's bed"), not a benefactive ("cut me a slice", handled by a
+# lookahead on the rule)
+_H_PET = (r"(?:dogs?|dogg(?:y|ie|ies|o)|pupp(?:y|ies)|pups?|cats?|kitt(?:y|ies|ens?)|pets?|rabbits?|bunn(?:y|ies)|"
+          r"hamsters?|gerbils?|guinea\s+pigs?|ferrets?|parrots?|budgies?|parakeets?)")
+_H_PP_CORE = (r"(?:people|persons?|someone|somebody|anyone|anybody|everyone|everybody|whoever|whomever|humans?|kids?|"
+              r"kiddos?|toddlers?|teens?|bab(?:y|ies)|child|children|infants?|newborns?|strangers?|intruders?|"
+              r"burglars?|classmates?|neighbou?rs?|" + _ROLES + "|" + _KIN + "|" + _KIN_SLANG + "|(?!tedd(?:y|ie)\\b)" +
+              _NAMES + "|" + _H_PET + ")")
+_H_PP = (r"(?:(?:me|you|him|them|us|myself|yourself|himself|herself|themselves|ourselves|ya|u)\b|" + _H_HER + r"|(?:" +
+         _H_DET + r"\s+)?" + _H_MOD + r"{0,2}?" + _H_PP_CORE + r"\b(?!['’])(?!\s+" + _H_THING_HEAD + r")(?!-))")
 # ... and after "at", "on" or "against" a body word ending its phrase too ("aims the heat gun at the arm"), never one a
 # thing word describes ("at the robot arm", "at the screw heads")
 _H_TARGET = r"(?:" + _H_SOMEONE + r"|(?:the\s+)?" + _H_BODY + r"\b(?=\s*(?:$|[.,;:!?)]|(?:and|or|until|while|when|so|then|with)\b)))"
@@ -1223,8 +1234,9 @@ _H_CL = r"[^.;!?\n]"
 _H_AT = (r"(?:(?:at|on|onto|against|toward|towards|over|under|beneath|below)\s+|(?:in|into)\s+(?!(?:my|your|his|her|their|our|"
        r"(?:the|a|an)\s+[a-z'’-]+['’]s?|[a-z'’-]+['’]s?)\s+(?:[a-z-]+\s+)?(?:hand|palm)s?\b))")
 _H_HURT = (r"(?:hurt|harm|injur|attack|punch|kick|stab|kill|slap|shoot|shot|zap|tase|taser|electrocut|chok|strangl|poison|"
-         r"tortur|hit|beat|whip|smack|strik|struck|thump|batter|spank|burn|scald|maim|wound|bite|bully|abus|"
+         r"tortur|hit|beat|whip|smack|strik|struck|thump|batter|spank|burn|scald|maim|wound|bite|bull(?:y|ies|ied)|abus|"
          r"drown|suffocat|smother|trip|shock|sting|stung|pelt|stun|gas|mace|pepper-?spray|drug|sedat|terrori|"
+         r"club|clobber|crush|flatten|whack|wallop|thrash|clout|cosh|bludgeon|slaughter|headbutt|head-?butt|"
          r"threat|intimidat|menac|harass|torment|blinds|blinded|blinding)\w*")
 _H_TIE = (r"(?:restrain|handcuff|cuff|gag|shackl|chain|strap|tie|ties|tied|tying|bind|bound|lock|cag|trap|pin|tape|taping|"
         r"seal|stapl|nail|glu|fasten|stick|stuck|zip-?ti|wrap|clamp|tether)\w*")
@@ -1244,6 +1256,47 @@ HOSTILE = (
     r"(?:(?:him|them|us|you)\b|" + _H_HER + "|" + _H_A_LIVING + ")",
     # swung or slashed at someone ("slashes at the cat with a knife")
     _H_NEG + r"\b(?:slash|swip|lung|lash|strik|swing|swung|jab|pok|thrust|stab|hack|chop|cut|lash)\w*\s+at\s+" + _H_A_LIVING,
+    # a blade used on a living target: a person or a pet cut, sliced, stabbed, pricked ("cuts my brother with a box
+    # cutter", "slices the cat"), or a blade to someone's throat or wrist; grooming ("cut the cat's hair") and cooking
+    # ("slices the ham") are not living targets and a benefactive ("cut me a slice") is excluded
+    _H_NEG + r"\b(?:cut|slic|slash|saw|stab|jab|prick|slit|gash|gouge|lacerat|sever|skewer|impal|carv)\w*\s+(?:up\s+|open\s+)?"
+    + _H_PP + r"(?!\s+(?:a|an|another|some|the|his|her|its|their|my|your|our)\s+(?:slice|piece|bit|chunk|wedge|portion|"
+    r"serving|hunk|sandwich|lunch|snack|meal|cake|loaf|bread|some|path|lawn|hedge|rug|ribbon|hair|fringe|nails?|claws?|"
+    r"fur|coat|key|cord|cable|wire|rope))",
+    _H_NEG + r"\b(?:cut|slic|slash|slit|stab|saw|open|gash|gouge|sever|sink\s+a\s+[a-z]+\s+into)\w*\s+(?:open\s+)?" + _H_POSS +
+    _H_MOD + r"{0,1}?(?:throats?|necks?|wrists?|bell(?:y|ies)|guts?|stomachs?|skin|flesh|arter(?:y|ies)|jugular|eyes?|"
+    r"arms?|legs?|fingers?|hands?|cheeks?|tongue)\b",
+    # smothered, or a head forced under water or into the toilet
+    _H_NEG + r"\b(?:hold|holds|holding|held|press|presses|pressed|pressing|put|puts|putting|clamp|clamps|clamped|push|"
+    r"pushes|pushed|force|forces|forced|shove|shoves|shoved|place|places|placed)\w*\s+(?:a\s+|the\s+|my\s+|his\s+|her\s+)?"
+    r"(?:[a-z-]+\s+)?(?:pillow|cushion|bag|plastic\s+bag|cloth|rag|towel|blanket|duvet|hand|hands)\s+(?:over|on|across|onto)\s+"
+    + _H_POSS + _H_MOD + r"{0,1}?(?:faces?|mouths?|noses?|heads?)\b",
+    _H_NEG + r"\b(?:hold|holds|holding|held|push|pushes|pushed|shove|shoves|shoved|force|forces|forced|dunk|dunks|dunked|"
+    r"plung\w+|submerg\w+|dip|dips|dipped|drown\w*)\s+(?:[\w'’-]+\s+){0,3}?(?:" + _H_POSS + _H_MOD + r"{0,1}?heads?\b|" +
+    _H_SOMEONE + r")\s+(?:[\w'’-]+\s+){0,2}?(?:under|in|into|beneath)\s+(?:the\s+)?(?:water|bath|pool|toilet|sink|tank|"
+    r"river|bucket|tub|pond|basin)\b",
+    # a ligature tightened around the neck or throat; a neck squeezed
+    _H_NEG + r"\b(?:tighten\w*|cinch\w*|pull\w*\s+(?:tight\s+)?)\s*(?:a\s+|the\s+|his\s+|her\s+|my\s+)?(?:[a-z-]+\s+)?"
+    r"(?:belts?|ropes?|cords?|wires?|cables?|strings?|nooses?|chains?|leash\w*|zip[- ]?ties?|cable[- ]?ties?|flex|scarf|"
+    r"tie|straps?|bands?)\s+(?:around|round|about)\s+" + _H_POSS + _H_MOD + r"{0,1}?(?:necks?|throats?)\b",
+    _H_NEG + r"\b(?:wrap\w*|loop\w*|coil\w*|wind\w*|put\w*|pull\w*)\s+(?:a\s+|the\s+|his\s+|her\s+|my\s+)?(?:[a-z-]+\s+)?"
+    r"(?:belts?|ropes?|cords?|wires?|cables?|strings?|nooses?|chains?|zip[- ]?ties?|cable[- ]?ties?|flex)\s+"
+    r"(?:around|round|about)\s+" + _H_POSS + _H_MOD + r"{0,1}?(?:necks?|throats?)\b",
+    _H_NEG + r"\b(?:squeez\w*|strangl\w*|throttl\w*|chok\w*|crush\w*)\s+(?:[\w'’-]+\s+){0,2}?" + _H_POSS + _H_MOD +
+    r"{0,1}?(?:necks?|throats?|windpipes?)\b",
+    # a hand or face forced onto a hot surface
+    _H_NEG + r"\b(?:push\w*|press\w*|force\w*|shove\w*|hold\w*|pin\w*|place\w*|put\w*|jam\w*|mash\w*)\s+" + _H_POSS +
+    _H_MOD + r"{0,1}?(?:hands?|palms?|fingers?|faces?|heads?|arms?|paws?|feet|foot)\s+(?:down\s+)?(?:onto|on|against|into|to)\s+(?:the\s+|a\s+)?"
+    r"(?:red[- ]?hot\s+|burning\s+|hot\s+|scalding\s+|lit\s+)?(?:stove|hob|hotplate|hot\s+plate|cooker|oven|grill|griddle|"
+    r"burner|element|ring|iron|fire|flames?|coals?|embers?|radiator|heater|kettle|pan|skillet|hotplate)s?\b",
+    # grabbed by the throat, neck or hair, or dragged by the hair; stamped or sat on; run over; a shock or a beating given
+    _H_NEG + r"\b(?:grab\w*|drag\w*|yank\w*|haul\w*|seiz\w*|snatch\w*|pull\w*|hoist\w*)\s+" + _H_SOMEONE +
+    r"\s+(?:[\w'’-]+\s+){0,2}?by\s+(?:the|his|her|its|their)\s+(?:throat|neck|hair|scruff\s+of\s+(?:the\s+|its\s+|his\s+|her\s+)?neck)\b",
+    _H_NEG + r"\b(?:stomp\w*|stamp\w*|trampl\w*|tread\w*|jump\w*|sit\w*|stand\w*|step\w*|lie\w*|kneel\w*)\s+on\s+(?:top\s+of\s+)?"
+    + _H_SOMEONE,
+    _H_NEG + r"\b(?:run|runs|ran|running|driv\w*|drove|back\w*|revers\w*|roll\w*|rolled)\s+(?:the\s+[a-z]+\s+)?over\s+" + _H_SOMEONE,
+    _H_NEG + r"\b(?:giv|gav)\w*\s+" + _H_SOMEONE + r"\s+(?:a\s+|an\s+|some\s+|repeated\s+|electric\s+)?(?:[\w'’-]+\s+){0,2}?"
+    r"(?:electric\s+shocks?|shocks?|a\s+beating|a\s+hiding|a\s+thrashing|a\s+kicking|a\s+hammering|a\s+good\s+hiding)\b",
     # done to someone with it: "burns the cat with a blowtorch", "touches the cat with a soldering iron"
     _H_NEG + r"\b(?:touch|press|pok|prod|jab|burn|brand|hit|strik|struck|spray|squirt|dous|zap|shock|pelt|whip|beat|poke)\w*\s+" +
     _H_SOMEONE + r"(?:\s+[\w'’-]+){0,4}?\s+(?:with|using)\s+(?:a|an|the|my|his|her|their|our|some)?\s*(?:[a-z-]+\s+){0,2}?" +
