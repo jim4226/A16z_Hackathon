@@ -325,8 +325,12 @@ clamping.
   on "my SO-101" (`brief.assess_scope`, `brief._so101_misfit`), as it does for one above its payload, also for the
   nearest robot it offers when the request is out of scope in another way ("use my SO-101 to stack soda cans"). The
   narrow end: a 21.5 mm box drops out of the stock jaws (at 30 g and at 100 g), a 22 mm one slips 11 mm at 30 g, and
-  boxes of 22.5, 23, 24, 25, 28, 30 and 34 mm slip 0.5 to 0.7 mm (`capability.SO101_MIN_FLAT_MM`), so a flat-sided
-  object under 22.5 mm gets the generated arm too, whose sensing fingers close on boxes from 21.5 mm. A described object whose shape the request
+  boxes of 22.5, 23, 24, 25, 28, 30 and 34 mm slip 0.5 to 0.7 mm (`capability.SO101_MIN_FLAT_MM`), so a stated
+  flat-sided object under 22.5 mm, or a round one under 26 mm, gets the generated arm too, not the stock arm kept on a
+  bigger stand-in (`brief._so101_below_min`, reached on the in-scope and the out-of-scope paths; the test's
+  `_so101_problem.said_ok` carries the same lower bound). The generated arm's own sensing fingers close on 21.5 mm
+  flat and 26 mm round, so an object stated below that is below Morph's gripper range: the generated arm is sized
+  around a 25 mm (or 30 mm round) stand-in and the note names the SO-101's limit. A described object whose shape the request
   doesn't give (`brief._shape_said`: "40 mm wide containers") is held to the flat-sided 34 mm, and the note says that
   saying it is round keeps the SO-101 ("they are round" in a reply does). The nearest robot for an out-of-scope
   request carries the person's own object when they gave one and it fits a generated arm ("use my SO-101 to pour out
@@ -405,20 +409,36 @@ Slot{value, source: user|inferred|default|memory|video|photo, confidence, eviden
   (`_gun_harmless`: handed over, held, cleaned, loaded, stored or sorted, used on a thing, or named as a thing's
   part). Pointed at a thing ("point the scan gun at the barcode", "aim the paint gun at the screw heads"), held out to
   someone, put in a hand or kept away from a face, a tool gun is a tool, and a massage gun on the requester's own body
-  is a massage. On the round-6 hunt's table (`tests/fixtures/brief/harm_hunt.json`, `test_the_harm_hunt_table`:
-  1,075 harmful one-liners and 3,149 harmless ones, most of those a tool gun used on a thing named with a body word),
-  the filter at bd19c43 built 583 harmful ones and refused 1,878 harmless ones; it now builds none and refuses one,
-  "a robot that hands me the flamethrower" (a weapon by name). The rules were written against that table, so the
-  figures say what it holds, not how often a new phrasing is caught; on the 5,848 harmless requests of the people
-  tables, written for another check, it refuses none. On 127
-  phrasings (the harm tests in `tests/test_brief.py` hold all but one), the filter before tool guns were let through
-  refused 75: the 54 that turn a gun on someone or name a weapon are still refused, and the 21 that only use a tool
-  gun (hand it over, hold it, point it at a barcode or an oven) are built. Of the 52 it built, 30 hostile ones (a
-  nail gun pointed at a brother, a staple gun turret, a heat gun held on the cat, a blowgun, a nail gun that guards
-  the door) are now refused; "a robot that holds a glue gun near the baby" is still built, as it was then. A
-  temperature gun aimed at people's foreheads is refused too, though it may only take a temperature. Of 5,043
-  requests of 2,000 characters made of repeated harm words, the slowest took about 70 ms once the patterns were
-  compiled.
+  is a massage. The filter is a first line, not the last: it must never refuse a safety-minded request (a robot that
+  stops, slows, switches off, or keeps people or hands away) or an everyday one whose danger word is the tool's
+  ordinary use. So a danger word must be the object of a hostile verb in its own clause, not anywhere in the request:
+  "switches off when someone comes near", "keeps the kids away from the nail gun", "hands me the knife when my mum
+  comes home", "cuts the cake", "trims the cat's claws", "wraps the baby in a blanket", "straps the baby into the car
+  seat", "pins my hair up", "a heat gun on the arm" (the robot's own) and "beat my dad at chess" all build; a hurt or
+  restraint verb on a person or pet needs a hostile framing, a blade or cut is harm only on a living target (a person
+  or a pet, never food or a haircut), and a tool at a body part is read as hands-care, warming or illumination
+  (`_benign_act`, `_benign_aim`, `_H_AIM_OK`). The hostile verbs also reach more phrasings now: a blade on a person or
+  pet ("cuts my brother with a box cutter", "slices the cat"), something held over a face or forced under water, a
+  ligature tightened around a neck, and a hand pushed onto a hot surface.
+  Measured, offline:
+  - On the round-6 hunt's table (`tests/fixtures/brief/harm_hunt.json`, `test_the_harm_hunt_table`: 1,106 harmful
+    one-liners and 3,205 harmless ones, most of those a tool gun used on a thing named with a body word), the filter
+    at bd19c43 built 583 harmful and refused 1,878 harmless; it now builds none and refuses none (one harmless row
+    kept as a known refusal, "a robot that hands me the flamethrower", because a weapon's name is refused whatever the
+    request does with it). On the 5,848 harmless people-table requests it refuses none.
+  - The rules are written against those tables, so they say what it holds, not how often a new phrasing is caught or a
+    new harmless one is spared. On hand-written sets kept aside while the rules were written (30% held out, untouched):
+    of 205 held-out hostile phrasings it refuses 152 (74%), and of 292 held-out harmless requests it refuses 0. On the
+    skeptic's 101 new hostile phrasings (`t/hostile1.txt`) it refuses 53, against 9 at bd19c43. On the skeptic's
+    harmless corpora (benign1/2/3, the typed follow-ups, and 10,716 corpus requests each given a safety or people
+    clause) it refuses 0, against 4 at bd19c43 (3 of them "a robot that hands me the glue gun by the fire", a staple
+    gun to "fix the fence that guards the garden", and a temperature gun held at a forehead; 1 on the corpus set).
+  - So the filter catches common hostile phrasings, not every one (livestock pricked with a needle and rarer framings
+    are missed by design, so the harmless reading wins), and, very rarely, could refuse a harmless request that puts a
+    tool or a blade next to a person. Of 5,547 adversarial 2,000-character inputs made of repeated harm words, the
+    slowest `harmful()` took about 60 ms once the patterns were compiled.
+  - Known over-read kept: a weapon's name is refused even when it is only handed over ("hand me the flamethrower"),
+    because a request Claude will also see should not slip a named weapon through on wording alone.
 - **Video and photos** (F3) produce slot values with `source: video|photo`. They go through the same
   brief and confirm card, or through `/api/video/apply` when editing an existing robot.
 
@@ -1581,7 +1601,13 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   who mounts the robot, a ward or a theatre, a tester, a bagger or a loader, "the teachers' lounge", and a place or a
   thing a named person owns with no one said to be there ("restock the nurses' station", "move the workers' lockers",
   "move the doctor's bag to the car", "move the farmer's market crates to the van"). The 45 rows read otherwise on
-  purpose are strict expected failures in that test, so the list above stays true.
+  purpose are strict expected failures in that test, so the list above stays true. Four former extra e-stops are now
+  built with no person: a job step or process word after "to" ("moves the parts to rework", also quarantine,
+  autoclave, decon, cleanup, rinse, overflow, backup, archive, salvage, refurb, aoi, smt, litho) is a station, not a
+  name; a numbered bed, table or room is a person only after a serving verb and not in a greenhouse or workshop
+  ("moves the seedlings to table 4"); a common word in a Title Case or SHOUTING tagline is not a name ("... For Fun",
+  "... With Steel", "... With Care"); and an explicit "nobody around" beats a bare "cobot"/"assistive" hint ("a
+  collaborative robot that runs overnight with nobody around"), though never a person the request describes.
 - **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
   at `test_reach_mm` (about 45 % of the egg-picker's reach), so the inspector's "Payload at full reach" overstated the
   arm 2.4 to 3x. The sweep now also reports the arm stretched straight out (`simulate._stretch_pose`: the tool point at

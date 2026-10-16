@@ -654,8 +654,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   separator ("1,050 g" was built as 50 g, "1,000 g", "1 000 g" and "1.000 g" as 1 g), and for sizes and weights it didn't read
   ("50 mm, 30 g tubes", "tubes (50 mm)", "tubes of 50 mm", "50 mm oranges", "2-inch tubes", "half a kilo", "a pound",
   "300 gm", "three hundred grams"; with two sizes, "60 mm and 30 mm cylinders", the larger now counts). Its stock jaws
-  drop a 21.5 mm box in Morph's simulation and let a 22 mm one slip 11 mm, so a flat-sided object under 22.5 mm gets a
-  Morph-generated arm too. For a request that is out of scope in another way, the nearest robot carries the person's
+  drop a 21.5 mm box in Morph's simulation and let a 22 mm one slip 11 mm, so a stated flat-sided object under 22.5 mm,
+  or a round one under 26 mm, gets a Morph-generated arm too, not the SO-101 kept on a bigger stand-in; below the
+  gripper's own range (21.5 mm flat, 26 mm round) the generated arm is sized around a 25 mm or 30 mm stand-in and the
+  note names the SO-101's limit. For a request that is out of scope in another way, the nearest robot carries the person's
   own object instead of its stand-in: "use my SO-101 to pour out 30 mm cylinders weighing 50 g" got a generated arm
   blamed on a 330 ml bottle nobody mentioned, and "use my SO-101 to cook" kept the SO-101 with eggs whatever the
   object weighed. "I have an SO-101" or "use my SO-101" typed in a later message was ignored, and "I don't have an
@@ -670,3 +672,28 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   requests the filter had always built ("a robot that points the nail gun at my brother", "a staple gun turret",
   "holds the heat gun on the cat", "a nail gun on a robot to defend my house"), and "a robot that tags people with a
   tag gun", which was refused before tool guns were let through.
+- The local harm filter no longer refuses a safety-minded request (a robot that stops, slows, switches off, or keeps
+  people or hands away) or an everyday one whose danger word is the tool's ordinary use. A danger word now has to be
+  the object of a hostile verb in its own clause, so "a robot that switches off when someone comes near", "keeps the
+  kids away from the nail gun", "hands me the knife when my mum comes home", "cuts the cake", "trims the cat's claws",
+  "wraps the baby in a blanket", "straps the baby into the car seat", "pins my hair up", "a heat gun on the arm" (the
+  robot's own) and "beat my dad at chess" build, as does a reply read with the request ("plays chess", then "it should
+  beat my dad"). It also catches more hostile phrasings: a blade used on a person or pet ("cuts my brother with a box
+  cutter", "slices the cat"), something held over a face or forced under water, a ligature tightened around a neck,
+  and a hand pushed onto a hot surface. It catches common hostile phrasings, not every one, and can only very rarely
+  refuse a harmless one: measured on sets kept aside while the rules were written, it refuses 152 of 205 held-out
+  hostile phrasings (74%) and 0 of 292 held-out harmless ones; on the harm and people tables it builds no harmful
+  request and refuses no harmless one (one weapon name, "hand me the flamethrower", stays refused by design).
+- "My SO-101" is read only when the request has it to use: "I have an SO-101", "use my SO-101". A past one ("I used to
+  have an SO-101"), someone else's ("my friend has an SO-101"), a question ("should I use my SO-101?"), a comparison
+  ("can it be like an SO-101?", "an SO-101 style arm") or a request for a new arm ("my SO-101 is broken, build a new
+  arm") no longer builds the stock SO-101.
+- "A pound coin", "one pound coins" and "a pound shop" are no longer read as 453.6 g objects (nor "2 pound coins" as
+  907 g); "a pound of flour" and "half a pound" still convert. An object is no longer named "weighing" ("cylinders
+  30 to 50 mm wide weighing 50 g" is a cylinder).
+- New robot no longer invents a person next to it from a job step or process word after "to" ("moves the parts to
+  rework", quarantine, autoclave, decon, cleanup, rinse, overflow, backup, archive, salvage, refurb, aoi, smt,
+  litho), a numbered bench, bed or room in a greenhouse or workshop ("moves the seedlings to table 4"), a Title Case
+  tagline word ("A Robot That Sorts Lego For Fun", "... Works With Steel"), or a bare "cobot" when the request also
+  says nobody is around; a person the request names or describes, and a numbered table or bed a diner or patient is
+  served at, still keep the emergency stop.
