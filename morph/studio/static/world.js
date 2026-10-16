@@ -1249,7 +1249,7 @@ export class WorldView {
     return (VIEW_TITLE[name] || name) + (cut.length ? ` (see-through: ${cut.slice(0, 3).join(', ')})` : '');
   }
 
-  _reachMM(doc) { return this.reachMM || doc?.metrics?.reach_3d_mm || 450; }
+  _reachMM(doc) { return this.reachMM || doc?.metrics?.arm_reach_mm || doc?.metrics?.reach_3d_mm || 450; }   // the arm's furthest point
 
   _nearestEdge() {                          // unit vector (base frame) from the robot to the closest surface edge
     const s = this.world.surface;

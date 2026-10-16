@@ -19,22 +19,27 @@ is not there when the browser has no WebGL).
 5. **Save and simulate:** saving the world reruns only the simulation stage; every other stage is reused. The pick and
    place then runs against the boxes. Every move of it (the approach, the descent to the object, the grasp, the lift,
    the carry, the set-down, the release, the rise and the way back to rest) is checked against the boxes every 10 ms,
-   with the object while it is carried. The carry path is picked to stay at least 10 mm clear; a move that would come
-   closer tries its alternatives: the approach and the way back along the carry path (the hand closed to the object's
-   width on the way back), the approach from higher up, the release with the hand opened only 4 mm past the object,
-   and the way back straight up first. The first that keeps 10 mm wins, else the one with the most room. A move that
-   would still pass into a box fails the simulation, naming the move and the box. The line under the room's name says
-   how the newest simulation went, how close the arm came to a box, and which other way it took.
-   *Play in the room* replays it there, and *Walk* lets you walk through the room (WASD and the mouse, or drag to
-   look where the browser won't lock the mouse): you start on a walkway when there is one, else on the floor a step or
-   two from the robot, with it in sight.
+   with the object while it is carried, and so is the motion between those poses: how far any point of the arm can
+   travel from one to the next is bounded, and wherever that could bring it closer the move is checked at poses in
+   between, so the clearance kept is the closest approach to within 0.05 mm, rounded down. The simulated run itself is
+   measured the same way, between its frames (30 a second) too, and the clearance shown is the smaller of the run's and
+   the plan's. The carry path is picked to stay at least 10 mm clear; a move that would come closer tries its
+   alternatives: the approach and the way back along the carry path (the hand closed to the object's width on the way
+   back), the approach from higher up, the release with the hand opened only 4 mm past the object, and the way back
+   straight up first. The first that keeps 10 mm wins, else the one with the most room. A move that would still pass
+   into a box fails the simulation, naming the move and the box. The line under the room's name says how the newest
+   simulation went, how close the arm came to a box, and which other way it took. *Play in the room* replays it there,
+   and *Walk* lets you walk through the room (WASD and the mouse, or drag to look where the browser won't lock the
+   mouse): you start on a walkway when there is one, else on the floor a step or two from the robot, with it in sight.
 6. **Check placement:** measured checks decide the verdict (*ready*, *needs changes* or *blocked*): the simulation ran
    in this room, both targets are in reach and on the surface, the arm stays clear of the boxes, the base sits on the
-   surface, tip-over (a heuristic), people areas inside the reach, anything overhead, and how much of the workspace
-   stays clear. With a room scan, it also measures the simulated path against the scan itself (below). Every distance
-   these checks keep or show is rounded down, never up: to 0.1 mm under 10 mm and to the millimetre from there, so
-   9.97 mm reads 9.9 (never the 10 mm that is OK) and 30.68 mm reads "at least 30 mm"; room that is missing (the base
-   over the edge, the arm into a box) is rounded up.
+   surface, tip-over (a heuristic), people areas within 100 mm of anywhere the arm can reach, anything less than 50 mm
+   over the arm's highest point, and how much of the workspace stays clear. The highest and furthest points are the
+   arm's own (its collision shapes, the jaws open and closed, over the joints' range), not its tool point's: the
+   egg-picker's fingertips reach 588 mm up and out, its tool point 567 and 568 mm. With a room scan, it also measures
+   the simulated path against the scan itself (below). Every distance these checks keep or show is rounded down, never
+   up: to 0.1 mm under 10 mm and to the millimetre from there, so 9.97 mm reads 9.9 (never the 10 mm that is OK) and
+   30.68 mm reads "at least 30 mm"; room that is missing (the base over the edge, the arm into a box) is rounded up.
 
 Each revision is simulated in exactly the room its design names: every saved room is kept under its hash in
 `<project>/world/saved/`, so editing the room while a build waits never changes what that build simulates, and a

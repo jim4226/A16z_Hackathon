@@ -1323,6 +1323,32 @@ field failure rate (section 0, honesty).
   between the arm and the room" for 30.68 (it read 31); the base's margin and the room above the arm likewise, with the
   base's parts rounded outwards (`_footprint`) and room that is missing (an overhang, the arm into a box) rounded up
   (`mm_up_text`). The World panel (`world.js` `mmDown`) and `morph world` follow the same rule.
+  R6: a jaw point moves up to 6.5 mm between two 10 ms plan samples and 19.5 mm between two of the run's frames (30 a
+  second), so beside the bench bin 18.5 mm out the frames said 10.3 mm while the run posed every 2 ms comes within
+  9.956 mm (and the plan's way back was 9.9 mm, not clear), and beside a 10 mm bracket 12.4 mm while the run comes
+  within 10.916 mm. `morph/robot/sweep.py`: `Motion.bound` bounds how far any point of each geom travels over a linear
+  move between two poses (per body: the turns of the joints that move it times its reach from their anchors, grown for
+  the joints further out, plus their slides), and `path_min` halves the moves whose bound (D_a + D_b - L) / 2 could be
+  below the closest distance found less `SWEEP_TOL_MM` (0.05 mm), with at most `SWEEP_MAX_POSES` (4000) poses in between
+  (else the bound left is what is kept). `simulate._along(between=True)` measures a move's samples and the move on to
+  the next one that way, for every `path` entry (`min_clearance_mm`, `clear`), the kept alternative's `detours` record
+  and `arc` (from the carry entry); `blocked` is a move measured into a box. The planner still chooses among its
+  alternatives on the samples, so the plans, the frames and every MuJoCo state are unchanged. `_world_metrics` measures
+  the run between its frames the same way and keeps the smaller of that and every `path` entry (`min_clearance_mm`,
+  `min_clearance_at`); `clearance_ok` also needs every `path` entry clear. On the bench now: bin 18.5 mm out 9.9 mm,
+  not OK (truth 9.956), bracket 10.8 (10.916), bin 20 mm out 11.3 (11.361); a world-mode pick and place took 4.1 s
+  instead of 2.9 at load 1.5. The workspace scenario adds `arm_top_mm` and `arm_reach_mm` (`_arm_extent`, rounded up):
+  the highest and furthest point of the robot's collision shapes (a mesh's hull corners, a box's corners, another
+  primitive's bounding sphere), the jaws at both ends of their range, over the sampled poses and a pattern search from
+  the best; `max_height_mm` and `reach_3d_mm` stay the tool point's. Egg-picker 588.1 / 588.1 mm (tool point 567.1 /
+  568.0), SO-101 533.4 / 552.4; the scenario takes 3.5 s instead of 1.7-1.9 at load 1.5. The overhead check ("Shelf is
+  N mm above the arm's highest point"), the people check ("No walkway or seat is within 100 mm of anywhere the arm can
+  reach") and the reach dome (`world.js` `_reachMM`) use them; a revision without them gets those checks skipped with
+  "simulate it again". `usable_workspace_fraction` is kept and shown rounded down (1249 of 2500 poses: 0.499, "49%",
+  a warning; it read "50%", a pass). The sim golden was re-recorded for both recorded environments: `run_all`,
+  `sim_workspace.json` (the two new keys; the world fixture's fraction 0.995 is 0.994) and the world fixture's
+  `sim_pick_place.json` (its `path` entries and `detours` each 0.1 mm lower, `min_clearance_mm` 12.1 is 11.3 at 4.36 s);
+  `robot.xml`, the frames and every MuJoCo state are bit-identical.
 - **World-tolerance presets (B2-S3, H2).** `register_world_preset(name, fn, label=None, room_only=False)`;
   `PRESET_LABELS`, `ROOM_ONLY`. `room` ("Only the room varies: the mount and every box; the object and the hardware stay
   nominal"): the standard world ranges (mount +/-10 mm and +/-2 deg, each box 0-15 mm) with every other entry off, so

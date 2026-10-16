@@ -28,7 +28,7 @@ def results(world, pp=None, ws=None, peak=0.3):
          "min_clearance_at": {"t": 4.2, "link": "jaw_left", "obstacle": "Mug"}, "clearance_ok": True}
     m.update(pp or {})
     w = {"reach_mm": 474.0, "reach_3d_mm": 420.0, "max_height_mm": 400.0, "pick_reachable": True, "place_reachable": True,
-         "usable_workspace_fraction": 0.9}
+         "usable_workspace_fraction": 0.9, "arm_top_mm": 400.0, "arm_reach_mm": 420.0}
     w.update(ws or {})
     return {"sims": {"scenarios": {"pick_place": {"metrics": m}, "workspace": {"metrics": w},
                                    "payload_sweep": {"metrics": {"curve": [{"shoulder_torque_nm": peak, "ok": True}]}}}},
@@ -73,8 +73,8 @@ TRUTH = [
     ({"world": moved(dy=180.0)}, {"footprint": "fail"}, "needs_changes"),
     ({"world": moved(dy=150.0)}, {"footprint": "warn"}, "ready"),
     ({"peak": 5.0}, {"tipover": "warn"}, "ready"),
-    ({"ws": {"reach_3d_mm": 600.0}}, {"people": "warn"}, "ready"),
-    ({"world": W.starter("counter"), "ws": {"max_height_mm": 567.0}}, {"overhead": "warn"}, "ready"),
+    ({"ws": {"arm_reach_mm": 600.0}}, {"people": "warn"}, "ready"),
+    ({"world": W.starter("counter"), "ws": {"arm_top_mm": 567.0}}, {"overhead": "warn"}, "ready"),
     ({"ws": {"usable_workspace_fraction": 0.3}}, {"workspace": "warn"}, "ready"),
 ]
 
@@ -112,7 +112,7 @@ def test_the_simulations_clearance_is_never_rounded_up(mc, status, text):
 
 def test_the_base_margin_and_the_room_overhead_are_never_rounded_up():
     """The base 19.96 mm inside the desk's edge is "19 mm" with the advice to keep 20 (before: "20 mm", a pass), and
-    a cabinet 49.97 mm over the arm's highest reach is "49 mm above" (before: "50"); 0.04 mm into it is "0.1 mm"."""
+    a cabinet 49.97 mm over the arm's highest point is "49 mm above" (before: "50"); 0.04 mm into it is "0.1 mm"."""
     robot = {**ROBOT, "parts": [{**ROBOT["parts"][0], "bbox": [[-70.04, -70, 0], [70.04, 70, 12]]}, ROBOT["parts"][1]]}
     w = moved(dy=140.0)
     c = {x["id"]: x for x in W.checks(w, results(w), robot=robot, design=design())["checks"]}
@@ -120,17 +120,17 @@ def test_the_base_margin_and_the_room_overhead_are_never_rounded_up():
     assert c["footprint"]["text"].startswith("The base sits 19 mm inside the edge") and "Keep 20 mm or more." in \
         c["footprint"]["text"], c["footprint"]
     counter = W.starter("counter")
-    room = run(world=counter, ws={"max_height_mm": 0.0})[1]["overhead"]["value"]     # its bottom over the counter top
-    for hmax, status, text, most in ((room - 49.97, "warn", "is 49 mm above the arm's highest reach", 49.97),
+    room = run(world=counter, ws={"arm_top_mm": 0.0})[1]["overhead"]["value"]     # its bottom over the counter top
+    for hmax, status, text, most in ((room - 49.97, "warn", "is 49 mm above the arm's highest point", 49.97),
                                      (room - 50.0, "pass", "is 50 mm above", 50.0),
                                      (room + 0.04, "warn", "reaches 0.1 mm into", -0.04)):
-        o = run(world=counter, ws={"max_height_mm": hmax})[1]["overhead"]
+        o = run(world=counter, ws={"arm_top_mm": hmax})[1]["overhead"]
         assert o["status"] == status and text in o["text"] and o["value"] <= most, (hmax, o)
 
 
 def test_people_zones_workspace_share_and_targets():
     pts = [[800.0, 200.0, 0.0]] * 30 + [[100.0, 0.0, 100.0]] * 70        # 30 % of the cloud sits in the chair zone
-    out, c = run(ws={"reach_3d_mm": 600.0}, sims={"workspace": {"points": pts}})
+    out, c = run(ws={"arm_reach_mm": 600.0}, sims={"workspace": {"points": pts}})
     assert c["people"]["status"] == "fail" and c["people"]["value"] == pytest.approx(0.3) and out["verdict"] == "needs_changes"
     w = copy.deepcopy(W.starter("desk"))
     w["zones"].append({"id": "aisle", "label": "Aisle", "kind": "walkway",
@@ -368,3 +368,39 @@ def test_inspect_without_ai_sends_nothing(monkeypatch):
     boom = FakeClaude(exc=AssertionError("must not be called"))
     res = W.inspect(world, results(world), views(), robot=ROBOT, design=design(), ai=False, client=boom)
     assert not boom.calls and res["review"]["source"] == "rules" and res["subq"] is None
+
+
+def test_a_shelf_and_a_walkway_are_measured_from_the_arm_not_its_tool_point():
+    """R6: the overhead and people checks took the highest and furthest tool point of 4000 random poses (the
+    egg-picker's 567.1 / 568.0 mm), while its fingers reach 587.8 mm up and 587.9 mm out. A shelf 50 mm above the tool
+    point's top passed as "50 mm above the arm's highest reach" with 29 mm left, and a walkway 105 mm past the tool
+    point's reach plus 100 mm passed with 85 mm left. They now take the arm's own top and furthest point."""
+    tcp = {"max_height_mm": 567.1, "reach_3d_mm": 568.0}
+    arm = {**tcp, "arm_top_mm": 588.0, "arm_reach_mm": 588.0}             # the egg-picker's workspace scenario
+    shelf = {"id": "shelf", "label": "Shelf", "center": [0.0, 0.0, 567.1 + 50.0 + 20.0], "half": [150.0, 150.0, 20.0]}
+    aisle = {"id": "aisle", "label": "Aisle", "kind": "walkway", "z": [-200.0, 1800.0],
+             "polygon": [[673.0, -300.0], [1073.0, -300.0], [1073.0, 300.0], [673.0, 300.0]]}      # 568 + 100 + 5 out
+    w = W.validate({"id": "bench", "mount": {"position": [0, 0, 0], "yaw_deg": 0}, "obstacles": [shelf], "zones": [aisle],
+                    "surface": {"label": "Bench top", "center": [100.0, 0.0, -12.5], "half": [550.0, 600.0, 12.5]}})
+    c = {x["id"]: x for x in W.checks(w, results(w, ws=arm), robot=ROBOT, design=design())["checks"]}
+    assert c["overhead"]["status"] == "warn" and c["overhead"]["text"] == "Shelf is 29 mm above the arm's highest point."
+    assert c["people"]["status"] == "warn" and "overlaps Aisle" in c["people"]["text"], c["people"]
+    far = W.validate({**w, "zones": [{**aisle, "polygon": [[x + 200.0, y] for x, y in aisle["polygon"]]}]})
+    c = {x["id"]: x for x in W.checks(far, results(far, ws=arm), robot=ROBOT, design=design())["checks"]}
+    assert c["people"]["status"] == "pass" and c["people"]["text"] == \
+        "No walkway or seat is within 100 mm of anywhere the arm can reach."
+    # a revision simulated before the arm's own extent was measured: not judged on its tool point
+    old = {k: v for k, v in results(w)["sims"]["scenarios"]["workspace"]["metrics"].items() if not k.startswith("arm_")}
+    res = results(w)
+    res["sims"]["scenarios"]["workspace"]["metrics"] = old
+    c = {x["id"]: x for x in W.checks(w, res, robot=ROBOT, design=design())["checks"]}
+    assert c["overhead"]["status"] == "skip" and "simulate it again" in c["overhead"]["text"]
+    assert c["people"]["status"] == "skip" and "simulate it again" in c["people"]["text"]
+
+
+@pytest.mark.parametrize("kept, status, text", [(0.4996, "warn", "49% of the arm's poses"), (0.499, "warn", "49%"),
+                                                (0.5, "pass", "50% of the arm's poses stay clear of the room.")])
+def test_the_room_to_move_is_never_rounded_up(kept, status, text):
+    """R6: 1249 of 2500 poses clear (49.96 %) was kept as 0.5 and passed as "50% of the arm's poses stay clear"."""
+    _, c = run(ws={"usable_workspace_fraction": kept})
+    assert c["workspace"]["status"] == status and text in c["workspace"]["text"], c["workspace"]

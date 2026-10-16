@@ -102,7 +102,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   alternatives (along the carry path, from higher up, the release with the hand opened only 4 mm past the object, the
   way back straight up first) and keeps the first that stays clear; when none does, the simulation fails and says
   which move and which box ("the jaw left hits Carton wall during the set-down at 5.0 s"). The World panel's status
-  line says which way the arm went. Simulations without a room are unchanged.
+  line says which way the arm went. Simulations without a room are unchanged. The motion between those poses counts
+  too: a jaw moves up to 6.5 mm between two 10 ms samples and 19.5 mm between two of the run's frames, so beside the
+  bench bin 18.5 mm out the check said "At least 10 mm" where the run comes within 9.96 mm. How far any point of the
+  arm can travel between two poses is bounded, and the moves that could come closer are checked in between, so the
+  clearance kept and shown (the smaller of the run's and the plan's) is never more than the closest approach; the
+  check isn't OK while any planned move comes within 10 mm. A shelf over the robot and a walkway beside it are measured
+  from the arm's own highest and furthest point, not its tool point's (the egg-picker's fingertips reach 21 mm higher),
+  and "Room to move" rounds its share down.
 - **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path against
   the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can be noisy
   or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot becomes a

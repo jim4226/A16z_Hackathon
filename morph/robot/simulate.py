@@ -111,6 +111,8 @@ GROUPS = {
     "world": (B_WORLD, B_OBJ | B_ARM | B_JAW | B_PROX | B_NOOBJ),   # the robot and the object, never the table or each other
 }
 CLEAR_MM = 10.0                    # world mode: the carry arc keeps this far from every obstacle box
+SWEEP_TOL_MM = 0.05                # world mode: the closest approach between two poses is found to within this
+SWEEP_MAX_POSES = 4000             # and with at most this many poses in between (else the bound left is kept)
 
 
 def floor_mm(v: float) -> float:
@@ -1180,10 +1182,12 @@ class _Robot:
                             for g in self.world_geoms}
         links = {m.body(n).id for n in self.asm.links}
         self.robot_geoms = np.array([i for i in range(m.ngeom) if m.geom_bodyid[i] in links], int)
+        from . import sweep
+        self.motion = sweep.Motion(m, np.r_[self.robot_geoms, [self.obj_geom]].astype(int))   # the object last
         self.sz = _surface_top(W) if W is not None else 0.0
         self.arc = None
         self.detours = {}
-        self.path, self.blocked = [], None
+        self.path, self.blocked, self.path_lo = [], None, []
 
     # ------------------------------------------------------------------ kinematics
     def q_ready(self) -> np.ndarray:
@@ -1909,12 +1913,47 @@ def _held(rob, g) -> float:
     return c if (g - c) * (1.0 if rob.info.grip_open >= c else -1.0) < 0 else g
 
 
-def _along(rob, d, plan, i0=1, i1=None, stop=-math.inf):
+def _swept(rob, d, poses, pose, stop=-math.inf):
+    """World mode: the smallest clearance (mm) between the robot (and the object while it is held) and the boxes along
+    a path through `poses` ({"t", "q", "obj"?, "held"}; `pose(d, p, held)` poses one, kinematics done), moving linearly
+    between them as the simulation does: measured at each pose (mj_geomDistance) and, where the motion in between could
+    come closer (sweep.path_min), at poses in between, to within SWEEP_TOL_MM. Returns (lo, t, robot geom, world geom,
+    closest): `lo` no more than the clearance anywhere along it, `closest` the closest measured, at t. Stops once a
+    measured clearance is below `stop`."""
+    from . import sweep
+
+    def evaluate(p, held):
+        pose(d, p, held)
+        c, rg, wg = rob.clearance(d, with_object=held)
+        return c, (p["t"], rg, wg), rob.motion.state(d)
+
+    def motion_of(a, b, held):
+        L = rob.motion.bound(a, b)
+        return L if held else L[:-1]
+
+    lo, best, info = sweep.path_min(poses, evaluate, motion_of, SWEEP_TOL_MM, SWEEP_MAX_POSES, stop=stop)
+    if info is None:
+        return math.inf, None, None, None, math.inf
+    return lo, info[0], info[1], info[2], best
+
+
+def _along(rob, d, plan, i0=1, i1=None, stop=-math.inf, between=False):
     """World mode: the smallest clearance (mm) between the robot (and the object while it is carried) and the boxes over
-    plan samples i0..i1-1, one every 10 ms as the simulation follows them: (mm, sample, robot geom, world geom); inf when
-    there are none. Stops once it is below `stop` (a candidate that can no longer beat the best one)."""
+    plan samples i0..i1-1, one every 10 ms as the simulation follows them: (mm, t, robot geom, world geom, closest
+    measured mm); inf when there are none. Stops once it is below `stop` (a candidate that can no longer beat the best
+    one). The planner chooses among its alternatives on the samples; with `between`, what is kept and reported, the
+    move on to sample i1 and the motion between samples count too (_swept: no more than the clearance anywhere)."""
     i1 = len(plan.t) if i1 is None else i1
-    best, cut, last = (math.inf, i0, None, None), 0.5, None
+    if between:
+        poses = []
+        for k in range(i0, min(i1 + 1, len(plan.t))):
+            held = plan.ph[min(k, i1 - 1)] in CARRIED
+            q = np.r_[plan.q[k], _held(rob, plan.g[k])]
+            if poses and poses[-1]["held"] == held and np.array_equal(poses[-1]["q"], q):
+                continue                       # a hold: the same pose as the sample before
+            poses.append({"t": float(plan.t[k]), "q": q, "held": held})
+        return _swept(rob, d, poses, lambda dd, p, held: rob.pose_carried(dd, p["q"][:-1], p["q"][-1], held), stop)
+    best, cut, last = (math.inf, None, None, None), 0.5, None
     for k in range(i0, i1):
         held, g = plan.ph[k] in CARRIED, _held(rob, plan.g[k])
         if last is not None and held == last[0] and g == last[1] and np.array_equal(plan.q[k], last[2]):
@@ -1923,16 +1962,17 @@ def _along(rob, d, plan, i0=1, i1=None, stop=-math.inf):
         rob.pose_carried(d, plan.q[k], g, held)
         c, rg, wg = rob.clearance(d, with_object=held, distmax=cut)
         if c < best[0]:
-            best, cut = (c, k, rg, wg), max(c * MM, 0.0)
+            best, cut = (c, float(plan.t[k]), rg, wg), max(c * MM, 0.0)
             if c < stop:
                 break
-    return best
+    return (*best, best[0])
 
 
 def _choose(rob, d, plan, cands):
     """World mode: build each candidate move, (via, extra, build(branch) -> False to skip), on a branch of the plan,
     check it every 10 ms and append the first that keeps CLEAR_MM, else the one with the most room (the earlier one on a
-    tie). Returns the record for rob.detours: {via, min_clearance_mm, clear, **extra}."""
+    tie). Returns the record for rob.detours: {via, min_clearance_mm, clear, **extra}, the clearance of the one kept
+    measured between its samples too (_along `between`)."""
     best = None
     for via, extra, build in cands:
         b = plan.branch()
@@ -1944,6 +1984,7 @@ def _choose(rob, d, plan, cands):
         if c >= CLEAR_MM:
             break
     c, via, extra, b = best
+    c = _along(rob, d, b, between=True)[0]             # what is kept: between the samples too
     plan.extend(b)
     return {"via": via, "min_clearance_mm": floor_mm(min(c, 500.0)), "clear": bool(c >= CLEAR_MM), **extra}
 
@@ -2093,53 +2134,69 @@ def _move_at(plan, t) -> str:
 
 def _check_path(rob, plan):
     """World mode: every move of the finished plan checked against the boxes every 10 ms (the object with the hand while
-    it is carried): rob.path, one {move, phase, min_clearance_mm, clear, at?} per move, and rob.blocked, the first move
+    it is carried) and between the samples (_along): rob.path, one {move, phase, min_clearance_mm, clear, at?} per
+    move, and rob.blocked, the first move
     whose planned path still passes into a box, which fails the simulation however the run goes (no alternative kept
     clear of it)."""
     d = rob._mj.MjData(rob.model)
     ends = [i for _, i in plan.moves[1:]] + [len(plan.t)]
     rob.path, rob.blocked = [], None
+    rob.path_lo = []
     for (name, i0), i1 in zip(plan.moves, ends):
-        c, k, rg, wg = _along(rob, d, plan, i0, i1)
+        c, t, rg, wg, closest = _along(rob, d, plan, i0, i1, between=True)
         e = {"move": name, "phase": plan.ph[min(i0 + 1, i1 - 1)], "min_clearance_mm": floor_mm(min(c, 500.0)),
              "clear": bool(c >= CLEAR_MM)}
         if rg is not None and c < 500.0:
-            e["at"] = {"t": round(float(plan.t[k]), 2), "link": rob.where(rg), "obstacle": rob.world_names.get(wg, "")}
+            e["at"] = {"t": round(float(t), 2), "link": rob.where(rg), "obstacle": rob.world_names.get(wg, "")}
         rob.path.append(e)
-        if c < 0.0 and rob.blocked is None:
+        rob.path_lo.append((c, e.get("at")))
+        if closest < 0.0 and rob.blocked is None:      # measured into a box (not only a bound that might be)
             rob.blocked = e
+    carry = next((e for e in rob.path if e["move"] == "carry"), None)
+    if isinstance(rob.arc, dict) and "min_clearance_mm" in rob.arc and carry is not None:
+        rob.arc = {**rob.arc, "min_clearance_mm": min(rob.arc["min_clearance_mm"], carry["min_clearance_mm"]),
+                   "clear": bool(rob.arc.get("clear") and carry["clear"])}     # the arc as carried, between samples too
 
 
 def _world_metrics(rob, design, run, plan) -> dict:
     """World mode, pick_place: contacts recorded during the simulation (each with the move and plan phase it happened
-    in), the smallest clearance between the robot (and the object while carried) and the room over the simulated frames,
-    with where it happens, and the plan's own check of every move (path, blocked)."""
+    in), the smallest clearance between the robot (and the object while carried) and the room along the run (its
+    frames, 30 a second, and the motion between them, _swept) or along the plan the run follows (its moves' path
+    entries), whichever is smaller, with where it happens (rounded down), and the plan's own check of every move (path,
+    blocked): clearance_ok only when nothing touched, the clearance is CLEAR_MM or more and every move is clear."""
     W = rob.opts.world
     d = rob._mj.MjData(rob.model)
-    best = (math.inf, None, None, 0.0)
-    for f in run.frames:
-        d.qpos[:] = 0
-        d.qpos[rob.qadr] = f["q"][:rob.n]
+
+    def pose(dd, p, held):
+        dd.qpos[:] = 0
+        dd.qpos[rob.qadr] = p["q"][:rob.n]
         if rob.g_q:
-            rob.set_grip(d, f["q"][-1])
-        carried = f["phase"] in ("lift", "move", "place")
-        d.qpos[rob.obj_q:rob.obj_q + 3] = np.asarray(f["obj"][:3]) * MM
-        d.qpos[rob.obj_q + 3:rob.obj_q + 7] = _q_body(f["obj"][3:7])
-        rob._mj.mj_kinematics(rob.model, d)
-        mc, rg, wg = rob.clearance(d, with_object=carried)
-        if mc < best[0]:
-            best = (mc, rg, wg, f["t"])
+            rob.set_grip(dd, p["q"][-1])
+        dd.qpos[rob.obj_q:rob.obj_q + 3] = np.asarray(p["obj"][:3]) * MM
+        dd.qpos[rob.obj_q + 3:rob.obj_q + 7] = _q_body(p["obj"][3:7])
+        rob._mj.mj_kinematics(rob.model, dd)
+
+    poses = [{"t": float(f["t"]), "q": np.asarray(f["q"], float), "obj": np.asarray(f["obj"], float),
+              "held": f["phase"] in CARRIED} for f in run.frames]
+    lo, t, rg, wg, _ = _swept(rob, d, poses, pose)
+    best = (lo, rg, wg, t)
+    for c, at in getattr(rob, "path_lo", []):          # the plan's own moves: the run follows them
+        if c < best[0] and at:
+            best = (c, at, None, at["t"])
     hits = run.stats.get("world_contacts") or []
     for h in hits:
         h["move"] = _move_at(plan, h["t"])
         h["phase"] = plan.ph[min(int(h["t"] / PLAN_DT + 1e-9), len(plan.ph) - 1)]
-    mc = floor_mm(best[0]) if math.isfinite(best[0]) else None              # rounded down: never more room than measured
+    mc = floor_mm(min(best[0], 500.0)) if math.isfinite(best[0]) else None   # rounded down: never more room than measured
     out = {"world": W.get("id", ""), "world_sha": W.get("sha", ""), "world_contacts": hits, "min_clearance_mm": mc,
-           "clearance_ok": bool(not hits and mc is not None and mc >= CLEAR_MM and rob.blocked is None), "arc": rob.arc,
-           "detours": dict(rob.detours), "path": list(rob.path)}
+           "clearance_ok": bool(not hits and mc is not None and mc >= CLEAR_MM and rob.blocked is None
+                                and all(e.get("clear", True) for e in rob.path)),
+           "arc": rob.arc, "detours": dict(rob.detours), "path": list(rob.path)}
     if rob.blocked is not None:
         out["blocked"] = dict(rob.blocked)
-    if best[1] is not None:
+    if isinstance(best[1], dict):                      # a planned move's closest point
+        out["min_clearance_at"] = dict(best[1])
+    elif best[1] is not None:
         out["min_clearance_at"] = {"t": round(float(best[3]), 2), "link": rob.where(best[1]),
                                    "obstacle": rob.world_names.get(best[2], "")}
     return out
@@ -2514,6 +2571,92 @@ def _payload_sweep(rob: _Robot, design, fast=False):
     return plan, run, metrics
 
 
+def _ceil_mm(v: float) -> float:
+    """A reach (mm) kept to 0.1 mm, rounded up: never less of the arm than was measured."""
+    return math.ceil(float(v) * 10.0 - 1e-6) / 10.0
+
+
+def _arm_extent(rob: _Robot, Qs, floor: float) -> tuple:
+    """The arm's own highest point and furthest point from its base (mm), not its tool point's: every robot geom's
+    convex shape (a mesh's vertices, as MuJoCo collides with their hull; a box's corners; another primitive's bounding
+    sphere), the jaws at the ends of their range, over the sampled joint poses `Qs` that keep every link above `floor`
+    (m), then a pattern search from the best of them (the top often lies between samples), rounded up to 0.1 mm.
+    Returns (top, furthest)."""
+    import mujoco
+
+    from scipy.spatial import ConvexHull, QhullError
+
+    mj, m = rob._mj, rob.model
+    d = mj.MjData(m)
+    verts, owner, spheres = [], [], []
+    for g in rob.robot_geoms:
+        if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH:
+            mid = m.geom_dataid[g]
+            V = np.asarray(m.mesh_vert[m.mesh_vertadr[mid]:m.mesh_vertadr[mid] + m.mesh_vertnum[mid]], float)
+            try:
+                V = V[ConvexHull(V).vertices]          # the extremes of a convex shape are among its corners
+            except (QhullError, ValueError):
+                pass
+        elif m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX:
+            V = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]) * np.asarray(m.geom_size[g], float)
+        else:
+            spheres.append(g)
+            continue
+        verts.append(V)
+        owner.append(np.full(len(V), g))
+    V = np.vstack(verts) if verts else np.zeros((0, 3))
+    G = np.concatenate(owner) if owner else np.zeros(0, int)
+    S = np.asarray(spheres, int)
+    links = [m.body(n).id for n in rob.asm.ordered_links() if m.body(n).id > 0]
+    if rob.g_q:                                        # the jaws at either end of their joint's range
+        jaw = int(np.nonzero(m.jnt_qposadr == rob.g_q[0])[0][0])
+        grips = sorted({float(m.jnt_range[jaw][0]) / rob.g_scale, float(m.jnt_range[jaw][1]) / rob.g_scale,
+                        float(rob.info.grip_open), float(rob.info.grip_close)})
+    else:
+        grips = [0.0]
+
+    def extent(q, g):
+        d.qpos[:] = 0
+        d.qpos[rob.qadr] = q
+        if rob.g_q:
+            rob.set_grip(d, g)
+        mj.mj_kinematics(m, d)
+        if d.xpos[links, 2].min() < floor - 1e-3 or d.site_xpos[rob.tcp_site][2] < floor:
+            return None
+        P = np.einsum("nij,nj->ni", d.geom_xmat[G].reshape(-1, 3, 3), V) + d.geom_xpos[G]
+        top = float(P[:, 2].max(initial=-np.inf))
+        far = float(np.sqrt((P * P).sum(1)).max(initial=0.0))
+        if len(S):
+            r = m.geom_rbound[S]
+            top = max(top, float((d.geom_xpos[S, 2] + r).max()))
+            far = max(far, float((np.linalg.norm(d.geom_xpos[S], axis=1) + r).max()))
+        return top / MM, far / MM
+
+    seen = [e for e in ((extent(q, grips[-1]), q) for q in Qs) if e[0] is not None]
+    lo, hi = rob.lo, rob.hi
+    out = []
+    for i in (0, 1):                                   # the top, then the furthest point
+        best = -math.inf
+        for _, q0 in sorted(seen, key=lambda e: -e[0][i])[:1]:
+            for g in grips:
+                q, v, step = q0.copy(), extent(q0, g), 0.2
+                v = v[i] if v is not None else -math.inf
+                while step > 1e-3:                     # pattern search: a joint at a time, within its range
+                    moved = False
+                    for j in range(len(q)):
+                        for sgn in (step, -step):
+                            q2 = q.copy()
+                            q2[j] = min(max(q2[j] + sgn, lo[j]), hi[j])
+                            e = extent(q2, g)
+                            if e is not None and e[i] > v + 1e-9:
+                                v, q, moved = e[i], q2, True
+                    if not moved:
+                        step /= 2.0
+                best = max(best, v)
+        out.append(_ceil_mm(best) if math.isfinite(best) else None)
+    return tuple(out)
+
+
 def _workspace(rob: _Robot, design, fast=False):
     """Monte-Carlo joint sampling (wrist roll fixed: it does not move the TCP) -> reachable TCP cloud with every
     link above the table; top-down reach at table grasp height by IK; a kinematic tour for the viewer."""
@@ -2531,11 +2674,13 @@ def _workspace(rob: _Robot, design, fast=False):
     pts = []
     world = len(rob.world_geoms) > 0
     floor, usable = (rob.sz * MM, []) if world else (0.0, None)
+    valid = []
     for q in Qs:
         d.qpos[rob.qadr] = q
         mj.mj_kinematics(m, d)
         if d.xpos[link_ids, 2].min() < floor - 1e-3 or d.site_xpos[rob.tcp_site][2] < floor:
             continue
+        valid.append(q)
         pts.append(d.site_xpos[rob.tcp_site] / MM)
         if world:                       # world mode: does this pose put the robot into a box?
             mj.mj_collision(m, d)
@@ -2571,6 +2716,8 @@ def _workspace(rob: _Robot, design, fast=False):
         "height_mm": [rnd(P[:, 2].min()), rnd(P[:, 2].max())],
         "yaw_deg": rnd(math.degrees(float(hi[0] - lo[0]))), "points": int(len(pts)),
     }
+    # the arm itself, not its tool point: what a shelf above it or a walkway beside it must keep clear of
+    metrics["arm_top_mm"], metrics["arm_reach_mm"] = _arm_extent(rob, valid[:400] if fast else valid, floor)
     # viewer tour: reach out, sweep the base yaw across its range, stand up, back to ready
     sc = 0.7 if fast else 1.0
     q_r = rob.q_ready()
@@ -2589,7 +2736,7 @@ def _workspace(rob: _Robot, design, fast=False):
                                  for i, n in enumerate(info.arm_joints)}
     if world:                           # the cloud shows only the poses that stay clear of the room
         keep = np.asarray(usable, bool)
-        metrics["usable_workspace_fraction"] = round(float(keep.mean()), 3) if len(keep) else 0.0
+        metrics["usable_workspace_fraction"] = math.floor(float(keep.mean()) * 1000.0 + 1e-9) / 1000.0 if len(keep) else 0.0
         metrics["world"] = rob.opts.world.get("id", "")
         P = P[keep] if keep.any() else np.zeros((0, 3))
         pts = P.tolist()

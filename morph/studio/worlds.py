@@ -2145,8 +2145,8 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
                               ratio, "x", "base"))
     else:
         out.append(_check("footprint", "Base on the surface", "skip", "The robot's base geometry isn't available.", view="base"))
-    # ---- people zones against the reach sphere
-    reach3 = ws.get("reach_3d_mm")
+    # ---- people zones against the reach sphere: the arm's own furthest point, not its tool point's
+    reach3 = ws.get("arm_reach_mm")
     pts = (sims.get("workspace") or {}).get("points")
     if sw["zones"] and isinstance(reach3, (int, float)):
         rad = reach3 + PEOPLE_MARGIN_MM
@@ -2178,17 +2178,20 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
             names = ", ".join(z["label"] for z, _ in hits)
             st = "warn"
             share = f"{frac * 100:.0f}%" if frac >= 0.01 else "under 1%"
-            text = (f"The arm's reach ({math.ceil(reach3 - 1e-6):.0f} mm + {PEOPLE_MARGIN_MM:.0f} mm) overlaps {names}"
+            text = (f"The arm's reach ({math.ceil(reach3 - 1e-6):.0f} mm to its furthest point + {PEOPLE_MARGIN_MM:.0f} mm) "
+                    f"overlaps {names}"
                     + (f"; {share} of its workspace is inside." if frac > 0 else ".")
                     + " Slow it down near people or add a guard.")
         else:
-            st, text = "pass", "No walkway or seat is within the arm's reach plus 100 mm."
+            st, text = "pass", f"No walkway or seat is within {PEOPLE_MARGIN_MM:.0f} mm of anywhere the arm can reach."
         out.append(_check("people", "People zones out of reach", st, text, frac, "fraction", "walkway",
                           zones=[{"label": z["label"], "kind": z["kind"], "distance_mm": floor_mm(d)} for z, d in hits]))
     elif sw["zones"]:
-        out.append(_check("people", "People zones out of reach", "skip", "The workspace simulation is missing.", view="walkway"))
-    # ---- boxes over the robot (wall cabinets, a shelf) it could reach when it stretches up
-    hmax = ws.get("max_height_mm")
+        out.append(_check("people", "People zones out of reach", "skip",
+                          "The workspace simulation is missing." if not ws else
+                          "How far the arm reaches isn't measured for this revision: simulate it again.", view="walkway"))
+    # ---- boxes over the robot (wall cabinets, a shelf) it could reach when it stretches up: its own highest point
+    hmax = ws.get("arm_top_mm")
     if isinstance(hmax, (int, float)):
         worst = None
         for o in sw["obstacles"]:
@@ -2207,14 +2210,18 @@ def checks(world: dict, results: dict, *, sims: dict | None = None, robot: dict 
             gap, o = worst
             gap = floor_mm(gap)                         # rounded down: never more room than measured
             st = "pass" if gap >= 50.0 else "warn"
-            text = (f"{o['label']} is {mm_text(gap)} mm above the arm's highest reach." if gap >= 0 else
+            text = (f"{o['label']} is {mm_text(gap)} mm above the arm's highest point." if gap >= 0 else
                     f"Stretched up, the arm reaches {mm_up_text(-gap)} mm into {o['label']} above it; keep its moves "
                     "below it.")
             out.append(_check("overhead", "Room above the arm", st, text, gap, "mm", "overview"))
+    elif ws:
+        out.append(_check("overhead", "Room above the arm", "skip",
+                          "The arm's highest point isn't measured for this revision: simulate it again.", view="overview"))
     uf = ws.get("usable_workspace_fraction")
     if in_world and isinstance(uf, (int, float)):
+        uf = math.floor(float(uf) * 1000.0 + 1e-6) / 1000.0     # rounded down: 1249 of 2500 is 49.9%, not 50%
         out.append(_check("workspace", "Room to move", "pass" if uf >= 0.5 else "warn",
-                          f"{uf * 100:.0f}% of the arm's poses stay clear of the room" +
+                          f"{math.floor(uf * 100.0 + 1e-6):.0f}% of the arm's poses stay clear of the room" +
                           ("." if uf >= 0.5 else "; it has little room to move here."), uf, "fraction", "top_down"))
     # ---- wrist camera line of sight (only with a wrist camera)
     if "wrist_camera" in str(flat.get("electronics.extras") or ""):
@@ -2263,7 +2270,8 @@ def _facts(world, sw, out, verdict, pp, ws, flat, robot, results) -> dict:
         "frame": "robot base: x forward, y left, z up, millimetres; origin at the base on the mount surface",
         "verdict": verdict,
         "robot": {"dof": (results.get("summary") or {}).get("dof"), "reach_mm": ws.get("reach_mm"),
-                  "reach_3d_mm": ws.get("reach_3d_mm"), "max_height_mm": ws.get("max_height_mm"),
+                  "reach_3d_mm": ws.get("reach_3d_mm"), "max_height_mm": ws.get("max_height_mm"),     # its tool point
+                  "arm_top_mm": ws.get("arm_top_mm"), "arm_reach_mm": ws.get("arm_reach_mm"),         # the arm itself
                   "mass_kg": _robot_mass(results, robot), "base_footprint_mm": _footprint(robot)},
         "task": {"object": flat.get("object.name"), "object_diameter_mm": flat.get("object.diameter_mm"),
                  "pick_mm": [flat.get("task.pick_x_mm"), flat.get("task.pick_y_mm")],
