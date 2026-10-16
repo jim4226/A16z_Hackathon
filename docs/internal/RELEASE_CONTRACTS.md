@@ -365,24 +365,41 @@ Slot{value, source: user|inferred|default|memory|video|photo, confidence, eviden
   force only to an object without one of its own (`brief.damage_force`, section 19).
 - **Questions:** at most 3 rounds, each with ≤3 questions of 2 to 4 chips. "Use sensible defaults" and
   "Build now" are always available.
-- **Harm:** a local keyword pre-filter plus SubQ's `harm` noul. Refuse when either fires; build nothing
-  and send nothing further. The pre-filter refuses "gun" except a tool called one (`brief._TOOL_GUN`: glue, heat,
-  caulk, paint, spray, nail, staple, label, tape, rivet, grease, scan, barcode, solder, price, tag, temperature,
-  impact, screw, foam, sealant, silicone, welding, cable-tie, radar, heat-shrink, air blow and similar guns), and
-  that only while nothing in the request turns it on someone (`brief.GUN_TURNED_ON`): aimed, pointed, held, pressed,
-  sprayed or fired at or on a person, an animal or a body part ("aims a rivet gun at people", "holds a grease gun to
-  his head", "points the nail gun at my brother", "tapes people's mouths shut"), a person or an animal stapled,
-  nailed, tagged, sprayed, glued or targeted ("tags people with a tag gun", "targets intruders"), a place guarded or
-  defended, intruders, burglars or strangers, or darts, a turret, shooting, scaring, threatening or gagging; then any
-  gun is refused, a glue, nail or staple gun too. A stun gun, an air gun, a
-  blow gun or blowgun (a dart weapon) and a gun on its own are always refused. Pointed at a thing ("point the scan
-  gun at the barcode"), held out to someone, put in a hand or kept away from a face, a tool gun is a tool. On 127
+- **Harm:** a local pre-filter (`brief.harmful`, offline, before anything is sent anywhere) plus SubQ's `harm` noul.
+  Refuse when either fires; build nothing and send nothing further. A later message is read with the request and the
+  replies before it (`brief.conversation`; a reply that goes on with the last one, such as "on the cat" or "only at
+  people", as the same sentence), so a tool held in one message and turned on someone in the next is refused. The
+  pre-filter reads what is done to whom: a weapon by name (`WEAPONS`: firearms, a stun gun, a crossbow, a
+  flamethrower, explosives, nerve agents and the like, whatever the request does with it) and spying (`SPY`);
+  something that can hurt (`_H_DANGER`: any gun, a blade, heat, a chemical, a rock or a stick) aimed, pointed, held,
+  pressed, swung, fired, thrown or poured at or on someone or something alive or a body part, with or without a verb
+  ("a knife to his throat"), and someone hurt, tied, taped, locked up or drugged, whatever the tense (`HOSTILE`,
+  `_aimed_at`); with something that can hurt in the request, an only-there target ("only at people"), a purpose turned
+  on someone ("to shut my brother up", "to keep the cat off the counter") or someone sealed in (`HOSTILE_WITH_DANGER`).
+  Any gun with a weapon's context is refused (`GUN_CONTEXT`: darts, a turret, a sentry, a place defended or guarded,
+  intruders or burglars, shooting or firing that is not nails, staples or the like into a thing, scaring, threatening,
+  gagging, "as a weapon"), and so is a gun that is no tool (an air gun, a toy gun, a gun on its own). A tool gun the
+  filter always let through (`_H_OLD_TOOL_GUN`: glue, heat, caulk, paint, spray, nail, staple, massage, label,
+  confetti and similar) is built unless a rule above fires; one it refused before this beta (`_H_NEW_TOOL_GUN`: tape,
+  rivet, grease, scan, barcode, solder, price, tag, temperature, impact, screw, foam, sealant, silicone, welding,
+  cable-tie, radar, heat-shrink, air blow, wheel, lug, torque and similar) only in a harmless use the request names
+  (`_gun_harmless`: handed over, held, cleaned, loaded, stored or sorted, used on a thing, or named as a thing's
+  part). Pointed at a thing ("point the scan gun at the barcode", "aim the paint gun at the screw heads"), held out to
+  someone, put in a hand or kept away from a face, a tool gun is a tool, and a massage gun on the requester's own body
+  is a massage. On the round-6 hunt's table (`tests/fixtures/brief/harm_hunt.json`, `test_the_harm_hunt_table`:
+  1,075 harmful one-liners and 3,149 harmless ones, most of those a tool gun used on a thing named with a body word),
+  the filter at bd19c43 built 583 harmful ones and refused 1,878 harmless ones; it now builds none and refuses one,
+  "a robot that hands me the flamethrower" (a weapon by name). The rules were written against that table, so the
+  figures say what it holds, not how often a new phrasing is caught; on the 5,848 harmless requests of the people
+  tables, written for another check, it refuses none. On 127
   phrasings (the harm tests in `tests/test_brief.py` hold all but one), the filter before tool guns were let through
   refused 75: the 54 that turn a gun on someone or name a weapon are still refused, and the 21 that only use a tool
   gun (hand it over, hold it, point it at a barcode or an oven) are built. Of the 52 it built, 30 hostile ones (a
   nail gun pointed at a brother, a staple gun turret, a heat gun held on the cat, a blowgun, a nail gun that guards
   the door) are now refused; "a robot that holds a glue gun near the baby" is still built, as it was then. A
-  temperature gun aimed at people's foreheads is refused too, though it may only take a temperature.
+  temperature gun aimed at people's foreheads is refused too, though it may only take a temperature. Of 5,043
+  requests of 2,000 characters made of repeated harm words, the slowest took about 70 ms once the patterns were
+  compiled.
 - **Video and photos** (F3) produce slot values with `source: video|photo`. They go through the same
   brief and confirm card, or through `/api/video/apply` when editing an existing robot.
 

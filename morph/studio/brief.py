@@ -14,6 +14,7 @@ loop. Every default, inference and repair becomes a plain-sentence assumption on
 
 from __future__ import annotations
 
+import bisect
 import functools
 import json
 import os
@@ -1005,12 +1006,13 @@ def _rx(pattern: str) -> re.Pattern:
     return re.compile(pattern)
 
 
-def people_text(raw: str) -> str:
+def people_text(raw: str, agents: bool = True) -> str:
     """`raw` in lower case with each capitalised name written "someone" ("pass Sarah the salt", "give the pills to Mary",
     "hand Dr Smith the clamp", "hand Nurse Jones the gauze"), so the receiver rules read the name as a person, and a few
     common misspellings mended ("hand teh nurse the gauze"). A capital that starts a sentence, follows "the" or "a", or
     names a place, a person word, a department or a known product is no name, and Title Case or SHOUTING says nothing
-    about names at all (unsure: a name read where there is none only adds a hand-over's emergency stop)."""
+    about names at all (unsure: a name read where there is none only adds a hand-over's emergency stop). With
+    `agents` false, a word for someone by what they do stays as written (the harm filter reads "the weed killer")."""
     raw = raw or ""
     words = re.findall(r"[A-Za-z][A-Za-z'’-]*", raw)
     if words and sum(w[0].isupper() for w in words) * 2 <= len(words):   # "the IT guy", "hand IT the laptops"
@@ -1043,7 +1045,8 @@ def people_text(raw: str) -> str:
                  r"\1ing machine", out)
     out = re.sub(r"\b((?:vision|x-?ray|optical|automated|camera|in-?line)\s+inspect)ors?\b", r"\1ion machine", out)
     out = re.sub(r"\b((?:washer|egg|fruit|optical|weight)\s+grad)ers?\b", r"\1ing machine", out)
-    return _agents(_baby_goods(out))
+    out = _baby_goods(out)
+    return _agents(out) if agents else out
 
 
 def _title_name(word: str) -> bool:
@@ -1144,71 +1147,182 @@ OUT_OF_SCOPE = (  # (kind, regex, plain reason); the first kind found picks the 
     ("above_table", r"\b(stack(?:s|ing)?|shel(?:f|ves)|cupboards?|top shelf|hang(?:s|ing)?|on the wall|dishwasher)\b",
      "Places are on the table plane only; stacking, shelves and racks above or below the table aren't generated."),
 )
-_TARGET = (r"(?:my |the |a |an |our |his |her |their |some )?(people|persons?|someone|somebody|anyone|humans?|kids?|children|"
-           r"brothers?|sisters?|siblings?|neighbou?rs?|intruders?|strangers?|cats?|dogs?|animals?|birds?|pets?|squirrels?|faces?)\b")
-HARM = (  # local pre-filter (SubQ's harm noul and the designer's flag catch the rest); tuned against fragile-food phrasing
-    r"\b(weapons?|firearms?|rifles?|pistols?|tasers?|stun guns?|(?<!bath )bombs?|explosives?|grenades?|missiles?|ammunition|ammo|"
-    r"blowguns?|blowpipes?)\b",
-    r"\b(?<!glue )(?<!heat )(?<!caulk )(?<!caulking )(?<!paint )(?<!spray )(?<!nail )(?<!staple )(?<!massage )(?<!label )guns?\b",
-    r"\b(shoot\w*|launch\w*|fir(?:e|es|ing)|throw\w*|fling\w*|spray\w*)\b[^.]{0,40}\b(?:at|on)\s+(?:him\b|her\b|them\b|" + _TARGET + ")",
-    r"(?<!without )(?<!not )(?<!never )(?<!avoid )(?<!no )\b(hurt\w*|harm\w*|injur\w*|attack\w*|punch\w*|kick\w*|stab\w*|kill\w*|slap\w*|"
-    r"shoot\w*|zap\w*|tase\w*|electrocut\w*|"
-    r"chok\w*|strangl\w*|poison\w*|tortur\w*)\s+" + _TARGET,
-    r"\b(restrain\w*|handcuff\w*|tie (?:up|down) " + _TARGET + r"|hold (?:someone|a person|people|him|her|them) (?:down|still))",
-    r"\b(spy(?:ing)? on|secretly (?:watch|record|film)\w*|covert(?:ly)? (?:watch|record|film|surveil)\w*)\b",
+# ---- harm: the local pre-filter (SubQ's harm noul and the designer's flag catch the rest), offline and before
+# anything is sent anywhere. It reads what is done to whom, not only words: a weapon, a tool that can hurt (any gun,
+# a blade, heat, a chemical, a rock or a stick) aimed, swung, fired, poured or pressed at someone or something alive,
+# someone hurt, tied or locked up, a drug in someone's drink. What can be hurt: someone or something alive
+_H_LIVING = (r"(?:people|persons?|someone|somebody|anyone|anybody|everyone|everybody|whoever|whomever|humans?|ppl|peeps|"
+           r"folks?|guys|dudes|crowds?|(?:(?<=\bthe )|(?<=\bmy )|(?<=\bour )|(?<=\bhis )|(?<=\bher )|(?<=\btheir )|"
+           r"(?<=\bwhole ))class(?:es)?|intruders?|strangers?|burglars?|thie(?:f|ves)|trespassers?|robbers?|"
+           r"attackers?|enem(?:y|ies)|prisoners?|hostages?|victims?|police|cops?|officers?|mail ?m[ae]n|post ?m[ae]n|"
+           r"posties?|delivery (?:guy|man|men|driver|person|people)s?|protesters?|classmates?|referees?|hikers?|joggers?|"
+           r"runners?|cyclists?|paperboys?|passers?-?by|neighbou?rs?|kids?|kiddos?|toddlers?|teens?|" + _ROLES + "|" +
+           _KIN + "|" + _KIN_SLANG + r"|(?!tedd(?:y|ie)\b)" + _NAMES + "|" + _ANIMAL + r"|squirrels?|foxes|fox|deer|mice|"
+           r"mouse|rats?|pigeons?|seagulls?|gulls?|raccoons?|badgers?|moles?|wildlife|wild animals|vermin)")
+_H_BODY = (r"(?:heads?|faces?|eyes?|eyeballs?|foreheads?|temples?|necks?|throats?|mouths?|lips|ears?|nose|noses|chests?|"
+         r"bell(?:y|ies)|backs?|skin|hair|bod(?:y|ies)|arms?|legs?|knees?|feet|foot|toes?|groins?|tails?|paws?|fur|"
+         r"hands?|palms?|fingers?|thumbs?|wrists?|shoulders?|calves|calf|thighs?|stomach|guts?|spine|ribs?|teeth|tongue)")
+# the living word names a thing when one of these follows it ("the dog house", "the cat flap", "the customer's phone")
+_H_THING_HEAD = (r"(?:house|flap|bed|bowl|feeder|statue|toy|door|food|basket|cage|kennel|hutch|tree|carrier|crate|mover|"
+               r"ornament|figurine|picture|poster|photo|drawing|painting|sculpture|model|doll|mannequin|dummy|silhouette|"
+               r"target|shape|outline|cut-?out|sticker|logo|dish|collar|leash|blanket|mat|coop|shed|stable|barn|trough|"
+               r"shampoo|bag|box|card|ticket|phone|badge|record|file|sample|manual|wristband|id|seat|chair|desk|station|"
+               r"room|area|zone|table|tray|bin|car|bike|van|truck|window|gate|fence|wall|parcel|package|luggage|suitcase|"
+               r"coat|clothes|shoe|hat|glasses|cup|plate|drink|coffee|tea|lunch|dinner|meal|fastball|ball|helmet|uniform|"
+               r"locker|counter|booth|kiosk|stall|barcode|screen|monitor|laptop|computer|tablet|camera|lamp|vase|pot|"
+               r"plant|garden|lawn|hedge|yard|porch|roof|gutter|drain|pipe|engine|wheel|tyre|tire|panel|frame|bottle|jar|"
+               r"wallet|purse|book|cushion|pillow|sofa|toolbox|tool|kit|equipment|gear|chip|implant|water|milk|hay|straw|"
+               r"craft|project|homework|belt|conveyor)"
+               r"(?:s|es)?\b")
+_H_DET = r"(?:the|a|an|my|your|his|her|their|our|its|some|any|all|every|that|this|these|those|one|two|three)"
+_H_MOD = r"(?:(?!(?:at|to|on|onto|in|into|and|or|with|from|for|of|by|so|then|while|when|until|because|if)\b)[a-z'’-]+\s+)"
+_H_POSS = (r"(?:(?:my|your|his|her|their|our)\s+(?:" + _H_MOD + r"{0,2}?" + _H_LIVING + r"['’]s?\s+)?|(?:" + _H_DET + r"\s+)?" +
+         _H_MOD + r"{0,2}?" + _H_LIVING + r"['’]s?\s+|(?:someone|somebody|people|a person|the person)['’]s?\s+)")
+_H_A_LIVING = (r"(?:" + _H_DET + r"\s+)?" + _H_MOD + r"{0,2}?" + _H_LIVING + r"\b(?!['’]s?\s+" + _H_MOD + r"{0,1}?" + _H_THING_HEAD +
+             r")(?!['’])(?!\s+" + _H_THING_HEAD + r")(?!-)")
+_H_HER = r"her\b(?!\s+(?!(?:" + _NOT_DESCRIBING + "|" + _PREPOSITION + "|" + _ADVERB + r"|until|again|too|now)\b)[a-z])"
+# someone (or their body): the object of a verb that hurts or ties
+_H_SOMEONE = r"(?:(?:me|you|him|them|us|myself|yourself|himself|herself|themselves|ourselves|ya|u)\b|" + _H_HER + "|" + \
+    _H_POSS + _H_MOD + r"{0,1}?" + _H_BODY + r"\b|" + _H_A_LIVING + ")"
+_H_SOMEONE_NOT_THEM = _H_SOMEONE.replace("(?:me|you|him|them|us|", "(?:me|you|him|us|", 1)
+# ... and after "at", "on" or "against" a body word ending its phrase too ("aims the heat gun at the arm"), never one a
+# thing word describes ("at the robot arm", "at the screw heads")
+_H_TARGET = r"(?:" + _H_SOMEONE + r"|(?:the\s+)?" + _H_BODY + r"\b(?=\s*(?:$|[.,;:!?)]|(?:and|or|until|while|when|so|then|with)\b)))"
+# things that hurt: any gun, blades, heat, chemicals, things thrown or swung, shocks
+_H_GUN = r"(?:[a-z-]+[- ])?guns?\b|\b(?:nail|glue|staple|blow|stun)guns?\b|\bblowpipes?"
+_H_DANGER = (r"(?:" + _H_GUN + r"|knife|knives|machetes?|blades?|razors?|scalpels?|box ?cutters?|scissors|saws?|chainsaws?|"
+           r"swords?|axes|axe|daggers?|spears?|pitchforks?|sickles?|cleavers?|bats?|clubs?|hammers?|crowbars?|sticks?|"
+           r"rocks?|stones?|bricks?|needles?|syringes?|darts?|arrows?|blowtorch(?:es)?|torch(?:es)?|lighters?|"
+           r"soldering irons?|hot irons?|curling irons?|irons?|flamethrowers?|flames?|fire|boiling water|hot water|hot oil|"
+           r"acid|bleach|ammonia|lye|pepper spray|mace|poison|insecticide|pesticide|weed ?killer|cattle prods?|prods?|"
+           r"tasers?|slingshots?|catapults?|crossbows?|bows?|fireworks?|chemicals?|petrol|gasoline|lasers?)\b")
+_H_DANGER_OR_IT = r"(?:\b" + _H_DANGER + r"|\bit\b|\bthem\b)"
+_H_AIM = (r"(?:aim|point|hold|held|fir(?:e|es|ed|ing)|shoot|shot|direct|train|level|turn|wav(?:e|es|ed|ing)|brandish|press|"
+        r"push|put|jab|poke|stick|spray|squirt|blast|swing|swung|thrust|us(?:e|es|ed|ing)|swipe|slash|throw|threw|thrown|"
+        r"hurl|fling|flung|drop|launch|touch|lunge|splash|pour|tip|dump|flick|lob|toss|swat|jam|drive|plunge|sink|"
+        r"bring|brought|move)(?:s|es|ed|ing)?")
+_H_NEG = r"(?<!\bnever )(?<!\bnot )(?<!n't )(?<!\bwithout )(?<!\bavoid )(?<!\bavoids )(?<!\bavoiding )(?<!\bno )(?<!\bnor )"
+_H_VERB_USE = (r"(?<!\bthe )(?<!\ba )(?<!\ban )(?<!\bmy )(?<!\byour )(?<!\bhis )(?<!\bher )(?<!\btheir )(?<!\bour )"
+             r"(?<!\bits )")         # a verb, not a noun ("the nail tech", "a tape measure")
+_H_CL = r"[^.;!?\n]"
+_H_AT = (r"(?:(?:at|on|onto|against|toward|towards|over|under|beneath|below)\s+|(?:in|into)\s+(?!(?:my|your|his|her|their|our|"
+       r"(?:the|a|an)\s+[a-z'’-]+['’]s?|[a-z'’-]+['’]s?)\s+(?:[a-z-]+\s+)?(?:hand|palm)s?\b))")
+_H_HURT = (r"(?:hurt|harm|injur|attack|punch|kick|stab|kill|slap|shoot|shot|zap|tase|taser|electrocut|chok|strangl|poison|"
+         r"tortur|hit|beat|whip|smack|strik|struck|thump|batter|spank|burn|scald|maim|wound|bite|bully|abus|"
+         r"drown|suffocat|smother|trip|shock|sting|stung|pelt|stun|gas|mace|pepper-?spray|drug|sedat|terrori|"
+         r"threat|intimidat|menac|harass|torment|blinds|blinded|blinding)\w*")
+_H_TIE = (r"(?:restrain|handcuff|cuff|gag|shackl|chain|strap|tie|ties|tied|tying|bind|bound|lock|cag|trap|pin|tape|taping|"
+        r"seal|stapl|nail|glu|fasten|stick|stuck|zip-?ti|wrap|clamp|tether)\w*")
+_H_FOOD = (r"(?:food|drink|coffee|tea|water|bowl|meal|dinner|lunch|breakfast|soup|juice|milk|wine|beer|cup|glass|bottle|"
+         r"plate|snack|cereal|smoothie)s?")
+# aimed, pointed, fired or swung at someone: "aims the rivet gun at the kid next door", "swings a knife at my brother",
+# "holds a knife to his throat", "mount a screw gun and aim it at people": the verb, then within 150 characters of its
+# clause something that hurts (or "it"), then within 150 more "at" someone or "to" their body; _aimed_at() reads it
+_H_AIMED = _H_NEG + r"\b" + _H_AIM + r"\b"
+_H_AIMED_AT = (r"(?=((?<!\baway )(?<!\bclear )(?<!\bfar )(?<!\bnot )(?<!\bnever )\b" + _H_AT + _H_TARGET + r"|\bto\s+" + _H_POSS +
+               _H_MOD + r"{0,1}?" + _H_BODY + r"\b))")
+HOSTILE = (
+    # thrown, fired or sprayed at someone, whatever it is ("throws rocks at the cat", "sprays water at the cat"): as the
+    # filter always read it; not sunscreen on one's own back
+    _H_NEG + r"\b(?:shoot|launch|fir(?:e|es|ing)|throw|fling|hurl|pelt|lob|squirt|spray|pour|splash|dump)\w*\b" + _H_CL +
+    r"{0,40}?\b(?:at|on|over)\s+" +
+    r"(?:(?:him|them|us|you)\b|" + _H_HER + "|" + _H_A_LIVING + ")",
+    # swung or slashed at someone ("slashes at the cat with a knife")
+    _H_NEG + r"\b(?:slash|swip|lung|lash|strik|swing|swung|jab|pok|thrust|stab|hack|chop|cut|lash)\w*\s+at\s+" + _H_A_LIVING,
+    # done to someone with it: "burns the cat with a blowtorch", "touches the cat with a soldering iron"
+    _H_NEG + r"\b(?:touch|press|pok|prod|jab|burn|brand|hit|strik|struck|spray|squirt|dous|zap|shock|pelt|whip|beat|poke)\w*\s+" +
+    _H_SOMEONE + r"(?:\s+[\w'’-]+){0,4}?\s+(?:with|using)\s+(?:a|an|the|my|his|her|their|our|some)?\s*(?:[a-z-]+\s+){0,2}?" +
+    _H_DANGER,
+    r"\bsets?\s+fire\s+to\s+" + _H_SOMEONE + r"|\bsets?\s+" + _H_SOMEONE + r"\s+(?:on\s+fire|alight|ablaze)",
+    # things hurled at property: "throws rocks at the cars"
+    r"\b(?:throw|hurl|fling|launch|fire|shoot|lob)\w*\s+(?:[\w'’-]+\s+){0,3}?(?:rocks?|stones?|bricks?|fireworks?|eggs?)\s+"
+    r"at\s+(?:the\s+|my\s+|our\s+|their\s+|passing\s+)?(?:[a-z-]+\s+)?(?:cars?|vehicles?|windows?|houses?|buses|trains?|"
+    r"planes?|drones?|traffic|shops?)\b",
+    # done to someone: "hits the kids with a stick", "poisons my husband", "kills mice", "blinds the guard"
+    _H_NEG + _H_VERB_USE + r"\b" + _H_HURT + r"\s+(?:up\s+|down\s+)?" + _H_SOMEONE,
+    # restrained: "ties up the dog", "holds him down", "tapes him to the chair", "locks the kids in their room"
+    _H_NEG + _H_VERB_USE + r"\b" + _H_TIE + r"\s+(?:up\s+|down\s+)?" + _H_SOMEONE_NOT_THEM,
+    _H_NEG + r"\b(?:hold|holds|holding|held|pin|pins|pinned|pinning|keep|keeps|keeping)\s+" + _H_SOMEONE + r"\s+(?:down|still)\b"
+    r"(?!\s+(?:for|while|so)\s+(?:the\s+|a\s+|her\s+|his\s+|its\s+)?(?:vet|doctor|nurse|groomer|dentist|farrier|check-?up|"
+    r"injection|jab|exam|examination|treatment|vaccination|haircut|trim)\b)",
+    # a chemical put on or in someone, or in their food: "squirts bleach in the dog's eyes", "puts bleach in my husband's
+    # coffee"; drugs only in their food or drink ("drugs my wife's drink", not "puts my dad's pills in his hand")
+    r"\b(?:spray|squirt|pour|splash|throw|put|tip|add|mix|slip|drip|sprinkl|rub|smear)\w*\s+(?:[\w'’-]+\s+){0,3}?(?:bleach|"
+    r"acid|ammonia|lye|poison|insecticide|pesticide|weed ?killer|chemicals?|petrol|gasoline|boiling water|hot oil|"
+    r"pepper spray|mace|rat poison|antifreeze|caustic soda|drain cleaner)\s+(?:at|on|in|into|onto|over)\s+(?:" + _H_SOMEONE +
+    "|" + _H_POSS + r"(?:[a-z-]+\s+)?" + _H_FOOD + r"\b)",
+    r"\b(?:put|slip|add|mix|drop|crush|stir|sneak)\w*\s+(?:[\w'’-]+\s+){0,3}?(?:drugs?|sedatives?|sleeping (?:pills|tablets)|"
+    r"laxatives?|roofies|rohypnol)\s+(?:in|into)\s+" + _H_POSS + r"(?:[a-z-]+\s+)?" + _H_FOOD + r"\b",
+    r"\b(?:drug|spike|poison|lace)\w*\s+" + _H_POSS + r"(?:[a-z-]+\s+)?" + _H_FOOD + r"\b",
+    # traps and falls: "sets traps for the neighbour's cat", "pushes my brother down the stairs"
+    r"\b(?:set|lay)s?\s+(?:up\s+)?traps?\s+for\s+" + _H_SOMEONE,
+    _H_NEG + r"\b(?:push|shov|knock|throw)\w*\s+" + _H_SOMEONE + r"\s+(?:down|off|over|out of|into)\b",
 )
-# workshop, shop and kitchen tools called guns ("hand the packer the tape gun", "pass me the temp gun"): no weapon. A
-# stun gun, an air gun, a blow gun (a dart weapon; an air blow gun is a tool) or a gun on its own is still refused.
-_TOOL_GUN = (r"\b(?:hot\s+)?(?:glue|heat|caulk|caulking|paint|spray|nail|staple|stapler|massage|label|labell?ing|tape|rivet|"
-             r"grease|scan|scanner|scanning|barcode|bar[- ]code|solder|soldering|price|pricing|tag|tagging|temp|temperature|"
-             r"thermometer|infrared|ir|impact|screw|foam|sealant|silicone|welding|mig|tig|cable[- ]tie|tie|radar|"
-             r"heat[- ]shrink|dispensing|grout|texture|air[- ]blow|wheel|lug|tyre|tire|torque)[- ]guns?\b")
-# ... and only while nothing turns it on someone: aimed, pointed, held, pressed or fired at or on a person, an animal or a
-# body part ("aims a rivet gun at people", "holds a grease gun to his head", "tapes people's mouths shut"), darts, a
-# turret, shooting, scaring or gagging. Then any gun is refused ("a robot that points the nail gun at my brother" was
-# built: the HARM patterns let glue, heat, nail, staple and label guns through). Pointed at a thing, held out to someone,
-# put in a hand or kept away from a face, it stays a tool.
-_BODY = (r"(?:heads?|faces?|eyes?|eyeballs?|foreheads?|temples?|necks?|throats?|mouths?|lips|ears?|nose|noses|chests?|"
-         r"bell(?:y|ies)|backs?|skin|hair|bod(?:y|ies)|arms?|legs?|knees?|feet|foot|toes?|groins?|tails?|paws?|fur)")
-_HAND = r"(?:hands?|palms?|fingers?|thumbs?|wrists?)"
-_GUN_TARGET = (r"(?:people|persons?|someone|somebody|anyone|anybody|everyone|everybody|humans?|intruders?|strangers?|"
-               r"burglars?|thie(?:f|ves)|trespassers?|neighbou?rs?|passers?-?by|crowds?|" + _ROLES + "|" + _KIN + "|" +
-               _ANIMAL + r"|squirrels?|foxes|fox|deer|mice|mouse|rats?|pigeons?|wildlife)")
-_POSS_LIVING = (r"(?:(?:my|your|his|her|their|our)\s+(?:(?!(?:" + _BODY + "|" + _HAND + r")\b)[a-z-]+\s+){0,2}?" + _GUN_TARGET +
-                r"['’]s?|" + _GUN_TARGET + r"['’]s?|my|your|his|her|their|our)")
-# the living word ends its noun phrase: "at the dog", not "at the dog house" or "the cat flap"
-_TARGET_END = (r"(?!['’])(?!\s+(?!(?:with|and|or|at|to|on|in|into|for|from|while|when|so|then|until|because|if|using|by|who|"
-               r"that|which|every|each|again|all|too|as|until|before|after|whenever|if)\b)[a-z])")
-_NOT_DONE = r"(?<!\bnever )(?<!\bnot )(?<!n't )(?<!\bwithout )(?<!\bavoid )(?<!\bavoids )(?<!\bavoiding )(?<!\bno )"
-_AT_SOMEONE = (r"(?:(?:the|a|an|my|your|his|her|their|our|some|any|all|every)\s+)?(?:(?!(?:at|to|on|in|into|and|or|with|from)\b)"
-               r"[a-z'’-]+\s+){0,2}?(?:" + _GUN_TARGET + r"\b" + _TARGET_END + "|" + _POSS_LIVING + r"\s+(?:[a-z-]+\s+)?(?:" + _BODY + "|" +
-               _HAND + r")\b|" + _BODY + r"\b|" + _HAND + r"\b)")
-GUN_TURNED_ON = (_NOT_DONE + r"\b(?:aim|point|hold|held|fir(?:e|es|ed|ing)|shoot|shot|direct|train|level|turn|wave|waving|brandish|"
-                 r"press|push|put|jab|poke|stick|spray|squirt|blast|swing|thrust|us(?:e|es|ed|ing))(?:s|es|ed|ing)?\b"
-                 r"[^.;!?]{0,60}?(?<!\bout )(?<!\baway )\b(?:at|on|onto|against|toward|towards)\s+(?:(?:me|you|him|them|us|"
-                 r"myself|yourself|himself|herself|themselves|ourselves)\b|her\b(?!\s+[a-z])|" + _AT_SOMEONE + r")|" + _NOT_DONE +
-                 r"\b(?:aim|point|hold|held|press|push|put|jab|poke|stick|spray|squirt|blast|shoot|fir(?:e|es|ed|ing))"
-                 r"(?:s|es|ed|ing)?\b[^.;!?]{0,60}?\b(?:to|in|into|up)\s+(?:(?:the|a|an|my|your|his|her|their|our)\s+)?"
-                 r"(?:" + _GUN_TARGET + r"['’]s?\s+)?(?:[a-z-]+\s+)?" + _BODY + r"\b|" +
-                 # done to someone with it: "tags people with a tag gun", "nails the cat", "glues people's hands together",
-                 # "a robot with a nail gun that targets intruders"
-                 _NOT_DONE + r"\b(?:stapl|nail|glu|tape|taping|tag|label|rivet|screw|spray|squirt|zap|burn|scald|heat|solder|"
-                 r"paint|seal|caulk|target|attack|hit|strik|struck|threat|scar|chas|stab|pok|jab|shock|sting|stung|blast|pelt|"
-                 r"pin|punish|hunt|hurt|harm|injur)\w*\s+(?:(?:the|a|an|my|your|his|her|their|our|some|any|all|every)\s+)?"
-                 r"(?:(?!(?:at|to|on|in|into|and|or|with|from|for)\b)[a-z'’-]+\s+){0,2}?(?:" + _GUN_TARGET + r"\b" + _TARGET_END +
-                 "|" +
-                 _GUN_TARGET + r"['’]s?\s+(?:[a-z-]+\s+)?(?:" + _BODY + "|" + _HAND + r")\b)|"
-                 # a gun that defends or guards a place: "a nail gun on a robot to defend my house"
-                 r"\b(?:defend\w*|defen[cs]e|deter\w*|repel\w*|guard(?:s|ed|ing)?\s+(?:the|my|our|a|its|his|her|their)\b|"
-                 r"ward(?:s|ed|ing)?\s+off|keep(?:s|ing)?\s+(?:people|intruders|burglars|strangers|thieves|them|everyone)\s+"
-                 r"(?:out|away))|" +
-                 r"(?<!\baway from )(?<!\bclear of )(?<!\bfar from )(?<!\bout of )\b" + _POSS_LIVING + r"\s+(?:[a-z-]+\s+)?" +
-                 r"(?:mouths?|lips|eyes?|eyeballs?|faces?|heads?|foreheads?|temples?|necks?|throats?|ears?|nose|noses)\b|"
-                 r"\b(?:darts?|turrets?|sentry|sentries|shoot\w*|fir(?:e|es|ed|ing)\b(?!\s+(?:extinguisher|alarm|blanket|exit|"
-                 r"door|safety|drill|station|hazard|risk|place|wood|pit|truck|engine)s?)|(?<!\bair )(?<!\bair-)blow[- ]?guns?|"
-                 r"blowpipes?|bullets?|scar(?:e|es|ed|ing)|threat\w*|frighten\w*|intimidat\w*|menac\w*|terrori[sz]\w*|"
-                 r"gag(?:s|ged|ging)?|torment\w*|harass\w*|shut\s+(?:people|someone|anyone|them|him|her)\s+up|intruders?|"
-                 r"burglars?|trespassers?|strangers?|robbers?|attackers?|enem(?:y|ies))\b")
+# no verb: "a robot with a rivet gun on people", "rivet gun at my brother", "a knife to his throat"
+_H_NO_VERB = (r"\b" + _H_DANGER + r"(?:\s+[\w'’-]+){0,4}?\s+(?:(?:at|on|onto|against|toward|towards)\s+" + _H_TARGET +
+              r"|for\s+" + _H_POSS + _H_MOD + r"{0,1}?" + _H_BODY + r"\b)",
+              r"\b" + _H_DANGER + r"(?:\s+[\w'’-]+){0,3}?\s+to\s+" + _H_POSS + _H_MOD + r"{0,1}?" + _H_BODY + r"\b")
+_H_ANY_DANGER = r"\b" + _H_DANGER
+_H_DANGER_HERE = r"(?=(" + _H_DANGER_OR_IT + "))"       # every place one starts, overlapping ("point gun")
+# with a weapon or a tool that can hurt in the request: an only-there target, a purpose that turns it on someone, or
+# someone sealed in ("never aims it at the wall, only at people", "uses the impact gun to shut my brother up", "to keep
+# the cat off the counter", "goes off when someone opens the door", "seals them in the room")
+HOSTILE_WITH_DANGER = (
+    r"\b(?:only|but|just|instead|rather|except)\s+(?:at|on|towards?)\s+" + _H_TARGET,
+    r"\bshut\s+" + _H_SOMEONE + r"\s+up\b",
+    _H_NEG + r"\b(?:tag|label|rivet|screw|spray|squirt|heat|solder|paint|caulk|target|scar|chas|pok|jab|blast|punish|hunt|"
+    r"frighten|sting|disciplin|deter|repel|keep)\w*\s+" + _H_A_LIVING + r"(?!\s+(?:company|warm|safe|fed|happy|clean|dry|"
+    r"busy|cool|entertained)\b)",
+    r"\bkeep(?:s|ing)?\s+" + _H_SOMEONE + r"\s+(?:off|out|away|back)\b",
+    r"\bstop(?:s|ping)?\s+" + _H_SOMEONE + r"\s+(?:from\s+)?[a-z]+ing\b",
+    r"\bgo(?:es)?\s+off\s+(?:when|if|whenever)\s+" + _H_SOMEONE,
+    r"\b(?:when|if|whenever|as soon as)\s+" + _H_A_LIVING + r"\s+(?:comes?|walks?|gets?|opens?|enters?|steps?|tries|try|goes|"
+    r"knocks?|rings?|arrives?|approaches|approach|moves?|appears?|climbs?|jumps?|breaks?)\b",
+    r"\b" + _H_TIE + r"\s+them\s+(?:in|into|inside)\s+(?:the\s+|a\s+|their\s+|his\s+|her\s+)?(?:room|house|basement|cellar|"
+    r"closet|cupboard|cage|shed|garage|car|trunk|attic|bathroom|bedroom|office|toilet|cell)\b",
+)
+# context that makes any gun a weapon ("a staple gun turret", "a nail gun on a robot to defend my house", "darts")
+GUN_CONTEXT = (r"\b(?:defend\w*|defen[cs]e|deter\w*|repel\w*|protect(?:s|ing|ion)?\s+(?:the\s+|my\s+|our\s+)?(?:[a-z-]+\s+)?(?:door|house|home|yard|garden|gate|property|shop|store|building|driveway|garage|car|premises|flat|apartment|office|farm|land)\b|guard(?:s|ed|ing)?\s+(?:the\s+|my\s+|our\s+|a\s+|his\s+|her\s+|"
+               r"their\s+)?(?:[a-z-]+\s+)?(?:door|house|home|yard|garden|gate|entrance|fence|property|shop|store|building|"
+               r"room|driveway|garage|car|base|perimeter|area|premises|porch|flat|apartment|office|land|farm|field)s?\b|"
+               r"ward(?:s|ed|ing)?\s+off|keep(?:s|ing)?\s+(?:people|intruders|burglars|strangers|thieves|them|everyone)\s+"
+               r"(?:out|away)|darts?|turrets?|sentry|sentries|"
+               r"(?:shoot\w*|fir(?:e|es|ed|ing))\b(?!\s+(?:extinguisher|alarm|blanket|exit|door|safety|drill|station|hazard|risk|place|"
+               r"wood|pit|truck|engine|starter|brigade|fighter|man|men|proof|resistant|retardant|works?|up)s?\b)(?!\s+(?:[\w'’-]+\s+)"
+               r"{0,4}?(?:into|through|onto)\s+(?!" + _H_SOMEONE + r"))(?!\s+(?:the\s+|a\s+)?(?:[a-z-]+\s+)?(?:nails?|staples?|"
+               r"brads?|rivets?|tacks?|pins?|screws?|bolts?|glue|clay|kilns?|pottery|photos?|pictures?|video|hoops?)\b)|"
+               r"(?<!\bair )(?<!\bair-)blow[- ]?guns?|blowpipes?|bullets?|scar(?:e|es|ed|ing)|threat\w*|frighten\w*|"
+               r"intimidat\w*|menac\w*|terrori[sz]\w*|gag(?:s|ged|ging)?|torment\w*|harass\w*|intruders?|burglars?|"
+               r"trespassers?|strangers?|robbers?|attackers?|enem(?:y|ies)|as\s+a\s+weapon|weaponi[sz]\w*)\b")
+WEAPONS = (r"\b(?:weapons?|firearms?|rifles?|pistols?|shotguns?|handguns?|revolvers?|ar-?15s?|ak-?47s?|glocks?|uzis?|"
+           r"sub-?machine ?guns?|machine ?guns?|snipers?|tasers?|stun ?guns?|(?<!bath )bombs?|pipe ?bombs?|explosives?|"
+           r"grenades?|missiles?|warheads?|rocket launchers?|bazookas?|ammunition|ammo|blowguns?|blowpipes?|crossbows?|"
+           r"flamethrowers?|molotovs?|landmines?|land mines?|nerve (?:agents?|gas)|sarin|ricin|anthrax|mustard gas|napalm|"
+           r"ieds?|harpoons?|cannons?|nunchucks?|brass knuckles|knuckle-?dusters?|switchblades?|flick ?knives?|"
+           r"butterfly knives?|throwing (?:knives|stars?))\b")
+SPY = r"\b(?:spy|spies|spied|spying)\s+on\b|\bsecretly\s+(?:watch|record|film)\w*|\bcovert(?:ly)?\s+(?:watch|record|film|surveil)\w*"
+# tool guns: the ones the filter always let through, and the ones it refused before this beta, which are let through
+# only in a harmless use: handed over, held, cleaned, loaded, stored or sorted, used on a thing, or named as a thing's part
+_H_OLD_TOOL_GUN = (r"(?:hot\s+)?(?:glue|heat|caulk|caulking|paint|spray|nail|staple|massage|label|confetti|t-?shirt|bubble|snow|"
+                 r"glitter|frosting|icing)")
+_H_NEW_TOOL_GUN = (r"(?:stapler|labell?ing|tape|rivet|grease|scan|scanner|scanning|barcode|bar[- ]code|solder|soldering|price|"
+                 r"pricing|tag|tagging|temp|temperature|thermometer|infrared|ir|impact|screw|foam|sealant|silicone|welding|mig|"
+                 r"tig|cable[- ]tie|tie|radar|heat[- ]shrink|dispensing|grout|texture|air[- ]blow|wheel|lug|tyre|tire|torque)")
+_H_HARMLESS_BEFORE = (r"\b(?:hand|pass|giv|gave|bring|brought|fetch|grab|get|got|toss|offer|return|suppl|lend|lent|deliver|put|"
+                    r"tak(?:e|es|en|ing)|took|collect|receiv|accept|retriev|remov|unhook|unclip|"
+                    r"hold|held|pick(?:s|ed|ing)? up|lift|carr|mov|stor|stow|hang|hung|clean|wip|load|reload|refill|fill|charg|"
+                    r"sort|stack|box|pack|test|calibrat|swap|replac|repair|fix|check|inspect|lubricat|oil|greas|maintain|mount|"
+                    r"attach|fit|equip|us(?:e|es|ed|ing)|operat|aim|point|press|direct|keep|kept|install|steady|switch|plug|"
+                    r"unplug|recharg|buy|order|rent|borrow|need|want|find|label|rack|organi[sz]|tidy|shelve|count)\w*\s+"
+                    r"(?:(?!(?:and|or|but|then|while|when|because|so)\b)[\w'’-]+\s+){0,6}?(?:[\w-]+\s+)?$")
+_H_HARMLESS_AFTER = (r"^(?:s)?\s*(?:holders?|racks?|stands?|cases?|box(?:es)?|nozzles?|tips?|triggers?|refills?|cartridges?|"
+                   r"tapes?|nails|staples|sticks|batter(?:y|ies)|chargers?|hooks?|mounts?|brackets?|parts|spares|reels?|"
+                   r"rolls?|holsters?|sleeves?|covers?|manuals?|drawer|shelf|bins?|trays?|labels|tags|heads?|bits?|"
+                   r"(?:robot|arm|attachment|end effector|tool|head)s?\s+(?:that|which|to|for)\b|(?:that|which|to|for)\s+"
+                   r"(?!(?:shoot|fire|hurt|harm|scare|attack|defend|guard|threaten)\w*)[a-z]+)")
+
+
+HARM = (WEAPONS, SPY)
 _STUB = "This robot sounds like it's meant to hurt, threaten or restrain people or animals. Morph doesn't design that."
 
 
@@ -1399,17 +1513,96 @@ def sanitize_object(v) -> dict | None:
 
 
 # ------------------------------------------------------------------ rules: read a message
+def _gun_harmless(t: str, m: re.Match) -> bool:
+    """Whether a tool gun the filter refused before this beta is in a harmless use where the request names it."""
+    before, after = t[max(0, m.start() - 160):m.start()], t[m.end():m.end() + 80]
+    return bool(re.search(_H_HARMLESS_BEFORE, before) or re.match(_H_HARMLESS_AFTER, after) or
+                re.search(r"\bwith\s+(?:a|an|the|my|its|his|her|their|our)?\s*(?:[a-z-]+\s+){0,2}?$", before) and
+                re.search(r"\b[a-z]+(?:s|es|ed|ing)?\s+(?:[\w'’-]+\s+){1,7}?with\s+", before) and
+                not re.search(r"\b(?:robot|arm|bot|machine|one)\s+(?:that\s+has\s+|with\s+)(?:a|an|the)?\s*(?:[a-z-]+\s+){0,2}?$",
+                              before))
+
+
+def _self_massage(s: str) -> bool:
+    """A massage gun on the requester's own body is what it is for ("uses the massage gun on my back")."""
+    return bool(re.search(r"\bmassage[- ]?guns?\b", s) and
+                re.search(r"\b(?:at|on|onto|against|over|to)\s+(?:(?:me|myself)|my\s+(?:[a-z-]+\s+)?" + _H_BODY + r")\s*$", s))
+
+
+def _negated(t: str, start: int) -> bool:
+    """A "never", "not" or "avoid" earlier in the clause, before a verb-less match ("never points the gun at anyone")."""
+    clause = re.split(r"[.;!?\n]", t[:start])[-1]
+    return bool(re.search(r"\b(?:never|not|without|avoid\w*|no)\b|n't\b", clause[-80:]))
+
+
+def _aimed_at(pt: str):
+    """Each "aims it at someone" in `pt` (verb, then within 150 characters of the clause something that hurts or "it",
+    then within 150 more "at" someone or "to" their body), as the words from the verb to the target. One pattern with
+    two open gaps took most of a second on 2,000 characters of repeated verbs; this finds every verb, danger and
+    target once and pairs them by position."""
+    aims = list(_rx(_H_AIMED).finditer(pt))
+    if not aims:
+        return
+    dangers = [(m.start(1), m.end(1)) for m in _rx(_H_DANGER_HERE).finditer(pt)]
+    targets = [(m.start(1), m.end(1)) for m in _rx(_H_AIMED_AT).finditer(pt)]
+    if not dangers or not targets:
+        return
+    ends = [m.start() for m in re.finditer(r"[.;!?\n]", pt)] + [len(pt)]
+    d_starts, t_starts = [d[0] for d in dangers], [t[0] for t in targets]
+    for a in aims:
+        stop = ends[bisect.bisect_left(ends, a.end())]          # the clause ends here
+        k = bisect.bisect_left(d_starts, a.end())
+        while k < len(dangers) and dangers[k][0] <= min(a.end() + 150, stop):
+            d_end = dangers[k][1]
+            n = bisect.bisect_left(t_starts, d_end)
+            while n < len(targets) and targets[n][0] <= min(d_end + 150, stop):
+                yield pt[a.start():targets[n][1]]
+                n += 1
+            k += 1
+
+
+@functools.lru_cache(maxsize=4096)
 def harmful(text: str) -> str | None:
-    t = (text or "").lower()
-    if re.search(r"\bguns?\b|\bblow-?guns?\b", t):
-        hostile = _rx(GUN_TURNED_ON).search(t)
-        if hostile:            # a gun turned on someone is refused, whatever the gun is called
-            return hostile.group(0).strip()
-        t = re.sub(_TOOL_GUN, " tool ", t)
-    for pat in HARM:
+    """The words that make a request one Morph refuses, or None: a weapon, spying, something that can hurt turned on
+    someone or something alive (aimed, swung, fired, thrown, poured, pressed, with or without a verb, "only at people",
+    to "shut my brother up" or "keep the cat off"), someone hurt, tied, locked up or drugged, a gun that is no tool, a
+    tool gun with a weapon's context (darts, a turret, guarding the door), and one of the tool guns this filter refused
+    before this beta (tape, rivet, impact, scan and the like) in no harmless use the request names: handed over, held,
+    cleaned, loaded, stored or sorted, used on a thing, or named as a thing's part."""
+    raw = " ".join((text or "").split())[:2000]
+    t = raw.lower().replace("@", " at ")
+    pt = people_text(raw, agents=False).replace("@", " at ")    # names read as "someone"
+    for pat in (WEAPONS, SPY):
         m = re.search(pat, t)
         if m:
             return m.group(0)
+    for words in _aimed_at(pt):
+        if not _self_massage(words):
+            return words.strip()
+    for pat in HOSTILE:
+        for m in _rx(pat).finditer(pt):
+            if not _self_massage(m.group(0)):
+                return m.group(0).strip()
+    for pat in _H_NO_VERB:
+        for m in _rx(pat).finditer(pt):
+            if not _self_massage(m.group(0)) and not _negated(pt, m.start()):
+                return m.group(0).strip()
+    if _rx(_H_ANY_DANGER).search(pt):
+        for pat in HOSTILE_WITH_DANGER:
+            m = _rx(pat).search(pt)
+            if m:
+                return m.group(0).strip()
+    guns = list(re.finditer(r"\b(?:[a-z-]+[- ])?guns?\b|\b(?:nail|glue|staple)guns?\b", t))
+    if guns:
+        m = _rx(GUN_CONTEXT).search(t)
+        if m:
+            return m.group(0).strip()
+        for g in guns:
+            near = t[max(0, g.start() - 25):g.end()]
+            if not re.search(r"\b(?:" + _H_OLD_TOOL_GUN + "|" + _H_NEW_TOOL_GUN + r")[- ]?guns?$", near):
+                return g.group(0)          # a gun that is no tool
+            if re.search(r"\b" + _H_NEW_TOOL_GUN + r"[- ]?guns?$", near) and not _gun_harmless(t, g):
+                return g.group(0)          # a tool gun refused before this beta, in no harmless use the request names
     return None
 
 
@@ -1487,7 +1680,7 @@ def parse(text: str) -> dict:
     except the layout, which is inferred from where things go."""
     raw = (text or "")[:2000]
     t = normalize_units(raw.lower())
-    out = {"slots": {}, "inferred": {}, "hints": {}, "implicit": [], "oos": out_of_scope_kinds(t), "harm": harmful(t), "said": {},
+    out = {"slots": {}, "inferred": {}, "hints": {}, "implicit": [], "oos": out_of_scope_kinds(t), "harm": harmful(raw), "said": {},
            "adjusted": adjusted_kinds(t), "person": {}}
     s, inf = out["slots"], out["inferred"]
     key, conf = detect_archetype(t)
@@ -2122,8 +2315,9 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
     if text and text.strip():
         t = text.strip()[:2000]
         p = parse(t)
-        if p["harm"]:
-            refuse(b, p["harm"], "rules")
+        hit = p["harm"] or harmful(conversation(b, t))   # "a robot that holds a rivet gun", then "point it at my brother"
+        if hit:
+            refuse(b, hit, "rules")
             return notes
         _typed_answer(b, p, normalize_units(t.lower()))
         keep = {"slots": {k: v for k, v in p["slots"].items() if k in ("object", "throughput", "budget", "quantity", "precision",
@@ -2137,6 +2331,24 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
             set_archetype(b, a2, 0.9, "user")
     b.turns.append({"role": "user", "answers": dict(answers or {}), "text": (text or "")[:2000], "ts": _now_iso()})
     return notes
+
+
+def conversation(b: Brief, text: str | None = None) -> str:
+    """The person's words so far, the request and every typed reply (and `text`), as one passage for the harm filter: a
+    tool held in one message and turned on someone in the next is read together, and a reply that goes on with the
+    last message ("on the cat", "only at people", "and swings it at my sister") as the same sentence. The last 2,000
+    characters."""
+    said = [x.get("text") or "" for x in b.turns if x.get("role") == "user"]
+    if not said or said[0] != b.request:
+        said.insert(0, b.request)
+    out = ""
+    for w in said + [text or ""]:
+        w = " ".join(w.split()).rstrip(".")
+        if w:
+            on = out and re.match(r"(?:at|on|onto|to|toward|towards|against|only|just|and|but|then|so|with|into|in|over|"
+                                  r"under|for)\b", w, re.I)
+            out += (" " if on else ". " if out else "") + w
+    return out[-2000:]
 
 
 def progress(b: Brief, *, defaults_now: bool = False, nearest: bool = False, deep: bool = True,
