@@ -1526,10 +1526,11 @@ field failure rate (section 0, honesty).
   between in 4.2-4.5 s, fit 0.6 s; with the mount moved 15 mm 8.7 s at load 2.5), 15.1-16.3 s at load 11-12 (pass 2
   5.1-5.3 s, 422 poses
   between in 6.1-6.6 s, fit 1.1-1.4 s), 20 s and cut short between the poses at load 13-17 (the pre-R6 engine took
-  14.7-14.8 s at load 16); R8: 9.9-10.3 s at load 3-4 and 10.8-11.0 s at load 3-4 with the World e2e running. With
-  the mount moved 15 mm (2.0 mm): R8 8.5-8.7 s at load 2-3 and 9.2-9.5 s at load 5; the final skeptic, at 16ef0d8,
-  13.8-15.9 s at load 9.3-9.8. The million-triangle room (it touches; the regions step skips refining a place that
-  touches): R8 9.8 s at load 2 and 11.9 s at load 5-6; the final skeptic, at 16ef0d8, 11.5 s at load 8.6-9.6.
+  14.7-14.8 s at load 16); R8: 9.9-10.3 s at load 3-4, 10.8-11.0 s at load 3-4 with the World e2e running and
+  13.3-14.6 s at load 8.9-10.2 with the full suite running. With the mount moved 15 mm (2.0 mm): R8 8.5-8.7 s at load
+  2-3, 9.2-9.5 s at load 5 and 9.4-9.5 s at load 8.5-9.8; the final skeptic, at 16ef0d8, 13.8-15.9 s at load 9.3-9.8.
+  The million-triangle room (it touches; the regions step skips refining a place that touches): R8 9.8 s at load 2,
+  11.9 s at load 5-6 and 12.3 s at load 7-7.7; the final skeptic, at 16ef0d8, 11.5 s at load 8.6-9.6.
   `scan_check(scan)` is the check (`id: "scan"`, "Clearance to the room scan", view `along_path`):
   pass, warn (closer than 10 mm, touching, or checked only in part) or skip, never fail, its text ending with
   `SCAN_NOTE` ("Measured against the scanned surface, which can be noisy or have holes. A warning, not a verdict.");

@@ -104,10 +104,11 @@ claim a big place, or a place for near misses closer than the box was fitted to.
 a box the room holds already is never offered again.
 
 The check, the boxes' fit included, has 20 seconds. On a 4-core computer the review's desk scan, a vase 9 mm from the
-arm's path, takes 9.9 to 11.5 seconds at load 1-4 and 15 to 16 at load 11-12 (measured only at the poses, as before,
-it took 14.7 seconds at load 16: the motion between the poses costs about as much again); the same desk with the mount
-moved 15 mm, the wrist 2.0 mm from the vase, 8.5 to 9.5 seconds at load 2-5 and 13.8 to 15.9 at load 9-10; a
-generated room of a million triangles 9.8 seconds at load 2 and 11.5 to 12 at load 5-10. When a check can't measure
+arm's path, takes 9.9 to 11.5 seconds at load 1-4, 13.3 to 14.6 at load 9-10 and 15 to 16 at load 11-12 (measured
+only at the poses, as before, it took 14.7 seconds at load 16: the motion between the poses costs about as much again);
+the same desk with the mount moved 15 mm, the wrist 2.0 mm from the vase, 8.5 to 9.5 seconds at load 2-10 (one run at
+load 9-10 took 13.8 to 15.9); a generated room of a million triangles 9.8 seconds at load 2 and 11.5 to 12.3 at load
+5-10. When a check can't measure
 the whole path in time, it never claims more room than it measured: it says how close the arm comes at most (the
 closest distance it did measure: "The wrist comes within at most 4.6 mm of the scanned surface"), with how close it
 comes at least when it knows ("no closer than 8.6 mm"), or that there wasn't time to measure it, and

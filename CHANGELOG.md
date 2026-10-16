@@ -120,9 +120,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   the path comes no closer there than the box was fitted for; when it does (the robot moved, say), the place is offered
   again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same box is never added
   twice, and a box the room holds already is never offered again. The check, the boxes' fit included, has 20 seconds:
-  the review's desk scan takes 9.9 to 11.5 seconds on a 4-core computer at load 1-4 and 15 to 16 at load 11-12, and a
-  generated room of a million triangles 9.8 seconds at load 2 and 11.5 to 12 at load 5-10 (below: it now measures the
-  arm's own shapes and the motion between its poses).
+  the review's desk scan takes 9.9 to 11.5 seconds on a 4-core computer at load 1-4, 13.3 to 14.6 at load 9-10 and 15
+  to 16 at load 11-12, and a generated room of a million triangles 9.8 seconds at load 2 and 11.5 to 12.3 at load 5-10
+  (below: it now measures the arm's own shapes and the motion between its poses).
   The boxes' share of the time is set aside only once the check has listed a near miss,
   sized from what fitting the boxes takes. Cut short, the check never claims more room than it measured: it says the arm
   comes within at most the closest distance it measured, or that there wasn't time to measure it, says only part of the
