@@ -711,14 +711,16 @@ in sections 3, 4 and 8. The rest that other code relies on:
   turned back into a servo: what a line is comes from its name's head (`bom._head`, the name before "(", ",", ";",
   "+", a dash, "with", "incl.", "built-in" and the fits-what clauses "for", "compatible", "fits", "suits"; a "/" right
   after the motor word). `bom._is_motor_name` holds for a motor word followed only by how the motor is built (a
-  material's case or gears, specs, kind words such as "serial bus", colours, units, a kit word) with no part for a
+  material's case or gears, specs, kind words such as "serial bus", colours, units, a kit word, and what a shop's
+  listing says it is for or has: "RC Robot Arm", "Full Metal Gear Dual Ball Bearing") with no part for a
   motor before it (`bom.ACCESSORY`, unless it is a material's case: "Metal case STS3215 servo"), or for a catalog model
   (`autoprofile.MODEL_RX`) with only makers, kind words and specs ("Feetech STS3215-C018"); a model named only in a
   fits-what clause never makes a line a motor. `autoprofile.TEXT_RX`: Waveshare's ST3215 is the 12 V STS3215 unless it
   says 7.4 V (not the ST3215-HS), and a Dynamixel family is the catalog motor only with its own code or none (an
   XL330-M077, XM430-W210, XM430-W350-R or 2XL430 is none). A name of only a motor's kind or maker ("Wrist pitch/roll
   servo", "Servo #1", "Servo - shoulder", "Dynamixel") is what its description names (`bom._generic_motor`); a line
-  whose reference designators are all connectors, chips, passive parts or switches ("J2 J3") is no motor. Motors the
+  whose reference designators are all connectors, chips, passive parts or switches ("J2 J3") is no motor in a board's
+  parts list (one with a footprint or package column: a hand-made list's "Ref" can name the joints, "J1-J6"). Motors the
   catalog lacks (steppers, BLDC and gear motors) are category "actuator" with `catalog` None; a row's `pack` counts the
   motors of a pack bought once (`actuator_keys`: Qty 1 and "(6 pcs)" is 6); KiCad 5-7's grouped CSV (its "Source:"
   rows, "Qnty") and KiBoM (the value, not the group number in "Component") are read; `total` is None when no line has a

@@ -114,7 +114,13 @@ _BRAND = re.compile(r"(?:feetech|feetechrc|robotis|dynamixel|waveshare|towerpro|
 _MOTOR_BRAND = re.compile(r"(?:myactuator|cubemars|t-motor|steadywin|eaglepower)", re.I)   # they make only motors
 _KIND = re.compile(r"(?:serial|bus|ttl|rs|smart|digital|analog|analogue|high|torque|high-torque|speed|high-speed|"
                    r"magnetic|encoder|encoding|coreless|brushless|micro|mini|standard|waterproof|continuous|rotation|"
-                   r"programmable|intelligent|series|x-series|half-duplex|duplex)", re.I)
+                   r"programmable|intelligent|series|x-series|half-duplex|duplex|full|large|big|dual)", re.I)
+# what a motor's listing says it is for, after the motor word: "MG996R Servo Motor RC Robot Arm" is a servo for a robot
+# arm (the "arm" of a robot, not a servo arm), "MG996R Servo Motor Metal Gear Dual Ball Bearing" one with ball bearings
+_USE = re.compile(r"(?:rc|robot|robots|robotic|robotics|car|cars|boat|boats|helicopter|helicopters|plane|planes|"
+                  r"airplane|aircraft|drone|drones|truck|trucks|vehicle|crawler|arduino|raspberry|pi|diy|hobby|toy|"
+                  r"toys)", re.I)
+_USE_NOUN = {"robot": re.compile(r"arms?|hands?|grippers?|kits?", re.I), "ball": re.compile(r"bearings?", re.I)}
 # a material's case or gears right before or after the motor word describe the motor: "Metal case STS3215 servo",
 # "STS3215 Servo Motor Metal Case 12V", "MG996R Metal Gear Servo"
 _BUILD = re.compile(r"(?:case|cases|housing|shell|gear|gears|geared)", re.I)
@@ -197,7 +203,10 @@ def _is_motor_name(item: str) -> bool:
     for i, w in enumerate(after):
         if _BUILD.fullmatch(w) and i and _MATERIAL.fullmatch(after[i - 1]):
             continue                                   # "Servo Metal Case", "Servo metal gears"
-        if not (_KIND.fullmatch(w) or _BRAND.fullmatch(w) or _ignorable(w)):
+        prev = after[i - 1].rstrip("s").replace("robotic", "robot") if i else ""
+        if prev in _USE_NOUN and _USE_NOUN[prev].fullmatch(w):
+            continue                                   # "... RC Robot Arm", "... Dual Ball Bearing"
+        if not (_KIND.fullmatch(w) or _BRAND.fullmatch(w) or _USE.fullmatch(w) or w == "ball" or _ignorable(w)):
             return False                               # the head noun is something else: "servo horn", "servo arm"
     return True
 
@@ -236,7 +245,8 @@ def _classify(item: str, mpn: str = "", detail: str = "", ref: str = "") -> tupl
     "fits") is what it fits. A motor's model is in its name's head or its MPN; the name, then the description, notes
     or specs (`detail`) pick its variant (autoprofile.VARIANT_RX: an STS3215 described as 12 V is the 12 V servo). A
     motor named only by its kind or maker (_generic_motor) is the motor its description names. A line whose reference
-    designators are all connectors, chips, passive parts or switches ("J2 J3") is none, whatever its value says."""
+    designators (`ref`: only a board's parts list passes them) are all connectors, chips, passive parts or switches ("J2
+    J3") is none, whatever its value says."""
     from .autoprofile import MODEL_RX, TEXT_RX, VARIANT_RX, VARIANTS
     if ref and _not_a_motor_ref(ref):
         return None, False
@@ -312,6 +322,9 @@ def map_table(rows: list) -> tuple[list, dict, list]:
     cols = {}
     used = set()
     data = rows[hi + 1:hi + 201]
+    # a board's parts list (KiCad, KiBoM, JLC: it has a footprint column) names its parts by reference designators, J
+    # a connector and U a chip; a hand-made list's "Ref" can be anything ("J1-J6": the arm's joints)
+    board = any(re.search(r"footprint|package", h) for h in head if h)
     for field, rx in FIELDS:
         idx = [i for i, h in enumerate(head) if h and i not in used and re.search(rx, h)]
         if not idx:
@@ -362,13 +375,13 @@ def map_table(rows: list) -> tuple[list, dict, list]:
         mpn = _cell(get("mpn"))[0] if "mpn" in cols else ""
         desc = _cell(get("description"))[0] if "description" in cols else ""
         ref = _cell(get("ref"))[0] if "ref" in cols else ""
-        key, motor = _classify(item, mpn, desc, ref)
+        key, motor = _classify(item, mpn, desc, ref if board else "")
         out.append({"item": item[:200], "qty": q, "unit_price": unit, "ext_price": ext, "currency": cur or cur2,
                     "url": url if url and re.match(r"^https?://", url) else None, "mpn": mpn[:80] or None,
                     "manufacturer": _cell(get("manufacturer"))[0][:80] or None if "manufacturer" in cols else None,
                     "supplier": _cell(get("supplier"))[0][:80] or None if "supplier" in cols else None,
                     "ref": ref[:200] or None, "description": desc[:200] or None, "make_or_buy": "buy",
-                    "category": "electronics" if ref and _not_a_motor_ref(ref) else _category(item, key, motor),
+                    "category": "electronics" if board and ref and _not_a_motor_ref(ref) else _category(item, key, motor),
                     "catalog": key, "catalog_name": _catalog_name(key),
                     "pack": pack_count(item) if motor else None, "source": "import"})
     return out, {f: rows[hi][i] if i < len(rows[hi]) else "" for f, i in cols.items()}, warns

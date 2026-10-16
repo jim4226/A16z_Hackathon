@@ -41,6 +41,11 @@ MORE = [  # (part name, catalog key, pack): a servo named in other ways stays on
     ("STS3215 servo motor kit (6 pcs)", "sts3215_7v4", 6), ("Feetech STS3215 servo motor (C018, 12V)", "sts3215", None),
     ("Waveshare ST3215 Servo 7.4V", "sts3215_7v4", None), ("ST3215-HS servo", None, None), ("XL430-W250-R", None, None),
     ("Servo for the STS3215 arm", None, None), ("Generic 20kg servo", None, None),
+    # shop listings that say after the motor word what it is built with or for (all three heads at 04a6469 read
+    # "dual", "full", "large" and "robot arm" as the line's head noun: no motor)
+    ("MG996R Servo Motor Metal Gear Dual Ball Bearing", "mg996r", None),
+    ("DS3218 20kg Digital Servo High Torque Full Metal Gear Waterproof", "ds3218", None),
+    ("MG996R Servo Motor RC Robot Arm", "mg996r", None), ("MG996R Servo Large Torque", "mg996r", None),
 ]
 
 
@@ -48,6 +53,16 @@ MORE = [  # (part name, catalog key, pack): a servo named in other ways stays on
 def test_a_servo_named_in_other_ways_is_still_one(item, key, pack):
     (r,) = bom.map_table([["Part", "Qty", "Notes"], [item, "1", ""]])[0]
     assert (r["catalog"], r["category"], r["pack"]) == (key, "actuator", pack)
+
+
+NOT_MOTORS = ["MG996R servo ball link", "MG996R servo arm", "STS3215 servo robot arm bracket", "SG90 servo horn set",
+              "STS3215 servo bearing", "MG996R servo linkage rod", "Feetech FE-URT-1 servo debug board"]
+
+
+@pytest.mark.parametrize("item", NOT_MOTORS)
+def test_a_part_for_a_servo_named_like_a_listing_is_still_no_servo(item):
+    (r,) = bom.map_table([["Part", "Qty", "Notes"], [item, "1", ""]])[0]
+    assert r["catalog"] is None and r["category"] != "actuator", r
 
 
 def _row(res, item):
@@ -83,6 +98,18 @@ def test_kicad_parts_lists_name_their_parts_by_value_and_connectors_are_never_mo
         "100nF", "SG90", "CH340C", "STS3215 bus"]
     kicad8 = bom.parse(os.path.join(DATA, "bom_files", "servo_board_kicad8.csv"))
     assert _row(kicad8, "STS3215_BUS")["catalog"] is None and _row(kicad8, "SG90")["catalog"] == "sg90"
+
+
+def test_joint_references_in_a_hand_made_list_are_not_connectors():
+    """A hand-made arm list whose "Ref" column names the joints it drives ("J1-J6", "J1 J2") keeps its servos: only a
+    board's parts list (one with a footprint column) reads J as a connector and U as a chip."""
+    rows, _, _ = bom.map_table([["Ref", "Part", "Qty"], ["J1-J6", "Feetech STS3215 12V servo", "6"],
+                                ["J1 J2", "STS3215 servo", "2"], ["U1", "Waveshare bus servo adapter", "1"]])
+    assert [(r["catalog"], r["category"]) for r in rows] == [("sts3215", "actuator"), ("sts3215_7v4", "actuator"),
+                                                             (None, "electronics")]
+    board, _, _ = bom.map_table([["Reference", "Value", "Footprint", "Qty"],
+                                 ["J1 J2", "STS3215 servo", "Connector_JST:JST_EH_B3B-EH-A_1x03_P2.50mm_Vertical", "2"]])
+    assert (board[0]["catalog"], board[0]["category"]) == (None, "electronics")
 
 
 def test_a_parts_list_without_prices_has_no_total(tmp_path):
