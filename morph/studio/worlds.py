@@ -1166,8 +1166,9 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     time isn't offered (stats["fit_timeout"]); stats["regions_s"] and ["fit_s"] time those two steps.
 
     Cut short (stats["truncated"]), the answer never claims more room than was measured: "min_clearance_mm" is the
-    closest distance measured anywhere, the second pass's exact ones or the first pass's coarse robot samples to the
-    scan's points (a real distance, so the arm comes at least that close), with stats["lower_mm"] a lower bound when
+    closest distance measured anywhere, the second pass's exact ones, the first pass's coarse robot samples to the
+    scan's points, or a region's own closest points (each a real distance, so the arm comes at least that close; a
+    region's also counts when the second pass stopped at a touch), with stats["lower_mm"] a lower bound when
     every pose was bounded, ["poses_checked"] of ["unique_poses"], ["part_clear"] when every pose looked at stays
     beyond SCAN_CUT_MM, and ["need_s"] about the time the whole check would take at this pace (cut in the first pass,
     the second counted as long as the first). A second pass cut short
@@ -1517,6 +1518,11 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     out["regions"] = _scan_regions(world, near, S, best if best["d"] < near_mm else None, m, obj_body, floor_cut_mm, stats,
                                    refine=exact, rho=rho, final=final, deadline=end)
     stats["regions_s"] = round(time.monotonic() - t1, 2)
+    if out["regions"]:                                  # a row measured closer than the check's closest (the second
+        r0 = min(out["regions"], key=lambda r: r["_d"])  # pass stops at a touch; a pass cut short): that is the closest
+        if r0["_d"] < close["d"] - 1e-9:
+            out["min_clearance_mm"] = floor_mm(r0["_d"])
+            out["at"] = {"t": r0["t"], "link": r0["link"], "point": list(r0["point"])}
     if out["regions"]:
         t1 = time.monotonic()
         _fit_boxes(world, out["regions"], poses, pose, d, m, shape, fixed, moving, carried, held, end, stats)

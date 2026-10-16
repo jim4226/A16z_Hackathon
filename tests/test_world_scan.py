@@ -689,6 +689,21 @@ def test_the_boxes_time_is_set_aside_only_once_the_second_pass_lists_a_near_miss
     assert st["poses_checked"] == st["unique_poses"] and st["truncated"], st      # cut in the second pass, not the first
 
 
+def test_the_checks_closest_distance_is_never_more_than_one_of_its_rows(tmp_path, nominal):
+    """The arm passes through the vase (the touching vase moved 10 mm into the path): the second pass stops at its
+    first point closer than 0.5 mm (it touches: 0.3 mm), but the near miss's row, measured exactly at its own closest
+    points, comes to 0.0 mm. The check's closest distance is the closest anything measured (before: 0.3 mm, so the
+    scan event said "Closest to the scan: 0.3 mm" beside a 0.0 mm row), and its place is that row's."""
+    rob, doc = nominal
+    (cx, cy), r, h = TOUCHING_VASE
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh((cx, cy - 10.0), r, h)])
+    res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
+    closest = min(res["regions"], key=lambda g: g["min_clearance_mm"])
+    assert res["min_clearance_mm"] <= closest["min_clearance_mm"] < worlds.SCAN_TOUCH_MM, (res["min_clearance_mm"], closest)
+    assert res["at"]["point"] == closest["point"] and res["at"]["t"] == closest["t"], (res["at"], closest)
+    assert "touches or passes through" in worlds.scan_check(res)["text"]
+
+
 def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):
     """Cut short before the first pose is measured (the clock runs out while the scan is prepared), the check has
     measured nothing: it says there wasn't time, never that the part of the path checked is clear."""

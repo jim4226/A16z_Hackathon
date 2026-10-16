@@ -1365,7 +1365,11 @@ field failure rate (section 0, honesty).
   are a real robot-to-scan distance, the arm coming at least that close there, and the box is fitted to it. Only the
   region holding the whole check's closest point, in a check not cut short, has `exact: true` (its closest approach);
   every other region's distance, and every region of a check cut short, is an upper bound the row shows as "at most".
-  `covers.clearance_mm` is that distance, so a later check that measures the place closer offers it again. Measured
+  `covers.clearance_mm` is that distance, so a later check that measures the place closer offers it again. A region
+  measured closer than the check's own closest (the second pass stops at its first point under 0.5 mm, and a pass cut
+  short measures only part of the path) makes its distance, place, time and link the check's `min_clearance_mm` and
+  `at`: on rD's r004 the check kept 0.2 mm while its row measured 0.0 mm (a vase in the arm's path in the tests: 0.3
+  and 0.0 mm). Measured
   on the review's desk scan (one region) and a vase beside a bin (two): the rows read as before (8.9 mm exact; 0.0 mm
   exact and 8.0 mm at most), the regions step 0.03-0.12 s with the refinement and 0.04-0.16 s without (one run each,
   load 5-7). `_fit_boxes` prunes each geom's fine samples by its coarse ones
