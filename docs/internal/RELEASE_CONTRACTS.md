@@ -359,7 +359,10 @@ Slot{value, source: user|inferred|default|memory|video|photo, confidence, eviden
 - **Questions:** at most 3 rounds, each with ≤3 questions of 2 to 4 chips. "Use sensible defaults" and
   "Build now" are always available.
 - **Harm:** a local keyword pre-filter plus SubQ's `harm` noul. Refuse when either fires; build nothing
-  and send nothing further.
+  and send nothing further. The pre-filter refuses "gun" except a tool called one (`brief._TOOL_GUN`: glue, heat,
+  caulk, paint, spray, nail, staple, label, tape, rivet, grease, scan, barcode, solder, price, tag, temperature,
+  impact, screw, foam, sealant, silicone, welding, cable-tie, radar, heat-shrink, blow and similar guns); a stun gun,
+  an air gun and a gun on its own are still refused.
 - **Video and photos** (F3) produce slot values with `source: video|photo`. They go through the same
   brief and confirm card, or through `/api/video/apply` when editing an existing robot.
 

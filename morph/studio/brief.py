@@ -440,6 +440,12 @@ HARM = (  # local pre-filter (SubQ's harm noul and the designer's flag catch the
     r"\b(restrain\w*|handcuff\w*|tie (?:up|down) " + _TARGET + r"|hold (?:someone|a person|people|him|her|them) (?:down|still))",
     r"\b(spy(?:ing)? on|secretly (?:watch|record|film)\w*|covert(?:ly)? (?:watch|record|film|surveil)\w*)\b",
 )
+# workshop, shop and kitchen tools called guns ("hand the packer the tape gun", "pass me the temp gun"): no weapon. A
+# stun gun, an air gun or a gun on its own is still refused.
+_TOOL_GUN = (r"\b(?:hot\s+)?(?:glue|heat|caulk|caulking|paint|spray|nail|staple|stapler|massage|label|labell?ing|tape|rivet|"
+             r"grease|scan|scanner|scanning|barcode|bar[- ]code|solder|soldering|price|pricing|tag|tagging|temp|temperature|"
+             r"thermometer|infrared|ir|impact|screw|foam|sealant|silicone|welding|mig|tig|cable[- ]tie|tie|radar|"
+             r"heat[- ]shrink|dispensing|grout|texture|blow|air[- ]blow)[- ]guns?\b")
 _STUB = "This robot sounds like it's meant to hurt, threaten or restrain people or animals. Morph doesn't design that."
 
 
@@ -631,7 +637,7 @@ def sanitize_object(v) -> dict | None:
 
 # ------------------------------------------------------------------ rules: read a message
 def harmful(text: str) -> str | None:
-    t = (text or "").lower()
+    t = re.sub(_TOOL_GUN, " tool ", (text or "").lower())
     for pat in HARM:
         m = re.search(pat, t)
         if m:

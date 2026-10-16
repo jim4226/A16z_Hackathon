@@ -537,3 +537,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   to is a pet nearby, with an emergency stop, not a person it hands things to: "hand the dog a bone", "give my parrot
   seeds" and "hand the horse a carrot" had no one nearby and no emergency stop, and "toss balls to my dog" and "pass
   the treats to my dog" were robots that "hand over" the things, as if to a person.
+- Requests that hand someone a tool called a gun are built, not refused as meant to hurt people: "hand the packer the
+  tape gun", "pass the rivet gun to the riveter", "hand me the scan gun", "pass me the temp gun" and "hand the
+  mechanic the impact gun" (and the tape, grease, soldering, price, screw, barcode and similar guns) were refused.
+  A stun gun, an air gun or a gun on its own still is.
