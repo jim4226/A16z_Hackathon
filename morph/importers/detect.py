@@ -159,8 +159,11 @@ def sniff(path: str, name: str | None = None) -> str:
     if ext in (".csv", ".tsv", ".txt") or "\t" in text[:2048] or text.count(",") > 4:
         try:
             dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
-            rows = list(csv.reader(io.StringIO(text[:8192]), dialect))
-            widths = [len(r) for r in rows if r]
+            rows = [r for r in csv.reader(io.StringIO(text[:8192]), dialect) if r]
+            lead = 0                                   # a KiCad grouped BOM starts "Source:", "Date:", "Tool:", ...
+            while lead < min(10, len(rows) - 2) and len(rows[lead]) <= 2 and rows[lead][0].strip().endswith(":"):
+                lead += 1
+            widths = [len(r) for r in rows[lead:]]
             if len(widths) >= 2 and max(widths) >= 2 and widths.count(widths[0]) >= 0.6 * len(widths):
                 return "tsv" if dialect.delimiter == "\t" else "csv"
         except csv.Error:

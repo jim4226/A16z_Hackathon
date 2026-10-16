@@ -42,21 +42,30 @@ MOTOR_RX = [  # mesh/link name -> catalog key (most specific first)
     (re.compile(r"ds[\s_-]?3218", re.I), "ds3218"),
     (re.compile(r"sg[\s_-]?90", re.I), "sg90"),
 ]
+# the STS3215's model codes: C001 (1/345), C044 (1/191) and C046 (1/147) are 7.4 V; C018 and C047 (1/345, about 30
+# kg·cm) are 12 V (Feetech's documents hub, vendor listings). Waveshare sells it as the ST3215, 12 V unless it says 7.4
+# V; the ST3215-HS is another servo. A Dynamixel family is the catalog motor only with its own code or none: an
+# XL330-M077 (the Koch leader's 0.2 N·m motor), an XM430-W210, an RS-485 XM430-W350-R or a two-axis 2XL430 isn't one
+_STS = r"(?<![a-z])sts?[\s_-]?3215(?![\s_-]?hs)"
 TEXT_RX = [  # README / BOM / package.xml mentions -> catalog key
-    (re.compile(r"sts[\s_-]?3215[^\n|]{0,40}?(7\.4|c001|c044|c046)", re.I), "sts3215_7v4"),
-    (re.compile(r"sts[\s_-]?3215[^\n|]{0,40}?12\s?v", re.I), "sts3215"),
-    (re.compile(r"sts[\s_-]?3215", re.I), "sts3215_7v4"),
-    (re.compile(r"xl[\s_-]?430", re.I), "xl430_w250"),
-    (re.compile(r"xl[\s_-]?330", re.I), "xl330_m288"),
-    (re.compile(r"xm[\s_-]?430", re.I), "xm430_w350"),
+    (re.compile(_STS + r"[^\n|]{0,40}?(?:7[.,]4|c0(?:01|44|46)(?!\d))", re.I), "sts3215_7v4"),
+    (re.compile(_STS + r"[^\n|]{0,40}?(?:\b12(?:[.,]0)?\s?-?\s?v|c0(?:18|47)(?!\d)|\b30\s?kg)", re.I), "sts3215"),
+    (re.compile(r"(?<![a-z])st[\s_-]?3215(?![\s_-]?hs)", re.I), "sts3215"),
+    (re.compile(_STS, re.I), "sts3215_7v4"),
+    (re.compile(r"(?<![\da-z])xl[\s_-]?430(?:[\s_-]?w250|(?![\s_-]?[a-z]\d))(?![\s_-]?r(?![a-z\d]))", re.I), "xl430_w250"),
+    (re.compile(r"(?<![\da-z])xl[\s_-]?330(?:[\s_-]?m288|(?![\s_-]?[a-z]\d))", re.I), "xl330_m288"),
+    (re.compile(r"(?<![\da-z])xm[\s_-]?430(?:[\s_-]?w350|(?![\s_-]?[a-z]\d))(?![\s_-]?r(?![a-z\d]))", re.I), "xm430_w350"),
     (re.compile(r"mg[\s_-]?996", re.I), "mg996r"),
     (re.compile(r"ds[\s_-]?3218", re.I), "ds3218"),
     (re.compile(r"\bsg[\s_-]?90\b", re.I), "sg90"),
 ]
+# a catalog motor's family wherever it is named, whatever its code (a parts list line's head names a motor model)
+MODEL_RX = re.compile(r"(?<![a-z])sts?[\s_-]?3215|(?<![a-z])2?x[lm][\s_-]?[34]30|mg[\s_-]?996|ds[\s_-]?3218|"
+                      r"\bsg[\s_-]?90\b", re.I)
 VARIANTS = {"sts3215_7v4": "sts3215", "sts3215": "sts3215"}  # catalog key -> the motor it is a variant of
 VARIANT_RX = [  # words anywhere in one parts-list line that pick a motor's variant (most specific first, as TEXT_RX)
-    (re.compile(r"7\.4\s?v|c0(?:01|44|46)(?!\d)", re.I), "sts3215_7v4"),
-    (re.compile(r"\b12(?:\.0)?\s?v(?:olts?)?\b", re.I), "sts3215"),
+    (re.compile(r"7[.,]4\s?v|c0(?:01|44|46)(?!\d)", re.I), "sts3215_7v4"),
+    (re.compile(r"\b12(?:[.,]0)?\s?-?\s?v(?:olts?|dc)?\b|c0(?:18|47)(?!\d)|\b30\s?kg", re.I), "sts3215"),
 ]
 MOTOR_PART_RX = r"^(?!.*(holder|mount|bracket|plate|cover|case|adapter|clip|cap))" \
                 r".*(motor|servo|sts3215|st3215|xl430|xl330|xm430|dynamixel|mg996|ds3218|sg90)"

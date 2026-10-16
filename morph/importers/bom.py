@@ -26,13 +26,14 @@ FIELDS = [  # matched in this order, so "Part number" becomes the MPN before "Pa
     ("mpn", r"\bmpn\b|mfr\.?\s*(part|p/?n|#)|manufacturer\s*part|part\s*(number|no\.?|#)|\bp/?n\b|lcsc|digi-?key\s*(part|#)"),
     ("ref", r"^(ref|refs|reference|references|designator|designators)\b"),
     ("ext_price", r"ext(ended)?\.?\s*(price|cost)|line\s*total|sub-?total|total\s*(price|cost)"),
-    ("unit_price", r"unit\s*(cost|price)|^price|^cost|price\s*\(|cost\s*\(|\bprice\b|\bcost\b"),
-    ("qty", r"^(qty|quantity|amount|count|pcs|q'?ty|number|no\.?|#|units)\b"),
+    ("unit_price", r"unit\s*(cost|price)|^price|^cost|price\s*\(|cost\s*\(|\bprice\b|\bcost\b|^(einzel)?preis\b"),
+    ("qty", r"^(qty|qnty|q\.ty|quantity|amount|count|pcs|q'?ty|number|no\.?|#|units|menge|anzahl|stk|st\u00fcck)\b"),
     ("url", r"\b(buy|link|url|where\s*to\s*buy|purchase|shop|store\s*link|source)\b"),
     ("manufacturer", r"^(manufacturer|mfr|mfg|brand|maker)\b"),
     ("supplier", r"^(supplier|vendor|distributor|seller|store)\b"),
-    ("item", r"^(part|parts|item|items|component|components|name|product|designation|material|value)\b"),
-    ("description", r"^(description|desc\.?|details|notes?|comments?|specs?|specification)\b"),  # the part name if there is no other
+    ("item", r"^(part|parts|item|items|component|components|name|product|designation|material|value|bezeichnung|"
+             r"artikel|benennung|teil)\b"),
+    ("description", r"^(description|desc\.?|details|notes?|comments?|specs?|specification|beschreibung|bemerkung)\b"),  # the part name if there is no other
 ]
 CURRENCY = {"$": "USD", "us$": "USD", "usd": "USD", "€": "EUR", "eur": "EUR", "£": "GBP", "gbp": "GBP",
             "¥": "CNY", "￥": "CNY", "rmb": "CNY", "cny": "CNY", "jpy": "JPY", "yen": "JPY"}
@@ -89,67 +90,183 @@ def _qty(s: str) -> int | None:
         return None
 
 
-# a motor named by its kind and up to three words before it (a brand or the joint it drives: "Feetech servo", "Gripper
-# servo"), and a count after it ("Servo (x6)"); a line that is any of the accessories below is never one
-GENERIC_MOTOR = re.compile(r"(?:[\w.-]+\s+){0,3}?(?:servo|motor|actuator)(?:\s+motor)?s?"
-                           r"(?:\s*\(\s*(?:x\s*)?\d+\s*(?:pcs?)?\s*\)|\s+x\s*\d+)?", re.I)
-# a part for a motor, named after it: "STS3215 servo horn", "Bus servo driver board for STS3215", "12V power supply for
-# STS3215 servos", "M3 screw for STS3215": the thing the name names is one of these (_accessory). What a
-# line comes with or is described by ("... with horn", "(incl. screws)", "..., horn included", "... - plastic case",
-# "... built-in controller", "... Servo Motor 12V Metal Case") doesn't count
-ACCESSORY = re.compile(r"\b(?:horns?|brackets?|mounts?|mounting|holders?|plates?|covers?|cases?|adapters?|clips?|caps?|"
+# what a line is comes from its part name's head: the first noun phrase, before what the part comes with, is
+# described by or fits: "(", ",", ";", "+", a dash between words or an unspaced em or en dash, a "/" right after the
+# motor word ("STS3215 servo/metal case"), "with", "w/", "incl.", "included", "built-in", and the fits-what clauses
+# ("for", "compatible (with)", "fits", "suits", "suitable for"): a model named there is what the part fits, never it
+_CLAUSE = re.compile(r"[(\[,;+]|\s[-–—]+\s|[–—]|\bw/|\b(?:with|incl|including|includes|included|"
+                     r"built[- ]?in|for|compatible|fits?|suits?|suitable|to\s+fit|to\s+suit)\b", re.I)
+_FITS = re.compile(r"\b(?:for|compatible|fits?|suits?|suitable|to\s+fit|to\s+suit)\b", re.I)
+_MOTOR_WORD = re.compile(r"(?:servo|motor|actuator|servomotor|stepper|gearmotor|bldc)s?", re.I)
+# words that are never a line's head noun: units, colours, materials, revisions, "replacement", how many
+_UNIT = re.compile(r"(?:mm|cm|m|in|inch|inches|ft|g|kg|deg|degree|degrees|awg|pin|pins|way)", re.I)
+_COLOUR = re.compile(r"(?:black|white|silver|grey|gray|red|blue|green|yellow|orange|purple|pink|gold|golden|clear|"
+                     r"transparent|translucent|natural)", re.I)
+_MATERIAL = re.compile(r"(?:metal|aluminium|aluminum|alu|alloy|steel|stainless|brass|copper|titanium|plastic|nylon|"
+                       r"carbon|abs|pom|cnc|anodized|anodised)", re.I)
+_FILLER = re.compile(r"(?:replacement|spare|original|genuine|new|rev|revision|ver|version|type|model|single|double|"
+                     r"style|edition|an?|the|of|and|or|in)", re.I)
+_GROUP = re.compile(r"(?:kits?|sets?|packs?|pairs?|bundles?|pcs?|pieces?|lots?|units?)", re.I)
+# besides its model, a motor's name holds its maker and what kind of motor it is ("Feetech STS3215 Serial Bus Servo
+# Magnetic Encoder", "Dynamixel X-series XL430-W250-T", "FEETECH STS3215 12V 30KG")
+_BRAND = re.compile(r"(?:feetech|feetechrc|robotis|dynamixel|waveshare|towerpro|tower|pro|dsservo|ds|hitec|savox|"
+                    r"futaba|emax|corona|miuzei|diymore|hiwonder|lobot|lewansoul)", re.I)
+_MOTOR_BRAND = re.compile(r"(?:myactuator|cubemars|t-motor|steadywin|eaglepower)", re.I)   # they make only motors
+_KIND = re.compile(r"(?:serial|bus|ttl|rs|smart|digital|analog|analogue|high|torque|high-torque|speed|high-speed|"
+                   r"magnetic|encoder|encoding|coreless|brushless|micro|mini|standard|waterproof|continuous|rotation|"
+                   r"programmable|intelligent|series|x-series|half-duplex|duplex)", re.I)
+# a material's case or gears right before or after the motor word describe the motor: "Metal case STS3215 servo",
+# "STS3215 Servo Motor Metal Case 12V", "MG996R Metal Gear Servo"
+_BUILD = re.compile(r"(?:case|cases|housing|shell|gear|gears|geared)", re.I)
+# a part for a motor named like one when its word comes before the motor word: "Power supply servo", "Cable servo"
+ACCESSORY = re.compile(r"(?:horns?|brackets?|mounts?|mounting|holders?|plates?|covers?|cases?|adapters?|clips?|caps?|"
                        r"boards?|drivers?|controllers?|supply|supplies|psus?|screws?|bolts?|nuts?|washers?|cables?|"
-                       r"wires?|harness(?:es)?|hubs?|extensions?|testers?|chargers?|batter(?:y|ies))\b", re.I)
-_COMES_WITH = re.compile(r"\(|\b(?:with|incl|including|includes|included|built[- ]?in|for)\b|\bw/|\+|[,;]|\s[-\u2013\u2014]\s",
-                         re.I)
-_SPEC = re.compile(r"\d+(?:[.,]\d+)?(?:v|vdc|kg(?:[.]?cm|f)?|n[\u00b7.]?m|ncm|m?a|mah|rpm|w|g)", re.I)   # 12V, 30kg.cm
-_MOTOR_WORD = re.compile(r"(?:servo|motor|actuator)s?", re.I)
-_GROUP = re.compile(r"(?:kit|set|pack|pair|bundle|pcs?|pieces?)", re.I)
+                       r"wires?|leads?|harness(?:es)?|hubs?|extensions?|testers?|chargers?|batter(?:y|ies))", re.I)
+_SPEC = re.compile(r"\d+(?:[.,]\d+)?(?:-\d+(?:[.,]\d+)?)?(?:v|vdc|volts?|kg(?:[.]?cm|f)?|n[·.]?m|ncm|m?a|mah|rpm|"
+                   r"w|g|kv)", re.I)                                             # 12V, 4.8-7.2V, 30kg.cm, 55g, 340KV
+_PLAIN = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)*")
+_MODEL_MARK = "§"
+_COUNT = re.compile(r"\s*(?:#\s*\d+|[x×]\s*\d+|\d+\s*[x×])\s*$|^\s*\d+\s*[x×]\s*", re.I)   # "Servo #1", "6x Servo"
+# reference designators of connectors, chips, passive parts and switches ("J2 J3", "U1"); M is a motor
+_NOT_MOTOR_REF = re.compile(r"(?:j|p|cn|x|xj|u|ic|c|r|rn|l|d|led|q|f|fb|y|sw|k|bt|tp|h|mh|jp|t|ps|vr|z)", re.I)
+# a count of motors in the name of a line bought once: "STS3215 12V servo (6 pcs)", "6 x STS3215 12V servo", "SG90
+# micro servo 10 pack", "MG996R servo x4"
+_PACK = re.compile(r"\((?:x\s*)?(\d+)\s*(?:pcs?|pieces?|x)?\)|\b(\d+)\s*(?:pcs?|pieces?)\b|^\s*(\d+)\s*[x×]\s|"
+                   r"\s[x×]\s*(\d+)\s*$|\b(\d+)[\s-]*pack\b|\bpack\s+of\s+(\d+)\b", re.I)
 
 
-def _accessory(item: str) -> bool:
-    """Whether a part name names an accessory (ACCESSORY): its head noun, the last plain word before what it comes with
-    or is described by ("STS3215 servo horn", "Servo horn kit": horn), or a word before the motor word ("Power supply
-    servo"). After the motor word, a spec ends the name ("Servo Motor 12V Metal Case" is a motor), and part numbers and
-    specs aren't words ("STS3215 12V": none)."""
-    head = re.sub(r"(\d)\s+(v|vdc|a|ma|mah|kg|w|g|rpm)\b", r"\1\2", _COMES_WITH.split(item, 1)[0], flags=re.I)
-    plain, before, motor = [], [], False
-    for w in head.split():
-        w = w.strip(".:")
-        if motor and _SPEC.fullmatch(w):
-            break                                          # "STS3215 Servo Motor 12V Metal Case": what follows describes it
-        if _MOTOR_WORD.fullmatch(w):
-            motor = True
-        if re.fullmatch(r"[A-Za-z]+(?:-[A-Za-z]+)*", w):
-            plain.append(w)
-            if not motor:
-                before.append(w)
-    while plain and _GROUP.fullmatch(plain[-1]):
-        plain.pop()
-    return bool(plain and ACCESSORY.fullmatch(plain[-1])) or any(ACCESSORY.fullmatch(w) for w in before)
+def _head(item: str) -> str:
+    """The part name's first noun phrase (_CLAUSE): what the line is."""
+    text = (item or "").strip()
+    m = _CLAUSE.search(text)
+    head = text[:m.start()] if m else text
+    cut = head.find("/")
+    if cut > 0 and head[:cut].split() and _MOTOR_WORD.fullmatch(head[:cut].split()[-1]):
+        head = head[:cut]                              # "STS3215 servo/metal case"; "Wrist pitch/roll servo" stays
+    return head.strip()
 
 
-def _catalog_key(item: str, mpn: str = "", detail: str = "") -> str | None:
-    """The catalog actuator a BOM line names. Only its part name and MPN can name one: a screw or a driver board whose
-    notes mention the servo it is for is not a servo, and neither is a horn, a bracket, a power supply or a board named
-    after the servo it is for (ACCESSORY, the name's head noun: not what it comes with). The description, notes or specs
-    (`detail`) then only pick the variant of the motor the name already names, when the name doesn't say: "STS3215"
-    with "12V" in its description is the 12 V servo. A line named only as a motor ("Servo", "Bus servo", "Feetech
-    servo", "Gripper servo", "Servo (x6)") is what its description says."""
-    from .autoprofile import TEXT_RX, VARIANT_RX, VARIANTS
-    if _accessory(item):
-        return None
-    name = " ".join(x for x in (item, mpn) if x)
-    if detail and GENERIC_MOTOR.fullmatch(item.strip()) and not any(rx.search(name) for rx, _ in TEXT_RX):
-        name = f"{name} {detail}"
+def _words(head: str) -> list:
+    """The head's words, its catalog models (autoprofile.MODEL_RX) marked: [(word, kind)], kind "plain" (letters),
+    "spec" (12V, 30kg.cm) or "other" (part numbers, the model mark)."""
+    from .autoprofile import MODEL_RX
+    head = MODEL_RX.sub(f" {_MODEL_MARK} ", head)
+    head = re.sub(r"(\d)\s+(v|vdc|volts?|a|ma|mah|kg|w|g|rpm|kv)\b", r"\1\2", head, flags=re.I)
+    out = []
+    for w in re.split(r"[\s/]+", head):
+        w = w.strip(".:,;!?*\"'()[]{}_")
+        if not w:
+            continue
+        out.append((w.lower(), "plain" if _PLAIN.fullmatch(w) else "spec" if _SPEC.fullmatch(w) else "other"))
+    return out
+
+
+def _ignorable(w: str) -> bool:
+    return bool(len(w) == 1 or _UNIT.fullmatch(w) or _COLOUR.fullmatch(w) or _MATERIAL.fullmatch(w)
+                or _FILLER.fullmatch(w) or _GROUP.fullmatch(w))
+
+
+def _is_motor_name(item: str) -> bool:
+    """Whether a part name names a motor, read the way a reader does. Its head (_head) is a motor word with nothing
+    after it but what kind of motor it is, a material's case or gears, specs, colours, units and a kit or set word
+    ("STS3215 servo", "MG996R 55g Metal Gear Servo", "Feetech STS3215 Servo Motor 12V Metal Case", "STS3215 servo kit"),
+    and no part for a motor before it ("Power supply servo" is a power supply); or, with no motor word, a motor's model
+    with only its maker, specs and what kind of motor it is ("Feetech STS3215-C018", "Dynamixel X-series
+    XL430-W250-T"). Whatever else the head names is the part: "STS3215 servo cable 200 mm" is a cable, "STS3215 servo
+    horn aluminum" a horn, "XL430 frame FR12-S102K" a frame."""
+    words = _words(_head(item))
+    if not words:
+        return False
+    motors = [i for i, (w, k) in enumerate(words) if k == "plain" and _MOTOR_WORD.fullmatch(w)]
+    if not motors:
+        plain = [w for w, k in words if k == "plain"]
+        if not all(_BRAND.fullmatch(w) or _MOTOR_BRAND.fullmatch(w) or _KIND.fullmatch(w) or _ignorable(w)
+                   for w in plain):
+            return False
+        return any(w == _MODEL_MARK for w, _ in words) or any(_MOTOR_BRAND.fullmatch(w) for w in plain)
+    before = [w for w, k in words[:motors[0]] if k == "plain"]
+    for i, w in enumerate(before):
+        if ACCESSORY.fullmatch(w) and not (_BUILD.fullmatch(w) and i and _MATERIAL.fullmatch(before[i - 1])):
+            return False
+    after = []
+    for w, k in words[motors[-1] + 1:]:
+        if k == "spec":
+            break                                      # "Servo Motor 12V Metal Case": what follows describes it
+        if k == "plain":
+            after.append(w)
+    for i, w in enumerate(after):
+        if _BUILD.fullmatch(w) and i and _MATERIAL.fullmatch(after[i - 1]):
+            continue                                   # "Servo Metal Case", "Servo metal gears"
+        if not (_KIND.fullmatch(w) or _BRAND.fullmatch(w) or _ignorable(w)):
+            return False                               # the head noun is something else: "servo horn", "servo arm"
+    return True
+
+
+def _generic_motor(item: str) -> bool:
+    """A motor named only by its kind or its maker, with no model ("Servo", "Bus servo", "Feetech TTL serial bus
+    servo", "Wrist pitch/roll servo", "Servo motor, shoulder", "Servo - shoulder", "Servo #1", "Servo x6", "Servo (qty
+    6)", "Dynamixel", "Feetech"): its description says which."""
+    head = _COUNT.sub("", _head(item))
+    words = _words(head)
+    if not words or any(k != "plain" and not w.isdigit() for w, k in words):
+        return False          # "Joint 1 servo"
+    plain = [w for w, k in words if k == "plain"]
+    if len(plain) <= 2 and all(_BRAND.fullmatch(w) for w in plain):
+        return True
+    return any(_MOTOR_WORD.fullmatch(w) for w in plain) and _is_motor_name(head)
+
+
+def _not_a_motor_ref(ref: str) -> bool:
+    """Reference designators that name only connectors, chips, passive parts or switches ("J2 J3 J4")."""
+    refs = [m.group(0) for m in re.finditer(r"[A-Za-z]+(?=\d)", ref or "")]
+    return bool(refs) and all(_NOT_MOTOR_REF.fullmatch(r) for r in refs)
+
+
+def pack_count(item: str) -> int | None:
+    """How many motors a line names in a pack ("STS3215 12V servo (6 pcs)": 6), or None."""
+    m = _PACK.search(item or "")
+    n = int(next(g for g in m.groups() if g)) if m else 0
+    return n if 2 <= n <= 100 else None
+
+
+def _classify(item: str, mpn: str = "", detail: str = "", ref: str = "") -> tuple[str | None, bool]:
+    """(the catalog motor a BOM line is or None, whether it is a motor at all). The part name says what the line is
+    (_is_motor_name): a horn, bracket, cable, frame, power supply or board named after the servo it is for is not a
+    motor, and a model named only where the name says what the part comes with or fits ("for", "compatible with",
+    "fits") is what it fits. A motor's model is in its name's head or its MPN; the name, then the description, notes
+    or specs (`detail`) pick its variant (autoprofile.VARIANT_RX: an STS3215 described as 12 V is the 12 V servo). A
+    motor named only by its kind or maker (_generic_motor) is the motor its description names. A line whose reference
+    designators are all connectors, chips, passive parts or switches ("J2 J3") is none, whatever its value says."""
+    from .autoprofile import MODEL_RX, TEXT_RX, VARIANT_RX, VARIANTS
+    if ref and _not_a_motor_ref(ref):
+        return None, False
+    if MODEL_RX.search(_head(item)) or (mpn and MODEL_RX.search(mpn)):
+        if not _is_motor_name(item):
+            return None, False
+        name = " ".join(x for x in (item, mpn) if x)
+    elif _generic_motor(item):                         # "Servo, STS3215 12V", "Servo" with a description
+        own = _FITS.split(item, 1)[0]                   # (never what it fits: "Servo for the STS3215 arm")
+        if MODEL_RX.search(own):
+            name = own
+        elif detail and MODEL_RX.search(detail):
+            name = detail
+        else:
+            return None, _is_motor_name(item)
+    else:
+        return None, _is_motor_name(item)
     key = next((k for rx, k in TEXT_RX if rx.search(name)), None)
     motor = VARIANTS.get(key)
     if motor:
         for text in (name, detail):
             pick = next((k for rx, k in VARIANT_RX if VARIANTS.get(k) == motor and rx.search(text)), None)
             if pick:
-                return pick
-    return key
+                return pick, True
+    return key, True
+
+
+def _catalog_key(item: str, mpn: str = "", detail: str = "", ref: str = "") -> str | None:
+    """The catalog motor a BOM line is (_classify), or None."""
+    return _classify(item, mpn, detail, ref)[0]
 
 
 def _catalog_name(key: str | None) -> str | None:
@@ -159,19 +276,24 @@ def _catalog_name(key: str | None) -> str | None:
     return (catalog.ACTUATORS.get(key) or {}).get("name")
 
 
-def _category(item: str, key: str | None) -> str:
-    t = item.lower()
-    if key:
+def _category(item: str, key: str | None, motor: bool = False) -> str:
+    """A line's kind, from its name's head (_head; the whole name when the head says nothing): "actuator" for any
+    motor (a catalog one, or a stepper, BLDC motor, gear motor or servo the catalog lacks: `catalog` None), then
+    fastener, cable, electronics, material or "purchased"."""
+    if key or motor:
         return "actuator"
-    if re.search(r"\b(screw|bolt|nut|washer|insert|standoff|fastener)s?\b", t):
-        return "fastener"
-    if re.search(r"\bcable|wire|harness\b", t):
-        return "cable"
-    if re.search(r"\b(board|controller|adapter|servo driver|motor driver|power supply|psu|battery|arduino|esp32|"
-                 r"raspberry pi|sensor|camera|u2d2)\b", t):
-        return "electronics"
-    if re.search(r"filament|pla\b|petg|resin|sheet|plate stock", t):
-        return "material"
+    for t in dict.fromkeys((_head(item).lower(), item.lower())):
+        if re.search(r"\b(screw|bolt|nut|washer|insert|standoff|spacer|rivet|fastener)s?\b|\bm\d(?:\.\d)?\s?x\s?\d|"
+                     r"\b(?:button|socket|cap|pan|flat|countersunk) head\b", t):
+            return "fastener"
+        if re.search(r"\b(?:cables?|wires?|harness(?:es)?|leads?|jumpers?|dupont)\b|\bcable-|\bextension\b(?!\s+board)|\bsplitters?\b", t):
+            return "cable"
+        if re.search(r"\b(board|controller|adapter|driver|power supply|psu|smps|battery|arduino|esp32|raspberry pi|"
+                     r"sensor|camera|webcam|u2d2|openrb|urt-?1|esc|odrive|encoder|step-?down|buck|converter|regulator|"
+                     r"capacitor|resistor|shifter|buffer|ch340|usb to ttl|shield|interface|module|pcb)s?\b", t):
+            return "electronics"
+        if re.search(r"filament|pla\b|petg|resin|sheet|plate stock", t):
+            return "material"
     return "purchased"
 
 
@@ -189,6 +311,7 @@ def map_table(rows: list) -> tuple[list, dict, list]:
         return [], {}, ["no header row with a part and a quantity or price column"]
     cols = {}
     used = set()
+    data = rows[hi + 1:hi + 201]
     for field, rx in FIELDS:
         idx = [i for i, h in enumerate(head) if h and i not in used and re.search(rx, h)]
         if not idx:
@@ -196,6 +319,12 @@ def map_table(rows: list) -> tuple[list, dict, list]:
         if field in ("unit_price", "ext_price", "url") and len(idx) > 1:
             usd = [i for i in idx if any(re.search(p, head[i]) for p, c in HEAD_CUR if c == "USD")]
             idx = usd or idx
+        if field == "item" and len(idx) > 1:          # KiBoM: "Component" is the group number 1, 2, 3; with
+            named = [i for i in idx if not all(re.fullmatch(r"\s*\d*\s*", _cell(r[i])[0] if i < len(r) else "")
+                                               for r in data)]
+            idx = named or idx                         # reference designators, the value names the part (SG90)
+            if "ref" in cols:
+                idx = [i for i in idx if head[i].startswith("value")] + [i for i in idx if not head[i].startswith("value")]
         cols[field] = idx[0]
         used.add(idx[0])
     if "item" not in cols and "description" in cols:
@@ -232,14 +361,16 @@ def map_table(rows: list) -> tuple[list, dict, list]:
             unit = round(ext / q, 4)
         mpn = _cell(get("mpn"))[0] if "mpn" in cols else ""
         desc = _cell(get("description"))[0] if "description" in cols else ""
-        key = _catalog_key(item, mpn, desc)
+        ref = _cell(get("ref"))[0] if "ref" in cols else ""
+        key, motor = _classify(item, mpn, desc, ref)
         out.append({"item": item[:200], "qty": q, "unit_price": unit, "ext_price": ext, "currency": cur or cur2,
                     "url": url if url and re.match(r"^https?://", url) else None, "mpn": mpn[:80] or None,
                     "manufacturer": _cell(get("manufacturer"))[0][:80] or None if "manufacturer" in cols else None,
                     "supplier": _cell(get("supplier"))[0][:80] or None if "supplier" in cols else None,
-                    "ref": _cell(get("ref"))[0][:200] or None if "ref" in cols else None,
-                    "description": desc[:200] or None, "make_or_buy": "buy", "category": _category(item, key),
-                    "catalog": key, "catalog_name": _catalog_name(key), "source": "import"})
+                    "ref": ref[:200] or None, "description": desc[:200] or None, "make_or_buy": "buy",
+                    "category": "electronics" if ref and _not_a_motor_ref(ref) else _category(item, key, motor),
+                    "catalog": key, "catalog_name": _catalog_name(key),
+                    "pack": pack_count(item) if motor else None, "source": "import"})
     return out, {f: rows[hi][i] if i < len(rows[hi]) else "" for f, i in cols.items()}, warns
 
 
@@ -384,7 +515,8 @@ def parse(path: str, fmt: str | None = None, table: int | None = None) -> dict:
     pick = mapped[table] if table is not None and 0 <= table < len(mapped) else mapped[0]
     rows = pick["rows"]
     curs = {r["currency"] for r in rows if r.get("currency")}
-    total = round(sum(r["ext_price"] for r in rows if r.get("ext_price") is not None), 2) if len(curs) <= 1 else None
+    priced = [r["ext_price"] for r in rows if r.get("ext_price") is not None]
+    total = round(sum(priced), 2) if priced and len(curs) <= 1 else None      # no prices: no total, not $0.00
     warns = list(pick["warnings"])
     if len(curs) > 1:
         warns.append(f"prices in several currencies ({', '.join(sorted(curs))}); no total")
@@ -416,9 +548,13 @@ def darwin_parts(rows: list) -> list:
 
 
 def actuator_keys(rows: list) -> dict:
-    """{catalog key: qty} for the actuators a parts list names (seeds the import's actuator picker)."""
+    """{catalog key: count} for the actuators a parts list names (seeds the import's actuator picker): a line's Qty,
+    or the motors its name packs when it was bought once ("STS3215 12V servo (6 pcs)", Qty 1: 6)."""
     out = {}
     for r in rows:
         if r.get("catalog"):
-            out[r["catalog"]] = out.get(r["catalog"], 0) + int(r.get("qty") or 1)
+            n = int(r.get("qty") or 1)
+            if n <= 1 and r.get("pack"):
+                n = int(r["pack"])
+            out[r["catalog"]] = out.get(r["catalog"], 0) + n
     return out

@@ -690,7 +690,8 @@ in sections 3, 4 and 8. The rest that other code relies on:
   nothing usable left says what was skipped; a link without `https://` to an allowed host gets it added.
   W3: a parts list's line is a catalog motor only when its part name or MPN names one (`bom._catalog_key`); its
   description, notes, details or specs column then only picks that motor's variant when the name doesn't
-  (`autoprofile.VARIANT_RX`: "12V" is the 12 V STS3215, "7.4V" or C001/C044/C046 the 7.4 V one), so a screw or a
+  (`autoprofile.VARIANT_RX`: "12V", "12VDC", "12-volt", 30 kg·cm, C018 or C047 is the 12 V STS3215, "7.4V" or
+  C001/C044/C046 the 7.4 V one), so a screw or a
   driver board whose notes name the servo stays a fastener or electronics. A line named only "Servo" (or "Bus servo",
   "Motor") is what its description says. R4: a name that is a part for a motor (`bom.ACCESSORY`: horn, bracket, mount,
   plate, cover, case, adapter, board, driver, controller, power supply, screw, nut, cable, hub, extension, tester,
@@ -705,6 +706,23 @@ in sections 3, 4 and 8. The rest that other code relies on:
   cable included", "STS3215 high-torque servo, flange mount" and "Dynamixel XM430-W350-T built-in controller" are
   catalog motors again (R4 made them none, purchased, cable or electronics), while "STS3215 servo 25T metal horn",
   "STS3215 servo horn kit" and "STS3215 servo motor driver" aren't; the review's 50-line comparison maps as R4 did.
+  R6 replaces R4's and R5's word lists, which a unit, colour or material after the accessory word ("STS3215 servo
+  cable 200 mm") or an accessory noun missing from the list ("servo arm", "gear set", "frame", "U2D2 for XL430")
+  turned back into a servo: what a line is comes from its name's head (`bom._head`, the name before "(", ",", ";",
+  "+", a dash, "with", "incl.", "built-in" and the fits-what clauses "for", "compatible", "fits", "suits"; a "/" right
+  after the motor word). `bom._is_motor_name` holds for a motor word followed only by how the motor is built (a
+  material's case or gears, specs, kind words such as "serial bus", colours, units, a kit word) with no part for a
+  motor before it (`bom.ACCESSORY`, unless it is a material's case: "Metal case STS3215 servo"), or for a catalog model
+  (`autoprofile.MODEL_RX`) with only makers, kind words and specs ("Feetech STS3215-C018"); a model named only in a
+  fits-what clause never makes a line a motor. `autoprofile.TEXT_RX`: Waveshare's ST3215 is the 12 V STS3215 unless it
+  says 7.4 V (not the ST3215-HS), and a Dynamixel family is the catalog motor only with its own code or none (an
+  XL330-M077, XM430-W210, XM430-W350-R or 2XL430 is none). A name of only a motor's kind or maker ("Wrist pitch/roll
+  servo", "Servo #1", "Servo - shoulder", "Dynamixel") is what its description names (`bom._generic_motor`); a line
+  whose reference designators are all connectors, chips, passive parts or switches ("J2 J3") is no motor. Motors the
+  catalog lacks (steppers, BLDC and gear motors) are category "actuator" with `catalog` None; a row's `pack` counts the
+  motors of a pack bought once (`actuator_keys`: Qty 1 and "(6 pcs)" is 6); KiCad 5-7's grouped CSV (its "Source:"
+  rows, "Qnty") and KiBoM (the value, not the group number in "Component") are read; `total` is None when no line has a
+  price. The hunters' 418-line corpus and 14 whole parts lists are data in tests/data (tests/test_import_bom_lines.py).
   Rows add `description` and `catalog_name`. An object import whose grip would bend the fingers
   gets New robot's repair (`api_import._fit_fingers`: `brief.preflight`'s deflection check, the beam 1.5 mm thicker at
   a time up to 14 mm), said in its reply. When an import's build isn't feasible (a robot's first build, an object's

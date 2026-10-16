@@ -30,12 +30,14 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   came from; `morph import` does the same from a terminal, given a path or a link. Auto-imported arms are sized for
   their worst pose over the joint range, so they come out more conservative than the shipped SO-101 (sized in its
   stretched-out pose). On a Studio other computers use, links are off unless it was started with `--allow-url-import`. A
-  parts list line is a catalog motor when its part name or MPN names one, and its description or notes pick the variant
-  (a "12V" STS3215 stays the 12 V servo); notes that mention the servo on a screw or a driver board don't make it one,
-  and neither does a name like "STS3215 servo horn" or "12V power supply for STS3215 servos"; what a servo comes with or
-  is described by does ("STS3215 servo, horn included", "Feetech STS3215 Servo Motor 12V Metal Case", "Dynamixel
-  XM430-W350-T built-in controller" are the servos). A line named "Feetech servo", "Gripper servo" or "Servo (x6)" is
-  the motor its description names. The preview shows the MPN and the description. An object whose grip would bend the
+  parts list line is a catalog motor when its part name says it is a motor and its name or MPN names one, and its
+  description or notes pick the variant (a "12V" STS3215, or a C018 or C047, is the 12 V servo); notes that mention
+  the servo on a screw or a driver board don't make it one, and neither does a name for a part of one, whatever follows
+  or what it fits ("STS3215 servo cable 200 mm", "SG90 servo arm set", "U2D2 for Dynamixel XL430"); what a servo comes
+  with or is built with doesn't change what it is ("STS3215 servo, horn included", "Feetech STS3215 Servo Motor 12V
+  Metal Case"). A line named "Feetech servo", "Gripper servo" or "Servo (x6)" is the motor its description names, and a
+  pack bought once counts its motors. KiCad's grouped CSV and KiBoM parts lists are read too, and a list without prices
+  shows no total. The preview shows the MPN and the description. An object whose grip would bend the
   fingers gets the thicker beam New robot would give it. An import whose build isn't feasible says why in its project's
   chat, with the fixes Morph can build as buttons (12 V STS3215 servos, Dynamixel servos, thicker fingers).
 - **Show Morph the job** (beta): add a phone video or photos of the task done by hand. Morph picks still frames in

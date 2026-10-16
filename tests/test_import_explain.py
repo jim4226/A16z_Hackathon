@@ -97,6 +97,38 @@ LINES = [  # (header, line, catalog key): only the part name or MPN names a moto
     (["Part", "Qty", "Notes"], ["Horn - aluminium, fits STS3215", "6", ""], None),
     (["Part", "Qty", "Notes"], ["Power supply servo", "1", "STS3215 12V"], None),      # an accessory word before the servo
     (["Part", "Qty", "Notes"], ["Cable servo", "6", "STS3215 12V"], None),
+    # the STS3215's 12 V model codes are the 12 V servo (R6): C018 and C047, 1/345, about 30 kg·cm
+    (["Part", "Qty", "Notes"], ["Feetech STS3215-C018", "6", ""], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215-C018 servo", "6", ""], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215 C018", "6", ""], "sts3215"),
+    (["Part", "MPN", "Manufacturer", "Qty"], ["Bus servo", "STS3215-C018", "Feetech", "6"], "sts3215"),
+    (["Part", "Qty", "Notes"], ["Feetech STS3215-C047", "6", ""], "sts3215"),
+    (["Part", "Qty", "Notes"], ["STS3215 servo (C018) for SO-101 follower", "6", ""], "sts3215"),
+    # an accessory named after a servo stays one whatever follows its head noun (a unit, colour, material, revision,
+    # "replacement") and whatever it fits: right at bb1fd6b, a servo at 11ff356 (R6)
+    (["Part", "Qty", "Notes"], ["Robot Cable-X3P 180mm (for XL430)", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["SG90 servo extension lead", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["Standoff for STS3215 horn", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["Bearing for STS3215 horn", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["Thread-locker for STS3215 screws", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["XL330 servo case replacement", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo cable 200 mm", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo cable 20 cm", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["Servo extension cable 300 mm for STS3215", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo bracket black", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["MG996R servo bracket silver", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo horn aluminum", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo horn metal", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["SG90 servo horns white", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["MG996R servo mounting bracket aluminium alloy", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["STS3215 servo driver board rev B", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["XL330 servo cable JST EH 3P", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["SG90 servo horn single arm", "6", ""], None),
+    (["Part", "Qty", "Notes"], ["25T Metal Servo Horn Compatible with MG996R", "4", ""], None),
+    (["Part", "Qty", "Notes"], ["Aluminium servo horn compatible MG996R DS3218", "4", ""], None),
+    (["Part", "Qty", "Notes"], ["Servo horn fits STS3215", "4", ""], None),
+    (["Part", "Qty", "Notes"], ["Servo bracket suits DS3218", "4", ""], None),
+    (["Part", "Qty", "Notes"], ["Servo extension cable compatible with SG90", "4", ""], None),
 ]
 
 

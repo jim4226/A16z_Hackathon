@@ -1,0 +1,416 @@
+{
+ "so101_follower_12v.csv": {
+  "note": "C018 is the 12 V servo; the 200 mm cable is not a servo",
+  "lines": {
+   "Feetech STS3215-C018 servo": [
+    "sts3215",
+    6
+   ],
+   "Waveshare Bus Servo Adapter (A)": [
+    null,
+    0
+   ],
+   "12V 5A power supply for STS3215 servos": [
+    null,
+    0
+   ],
+   "STS3215 servo horn (aluminium)": [
+    null,
+    0
+   ],
+   "M2x6 screw": [
+    null,
+    0
+   ],
+   "STS3215 servo cable 200 mm": [
+    null,
+    0
+   ],
+   "USB-C cable": [
+    null,
+    0
+   ],
+   "PLA filament 1 kg": [
+    null,
+    0
+   ],
+   "Table clamp": [
+    null,
+    0
+   ]
+  }
+ },
+ "so101_leader_follower.csv": {
+  "note": "the servo arm is a horn",
+  "lines": {
+   "STS3215 Servo 7.4V, 1/345 gear (C001)": [
+    "sts3215_7v4",
+    7
+   ],
+   "STS3215 Servo 7.4V, 1/191 gear (C044)": [
+    "sts3215_7v4",
+    2
+   ],
+   "STS3215 Servo 7.4V, 1/147 gear (C046)": [
+    "sts3215_7v4",
+    3
+   ],
+   "Bus servo driver board for STS3215": [
+    null,
+    0
+   ],
+   "5V 4A power supply": [
+    null,
+    0
+   ],
+   "Feetech FE-URT-1 servo debug board": [
+    null,
+    0
+   ],
+   "STS3215 servo arm, aluminium": [
+    null,
+    0
+   ]
+  }
+ },
+ "koch_v11.csv": {
+  "note": "Koch v1.1: XL330-M077 is the leader arm's motor, not the M288",
+  "lines": {
+   "Dynamixel XL430-W250-T": [
+    "xl430_w250",
+    2
+   ],
+   "Dynamixel XL330-M288-T": [
+    "xl330_m288",
+    4
+   ],
+   "Dynamixel XL330-M077-T": [
+    null,
+    0
+   ],
+   "U2D2": [
+    null,
+    0
+   ],
+   "U2D2 Power Hub Board": [
+    null,
+    0
+   ],
+   "ROBOTIS U2D2 for Dynamixel XL430": [
+    null,
+    0
+   ],
+   "SMPS 12V 5A for XL430": [
+    null,
+    0
+   ],
+   "Robot Cable-X3P 180mm (for XL430)": [
+    null,
+    0
+   ],
+   "FR12-H101K frame for XL430": [
+    null,
+    0
+   ],
+   "XL330 servo cable JST EH 3P": [
+    null,
+    0
+   ]
+  }
+ },
+ "hobby_arm.csv": {
+  "note": "",
+  "lines": {
+   "MG996R servo": [
+    "mg996r",
+    3
+   ],
+   "SG90 9g micro servo": [
+    "sg90",
+    3
+   ],
+   "PCA9685 16-channel servo driver": [
+    null,
+    0
+   ],
+   "MG996R metal servo arm": [
+    null,
+    0
+   ],
+   "SG90 servo arm set": [
+    null,
+    0
+   ],
+   "MG996R servo bracket silver": [
+    null,
+    0
+   ],
+   "MG996R replacement gears": [
+    null,
+    0
+   ],
+   "5V 10A power supply": [
+    null,
+    0
+   ],
+   "Arduino Uno R3": [
+    null,
+    0
+   ],
+   "Capacitor 1000uF for MG996R": [
+    null,
+    0
+   ],
+   "SG90 servo extension lead": [
+    null,
+    0
+   ]
+  }
+ },
+ "stepper_arm.csv": {
+  "note": "",
+  "lines": {
+   "NEMA17 stepper motor 42-40": [
+    null,
+    0
+   ],
+   "NEMA17 planetary gearbox stepper 5.18:1": [
+    null,
+    0
+   ],
+   "TMC2209 stepper driver": [
+    null,
+    0
+   ],
+   "DRV8825 stepper driver for NEMA17": [
+    null,
+    0
+   ],
+   "GT2 pulley 20T for NEMA17": [
+    null,
+    0
+   ],
+   "NEMA17 motor mount bracket": [
+    null,
+    0
+   ],
+   "SG90 servo": [
+    "sg90",
+    1
+   ],
+   "24V 5A power supply": [
+    null,
+    0
+   ]
+  }
+ },
+ "eu_semicolon.csv": {
+  "note": "German headers: is the table read at all? (Servohorn = servo horn, Netzteil = power supply)",
+  "lines": {
+   "Feetech STS3215 Servo 12V": [
+    "sts3215",
+    6
+   ],
+   "Servohorn Aluminium STS3215": [
+    null,
+    0
+   ],
+   "Netzteil 12V 5A": [
+    null,
+    0
+   ]
+  }
+ },
+ "eu_semicolon_en.csv": {
+  "note": "",
+  "lines": {
+   "Feetech STS3215 Servo 12V": [
+    "sts3215",
+    6
+   ],
+   "STS3215 servo horn, aluminium": [
+    null,
+    0
+   ],
+   "Power supply 12V 5A": [
+    null,
+    0
+   ]
+  }
+ },
+ "servo_board_kicad8.csv": {
+  "note": "KiCad 8 Symbol Fields Table export; J2-J7 are JST connectors for the servo bus; M1/M2 are the Motor_Servo symbol (the servo itself, plugged into a header)",
+  "lines": {
+   "100nF": [
+    null,
+    0
+   ],
+   "1000uF": [
+    null,
+    0
+   ],
+   "USB_C_Receptacle": [
+    null,
+    0
+   ],
+   "STS3215_BUS": [
+    null,
+    0
+   ],
+   "Barrel_Jack_12V": [
+    null,
+    0
+   ],
+   "SG90": [
+    "sg90",
+    2
+   ],
+   "CH340C": [
+    null,
+    0
+   ],
+   "74LVC1G125": [
+    null,
+    0
+   ],
+   "10k": [
+    null,
+    0
+   ]
+  }
+ },
+ "servo_board_kicad_legacy.csv": {
+  "note": "KiCad 5-7 bom_csv_grouped_by_value plugin output (header 'Qnty')",
+  "lines": {
+   "100nF": [
+    null,
+    0
+   ],
+   "STS3215": [
+    null,
+    0
+   ],
+   "MG996R": [
+    "mg996r",
+    2
+   ],
+   "CH340C": [
+    null,
+    0
+   ]
+  }
+ },
+ "servo_board_kibom.csv": {
+  "note": "KiBoM default columns: 'Component' is the group number",
+  "lines": {
+   "#1": [
+    null,
+    0
+   ],
+   "#2": [
+    "sg90",
+    2
+   ],
+   "#3": [
+    null,
+    0
+   ],
+   "#4": [
+    null,
+    0
+   ]
+  }
+ },
+ "jlc_bom.csv": {
+  "note": "JLCPCB assembly BOM",
+  "lines": {
+   "100nF": [
+    null,
+    0
+   ],
+   "CH340C": [
+    null,
+    0
+   ],
+   "STS3215 connector": [
+    null,
+    0
+   ]
+  }
+ },
+ "bldc_arm.csv": {
+  "note": "",
+  "lines": {
+   "GIM6010-8 BLDC actuator": [
+    null,
+    0
+   ],
+   "CubeMars AK80-9 actuator": [
+    null,
+    0
+   ],
+   "Moteus r4.11 controller": [
+    null,
+    0
+   ],
+   "AS5047P magnetic encoder": [
+    null,
+    0
+   ],
+   "XL330-M288-T": [
+    "xl330_m288",
+    1
+   ],
+   "U2D2 interface for XL330 servos": [
+    null,
+    0
+   ]
+  }
+ },
+ "pack_counts.csv": {
+  "note": "a pack of N bought once: Qty 1, N servos",
+  "lines": {
+   "STS3215 12V servo (6 pcs)": [
+    "sts3215",
+    6
+   ],
+   "6 x STS3215 12V servo": [
+    "sts3215",
+    6
+   ],
+   "SG90 micro servo 10 pack": [
+    "sg90",
+    10
+   ],
+   "MG996R servo x4": [
+    "mg996r",
+    4
+   ]
+  }
+ },
+ "so_arm100_readme.md": {
+  "note": "",
+  "lines": {
+   "STS3215 Servo 12V, 1/345 gear (C018)": [
+    "sts3215",
+    6
+   ],
+   "Motor Control Board": [
+    null,
+    0
+   ],
+   "USB-C Cable 2 pcs": [
+    null,
+    0
+   ],
+   "Power Supply (12V 5A)": [
+    null,
+    0
+   ],
+   "Table Clamp 2 pcs": [
+    null,
+    0
+   ]
+  }
+ }
+}
