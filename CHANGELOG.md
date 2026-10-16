@@ -577,6 +577,12 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   the gloves", "pass around the snacks", "hand round the biscuits", "a robot that gives out flyers", "hand the
   leaflets to passers-by") and "a robot that puts the part in the operator's hand" were built with nobody nearby and
   no emergency stop.
+- New robot no longer reads a department or a packing machine as a person it hands things to, nor baby products as
+  children nearby: "bring the bottles to Recycling", "bring the parcels to Goods In", "bring the samples to
+  Pathology", "move the trays to the denester" and "pass the bottles to the corker" were hand-overs, and "a robot
+  that sorts baby food jars", "move the baby wipes to the shelf", "a robot that dispenses infant formula" and "give
+  the baby carrots to the rabbit" had children nearby. A grader, a candler, a stacker or a deburrer may be a person,
+  so New robot still hands things to one, with an emergency stop.
 - New robot no longer keeps an object on "my SO-101" that the stock jaws can't hold: "use my SO-101 to move light
   bulbs" built an SO-101 with no issue whose own simulation then dropped the 60 mm bulb. In Morph's simulation the
   stock jaws dropped every round object tried from 47 to 60 mm across and flat-sided ones of 36, 40, 44 and 48 mm (a

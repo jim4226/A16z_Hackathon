@@ -1865,8 +1865,12 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   around the snacks", "hand round the biscuits", "a robot that gives out flyers", "give the gloves out"; not round an
   obstacle or a place, out of something, nor a part that gives out); passers-by, bystanders, pedestrians, spectators,
   commuters and tourists are people. A capitalised word is no name at the start of a sentence, after "the" or "a", for a
-  place, person or product word, a department or a brand ("Reception", "Assembly", "Starbucks", "Haas"), a month or a
-  day, and when the request is in Title Case or capitals. The patterns are compiled once (`brief._rx`).
+  place, person or product word, a department or a brand ("Reception", "Assembly", "Pathology", "Recycling", "Goods
+  In", "Finance", "Starbucks", "Haas"), a month or a day, and when the request is in Title Case or capitals. Baby and
+  infant products are things (`brief._baby_goods`: "baby carrots", "baby food jars", "baby wipes", "infant formula"),
+  except right after a giving or feeding verb with no one else to get them ("feed the baby food", "give the baby
+  carrots": the baby may be the one fed). A tray denester and a bottle corker are machines; a grader, a candler, a
+  stacker or a deburrer may be a person and stays one (a safe error: "move the eggs to the grader" is a hand-over). The patterns are compiled once (`brief._rx`).
   A person's place is no person. A possessive, a family word or a person word before 's or s' owns the place the things
   go to when a place, a piece of furniture, a container or a machine (`_PLACE`: desk, room, bedroom, office, workshop,
   kitchen, table, car, door, shed, shelf, drawer, bin, tray, station, line, machine, cell, panel, fridge, printer,

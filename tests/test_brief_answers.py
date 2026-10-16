@@ -336,6 +336,32 @@ def test_a_reader_or_a_cleaning_machine_is_no_person(text):
     assert not re.search(B.PERSON_NEAR, B.people_text(text)) and not re.search(B.PEOPLE_BESIDE, B.people_text(text))
 
 
+@pytest.mark.parametrize("text, people", [
+    # a department, a tray denester or a bottle corker is no person the things are handed to, and baby carrots, baby
+    # wipes, baby food jars and infant formula are things, not children nearby
+    ("bring the samples to Pathology", None), ("bring the bottles to Recycling", None), ("bring the parcels to Goods In", None),
+    ("bring the meds to Pharmacy", None), ("move the trays to the denester", None), ("pass the bottles to the corker", None),
+    ("give the baby carrots to the rabbit", "pets"), ("a robot that sorts baby food jars", None),
+    ("move the baby wipes to the shelf", None), ("a robot that dispenses infant formula", None),
+    ("pack the baby spinach into boxes", None)])
+def test_departments_machines_and_baby_products_are_no_people(text, people):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "task") != "hand_over" and "hands over" not in b.summary, (B.value(b, "task"), b.summary)
+    assert B.value(b, "people_nearby") not in ("yes", "children") or b.slots.get("people_nearby") is None, B.value(b, "people_nearby")
+    if people:
+        assert B.value(b, "people_nearby") == people
+
+
+@pytest.mark.parametrize("text, people", [
+    # ... but a baby who may be the one fed or given something, or a person who may be a machine's name, stays a person
+    ("feed the baby food", "children"), ("give the baby carrots", "children"), ("a robot that feeds my baby baby food", "children"),
+    ("bring the baby food to the baby", "children"), ("move the eggs to the grader", "yes"), ("move the boxes to the stacker", "yes"),
+    ("bring the parcel to Sarah", "yes"), ("hand the bottles to the packer", "yes")])
+def test_a_person_the_words_leave_unsure_stays_a_person(text, people):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "people_nearby") == people and "estop" in b.changes["electronics.extras"]
+
+
 @pytest.mark.parametrize("text", ["hand the book to the reader", "pass the proofs to the proof reader",
                                   "pass the proofs to the proofreader", "a robot that hands the cleaner a mop",
                                   "give the cleaner the bucket", "hand the leaflets to the readers"])

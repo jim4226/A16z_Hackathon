@@ -380,7 +380,10 @@ _NOT_AGENT_END = ("washer", "dryer", "drier", "mixer", "blender", "toaster", "ro
                   "dropper", "eyedropper", "atomi[sz]er", "inhaler", "spacer", "applicator", "scooper", "pooper", "kicker",
                   # lab and packing machines ("move the tubes to the sequencer")
                   "sequencer", "analy[sz]er", "cycler", "sonicator", "evaporator", "homogeni[sz]er", "vortexer",
-                  "pipett?or", "degasser", "desiccator", "ioni[sz]er", "strapper", "checkweigher", "embosser")
+                  "pipett?or", "degasser", "desiccator", "ioni[sz]er", "strapper", "checkweigher", "embosser",
+                  # machines no one is called ("move the trays to the denester", "pass the bottles to the corker"); a grader,
+                  # a candler, a stacker or a deburrer may be a person, so they stay one
+                  "denester", "corker")
 _NOT_AGENT_WORD = ("holder", "maker", "tractor", "order", "matter", "character", "chapter", "summer", "winter", "october",
                    "november", "december", "september", "power", "river", "silver", "copper", "leather", "feather",
                    "weather", "powder", "solder", "plaster", "glitter", "clutter", "litter", "timber", "lumber", "polymer",
@@ -675,6 +678,10 @@ _NOT_NAMES = frozenset(("i", "monday", "tuesday", "wednesday", "thursday", "frid
                         "arduino", "raspberry", "pi", "feetech", "dynamixel", "robotis", "lerobot", "so", "mg996r", "sg90",
                         "ok", "okay", "hi", "hello", "hey", "thanks", "please", "dr", "mr", "mrs", "ms", "miss", "mx", "prof",
                         "reception", "assembly", "shipping", "packing", "dispatch", "inspection", "storage", "maintenance",
+                        "pathology", "radiology", "pharmacy", "haematology", "hematology", "microbiology", "histology",
+                        "cytology", "virology", "immunology", "biochemistry", "oncology", "cardiology", "imaging", "recycling",
+                        "goods", "despatch", "stores", "purchasing", "procurement", "finance", "logistics", "production",
+                        "facilities", "catering", "laundry", "sterilisation", "sterilization", "outpatients", "admissions",
                         "security", "admin", "accounts", "receiving", "returns", "quality", "qa", "qc", "starbucks", "amazon",
                         "haas", "ups", "fedex", "dhl", "usps", "costco", "walmart", "tesco", "aldi", "lidl", "target", "apple",
                         "google", "samsung", "bosch", "makita", "dewalt", "festool"))
@@ -718,7 +725,27 @@ def people_text(raw: str) -> str:
         out = "".join(parts + [raw[last:].lower()])
     for pat, rep in _TYPOS:
         out = re.sub(pat, rep, out)
-    return _agents(out)
+    return _agents(_baby_goods(out))
+
+
+# baby and infant products are things, not children ("sorts baby food jars", "move the baby wipes", "dispenses infant
+# formula", "give the baby carrots to the rabbit"); after a giving or feeding verb with no one else to get them the baby
+# may be the one given something, so it stays ("feed the baby food", "give the baby carrots")
+_BABY_GOODS = (r"(?:carrots?|spinach|corn|sweetcorn|potato(?:es)?|tomato(?:es)?|leaf|leaves|greens|courgettes?|zucchinis?|"
+               r"squash(?:es)?|beets?|beetroots?|aubergines?|kale|lettuces?|plum tomatoes|foods?|wipes?|oil|powder|lotion|"
+               r"shampoo|formula|cereal|rice|purees?|purées?|jars?|pouches?|bottles? of formula)")
+
+
+def _baby_goods(text: str) -> str:
+    """`text` with "baby"/"infant" before a product written "product" ("baby food jars" -> "product food jars")."""
+    def product(m):
+        given = re.search(r"\b(?:feed|giv|give|hand|pass|bring|brought|serv|offer|fetch|get)\w*\s+(?:(?:the|a|an|my|our|your|their|"
+                          r"his|her|this|that)\s+)?$", text[:m.start()])
+        if given and not re.match(r"(?:\s+[\w'’-]+){0,3}?\s+(?:to|for)\s+(?!(?:(?:the|a|an|my|our|your|their|his|her)\s+)?"
+                                  r"(?:bab(?:y|ies)|infants?)\b)[a-z]", text[m.end():]):
+            return m.group(0)
+        return "product" + m.group(1)
+    return re.sub(r"\b(?:bab(?:y|ies)|infants?)(\s+" + _BABY_GOODS + r")\b", product, text)
 
 
 # where a word for someone can stand: after a determiner, a possessive or a preposition, through up to three describing
