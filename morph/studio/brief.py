@@ -644,6 +644,10 @@ _FOR_SOMEONE = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist
                 r"bakery|lobby)\b|\bserv(?:e|es|ed|ing)\s+(?:(?:the|a|an|some|hot|cold|fresh|iced)\s+)?(?:drinks?|food|meals?|"
                 r"coffees?|teas?|beers?|wines?|cocktails?|snacks?|dinner|lunch|breakfast|desserts?|ice cream|soup|cake)\b|"
                 r"\brobot(?:ic)?\s+(?:barista|bartender|waiter|waitress|server|butler)\b|"
+                # her or his thing brought somewhere is brought for her or him: "bring her tea to the table", "bring her cup
+                # to the sink" (no hand-over: the thing goes to a place, but she is there)
+                r"\b(?:" + _GIVE_TO + r"|deliver(?:s|ed|ing)?|carr(?:y|ies|ied|ying))\s+(?:her|his)\s+(?!(?:own\s+)?(?:" + _PLACE +
+                r")\b)(?!" + _NOT_DESCRIBING + r"\b)[a-z]|"
                 # it works on someone's body: "a robot that brushes my hair", "washes grandma's feet", "shaves him"
                 r"\b(?:brush|comb|wash|massag|scratch|shav|trim|cut|styl|dry|dries|bath|wip|moisturi[sz]|plait|braid|"
                 r"curl|groom)\w*\s+(?:(?:my|your|his|her|their|our|someone['’]s|somebody['’]s|" + _KIN + "|" + _KIN_SLANG +

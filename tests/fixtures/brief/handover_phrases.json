@@ -10855,6 +10855,48 @@
    "task": "hand_over",
    "people": "yes",
    "estop": true
+  },
+  {
+   "text": "bring her tea to the table",
+   "family": "C-her-thing-placed",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her pills to the table",
+   "family": "C-her-thing-placed",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her water to her bedside table",
+   "family": "C-her-thing-placed",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "bring her medicine to the tray",
+   "family": "C-her-thing-placed",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass her plate to the counter",
+   "family": "C-her-thing-placed",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "take her cup to the sink",
+   "family": "C-her-thing-placed",
+   "task": null,
+   "people": "yes",
+   "estop": true
   }
  ]
 }

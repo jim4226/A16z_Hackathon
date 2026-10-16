@@ -1899,7 +1899,8 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   "the guest room"), and "her" or a person word whose next words go to, into or onto a place things are put away in
   or on is the thing's (`_PUT_AWAY`: furniture, a container, a machine or a station, not a room or an area: "bring her
   cup to the sink", "give her toys to the toy box", "bring her keys to the hook", "pass the guest towels to the
-  shelf"). "In" or "on" a place says where the person is or how the thing comes, and a room or an area may be where
+  shelf"); she is still a person the robot brings things for, so people are nearby, with an emergency stop ("bring
+  her tea to the table", "bring her cup to the sink"). "In" or "on" a place says where the person is or how the thing comes, and a room or an area may be where
   the person is, so "bring her tea in the garden", "bring her medicine on a tray", "pass her pills on the tray",
   "bring her tea to the garden", "bring them tea in the garden" and "give the operator parts in the tray" are
   hand-overs (an animal's thing keeps the older guard, `_THEN_ANY_PLACE`: "bring the dog bowl to her porch"). The tool hand-over archetype's things going to a place are a pick
@@ -1918,7 +1919,7 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   than the few above. A place named after people
   infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
   place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
-  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,607
+  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 1,613
   requests from the release review's two hunts and the fixers' rounds, each with the task, people and e-stop it must get,
   run through `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
