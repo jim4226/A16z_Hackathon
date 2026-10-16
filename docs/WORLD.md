@@ -93,12 +93,13 @@ claim a big place, or a place for near misses closer than the box was fitted to.
 a box the room holds already is never offered again.
 
 The check, the boxes' fit included, has 20 seconds. On a 4-core computer the review's desk scan, a vase 9 mm from the
-arm's path, takes 15 to 16 seconds at load 11-12 (measured only at the poses, as before, it took 14.7 seconds at load
-16: the motion between the poses costs about as much again); the same desk with the mount moved 15 mm, the wrist 2 mm
-from the vase, 12.5 to 13.5 seconds at load 12; a generated room of a million triangles 14.5 seconds at load 10-12. When
-a check can't measure the whole path in time, it never claims more room than it measured: it says how close the arm
-comes at most (the closest distance it did measure: "The wrist comes within at most 4.6 mm of the scanned surface"),
-with how close it comes at least when it knows ("no closer than 8.6 mm"), or that there wasn't time to measure it, and
+arm's path, takes 11.3 to 11.5 seconds at load 1-2 and 15 to 16 at load 11-12 (measured only at the poses, as before,
+it took 14.7 seconds at load 16: the motion between the poses costs about as much again); the same desk with the mount
+moved 15 mm, the wrist 2 mm from the vase, 8.7 seconds at load 2.5 and 12.5 to 13.5 at load 12; a generated room of a
+million triangles 14.5 seconds at load 10-12. When a check can't measure the whole path in time, it never claims more
+room than it measured: it says how close the arm comes at most (the closest distance it did measure: "The wrist comes
+within at most 4.6 mm of the scanned surface"), with how close it comes at least when it knows ("no closer than 8.6
+mm"), or that there wasn't time to measure it, and
 that only part of the path, or of the motion between its poses, was measured (at load 13 to 17 the desk check can run
 out of time there). It says whether checking again when the computer is less busy may finish it, or whether, at that
 pace, it would take more than twice as long. Its answer is kept until the room, the scan or the revision's simulation

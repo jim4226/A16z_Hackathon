@@ -1498,7 +1498,9 @@ field failure rate (section 0, honesty).
   mm nearer the path, the check before said it had a grey box already). Tests: `tests/test_world_scan_shapes.py`
   with the hunters' configurations as data (`tests/data/scan_shape_cases.json`, built on the egg-picker's bench path,
   MuJoCo every 0.25 ms around the closest pose as the reference); the hunters' own scripts on rD r004: all OK. Measured
-  (load from other work on the same 4 cores): the desk scan 15.1-16.3 s at load 11-12 (pass 2 5.1-5.3 s, 422 poses
+  (load from other work on the same 4 cores): the desk scan 11.3-11.5 s at load 1-2 (R7, pass 2 4.4-4.5 s, 422 poses
+  between in 4.2-4.5 s, fit 0.6 s; with the mount moved 15 mm 8.7 s at load 2.5), 15.1-16.3 s at load 11-12 (pass 2
+  5.1-5.3 s, 422 poses
   between in 6.1-6.6 s, fit 1.1-1.4 s), 20 s and cut short between the poses at load 13-17 (the pre-R6 engine took
   14.7-14.8 s at load 16); with the mount moved 15 mm (2.1 mm) 12.5-13.5 s at load 12; the million-triangle room 14.5 s
   at load 10-12 (it touches; the regions step skips refining a place that touches).
