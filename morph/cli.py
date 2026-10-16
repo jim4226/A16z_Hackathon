@@ -332,8 +332,10 @@ def _stopped_starting(fresh: list, building: list, last: bool) -> int:
     line instead of a traceback from inside MuJoCo, and exit status 130 (stopped). The build in progress left nothing
     (RobotProject.run discards a revision it didn't finish). A project this start made (`fresh`) that has no finished
     revision is removed: kept, a project named other than the demos would hold no design, and the next `morph studio`
-    would refuse to start on it. So the next start builds it again. `last`: the process ends now (_leave)."""
-    _ignore_stops()  # stopping already: a second Ctrl+C changes nothing
+    would refuse to start on it. So the next start builds it again. `last`: the process ends now (_leave), and a stop
+    signal from here on is ignored (a second Ctrl+C changes nothing); a script calling main(argv) keeps its handlers."""
+    if last:
+        _ignore_stops()
     import shutil
     from .robot.pipeline2 import RobotProject
     for nm in fresh:

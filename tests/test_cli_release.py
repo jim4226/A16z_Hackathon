@@ -425,3 +425,33 @@ def test_studio_on_a_project_with_no_finished_revision_never_replaces_its_design
     assert "no project boom-kb yet" not in capsys.readouterr().out and built == []
     assert {n: open(os.path.join(root, n), encoding="utf-8").read() for n in before} == before
     assert not [n for n in os.listdir(root) if n.startswith("r0")]
+
+
+def test_a_stop_while_the_launcher_builds_keeps_a_script_s_ctrl_c_and_what_was_there(tmp_path, monkeypatch, capsys):
+    """cmd_studio called from a script or a test (main(argv), not the command line): a stop during the first robot
+    returns 130 and leaves the process's Ctrl+C handling as it was; only folders that start made go, never one that was
+    there before (a demo project with no finished revision is built again next time)."""
+    import signal as sig
+    home = tmp_path / "projects"
+    (home / "egg-picker").mkdir(parents=True)                       # there before, with no finished revision
+    (home / "egg-picker" / "meta.json").write_text(json.dumps({"kind": "robot", "demo": True}), encoding="utf-8")
+    monkeypatch.setattr(cli, "HOME", str(home))
+    monkeypatch.setattr(keys, "ENV_PATH", str(tmp_path / ".env"))
+
+    def stopped(a):
+        from morph.studio import projects
+        projects.create(str(home), a.name, demo=a.name in projects.DEMOS, unique=False)
+        raise KeyboardInterrupt
+    monkeypatch.setattr(cli, "cmd_robot", stopped)
+    before = sig.getsignal(sig.SIGINT)
+    for name, kept in (("egg-picker", True), ("my-arm", False)):
+        with socket.socket() as free:
+            free.bind(("127.0.0.1", 0))
+            port = free.getsockname()[1]
+        a = argparse.Namespace(name=name, host="127.0.0.1", port=port, open=False, remote=False, team=False,
+                               allow_url_import=False)
+        assert cli.cmd_studio(a) == 130
+        assert sig.getsignal(sig.SIGINT) is before
+        assert (home / name).exists() is kept and not (home / "so101").exists()
+        out = capsys.readouterr().out.splitlines()
+        assert out[-1] == f"Stopped before the Studio started: {name} wasn't finished, and the next start builds it again."
