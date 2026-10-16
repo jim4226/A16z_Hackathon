@@ -1,4 +1,4 @@
-# Sponsor integrations: Keewano and Darwin
+# Integrations: Keewano and Darwin
 
 Both integrations use only the Python standard library, so nothing new to install. With no keys,
 both still work: Darwin Search needs no account, and Keewano switches itself off. Both follow the

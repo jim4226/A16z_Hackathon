@@ -42,10 +42,10 @@ machines = ["pyserial", "requests"]
 dev = ["pytest"]
 
 [project.urls]
-Homepage = "https://github.com/jim4226/A16z_Hackathon"
-Source = "https://github.com/jim4226/A16z_Hackathon"
-Issues = "https://github.com/jim4226/A16z_Hackathon/issues"
-Changelog = "https://github.com/jim4226/A16z_Hackathon/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/jim4226/morph-studio"
+Source = "https://github.com/jim4226/morph-studio"
+Issues = "https://github.com/jim4226/morph-studio/issues"
+Changelog = "https://github.com/jim4226/morph-studio/blob/main/CHANGELOG.md"
 
 [project.scripts]
 morph = "morph.cli:main"

@@ -202,7 +202,7 @@ def test_release_docs_exist_link_correctly_and_name_this_version():
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
     assert f"## {morph.__version__} " in changelog
     docs = ["README.md", "SECURITY.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "docs/INSTALL.md", "docs/PRIVACY.md",
-            "docs/RELEASE_CHECKLIST.md", "docs/BOARDREPO.md", "docs/SPONSORS.md", "docs/DEMO_SCRIPT.md", "docs/TEAMS.md",
+            "docs/RELEASE_CHECKLIST.md", "docs/BOARDREPO.md", "docs/INTEGRATIONS.md", "docs/DEMO_SCRIPT.md", "docs/TEAMS.md",
             "docs/IMPORT.md", "docs/WORLD.md"]
     for doc in docs:
         text = (REPO / doc).read_text(encoding="utf-8")
@@ -211,4 +211,4 @@ def test_release_docs_exist_link_correctly_and_name_this_version():
             if path and not re.match(r"[a-z]+:", path):
                 assert (REPO / doc).parent.joinpath(path).resolve().exists(), (doc, link)
     assert not (REPO / "docs" / "HACKATHON_PLAN.md").exists() and (REPO / "docs" / "internal" / "HACKATHON_PLAN.md").exists()
-    assert "github.com/jim4226/A16z_Hackathon/security/advisories/new" in (REPO / "SECURITY.md").read_text(encoding="utf-8")
+    assert "github.com/jim4226/morph-studio/security/advisories/new" in (REPO / "SECURITY.md").read_text(encoding="utf-8")

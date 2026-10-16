@@ -272,6 +272,6 @@ def test_no_measured_or_real_build_claims_for_seeded_data():
     claims = re.compile(r"calibrat\w* (the grip force )?from real builds|measured results tune|measured builds for"
                         r"|from \$\{cal\.n\} measured|no measured \$|grip force calibrated from real")
     for rel in ("morph/studio/static/app.js", "morph/studio/static/keys.js", "morph/studio/static/present.js",
-                "README.md", "docs/SPONSORS.md", "morph/electronics.py"):
+                "README.md", "docs/INTEGRATIONS.md", "morph/electronics.py"):
         with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
             assert not claims.search(fh.read()), rel

@@ -1,7 +1,7 @@
 # BoardRepo and Morph
 
 [BoardRepo](https://boardrepo.com/) hosts 8,263 public KiCad and Altium boards (count as of Oct 11 2026). Each
-board has schematic, PCB, 3D and BOM views. It is run by Flintt, Inc. and is not a hackathon sponsor.
+board has schematic, PCB, 3D and BOM views. It is run by Flintt, Inc.
 
 Morph uses it two ways. Neither needs an account or a key.
 

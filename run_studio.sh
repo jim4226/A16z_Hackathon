@@ -28,7 +28,7 @@ update() {  # 0: switched to the latest release; 1: keep the version that is her
   local latest
   if [ ! -e .git ]; then
     echo "--update: this folder isn't a git clone, so it can't switch versions itself. Download the latest release"
-    echo "from https://github.com/jim4226/A16z_Hackathon/releases into a new folder and copy your projects folder"
+    echo "from https://github.com/jim4226/morph-studio/releases into a new folder and copy your projects folder"
     echo "and .env across. Starting the version you have."
     return 1
   fi

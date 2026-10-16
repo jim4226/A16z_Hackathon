@@ -36,7 +36,7 @@ ALLOW = {"github.com", "codeload.github.com", "raw.githubusercontent.com", "hugg
 ALLOW_SUFFIX = (".hf.co",)
 WANTED = re.compile(r"\.(urdf|xacro|xml|stl|obj|ply|off|dae|glb|gltf|bin|3mf|step|stp|iges|igs|csv|tsv|xlsx|md|yaml|yml|"
                     r"kicad_pcb|kicad_sch)$|(^|/)(package\.xml|licen[sc]e[^/]*|copying[^/]*|notice[^/]*|readme[^/]*)$", re.I)
-UA = "MorphStudio-import/0.2 (+https://github.com/jim4226/A16z_Hackathon)"
+UA = "MorphStudio-import/0.2 (+https://github.com/jim4226/morph-studio)"
 OVERALL_S = 600.0
 SEG = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}$")      # an owner, repo or ref path segment; never . or ..
 

@@ -159,6 +159,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 
 ### Install and updates
 
+- The repository is now [github.com/jim4226/morph-studio](https://github.com/jim4226/morph-studio) (it was
+  `A16z_Hackathon`, from the hackathon Morph started at; old links and clones still reach it). A new clone's folder
+  is `morph-studio`. Keewano and Darwin are written up as integrations: `docs/INTEGRATIONS.md` (it was
+  `docs/SPONSORS.md`).
 - Launchers find Python 3.10 to 3.14 and say what to install when there is none (Python 3.15 is too new for now).
   They rebuild a broken `.venv`, show pip's progress on the first install, and skip pip on later launches.
 - Launchers no longer pull `main` on every start. `--update` switches a git clone to the newest release tag, and

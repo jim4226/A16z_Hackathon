@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security problems privately, through GitHub's private vulnerability reporting:
-[**Report a vulnerability**](https://github.com/jim4226/A16z_Hackathon/security/advisories/new) (the Security tab of
+[**Report a vulnerability**](https://github.com/jim4226/morph-studio/security/advisories/new) (the Security tab of
 this repository). Don't open a public issue for it, and don't put API keys, exploit code or private designs in an
 issue, a screenshot or a log. If one of your keys was exposed, revoke it with its provider first.
 

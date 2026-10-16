@@ -27,12 +27,12 @@ keys are optional.
 **With Git** (updates are one command), in a terminal (Command Prompt or PowerShell on Windows):
 
 ```shell
-git clone https://github.com/jim4226/A16z_Hackathon
-cd A16z_Hackathon
+git clone https://github.com/jim4226/morph-studio
+cd morph-studio
 ```
 
 **Without Git:** download *Source code (zip)* of the latest release from the
-[releases page](https://github.com/jim4226/A16z_Hackathon/releases) and unzip it into a normal folder, such as
+[releases page](https://github.com/jim4226/morph-studio/releases) and unzip it into a normal folder, such as
 Documents (not inside the zip viewer, and not a read-only or cloud-synced folder).
 
 ## 3. Start it

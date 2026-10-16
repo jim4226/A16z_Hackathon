@@ -20,8 +20,8 @@ Step by step, updating, uninstalling and fixes for common problems: [docs/INSTAL
 In a terminal (Command Prompt or PowerShell on Windows, Terminal on macOS and Linux):
 
 ```shell
-git clone https://github.com/jim4226/A16z_Hackathon
-cd A16z_Hackathon
+git clone https://github.com/jim4226/morph-studio
+cd morph-studio
 ```
 
 Then start it on **Windows**:
@@ -42,7 +42,7 @@ Later, double-click `run_studio.bat` in Explorer (Windows) or run `./run_studio.
 to update. A clone that already has commits made after that release (a branch, or `main` once it moves on) stays as
 it is: `git pull` updates it, with Morph closed. Without `--update`, the launcher never runs git, and after the first
 install it starts offline. No Git?
-Download *Source code (zip)* from the [latest release](https://github.com/jim4226/A16z_Hackathon/releases) and run
+Download *Source code (zip)* from the [latest release](https://github.com/jim4226/morph-studio/releases) and run
 the launcher in the unzipped folder.
 
 The first launch takes a few minutes. The launcher looks for Python 3.13, 3.12, 3.11, 3.10, then 3.14 (and says what
@@ -61,7 +61,7 @@ each one, so a mistyped key shows up at once.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Free-form chat requests, Claude reading a **New robot** request, the frame analysis in **Show Morph the job** and World mode's AI review (without it, the suggestion chips, common phrasings and built-in rules work, and you fill in the video cards yourself) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 | `SUBQ_API_KEY` | SubQ Snap: quick yes/no and multiple-choice decisions, shown as "SubQ Snap (AI)" ([SubQ Snap](#subq-snap-optional)) | [console.subq.ai](https://console.subq.ai) |
-| `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: revisions and measurements logged once event sending is on, and an optional grip-force calibration from that history (seeded demo data unless your project holds real bench results) | Keewano settings ([docs/SPONSORS.md](docs/SPONSORS.md)) |
+| `KEEWANO_API_KEY`, `KEEWANO_PAT`, `KEEWANO_PROJECT_ID` | Build memory: revisions and measurements logged once event sending is on, and an optional grip-force calibration from that history (seeded demo data unless your project holds real bench results) | Keewano settings ([docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)) |
 | Darwin | Nothing to add: Darwin Search is public | |
 
 **Privacy and network** (at the bottom of the Keys dialog) has three switches, saved in
@@ -170,7 +170,7 @@ regenerates only what depends on it.
   address), so switching one tab moves no other tab and nobody else. Chat and parameter edits wait their turn
   in each project's queue, and each project keeps its chat.
 - **Present** (button or `P`): the demo as 14 press-through steps with captions.
-- More: [docs/SPONSORS.md](docs/SPONSORS.md) (Keewano and Darwin), [docs/TIME_SAVED.md](docs/TIME_SAVED.md)
+- More: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) (Keewano and Darwin), [docs/TIME_SAVED.md](docs/TIME_SAVED.md)
   (time-saved sources), [docs/internal/PLATFORM_CONTRACTS.md](docs/internal/PLATFORM_CONTRACTS.md) (how the stages fit
   together), [CHANGELOG.md](CHANGELOG.md) (what changed in each release), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -386,7 +386,7 @@ These run in a terminal set up as in [Commands in a terminal](#commands-in-a-ter
 | `report.py` | the comparison page |
 | `agent.py` | Claude need → spec (fragility, sensor, servo inferred), web research |
 
-## Sponsor integrations
+## Integrations
 
 **Keewano: the build memory.** With **Send build events to Keewano** on (Keys, Privacy and network;
 off by default), every ledger entry (revision, bench measurement, human minutes, Darwin lookup) is
@@ -433,7 +433,7 @@ shortlist: ordering is Darwin Act, which needs the user's own account and approv
 
 With no keys set, both integrations are no-ops and everything runs offline.
 
-**BoardRepo: the board in KiCad, and open boards to learn from** (not a sponsor). Every carrier
+**BoardRepo: the board in KiCad, and open boards to learn from** (a separate site, run by Flintt, Inc.). Every carrier
 board is also written as a KiCad project next to its Gerbers (`electronics/board/kicad/`), with
 the same copper, the GND pour included. KiCad 9 reports 0 DRC violations, 0 unconnected items, 0 PCB-vs-schematic
 mismatches and 0 ERC errors for every MCU. Darwin's PCB-fab handoff includes it. `morph kicad`
