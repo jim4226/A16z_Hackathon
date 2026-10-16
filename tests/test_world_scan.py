@@ -212,7 +212,7 @@ def test_add_box_here_never_comes_closer_to_the_path_than_the_scan_and_is_not_of
     rob_b, doc_b, met_b = simulated(tuple(worlds.sim_world(w)["obstacles"]))
     same_path = float(np.nanmin(mujoco_clearance(rob_b, doc)))             # MuJoCo: the box against the scanned path
     assert same_path >= g["min_clearance_mm"] - 1.0, (same_path, g)        # (MuJoCo's hulls and our samples: about 1 mm)
-    assert g["trimmed"] and g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1, g
+    assert g["trimmed"] and g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1 - 1e-9, g
     lo, hi = np.subtract(g["box"]["center"], g["box"]["half"]), np.add(g["box"]["center"], g["box"]["half"])
     assert abs(lo[2]) < 0.2 and hi[2] >= 60.0 and np.all(hi[:2] - lo[:2] >= 20.0), g["box"]       # still most of the vase
     assert met_b["success"] and not met_b["world_contacts"]
@@ -243,7 +243,7 @@ def test_a_box_trimmed_off_a_vases_top_still_covers_the_near_miss_it_was_made_fo
     (g,) = res["regions"]
     lo, hi = corners(g["box"])
     assert g["trimmed"] and hi[2] < g["point"][2] - worlds.SCAN_COVER_MM, g          # trimmed away from the near miss
-    assert abs(lo[2]) < 0.2 and g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1, g
+    assert abs(lo[2]) < 0.2 and g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1 - 1e-9, g
     clo, chi = corners(g["covers"])
     assert np.all(clo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= chi + 0.2), g      # over the near miss
     assert chi[2] >= TALL_VASE[2] - 0.2 and np.all(clo <= lo + 0.05) and np.all(hi <= chi + 0.05), g
@@ -391,7 +391,7 @@ def test_a_box_added_for_a_near_miss_is_offered_again_when_the_robot_moves_close
     (g2,) = res2["regions"]
     assert not res2["stats"]["covered"] and g2["min_clearance_mm"] < g["min_clearance_mm"] - 1.0, res2
     assert g2["box"] is not None and not worlds._same_box(g2["box"], obstacle), g2       # refitted for the new path
-    assert g2["box_clearance_mm"] is None or g2["box_clearance_mm"] >= g2["min_clearance_mm"] - 0.1, g2
+    assert g2["box_clearance_mm"] is None or g2["box_clearance_mm"] >= g2["min_clearance_mm"] - 0.1 - 1e-9, g2
     c = worlds.scan_check(res2)
     assert "Add box here" in c["text"] and "grey box already" not in c["text"], c
 

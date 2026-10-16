@@ -23,14 +23,16 @@ is not there when the browser has no WebGL).
    travel from one to the next is bounded, and wherever that could bring it closer the move is checked at poses in
    between, so the clearance kept is the closest approach to within 0.05 mm, rounded down. The simulated run itself is
    measured the same way, between its frames (30 a second) too, and the clearance shown is the smaller of the run's and
-   the plan's. The carry path is picked to stay at least 10 mm clear; a move that would come closer tries its
-   alternatives: the approach and the way back along the carry path (the hand closed to the object's width on the way
-   back), the approach from higher up, the release with the hand opened only 4 mm past the object, and the way back
-   straight up first. The first that keeps 10 mm wins, else the one with the most room. A move that would still pass
-   into a box fails the simulation, naming the move and the box. The line under the room's name says how the newest
-   simulation went, how close the arm came to a box, and which other way it took. *Play in the room* replays it there,
-   and *Walk* lets you walk through the room (WASD and the mouse, or drag to look where the browser won't lock the
-   mouse): you start on a walkway when there is one, else on the floor a step or two from the robot, with it in sight.
+   the plan's. The carry path is picked to stay at least 10 mm clear at its 10 ms samples; a move that would come
+   closer tries its alternatives: the approach and the way back along the carry path (the hand closed to the object's
+   width on the way back), the approach from higher up, the release with the hand opened only 4 mm past the object,
+   and the way back straight up first. The first that keeps 10 mm there wins, else the one with the most room; one that
+   keeps 10 mm only at its samples shows as a near miss (a bin 18.5 mm beside the bench's carry path: 9.9 mm). A move
+   that would still pass into a box fails the simulation, naming the move and the box. The line under the room's name
+   says how the newest simulation went, how close the arm came to a box, and which other way it took. *Play in the
+   room* replays it there, and *Walk* lets you walk through the room (WASD and the mouse, or drag to look where the
+   browser won't lock the mouse): you start on a walkway when there is one, else on the floor a step or two from the
+   robot, with it in sight.
 6. **Check placement:** measured checks decide the verdict (*ready*, *needs changes* or *blocked*): the simulation ran
    in this room, both targets are in reach and on the surface, the arm stays clear of the boxes, the base sits on the
    surface, tip-over (a heuristic), people areas within 100 mm of anywhere the arm can reach, anything less than 50 mm
@@ -63,10 +65,10 @@ scan's triangles exactly: each part's convex hull (as MuJoCo collides with it), 
 are, a cylinder or an ellipsoid as the polytope around it. On scans made of a world's own boxes it agrees with MuJoCo's
 own distances to within 0.005 mm. Between two poses no point of the arm travels further than its joints' turns allow,
 and wherever that could bring it closer than the closest it found, the move is measured at poses in between, so the
-distance it keeps is the closest approach along the whole path to within 0.1 mm, rounded down: a speck or a cable the
-arm passes straight through between two poses *touches or passes through*. The result is a warning, never the verdict:
-"Measured against the scanned surface, which can be noisy or have holes. A warning, not a verdict." It names the part of
-the arm and the time, and says *touches or passes through* below 0.5 mm.
+distance it keeps is never more than the closest approach anywhere along the path and at most 0.1 mm less, rounded
+down: a speck or a cable the arm passes straight through between two poses *touches or passes through*. The result is a
+warning, never the verdict: "Measured against the scanned surface, which can be noisy or have holes. A warning, not a
+verdict." It names the part of the arm and the time, and says *touches or passes through* below 0.5 mm.
 
 Each place where the arm comes within 10 mm of the scan is listed with **Add box here**: a grey box over that part of
 the scan (standing on the surface when the scan under it does), added to the room. When more than eight places are that

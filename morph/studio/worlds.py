@@ -1779,8 +1779,12 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
     # pass 3, between the poses: a move whose geoms could come closer than the closest found is measured in between.
     # Each such move keeps, per geom, the scanned triangles within the closest found plus its whole move L of it at
     # either end (every point of the geom stays within L/2 of where it was at one end), so anywhere along the move the
-    # rest are at least the closest found plus L/2 away, and a pose in between is measured exactly against those alone
+    # rest are at least the closest found plus L/2 away, and a pose in between is measured exactly against those alone.
+    # What it keeps is a lower bound of the whole path (lo_path): the closest measured, the moves still queued and the
+    # lowest bound of a move a geom was left alone in (low3: each no closer than the closest found less
+    # SCAN_BETWEEN_TOL_MM), never the closest measured alone
     lo_path, t3, evals = best["d"], time.monotonic(), 0
+    low3 = [math.inf]
     end3 = max(deadline, end - reserve / 2.0)          # the closest answer first: half the boxes' share if need be
     if final and best["d"] >= SCAN_TOUCH_MM:
         target = min(SCAN_CUT_MM, best["d"])
@@ -1820,6 +1824,8 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
                 if w < cut:
                     v = min(v, w)
                     keep.append(int(g))
+                else:
+                    low3[0] = min(low3[0], w)           # no closer than this there: the lower bound counts it
             return v, keep
 
         def push(pa, la, sa, pb_, lb_, sb, gs, tris, c):
@@ -1871,11 +1877,13 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             evals += 1
             push(pa, la, sa, pm, lm, sm, gs, kids[0], c)
             push(pm, lm, sm, pb_, lb_, sb, gs, kids[1], c)
-        lo_path = min(best["d"], min((h_[0] for h_ in heap), default=math.inf))
+        # a lower bound of the whole path: the closest measured, the moves still queued and those left alone, each no
+        # closer than its bound (all within SCAN_BETWEEN_TOL_MM of the closest found unless time ran out)
+        lo_path = max(0.0, min(best["d"], min((h_[0] for h_ in heap), default=math.inf), low3[0]))
         if heap and heap[0][0] < min(target, best["d"]) - SCAN_BETWEEN_TOL_MM and best["d"] >= SCAN_TOUCH_MM:
             final = False                               # out of time between the poses: what is left is a bound (every
             stats["between_cut"] = True                 # move not in the heap is no closer than best less the tolerance)
-            lo3, left3 = max(0.0, min(heap[0][0], best["d"] - SCAN_BETWEEN_TOL_MM)), len(heap)
+            lo3, left3 = lo_path, len(heap)
     stats.update(between_poses=evals, between_s=round(time.monotonic() - t3, 2))
     # cut short, the answer never claims more room than was measured: the closest distance measured anywhere (pass 2's
     # exact ones, or pass 1's coarse samples, which are points of the robot too) is the most the arm keeps clear
@@ -1898,8 +1906,8 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
                      for k in range(len(poses) - 1) if first[k] != first[k + 1]]
             lower = min([float(v.min())] + moves + [best["d"]])
             stats["lower_mm"] = floor_mm(lower) if lower > 0.0 else None
-        stats["part_clear"] = bool(visited.any() and close["d"] >= SCAN_CUT_MM
-                                   and float(lb[visited].min(initial=math.inf)) >= SCAN_CUT_MM)
+        stats["part_clear"] = bool(close["d"] >= SCAN_CUT_MM and _part_clear(
+            [(k, lbg[k]) for k in np.nonzero(visited)[0] if lbg[k] is not None], half, gi))
         if cut1:                                        # at this pace: pass 1 for every pose, and pass 2 as long
             need = stats["prepare_s"] + 2.0 * stats["pass1_s"] * unique / max(1, int(visited.sum()))   # (it took 0.5-5x)
         elif stats.get("between_cut"):                  # and the moves left: at least two poses each
@@ -1910,7 +1918,9 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
             need = stats["prepare_s"] + stats["pass1_s"] + stats["pass2_s"] * todo / max(1, refined)
         stats["need_s"] = round(need, 1)
     shown = min(lo_path, close["d"]) if final else close["d"]
-    if close["d"] < SCAN_CUT_MM or (final and lo_path < SCAN_CUT_MM):
+    if final and lo_path < SCAN_CUT_MM and "g" not in close:     # nothing measured within SCAN_CUT_MM, the motion
+        stats["beyond_mm"] = floor_mm(lo_path)                   # between the poses bounded only to just short of it
+    elif close["d"] < SCAN_CUT_MM or (final and lo_path < SCAN_CUT_MM):
         b = m.geom_bodyid[close["g"]]
         out["min_clearance_mm"] = floor_mm(max(0.0, shown))         # rounded down: never more room than measured
         out["at"] = {"t": round(float(close["t"]), 2), "link": "object" if b == obj_body else m.body(b).name,
@@ -2044,7 +2054,7 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         return Dx, Qx, Px
 
     out["regions"] = _scan_regions(world, near, S, best if best["d"] < near_mm else None, m, obj_body, floor_cut_mm, stats,
-                                   refine=refine, rho=rho, final=final and best["d"] >= SCAN_TOUCH_MM,
+                                   refine=refine, rho=rho, final=final and lo_path >= SCAN_TOUCH_MM,
                                    deadline=end, lo=lo_path if final else None,
                                    cover={g: sh.cover_f for g, sh in shape.items()},
                                    path_box=lambda boxes: _path_to_boxes(boxes, poses, pose, d, m, shape, half, gi,
@@ -2063,6 +2073,16 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         out["regions"] = _already_boxed(world, out["regions"], stats)
     stats["seconds"] = round(time.monotonic() - t0, 2)
     return out
+
+
+def _part_clear(bounds, half, gi, cut=SCAN_CUT_MM) -> bool:
+    """Whether the part of the path a check cut short looked at stays beyond `cut`: at each pose looked at
+    ((index, {geom: lower bound})), every geom's bound less half the larger of its moves next to it (half[pose, gi[geom]]),
+    as every point of the arm between two poses is within half the move of one of them. Its bounds at the poses alone
+    don't say that: a pose 50.5 mm clear with a 3 mm move to the next can pass 49 mm from the scan in between."""
+    if not bounds:
+        return False
+    return all(v - float(half[k, gi[int(g)]]) >= cut for k, lbs in bounds for g, v in lbs.items())
 
 
 def _spread(n: int, step: int = 16) -> list:
@@ -2628,7 +2648,8 @@ def scan_check(scan: dict) -> dict:
                 "There wasn't time to measure how close the arm comes to the scanned surface.")
         st = "warn"
     elif mc is None:
-        st, text = "pass", f"The arm stays more than {SCAN_CUT_MM:.0f} mm from the scanned surface."
+        beyond = min(SCAN_CUT_MM, float(stats.get("beyond_mm") or SCAN_CUT_MM))
+        st, text = "pass", f"The arm stays more than {mm_text(beyond)} mm from the scanned surface."
     elif mc < SCAN_TOUCH_MM:
         st, text = "warn", _sentence(f"{who} touches or passes through the scanned surface{when}")
     elif cut:

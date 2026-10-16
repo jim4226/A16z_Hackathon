@@ -340,7 +340,7 @@ def test_the_scan_check_never_claims_more_room_than_the_robots_real_shapes_leave
         b = worlds.box_to_base(w2, w2["obstacles"][0], nd=4)
         box_exact = Truth(rob, doc, [(b["center"], b["half"], worlds._rz(b["yaw_deg"]))]).path()
         assert g["box_clearance_mm"] is not None and g["box_clearance_mm"] <= box_exact + 1e-9, (g, box_exact)
-        assert g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1, g
+        assert g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1 - 1e-9, g
     elif must == "count":                               # every place counted, the closest 8 listed
         assert len(res["regions"]) == worlds.SCAN_MAX_REGIONS and res["stats"]["places"] == case["count"], res["stats"]
         assert f"{case['count']} places closer than 10 mm (the {worlds.SCAN_MAX_REGIONS} closest are listed)" in text, text
@@ -353,6 +353,26 @@ def test_the_scan_check_never_claims_more_room_than_the_robots_real_shapes_leave
         raise AssertionError(must)
 
 
+@pytest.mark.parametrize("tol", [3.0, worlds.SCAN_BETWEEN_TOL_MM])
+def test_the_distance_kept_is_a_lower_bound_of_the_whole_path_whatever_the_tolerance(tmp_path, nominal, monkeypatch, tol):
+    """The third pass stops once no move could come closer than the closest found less SCAN_BETWEEN_TOL_MM, and the
+    moves it left alone can still come up to that much closer. It kept the closest it measured: a speck 3 mm outside the
+    fastest corner halfway along its move (MuJoCo: 2.75 mm along the path, 3.10 at the poses) read "comes within 2.9 mm"
+    with a 3 mm tolerance, and with 0.1 mm a closest measured at 10.03 mm could read "At least 10 mm" over a move
+    bounded at 9.95. The distance kept is a lower bound of the whole path: the closest measured, the moves still queued
+    and the bounds of those left alone."""
+    rob, doc = nominal
+    boxes, k = through(rob, doc, -3.0, (0.05, 0.05, 0.05))
+    exact = Truth(rob, doc, boxes).path(k)
+    monkeypatch.setattr(worlds, "SCAN_BETWEEN_TOL_MM", tol)
+    res, chk = measure(scan_of(tmp_path / "room.glb", boxes), rob, doc)
+    mc = res["min_clearance_mm"]
+    assert not res["stats"]["truncated"] and mc is not None and mc <= exact + 1e-9, (tol, mc, exact, chk["text"])
+    assert mc >= exact - tol - 0.2, (tol, mc, exact)
+    for r in res["regions"]:
+        assert r["min_clearance_mm"] <= exact + 1e-9 or not r["exact"], (r, exact)
+
+
 @pytest.mark.parametrize("checked, unique, share", [(606, 607, "(99% of it)"), (607, 607, "(100% of it)"),
                                                     (599, 600, "(99% of it)"), (3, 600, "(less than 1% of it)"),
                                                     (6, 600, "(1% of it)")])
@@ -361,6 +381,17 @@ def test_the_share_of_the_path_checked_is_never_rounded_up(checked, unique, shar
     c = worlds.scan_check({"min_clearance_mm": None, "at": None, "regions": [],
                            "stats": {"truncated": True, "part_clear": True, "poses_checked": checked, "unique_poses": unique}})
     assert share in c["text"], c["text"]
+
+
+def test_a_check_cut_short_says_its_part_stays_clear_only_between_its_poses_too():
+    """Cut short, "In the part of the path checked, the arm stays more than 50 mm" was decided on each pose's bound
+    alone; a geom 50.5 mm clear at a pose with a 3 mm move to the next can come within 49 mm between them. The
+    bound less half the larger move next to it decides it."""
+    half = np.array([[1.5, 0.0], [1.5, 0.0]])                    # [pose, geom]: geom 7 moves 3 mm, geom 9 is fixed
+    gi = {7: 0, 9: 1}
+    assert not worlds._part_clear([(0, {7: 50.5, 9: 80.0}), (1, {7: 60.0})], half, gi)
+    assert worlds._part_clear([(0, {7: 51.5, 9: 50.0}), (1, {7: 60.0})], half, gi)
+    assert not worlds._part_clear([], half, gi)
 
 
 def test_a_check_cut_short_counts_the_places_it_listed():

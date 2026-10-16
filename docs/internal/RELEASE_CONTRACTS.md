@@ -1468,7 +1468,12 @@ field failure rate (section 0, honesty).
   bound (D_a + D_b - L) / 2 could be below the closest found less `SCAN_BETWEEN_TOL_MM` (0.1 mm) is halved and measured
   in between, exactly, against the triangles and faces that can still come that close in that half, at most
   `SCAN_MAX_BETWEEN` (4000) poses (`stats.between_poses`, `between_s`); it may use half the boxes' share of the time,
-  and `min_clearance_mm` is the smaller of the closest measured and the bound left. Cut short there:
+  and `min_clearance_mm` is a lower bound of the whole path: the smaller of the closest measured, the moves still
+  queued and the lowest bound of a geom's move the pass left alone (`low3`, no closer than the closest found less 0.1
+  mm), so at most 0.1 mm under the closest approach before it is rounded down (R7: the moves left alone didn't count,
+  so with a 3 mm tolerance a speck 3 mm outside the fastest corner read 2.9 mm where MuJoCo has 2.75, and with 0.1 mm a
+  closest measured at 10.03 mm over a move bounded at 9.95 could read "At least 10 mm"; with nothing measured within
+  50 mm and a bound just under it, "The arm stays more than 49 mm", `stats.beyond_mm`). Cut short there:
   `stats.between_cut`, `lower_mm` that bound, and "The motion between the poses wasn't all measured closely enough in
   the 20 s a check has" in place of "Only part of the path was measured". A region's box is measured with MuJoCo
   (`box_path`: the box as a geom of a copy of the collision model, `mj_geomDistance` to each geom near it at every pose
