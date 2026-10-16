@@ -446,6 +446,149 @@ def test_a_stop_while_the_launcher_rebuilds_for_newer_code_says_the_finished_rev
     assert sorted(n for n in os.listdir(home / "egg-picker") if n.startswith("r0")) == ["r001"]
     assert json.loads(results.read_text(encoding="utf-8"))["pipeline_version"] == "older"
 
+
+_SLOW_TRIMESH = """
+import os, sys, time
+from morph import keys
+keys.ENV_PATH = sys.argv[0] + ".env"                    # .env in the test's folder, never the checkout's
+sys.argv = ["morph", "studio", sys.argv[1], "--port", sys.argv[2]]
+
+
+class SlowTrimesh:
+    # trimesh's first import, slowed down: like trimesh, it catches BaseException around a part of it (trimesh does
+    # around its optional imports), which is where a Ctrl+C pressed then landed
+    def find_spec(self, name, path=None, target=None):
+        if name == "trimesh":
+            sys.meta_path.remove(self)
+            print("<importing>", flush=True)
+            try:
+                for _ in range(60):
+                    time.sleep(0.05)
+            except BaseException:
+                print("<swallowed>", flush=True)
+        return None
+
+
+sys.meta_path.insert(0, SlowTrimesh())
+from morph.robot.pipeline2 import RobotProject
+
+def build(self, rev, design, *a, **k):                  # the build, after what it imports first
+    from morph.robot import arm  # noqa: F401
+    os.makedirs(self.rev_dir(rev), exist_ok=True)
+    with open(os.path.join(self.rev_dir(rev), "design.json"), "w") as fh:
+        fh.write(design.dumps())
+    print("<building>", flush=True)
+    time.sleep(120)
+RobotProject._build = build
+from morph import cli
+sys.exit(cli.main())
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from outside the process")
+@pytest.mark.parametrize("name,signals", [("my-arm", ["SIGINT"]), ("my-arm", ["SIGTERM"]), ("my-arm", ["SIGHUP"]),
+                                          ("my-arm", ["SIGINT", "SIGTERM"]), ("rebuild", ["SIGINT"])])
+def test_a_stop_while_the_launcher_first_imports_the_build_stops_in_one_line(tmp_path, name, signals):
+    """Ctrl+C in the first half second of "generating the first robot" landed while trimesh was first imported, and
+    trimesh catches BaseException around its optional imports: the press was swallowed (the build went on and the
+    Studio started), or left trimesh half-made, which ended in a TypeError or a segmentation fault and a project the
+    next start refused. The launcher now loads what the build imports before the line, with stop signals held until
+    it is loaded, then stops in one line. The same before a rebuild for newer Morph code."""
+    home = tmp_path / "projects"
+    if name == "rebuild":
+        name = "egg-picker"
+        _studio_home(home)
+        results = home / name / "r001" / "results.json"
+        results.write_text(json.dumps({**json.loads(results.read_text(encoding="utf-8")), "pipeline_version": "older"}),
+                           encoding="utf-8")
+        line = (f"Stopped before the Studio started: {name}'s rebuild with the latest Morph code was cut off; its "
+                "finished revision r001 is kept, and the next start rebuilds it.\n")
+    else:
+        line = f"Stopped before the Studio started: {name} wasn't finished, and the next start builds it again.\n"
+    proc, out = _start_studio_script(tmp_path, _SLOW_TRIMESH, name)
+    rc = _stop_at(proc, out, "<importing>\n", signals)
+    time.sleep(0.2)
+    err = proc.stderr.read()
+    assert rc == 130 and "Traceback" not in err, (rc, out, err)
+    assert out[out.index("<importing>\n") + 1:] == [line], out
+    if line.endswith("builds it again.\n"):
+        assert not (home / name).exists()                   # made by this start, never finished: nothing of it kept
+    else:
+        assert sorted(n for n in os.listdir(home / name) if n.startswith("r0")) == ["r001"]
+    assert not (home / ".studios").exists() or os.listdir(home / ".studios") == []
+
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from outside the process")
+def test_ctrl_c_while_morph_robot_new_first_imports_the_build_is_not_swallowed(tmp_path):
+    """`morph robot new my-arm` in a terminal: Ctrl+C while trimesh was first imported was swallowed the same way (the
+    build went on) or broke trimesh. It now stops before the project is made."""
+    script = _SLOW_TRIMESH.replace('sys.argv = ["morph", "studio", sys.argv[1], "--port", sys.argv[2]]',
+                                   'sys.argv = ["morph", "robot", "new", sys.argv[1]]')
+    proc, out = _start_studio_script(tmp_path, script, "my-arm")
+    rc = _stop_at(proc, out, "<importing>\n", ["SIGINT"])
+    err = proc.stderr.read()
+    assert rc == -signal.SIGINT and err.rstrip().endswith("KeyboardInterrupt"), (rc, out, err)
+    assert "<swallowed>\n" not in out and "<building>\n" not in out, out
+    assert not (tmp_path / "projects" / "my-arm").exists()
+
+_HELD = """
+import os, signal, sys, time
+import numpy  # noqa: F401  (its BLAS threads: a signal the main thread blocks goes to one of them)
+from morph import cli
+
+def kill(*sigs):
+    for sig in sigs:
+        os.kill(os.getpid(), sig)
+    time.sleep(0.2)                                      # whichever thread takes it, Python's handler has run
+
+def case(name, body, limit=10.0):
+    try:
+        with cli._stops_held(limit):
+            try:
+                body()
+                inside = "nothing"
+            except KeyboardInterrupt:
+                inside = "KeyboardInterrupt"
+        after = "nothing"
+    except KeyboardInterrupt:
+        after = "KeyboardInterrupt"
+    print(name, inside, after, signal.getsignal(signal.SIGINT) is signal.default_int_handler,
+          signal.getsignal(signal.SIGTERM) == signal.SIG_DFL, flush=True)
+
+print("threads", len(os.listdir("/proc/self/task")) > 1, flush=True)
+case("int", lambda: kill(signal.SIGINT))
+case("int-int", lambda: kill(signal.SIGINT, signal.SIGINT))
+case("none", lambda: time.sleep(0.2))
+case("limit", lambda: kill(signal.SIGINT), limit=0.0)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+case("ignored", lambda: kill(signal.SIGINT))
+signal.signal(signal.SIGINT, signal.default_int_handler)
+case("term", lambda: kill(signal.SIGTERM))           # the default action: ends the process, after the context
+print("still here", flush=True)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals sent from inside the process")
+def test_stops_held_note_a_stop_and_hand_it_on_when_the_context_ends(tmp_path):
+    """cli._stops_held: Ctrl+C inside the context changes nothing there and raises KeyboardInterrupt once it ends
+    (twice pressed: once); the handlers are put back; an ignored signal stays ignored; past the limit a stop goes
+    through at once; a signal whose default ends the process ends it when the context ends. Blocking the signal for
+    the main thread alone wasn't enough with numpy's threads running."""
+    script = tmp_path / "held.py"
+    script.write_text(_HELD, encoding="utf-8")
+    out = subprocess.run([sys.executable, str(script)], env={**os.environ, "PYTHONPATH": CODE}, capture_output=True,
+                         text=True, timeout=120, preexec_fn=_signals_as_in_a_terminal)
+    assert out.stdout.splitlines() == [
+        "threads True",
+        "int nothing KeyboardInterrupt True True",
+        "int-int nothing KeyboardInterrupt True True",
+        "none nothing nothing True True",
+        "limit KeyboardInterrupt nothing True True",
+        "ignored nothing nothing False True",
+    ], (out.stdout, out.stderr)
+    assert out.returncode == -signal.SIGTERM and "still here" not in out.stdout
+
 def test_leaving_flushes_the_terminal_and_ends_study_workers(tmp_path):
     code = ("import multiprocessing as mp, sys, time\n"
             "from morph import cli\n"

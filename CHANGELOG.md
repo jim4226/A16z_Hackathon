@@ -469,7 +469,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   before the Studio starts, stops in one line, "Stopped before the Studio started: ...", with exit status 130, where it printed a
   traceback from inside MuJoCo. A project that start made and didn't finish is not kept, so the next start builds it
   again: one named other than the demos (`morph studio my-arm`) used to be left without a design, and the Studio
-  refused to start on it.
+  refused to start on it. That includes the first second or so of the build, while Morph first loads trimesh and
+  MuJoCo: a Ctrl+C then was swallowed (the Studio started anyway) or ended in a segmentation fault or a TypeError
+  that left the project unstartable. The launcher now loads them before it prints "generating the first robot" (or
+  "rebuilding with the latest Morph code"), holding a stop until they are loaded (10 s at most), and then stops in the
+  same line; `morph robot new`, `morph robot change`, a one-liner and `morph world --starter`/`--off` load them the same
+  way before they build. A stop during the rebuild for newer Morph code says that rebuild was cut off and the
+  finished revision is kept (it said the project wasn't finished).
 - With two Studios on one projects folder, Reset demo in one no longer deletes the revision the other is building (it
   is refused, and says why), Delete project is refused while another Studio or a `morph study` command runs a
   robustness study of the project, and says which process runs it and on which computer (the study went on in a

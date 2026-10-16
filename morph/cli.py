@@ -301,6 +301,11 @@ def _first_robots(a, other: str, building: list):
     for nm in (a.name, other):
         _set_aside_cut_off(RobotProject(os.path.join(HOME, nm)))
     p = RobotProject(os.path.join(HOME, a.name))
+
+    def first(name, *rev):  # a build starts: what it imports is loaded before its line is printed
+        building[:] = [name, *rev]
+        _load_build()
+
     if not p.finished():
         if existing and projects.read_meta(existing).get("demo") is not True:
             # a project of its own whose first build was cut off or failed: the template must never replace its design
@@ -308,21 +313,21 @@ def _first_robots(a, other: str, building: list):
             sys.exit(f"{a.name} has no finished revision yet, so the Studio can't start on it. Start the Studio on "
                      f"another project (`morph studio egg-picker`), then send \"build it again\" in {a.name}'s chat, "
                      f"or delete {a.name} from the project menu there.")
+        first(a.name)
         print(f"{a.name} has no finished revision yet: building its first robot (about a minute)..." if existing else
               f"no project {a.name} yet: generating the first robot (about a minute)...")
-        building[:] = [a.name]
         cmd_robot(argparse.Namespace(action="new", name=a.name, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if a.name == "so101" else None, demo=a.name in projects.DEMOS))
     if not RobotProject(os.path.join(HOME, other)).finished():
+        first(other)
         print(f"also preparing the {other} project for the project switcher...")
-        building[:] = [other]
         cmd_robot(argparse.Namespace(action="new", name=other, need=None, trials=4, fast=False, base=None, changes=[],
                                      source="so101" if other == "so101" else None, demo=True))
     for proj in (p, RobotProject(os.path.join(HOME, other))):
         last = proj.latest()
         if last and proj.load_results(last).get("pipeline_version") != pipeline_version(proj.load_design(last).arm.source):
+            first(os.path.basename(proj.root), last)
             print(f"{os.path.basename(proj.root)}: rebuilding with the latest Morph code (about a minute)...")
-            building[:] = [os.path.basename(proj.root), last]
             proj.run(proj.load_design(last), parent=None, label="rebuilt with latest Morph", verbose=False)
     building.clear()
     return p
@@ -392,6 +397,86 @@ def _stops_raise():
                 except (OSError, ValueError, RuntimeError):
                     pass
     return raising()
+
+
+def _load_build():
+    """Load what a robot build imports (pipeline2.BUILD_MODULES, about a second the first time) with Ctrl+C, a closed
+    terminal window and `kill` held until it is loaded, then let a stop that came meanwhile through as if it came now
+    (_stops_held). trimesh catches BaseException around its optional imports: a stop landing there was swallowed (the
+    build went on), or left trimesh half-made, which ended in a TypeError or a segmentation fault, and a project of its
+    own the next start refused."""
+    from .robot.pipeline2 import load_build_modules
+    with _stops_held():
+        load_build_modules()
+
+
+def _stops_held(limit: float = 10.0):
+    """A context during which SIGINT, SIGTERM, SIGHUP and SIGBREAK are only noted; on leaving it, the handlers there
+    were are put back, and each signal noted is handed to its handler, in the order they came, as if it came then
+    (KeyboardInterrupt for Ctrl+C, and under _stops_raise for the others too; a default action, such as ending the
+    process, is taken). After `limit` seconds a stop is no longer held but handed on at once: one that hangs can still
+    be stopped. Only from the main thread; a signal the process ignores stays ignored. On POSIX they are also blocked
+    for the main thread meanwhile, so native code there isn't interrupted; blocking alone isn't enough: another thread,
+    such as one of the numeric library's (OpenBLAS), then takes the signal, and Python runs its handler in the main
+    thread all the same."""
+    import contextlib
+    import signal
+    import threading
+
+    def hand_on(sig, handler):
+        if callable(handler):
+            handler(sig, None)
+        elif handler == signal.SIG_DFL:
+            try:
+                signal.raise_signal(sig)
+            except (OSError, ValueError):
+                raise KeyboardInterrupt from None
+
+    @contextlib.contextmanager
+    def held():
+        old, came, mask, began = {}, [], None, time.monotonic()
+
+        def note(signum, frame):
+            if time.monotonic() - began > limit:
+                return hand_on(signum, old[signum])
+            came.append(signum)
+
+        if threading.current_thread() is threading.main_thread():
+            for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
+                sig = getattr(signal, name, None)
+                try:
+                    if sig is not None and signal.getsignal(sig) not in (signal.SIG_IGN, None):
+                        old[sig] = signal.signal(sig, note)
+                except (OSError, ValueError, RuntimeError):
+                    pass
+            if old and hasattr(signal, "pthread_sigmask"):
+                try:
+                    mask = signal.pthread_sigmask(signal.SIG_BLOCK, set(old))
+                except (OSError, ValueError):
+                    mask = None
+        try:
+            yield
+        finally:
+            stop = None
+            if mask is not None:
+                try:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, mask)  # one held for the main thread is noted now
+                except (OSError, ValueError):
+                    pass
+            for sig, handler in old.items():
+                for _ in range(3):  # signal.signal runs pending handlers before it changes one
+                    try:
+                        signal.signal(sig, handler)
+                        break
+                    except (OSError, ValueError, RuntimeError):
+                        break
+                    except BaseException as exc:  # noqa: BLE001  (a stop to a handler put back: the rest first)
+                        stop = stop or exc
+            if stop is not None:
+                raise stop
+            for sig in dict.fromkeys(came):  # each once, in the order they came
+                hand_on(sig, old[sig])
+    return held()
 
 
 def _ignore_stops():
@@ -583,6 +668,7 @@ def cmd_robot_brief(a) -> int:
     changes, notes = capability.clamp(pay["changes"], allow=("name", "arm.source", "arm.actuator_overrides"))
     for n in notes:
         print(f"  adjusted: {n}")
+    _load_build()
     try:
         info = projects.create(HOME, pay["name"], design=Design().with_changes(changes), need=pay["meta"]["need"],
                                origin="brief", meta={"brief_id": b.id}, unique=not name)
@@ -631,6 +717,7 @@ def cmd_robot(a) -> int:
             it = interpret(a.need, design)
             design = _checked(design, {k: v for k, v in it["changes"].items() if k not in ("name", "arm.source")})
             print(it["reply"])
+        _load_build()  # before anything is created: a Ctrl+C meanwhile stops it here, never inside trimesh's import
         try:
             info = projects.create(HOME, a.name, source=source, design=design, need=a.need, demo=getattr(a, "demo", False),
                                    unique=False)
@@ -652,6 +739,7 @@ def cmd_robot(a) -> int:
             if bad or not a.changes:
                 sys.exit("Give each change as dotted.key=value, for example arm.dof=6" + (f" (not {bad[0]})" if bad else "."))
             design = _checked(p.load_design(base), dict(kv.split("=", 1) for kv in a.changes))
+            _load_build()
             rev = p.run(design, parent=base, label=" ".join(a.changes)[:48], n_trials=a.trials, fast_sim=a.fast)
             failed = _robot_summary(p, rev)
         elif a.action == "show":
@@ -747,6 +835,7 @@ def cmd_world(a) -> int:
             changes, label = {"world.id": w["id"], "world.sha": sha}, f"world: {w['name']}"
         design = _checked(design, changes)
         p.log(worlds.ledger_entry(w))  # the kind of room and its counts (Keewano, when its events are on)
+        _load_build()
         rev = p.run(design, parent=base, label=label, n_trials=a.trials, fast_sim=a.fast)
         base, design = rev, p.load_design(rev)
     try:
