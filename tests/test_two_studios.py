@@ -169,6 +169,24 @@ def test_a_room_with_work_is_kept_whatever_its_folder_id_reads(tmp_path, builds,
     assert a.room("kb") is not room                                         # idle, another folder: a fresh room
 
 
+def test_a_studio_that_never_finished_starting_leaves_neither_of_its_files(tmp_path, builds, monkeypatch):
+    """A second Ctrl+C inside Studio() (in projects.tidy or _start_tools) dropped the half-made Studio: its Claim's
+    finalizer removed .studios/<id>.lock but not the start record beside it, and cli._leave found no Claim left to
+    release, so .studios/<id>.json stayed until another start's sweep. The finalizer removes both."""
+    import gc
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+
+    def stopped(*a, **k):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(server, "_start_tools", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    gc.collect()
+    assert not os.path.exists(rooms.owner_lock(str(home), rooms.OWNER))
+    assert not os.path.exists(rooms.start_record(str(home), rooms.OWNER))
+
+
 def test_a_full_disk_at_the_start_costs_the_start_record_one_line(tmp_path, builds, monkeypatch, capsys):
     """The start record is written when the Studio starts; on a full disk the Studio still starts, and the terminal
     says what that costs in one line (it printed a traceback)."""

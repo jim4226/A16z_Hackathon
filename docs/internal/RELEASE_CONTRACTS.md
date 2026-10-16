@@ -81,8 +81,9 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   as before; `morph team audit --verify` prints the note.
 - `morph studio` (the command line: `main()` without argv) ends its process with `cli._leave` once `serve()` has
   returned (Ctrl+C, a closed terminal window, SIGTERM: `server._Stop`): study workers ended, the process's
-  `.studios/<id>.lock` and `.json` files released and removed (`rooms.release_claims`), stdout and stderr flushed,
-  then `os._exit`. From the end of a clean stop (`serve(last=True)`, `_Stop.__exit__`)
+  `.studios/<id>.lock` and `.json` files released and removed (`rooms.release_claims`; a Claim's finalizer does the
+  same for both when it is dropped, as when a second Ctrl+C inside `Studio()` leaves no Studio to hold it), stdout and
+  stderr flushed, then `os._exit`. From the end of a clean stop (`serve(last=True)`, `_Stop.__exit__`)
   to `os._exit` SIGINT, SIGTERM, SIGHUP and SIGBREAK are ignored: the stop is written down by then, and a Ctrl+C
   pressed again while the process leaves printed a KeyboardInterrupt traceback, ended it with -2 and left
   `.studios/<id>.json`. Interpreter

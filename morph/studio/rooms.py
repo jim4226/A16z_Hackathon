@@ -65,7 +65,18 @@ class Claim:
         self.lock = durable.BuildLock(owner_lock(home, OWNER))
         self.lock.acquire()
         self.real = self.lock.real
-        weakref.finalize(self, self.lock.release)
+        weakref.finalize(self, _let_go, self.lock, home)
+
+
+def _let_go(lock, home: str):
+    """A Claim nobody holds any more (its Studio gone, or never made whole: a second Ctrl+C inside Studio()), or this
+    process ending (release_claims): its lock and, beside it, the note of the project this process's Studio started on
+    (note_start) go together. Never raises."""
+    lock.release()
+    try:
+        os.remove(start_record(home, OWNER))
+    except OSError:
+        pass
 
 
 def claim(home: str) -> Claim:
@@ -84,11 +95,7 @@ def release_claims():
     lock it holds on a projects folder is released and its file removed, as a Studio that stops cleanly leaves it."""
     with _CLAIMS_LOCK:
         for key, held in list(_CLAIMS.items()):
-            held.lock.release()
-            try:
-                os.remove(start_record(key, OWNER))
-            except OSError:
-                pass
+            _let_go(held.lock, key)
 
 
 def start_record(home: str, owner: str) -> str:
