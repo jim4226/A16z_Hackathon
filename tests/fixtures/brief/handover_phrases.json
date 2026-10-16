@@ -10789,6 +10789,72 @@
    "task": "hand_over",
    "people": "yes",
    "estop": true
+  },
+  {
+   "text": "a robot that brushes my hair",
+   "family": "C-hunt3",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that washes grandma's feet",
+   "family": "C-hunt3",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that combs the patient's hair",
+   "family": "C-hunt3",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that dresses him",
+   "family": "C-hunt3",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "a robot that dries my hands",
+   "family": "C-hunt3",
+   "task": null,
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "give the cookies to the trick or treaters",
+   "family": "C-hunt3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "move the blanks to the laser engraver",
+   "family": "C-hunt3",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "pass the boxes to the case erector",
+   "family": "C-hunt3",
+   "task": "not_hand_over"
+  },
+  {
+   "text": "hand the plaque to the engraver",
+   "family": "C-hunt3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
+  },
+  {
+   "text": "pass the beams to the steel erector",
+   "family": "C-hunt3",
+   "task": "hand_over",
+   "people": "yes",
+   "estop": true
   }
  ]
 }

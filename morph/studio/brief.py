@@ -286,7 +286,8 @@ _ROLE = (r"(?:nurse|doctor|doc|surgeon|dentist|vet|paramedic|medic|pharmacist|mi
          r"spectator|commuter|tourist|"
          r"person|guy|man|woman|lady|gentleman|folk|adult|elder|senior|pensioner|" + _KIN_SLANG + "|" + _KIN + r")")
 _PLURALS = (r"people|staff|crew|folks|children|schoolchildren|grandchildren|men|women|ladies|gentlemen|babies|midwives|wives|"
-            r"passers-?by|bystanders|onlookers|pedestrians|spectators|commuters|tourists|fans")
+            r"passers-?by|bystanders|onlookers|pedestrians|spectators|commuters|tourists|fans|trick[- ]or[- ]treaters|"
+            r"carol+ers")
 _ROLES = r"(?:" + _PLURALS + "|" + _ROLE + r"(?:s|es)?)"
 _ROLES_PL = r"(?:" + _PLURALS + "|" + _ROLE + r"(?:s|es))"
 _ANYONE = r"(?:someone|somebody|anyone|anybody|everyone|everybody|whoever|whomever)"
@@ -418,9 +419,18 @@ _READER_MACHINE = re.compile(r"(?:card|smartcard|barcode|bar-code|code|qr|rfid|n
                              r"pass|ticket|id)")
 
 
+# ... and an engraver or an erector after one of these is a machine too ("the laser engraver", "the case erector")
+_MACHINE_BEFORE = {"engraver": re.compile(r"(?:laser|cnc|rotary|fib(?:er|re)|co2|diode|uv)"),
+                   "erector": re.compile(r"(?:case|carton|box|tray|crate)")}
+
+
 def _machine_reader(toks: list, i: int) -> bool:
-    """Whether word i is a reader that is a machine: "card reader(s)", "card-reader(s)", "e-reader"."""
+    """Whether word i is a reader that is a machine: "card reader(s)", "card-reader(s)", "e-reader", or an engraver or
+    an erector that is: "the laser engraver", "the case erector"."""
     head, _, last = toks[i].group(0).rpartition("-")
+    if last.rstrip("s") in _MACHINE_BEFORE:
+        before = _MACHINE_BEFORE[last.rstrip("s")]
+        return bool(before.fullmatch(head) if head else i and before.fullmatch(toks[i - 1].group(0)))
     if last not in ("reader", "readers"):
         return False
     return bool(_READER_MACHINE.fullmatch(head) if head else i and _READER_MACHINE.fullmatch(toks[i - 1].group(0)))
@@ -613,7 +623,8 @@ _TO_A_PLACE = (r"\b" + _TAKE_TO + r"\s+" + _GAP + r"(?:to|for|into|onto)\s+"
                r"(?:(?:the|a|an|my|our|your|their|her|his|its)\s+|[a-z-]+['’]s\s+)*(?:[a-z-]+\s+){0,3}?" + _PLACE + r"\b")
 # "hand the dog a bone", "give my parrot seeds", "toss balls to my dog", "bring a toy for the puppy"; "the dog trainer the
 # clicker" is a person, who hands-over reading finds first
-ANIMAL_GETS = (r"\b" + _GIVE + r"\s+(?:" + _AN_ANIMAL + "|" + _ANIMAL_NP + _THEN_ANY_PLACE + _THING + r")|\b" + _TAKE_TO +
+ANIMAL_GETS = (r"\b(?:brush|comb|wash|groom|bath|stroke|pet|scratch|dry|dries)\w*\s+" + _AN_ANIMAL + "|"   # "brushes the dog"
+               r"\b" + _GIVE + r"\s+(?:" + _AN_ANIMAL + "|" + _ANIMAL_NP + _THEN_ANY_PLACE + _THING + r")|\b" + _TAKE_TO +
                r"\s+" + _GAP + r"(?:to|for)\s+" + _AN_ANIMAL)        # not "bring the hamster cage to the table"
 # Someone the robot works for, helps or gives something to is next to it: "help my grandma", "for me", "give the operator a
 # break" (a hand-over's receiver too: PERSON_NEAR)
@@ -632,7 +643,14 @@ _FOR_SOMEONE = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist
                 r"restaurant|office|lab|workshop|ward|hospital|classroom|school|line|floor|warehouse|market|canteen|cafeteria|"
                 r"bakery|lobby)\b|\bserv(?:e|es|ed|ing)\s+(?:(?:the|a|an|some|hot|cold|fresh|iced)\s+)?(?:drinks?|food|meals?|"
                 r"coffees?|teas?|beers?|wines?|cocktails?|snacks?|dinner|lunch|breakfast|desserts?|ice cream|soup|cake)\b|"
-                r"\brobot(?:ic)?\s+(?:barista|bartender|waiter|waitress|server|butler)\b")
+                r"\brobot(?:ic)?\s+(?:barista|bartender|waiter|waitress|server|butler)\b|"
+                # it works on someone's body: "a robot that brushes my hair", "washes grandma's feet", "shaves him"
+                r"\b(?:brush|comb|wash|massag|scratch|shav|trim|cut|styl|dry|dries|bath|wip|moisturi[sz]|plait|braid|"
+                r"curl|groom)\w*\s+(?:(?:my|your|his|her|their|our|someone['’]s|somebody['’]s|" + _KIN + "|" + _KIN_SLANG +
+                r"|(?:the|a|an|my|your|his|her|their|our)\s+(?:[a-z-]+\s+)?(?:" + _ROLES + r"|person|morphagents?))['’]?s?\s+)"
+                r"(?:[a-z-]+\s+)?(?:hair|face|teeth|back|feet|foot|hands?|nails?|arms?|legs?|skin|body|shoulders?|neck|head|"
+                r"beard|lips|eyes?|ears?|scalp|toes?)\b|\b(?:brush|comb|wash|massag|shav|bath|dress|undress|groom)\w*\s+"
+                r"(?:me|him|her|them|us)\b(?!\s+(?:a|an|the|some)\b)")
 PERSON_NEAR = _FOR_SOMEONE + "|" + HAND_TO_PERSON
 _NEAR = r"(?:near(?:by)?|next to|around|beside|alongside|close (?:by|to)|in front of|behind|opposite|across from|between)"
 _SUBJECT_ME = r"(?:(?:i|we|he|she)(?:['’](?:m|ll|re|ve|d|s))?\b)"     # "I", "I'm", "we'll", "she's" ("you" and "they" can be things)
