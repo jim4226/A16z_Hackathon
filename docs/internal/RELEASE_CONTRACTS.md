@@ -725,17 +725,33 @@ in sections 3, 4 and 8. The rest that other code relies on:
   motors of a pack bought once (`actuator_keys`: Qty 1 and "(6 pcs)" is 6); KiCad 5-7's grouped CSV (its "Source:"
   rows, "Qnty") and KiBoM (the value, not the group number in "Component") are read; `total` is None when no line has a
   price. The hunters' 418-line corpus and 14 whole parts lists are data in tests/data (tests/test_import_bom_lines.py).
-  R9 (the third round's hunters: 0033630 read 345 of their 1,439 lines and 13 of their 16 whole lists wrong, most of
-  them because a joint word outside a closed list lost the motor): a line's label, the words naming the joint, arm or
-  motor ID its motor drives or is, is open (`bom._label_words`): any plain words and joint references (J1, #2, ID 1,
-  SO-101) except a motor word (unless before its number: "Motor ID 2"), a kit or count word, a part's noun
-  (`bom.ACCESSORY`, `bom._PART`, `bom._COMPOUND_PART`: "Frame", "printed", "Servohorn"), what a part does with a motor
-  (`bom._PART_VERB`: "uses", "holds", "with"), what a whole kit is for (`bom._USE`: "Robot", "RC car"), and "arm" only
-  after whose arm (`bom._ARM_OWNER`: "Left arm", "Upper arm"; "Lift arm" is a part). A label qualifies the model after
-  it, before ":" or a dash, in brackets first ("[J1] STS3215") and alone before brackets ("J1 (STS3215)"); after the
-  model only joint and motion words do (`bom._MOTION`, `bom._JOINT_AFTER`: "STS3215 C018 shoulder pan"; "SG90
-  gripper" stays a part unless a spec or code comes between). A kit word with a label ("Pan tilt SG90 kit") and a
-  part's verb before the model ("Gripper (uses SG90)") make no motor. "Servo for <label> (<model>)" reads the model; a
+  R9 (the third round's hunters: 0033630 read 345 of their 1,368 lines, the 1,313 of their corpus and their 55 probes,
+  and 13 of their 16 whole lists wrong, most of them because a joint word outside a closed list lost the motor;
+  tests/data/bom_hunt_lines.json also holds the fixer's 85 probes, 1,453 rows): a line's label, the words naming the
+  joint, arm or motor ID its motor drives or is, is positive evidence (`bom._label_words`; 8fd3662 made it open, any
+  words but a listed part's, and 1,564 of the final skeptic's 1,800 noun-label lines that 0033630 read as parts became
+  motors: "Upper arm link (MG996R)", "Gripper rack (SG90)", "Counterweight (MG996R)"). Every plain word is a joint or
+  motion word (`bom._LABEL_JOINT`: "Shoulder", "Elbow flex", "Waist", "Camera pan", "Turntable", "Grabber", "Schulter"),
+  whose or which arm or side (`bom._ARM_OWNER`: "Leader", "Left master"), an ID word, or a maker's, kind, unit, colour
+  or filler word ("Optional"; "Tower" only before "Pro", a pack word only as a count: "Upper arm piece MG996R" is a
+  part); joint references (J1, #2, ID 1, SO-101; at most two letters, so "ESP32" is none); a motor word only before its
+  number ("Motor ID 2"); "arm" or "leg" only after whose it is, or a leg before its number (`bom._LIMB`: "Upper arm",
+  "Leg 2"; "Lift arm" and "Leg MG996R" are parts); "End" and "Index" only before "effector" and "finger"; a drive wheel
+  or a numbered link only before ":" or a dash (`bom._LABEL_ROLE`: "Wheel: STS3215 12V", "Link 2: MG996R"; "Wheel
+  STS3215" and "Link 2 MG996R" stay parts); "moving" only in brackets after a joint ("Gripper (moving jaw) STS3215";
+  "Moving jaw SG90" is the printed jaw). Any other word makes the line that part ("Leader arm handle STS3215", "Trigger
+  (STS3215)", "Static jaw STS3215", "Palm SG90"). A label qualifies the model after it, before ":" or a dash, in
+  brackets first ("[J1] STS3215") and alone before brackets ("J1 (STS3215)"); after the model only joint and motion
+  words do (`bom._MOTION`, `bom._JOINT_AFTER`: "STS3215 C018 shoulder pan"; "SG90 gripper" stays a part unless a spec or
+  code comes between, and "MG996R: upper arm link" is the link). A kit word with a label ("Pan tilt SG90 kit") and a
+  part's verb before the model ("Gripper (uses SG90)") make no motor; "Upgrade" is a word of a servo's name
+  (`bom._KIND`: "DS3218 Upgrade 20KG Full Metal Gear Digital Servo"; 8fd3662 read it as a part's verb) and only "upgrade
+  kit" and "upgrade from/to" make a part (`bom._upgrade_part`), and "drive" before a motor word is that motor
+  (`bom._part_verb`: "Drive servo MG996R"). A print word anywhere in a line's name or notes makes it a part
+  (`bom._printed`: printed, 3D printed, PLA, PETG, ABS, resin, TPU, ASA, STL: "Base MG996R (printed)", "STS3215 shoulder
+  pan (printed)", "Upper arm STS3215" noted "printed"), except in a clause about what a servo fits ("MG996R servo for
+  the 3D printed arm" is the servo). The final skeptic's 1,800 noun-label lines are a test: none is a motor that 0033630
+  read as a part. "Servo for <label> (<model>)" reads the model; a
   part named only by its label is the motor of a model MPN, or of a description that says servo ("Base" described as
   "STS3215 12V servo"; "Gripper" described as "SG90" stays no motor); "Model", "Motor", "Servo" and "Actuator"
   columns are the MPN; the head's own model is the key (`bom._own_key`: "DS3218 servo (MG996R compatible)" is the
@@ -1446,32 +1462,30 @@ field failure rate (section 0, honesty).
   last two revisions), plans and simulates the pick and place there (`simulate.world_trials`: `_plan_pick_place` and
   `_run_pick_place`, fast=False as the Studio's pipeline; `_Robot(described=...)` reuses the slow description; the box
   tried is the room's last, and `at_box`, `contact` and `blocked` are about it by its id, `_Robot.world_ids`, kept out
-  of the simulation's documents, so their golden hashes are unchanged: R8 compared labels, and Add box here could make
-  a second "Scan near miss 1", whose row then showed the other box's distance or whose offer the other box's contact
-  could refuse). A region's id and label are numbered on past the "Scan near miss k" labels and "scan-k" ids the world
-  holds (`worlds._number_regions`; world.js `scanBoxName` does the same for a box added to an unsaved world that
-  holds its label or id). A box
-  the run touches, the plan passes into, or that fails a simulation the revision's own didn't (`baseline_ok`), loses its
-  box and `covers`, with `trial` {ok: False, failure} and `no_box` "A simulation with a grey box here fails (<failure>),
-  so none is offered: move the robot or the thing instead."; one it goes round keeps it, with `trial` {ok,
-  min_clearance_mm (the simulation's own: its run and plan against every box, so no more than its distance to this one),
-  at_box, fails}. Two or more kept are tried together (`stats.together`: the failure, or None; R8: when the deadline
-  passed before that run, `stats.together` was `TRIAL_LATE` and the check said "Added together, those boxes make the
-  simulation fail (Morph ran out of time ...)" and was kept; now `stats.together_late` and `stats.trial_timeout`, and
-  "There wasn't time to try a simulation with those boxes added together: checking again when the computer is less
-  busy may try it."). Out of time
-  (`SCAN_TRIAL_S` = 30 s of its own) a box isn't offered (`TRIAL_LATE`, `stats.trial_timeout`), nor when the
-  revision's robot can't be simulated again (a preview, its results missing, or the trial raised: `stats.untried`, the
-  reason, and "a simulation with a box there couldn't be tried (<reason>), so none is offered"), and the answer isn't
-  kept. The check says, tried: "Add box here turns it into <the box>; a simulation with it, tried here, keeps clear of
-  it (the row says how close it comes)." (untried: "; the next simulation tries to plan round it, and may take another
-  way, closer to it, or fail."), and with none offered for that reason "a simulation with a grey box there, tried here,
-  fails (the row says how), so none is offered". The World panel's row adds "tried: the simulation keeps X mm from it"
-  ("at least" when its closest box is another; world.js `scanTried`). Measured to another box under 0.5 mm it gives no
-  number: "keeps clear of it", with "and still fails elsewhere (<failure>)" when the trial fails (R8 printed "keeps at
-  least -2.4 mm from it" when a simulation failing already went into another box). The trial is the next simulation:
-  on the hunters' 15 cases kept in tests/data/scan_box_trials.json its failure is word for word the one the simulation
-  after Add box here reports, and
+  of the simulation's documents, so their golden hashes are unchanged: 1f6b690 compared labels, and Add box here could
+  make a second "Scan near miss 1", whose row then showed the other box's distance or whose offer the other box's
+  contact could refuse). A region's id and label are numbered on past the "Scan near miss k" labels and "scan-k" ids the
+  world holds (`worlds._number_regions`; world.js `scanBoxName` does the same for a box added to an unsaved world that
+  holds its label or id). A box the run touches, the plan passes into, or that fails a simulation the revision's own
+  didn't (`baseline_ok`), loses its box and `covers`, with `trial` {ok: False, failure} and `no_box` "A simulation with
+  a grey box here fails (<failure>), so none is offered: move the robot or the thing instead."; one it goes round keeps
+  it, with `trial` {ok, min_clearance_mm (the simulation's own: its run and plan against every box, so no more than its
+  distance to this one), at_box, fails}. Two or more kept are tried together (`stats.together`: the failure, or None; at
+  1f6b690, when the deadline passed before that run, `stats.together` was `TRIAL_LATE` and the check said "Added
+  together, those boxes make the simulation fail (Morph ran out of time ...)" and was kept; now `stats.together_late`
+  and `stats.trial_timeout`, and "There wasn't time to try a simulation with those boxes added together: checking again
+  when the computer is less busy may try it."). Out of time (`SCAN_TRIAL_S` = 30 s of its own) a box isn't offered
+  (`TRIAL_LATE`, `stats.trial_timeout`), nor when the revision's robot can't be simulated again (a preview, its results
+  missing, or the trial raised: `stats.untried`, the reason, and "a simulation with a box there couldn't be tried
+  (<reason>), so none is offered"), and the answer isn't kept. The check says, tried: "Add box here turns it into <the
+  box>; a simulation with it, tried here, keeps clear of it (the row says how close it comes)." (untried: "; the next
+  simulation tries to plan round it, and may take another way, closer to it, or fail."), and with none offered for that
+  reason "a simulation with a grey box there, tried here, fails (the row says how), so none is offered". The World
+  panel's row adds "tried: the simulation keeps X mm from it" ("at least" when its closest box is another; world.js
+  `scanTried`). Measured to another box under 0.5 mm it gives no number: "keeps clear of it", with "and still fails
+  elsewhere (<failure>)" when the trial fails (1f6b690 printed "keeps at least -2.4 mm from it" when a simulation
+  failing already went into another box). The trial is the next simulation: on the hunters' 15 cases kept in
+  tests/data/scan_box_trials.json its failure is word for word the one the simulation after Add box here reports, and
   its clearance the same number. Its cost, measured with `api_world.inspect_world` on this tree (4 cores): the review's
   desk scan (vase 8.8 mm, the box tried 10.1 mm from the simulation) `try_boxes` 4.8-6.5 s of a 17.6-18.7 s scan check
   at load 6-10; the same desk with the mount moved 15 mm (2.0 mm, tried 2.1 mm) 9.6-13.3 s of 21-25 s at load 6-12, and
