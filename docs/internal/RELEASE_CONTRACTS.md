@@ -272,9 +272,14 @@ and a stop in between leaves both journals, never neither. Then:
   (or the start-up) counts. A clean stop is one a person asks for: Ctrl+C (SIGINT), a closed terminal window
   (SIGHUP), a logout, shutdown or `kill` (SIGTERM), Ctrl+Break (SIGBREAK) and, on Windows, a closed console window
   (the console's close event journals the stop before Windows ends the process; written for Windows, not run there in
-  these tests). `server._Stop` handles them from before the start-up's recovery to the end of `serve()`: the first
-  ends `serve_forever` (or keeps it from starting), a second raises KeyboardInterrupt; a signal the process ignores
-  (nohup) stays ignored. `serve()` listens before the Studio's start-up recovers anything, so a start that can't
+  these tests). `server._Stop` handles them from before the start-up's recovery to the end of `serve()` (`serve()`
+  makes the Studio with `recover=False` and runs `Studio.recover()` once `_Stop` has it, so a stop that lands in the
+  recovery is journaled too): the first ends `serve_forever` (or keeps it from starting); a second raises
+  KeyboardInterrupt where the start-up or `serve_forever` is, only once and never once `serve()` is ending
+  (`_Stop.end`: `Studio.stopping`, then `jobs.shutdown`), and every later one only cuts the wait for studies short
+  (`jobs.shutdown(hurry=)`), so however many come and wherever they land, the clean stop is written down whole. A first
+  build that takes the build slot after `Studio.stopping` (`JobQueue.stopped`: the build ahead of it ended while studies
+  stopped) journals `started` and `interrupted` together. A signal the process ignores (nohup) stays ignored. `serve()` listens before the Studio's start-up recovers anything, so a start that can't
   listen (a busy port, a mistyped `--host`) leaves every journal as it was. At
   `Studio.FIRST_BUILD_TRIES` (2) it is not queued again (a design that stops the Studio would stop it
   at every start): it is kept in `<p>/.morph/first-build.json` (`projects.park_first_build`), the chat and the terminal

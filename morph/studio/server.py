@@ -271,7 +271,9 @@ class Studio:
     `allow_url_import`: importing from a link stays on even when other computers can use this Studio."""
 
     def __init__(self, project: RobotProject, home: str | None = None, max_builds: int | None = None, *,
-                 team: bool = False, allow_url_import: bool = False):
+                 team: bool = False, allow_url_import: bool = False, recover: bool = True):
+        """`recover`: pick up the work a stopped Studio left now (recover()); serve() passes False and calls recover()
+        once its stop handling has this Studio, so a stop that lands in the recovery is journaled as a clean one."""
         self.home = os.path.realpath(home or os.path.dirname(project.root))
         self.start = os.path.basename(project.root)
         self.remote = False  # set by serve() when other computers may use this Studio
@@ -289,7 +291,14 @@ class Studio:
         _start_features(self.home)
         self.toolbox = None
         _start_tools(self)
-        self._recover(tidied)
+        self._tidied = [tidied]  # what the start-up set aside, for recover() (once)
+        if recover:
+            self.recover()
+
+    def recover(self):
+        """Pick up the work a stopped Studio left (_recover), once."""
+        if self._tidied:
+            self._recover(self._tidied.pop())
 
     # -- a Studio that stopped with work open (Ctrl+C, a closed window, a crash)
     REBUILT = " (rebuilt after a stop)"
@@ -2078,20 +2087,41 @@ class _Server(ThreadingHTTPServer):
 class _Stop:
     """How a Studio is asked to stop: Ctrl+C (SIGINT), a closed terminal window (SIGHUP), a logout, shutdown or `kill`
     (SIGTERM), Ctrl+Break (SIGBREAK) or a closed console window on Windows. The first one ends serve_forever (or keeps
-    it from starting, during the start-up), so serve() journals a clean stop (Studio.stopping: a first build it cuts
-    off is no try) and returns; a second one stops at once (KeyboardInterrupt). A signal the process ignores (nohup)
-    stays ignored. Handlers are only set from the main thread, and put back afterwards."""
+    it from starting, during the start-up), so serve() journals a clean stop (end: Studio.stopping, a first build it
+    cuts off is no try) and returns. A second one stops at once: it raises KeyboardInterrupt where the start-up or
+    serve_forever is (only once, and never once serve() is ending, so it always lands where serve() turns it into the
+    same clean stop), and cuts short the wait for studies to stop. However many come, and wherever they land, the stop
+    is written down whole: serve() gives this the Studio before its recovery queues anything. A signal the process
+    ignores (nohup) stays ignored. Handlers are only set from the main thread, and put back afterwards."""
     NAMES = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
 
     def __init__(self, httpd):
-        self.httpd, self.requested, self.serving, self.studio, self.old, self.console = httpd, False, False, None, {}, None
+        self.httpd, self.studio, self.old, self.console = httpd, None, {}, None
+        self.requested = self.serving = self.raised = self.ending = False
+        self.hurry = threading.Event()  # asked again: studies aren't waited for
 
     def __call__(self, signum=None, frame=None):
-        if self.requested:
+        if not self.requested:
+            self.requested = True
+            if self.serving:  # shutdown() waits for serve_forever, which runs on this (the main) thread
+                threading.Thread(target=self.httpd.shutdown, daemon=True, name="morph-stop").start()
+            return
+        self.hurry.set()
+        if not (self.raised or self.ending):
+            self.raised = True
             raise KeyboardInterrupt  # asked again: stop now
-        self.requested = True
-        if self.serving:  # shutdown() waits for serve_forever, which runs on this (the main) thread
-            threading.Thread(target=self.httpd.shutdown, daemon=True, name="morph-stop").start()
+
+    def end(self, clean: bool):
+        """serve() is done (`clean`: a stop someone asked for, not an error escaping it): the Studio journals the first
+        builds the stop cuts off as no try (Studio.stopping), then its studies stop (jobs.shutdown). From here on a
+        signal never raises: it only cuts the wait for the studies short."""
+        self.ending = True
+        if self.studio is None:
+            return  # the start-up stopped before the Studio existed: it queued nothing
+        if clean:
+            self.studio.stopping()
+        from . import jobs
+        jobs.shutdown(self.studio, hurry=self.hurry)  # robustness studies stop and keep their runs
 
     def __enter__(self):
         if threading.current_thread() is not threading.main_thread():
@@ -2156,10 +2186,13 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
                              "(Ctrl+C in its terminal, or close that window), then start again.") from None
         raise SystemExit(f"Morph Studio couldn't listen on {host}:{port} ({exc}).") from None
     httpd.daemon_threads = True
-    stop, studio = _Stop(httpd), None
-    try:
-        with stop:
-            studio = stop.studio = Studio(project, home, team=team, allow_url_import=allow_url_import)
+    stop = _Stop(httpd)
+    with stop:
+        clean = False  # an error escaping is no clean stop (a first build it cut off counts as a try)
+        try:
+            # the Studio's recovery (a cut-off first build queued again) runs once `stop` has the Studio
+            studio = stop.studio = Studio(project, home, team=team, allow_url_import=allow_url_import, recover=False)
+            studio.recover()
             studio.remote = bool(token) or (team and not is_loopback(host))
             if team:
                 from . import api_team
@@ -2171,15 +2204,14 @@ def serve(project: RobotProject, host="127.0.0.1", port=8765, home: str | None =
             stop.serving = True
             if not stop.requested:
                 httpd.serve_forever()
-    except KeyboardInterrupt:
-        if studio is not None:
-            studio.stopping()  # asked twice, or Ctrl+C where no handler could be set: still a person stopping it
-    else:
-        studio.stopping()  # serve_forever returned (asked to stop), or a stop came during the start-up: a clean stop;
-    finally:               # an error escaping is none (a first build it cut off counts as a try)
-        if studio is not None:
-            from . import jobs
-            jobs.shutdown(studio)  # robustness studies stop and keep their runs; the same settings carry on next time
+            clean = stop.ending = True  # serve_forever returned (asked to stop), or a stop came during the start-up
+        except KeyboardInterrupt:
+            clean = True  # asked twice, or Ctrl+C where no handler could be set: still a person stopping it
+        except BaseException:
+            stop.ending = True
+            raise
+        finally:
+            stop.end(clean)  # the same settings of a study carry on next time
 
 
 def _announce(project, host, port, token, team, link):

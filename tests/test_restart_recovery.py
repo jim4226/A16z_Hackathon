@@ -286,7 +286,7 @@ def test_only_a_clean_stop_of_serve_journals_its_first_builds_as_no_try(home, mo
     monkeypatch.setattr(server, "_Server", Server)
     monkeypatch.setattr(capability, "warm", lambda block=True: None)
     monkeypatch.setattr(server.Studio, "stopping", lambda self: calls.append("stopping"))
-    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0: calls.append("studies stopped"))
+    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0, hurry=None: calls.append("studies stopped"))
     run = lambda: server.serve(RobotProject(str(home / "egg")), port=0, home=str(home))  # noqa: E731
     if isinstance(ends, Exception):
         with pytest.raises(type(ends)):
@@ -966,7 +966,7 @@ def test_a_stop_asked_for_during_the_start_up_is_a_clean_one(home, tmp_path, bui
     monkeypatch.setattr(server, "_Server", _Listener)
     monkeypatch.setattr(server.Studio, "_recover", recover)
     monkeypatch.setattr(capability, "warm", lambda block=True: None)
-    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0: None)
+    monkeypatch.setattr(jobs, "shutdown", lambda studio, timeout=5.0, hurry=None: None)
     def unhandled(signum, frame):  # what an unhandled stop would do, without ending the test run
         raise RuntimeError(f"{sig} reached no handler of serve()")
 
@@ -988,6 +988,96 @@ def test_a_stop_asked_for_during_the_start_up_is_a_clean_one(home, tmp_path, bui
     assert [j.label for j in queued] == ["first design" + REBUILT] and "stopped twice" not in " ".join(texts(kb1))
     builds.gate.set()
     finish(*queued)
+
+
+@pytest.mark.parametrize("presses", [2, 3, 6])
+def test_ctrl_c_pressed_again_and_again_during_the_start_up_is_still_a_clean_stop(home, tmp_path, builds, monkeypatch,
+                                                                                presses):
+    """Ctrl+C pressed twice while the start-up rebuilt a cut-off first build (after one real crash): the second press
+    raised KeyboardInterrupt inside Studio(), before serve() had the Studio, so nothing journaled the stop
+    "interrupted" and the next start parked the design ("The Studio stopped twice ...") after one crash. Presses that
+    keep coming (one landing while the stop is written down, more while studies stop) never cut the stop short or
+    escape serve() either: a person stopping the Studio is never a try, however often they press."""
+    import signal
+    if threading.current_thread() is not threading.main_thread():
+        pytest.skip("signals reach the main thread only")
+    from morph.studio import capability
+    cut_off_first_build(home)                                               # one real crash: one try
+    builds.gate = threading.Event()
+    real_recover, real_stopping = server.Studio._recover, server.Studio.stopping
+    sent = []
+
+    def press():
+        sent.append(True)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    def recover(self, *a, **k):
+        real_recover(self, *a, **k)
+        assert builds.started.wait(5)                                       # the rebuild has started
+        press()                                                             # the first: a clean stop is asked for
+        press()                                                             # the second: stop now
+        raise AssertionError("the second Ctrl+C didn't stop the start-up")
+
+    def stopping(self):
+        if len(sent) < presses:
+            press()                                                         # one more, while the stop is written down
+        real_stopping(self)
+
+    def shutdown(studio, timeout=5.0, hurry=None):
+        while len(sent) < presses:
+            press()                                                         # and the rest while studies stop
+        assert hurry is None or hurry.is_set()                              # asked again: no waiting for them
+
+    _Listener.fail, _Listener.served = None, []
+    monkeypatch.setattr(server, "_Server", _Listener)
+    monkeypatch.setattr(server.Studio, "_recover", recover)
+    monkeypatch.setattr(server.Studio, "stopping", stopping)
+    monkeypatch.setattr(capability, "warm", lambda block=True: None)
+    monkeypatch.setattr(jobs, "shutdown", shutdown)
+
+    def unhandled(signum, frame):
+        raise RuntimeError("a Ctrl+C reached no handler of serve()")
+
+    before = signal.signal(signal.SIGINT, unhandled)
+    try:
+        server.serve(RobotProject(str(home / "egg")), port=0, home=str(home))  # returns: nothing escapes it
+        assert _Listener.served == [] and len(sent) == presses
+    finally:
+        signal.signal(signal.SIGINT, before)
+    ops = [json.loads(line)["op"] for path in rooms.journals(str(home / "kb1")) for line in open(path, encoding="utf-8")]
+    assert ops[-2:] == ["started", "interrupted"], ops
+    after = stopped(home, tmp_path, builds)                                 # the process ends here
+    monkeypatch.setattr(server.Studio, "_recover", real_recover)
+    builds.gate.set()
+    builds.gate = threading.Event()
+    st = server.Studio(RobotProject(str(after / "egg")), str(after))
+    kb1 = st.room("kb1")
+    queued = [kb1.jobs.get(j["id"]) for j in kb1.jobs.snapshot()]
+    assert [j.label for j in queued] == ["first design" + REBUILT] and "stopped twice" not in " ".join(texts(kb1))
+    assert not (after / "kb1" / ".morph" / "first-build.json").exists()
+    builds.gate.set()
+    finish(*queued)
+
+
+def test_a_first_build_that_starts_after_a_clean_stop_was_written_down_is_no_try(home, builds):
+    """A first build waiting for the build slot when the Studio stops cleanly: Studio.stopping journaled nothing for
+    it (it hadn't started), then the build ahead of it ended while studies stopped, it took the slot and journaled
+    "started", and the process ended: the next start counted the clean stop as a try. A first build that starts once
+    the clean stop is under way is cut off by that stop, and its journal says so."""
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    builds.gate = threading.Event()
+    ahead = st.queue_params(st.room(), {"build.quantity": 40})             # takes the only build slot
+    assert builds.started.wait(5)
+    room, job = st.create_project("kb2", design=Design().with_changes({"build.quantity": 7}))
+    st.stopping()                                                           # Ctrl+C: what serve() calls
+    first, builds.gate = builds.gate, threading.Event()                     # kb2's build will wait at this one
+    builds.started.clear()
+    first.set()                                                             # the build ahead ends; kb2's starts
+    assert builds.started.wait(5)
+    entries = rooms.open_jobs(rooms.journals(str(home / "kb2"))[0])
+    assert [(e["id"], e["started"]) for e in entries] == [(job.id, False)]  # cut off by a clean stop: no try
+    builds.gate.set()
+    finish(ahead, job)
 
 
 def test_a_start_that_cant_listen_changes_no_journal(home, monkeypatch):

@@ -152,12 +152,16 @@ class HeavyJobs:
         job = self.jobs.get(project)
         return True if job is None else job.finished.wait(timeout)
 
-    def shutdown(self, timeout: float = 5.0):
-        """Cancel every job (the Studio is stopping); their saved runs stay resumable."""
+    def shutdown(self, timeout: float = 5.0, hurry: threading.Event | None = None):
+        """Cancel every job (the Studio is stopping); their saved runs stay resumable. Each gets up to `timeout` s to
+        end, none once `hurry` is set (asked to stop again: a study whose process ended reads as interrupted)."""
         for project in list(self.jobs):
             self.cancel(project, keep=True)
         for job in list(self.jobs.values()):
-            job.finished.wait(timeout)
+            end = time.monotonic() + timeout
+            while not (hurry is not None and hurry.is_set()) and time.monotonic() < end:
+                if job.finished.wait(timeout if hurry is None else 0.05):
+                    break
 
     # -- reading
     def status(self, project: str) -> dict | None:
@@ -282,8 +286,9 @@ def stop(studio, project: str, timeout: float = 5.0) -> bool:
     return jobs.wait(project, timeout)
 
 
-def shutdown(studio, timeout: float = 5.0):
-    """The Studio is stopping: cancel its studies (their finished runs stay, and the same settings carry on)."""
+def shutdown(studio, timeout: float = 5.0, hurry: threading.Event | None = None):
+    """The Studio is stopping: cancel its studies (their finished runs stay, and the same settings carry on); `hurry`
+    set (asked to stop again): not waiting for them to end."""
     jobs = getattr(studio, "heavy_jobs", None)
     if jobs is not None:
-        jobs.shutdown(timeout)
+        jobs.shutdown(timeout, hurry)

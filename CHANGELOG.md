@@ -443,7 +443,10 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   first design once (they could build it twice, r001 and r002). Closing the Studio's terminal window, a logout or a
   `kill` (SIGTERM), and Ctrl+C during the start-up while it rebuilds a cut-off first build, are clean stops too: they
   used to count as crashes (twice parked the design, "The Studio stopped twice ..."), and Ctrl+C there ended in a
-  traceback. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
+  traceback. Ctrl+C pressed twice or more while the start-up rebuilds it, or again while the Studio writes its stop
+  down, is a clean stop as well (the second press counted as a crash, so one real crash and a double Ctrl+C parked the
+  design), and a first build that gets its turn while the Studio is stopping is cut off by that stop, not counted as a
+  try. A start that can't listen (a busy port, a mistyped `--host`) no longer starts that rebuild first, so
   failed starts are no tries either.
 - With two Studios on one projects folder, Reset demo in one no longer deletes the revision the other is building (it
   is refused, and says why), a Studio no longer deletes the project another running Studio started on, a project
