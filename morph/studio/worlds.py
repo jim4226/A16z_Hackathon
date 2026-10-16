@@ -952,6 +952,7 @@ SCAN_FIT_ROUNDS = 12         # a box measured against the path at most this many
 # poses the robot once per pose: regions and fit took 2.0-3.1 ms a distinct pose at load 11-14), with room to spare,
 # and never more than a share of the limit
 SCAN_FIT_S_PER_POSE, SCAN_RESERVE_MIN_S, SCAN_RESERVE_SHARE = 0.004, 0.5, 0.25
+SCAN_TRIAL_S = 30.0          # time to try a simulation with each box Add box here would make (try_boxes)
 SCAN_RETRY_FACTOR = 2.0      # a check cut short that needs more than this many times its limit: checking again won't do
 
 
@@ -2068,8 +2069,8 @@ def scan_clearance(glb_path: str, world: dict, doc: dict, robot_xml: str, *, nea
         """What a box (centre c, half sizes h, axes Rb; robot base frame, mm) would meet that no plan can move, or
         None: "object" or "object_end" when it meets the object where it starts or where it is set down and the
         scan's own closest point there (`point`, base frame) is on it or next to it (within SCAN_ON_OBJECT_MM: the
-        scan holds the object itself, or something touching it), "object_box" or "object_end_box" when only the box
-        reaches it; with `arm`, "start" (the arm in its starting pose), "pick" (the arm going down to the object,
+        scan holds the object itself, or something within 2 mm of it), "object_box" or "object_end_box" when only
+        the box reaches it; with `arm`, "start" (the arm in its starting pose), "pick" (the arm going down to the object,
         grasping and lifting it) or "place" (setting it down and letting go); False when `stop_at` passed first.
         Meeting is coming closer than SCAN_TOUCH_MM, by MuJoCo's own distance (as the simulation measures its grey
         boxes), the motion between poses counted (box_path)."""
@@ -2227,8 +2228,8 @@ def _trim_box(P, lo, hi, need):
 
 # why no box is offered where the arm must go (scan_clearance's must_reach): a box there would fail the simulation
 MUST_REACH = {
-    "object": "the scan holds the object itself here (or something touching it), where it starts: the arm must reach "
-              "it to pick it up, so no box is offered",
+    "object": "the scan holds the object itself here (or something within 2 mm of it), where it starts: the arm must "
+              "reach it to pick it up, so no box is offered",
     "object_end": "the scan holds something where the object is set down: the arm must reach there, so no box is "
                   "offered; move the place spot or what is there",
     "object_box": "a box over this part of the scan would reach the object where it starts, which the arm must reach, "
@@ -2347,15 +2348,17 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
                 dd = _box_dist(P, lo0, hi0)
                 r["box_clearance_mm"] = floor_mm(dd.min()) if len(dd) else None
             continue
-        fit, lo_b = _trim_box(P, lo0, hi0, target), None
+        # fitted to the target plus the tolerance, so the box is never shown closer to the path than the near miss
+        # (a 2.0 mm near miss's box read 1.9 mm from the path: fitted to within 0.05 mm under it, then rounded down)
+        fit, lo_b = _trim_box(P, lo0, hi0, target + SCAN_FIT_TOL_MM), None
         for _ in range(SCAN_FIT_ROUNDS if fit is not None else 0):
             saved = _world_box(world, R, *fit, yaw, rounding="in")
             if verify is None:
                 break
             b = box_to_base(world, saved, nd=4)
             lo_b, found = verify(np.asarray(b["center"], float), np.asarray(b["half"], float), _rz(float(b["yaw_deg"])),
-                                 target, deadline)
-            if lo_b is None or lo_b >= target - SCAN_FIT_TOL_MM:
+                                 target + SCAN_FIT_TOL_MM, deadline)
+            if lo_b is None or lo_b >= target:
                 break
             P = np.vstack([P, np.asarray(found[1], float)[None] @ R])         # the robot point it comes closest at
             fit = _trim_box(P, fit[0], fit[1], target + SCAN_FIT_TOL_MM)
@@ -2368,7 +2371,7 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
             r["no_box"] = ("Morph ran out of time to fit a box here that keeps clear of the path: checking again when the "
                            "computer is less busy may fit one.")
             continue
-        if fit is None or (verify is not None and (lo_b is None or lo_b < target - SCAN_FIT_TOL_MM)):
+        if fit is None or (verify is not None and (lo_b is None or lo_b < target)):
             r["box"] = None
             r["no_box"] = (f"A box here would come closer to the path than the scan ({_mm1(target)} mm) unless it were "
                            f"thinner than {SCAN_FIT_MIN_MM:.0f} mm: move the robot or the thing instead.")
@@ -2398,6 +2401,79 @@ def _fit_boxes(world, regions, poses, pose, d, m, shape, fixed, moving, carried,
             r["covers"] = {**_world_box(world, R, clo, chi, yaw, rounding="out"), "clearance_mm": floor_mm(target)}
     if late and stats is not None:
         stats["fit_timeout"] = True
+
+
+TRIAL_LATE = ("Morph ran out of time to try a simulation with a box here: checking again when the computer is less "
+              "busy may try it.")
+
+
+def try_boxes(res: dict, world: dict, trial, deadline: float, baseline_ok: bool | None = None) -> None:
+    """Add box here's promise, tried rather than assumed: each box a region of scan_clearance() offers is added to the
+    room on its own, as Add box here adds it, and the pick and place planned and simulated again as the next simulation
+    would run it (`trial`(rooms, deadline) -> [result or None], simulate.world_trials on the revision's robot, each
+    room a sim_world()). A box the simulation goes round keeps its offer, with "trial" {ok, min_clearance_mm (the
+    simulation's own clearance, no more than its distance to this box), at_box (measured to this box), fails (when the
+    revision's own simulation failed too, `baseline_ok` False: how this one fails, without touching the box)}. A box
+    the run touches or the plan passes into, or with which the simulation fails where the revision's didn't, is
+    offered no more: "trial" {ok False, failure} and "no_box" say how it fails. A box not tried before `deadline`
+    (time.monotonic()) isn't offered either (stats["trial_timeout"]). Two or more boxes kept are tried together too:
+    stats["together"] is how that simulation fails, or None when it succeeds."""
+    regs = [r for r in res.get("regions") or [] if r.get("box")]
+    if not regs:
+        return
+    stats = res.setdefault("stats", {})
+
+    def room(rs):
+        obs = list(world.get("obstacles") or [])
+        ids = {o.get("id") for o in obs}
+        for r in rs:
+            i, k = str(r["id"]), 2
+            while i in ids:
+                i, k = f"{r['id']}-{k}", k + 1
+            ids.add(i)
+            obs.append({"id": i, "label": r["label"], "center": r["box"]["center"], "half": r["box"]["half"],
+                        "yaw_deg": r["box"]["yaw_deg"], "source": "auto"})
+        return sim_world(validate({**world, "obstacles": obs}))
+
+    def drop(r, why):
+        r["box"] = None
+        r.pop("covers", None)
+        r["no_box"] = why
+
+    results = trial([room([r]) for r in regs], deadline)
+    kept = []
+    for r, t in zip(regs, results):
+        if t is None:
+            drop(r, TRIAL_LATE)
+            stats["trial_timeout"] = True
+            continue
+        if t["contact"] or t["blocked"] or (not t["success"] and baseline_ok is not False):
+            how = t.get("failure") or f"the arm comes {mm_up_text(-float(t['min_clearance_mm'] or 0.0))} mm into it"
+            r["trial"] = {"ok": False, "failure": how}
+            drop(r, f"A simulation with a grey box here fails ({how}), so none is offered: move the robot or the thing "
+                    "instead.")
+            continue
+        r["trial"] = {"ok": True, "min_clearance_mm": t["min_clearance_mm"], "at_box": t.get("closest") == r["label"],
+                      "fails": None if t["success"] else t.get("failure")}
+        kept.append(r)
+    if len(kept) > 1 and baseline_ok is not False:
+        (t,) = trial([room(kept)], deadline)
+        stats["together"] = TRIAL_LATE if t is None else None if t["success"] else t.get("failure") or "it fails"
+
+
+def failed_on_box(world: dict, doc: dict) -> dict | None:
+    """When the revision's simulation (`doc`, sim_pick_place) fails on a grey box Add box here made (source "auto": its
+    run hits it or its plan passes into it): {label, failure}, else None. The scan check says so: that box is the one
+    to remove, whatever the scan says now."""
+    met = (doc or {}).get("metrics") or {}
+    if met.get("success") is not False:
+        return None
+    hits = [h.get("obstacle") for h in met.get("world_contacts") or []]
+    hits.append(((met.get("blocked") or {}).get("at") or {}).get("obstacle"))
+    for o in world.get("obstacles") or []:
+        if o.get("source") == "auto" and o.get("label") and o.get("label") in hits:
+            return {"label": o["label"], "failure": str(met.get("failure") or "")}
+    return None
 
 
 def _same_box(a: dict, b: dict) -> bool:
@@ -2725,8 +2801,8 @@ def scan_event_text(res: dict) -> str:
     """The scan check's line in the Studio's progress (the "world" and "agent" events): what scan_check says, short."""
     if res.get("skipped"):
         return str(res["skipped"])
-    mc, n = res.get("min_clearance_mm"), len(res.get("regions") or [])
     st = res.get("stats") or {}
+    mc, n = res.get("min_clearance_mm"), max(len(res.get("regions") or []), int(st.get("places") or 0))
     cut = bool(st.get("truncated"))
     if mc is not None:
         text = ("The arm touches or passes through the scan" if mc < SCAN_TOUCH_MM else
@@ -2806,19 +2882,41 @@ def scan_check(scan: dict) -> dict:
         touch = sum(1 for r in regions if r.get("box") is not None and r.get("touches"))
         must = [r for r in regions if r.get("must_reach")]
         scanned = any(r["must_reach"] == "object" for r in must)
-        if boxed and touch == boxed:                    # where the arm touches the scan, the box is the scanned surface
-            text += (f": Add box here turns {'one' if places != 1 else 'it'} into a grey box over the scanned surface "
-                     f"there (at least {SCAN_MIN_BOX_MM:.0f} mm each way, so it can be larger than what was scanned), "
-                     "and the next simulation tries to plan round it.")
-        elif boxed:
-            text += (f": Add box here turns {'one' if places != 1 else 'it'} into a grey box the simulation keeps clear "
-                     "of, trimmed so it is no closer to the path than the scan"
-                     + (" (where the arm touches the scan, the box is the scanned surface there, untrimmed, and the "
-                        "next simulation tries to plan round it)." if touch else "."))
+        failed = [r for r in regions if (r.get("trial") or {}).get("ok") is False]     # a simulation with it fails
+        tried = sum(1 for r in regions if r.get("box") is not None and (r.get("trial") or {}).get("ok"))
+        if boxed:                                       # where the arm touches the scan, the box is the scanned surface
+            what = (f"a grey box over the scanned surface there (at least {SCAN_MIN_BOX_MM:.0f} mm each way, so it can "
+                    "be larger than what was scanned)" if touch == boxed else
+                    "a grey box, trimmed so it is no closer to the path as it is now than the scan"
+                    + (" (where the arm touches the scan, the box is the scanned surface there, untrimmed)" if touch
+                       else ""))
+            text += f": Add box here turns {'one' if places != 1 else 'it'} into {what}"
+            if tried == boxed:                          # try_boxes: the next simulation, run here with the box
+                text += ("; a simulation with it, tried here, keeps clear of it (the row says how close it comes)."
+                         if boxed == 1 else "; a simulation with each, tried here on its own, keeps clear of it (the "
+                         "rows say how close each comes).")
+            else:                                       # not tried: the path the next simulation takes isn't known
+                text += ("; the next simulation tries to plan round it, and may take another way, closer to it, or "
+                         "fail.")
+            if failed:
+                text += " Where a simulation with a box fails, none is offered (the rows say how)."
+            if any(r.get("no_box") == TRIAL_LATE for r in regions):
+                text += (" There wasn't time to try a simulation with a box at every place: checking again when the "
+                         "computer is less busy may try them all.")
+            if stats.get("together"):
+                text += (f" Added together, those boxes make the simulation fail ({str(stats['together']).rstrip('.')}"
+                         "): add one, Save and simulate, then check again.")
         elif must and len(must) == n:                  # where the arm must go: a box there fails the simulation
             text += (f": the arm must reach {'there' if n == 1 else 'those places'} to pick or place the object, or "
                      "stands there in its starting pose, so no box is offered"
-                     + (" (the scan holds the object itself where it starts)." if scanned else "."))
+                     + (" (the scan holds the object itself where it starts, or something within "
+                        f"{SCAN_ON_OBJECT_MM:.0f} mm of it)." if scanned else "."))
+        elif failed and len(failed) + len(must) == n:   # try_boxes: the simulation fails with each box
+            text += (": a simulation with a grey box there, tried here, fails (the row says how), so none is offered; "
+                     "move the robot or the thing.")
+        elif stats.get("trial_timeout"):
+            text += (": there wasn't time to try a simulation with a box there: checking again when the computer is "
+                     "less busy may try it.")
         elif stats.get("fit_timeout"):
             text += ": there wasn't time to fit a box that keeps clear of the path."
         elif any(r.get("boxed") for r in regions):
@@ -2828,9 +2926,15 @@ def scan_check(scan: dict) -> dict:
             text += ": too close to the path for a box; move the robot or the thing."
         if must and (boxed or len(must) < n):
             text += (" Where the arm must reach to pick or place the object, or stands in its starting pose, no box is "
-                     "offered" + (": the scan holds the object itself there." if scanned else "."))
+                     "offered" + (": the scan holds the object itself there, or something within "
+                                  f"{SCAN_ON_OBJECT_MM:.0f} mm of it." if scanned else "."))
     elif cut and mc is not None and floor_mm(mc) < SCAN_NEAR_MM:
         text += " There wasn't time to measure that place closely enough to offer a box for it."
+    if stats.get("fails_on"):                         # a box Add box here made, and the simulation fails on it
+        fo = stats["fails_on"]
+        text += (f" The simulation fails on {fo['label']}, a box Add box here made"
+                 + (f" ({str(fo['failure']).rstrip('.')})" if fo.get("failure") else "")
+                 + ": remove that box, and move the robot or the thing instead.")
     covered = stats.get("covered") or 0
     if covered:
         text += (f" {covered} {'other ' if regions else ''}place{'s' if covered != 1 else ''} closer than "

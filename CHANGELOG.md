@@ -122,11 +122,13 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 - **Clearance to the room scan** (beta): with an uploaded scan, Check placement also measures the simulated path against
   the scan itself, as a warning that never sets the verdict ("Measured against the scanned surface, which can be noisy
   or have holes."), and lists each place the arm comes within 10 mm of it with **Add box here**: that spot becomes a
-  grey box, trimmed so it is no closer to the path than the scan, and the next simulation plans around it. A place next
+  grey box, trimmed so it is no closer to the path as it is than the scan, offered only when a simulation with it, run
+  during the check as Save and simulate would run it, goes round it (below). A place next
   to a grey box, or one a box was added for (even when the trim moved the box away from it), isn't offered again while
   the path comes no closer there than the box was fitted for; when it does (the robot moved, say), the place is offered
   again with a box fitted to the new path. A box sized or moved by hand is a plain grey box. The same box is never added
-  twice, and a box the room holds already is never offered again. The check, the boxes' fit included, has 20 seconds:
+  twice, and a box the room holds already is never offered again. The check, the boxes' fit included, has 20 seconds
+  (trying the boxes 30 seconds more):
   the review's desk scan takes 9.9 to 11.5 seconds on a 4-core computer at load 1-4, 13.3 to 14.6 at load 9-10 and 15
   to 16 at load 11-12, and a generated room of a million triangles 9.8 seconds at load 2 and 11.5 to 12.3 at load 5-10
   (below: it now measures the arm's own shapes and the motion between its poses).
@@ -142,7 +144,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   kept as 10.0, so the scan check passed it as "At least 10 mm" and the simulation called it clear.
 - The place a box from Add box here keeps (`covers`) counts only as what the fit makes: past the box only on trimmed
   sides, no further than the box's own size, and with the distance it was fitted to. A world saved through the API
-  with a 10 mm cube and a place 50 mm past it on every side could hide a real 9.0 mm near miss; now that place is
+  with a 10 mm cube and a place 50 mm past it on every side could hide a real 8.8 mm near miss; now that place is
   ignored and the near miss is offered.
 - A room-scan near miss's row says "at most X mm" unless it is the check's closest place measured along the whole path,
   and its distance is measured exactly at its own closest points: before, a row read "2.2 mm from the wrist" in a check
@@ -157,7 +159,7 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   between, so the distance kept is never more than the closest approach anywhere along the path and at most 0.1 mm
   under it before rounding down (the moves the check left alone count with their bounds): those now read 9.8 mm and
   touching. Where the arm touches or passes through the scan, Add box here offers a grey box over that part of the scan,
-  untrimmed (at least 20 mm each way, so a speck gets a 20 mm box), and the next simulation tries to plan round it; its
+  untrimmed (at least 20 mm each way, so a speck gets a 20 mm box), offered when a simulation with it goes round it; its
   row says it touches the path unless the whole path keeps at least 0.5 mm from it (a row read "0.1 mm from the path"
   for a box 8.75 mm into it). Where the arm must go (its starting pose, the descent, the grasp and the lift, the
   set-down and the release, the object where it starts and ends) no box is offered, and the row says the arm must reach
@@ -177,6 +179,20 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   was fitted to. Measuring between the poses makes the check slower: the desk scan above took 14.7 seconds at load 16
   measured only at the poses; at load 13 to 17 it can run out of time between them, and then says how close the arm
   comes at most and at least, and that the motion between the poses wasn't all measured.
+- Add box here is tried before it is offered. A box was offered when it kept clear of the path as it was (a touch box
+  when no move a plan can't change met it), but the next simulation plans again with the box in the room, and its other
+  ways for the approach, the carry and the way back can meet the box too, or its run strays 1 to 3 mm from its plan into
+  a box trimmed to 0.6 mm: on the hunters' bench 8 of 26 touch boxes and 2 of 20 trimmed boxes made the next simulation
+  fail ("the wrist hits Scan near miss 1 during the approach at 1.7 s"), after the check had said "a grey box the
+  simulation keeps clear of". Now Check placement plans and simulates the pick and place again with each box, as Save
+  and simulate would: a box that simulation fails with is not offered and its row says how it fails; one it goes round
+  is offered and its row says how close that simulation comes to it, as the simulation after Add box here says (of the
+  hunters' cases kept as tests, all 8 failures are caught and the 7 others offered with the clearance their next
+  simulation measured). Boxes offered together are tried together too. When the simulation fails on a box Add box here
+  made, the check names it and says to remove it. Also: a trimmed box is fitted to the near miss's own distance (a 2.0
+  mm near miss's box read 1.9 mm from the path), the scan line in the Studio's progress counts every place, not only the
+  eight listed ("8 near misses" where the check said 12), and where the scan holds the object itself the check adds "or
+  something within 2 mm of it" (a block 0.3 mm beside the egg read as the egg).
 - Robustness studies in World mode can let only the room vary (**Only the room varies** under the card's tolerances:
   the mount and every box, the object and the hardware nominal), so every failure is the room's. A carton wall 12 mm
   from the open jaws: 185 of 200 runs succeed (88-95 %); the 15 others hit it at the release, most often with the

@@ -1116,24 +1116,33 @@ def _opts(options) -> SimOptions:
 # ====================================================================== runtime wrapper
 
 class _Robot:
-    def __init__(self, asm, design, opts: SimOptions):
+    def __init__(self, asm, design, opts: SimOptions, described=None):
+        """`described`: another _Robot's `described` (the same asm and design): its description and gains, the slow
+        part of building one, reused for the same robot in another room (box_trials)."""
+        import copy
+
         import mujoco
 
         self.asm, self.design, self.opts = asm, design, opts
-        self.info, masses = _describe(asm, design, opts)
-        xml = _xml(asm, design, opts, self.info, masses)
-        model = mujoco.MjModel.from_xml_string(xml)
-        # second pass: velocity gains for a damping ratio ZETA from the joint-space inertia at the ready pose
-        data = mujoco.MjData(model)
-        self._index(model)
-        q = self.q_ready()
-        data.qpos[self.qadr] = q
-        mujoco.mj_forward(model, data)
-        Mfull = np.zeros((model.nv, model.nv))
-        mujoco.mj_fullM(model, data, Mfull)
-        diag = np.diag(Mfull)[self.dadr]                    # includes the rotor armature
-        kv = {n: 2.0 * ZETA * math.sqrt(self.info.kp[n] * max(diag[i], 1e-5))
-              for i, n in enumerate(self.info.arm_joints)}
+        if described is not None:
+            info, masses, kv = described
+            self.info = copy.deepcopy(info)
+        else:
+            self.info, masses = _describe(asm, design, opts)
+            xml = _xml(asm, design, opts, self.info, masses)
+            model = mujoco.MjModel.from_xml_string(xml)
+            # second pass: velocity gains for a damping ratio ZETA from the joint-space inertia at the ready pose
+            data = mujoco.MjData(model)
+            self._index(model)
+            q = self.q_ready()
+            data.qpos[self.qadr] = q
+            mujoco.mj_forward(model, data)
+            Mfull = np.zeros((model.nv, model.nv))
+            mujoco.mj_fullM(model, data, Mfull)
+            diag = np.diag(Mfull)[self.dadr]                    # includes the rotor armature
+            kv = {n: 2.0 * ZETA * math.sqrt(self.info.kp[n] * max(diag[i], 1e-5))
+                  for i, n in enumerate(self.info.arm_joints)}
+        self.described = (copy.deepcopy(self.info), masses, kv)
         self.xml = _xml(asm, design, opts, self.info, masses, kv=kv)
         self.model = mujoco.MjModel.from_xml_string(self.xml)
         self._index(self.model)
@@ -2919,11 +2928,38 @@ def _run_one(rob, design, name, fast, perturb=None):
     raise ValueError(f"unknown scenario {name!r}; choose from {SCENARIOS}")
 
 
-def _make_robot(asm, design, fast, opts):
+def _make_robot(asm, design, fast, opts, described=None):
     o = _opts(opts)
     if fast and "timestep" not in (opts or {}):
         o.timestep = 0.002
-    return _Robot(asm, design, o)
+    return _Robot(asm, design, o, described)
+
+
+def world_trials(asm, design, rooms: list, *, fast: bool = False, deadline: float = math.inf, described=None) -> tuple:
+    """World mode: the pick and place planned and simulated again as the next simulation would run it, in each of
+    `rooms` (SimOptions.world dicts, robot base frame mm: the room with a box added, the box tried its last obstacle).
+    Returns (trials, described): one {success, failure, min_clearance_mm, closest, contact, blocked} a room, or None for
+    one not tried before `deadline` (time.monotonic()). `min_clearance_mm` is the simulation's own (the closest the run
+    and its plan come to any box, rounded down: no more than its distance to the box tried), `closest` the label of the
+    box it is measured to, `contact` whether the run touched the box tried, `blocked` whether its plan passes into it.
+    `described` (the robot's description, the slow part of building it) comes back for the next call on the same asm
+    and design."""
+    out = []
+    for room in rooms:
+        if time.monotonic() > deadline:
+            out.append(None)
+            continue
+        rob = _make_robot(asm, design, fast, {"world": room}, described)
+        described = rob.described
+        plan, at = _plan_pick_place(rob, design, fast)
+        _, met = _run_pick_place(rob, design, plan, at)
+        label = rob.world_names.get(int(rob.world_geoms[-1]), "")
+        out.append({"success": bool(met.get("success")), "failure": met.get("failure"),
+                    "min_clearance_mm": met.get("min_clearance_mm"),
+                    "closest": (met.get("min_clearance_at") or {}).get("obstacle"),
+                    "contact": any(h.get("obstacle") == label for h in met.get("world_contacts") or []),
+                    "blocked": ((met.get("blocked") or {}).get("at") or {}).get("obstacle") == label})
+    return out, described
 
 
 def _write(outdir, name, doc):

@@ -82,6 +82,25 @@ def simulated(obstacles=(), fast=True):
     return _SIMS[key]
 
 
+BENCH = worlds.validate({"id": "bench", **ROOM, "asset": "room.glb"})
+_ASM = {}
+
+
+def bench_trial(fast=True):
+    """worlds.try_boxes' trial on the bench egg-picker (simulate.world_trials, as api_world runs it on a revision's
+    robot), in the rooms simulated() builds (its surface and floor)."""
+    if "asm" not in _ASM:
+        sz = arm.size(EGG)
+        _ASM["asm"] = arm.build(EGG, sz, electronics2.plan(EGG, {**sz, "grip_target_n": 2.34}))
+    st = {"d": None}
+
+    def trial(rooms, deadline):
+        rooms = [{**r, "surface": SURFACE, "floor_z": -900.0} for r in rooms]
+        out, st["d"] = S.world_trials(_ASM["asm"], EGG, rooms, fast=fast, deadline=deadline, described=st["d"])
+        return out
+    return trial
+
+
 def mujoco_clearance(rob, doc):
     """MuJoCo's clearance to the grey boxes (mj_geomDistance) at the poses scan_clearance checks."""
     dd = rob._mj.MjData(rob.model)
@@ -212,7 +231,7 @@ def test_add_box_here_never_comes_closer_to_the_path_than_the_scan_and_is_not_of
     rob_b, doc_b, met_b = simulated(tuple(worlds.sim_world(w)["obstacles"]))
     same_path = float(np.nanmin(mujoco_clearance(rob_b, doc)))             # MuJoCo: the box against the scanned path
     assert same_path >= g["min_clearance_mm"] - 1.0, (same_path, g)        # (MuJoCo's hulls and our samples: about 1 mm)
-    assert g["trimmed"] and g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1 - 1e-9, g
+    assert g["trimmed"] and g["box_clearance_mm"] >= g["min_clearance_mm"] - 1e-9, g
     lo, hi = np.subtract(g["box"]["center"], g["box"]["half"]), np.add(g["box"]["center"], g["box"]["half"])
     assert abs(lo[2]) < 0.2 and hi[2] >= 60.0 and np.all(hi[:2] - lo[:2] >= 20.0), g["box"]       # still most of the vase
     assert met_b["success"] and not met_b["world_contacts"]
@@ -243,7 +262,7 @@ def test_a_box_trimmed_off_a_vases_top_still_covers_the_near_miss_it_was_made_fo
     (g,) = res["regions"]
     lo, hi = corners(g["box"])
     assert g["trimmed"] and hi[2] < g["point"][2] - worlds.SCAN_COVER_MM, g          # trimmed away from the near miss
-    assert abs(lo[2]) < 0.2 and g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1 - 1e-9, g
+    assert abs(lo[2]) < 0.2 and g["box_clearance_mm"] >= g["min_clearance_mm"] - 1e-9, g
     clo, chi = corners(g["covers"])
     assert np.all(clo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= chi + 0.2), g      # over the near miss
     assert chi[2] >= TALL_VASE[2] - 0.2 and np.all(clo <= lo + 0.05) and np.all(hi <= chi + 0.05), g
@@ -391,7 +410,7 @@ def test_a_box_added_for_a_near_miss_is_offered_again_when_the_robot_moves_close
     (g2,) = res2["regions"]
     assert not res2["stats"]["covered"] and g2["min_clearance_mm"] < g["min_clearance_mm"] - 1.0, res2
     assert g2["box"] is not None and not worlds._same_box(g2["box"], obstacle), g2       # refitted for the new path
-    assert g2["box_clearance_mm"] is None or g2["box_clearance_mm"] >= g2["min_clearance_mm"] - 0.1 - 1e-9, g2
+    assert g2["box_clearance_mm"] is None or g2["box_clearance_mm"] >= g2["min_clearance_mm"] - 1e-9, g2
     c = worlds.scan_check(res2)
     assert "Add box here" in c["text"] and "grey box already" not in c["text"], c
 
@@ -735,13 +754,19 @@ def test_a_thing_the_arm_passes_through_gets_a_box_over_it_when_a_plan_can_go_ro
     assert np.all(lo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= hi + 0.2), g      # over the touch
     c = worlds.scan_check(res)
     assert "touches or passes through" in c["text"] and "a grey box over the scanned surface there (at least 20 mm " \
-        "each way, so it can be larger than what was scanned), and the next simulation tries to plan round it" in \
-        c["text"], c["text"]
+        "each way, so it can be larger than what was scanned); the next simulation tries to plan round it, and may " \
+        "take another way, closer to it, or fail." in c["text"], c["text"]            # not tried: no promise
     assert "thing as scanned" not in c["text"] and "plans round it" not in c["text"], c["text"]
+    box = dict(g["box"])
+    worlds.try_boxes(res, BENCH, bench_trial(fast=True), time.monotonic() + 300.0, baseline_ok=True)
+    assert g["box"] == box and g["trial"]["ok"] and g["trial"]["fails"] is None, g    # tried: the simulation goes round
+    c = worlds.scan_check(res)
+    assert "; a simulation with it, tried here, keeps clear of it (the row says how close it comes)." in c["text"], c
     w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
                          "obstacles": [{"id": g["id"], "label": g["label"], **g["box"], "source": "auto"}]})
     rob2, doc2, met2 = simulated(tuple(worlds.sim_world(w)["obstacles"]))
     assert met2["success"] and not met2["world_contacts"] and not met2.get("blocked"), met2.get("failure")
+    assert met2["min_clearance_mm"] == g["trial"]["min_clearance_mm"], (met2["min_clearance_mm"], g["trial"])
     res2 = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc2, rob2.xml)
     assert res2["min_clearance_mm"] is None or res2["min_clearance_mm"] >= worlds.SCAN_TOUCH_MM, res2
 
@@ -807,7 +832,8 @@ def test_where_the_arm_must_go_no_box_is_offered(tmp_path, nominal, case):
     assert "Add box here" not in c["text"] and "plans round it" not in c["text"], c["text"]
     assert "the arm must reach there to pick or place the object, or stands there in its starting pose, so no box is " \
         "offered" in c["text"], c["text"]
-    assert ("the scan holds the object itself where it starts" in c["text"]) == (g["must_reach"] == "object"), c["text"]
+    assert ("the scan holds the object itself where it starts, or something within 2 mm of it" in c["text"]) == \
+        (g["must_reach"] == "object"), c["text"]           # a block 0.3 mm beside the egg is "within 2 mm of it" too
 
 
 @pytest.fixture(scope="module")
@@ -946,6 +972,75 @@ def test_acceptance_a_million_triangle_room_in_under_20_s(tmp_path):
     assert took <= 20.0 and res["min_clearance_mm"] is not None and res["regions"]
 
 
+with open(os.path.join(os.path.dirname(__file__), "data", "scan_box_trials.json"), encoding="utf-8") as _fh:
+    TRIALS = json.load(_fh)["cases"]        # the hunters' specks and cubes, with the next simulation they measured
+QUICK = {0, 6, 9, 13}                       # a touch and a near miss each way; MORPH_SLOW=1 tries every case
+
+
+@pytest.mark.parametrize("case", [c for i, c in enumerate(TRIALS) if SLOW or i in QUICK], ids=lambda c: c["name"])
+def test_add_box_here_is_offered_only_where_the_simulation_with_the_box_was_tried_and_went_round_it(tmp_path, case):
+    """0033630 offered every one of these boxes: the touch boxes because no move a plan can't change met them, the
+    trimmed ones because the box kept clear of the path as it was. Added, 8 of the 15 made the next simulation fail: its
+    planner took another approach, carry or way back, and those meet the box too (or its run strays 1-3 mm from its
+    plan, into a box trimmed to 0.6 mm). Now each box is tried first, by the next simulation itself, run here with
+    the box: a box it fails with is no longer offered and the row says how it fails; one it goes round is offered,
+    with the clearance that simulation measured, the same the simulation after Add box here reports."""
+    rob, doc, met = simulated(fast=False)
+    thing = {"center": case["center"], "half": [case["half"]] * 3, "yaw_deg": 0.0}
+    m = trimesh.util.concatenate([box_mesh(SLAB), box_mesh(thing)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    res = measure(room, BENCH, doc, rob.xml)
+    (g,) = res["regions"]
+    assert g["box"] is not None and not g.get("must_reach"), g                     # offered before it was tried
+    box = dict(g["box"])
+    w = worlds.validate({**BENCH, "obstacles": [{"id": g["id"], "label": g["label"], **box, "source": "auto"}]})
+    _, _, met2 = simulated(tuple(worlds.sim_world(w)["obstacles"]), fast=False)   # Add box here, Save and simulate
+    worlds.try_boxes(res, BENCH, bench_trial(fast=False), time.monotonic() + 300.0, baseline_ok=met["success"])
+    text = worlds.scan_check(res)["text"]
+    if not case["next"]["success"]:
+        assert not met2["success"] and met2["failure"] == case["next"]["failure"], met2.get("failure")
+        assert g["box"] is None and "covers" not in g and g["trial"] == {"ok": False, "failure": met2["failure"]}, g
+        assert g["no_box"] == (f"A simulation with a grey box here fails ({met2['failure']}), so none is offered: "
+                               "move the robot or the thing instead."), g
+        assert ": a simulation with a grey box there, tried here, fails (the row says how), so none is offered; move " \
+            "the robot or the thing." in text and "Add box here" not in text, text
+    else:
+        assert met2["success"] and abs(met2["min_clearance_mm"] - case["next"]["min_clearance_mm"]) <= 0.2, met2
+        assert g["box"] == box and g["trial"] == {"ok": True, "min_clearance_mm": met2["min_clearance_mm"],
+                                                  "at_box": True, "fails": None}, g
+        assert "Add box here turns it into" in text and "a simulation with it, tried here, keeps clear of it" in text
+
+
+def test_the_check_names_a_box_add_box_here_made_when_the_simulation_fails_on_it():
+    """After a box Add box here made, the simulation failed on it ("the wrist hits Scan near miss 1 during the approach
+    at 1.7 s") and the next check said only that the place "has a grey box already". It now says which box to
+    remove; a box drawn by hand, or a simulation that succeeds or fails elsewhere, isn't named."""
+    w = {"obstacles": [{"id": "scan-1", "label": "Scan near miss 1", "source": "auto"},
+                       {"id": "shelf", "label": "Shelf", "source": "manual"}]}
+    fail = "the wrist hits Scan near miss 1 during the approach at 1.7 s"
+    doc = {"metrics": {"success": False, "failure": fail, "world_contacts": [{"obstacle": "Scan near miss 1"}]}}
+    fo = worlds.failed_on_box(w, doc)
+    assert fo == {"label": "Scan near miss 1", "failure": fail}
+    blocked = {"metrics": {"success": False, "failure": "x", "world_contacts": [],
+                           "blocked": {"at": {"obstacle": "Scan near miss 1"}}}}
+    assert worlds.failed_on_box(w, blocked)["label"] == "Scan near miss 1"
+    assert worlds.failed_on_box(w, {"metrics": {"success": False, "world_contacts": [{"obstacle": "Shelf"}]}}) is None
+    assert worlds.failed_on_box(w, {"metrics": {"success": True, "world_contacts": []}}) is None
+    text = worlds.scan_check({"min_clearance_mm": None, "at": None, "regions": [],
+                              "stats": {"covered": 1, "fails_on": fo}})["text"]
+    assert (f"The simulation fails on Scan near miss 1, a box Add box here made ({fail}): remove that box, and move the "
+            "robot or the thing instead." in text), text
+
+
+def test_the_scan_event_counts_every_place_not_only_the_listed_ones():
+    """The check says 12 places (8 listed); the Studio's progress line said 8 near misses."""
+    res = {"min_clearance_mm": 2.4, "regions": [{}] * 8, "stats": {"places": 12}}
+    assert worlds.scan_event_text(res) == "Closest to the scan: 2.4 mm, 12 near misses"
+    assert "12 places closer than 10 mm (the 8 closest are listed)" in worlds.scan_check(
+        {**res, "at": {"t": 1.0, "link": "wrist", "point": [0, 0, 0]}, "regions": [
+            {"id": f"scan-{i}", "label": f"Scan near miss {i}", "box": None, "no_box": "x"} for i in range(8)]})["text"]
+
+
 # ------------------------------------------------------------------ the Studio route
 def scan_project(tmp_path, boxes):
     """r001 of an egg-picker project, simulated (fast) in a world whose room scan holds these boxes and whose grey
@@ -965,9 +1060,9 @@ def scan_project(tmp_path, boxes):
         fh.write(d.dumps())
     sw = RobotProject(root)._sim_world(d, os.path.join(rev, "sim"))
     sz = arm.size(d)
-    doc = S.run(arm.build(d, sz, electronics2.plan(d, {**sz, "grip_target_n": 2.34})), d, "pick_place",
-                os.path.join(rev, "sim"), fast=True, world=sw)
-    res = {"rev": "r001", "kind": "robot", "sims": {"mjcf": "robot.xml", "scenarios": {
+    ep = electronics2.plan(d, {**sz, "grip_target_n": 2.34})
+    doc = S.run(arm.build(d, sz, ep), d, "pick_place", os.path.join(rev, "sim"), fast=True, world=sw)
+    res = {"rev": "r001", "kind": "robot", "sizing": sz, "eplan": ep, "sims": {"mjcf": "robot.xml", "scenarios": {
         "pick_place": {"file": "sim_pick_place.json", "metrics": doc["metrics"]}}}}
     with open(os.path.join(rev, "results.json"), "w", encoding="utf-8") as fh:
         json.dump(res, fh)
@@ -991,8 +1086,11 @@ def test_the_world_check_measures_the_path_against_the_scan(tmp_path):
                         sims=api_world._inputs(room, "r001")[1], design=room.p.load_design("r001"))
     assert body["verdict"] == out["verdict"]                                # the scan never changes the verdict
     scan_ev = [e for e in room.events if e["type"] == "world" and e["stage"] == "scan"]
-    assert [e["status"] for e in scan_ev] == ["start", "done"] and "near miss" in scan_ev[1]["text"]
-    assert any(e["type"] == "agent" and e["role"] == "feasibility" and e["text"] == scan_ev[1]["text"] for e in room.events)
+    g = c["scan"]["regions"][0]                         # Add box here, tried on the revision's robot rebuilt
+    assert (g.get("trial") or {}).get("ok") is not None, g
+    assert [e["status"] for e in scan_ev] == ["start", "start", "done"] and "near miss" in scan_ev[2]["text"]
+    assert scan_ev[1]["text"] == "Trying a simulation with each box Add box here would make"
+    assert any(e["type"] == "agent" and e["role"] == "feasibility" and e["text"] == scan_ev[2]["text"] for e in room.events)
     # checked again: the same answer, from memory
     room.events.clear()
     st, body2 = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
@@ -1000,7 +1098,8 @@ def test_the_world_check_measures_the_path_against_the_scan(tmp_path):
     assert not [e for e in room.events if e["type"] == "world" and e["stage"] == "scan"]
     # a check cut short (a busy computer), a box not fitted in time or a list of near misses not finished (R5: the
     # places not listed may touch) isn't kept: checking again measures again
-    for stats in ({"truncated": True}, {"fit_timeout": True}, {"unlisted_mm": 0.0}, {"unlisted_mm": 8.3}):
+    for stats in ({"truncated": True}, {"fit_timeout": True}, {"unlisted_mm": 0.0}, {"unlisted_mm": 8.3},
+                  {"trial_timeout": True}):
         api_world._SCANS.clear()
         calls = []
         real = worlds.scan_clearance

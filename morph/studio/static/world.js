@@ -41,6 +41,17 @@ const r1 = (x) => Math.round(x * 10) / 10;
 // a clearance as the texts show it, rounded down, never up: to 0.1 mm under 10 mm (9.97 reads 9.9, not 10), to the mm
 // from there (30.68 reads 30, not 31); worlds.mm_text does the same in Python
 const mmDown = (x) => { const v = Math.floor(x * 10 + 1e-6) / 10; return v < 10 ? v.toFixed(1) : String(Math.floor(v + 1e-9)); };
+// Add box here, tried (worlds.try_boxes): the simulation run with the box, as the next one would run, and the closest it
+// comes to any box (so no further from this one); untried, the next simulation may take another way or fail
+const scanTried = (g) => g.trial?.ok
+  ? `; tried: the simulation keeps ${g.trial.min_clearance_mm == null ? 'clear of it'
+    : `${g.trial.at_box ? '' : 'at least '}${mmDown(+g.trial.min_clearance_mm)} mm from it`}${g.trial.fails ? ` (and still fails: ${esc(g.trial.fails)})` : ''}`
+  : '';
+const scanBoxTitle = (g) => g.trial?.ok
+  ? `A grey box over this part of the scan: a simulation with it, tried when the scan was checked, ${g.trial.min_clearance_mm == null ? 'keeps clear of it'
+    : `comes no closer to it than ${mmDown(+g.trial.min_clearance_mm)} mm`}`
+  : (g.touches ? 'A grey box over this part of the scan, where the arm touches it: the next simulation tries to plan round it, and may fail'
+    : 'A grey box over this part of the scan, no closer to the path as it is than the scan: the next simulation may take another way, closer to it, or fail');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const uid = () => Math.random().toString(36).slice(2, 8);
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4();
@@ -1900,7 +1911,7 @@ export class WorldPanel {
         ${rv.skipped ? `<div class="wv-note warn">${esc(rv.skipped)}</div>` : ''}${rv.note ? `<div class="wv-note warn">${esc(rv.note)}</div>` : ''}${rv.error ? `<div class="wv-note warn">${esc(rv.error)}</div>` : ''}
         ${r.asked?.subq && !r.subq ? '<div class="wv-note warn">SubQ didn\'t answer (no SubQ key, it is paused, or it declined the pictures): only the checks above.</div>' : ''}
         <div style="margin-top:6px">${(r.checks || []).map((c) => `<div class="wv-check"><span class="st ${esc(c.status)}">${esc(c.status)}</span><span>${esc(c.text)}</span></div>`
-          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${g.exact ? '' : 'at most '}${mmDown(+g.min_clearance_mm)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; ${g.box ? `box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm${g.box_clearance_mm != null ? (+g.box_clearance_mm < 0.5 ? ', touches the path' : `, ${mmDown(+g.box_clearance_mm)} mm from the path`) : ''}${g.trimmed ? ' (trimmed to keep clear of it)' : ''}` : esc(g.no_box || 'no box')}</span>${g.box ? B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: g.touches ? 'A grey box over this part of the scan, where the arm touches it: the next simulation tries to plan round it' : 'A grey box over this part of the scan, no closer to the path than the scan: the simulation keeps the arm clear of it' }) : ''}</div>`).join('') : '')).join('')}</div>
+          + (c.id === 'scan' ? (c.regions || []).map((g, i) => `<div class="wv-row wv-scan"><span class="wv-note" style="margin:0;flex:1">${esc(g.label)}: ${g.min_clearance_mm < 0.5 ? 'touches' : `${g.exact ? '' : 'at most '}${mmDown(+g.min_clearance_mm)} mm from`} the ${esc(g.link === 'object' ? 'object' : String(g.link || 'arm').replace(/_/g, ' '))} at ${(+g.t).toFixed(1)} s; ${g.box ? `box ${g.box.half.map((x) => Math.round(2 * x)).join(' × ')} mm${g.box_clearance_mm != null ? (+g.box_clearance_mm < 0.5 ? ', touches the path' : `, ${mmDown(+g.box_clearance_mm)} mm from the path`) : ''}${g.trimmed ? ' (trimmed to keep clear of it)' : ''}${scanTried(g)}` : esc(g.no_box || 'no box')}</span>${g.box ? B('scanbox', g.added ? 'Added' : 'Add box here', { arg: i, dis: !!g.added, title: scanBoxTitle(g) }) : ''}</div>`).join('') : '')).join('')}</div>
         ${rv.summary && rv.source === 'claude' ? `<div class="wv-note">${esc(SRC.claude)}: ${esc(rv.summary)}</div>` : ''}
         ${(rv.findings || []).length ? `<div style="margin-top:7px">${rv.findings.map((f) => `<div class="wv-find ${esc(f.severity)}"><span class="src">${esc(SRC[f.source] || f.source)} · ${esc(f.category)} · ${esc(VIEW_TITLE[f.viewpoint] || f.viewpoint)}</span>
           <div>${esc(f.evidence)}</div><div class="wv-note" style="margin-top:2px">${esc(f.recommendation)}</div></div>`).join('')}</div>` : ''}

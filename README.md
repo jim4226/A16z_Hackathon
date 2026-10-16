@@ -260,7 +260,8 @@ workbench, or your own room scan as a `.glb`. Place the robot on a surface, mark
 and where people walk or sit, and save: the pick and place is simulated again in that room (no other stage reruns),
 and **Check placement** gives a measured verdict. The simulation sees only the grey boxes, and it is not a motion
 planner. With a room scan, the check also measures the simulated path against the scan itself (a warning, never the
-verdict), and **Add box here** turns a near miss into a grey box the next simulation keeps clear of.
+verdict), and **Add box here** turns a near miss into a grey box, offered only after a simulation with that box, run
+during the check, goes round it (its row says how close).
 
 From a terminal (`--off` instead of `--starter desk` brings the plain table back):
 

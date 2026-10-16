@@ -340,7 +340,7 @@ def test_the_scan_check_never_claims_more_room_than_the_robots_real_shapes_leave
         b = worlds.box_to_base(w2, w2["obstacles"][0], nd=4)
         box_exact = Truth(rob, doc, [(b["center"], b["half"], worlds._rz(b["yaw_deg"]))]).path()
         assert g["box_clearance_mm"] is not None and g["box_clearance_mm"] <= box_exact + 1e-9, (g, box_exact)
-        assert g["box_clearance_mm"] >= g["min_clearance_mm"] - 0.1 - 1e-9, g
+        assert g["box_clearance_mm"] >= g["min_clearance_mm"] - 1e-9, g
     elif must == "count":                               # every place counted, the closest 8 listed
         assert len(res["regions"]) == worlds.SCAN_MAX_REGIONS and res["stats"]["places"] == case["count"], res["stats"]
         assert f"{case['count']} places closer than 10 mm (the {worlds.SCAN_MAX_REGIONS} closest are listed)" in text, text

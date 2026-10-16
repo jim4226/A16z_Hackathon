@@ -289,6 +289,37 @@ def _inputs(room, rev):
 
 _SCANS: OrderedDict = OrderedDict()      # (project, revision, world, room file) -> scan_clearance(): the last eight
 _SCANS_LOCK = threading.Lock()
+_ROBOTS: OrderedDict = OrderedDict()     # (project, revision, its results) -> [asm, description]: the last two robots
+_ROBOTS_LOCK = threading.Lock()          # a simulation with a box was tried on (rebuilding one takes a few seconds)
+
+
+def _box_trial(room, rev):
+    """simulate.world_trials on the revision's robot, rebuilt as the pipeline built it (its design and its saved sizing
+    and electronics plan; the next simulation, after Add box here and Save and simulate, reuses them too), for
+    worlds.try_boxes; None when it can't be (a preview-only build, results missing)."""
+    path = os.path.join(room.p.rev_dir(rev), "results.json")
+    d, results = _design(room, rev), _json(path) or {}
+    if d is None or results.get("preview_only") or not isinstance(results.get("sizing"), dict):
+        return None
+    try:
+        key = (room.p.root, rev, os.stat(path).st_mtime_ns)
+    except OSError:
+        return None
+    from ..robot import arm, imported, simulate
+
+    def trial(rooms, deadline):
+        with _ROBOTS_LOCK:
+            got = _ROBOTS.get(key)
+        if got is None:
+            got = [(imported.build if d.arm.source else arm.build)(d, results["sizing"], results.get("eplan")), None]
+        out, got[1] = simulate.world_trials(got[0], d, rooms, deadline=deadline, described=got[1])
+        with _ROBOTS_LOCK:
+            _ROBOTS[key] = got
+            _ROBOTS.move_to_end(key)
+            while len(_ROBOTS) > 2:
+                _ROBOTS.popitem(last=False)
+        return out
+    return trial
 
 
 def _scan(room, rev, w: dict, sims: dict) -> dict | None:
@@ -325,6 +356,25 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
         res = worlds.scan_clearance(path, w, doc, xml)
     except Exception as exc:  # noqa: BLE001  (the scan is a warning: it never takes the rest of the check down)
         res = skip(f"The path couldn't be measured against the scan ({exc.__class__.__name__}).")
+    fails_on = None if res.get("skipped") else worlds.failed_on_box(w, doc)
+    if fails_on:                                # the simulation fails on a box Add box here made: the check says so
+        res.setdefault("stats", {})["fails_on"] = fails_on
+    if any(g.get("box") for g in res.get("regions") or []):     # Add box here's promise, tried: the next simulation
+        _send(room, {"type": "world", "stage": "scan", "status": "start",     # run here with each box
+                     "text": "Trying a simulation with each box Add box here would make"})
+        try:
+            trial = _box_trial(room, rev)
+            if trial is None:
+                raise RuntimeError("this revision can't be simulated again (a preview, or its results are missing)")
+            worlds.try_boxes(res, w, trial, time.monotonic() + worlds.SCAN_TRIAL_S,
+                             baseline_ok=(doc.get("metrics") or {}).get("success"))
+        except Exception as exc:  # noqa: BLE001  (never a box promised without the simulation tried)
+            for g in res.get("regions") or []:
+                if g.get("box"):
+                    g["box"], g["no_box"] = None, ("A simulation with a box here couldn't be tried "
+                                                   f"({exc.__class__.__name__}), so none is offered.")
+                    g.pop("covers", None)
+            res.setdefault("stats", {})["trial_timeout"] = True
     ms = int((time.time() - t0) * 1000)
     for g in res.get("regions") or []:          # a trimmed box's place names the revision whose path it was fitted to
         if isinstance(g.get("covers"), dict) and re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", rev):
@@ -334,9 +384,9 @@ def _scan(room, rev, w: dict, sims: dict) -> dict | None:
                  "ms": ms, "text": text})
     _send(room, {"type": "world", "stage": "scan", "status": "done", "text": text})
     st = res.get("stats") or {}
-    if st.get("fit_timeout") or st.get("truncated") or st.get("unlisted_mm") is not None:
-        return res                              # cut short (a busy computer), a box not fitted or a list of near misses
-                                                # not finished: Check placement again measures again
+    if st.get("fit_timeout") or st.get("truncated") or st.get("unlisted_mm") is not None or st.get("trial_timeout"):
+        return res                              # cut short (a busy computer), a box not fitted or not tried, or a list
+                                                # of near misses not finished: Check placement again measures again
     with _SCANS_LOCK:
         _SCANS[key] = res
         while len(_SCANS) > 8:

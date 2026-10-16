@@ -1413,27 +1413,56 @@ field failure rate (section 0, honesty).
   mm into got no box). R8: its `box_clearance_mm` is MuJoCo's lower bound only when `box_path` bounded the whole path
   further than the touch, else 0.0 (`box_path` stops at the first pose closer than its target; R7 kept that pose's
   distance, so a row read "0.1 mm from the path" for a box 8.75 mm into it); and it is offered only when a plan can go
-  round it. `must_reach` measures it (MuJoCo's distance, the motion between poses counted, `box_path` with a pose mask)
+  round it (R9: tried by the simulation itself, below). `must_reach` measures it (MuJoCo's distance, the motion between
+  poses counted, `box_path` with a pose mask)
   against what the planner can't move: the arm in its starting pose (pose 0), going down to the object, grasping and
   lifting it (from the "above the object" marker to "lifted", and phases grasp and lift), setting it down and letting
   go (phases place and release), and the object where it starts and ends (the first and last pose). Closer than
   `SCAN_TOUCH_MM` to any of them, the region has `box: None`, `must_reach` and `no_box` (`MUST_REACH`): `object` or
   `object_end` when the scan's own closest point there is within `SCAN_ON_OBJECT_MM` (2 mm) of the object ("the scan
-  holds the object itself here (or something touching it) ..."), `object_box` or `object_end_box` when only the box
+  holds the object itself here (or something within 2 mm of it) ..."; R9: it said "touching", but a block 0.3 mm beside
+  the egg is one), `object_box` or `object_end_box` when only the box
   reaches it, else `start`, `pick` or `place`. A trimmed box that would reach the object where it starts or ends isn't
   offered either (`object_box`, `object_end_box`). The check says "Add box here turns it into a grey box over the
   scanned surface there (at least 20 mm each way, so it can be larger than what was scanned), and the next simulation
   tries to plan round it" (R7: "the thing as scanned, and the next simulation plans round it", untrue for a 0.1 mm
   speck's 19.8 mm box), and where no box is offered for that reason, "the arm must reach there to pick or place the
   object, or stands there in its starting pose, so no box is offered" (plus "(the scan holds the object itself where
-  it starts)"); with boxes offered elsewhere, "Where the arm must reach ... no box is offered." Measured on the bench
+  it starts, or something within 2 mm of it)"); with boxes offered elsewhere, "Where the arm must reach ... no box is
+  offered." Measured on the bench
   (`tests/test_world_scan.py`): the egg itself scanned at the pick spot (`object`), a 4 mm nub 0.2 mm under a finger at
   the grasp (its box reaches the egg) and the egg's shape at the place spot get no box, where R7's box failed the next
   simulation ("the object touches Scan near miss 1 in the arm's starting pose"; the real Studio said the same); the
   vase 10 mm into the carry keeps its box, and the next simulation succeeds. Of 40 specks the arm touches on the
   approach, the carry or the way back (a fuzz on the bench, seed 1), 29 boxes would meet a pose no plan moves (13 the
   starting pose, 13 the set-down and release, 3 the descent, grasp and lift) and aren't offered; the 5 of those checked
-  with MuJoCo reached 3.8 to 20.2 mm into it as R7 offered them. R8: the check's distance and
+  with MuJoCo reached 3.8 to 20.2 mm into it as R7 offered them. R9: a plan the simulation knows going round the box was
+  assumed, not tried: the planner's other approaches, carry arcs and ways back meet near the hover points and the rest
+  pose, so a touch box often lies across all of them, and a trimmed box within `CLEAR_MM` of the approach sends the
+  planner another way whose run strays 1 to 3 mm from its plan; on the hunters' bench 8 of 26 touch boxes and 2 of 20
+  trimmed boxes made the next simulation fail. Now `api_world._scan` runs `worlds.try_boxes` on every region with a box:
+  each box is added to the room as Add box here adds it (`validate`, `sim_world`), and the revision's robot, rebuilt
+  from its design and its saved `sizing` and `eplan` as the pipeline builds it (`api_world._box_trial`, kept for the
+  last two revisions), plans and simulates the pick and place there (`simulate.world_trials`: `_plan_pick_place` and
+  `_run_pick_place`, fast=False as the Studio's pipeline; `_Robot(described=...)` reuses the slow description). A box
+  the run touches, the plan passes into, or that fails a simulation the revision's own didn't (`baseline_ok`), loses its
+  box and `covers`, with `trial` {ok: False, failure} and `no_box` "A simulation with a grey box here fails (<failure>),
+  so none is offered: move the robot or the thing instead."; one it goes round keeps it, with `trial` {ok,
+  min_clearance_mm (the simulation's own: its run and plan against every box, so no more than its distance to this one),
+  at_box, fails}. Two or more kept are tried together (`stats.together`: the failure, or None). Out of time
+  (`SCAN_TRIAL_S` = 30 s of its own) a box isn't offered (`TRIAL_LATE`, `stats.trial_timeout`), and the answer isn't
+  kept. The check says, tried: "Add box here turns it into <the box>; a simulation with it, tried here, keeps clear of
+  it (the row says how close it comes)." (untried: "; the next simulation tries to plan round it, and may take another
+  way, closer to it, or fail."), and with none offered for that reason "a simulation with a grey box there, tried here,
+  fails (the row says how), so none is offered". The World panel's row adds "tried: the simulation keeps X mm from it"
+  ("at least" when its closest box is another). The trial is the next simulation: on the hunters' 15 cases kept in
+  tests/data/scan_box_trials.json its failure is word for word the one the simulation after Add box here reports, and
+  its clearance the same number. `worlds.failed_on_box`: when the revision's simulation fails on a box with source
+  "auto", `stats.fails_on` {label, failure} and the check says "The simulation fails on <label>, a box Add box here made
+  (<failure>): remove that box, and move the robot or the thing instead." A trimmed box is fitted to its region's
+  distance plus `SCAN_FIT_TOL_MM` and verified to at least that distance, so `box_clearance_mm` is never under the row's
+  `min_clearance_mm` (a 2.0 mm near miss's box read 1.9). `scan_event_text` counts `stats.places`, not only the rows
+  listed. R8: the check's distance and
   each region's are kept as 0.0 under `SCAN_TOUCH_MM` (`_touch_floor`: `min_clearance_mm`), since there the check stops
   looking closer and the distance it had is one pose's (a speck at 0.197 mm was kept as 0.2); near
   misses within `SCAN_COVER_MM` = 10 mm of one of the world's grey boxes are that box's, and a
@@ -1485,7 +1514,7 @@ field failure rate (section 0, honesty).
   what the whole check would take at this pace (cut in the first pass, the second counted as long as the first: it took
   0.5 to 5 times as long in the scans measured). A second pass cut short after the closest point is measured (every pose
   and point left has a bound at or above it) is not truncated; `stats.unlisted_mm` then bounds the near misses not
-  listed. Measured on the review's desk scan (2,872 triangles near the arm, 667 poses, the 9.0 mm vase near miss),
+  listed. Measured on the review's desk scan (2,872 triangles near the arm, 667 poses, the vase near miss, 8.8 mm),
   alternating with 22bec48 at the default 20 s: at load 3.7-7.0, 22bec48 took 12.3-13.1 s and R4 7.5-8.5 s (pass 1
   0.75-0.97 s against 5.7-5.8 s; regions and fit 0.9-1.2 s); at load 11-13, 22bec48 took 16.4-17.8 s and was cut short
   in 2 of 4 runs, R4 10.1-11.4 s (pass 1 0.95-1.02 s against 7.8-8.7 s) and was never cut short. The same scan with the
@@ -1583,8 +1612,9 @@ field failure rate (section 0, honesty).
   `rev`; `worlds.validate` keeps it as a box with `clearance_mm` from 0 to 10 mm and `rev` a revision name, the
   simulation never sees it); a box equal to one the world holds (0.05 mm, 0.01 degree) isn't added again, the row
   reading Added. R4: a box sized, moved or turned by hand (the gizmo or the panel's numbers, `setBoxFromBase`), or a
-  room rescaled, loses its `covers`. *Save and simulate* then plans around it, and the next check measures the new
-  path. Browser tests: `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan` and
+  room rescaled, loses its `covers`. *Save and simulate* then plans around it (R9: a box offered was tried, and the
+  simulation after Add box here is the one the check ran), and the next check measures the new path. Browser tests:
+  `tests/e2e/test_e2e_world.py::test_add_box_here_from_the_room_scan` and
   `::test_a_box_trimmed_off_a_vase_is_added_once_and_not_offered_again`; `tests/test_world_gizmo.py` (hand edits).
 - **Under attack (B2-S4).** An adversarial review of the track; what other code relies on since:
   - `robust.StudyConflict` (a `StudyError`; the routes answer 409) for what can't run as asked: a revision with nothing
