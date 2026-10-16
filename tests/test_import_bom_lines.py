@@ -51,6 +51,8 @@ MORE = [  # (part name, catalog key, pack): a servo named in other ways stays on
     ("Shoulder STS3215 12V", "sts3215", None), ("Koch follower XL430-W250-T", "xl430_w250", None),
     ("Base (J1): STS3215 12V", "sts3215", None), ("Gripper - XL330-M288-T", "xl330_m288", None),
     ("Leader arm: 6x STS3215 7.4V", "sts3215_7v4", 6), ("Axis 1 MG996R", "mg996r", None),
+    # a model named first is never a joint label ("SG90" is no "J1"), and the joint after it is ("MG996R: base")
+    ("SG90: 2 pcs", "sg90", 2), ("SG90 - gripper", "sg90", None), ("MG996R: base", "mg996r", None),
 ]
 
 

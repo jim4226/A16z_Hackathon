@@ -163,20 +163,32 @@ def _joint_words(plain: list) -> bool:
     return True
 
 
-def _unlabel(item: str) -> str:
-    """A part name without the joint label before its ":" or dash (_LABEL): "Base (J1): STS3215 12V" is the STS3215
-    12 V, "Gripper - cable for SG90" a cable. A label is joint words (_joint_words), numbers and joint references (J1,
-    #2, 1-5) only: "Servo - shoulder" and "Horn - STS3215" keep their heads."""
-    m = _LABEL.match(item or "")
-    if not m:
-        return item
-    words = [w.strip(".,;!?*\"'#") for w in re.split(r"[\s/()\[\],&+]+", m.group("label"))]
+def _is_label(text: str) -> bool:
+    """Whether text only names a joint: joint words (_joint_words), numbers and joint references (J1, #2, 1-5), and no
+    motor model ("SG90" is the servo, not a joint reference)."""
+    from .autoprofile import MODEL_RX
+    if MODEL_RX.search(text):
+        return False
+    words = [w.strip(".,;!?*\"'#") for w in re.split(r"[\s/()\[\],&+]+", text)]
     words = [w for w in words if w]
     if not words or not all(_PLAIN.fullmatch(w) or re.fullmatch(r"(?:[a-z]{1,2})?\d+(?:-(?:[a-z]{1,2})?\d+)?", w, re.I)
                             for w in words):
+        return False
+    return _joint_words([w.lower() for w in words if _PLAIN.fullmatch(w)])
+
+
+def _unlabel(item: str) -> str:
+    """A part name without the joint label before or after its ":" or dash (_LABEL, _is_label): "Base (J1): STS3215
+    12V" and "STS3215 12V: base" are the STS3215 12 V, "Gripper - cable for SG90" a cable. "Servo - shoulder", "Horn -
+    STS3215" and "SG90: 2 pcs" keep their heads."""
+    m = _LABEL.match(item or "")
+    if not m:
         return item
-    plain = [w.lower() for w in words if _PLAIN.fullmatch(w)]
-    return m.group("rest") if _joint_words(plain) else item
+    if _is_label(m.group("label")):
+        return m.group("rest")
+    if _is_label(m.group("rest")):
+        return m.group("label")
+    return item
 
 
 def _head(item: str) -> str:
@@ -461,7 +473,7 @@ def map_table(rows: list) -> tuple[list, dict, list]:
                     "category": "electronics" if board and ref and _not_a_motor_ref(ref) else _category(_unlabel(item),
                                                                                                      key, motor),
                     "catalog": key, "catalog_name": _catalog_name(key),
-                    "pack": pack_count(_unlabel(item)) if motor else None, "source": "import"})
+                    "pack": (pack_count(_unlabel(item)) or pack_count(item)) if motor else None, "source": "import"})
     return out, {f: rows[hi][i] if i < len(rows[hi]) else "" for f, i in cols.items()}, warns
 
 

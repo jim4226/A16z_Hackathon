@@ -478,5 +478,14 @@
 {"group": "L3.joint-then-model-in-clause", "header": ["Part", "Qty", "Notes"], "line": ["Base STS3215 mount", "1", ""], "key": null, "category": null},
 {"group": "L3.joint-then-model-in-clause", "header": ["Part", "Qty", "Notes"], "line": ["Lift arm MG996R", "1", ""], "key": null, "category": null},
 {"group": "L3.joint-then-model-in-clause", "header": ["Part", "Qty", "Notes"], "line": ["Shoulder: 2x STS3215", "1", ""], "key": "sts3215_7v4", "category": "actuator"},
-{"group": "L3.joint-then-model-in-clause", "header": ["Part", "Qty", "Notes"], "line": ["Follower arm: STS3215 servo cable", "1", ""], "key": null, "category": "cable"}
+{"group": "L3.joint-then-model-in-clause", "header": ["Part", "Qty", "Notes"], "line": ["Follower arm: STS3215 servo cable", "1", ""], "key": null, "category": "cable"},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["SG90 - gripper", "1", ""], "key": "sg90", "category": "actuator"},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["XL430 - wrist", "1", ""], "key": "xl430_w250", "category": "actuator"},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["MG996R: base", "1", ""], "key": "mg996r", "category": "actuator"},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["XL330-M288-T: gripper", "1", ""], "key": "xl330_m288", "category": "actuator"},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["SG90: 2 pcs", "1", ""], "key": "sg90", "category": "actuator"},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["DS3218 - elbow joint", "1", ""], "key": "ds3218", "category": "actuator"},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["STS3215 12V: shoulder pan", "1", ""], "key": "sts3215", "category": "actuator"},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["STS3215: base plate", "1", ""], "key": null, "category": null},
+{"group": "L4.model-then-label", "header": ["Part", "Qty", "Notes"], "line": ["Horn - STS3215", "1", ""], "key": null, "category": null}
 ]
