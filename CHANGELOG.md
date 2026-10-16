@@ -189,7 +189,8 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   and simulate would: a box that simulation fails with is not offered and its row says how it fails; one it goes round
   is offered and its row says how close that simulation comes to it, as the simulation after Add box here says (of the
   hunters' cases kept as tests, all 8 failures are caught and the 7 others offered with the clearance their next
-  simulation measured). Boxes offered together are tried together too. Trying a box is a simulation run, so a check that
+  simulation measured). Boxes offered together are tried together too; when there isn't time for that simulation, the
+  check says so (not that they fail) and checking again tries it. Trying a box is a simulation run, so a check that
   offers one takes longer: on the review's desk scan 4.8 to 6.5 seconds more at load 6-10 (17.6 to 18.7 seconds in all),
   with the mount moved 15 mm 9.6 to 13.3 seconds more at load 6-12 (21 to 25 seconds in all; 47 seconds in the Studio at
   load 16). When the simulation fails on a box Add box here made, the check names it and says to remove it. Also: a

@@ -97,8 +97,9 @@ offered and its row says how the simulation fails ("A simulation with a grey box
 miss 1 during the approach at 1.7 s), so none is offered"). When it goes round it, the box is offered and its row says
 how close that simulation comes to it ("tried: the simulation keeps 0.3 mm from it", or "at least" when the closest box
 is another one): after *Add box here*, *Save and simulate* runs the same simulation and says the same. Two or more boxes
-offered are also tried together, and the check says when that fails (add one, simulate, and check again). A box there
-wasn't time to try is not offered, and checking again tries it. When the simulation fails on a box *Add box here* made
+offered are also tried together, and the check says when that fails (add one, simulate, and check again), or that there
+wasn't time to try them together (never that they fail), and checking again tries again. A box there wasn't time to try
+is not offered, and checking again tries it. When the simulation fails on a box *Add box here* made
 earlier, the check names that box and says to remove it. Under 0.5 mm the arm's distance to the scan is kept and shown
 as touching (0.0), in the check, its rows and the scan line in the Studio's progress. A near miss within 10 mm of a grey
 box is that box's, and so is the place a box was added for, even when the trim moved the box away from it (a vase's rim

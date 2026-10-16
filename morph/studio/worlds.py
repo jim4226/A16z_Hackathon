@@ -2417,7 +2417,8 @@ def try_boxes(res: dict, world: dict, trial, deadline: float, baseline_ok: bool 
     the run touches or the plan passes into, or with which the simulation fails where the revision's didn't, is
     offered no more: "trial" {ok False, failure} and "no_box" say how it fails. A box not tried before `deadline`
     (time.monotonic()) isn't offered either (stats["trial_timeout"]). Two or more boxes kept are tried together too:
-    stats["together"] is how that simulation fails, or None when it succeeds."""
+    stats["together"] is how that simulation fails, or None when it succeeds; when the deadline passes before it runs,
+    stats["together_late"] (and stats["trial_timeout"], so the answer is measured again): never said to fail."""
     regs = [r for r in res.get("regions") or [] if r.get("box")]
     if not regs:
         return
@@ -2458,7 +2459,10 @@ def try_boxes(res: dict, world: dict, trial, deadline: float, baseline_ok: bool 
         kept.append(r)
     if len(kept) > 1 and baseline_ok is not False:
         (t,) = trial([room(kept)], deadline)
-        stats["together"] = TRIAL_LATE if t is None else None if t["success"] else t.get("failure") or "it fails"
+        if t is None:                                   # not tried: nothing is known about them together
+            stats["together_late"] = stats["trial_timeout"] = True
+        else:
+            stats["together"] = None if t["success"] else t.get("failure") or "it fails"
 
 
 def failed_on_box(world: dict, doc: dict) -> dict | None:
@@ -2906,6 +2910,9 @@ def scan_check(scan: dict) -> dict:
             if stats.get("together"):
                 text += (f" Added together, those boxes make the simulation fail ({str(stats['together']).rstrip('.')}"
                          "): add one, Save and simulate, then check again.")
+            elif stats.get("together_late"):
+                text += (" There wasn't time to try a simulation with those boxes added together: checking again when "
+                         "the computer is less busy may try it.")
         elif must and len(must) == n:                  # where the arm must go: a box there fails the simulation
             text += (f": the arm must reach {'there' if n == 1 else 'those places'} to pick or place the object, or "
                      "stands there in its starting pose, so no box is offered"

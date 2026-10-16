@@ -1449,7 +1449,11 @@ field failure rate (section 0, honesty).
   box and `covers`, with `trial` {ok: False, failure} and `no_box` "A simulation with a grey box here fails (<failure>),
   so none is offered: move the robot or the thing instead."; one it goes round keeps it, with `trial` {ok,
   min_clearance_mm (the simulation's own: its run and plan against every box, so no more than its distance to this one),
-  at_box, fails}. Two or more kept are tried together (`stats.together`: the failure, or None). Out of time
+  at_box, fails}. Two or more kept are tried together (`stats.together`: the failure, or None; R8: when the deadline
+  passed before that run, `stats.together` was `TRIAL_LATE` and the check said "Added together, those boxes make the
+  simulation fail (Morph ran out of time ...)" and was kept; now `stats.together_late` and `stats.trial_timeout`, and
+  "There wasn't time to try a simulation with those boxes added together: checking again when the computer is less
+  busy may try it."). Out of time
   (`SCAN_TRIAL_S` = 30 s of its own) a box isn't offered (`TRIAL_LATE`, `stats.trial_timeout`), nor when the
   revision's robot can't be simulated again (a preview, its results missing, or the trial raised: `stats.untried`, the
   reason, and "a simulation with a box there couldn't be tried (<reason>), so none is offered"), and the answer isn't

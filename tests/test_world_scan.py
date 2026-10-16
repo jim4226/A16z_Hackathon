@@ -1032,6 +1032,62 @@ def test_the_check_names_a_box_add_box_here_made_when_the_simulation_fails_on_it
             "robot or the thing instead." in text), text
 
 
+def _two_boxes():
+    def reg(i, c):
+        return {"id": f"scan-{i}", "label": f"Scan near miss {i}", "min_clearance_mm": 3.0, "exact": True, "t": 1.0,
+                "link": "wrist", "point": c, "box": {"center": c, "half": [10.0, 10.0, 10.0], "yaw_deg": 0.0},
+                "box_clearance_mm": 3.0}
+    return {"min_clearance_mm": 3.0, "at": {"t": 1.0, "link": "wrist", "point": [0, 0, 0]},
+            "regions": [reg(1, [100.0, 300.0, 200.0]), reg(2, [-100.0, 300.0, 200.0])], "stats": {"places": 2}}
+
+
+def _cached(stats):
+    """Whether api_world._scan keeps this answer (it measures again only when one of these says it is incomplete)."""
+    return not (stats.get("fit_timeout") or stats.get("truncated") or stats.get("unlisted_mm") is not None
+                or stats.get("trial_timeout") or stats.get("untried"))
+
+
+def test_boxes_not_tried_together_in_time_are_never_said_to_fail_together():
+    """Both boxes went round on their own; the deadline passed before the simulation with both (the final skeptic's
+    together_late: 17.6 s each alone at load 8 against the 30 s of SCAN_TRIAL_S, and with both the real next
+    simulation succeeds at 3.1 mm). 1f6b690 said "Added together, those boxes make the simulation fail (Morph ran out of
+    time to try a simulation with a box here ...)" and kept that answer. Now it says there wasn't time to try them
+    together, and Check placement tries again."""
+    calls = []
+
+    def trial(rooms, deadline):
+        calls.append(len(rooms))
+        if len(calls) == 1:                    # each box on its own: both go round it
+            return [{"success": True, "failure": None, "min_clearance_mm": 2.5, "at_box": True, "contact": False,
+                     "blocked": False} for _ in rooms]
+        return [None]                          # together: out of time before it started
+    res = _two_boxes()
+    worlds.try_boxes(res, BENCH, trial, time.monotonic() + 30, baseline_ok=True)
+    assert calls == [2, 1] and all(r["box"] and r["trial"]["ok"] for r in res["regions"]), res
+    text = worlds.scan_check(res)["text"]
+    assert "fail" not in text.split("tried here on its own")[1], text
+    assert "make the simulation fail" not in text and "ran out of time" not in text, text
+    assert ("There wasn't time to try a simulation with those boxes added together: checking again when the computer "
+            "is less busy may try it.") in text, text
+    assert not _cached(res["stats"]), res["stats"]
+    # tried together and failing: said, and kept (the answer is complete)
+    res = _two_boxes()
+    calls.clear()
+
+    def fails_together(rooms, deadline):
+        calls.append(len(rooms))
+        if len(calls) == 1:
+            return [{"success": True, "failure": None, "min_clearance_mm": 2.5, "at_box": True, "contact": False,
+                     "blocked": False} for _ in rooms]
+        return [{"success": False, "failure": "the wrist hits Scan near miss 2 during the carry at 4.9 s",
+                 "min_clearance_mm": -1.0, "at_box": False, "contact": True, "blocked": False}]
+    worlds.try_boxes(res, BENCH, fails_together, time.monotonic() + 30, baseline_ok=True)
+    text = worlds.scan_check(res)["text"]
+    assert ("Added together, those boxes make the simulation fail (the wrist hits Scan near miss 2 during the carry at "
+            "4.9 s): add one, Save and simulate, then check again.") in text, text
+    assert _cached(res["stats"]), res["stats"]
+
+
 def test_the_scan_event_counts_every_place_not_only_the_listed_ones():
     """The check says 12 places (8 listed); the Studio's progress line said 8 near misses."""
     res = {"min_clearance_mm": 2.4, "regions": [{}] * 8, "stats": {"places": 12}}
