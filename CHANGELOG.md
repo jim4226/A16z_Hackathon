@@ -214,8 +214,9 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   32-bit Windows is told at once; an ARM64 or 32-bit Python on Windows, an Intel Python on an Apple silicon Mac, or a
   Mac Terminal in Intel mode (Rosetta) is named with the fix; an x64 Python on Windows 11 on ARM goes on, in x64
   emulation. Windows on ARM is untested: MuJoCo's x64 build uses AVX instructions, which that emulation runs only on
-  Windows 11 24H2 or later, so there every start first checks that MuJoCo loads and, when it doesn't, says to update
-  Windows or use another computer. When pip fails, both launchers name the same Pythons the packages have builds for
+  Windows 11 24H2 or later, so there every start first checks that MuJoCo loads and steps a one-sphere model (which
+  runs its compute code, not only the library loading) and, when that fails, says to update Windows or use another
+  computer. When pip fails, both launchers name the same Pythons the packages have builds for
   (an x64 Python on Windows).
 - `constraints.txt` pins tested versions with wheels for Python 3.10 to 3.14 on Windows x64, macOS 12+ on Apple
   silicon and Linux x64.

@@ -358,23 +358,38 @@ def test_windows_refuses_only_where_the_python_cant_install_morph():
     assert "Morph needs 64-bit Windows" in said(":unsupported") and "Windows on ARM" not in said(":unsupported")
 
 
-def test_windows_on_arm_checks_that_mujoco_loads_before_the_studio_starts():
+def test_windows_on_arm_checks_that_mujoco_loads_and_steps_a_model_before_the_studio_starts():
     """On Windows on ARM the x64 Python runs in emulation, and MuJoCo's x64 build uses AVX, which that emulation runs
-    only on Windows 11 24H2 or later: every start there first imports MuJoCo in .venv's Python, and when that fails the
-    launcher says why and what to do instead of the Studio crashing at start-up. Elsewhere nothing changes."""
+    only on Windows 11 24H2 or later: every start there first imports MuJoCo in .venv's Python and steps a one-sphere
+    model (importing alone may not run its compute code), and when that fails the launcher says why and what to do
+    instead of the Studio crashing at start-up or at its first simulation. Elsewhere nothing changes."""
     lines = _bat_lines()
     start = lines.index(":start")
     assert lines.index('set "WOA="') < start
     assert {ln for ln in lines[:start] if "WOA=1" in ln} == {
         'if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "WOA=1"', 'if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "WOA=1"'}
+    (mj,) = [ln for ln in lines[:start] if ln.startswith('set "MJOK=')]
+    code = mj[len('set "MJOK='):-1]
+    assert mj.endswith('"') and '"' not in code and "%" not in code and "!" not in code, mj   # all inside its quotes
+    assert "import mujoco" in code and "MjModel.from_xml_string(" in code and "mujoco.mj_step(" in code, code
     i = lines.index(":installed")
-    assert lines[i + 1] == 'if defined WOA .venv\\Scripts\\python.exe -c "import mujoco" >nul 2>&1 || goto mujoco_arm'
+    assert lines[i + 1] == 'if defined WOA .venv\\Scripts\\python.exe -c "%MJOK%" >nul 2>&1 || goto mujoco_arm'
     assert lines[i + 2] == "call .venv\\Scripts\\activate.bat"
     j = lines.index(":mujoco_arm")
     said = " ".join(ln[5:] for ln in lines[j:lines.index("goto fail", j)] if ln.startswith("echo "))
-    for words in ("doesn't load on this Windows on ARM computer", "AVX", "Windows 11 version 24H2 or later",
-                  "Update Windows 11 to 24H2 or later", "use another computer", 'python.exe -c "import mujoco"'):
+    for words in ("doesn't load or run on this Windows on ARM computer", "AVX", "Windows 11 version 24H2 or later",
+                  "Update Windows 11 to 24H2 or later", "use another computer", 'python.exe -c "%MJOK%"'):
         assert words in said, (words, said)
+
+
+def test_the_windows_on_arm_check_runs_here_as_cmd_exe_passes_it():
+    """The check's Python, as cmd.exe hands it to python.exe (the set line's quotes taken off, the backslash-escaped
+    single quotes left for Python), loads MuJoCo and steps the model: it exits 0 where MuJoCo works."""
+    pytest.importorskip("mujoco")
+    (mj,) = [ln for ln in _bat_lines() if ln.startswith('set "MJOK=')]
+    code = mj[len('set "MJOK='):-1]
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
 
 
 def test_both_launchers_say_the_same_when_pip_fails():

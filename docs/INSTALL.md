@@ -6,8 +6,8 @@ Morph Studio runs on your own computer and opens in your browser. It works on:
   build for an ARM64 or 32-bit Python, or for 32-bit Windows. **Windows on ARM is untested:** Morph hasn't been run
   on any Windows on ARM computer yet. There the launcher uses the x64 Python, which Windows 11 runs in its x64
   emulation (slower than natively). MuJoCo's x64 build uses AVX instructions, which that emulation runs only on
-  Windows 11 version 24H2 or later, so on Windows on ARM every start first checks that MuJoCo loads, and says to
-  update Windows or use another computer when it doesn't.
+  Windows 11 version 24H2 or later, so on Windows on ARM every start first checks that MuJoCo loads and steps a
+  one-sphere model, and says to update Windows or use another computer when it doesn't.
 - **macOS 12 or newer on Apple silicon** (M1 or later), with a Python that runs natively (python.org's, or
   Homebrew's in `/opt/homebrew`). Intel Macs aren't supported: MuJoCo no longer publishes builds for them, nor for a
   Python running in Intel mode (Rosetta).
@@ -157,9 +157,9 @@ If you installed Morph as a package with pip instead, run `pip uninstall morph` 
   or 32-bit Windows, so the launcher stops before making `.venv`. **"The Python found ... is an ARM64 build"** or
   **"isn't a 64-bit (x64) Python"** (Windows): install Python 3.13 from python.org with its "Windows installer
   (64-bit)" and run the launcher again; on Windows 11 on ARM it runs in x64 emulation. **"MuJoCo, Morph's physics
-  engine, is installed but doesn't load on this Windows on ARM computer"**: update Windows 11 to version 24H2 or later
-  (Settings, Windows Update) and run the launcher again, or use another computer; `.venv\Scripts\python.exe -c
-  "import mujoco"` shows the error itself. **"This Terminal runs in Intel
+  engine, is installed but doesn't load or run on this Windows on ARM computer"**: update Windows 11 to version 24H2
+  or later (Settings, Windows Update) and run the launcher again, or use another computer; the command the message
+  ends with (`.venv\Scripts\python.exe -c` and the check) shows the error itself. **"This Terminal runs in Intel
   mode (Rosetta)"** on an Apple silicon Mac: start it with `arch -arm64 ./run_studio.sh`, or turn off *Open using
   Rosetta* in Terminal's Get Info window. **"... is an Intel (x86_64) Python"**: install Python 3.13 from python.org,
   which runs natively on Apple silicon.
