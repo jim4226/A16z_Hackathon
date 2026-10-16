@@ -1412,10 +1412,23 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   twists. An assembly request moves the parts (task `pick_place`, no sorting camera). `CATALOG` has a glass jar
   (65 mm, 300 g) and a pill bottle (35 mm, 40 g), offered by the containers and small-parts archetypes only when the
   request names them (`Archetype.more`).
-- **People the robot works for (UX-3).** `brief.PERSON_NEAR` (a grandparent, "my mum", "my dad", "my partner", "help
-  me", "for him" and the like) infers `people_nearby` "yes" for every archetype, so the robot gets an emergency stop
-  and the card says it was assumed; `HAND_TO_PERSON` ("pass my dad", "bring her") sets the task to hand-over. A
-  hand-over defaults to people next to it and a sorting archetype asked to hand things over gets no camera. Every
+- **People the robot works for (UX-3).** `brief.parse` reads `people_nearby` in this order. "Nobody nearby", "no one
+  works next to it" (not "no one else") says "no", unless the request hands something to someone. Kids, children,
+  toddlers, babies, infants, twins, "my son", "my daughter" and "the girl" (not "no kids") say "children". People beside
+  it in so many words (`brief.PEOPLE_BESIDE`: "people work next to it", "next to the operator", "a worker stands next
+  to it", "customers stand in front of it", "where customers pick up their coffee", "shared with two workers", "a bin I
+  fill by hand") say "yes". A hand-over (`HAND_TO_PERSON`), a person the robot works for (`brief.PERSON_NEAR`: a
+  grandparent, "my mum", "my colleague", "help me", "for him", "for the nurse" and the like) or "no one else" infer
+  "yes" for every archetype (a toy or pet archetype keeps its children or pets), so the robot gets an emergency stop
+  and the card says it was assumed. Only then do "on its own", "by itself", "unattended", "enclosed", "fenced" and the
+  robot working alone (`brief.ROBOT_ALONE`; "she lives alone" and "while he is alone" say nothing about the robot)
+  infer "no", shown as an assumption ("assumed"), never as "you said". A designer model's "no" never takes away a
+  person the words put next to it (`agents.apply_update`). `HAND_TO_PERSON` ("pass my dad", "bring her") sets the task
+  to hand-over. A hand-over has people next to it and always an emergency stop (`brief_to_changes`): the people
+  question isn't asked on one, and an answer or a model that says it works on its own keeps the e-stop, with the
+  assumption "It hands things to a person, who takes them from the gripper within its reach, so it has an emergency
+  stop even though no one else works next to it." and the card row "Only the person it hands things to". A sorting
+  archetype asked to hand things over gets no camera. Every
   width in a note is `capability.min_width` for the shape (26 mm round, 21.5 mm flat-sided), and a preset outside the
   band says which limit it breaks (`brief.unfit_note`: "too heavy", "too narrow", "too wide").
 - **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
@@ -1574,10 +1587,9 @@ Round 2 of the pipeline and wording fixes. What other code relies on since:
   only when not after a moving verb or determiner (`_DET`) and not "twist ties" or "twist-off"; "screw caps" after
   `_DET` are caps; "insert" after `_DET` and plural "inserts" or "plugs" not done by a doer ("it", "that", "which",
   "robot", "arm") are parts; "assembly line/station/area/..." is a place and "pre-assembled" an adjective.
-  `brief.HAND_TO_PERSON` needs a receiver: "hand/pass/give/bring" followed by a person (me, him, her, us, `_PERSON`), or
-  by up to four words and "to" a person ("give it back to her", "hand the cup to my mum"); "them" or "it" alone are the
-  things, so "pass them to the packing station" is a pick and place with no emergency stop. `PERSON_NEAR` uses it for
-  those verbs (help, assist and serve keep "them"). `tests/test_brief_answers.py` holds both ways' tables.
+  `brief.HAND_TO_PERSON` needs a receiver (see "Who receives a hand-over" below): "them" or "it" alone are the things,
+  so "pass them to the packing station" is a pick and place with no emergency stop. `PERSON_NEAR` uses it (help, assist
+  and serve keep "them"). `tests/test_brief_answers.py` holds both ways' tables.
 - **No negative payload (E-N9).** The payload sweep's `stretch_payload_g` is the static capacity stretched straight
   out, and stays as computed in the simulation's metrics (below zero: the deficit). The summary clamps it at 0 and adds
   `stretch_holds_itself` (False when a servo can't hold even the arm's own weight out there; None without a sweep) and
@@ -1717,27 +1729,53 @@ Round 3 of the grip and pipeline fixes. What other code relies on since:
   of the simulation the plan reads; about 3 s, kept per gripper design in `impact._HOLDS`) and plans it on the new
   servo and rail, so a 6 mm pad depth on the egg-picker keeps 2.34 N as its build does (it read 2.34 -> 2.17 N). A
   stock jaw takes the preflight's grip, as its gripper stage is that closed form.
-- **A person's place is no person (E-N8); unsure is a hand-over.** `brief.HAND_TO_PERSON`'s "to <receiver>" form
-  uses `_RECEIVER_TO`: "her" and "his" (`_HER_HIS`), and a `_PERSON` before 's (`_NOT_THEIR_PLACE`), own the place the
-  things go to only when a place, a piece of furniture or a container (`_PLACE`: desk, room, bedroom, office,
-  workshop, kitchen, table, car, door, shed, shelf, drawer, bin, tray, station, line, machine and the like), after at
-  most three describing words ("her bedside table", "my mum's kitchen table", "her old wooden kitchen table"), ends
-  the noun phrase: the text ends there, or punctuation, a number, a function word (`_NOT_DESCRIBING`: and, at, so,
-  every, please, ...), an adverb (`_ADVERB`: twice, daily, tonight, upstairs, quickly, ...) or a preposition
-  (`_PREPOSITION`: near, next, over, up, without, ...) follows (`_PHRASE_END`): "bring the cup to her kitchen table
-  near the window" is a pick and place. So "bring the mail to her desk", "bring them to her room", "bring the cups to his office",
-  "give the parts to my dad's workshop", "bring the meds to her bedroom twice a day" and "give the bolts to his
-  assembly line" are no hand-over. Otherwise the person is the receiver, because a missed hand-over drops the
-  emergency stop beside a person: after "her" or 's comes no place ("bring the meds to her twice a day", "gives the
-  medicine to her nurse", "bring breakfast to her bedside every day", "give it to her husband", "bring the remote to my
-  dad's friend"), or the place word only describes the person who follows it ("brings the medicine to her home nurse",
-  "to her care home nurse", "to my dad's room mate", "to her office manager", "to his lab partner"). These are
-  hand-overs with people nearby and an e-stop. The safe errors: "give the ball to her dog", and a place word followed
-  by a noun that isn't on the list ("bring the cup to her desk lamp"). The direct form ("bring her the cup", "pass my
-  dad his pills") keeps any "her" but no receiver before 's ("pass my dad's pills to the tray" goes to the tray).
-  `PERSON_NEAR` applies the same place guard to its person mention and its "for/to her/his", so "pass my dad's pills
-  to the tray" has people nearby. The tables and a whole-brief test
-  (`test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop`) are in `tests/test_brief_answers.py`.
+- **Who receives a hand-over (E-N8); unsure is a hand-over.** `brief.HAND_TO_PERSON` reads a receiver after a giving
+  verb. Hand, pass, give and bring (any form) take "me", "him", "her", "us" and `_PERSON` (a family word, "my"/"our"/
+  "your" + a person word, "elderly"/"disabled" + a word) with or without a thing after them ("hand me", "bring her the
+  cup"). They and fetch, get, grab, toss, throw, offer, serve and feed take every other receiver only with a thing
+  after it (`_THING`: a determiner, a possessive or a noun; never a job done to them, "give them a shake", "give the
+  parts a quick check", nor a robot, "get me a robot arm that sorts screws"): "you"; "them" and someone, anyone,
+  everyone or whoever before a determiner ("bring them their drinks"); a title and a name ("hand Dr Smith the clamp");
+  and a person word (`_ROLE`: nurse, surgeon, carer, resident, patient, operator, worker, packer, welder, technician,
+  staff, chef, barista, cashier, customer, guest, visitor, student, teacher, volunteer, courier, neighbour, friend,
+  cousin, baby, girl, man, lady, people and the like, and the family words `_KIN`: grandma, grandad, gran, nan, mum,
+  dad, auntie, uncle, baby, ...) after a determiner or a possessive ("the surgeon", "our packers", "my colleague",
+  "the old man", "their nanny") or in the plural ("customers"). Those verbs, deliver, take, carry and present, and the
+  passive ("parts are handed to the operator") reach a receiver after up to four words and "to" ("hand off the parts
+  to the operator", "offer the tray of snacks to the guests"): any of those, a family word on its own ("pass the
+  remote to mum"), "them", "myself", or her, his, my, our, your or their before anything that isn't their place
+  (`_POSS`: "to my grandma", "to their nanny"). Fetch, get, grab and bring also reach one after up to six words and
+  "for" ("fetch the remote for my dad"). A capitalised name is read as "someone" (`brief.people_text`: "pass Sarah the
+  salt", "give the pills to Mary"), except at the start of a sentence, after "the" or "a", for a place, person or
+  product word, a month or a day, and when the request is in Title Case or capitals.
+  A person's place is no person. A possessive, a family word or a person word before 's or s' owns the place the things
+  go to when a place, a piece of furniture, a container or a machine (`_PLACE`: desk, room, bedroom, office, workshop,
+  kitchen, table, car, door, shed, shelf, drawer, bin, tray, station, line, machine, cell, panel, fridge, printer,
+  garden bed and the like), after at most three describing words ("her bedside table", "my mum's kitchen table", "her
+  old wooden kitchen table"), ends the noun phrase: the text ends there, or punctuation, a number, a function word
+  (`_NOT_DESCRIBING`: and, at, so, every, please, ...), an adverb (`_ADVERB`: twice, daily, tonight, upstairs,
+  quickly, ...) or a preposition (`_PREPOSITION`: near, next, over, up, without, ...) follows (`_PHRASE_END`): "bring
+  the cup to her kitchen table near the window" is a pick and place. So "bring the mail to her desk", "bring them to
+  her room", "bring the cups to his office", "give the parts to my dad's workshop", "bring the pills to her nurses'
+  station", "bring the meds to her bedroom twice a day" and "give the bolts to his assembly line" are no hand-over. A
+  person word followed by a place word names the place ("pass the parts to the operator station", "the worker cell",
+  "the guest room"), and "her" or a person word whose next words go on to a place is the thing's ("bring her cup to
+  the sink", "pass the guest towels to the shelf"). The tool hand-over archetype's things going to a place are a pick
+  and place (`_TO_A_PLACE`: "bring the tools to his workbench"; its workshop people keep the e-stop). Otherwise the
+  person is the receiver, because a missed hand-over drops the emergency stop beside a person: after "her" or 's comes
+  no place ("bring the meds to her twice a day", "gives the medicine to her nurse", "bring breakfast to her bedside
+  every day", "give it to her husband", "bring the remote to my dad's friend"), or the place word only describes the
+  person who follows it ("brings the medicine to her home nurse", "to her care home nurse", "to my dad's room mate",
+  "to her office manager", "to his lab partner"). These are hand-overs with people nearby and an e-stop, also when
+  the request says the person is alone or the robot works on its own ("bring the meds to her twice a day, she lives
+  alone"). The safe errors: "give the ball to her dog", "to her sofa", "to her bed" and "to her armchair" (someone sits
+  or lies there), "bring the cup to my left" and "to her side", a capitalised word that is no name ("bring the tea to
+  Starbucks"), and "give the baby bottles to the sink" (children nearby, no hand-over). A place named after people
+  infers none ("a robot for the operator station"). `PERSON_NEAR` applies the same
+  place guard to its person mention and its "for/to/with" person, so "pass my dad's pills to the tray" has people
+  nearby and "to her nurses' station" has none. The tables (`tests/fixtures/brief/handover_phrases.json`: 573
+  requests from the release review's hunt, each with the task, people and e-stop it must get, run through
+  `agents.run_turn`; and the regex tables) and the whole-brief tests are in `tests/test_brief_answers.py`.
 - **The ledger records what ran.** `RobotProject.run`'s revision entry has `recomputed`: the stages it computed (in
   order, failures included; not the ones it carried over or that were blocked), and `reused`: the stages whose
   `stage_status` is "reused", early cutoffs included. Keewano's `StageRecomputed` events (`keewano.events_for`) and

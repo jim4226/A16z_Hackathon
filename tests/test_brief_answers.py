@@ -1,8 +1,10 @@
 """The New robot conversation as people type it (found by driving the Studio's dialog): typed replies to the questions,
 the wording of questions, summaries and assumptions, and what the timeline says. Offline: no keys, no network."""
 
+import json
 import os
 import re
+from pathlib import Path
 
 import pytest
 
@@ -270,6 +272,99 @@ def test_a_carer_brief_hands_over_with_people_nearby_and_an_emergency_stop(text)
     b = agents.run_turn(agents.run_turn(text=text), action="defaults")
     assert B.value(b, "task") == "hand_over" and B.value(b, "people_nearby") == "yes"
     assert "estop" in b.changes["electronics.extras"] and re.search(r"\bhands (?:over|you)\b", b.summary), b.summary
+
+
+_HAND_OVERS = json.loads((Path(__file__).parent / "fixtures" / "brief" / "handover_phrases.json").read_text("utf-8"))["rows"]
+
+
+@pytest.mark.parametrize("row", _HAND_OVERS, ids=[r["text"] for r in _HAND_OVERS])
+def test_the_hand_over_table(row):
+    # the release review's hunt: job titles ("pass the clamp to the surgeon"), "them" and "you", family words without "my"
+    # or with it ("bring dad his slippers", "to my grandma"), names, babies, verbs past hand/pass/give/bring ("get me a
+    # drink", "present the instruments to the surgeon"), people working beside it ("next to the operator") and "alone"
+    # said of a person ("she lives alone") built pick and place robots with nobody nearby and no emergency stop
+    b = agents.run_turn(agents.run_turn(text=row["text"]), action="defaults")
+    assert b.status == "ready", b.status
+    task, people = B.value(b, "task"), B.value(b, "people_nearby")
+    estop = "estop" in b.changes["electronics.extras"]
+    if task == "hand_over":   # the person it hands things to takes them from the gripper: always within its reach
+        assert people in ("yes", "children") and estop, (people, estop)
+    if row.get("task") == "hand_over":
+        assert task == "hand_over" and re.search(r"\bhands (?:over|you)\b", b.summary), (task, b.summary)
+    elif row.get("task") == "not_hand_over":
+        assert task != "hand_over"
+    if row.get("people"):
+        assert people == "children" if row["people"] == "children" else people in ("yes", "children"), people
+    if row.get("estop"):
+        assert estop
+
+
+@pytest.mark.parametrize("text", ["hand me the screwdriver", "bring the meds to her twice a day", "pass my dad his pills"])
+def test_a_hand_over_keeps_its_emergency_stop_when_told_it_works_on_its_own(text):
+    # answering people_nearby "It works on its own" on a hand-over took the e-stop away, though a person takes the
+    # thing from its gripper
+    b = agents.run_turn(text=text)
+    assert "people_nearby" not in [q["slot"] for q in b.questions]          # never offered on a hand-over
+    b = agents.run_turn(agents.run_turn(b, answers={"people_nearby": "no"}), action="defaults")
+    assert B.value(b, "task") == "hand_over" and "estop" in b.changes["electronics.extras"]
+    assert B._HANDED in [a["text"] for a in b.assumptions if a.get("slot") == "people_nearby"]
+    row = next(r for r in B.card(b) if r["slot"] == "people_nearby")
+    assert (row["text"], row["badge"]) == ("Only the person it hands things to", "you said")
+
+
+@pytest.mark.parametrize("later", ["it hands them to my grandma", "it gives the cups to the nurse", "hand them to the operator"])
+def test_a_hand_over_typed_in_a_later_turn_is_a_hand_over(later):
+    b = agents.run_turn(agents.run_turn(agents.run_turn(text="a robot that moves pill bottles"), text=later), action="defaults")
+    assert (B.value(b, "task"), B.value(b, "people_nearby")) == ("hand_over", "yes") and "estop" in b.changes["electronics.extras"]
+
+
+def test_a_tool_hand_over_never_asks_whether_people_are_next_to_it():
+    b = agents.run_turn(text="a robot for the tools on my workbench")
+    assert B.value(b, "task") == "hand_over" and B._arch(b).key == "tool_handover"
+    assert "people_nearby" not in B.questions_for(b) and "people_nearby" not in [q["slot"] for q in b.questions]
+
+
+@pytest.mark.parametrize("text, people, source, badge", [
+    # "on its own" is Morph's reading of the words, so the card says "assumed", not "you said"
+    ("a robot that sorts screws on its own", "no", "inferred", "assumed"),
+    ("an enclosed robot that sorts screws", "no", "inferred", "assumed"),
+    ("a robot that sorts screws, nobody nearby", "no", "user", "you said"),
+    # "alone" said of a person says nothing about the robot; the person named is next to it
+    ("a robot that sorts my grandma's pills, she lives alone", "yes", "inferred", "assumed"),
+    ("a robot that sorts screws, no one else is around", "yes", "inferred", "assumed")])
+def test_alone_is_the_robots_only_when_the_robot_is_alone(text, people, source, badge):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    row = next(r for r in B.card(b) if r["slot"] == "people_nearby")
+    assert (B.value(b, "people_nearby"), b.slots["people_nearby"].source, row["badge"]) == (people, source, badge)
+    assert ("estop" in b.changes["electronics.extras"]) is (people == "yes")
+
+
+@pytest.mark.parametrize("text, hand_over", [
+    # the direct form needs a thing after the receiver for the new receivers, never a job done to them or a robot
+    ("get me a drink from the fridge", True), ("serve the guests their drinks", True), ("pass Sarah the salt", True),
+    ("hand Dr Smith the clamp", True), ("bring them their drinks", True), ("a robot that passes you the salt", True),
+    ("give the pills to Mary", True), ("bring the slippers to Grandpa Joe", True), ("give the box to someone", True),
+    ("give the residents their tea", True), ("hand the operator parts through a window", True),
+    ("parts are handed to the operator one at a time", True), ("fetch the remote for my dad", True),
+    ("get me a robot arm that sorts screws", False), ("give me a robot that picks strawberries", False),
+    ("give them a shake", False), ("give the parts a quick check", False), ("bring them home", False),
+    ("get it started", False), ("it takes me 10 minutes to sort the screws", False), ("bring Coke cans to the fridge", False),
+    ("pass Lego bricks to the bin", False), ("bring it to Station 2", False), ("give priority to customer orders", False),
+    ("pass the parts to the operator station", False), ("bring the trays to the nurses' station", False),
+    ("pass the guest towels to the shelf", False), ("hand the user manual to the printer", False),
+    ("get the parts for my project", False), ("fetch the cups for the dishwasher", False),
+    ("Bring The Cups To The Sink", False), ("HAND THE PARTS TO THE CONVEYOR", False)])
+def test_a_receiver_is_a_person_and_the_rest_are_things_or_places(text, hand_over):
+    assert bool(re.search(B.HAND_TO_PERSON, B.people_text(text))) is hand_over
+
+
+@pytest.mark.parametrize("text, task, estop", [
+    # the tool hand-over archetype's tools going to a place are a pick and place; its workshop people keep the e-stop
+    ("bring the tools to his workbench", "pick_place", True), ("bring the tools to grandpa's shed", "pick_place", True),
+    ("bring the tools to his shed out back", "pick_place", True), ("hand me the tools", "hand_over", True)])
+def test_tools_that_go_to_a_place_are_a_pick_and_place(text, task, estop):
+    b = agents.run_turn(agents.run_turn(text=text), action="defaults")
+    assert B.value(b, "task") == task and ("estop" in b.changes["electronics.extras"]) is estop
 
 
 @pytest.mark.parametrize("text", ["a 4 dof arm with hobby servos to pick up ping pong balls",

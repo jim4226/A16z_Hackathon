@@ -327,6 +327,8 @@ def apply_update(b: B.Brief, upd) -> str:
     n = 0
     for name, v in pairs.items():
         v2 = B.coerce(name, v) if v is not None else None
+        if name == "people_nearby" and v2 == "no" and b.get("people_nearby") in ("yes", "children", "pets"):
+            continue   # a person the request's words put next to it stays there: the e-stop is kept when unsure
         if v2 is not None and B.set_slot(b, name, v2, "inferred", conf(name), "claude"):
             n += 1
     return f"{B._arch(b).label}; read {n + (obj is not None)} facts"

@@ -244,23 +244,40 @@ ADJUSTED = (
      "Assembling, inserting and pressing parts together need force control and alignment this gripper and its simulator "
      "don't have; the robot moves the parts, it doesn't fit them together."),
 )
-# Words for a person the robot works for or hands things to: they are next to it, so it gets an emergency stop
-_PERSON = (r"(?:grand(?:ma|pa|mother|father|parents?|mum|mom|dad)|granny|gran|nan(?:a|na)?|elderly \w+|"
-           r"my (?:mum|mom|mother|dad|father|parents?|partner|wife|husband|boyfriend|girlfriend|roommate|flatmate|friend|"
-           r"aunt|uncle|brother|sister|patient|client)s?)")
-# a hand-over goes to a person: "hand me", "pass my dad his pills", "give it to her", "bring the cups back to us". "them" or
-# "it" alone are the things: "pass them to the packing station" is a pick and place. A person's place is no person either:
-# "to her desk", "to his office", "to my dad's workshop". "her", "his" and 's are read as owning a place only when a
-# place, a piece of furniture or a container (_PLACE, after at most three describing words: "her bedside table") ends the
-# noun phrase: the text ends, or punctuation, a number, a function word, an adverb or a preposition follows (_PHRASE_END).
-# Before anything else ("to her nurse", "to her twice a day", "to her bedside", "to my dad's friend"), and when the place
-# word only describes the person who follows it ("to her home nurse", "to her office manager", "to my dad's room mate"),
-# the person is the receiver, because a missed hand-over drops the emergency stop beside a person
-_PLACE = (r"(?:desk|room|bedroom|office|study|workshop|garage|shed|lab|studio|kitchen|pantry|bathroom|hall(?:way)?|"
-          r"house|home|flat|apartment|porch|garden|yard|car|van|truck|door|doorstep|mailbox|letterbox|"
-          r"table|bench|workbench|counter|shelf|shelves|bookshelf|bookcase|cupboard|cabinet|closet|wardrobe|dresser|"
-          r"drawer|nightstand|locker|rack|station|bin|box|basket|crate|tray|bowl|cart|trolley|line|conveyor|belt|machine|"
-          r"sink|step|sill|windowsill|window|vise)s?")
+# ---- people: who the robot hands things to, and who works beside it (UX-3, E-N8). A person next to the robot gets an
+# emergency stop, so when the words leave it unsure, the person is there: a missed hand-over drops the e-stop beside
+# someone, a false one only adds an $8 switch.
+# Family words that name a person on their own ("bring dad his slippers", "pass the remote to mum", "pass grandad his paper")
+_KIN = (r"(?:grand(?:ma|pa|mother|father|parents?|mum|mom|mummy|mommy|dad|daddy|ad)|grand-dad|granny|grannie|gran|gramps|"
+        r"nan(?:a|na|ny)?|mum(?:my)?|mom(?:my|ma)?|mam|mama|dad(?:dy)?|papa|auntie|aunty|uncle|baby)")
+# Words for a person that need a determiner or a possessive ("to the surgeon", "to our packers", "hand my colleague the
+# stapler") or a plural ("serve coffee to customers"): care, work, shop and public, family, children
+_ROLE = (r"(?:nurse|doctor|doc|surgeon|dentist|vet|paramedic|pharmacist|midwife|physio(?:therapist)?|therapist|carer|"
+         r"care ?giver|care (?:assistant|worker|aide)|aide|resident|patient|"
+         r"operator|worker|packer|welder|assembler|inspector|technician|tech|machinist|engineer|mechanic|scientist|researcher|"
+         r"staffer|crew|team|member|colleague|co-?worker|teammate|boss|manager|supervisor|apprentice|trainee|intern|"
+         r"chef|cook|waiter|waitress|barista|bartender|cashier|clerk|receptionist|assistant|helper|cleaner|gardener|"
+         r"housekeeper|babysitter|driver|courier|librarian|teacher|tutor|student|pupil|volunteer|attendant|porter|guard|"
+         r"steward(?:ess)?|host(?:ess)?|usher|janitor|caretaker|fishmonger|butcher|baker|grocer|florist|farmer|"
+         r"customer|shopper|client|guest|visitor|attendee|passenger|user|owner|"
+         r"neighbou?r|friend|mate|buddy|pal|partner|wife|husband|spouse|boyfriend|girlfriend|fianc[eé]e?|room-?mate|flat-?mate|"
+         r"housemate|lodger|tenant|son|daughter|brother|sister|sibling|cousin|nephew|niece|"
+         r"(?:mother|father|brother|sister|son|daughter)-in-law|in-laws|step-?(?:mum|mom|mother|dad|father|parent|son|daughter)|"
+         r"mother|father|parent|grandchild|grandson|granddaughter|aunt|"
+         r"child|kid|baby|infant|newborn|toddler|twin|boy|girl|"
+         r"person|guy|man|woman|lady|gentleman|folk|adult|elder|senior|pensioner|" + _KIN + r")")
+_ROLES = (r"(?:people|staff|crew|folks|children|men|women|ladies|gentlemen|babies|midwives|wives|" + _ROLE + r"(?:s|es)?)")
+_ROLES_PL = (r"(?:people|staff|crew|folks|children|men|women|ladies|gentlemen|babies|midwives|wives|" + _ROLE + r"(?:s|es))")
+_ANYONE = r"(?:someone|somebody|anyone|anybody|everyone|everybody|whoever|whomever)"
+# A place, a piece of furniture, a container or a machine the things go to (multi-word ones first)
+_PLACE = (r"(?:garden beds?|flower beds?|raised beds?|"
+          r"desk|room|bedroom|office|study|workshop|garage|shed|lab|studio|kitchen|pantry|bathroom|hall(?:way)?|"
+          r"house|home|flat|apartment|porch|garden|yard|car|van|truck|door|doorstep|mailbox|letterbox|building|lobby|"
+          r"table|bench|workbench|workstation|worktable|workspace|counter|shelf|shelves|bookshelf|bookcase|cupboard|cabinet|"
+          r"closet|wardrobe|dresser|drawer|nightstand|locker|rack|station|bin|box|toolbox|basket|crate|tray|bowl|cart|trolley|"
+          r"organi[sz]er|coaster|placemat|mat|lamp|line|conveyor|belt|machine|robot|press|lathe|saw|printer|cnc|oven|fridge|"
+          r"freezer|microwave|dishwasher|sink|step|sill|windowsill|window|vise|cell|panel|console|area|zone|bay|gate|"
+          r"entrance|exit)s?")
 _NOT_DESCRIBING = (r"(?:a|an|the|and|or|but|so|then|when|whenever|while|if|as|at|in|on|by|with|from|for|to|of|after|"
                    r"before|during|until|once|every|each|because|since|please|now|she|he|they|it|i|we|you|her|his|their|"
                    r"my|is|was|can|will|would|could|should|who|that|which)")
@@ -269,20 +286,117 @@ _ADVERB = (r"(?:twice|daily|nightly|weekly|hourly|today|tonight|tomorrow|again|a
            r"right|straight|directly|only|early|back|away)")
 _PREPOSITION = (r"(?:near|beside|behind|below|beneath|under|underneath|over|above|into|onto|inside|outside|across|"
                 r"around|through|next|between|against|without|within|towards?|up|down|off|out|along|past|beyond|opposite)")
-_PHRASE_END = (r"(?=\s*(?:$|[.,;:!?()\[\]{}\"“”…/]|['’](?!s\b)|\d|(?:" + _NOT_DESCRIBING + r"|" + _ADVERB + r"|"
+_PHRASE_END = (r"(?=\s*(?:$|[.,;:!?()\[\]{}\"“”…/]|-(?![a-z])|['’](?!s\b)|\d|(?:" + _NOT_DESCRIBING + r"|" + _ADVERB + r"|"
                + _PREPOSITION + r")\b))")
-# " desk", " bedside table", " room's door"; not " home nurse", " office manager" or " husband's desk" (unsure: hers)
+# " desk", " bedside table", " room's door"; not " home nurse" or " office manager"
 _A_PLACE = (r"\s+(?:(?:" + _PLACE + r"['’]s|(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+)\s+){0,3}?" + _PLACE + r"\b" +
             _PHRASE_END)
+_OWNS = r"(?:['’]s|(?<=s)['’])"                                # "the nurse's desk", "the nurses' station"
 _NOT_THEIRS = r"(?![’']s\b)"                                   # "pass my dad's pills": the pills are his, he isn't the receiver
-_NOT_THEIR_PLACE = r"(?![’']s" + _A_PLACE + r")"
-_HER_HIS = r"(?:her|his)\b(?!" + _A_PLACE + r")"
-_RECEIVER = r"(?:me|him|her|us|" + _PERSON + r")\b" + _NOT_THEIRS              # "bring her the cup": the thing follows
-_RECEIVER_TO = r"(?:me\b|him\b|us\b|" + _HER_HIS + r"|" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r")"
-HAND_TO_PERSON = r"\b(?:hand|pass|give|bring)(?:s|es|ing)?\s+(?:" + _RECEIVER + r"|(?:[\w']+\s+){0,4}?to\s+" + _RECEIVER_TO + r")"
+# a person's word is no person when it names or owns a place: "the operator station", "my dad's workshop"
+_NOT_THEIR_PLACE = (r"(?!" + _OWNS + _A_PLACE + r"|\s+(?:(?!(?:" + _NOT_DESCRIBING + "|" + _PREPOSITION + "|" + _ADVERB +
+                    r")\b)[a-z-]+\s+){0,2}?" + _PLACE + r"\b" + _PHRASE_END + r")")
+# "to her", "to my cousin", "to their nanny", "to our cleaner": a possessive is the receiver unless it owns a place,
+# itself or through someone ("to her desk", "to my dad's workshop", "to her nurses' station", "to their bedroom shelf")
+_NO_PLACE_OF_THEIRS = r"(?!(?:\s+[a-z-]+" + _OWNS + r")?" + _A_PLACE + r")"
+_HER_HIS = r"(?:her|his)\b" + _NO_PLACE_OF_THEIRS
+_POSS = r"(?:her|his|my|our|your|their)\b" + _NO_PLACE_OF_THEIRS
+_PERSON = (r"(?:" + _KIN + r"|(?:elderly|disabled) [a-z]+|(?:my|our|your) (?:(?!" + _NOT_DESCRIBING + r"\b)[a-z'’-]+ ){0,2}?" +
+           _ROLES + r")")
+_TITLED = r"(?:dr|mr|mrs|ms|miss|mx|prof)\.?\s+(?!" + _NOT_DESCRIBING + r"\b)[a-z'’-]+"
+# "the surgeon", "a worker", "our packers", "the next worker", "the old man", "their kitchen helper"
+_WHO_NP = (r"(?:the|a|an|my|our|your|their|her|his|this|that|these|those|each|every|any|some|another|both|all(?: the)?|"
+           r"one|two|three|four|five|several|many|other)\s+(?:(?!" + _NOT_DESCRIBING + r"\b)[a-z'’-]+\s+){0,3}?" + _ROLES + r"\b")
+_WHO = r"(?:" + _ANYONE + "|" + _PERSON + "|" + _TITLED + "|" + _WHO_NP + "|" + _ROLES_PL + r")\b" + _NOT_THEIR_PLACE
+# what follows the receiver in "hand the nurse the gauze", "hands the operator parts": a thing, never a job done to them
+# ("give them a shake", "give the parts a quick check") nor a robot ("get me a robot that sorts screws")
+_ACTION = (r"(?:shake|twist|tap|wipe|rinse|check|clean|spin|push|nudge|squeeze|look|go|try|turn|stir|flip|rub|polish|dust|"
+           r"wash|scrub|grip|reading|hand|break|rest|chance|call|ring|lift|boost|hint|wave|name|label|bath|shower|test|tidy)s?")
+_THING_DET = (r"(?:the|a|an|some|his|her|their|my|your|our|its|this|that|these|those|one|two|three|four|five|six|another|"
+              r"more|any|each|every|all|both|enough|[0-9]+)")
+_ROBOT_WORD = r"(?:robot|robotic|arm|bot|cobot|machine|gripper|design|device|gadget|system|setup)s?"
+_NO_THING = (r"(?!\s+(?:(?:a|an|the|some|another|one|more|good|quick|little|gentle|final)\s+)*(?:[a-z-]+\s+)?" + _ACTION +
+             r"\b" + _PHRASE_END + r")(?!\s+(?:" + _THING_DET + r"\s+)?(?:[a-z-]+\s+)?" + _ROBOT_WORD + r"\b)")
+_THING = (_NO_THING + r"(?=\s+(?:" + _THING_DET + r"\b|(?!(?:" + _NOT_DESCRIBING + "|" + _ADVERB + "|" + _PREPOSITION +
+          r"|home|together|apart|closer|forward|started|going|ready|to)\b)[a-z][a-z'’-]*\b(?<![a-z]{3}ed)(?<![a-z]{2}ing)))")
+_THING_DET_NEXT = _NO_THING + r"(?=\s+" + _THING_DET + r"\b)"
+# "bring her the cup" and "hand the operator parts", but not "bring her cup to the sink" or "pass the guest towels to the
+# shelf": a word that goes on to a place is the thing's, not the receiver
+_THEN_A_PLACE = (r"(?!\s+(?!" + _NOT_DESCRIBING + r"\b)[a-z-]+(?:\s+[a-z-]+){0,2}?\s+(?:back\s+|over\s+)?(?:to|into|onto|in|on)"
+                 r"\s+(?:(?:the|a|an|my|her|his|their|our|your)\s+)?(?:[a-z-]+\s+){0,2}?" + _PLACE + r"\b)")
+_HER_DIRECT = r"her\b" + _THEN_A_PLACE
+# "bring her the cup", "hand me": the thing follows, or nothing
+_RECEIVER = (r"(?:me|him|us|" + _HER_DIRECT + "|" + _PERSON + r")\b" + _NOT_THEIRS +
+             r"(?!\s+(?:" + _THING_DET + r"\s+)?(?:[a-z-]+\s+)?" + _ROBOT_WORD + r"\b)")
+_RECEIVER_THING = (r"(?:(?:me|him|us|you|" + _HER_DIRECT + "|" + _PERSON + "|" + _TITLED + "|" + _WHO_NP + "|" + _ROLES_PL +
+                   r")\b" + _NOT_THEIRS + _THEN_A_PLACE + _THING + r"|(?:them|" + _ANYONE + r")\b" + _THING_DET_NEXT + ")")
+_RECEIVER_TO = (r"(?:(?:me|myself|him|himself|us|ourselves|you|yourself|yourselves|them|themselves)\b|" + _POSS + "|" + _WHO + ")")
+_RECEIVER_FOR = (r"(?:(?:me|myself|him|us|you)\b|her\b" + _PHRASE_END + "|" + _WHO + ")")
+_GAP = r"(?:(?!" + _ROBOT_WORD + r"\b)[\w'’]+\s+){0,4}?"
+_GIVE = r"(?:hand(?:s|ing)?|pass(?:es|ing)?|giv(?:e|es|ing)?|bring(?:s|ing)?)"            # "hand me", "pass my dad his pills"
+_GIVE_TO = (r"(?:hand(?:s|ed|ing)?|pass(?:es|ed|ing)?|giv(?:e|es|en|ing)?|gave|bring(?:s|ing)?|brought|fetch(?:es|ed|ing)?|"
+            r"get(?:s|ting)?|got|grab(?:s|bed|bing)?|toss(?:es|ed|ing)?|throw(?:s|ing|n)?|threw|offer(?:s|ed|ing)?|"
+            r"serv(?:e|es|ed|ing)|feed(?:s|ing)?|fed)")                       # "get me a drink", "serve the guests coffee"
+_TAKE_TO = (_GIVE_TO[:-1] + r"|deliver(?:s|ed|ing)?|tak(?:e|es|en|ing)|took|carr(?:y|ies|ied|ying)|present(?:s|ed|ing)?)")
+HAND_TO_PERSON = (r"\b" + _GIVE + r"\s+" + _RECEIVER + r"|\b" + _GIVE_TO + r"\s+" + _RECEIVER_THING +
+                  r"|\b" + _TAKE_TO + r"\s+" + _GAP + r"to\s+" + _RECEIVER_TO +
+                  r"|\b(?:fetch|get|grab|bring)\w*\s+" + _GAP.replace("{0,4}", "{0,6}") + r"for\s+" + _RECEIVER_FOR)
+# "bring the tools to his workbench", "to grandpa's shed": the things go to a place
+_TO_A_PLACE = (r"\b" + _TAKE_TO + r"\s+" + _GAP + r"(?:to|for|into|onto)\s+"
+               r"(?:(?:the|a|an|my|our|your|their|her|his|its)\s+|[a-z-]+['’]s\s+)*(?:[a-z-]+\s+){0,3}?" + _PLACE + r"\b")
 PERSON_NEAR = (r"\b" + _PERSON + r"\b" + _NOT_THEIR_PLACE + r"|\b(?:help|assist|serve)(?:s|es|ing)?\s+(?:me|him|her|us|them)\b|" +
-               HAND_TO_PERSON + r"|\b(?:for|to)\s+(?:me\b|him\b|" + _HER_HIS + r")" +
+               HAND_TO_PERSON + r"|\b(?:for|to|with)\s+(?:(?:me|him|us)\b|" + _HER_HIS + "|" + _WHO + ")" +
                r"|\b(?:carers?|caregivers?|disabled|wheelchair|bedridden|patients?)\b")
+_NEAR = r"(?:near(?:by)?|next to|around|beside|alongside|close (?:by|to)|in front of|behind|opposite|across from)"
+_SOMEBODY = r"(?:(?:i|we)\b|" + _WHO + ")"
+# people beside it in so many words: "people work next to it", "next to the operator", "a worker stands next to it",
+# "where customers pick up their coffee", "a bench shared with two workers", "a bin I fill by hand"
+PEOPLE_BESIDE = (r"\b(?:next to me|beside me|near me|with people|around people|coworkers?|colleagues?|hands? me|pass(?:es)? me|"
+                 r"while i work|people around)\b|"
+                 r"\b(?:people|someone|staff|workers|operators|users|humans|others)\b(?:\s+\w+){0,3}?\s*" + _NEAR + r"\b|"
+                 r"\b" + _NEAR + r"\s+(?:to\s+)?(?:(?:people|staff|workers|operators|users|humans|others|me|us|him)\b|"
+                 + _HER_HIS + "|" + _WHO + ")|"
+                 r"\b" + _SOMEBODY + r"(?:\s+[\w'’]+){0,4}?\s+(?:" + _NEAR + r"|by|past)\s+"
+                 r"(?:it|the (?:robot|arm|cobot)|this (?:robot|arm))\b|"
+                 r"\bwhere\s+(?:(?:i|we)\b|" + _ANYONE + "|" + _WHO_NP + "|" + _ROLES_PL + r"\b)\s*"
+                 r"(?!(?:is|are|was|were|be)\b)[a-z]|"
+                 r"\bshared?\s+with\s+" + _SOMEBODY + r"|\bi\s+(?:fill|load|refill|restock|top up|feed)\b")
+# "it works on its own", "an enclosed cell", "the robot runs alone": no one next to it, unless a person is named. "Alone"
+# said of a person ("she lives alone", "while he is alone") says nothing about the robot.
+ROBOT_ALONE = (r"\b(?:on its own|by itself|unattended|enclosed|fenced(?: off| in)?|caged|lights[- ]out)\b|"
+               r"\b(?:it|robot|arm|machine|cobot)\s+(?:\w+\s+){0,2}?alone\b|"
+               r"(?<!\bshe )(?<!\bhe )(?<!\bi )(?<!\bwe )(?<!\bthey )(?<!\bwho )(?<!\byou )"
+               r"\b(?:works?|working|operates?|operating|runs?|running)\s+alone\b")
+_KIDS = (r"\b(?:kids?|children|child|toddlers?|bab(?:y|ies)|infants?|newborns?|twins|my son|my daughter|"
+         r"(?:the|a|my|our|her|his|their|little|young) (?:boy|girl)s?)\b")
+# words that are capitalised for another reason than being someone's name
+_NOT_NAMES = frozenset(("i", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january",
+                        "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
+                        "december", "christmas", "easter", "lego", "duplo", "ikea", "coke", "pepsi", "morph", "claude",
+                        "arduino", "raspberry", "pi", "feetech", "dynamixel", "robotis", "lerobot", "so", "mg996r", "sg90",
+                        "ok", "okay", "hi", "hello", "hey", "thanks", "please", "dr", "mr", "mrs", "ms", "miss", "mx", "prof"))
+
+
+def people_text(raw: str) -> str:
+    """`raw` in lower case with each capitalised name written "someone" ("pass Sarah the salt", "give the pills to Mary",
+    "hand Dr Smith the clamp"), so the receiver rules read the name as a person. A capital that starts a sentence, follows
+    "the" or "a", or names a place, a person word or a known product is no name, and Title Case or SHOUTING says nothing
+    about names at all (unsure: a name read where there is none only adds a hand-over's emergency stop)."""
+    words = re.findall(r"[A-Za-z][A-Za-z'’-]*", raw or "")
+    if not words or sum(w[0].isupper() for w in words) * 2 > len(words):
+        return (raw or "").lower()
+    out, last = [], 0
+    for m in re.finditer(r"\b[A-Z][a-z]+\b", raw):
+        before, w = raw[:m.start()].rstrip(), m.group(0).lower()
+        if not before or before[-1] in ".!?:;\"“(\n" or w in _NOT_NAMES or \
+                re.search(r"\b(?:the|a|an|this|that|these|those|its)$", before.lower()) or \
+                re.fullmatch(r"(?:" + _ROLES + "|" + _PLACE + "|" + _NOT_DESCRIBING + "|" + _ADVERB + "|" + _PREPOSITION + ")", w):
+            continue
+        out += [raw[last:m.start()].lower(), "someone"]
+        last = m.end()
+    return "".join(out + [raw[last:].lower()])
+
+
 OUT_OF_SCOPE = (  # (kind, regex, plain reason); the first kind found picks the nearest robot
     ("drone", r"\b(drones?|quadcopters?|multirotors?|uavs?|fly|flies|flying)\b", "Morph doesn't design drones or anything that flies."),
     ("humanoid", r"\b(humanoids?|androids?|bipeds?|robot butler|two arms|dual[- ]arm|bimanual|multi-?finger\w*|dexterous|robotic hand|"
@@ -677,20 +791,22 @@ def parse(text: str) -> dict:
         if re.search(pat, t):
             s["environment"] = env
             break
-    near = r"(?:near(?:by)?|next to|around|beside|alongside|close (?:by|to))"
-    if re.search(r"\b(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b(?:\s+\w+){0,3}?\s*" + near + r"\b", t):
+    # who is next to it. A receiver outranks every word for "on its own": the person it hands things to takes them from
+    # the gripper ("hand me tools, no one else is nearby", "bring the meds to her twice a day, she lives alone")
+    pt = normalize_units(people_text(raw))         # names read as "someone"
+    hands = re.search(HAND_TO_PERSON, pt)
+    if re.search(r"\b(?:nobody|no ?one|no-one|no people|no humans?|no kids|no children)\b(?!\s+else\b)(?:\s+\w+){0,3}?\s*" + _NEAR +
+                 r"\b", t) and not hands:
         s["people_nearby"] = "no"   # "nobody nearby", "no one works next to it"
-    elif re.search(r"\b(kids?|children|child|toddlers?|my son|my daughter)\b", t):
+    elif re.search(_KIDS, re.sub(r"\b(?:no|without|not any)\s+(?:kids|children|toddlers|babies)\b", " ", pt)):
         s["people_nearby"] = "children"
-    elif re.search(r"\b(next to me|beside me|near me|with people|around people|coworkers?|colleagues?|hands? me|pass(?:es)? me|"
-                   r"while i work|people around)\b", t) or \
-            re.search(r"\b(?:people|someone|staff|workers|operators|users|humans|others)\b(?:\s+\w+){0,3}?\s*" + near + r"\b", t) or \
-            re.search(r"\b" + near + r"\s+(?:to\s+)?(?:people|staff|workers|operators|users|humans|someone|others|us)\b", t):
-        s["people_nearby"] = "yes"  # "people nearby", "people work next to it", "near people"
-    elif re.search(r"\b(alone|unattended|on its own|by itself|enclosed|fenced)\b", t):
-        s["people_nearby"] = "no"
-    elif re.search(PERSON_NEAR, t):
-        inf["people_nearby"] = "yes"  # "help my grandma", "pass my dad his pills", "for me": that person is next to it
+    elif re.search(PEOPLE_BESIDE, pt):
+        s["people_nearby"] = "yes"  # "people nearby", "people work next to it", "near people", "next to the operator"
+    elif hands or re.search(PERSON_NEAR, pt) or re.search(r"\b(?:no ?one|nobody|no-one)\s+else\b", t):
+        # "help my grandma", "pass my dad his pills", "for me": that person is next to it (and a toy robot's children)
+        inf["people_nearby"] = ARCHETYPES[key].people if ARCHETYPES[key].people in ("children", "pets") else "yes"
+    elif re.search(ROBOT_ALONE, t):
+        inf["people_nearby"] = "no"   # Morph's reading of "on its own" or "enclosed": an assumption on the card
     # precision
     if re.search(r"(?:±|\+/-|plus or minus)\s*(?:0?\.\d+|1)\s*mm|\bsub[- ]?mm|\bsub[- ]?millimet\w*|\bvery (?:precise|accurate)\b|"
                  r"\b1 mm (?:accuracy|precision)\b", t):
@@ -730,10 +846,12 @@ def parse(text: str) -> dict:
     # tasks
     if re.search(r"\bsort(?:s|ing|er)?\b", t):
         s["task"] = "sort"
-    elif re.search(r"\bhand[- ]?over\b", t) or re.search(HAND_TO_PERSON, t):
+    elif re.search(r"\bhand[- ]?over\b", t) or hands:
         s["task"] = "hand_over"
     elif any(k == "assembly" for k, _ in out["adjusted"]):
         inf["task"] = "pick_place"    # the parts are moved to where they go, not sorted
+    elif ARCHETYPES[key].task == "hand_over" and re.search(_TO_A_PLACE, pt):
+        inf["task"] = "pick_place"    # "bring the tools to his workbench": the tools go to a place, not to a person
     # design keys named outright
     h = out["hints"]
     m = re.search(r"\b([456])\s*-?\s*(?:dof|axis|axes|joints?|degrees? of freedom)\b", t) or \
@@ -972,7 +1090,8 @@ def questions_for(b: Brief) -> list:
     if b.round == 0:
         spec = specificity(b)
         n = 3 if spec == 0 else 2 if spec <= 2 else 1 if spec == 3 or req else 0
-        opt = [s for s in a.optional if not filled(b, s) and s not in b.asked]
+        opt = [s for s in a.optional if not filled(b, s) and s not in b.asked and   # a hand-over has its receiver nearby
+               not (s == "people_nearby" and value(b, "task") == "hand_over")]
         slots = (req + opt)[:max(n, len(req))]
     else:
         slots = req
@@ -1270,7 +1389,8 @@ def brief_to_changes(b: Brief) -> dict:
     ch.update({"task.pick_x_mm": lay["pick"][0], "task.pick_y_mm": lay["pick"][1], "task.place_x_mm": lay["place"][0],
                "task.place_y_mm": lay["place"][1], "task.cycle_time_s": float(value(b, "throughput"))})
     extras = set()
-    if value(b, "people_nearby") in ("yes", "children", "pets") or value(b, "environment") in ("lab", "kitchen", "classroom"):
+    if value(b, "people_nearby") in ("yes", "children", "pets") or value(b, "environment") in ("lab", "kitchen", "classroom") \
+            or value(b, "task") == "hand_over":   # a hand-over's receiver takes the thing from the gripper, whatever was said
         extras.add("estop")
     if value(b, "perception") == "wrist_camera":
         extras.add("wrist_camera")
@@ -1639,7 +1759,10 @@ def assumptions_for(b: Brief, ch: dict) -> list:
                 cat = {"fragile": "fragile", "care": "needing care"}[s.value]
                 add(slot, f"I read '{_fragility_words(s)}' as {cat}: damaged above about {maxf:g} N per finger.", "inferred")
             continue
+        handed = slot == "people_nearby" and value(b, "task") == "hand_over" and value(b, slot) == "no"
         if s is not None and s.source in ("user", "video", "photo") or (s is not None and s.source == "memory"):
+            if handed:   # "It works on its own" on a hand-over: the receiver is still there
+                add(slot, _HANDED, "inferred")
             continue
         kind = "inferred" if s is not None and s.source == "inferred" else "default"
         v = value(b, slot)
@@ -1657,6 +1780,10 @@ def assumptions_for(b: Brief, ch: dict) -> list:
                 add(slot, f"I assumed {PEOPLE[v]}, so there is no emergency stop.", kind)
             elif v in ("yes", "children", "pets"):
                 add(slot, f"I assumed {PEOPLE[v]}, so it has an emergency stop.", kind)
+            elif handed:
+                add(slot, _HANDED, kind)
+            elif env not in ("lab", "kitchen", "classroom"):   # the request asked for one
+                add(slot, f"I assumed {PEOPLE[v]}; it has the emergency stop you asked for.", kind)
             else:  # the e-stop comes with the place: say whether the place was the person's or Morph's guess
                 es = b.slots.get("environment")
                 said = es is not None and es.source in ("user", "video", "photo")
@@ -1669,6 +1796,10 @@ def assumptions_for(b: Brief, ch: dict) -> list:
         elif slot == "quantity" and int(v) == 1:
             add(slot, "I assumed one 3D-printed prototype.", kind)
     return out
+
+
+_HANDED = ("It hands things to a person, who takes them from the gripper within its reach, so it has an emergency stop "
+           "even though no one else works next to it.")
 
 
 def summary_text(b: Brief, ch: dict, pre: dict) -> str:
@@ -1748,8 +1879,8 @@ def card(b: Brief) -> list:
                 txt = f"One every {float(v):g} s"
             elif slot == "environment":
                 txt = ENVIRONMENTS[v].capitalize()
-            elif slot == "people_nearby":
-                txt = PEOPLE[v].capitalize()
+            elif slot == "people_nearby":   # a hand-over's receiver is next to it whatever else was said
+                txt = "Only the person it hands things to" if v == "no" and value(b, "task") == "hand_over" else PEOPLE[v].capitalize()
             elif slot == "precision":
                 txt = PRECISION[v].capitalize()
             elif slot == "budget":

@@ -503,3 +503,15 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
   the medicine to her nurse", "bring the remote to my dad's friend" and a place word that describes the person ("bring
   the medicine to her home nurse", "to her office manager", "to my dad's room mate") stay hand-overs with an emergency
   stop.
+- New robot reads far more people as the person it hands things to, or works beside, and keeps the emergency stop
+  next to them. Of the release review's 573 one-line requests, 157 that put a person next to the robot built it with
+  nobody nearby and no emergency stop, among them "pass the clamp to the surgeon", "a robot that hands parts to the
+  operator", "bring them their drinks", "give the pills to Mary", "bring dad his slippers", "give the baby her bottle",
+  "get me a drink from the fridge", "a robot that works next to the operator" and "bring the meds to her twice a day,
+  she lives alone"; 77 more kept the e-stop but not the hand-over ("bring the meds to my grandma"), and 12 that hand
+  nothing to anyone were hand-overs ("bring her cup to the sink", "pass the parts to his work cell"). None is now.
+  "Alone", "on its own" and "enclosed" say nobody is near only when they describe the robot, and the card then says
+  Morph assumed it; a hand-over always keeps its emergency stop, also when the answer or the designer model says it
+  works on its own, and New robot doesn't ask about people on one. "Get me a robot that..." is no hand-over, a job
+  title before a place ("the operator station", "the nurses' station") is a place, "bring her cup to the sink" moves
+  her cup, and the tool robot's "bring the tools to his workbench" is a pick and place.
