@@ -2116,6 +2116,9 @@ _MORE_THAN_SAID = re.compile(r"\b(?:empty|full|unfilled|fill\w*|holds?|holding|c
                              r"together|simultaneous\w*|scoop\w*|handfuls?|armfuls?|go(?:es)?\s+in|put\s+in|"
                              r"with\s+the\s+[a-z]+\s+in|of\s+(?!them\b|those\b|these\b|\d)[a-z]+|"
                              r"(?!g\s|batch(?:es)?\s)[a-z]+\s+of\s+(?:about\s+|around\s+|roughly\s+|approx\w*\s+)?\d+)\b|\+")
+# a mass per hour, minute, day or shift, not a batch or a total ("2 kg of 50 g cubes per shift", "2 kg of them a day")
+_TIMED = re.compile(r"[^.;!?,]{0,40}?(?:\b(?:per|an?|each|every)\s+(?:h|hrs?|hours?|mins?|minutes?|days?|shifts?|weeks?|"
+                    r"months?)\b|/\s*(?:h|hrs?|hours?|mins?|minutes?|days?|shifts?|weeks?)\b|\b(?:hourly|daily|weekly|monthly)\b)")
 # a later message about their weight beside a rate left out before ("they weigh more when wet"): the rate comes back
 _WEIGHT_TALK = re.compile(r"\b(?:weigh\w*|weight\w*|heav\w*|light\w*|mass|masses|kg|g|grams?|oz|lbs?|pounds?|ounces?)\b")
 # a batch said of how the robot handles them is what it lifts at once ("it lifts them in 2 kg batches", "pick up 50 g
@@ -2167,6 +2170,9 @@ def _rates_to_drop(t: str, masses: list, objects: tuple = (set(), set()), own_el
         return set()
     if not _plain_talk([t] if said is None else said, objects):
         return set()   # "some are quite heavy", "excl. jam", "it carries 2 kg of them": the rate stays as read
+    if any(not _TIMED.match(t, masses[i][2]) for i in rates) and \
+            any(m.group("h") for m in _HANDLES.finditer(" ".join([t] if said is None else said).lower())):
+        return set()   # a batch or a total the arm may lift at once ("pick up 2 kg of 50 g cubes"): it stays as read
     if not all(_names_objects(t, masses[i][1], masses[i][2], *objects) for i in own):
         return set()   # "the pills weigh 1 g each", "at least 20 g", "the jam 100 g": the rate stays as read
     for _v, s, e in _width_reads(t):   # "pack 30 mm tubes at 2 kg per hour; the bulbs are 25 g": two kinds of thing

@@ -290,9 +290,9 @@ def test_them_moved_somewhere_are_things(text):
 
 # ---- 5. a mass per hour or a batch's beside the object's own
 @pytest.mark.parametrize("text", ["move 50 g cubes at 2 kg per hour", "move 50 g cubes, about 2 kg an hour",
-                                  "sort 50 g blocks in 2 kg batches", "move 2 kg of 50 g cubes", "pick up cubes weighing 50 g, 2 kg/h",
+                                  "sort 50 g blocks in 2 kg batches", "sort 2 kg of 50 g cubes", "pick up cubes weighing 50 g, 2 kg/h",
                                   "move 50 g cubes, 2 kg of them a day", "move 50 g cubes at 2 kg per min",
-                                  "pick up the 50 g cookies we bake in 2 kg batches"])
+                                  "sort the 50 g cookies we bake in 2 kg batches", "move 2 kg of 50 g bottles per shift"])
 def test_a_rate_or_a_batch_is_not_the_objects_mass(text):
     b = talk(text)
     assert mass(b) == 50.0 and b.scope["status"] != "out_of_scope", (text, mass(b))
@@ -458,6 +458,8 @@ _FILLER = "people nearby. " * 140   # plain, and long enough to push the first m
     (("use my SO-101 to pick up 30 mm jars weighing 50 g; it carries 2 kg of them",), 150.0),
     (("use my SO-101 to pick up 30 mm 50 g cubes two kilos a day, 40 cubes a lift",), 150.0),
     (("Use my SO-101 to lift 2 kg of 50 g cubes onto the scale.",), 150.0),
+    (("use my SO-101 to pick up 2 kg of 50 g cubes",), 150.0),
+    (("use my SO-101 to sort 50 g cubes in 2 kg batches, it picks them up",), 150.0),
     (("use my SO-101 to unload 30 mm fifty gram jars in 2 kg batches",), 150.0),
     (("use my SO-101 to sort 30 mm 50 g cubes in 2 kg batches, then carry the batches to the shelf",), 150.0),
     # contents and exclusions

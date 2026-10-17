@@ -661,9 +661,11 @@ clamping.
   "measuring 50 mm", "50 mm oranges", "two-inch", "50-mm", "half a kilo", "a pound", "300 gm", "three hundred grams",
   "1,050 g", "1 000 g" and "1.000 g" (thousands; a dot only before grams and "000"), and the largest of several
   ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach, nor
-  a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "in 2 kg batches", "2 kg of 50 g
-  cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by name, `brief._names_objects`,
-  the whole conversation as typed is plain, `brief._plain_talk` (every word in `brief._PLAIN_WORDS` or the objects' own
+  a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "sort 50 g blocks in 2 kg
+  batches", "sort 2 kg of 50 g cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by
+  name, `brief._names_objects`, a batch or a total that isn't per hour, day or shift (`brief._TIMED`) only when no verb
+  in the conversation has the arm handle them (`brief._HANDLES`: "pick up 2 kg of 50 g cubes" may be one lift), the
+  whole conversation as typed is plain, `brief._plain_talk` (every word in `brief._PLAIN_WORDS` or the objects' own
   nouns, every number a size, a mass or a time, no other symbol: a closed list of the words that do say more is never
   complete), and no word in the conversation says the object may weigh more than a mass given or that several are
   lifted at once,

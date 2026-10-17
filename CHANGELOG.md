@@ -532,12 +532,14 @@ you build:
   don't have an SO-101", then espresso cups): a kitchen's or a lab's emergency stop too.
 - New robot: "them" served food or drink ("a robot that delivers them coffee", "makes them tea") are people next to the
   robot, so it gets an emergency stop.
-- New robot: a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "in 2 kg batches",
-  "2 kg of 50 g cubes") is not the object's mass when the conversation says nothing else about it: the arm is sized for
-  50 g, not Morph's largest. A total stays the object's ("60 g empty, 350 g in total when full" is 350 g), and so does
-  the rate whenever the conversation says anything more (a part's or what the objects hold, "the pills weigh 1 g each",
-  "jars of honey"; "some are heavier", "on average"; "2 kg of them at a time"), also in a later message ("that's the
-  empty weight"); "lots of 300 g jars" and "pouches of 300 g every minute" are the objects' own mass.
+- New robot: a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "sort 50 g blocks in
+  2 kg batches", "sort 2 kg of 50 g cubes") is not the object's mass when the conversation says nothing else about it:
+  the arm is sized for 50 g, not Morph's largest. A total stays the object's ("60 g empty, 350 g in total when full" is
+  350 g), and so does the rate whenever the conversation says anything more (a part's or what the objects hold, "the
+  pills weigh 1 g each", "jars of honey"; "some are heavier", "on average"; "2 kg of them at a time"), also in a later
+  message ("that's the empty weight"), and a batch or a total that isn't per hour, day or shift when the arm is said
+  to pick up, move or carry them ("pick up 2 kg of 50 g cubes": it may lift them at once); "lots of 300 g jars" and
+  "pouches of 300 g every minute" are the objects' own mass.
 - Agent tools: a run's card keeps the lines of the calls it has shown when a list of runs the Studio read before those
   calls reaches the page late (on a busy computer, after Allow once): the card showed Working with none of them, or
   Done without them, until the next update.
