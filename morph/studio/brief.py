@@ -2275,12 +2275,85 @@ _LIFTS = re.compile(r"\b(?:pick\w*|mov\w*|stack\w*|plac\w*|put\w*|transfer\w*|pa
 _PER_ITEM = re.compile(r"\b(?:sort|sorts|sorted|sorting|tidy|tidies|tidied|tidying|arrange\w*|organi[sz]e\w*)\b")
 
 
+# The few whole messages a rate or a batch is left out in: a request that gives the objects' own mass by their noun
+# with a rate per hour, day or shift or a batch they are sorted in, a reply that is the rate alone, or who is around. No
+# list of the words that say more ("move the stack", "one move per hour", "for a day", "the 95 g tins") is complete, so
+# any other message keeps the rate as read.
+_T_FRAME = (r"(?:(?:please\s+)?(?:use\s+my\s+SO\s+to|i\s+have\s+an?\s+SO\s*[.,;]?\s+(?:it\s+should|use\s+it\s+to)|i\s+have\s+an?\s+"
+            r"SO\s+and\s+(?:i\s+)?want\s+it\s+to|my\s+SO\s+should|(?:with|using)\s+my\s+SO,?|an?\s+(?:robot\s+)?arm\s+"
+            r"(?:that|to)(?:\s+can)?|an?\s+robot\s+(?:that|to)(?:\s+can)?|build\s+(?:me\s+)?an?\s+robot\s+(?:arm\s+)?to|"
+            r"i\s+(?:want|need)\s+an?\s+robot\s+(?:arm\s+)?to|help\s+(?:me|us))\s+)?")
+_T_VERB = r"(?:pick(?:s|ing)?\s+up|mov(?:e|es|ing)|sort(?:s|ing)?|transfer(?:s|ring)?|plac(?:e|es|ing)|stack(?:s|ing)?)"
+_T_SORT = r"(?:sort(?:s|ing)?|tid(?:y|ies|ying)|arrang(?:e|es|ing)|organi[sz](?:e|es|ing))"
+_T_WIDTH = r"(?:\d+(?:\.\d+)?\s*mm(?:\s+wide)?,?\s+)?"
+_T_MASS = r"\d+(?:\.\d+)?\s*g"
+_T_ABOUT = r"(?:(?:about|around|roughly|approximately|approx\.?|~)\s*)?"
+_T_UNIT = r"(?:hour|minute|min|day|shift|week)"
+_T_TIME = r"(?:(?:per|an?)\s+(?P<unit>" + _T_UNIT + r")\b|/\s*(?P<unit2>h|hr|hour|min|day|shift)\b)"
+_T_OWN = (r"(?:(?P<m1>" + _T_MASS + r")\s+(?P<n1>[a-z]+)|(?P<n2>[a-z]+)\s+(?:weighing|that\s+weigh|of)\s+(?P<m2>" + _T_MASS +
+          r")(?:\s+each)?|(?P<n3>[a-z]+),?\s+each\s+(?P<n4>[a-z]+)\s+is\s+(?P<m3>" + _T_MASS + r"))")
+_T_DEST = r"(?:\s+(?:into|onto|to|on|in)\s+(?:the\s+|a\s+)?(?:bins?|tables?|shel(?:f|ves)|conveyor|belt))?"
+_T_RATE = (r"(?:,\s*|\s+)(?:at\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\s*(?:of\s+them\s+)?" + _T_TIME)
+_T_END = r"\s*[.!]?\s*$"
+_T_WHO = r"(?:,\s*|\.\s*)(?:people|kids|children|staff|nobody|no\s+one)\s+(?:nearby|around)"
+_T_REQUEST = [re.compile(r"^\s*" + _T_FRAME + v + r"\s+" + _T_WIDTH + _T_OWN + _T_DEST + tail + _T_DEST + r"(?:" + _T_WHO + r")?" + _T_END)
+              for v, tail in ((_T_VERB, _T_RATE), (_T_SORT, _T_RATE), ("(?:" + _T_VERB + "|" + _T_SORT + ")", ""))] + [
+    re.compile(r"^\s*" + _T_FRAME + _T_SORT + r"\s+" + _T_WIDTH + _T_OWN + r"\s+in\s+" + _T_ABOUT + r"(?P<r>" + _T_MASS +
+               r")\s*-?\s*batches" + _T_END),
+    re.compile(r"^\s*" + _T_FRAME + _T_SORT + r"\s+" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\s+of\s+" + _T_WIDTH +
+               r"(?P<m1>" + _T_MASS + r")\s+(?P<n1>[a-z]+)(?:\s+" + _T_TIME + r")?" + _T_END)]
+_T_REPLY = [re.compile(r"^\s*(?:at\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\s*(?:of\s+them\s+)?" + _T_TIME + r"(?:" +
+                       _T_WHO + r")?" + _T_END),
+            re.compile(r"^\s*(?:in\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\s*-?\s*batches" + _T_END),
+            re.compile(r"^\s*(?:people|kids|children|staff|nobody|no\s+one)\s+(?:nearby|around|next\s+to\s+it)" + _T_END),
+            re.compile(r"^\s*one\s+every\s+\d+(?:\.\d+)?\s*s(?:ec(?:ond)?s?)?" + _T_END)]
+# containers whose mass on a label is what they hold, not what they weigh ("95 g tins"); said "weighing" it is theirs
+_CONTAINERS = frozenset(("jar", "bottle", "can", "tin", "cup", "mug", "pouch", "bag", "box", "pack", "packet", "carton", "tub",
+                         "pot", "vial", "tube", "tray", "bin", "crate", "sack", "sleeve", "case", "container", "basket", "bucket",
+                         "bowl", "glass", "flask", "sachet", "punnet"))
+_PER_MINUTE = {"hour": 60.0, "h": 60.0, "hr": 60.0, "minute": 1.0, "min": 1.0, "day": 480.0, "shift": 480.0, "week": 2400.0}
+
+
+def _rate_template(said, objects: tuple) -> bool:
+    """Whether every message in `said` is one of the few a rate or a batch is left out in (_T_REQUEST, _T_REPLY): the
+    first one the request, said of the objects by their own head noun (`objects`), and no faster than one arm moves
+    one object (15 a minute, one every 4 s); a reply with a batch only after a request to sort them."""
+    heads = objects[0]
+    msgs = [re.sub(_SO, " SO ", normalize_units((w or "").lower())).replace("’", "'") for w in said]
+    if not msgs:
+        return False
+    first = next((m for m in (r.match(msgs[0]) for r in _T_REQUEST) if m), None)
+    if first is None:
+        return False
+    nouns = [first.group(k) for k in ("n1", "n2", "n3", "n4") if k in first.re.groupindex and first.group(k)]
+    own = [float(re.match(r"[\d.]+", first.group(k)).group(0)) for k in ("m1", "m2", "m3")
+           if k in first.re.groupindex and first.group(k)]
+    if not nouns or not own or any(_singular(n) not in heads for n in nouns):
+        return False
+    if first.group("n1") if "n1" in first.re.groupindex else None:
+        if _singular(first.group("n1")) in _CONTAINERS:
+            return False   # "95 g tins": what they hold
+    sorting = bool(re.search(r"\b" + _T_SORT, msgs[0]))
+    rates = [first]
+    for m in msgs[1:]:
+        r = next((x for x in (t.match(m) for t in _T_REPLY) if x), None)
+        if r is None or "batches" in m and not sorting:
+            return False
+        rates.append(r)
+    for r in rates:
+        unit = r.groupdict().get("unit") or r.groupdict().get("unit2")
+        if r.groupdict().get("r") and unit and \
+                float(re.match(r"[\d.]+", r.group("r")).group(0)) / _PER_MINUTE[unit] / max(own) > 15.0:
+            return False   # "50 g balls at 2 kg per minute": 40 a minute is more than one at a time
+    return True
+
+
 def _rate_drop_holds(said, objects: tuple, untimed: bool) -> bool:
     """Whether the whole conversation (`said`, as typed) still lets a rate or a batch beside the objects' own mass be
     left out: plain (_plain_talk), one width for the objects (two may be two kinds of them: "50 g cubes and 34 mm
     cubes"), no arm that may lift a batch or a total at once (`untimed`: a batch or a total, not per hour, day or
     shift; or any batch said beside a verb that lifts), and no batches of the objects ("batches of 50 g cubes")."""
-    if not _plain_talk(said, objects):
+    if not _plain_talk(said, objects) or not _rate_template(said, objects):
         return False
     msgs = [normalize_units(re.sub(_SO, " ", (w or "").lower())) for w in said]
     if len({round(v, 1) for n in msgs for v, _s, _e in _width_reads(n)}) > 1:
@@ -2688,6 +2761,8 @@ def merge(b: Brief, parsed: dict, source: str = "user", evidence: str = ""):
                 v2["least_mm"] = float(cap._num(v["least_mm"]))   # the least the person's words say they may be
             if name == "object" and isinstance(v, dict) and v.get("widest_unknown") is True:
                 v2["widest_unknown"] = True                         # a size given at a neck, not at their widest
+            if name == "object" and isinstance(v, dict) and v.get("shape_unknown") is True:
+                v2["shape_unknown"] = True                          # Morph's guess for a job: its shape isn't known
             if name == "object" and isinstance(v, dict) and cap._num(v.get("rate_g")):
                 v2["rate_g"] = float(cap._num(v["rate_g"]))         # a rate left out of their mass ("at 2 kg per hour")
                 if v.get("rate_untimed") is True:
@@ -2732,15 +2807,16 @@ def _default_object(b: Brief) -> dict:
 
 
 def _left_so101_floor(b: Brief, o: dict, arch: str) -> dict:
-    """The job's own object Morph assumes once the SO-101 is left for that job ("I don't have an SO-101" on a playroom
-    request), never narrower or lighter than the general arm's, which leaving the SO-101 gave before."""
-    if not b.flags.get("left_so101") or arch in ("generic_arm", "so101"):
+    """The job's own object Morph assumes once the SO-101 is left ("I don't have an SO-101" on a playroom request), never
+    narrower or lighter than the general arm's, which leaving the SO-101 gave before, and of no known shape."""
+    if not b.flags.get("left_so101") or arch == "so101":
         return o
     g = object_value(ARCHETYPES["generic_arm"].objects[0])
     d = max(float(o["diameter_mm"]), float(g["diameter_mm"]))
-    return dict(o, diameter_mm=d, mass_g=max(float(o["mass_g"]), float(g["mass_g"])),
-                length_mm=max(float(o.get("length_mm") or 0), d),
-                shape=o.get("shape") if float(o["diameter_mm"]) >= float(g["diameter_mm"]) else g.get("shape", o.get("shape")))
+    # Morph's guess, not the person's object: no shape of its own (no preset key, nothing stated), so the stock SO-101,
+    # if it is named again, holds it only where it holds both round and flat-sided objects
+    return dict(o, key=None, diameter_mm=d, mass_g=max(float(o["mass_g"]), float(g["mass_g"])),
+                length_mm=max(float(o.get("length_mm") or 0), d), shape="cylinder", stated=[], shape_unknown=True)
 
 
 def defaults(b: Brief) -> dict:
@@ -2908,7 +2984,8 @@ def _so101_least(o: dict | None) -> str | None:
     lo = cap._num((o or {}).get("least_mm"))
     if not lo:
         return None
-    lim = cap.SO101_MIN_FLAT_MM if o.get("shape") == "box" else cap.min_width("cylinder", "fsr402")
+    box = o.get("shape") == "box" and not (o.get("shape_unknown") and "shape" not in (o.get("stated") or []))
+    lim = cap.SO101_MIN_FLAT_MM if box else cap.min_width("cylinder", "fsr402")
     if lo >= lim:
         return None
     kind, x = "flat-sided" if o.get("shape") == "box" else "round", _plural(str(o.get("name") or "object")).lower()
@@ -2924,13 +3001,19 @@ def _so101_misfit_size(o: dict | None) -> str | None:
         return (f"The stock SO-101 lifts about {cap.SO101_PAYLOAD_G} g with a 2x torque margin; {o['mass_g']:g} g needs a "
                 "stronger arm.")
     d, name = float(o["diameter_mm"]), o.get("name", "object")
-    if o.get("key") is None and o.get("stated") is not None and "shape" not in o["stated"]:
+    if (o.get("key") is None and o.get("stated") is not None or o.get("shape_unknown")) and \
+            "shape" not in (o.get("stated") or []):
         # the request gave its object's size but not its shape: it may be flat-sided ("40 mm wide phones")
         if d > cap.SO101_MAX_WIDTH_MM["box"]:
             return (f"In Morph's simulation the stock SO-101's jaws hold round objects up to about "
                     f"{cap.SO101_MAX_WIDTH_MM['cylinder']:g} mm across but flat-sided ones only up to about "
                     f"{cap.SO101_MAX_WIDTH_MM['box']:g} mm; the request doesn't say whether a {d:g} mm {name} is round, so "
                     f"it needs a Morph-generated arm (say it is round, as in \"{d:g} mm cylinders\", to keep the SO-101).")
+        if o.get("shape_unknown") and d < cap.min_width("cylinder", "fsr402"):
+            # Morph's own guess for a job, of no known shape: it may be round, which the jaws drop under 26 mm
+            return (f"In Morph's simulation the stock SO-101's jaws drop round objects narrower than about "
+                    f"{cap.min_width('cylinder', 'fsr402'):g} mm; the request doesn't say whether a {d:g} mm {name} is "
+                    "flat-sided, so it needs a Morph-generated arm.")
         return None
     widest = cap.SO101_MAX_WIDTH_MM.get(o.get("shape"), cap.SO101_MAX_WIDTH_MM["cylinder"])
     if d > widest:
@@ -2949,6 +3032,8 @@ def _so101_below_min(o: dict | None) -> str | None:
     if not o or "diameter_mm" not in (o.get("stated") or []):
         return _so101_least(o)   # only when the user stated the width (not a preset's default size)
     d, shape = float(o.get("diameter_mm", 0) or 0), o.get("shape")
+    if o.get("shape_unknown") and "shape" not in (o.get("stated") or []):
+        shape = "cylinder"   # Morph's guess of no known shape: it may be round
     lo = cap.SO101_MIN_FLAT_MM if shape == "box" else cap.min_width("cylinder", "fsr402")
     if d and d < lo:
         kind = "flat-sided" if shape == "box" else "round"
@@ -2978,7 +3063,7 @@ def assess_scope(b: Brief) -> dict:
         if near_obj and near_obj["mass_g"] > cap.payload_g("smart_bus", 4):
             slots["budget"] = 1500.0
         obj = sanitize_object(slots.get("object") or ARCHETYPES[arch].objects[0])
-        if not mine and b.flags.get("left_so101") and arch not in ("generic_arm", "so101"):
+        if not mine and b.flags.get("left_so101") and arch != "so101":
             obj = slots["object"] = _left_so101_floor(b, obj, arch)
         so101_here = b.get("existing_hardware") == "so101" or arch == "so101"
         # a stated object below the SO-101's own minimum gets a generated arm, not the stock arm on a bigger stand-in
@@ -2996,7 +3081,7 @@ def assess_scope(b: Brief) -> dict:
                    + (", with Dynamixel servos and 4 joints (about $1,500 in parts)" if slots.get("budget") else "") + ".")
         return {"status": "out_of_scope", "notes": notes, "nearest": {"archetype": arch, "slots": slots, "summary": summary}}
     ov = b.get("object")
-    misfit = _so101_misfit(ov) if b.get("existing_hardware") == "so101" else None
+    misfit = _so101_misfit(ov) if value(b, "existing_hardware") == "so101" else None   # "SO-101 to move jars" too
     if misfit:
         return {"status": "out_of_scope", "notes": [misfit],   # the SO-101's job keeps its emergency stop on a new arm
                 "nearest": {"archetype": _arch_without_so101(b) if a.key == "so101" else
@@ -3280,7 +3365,8 @@ def _not_plain(t: str, s: int, e: int) -> bool:
     return bool(stop < len(t) and t[stop] == "?" or _SUPPOSED.search(t[start:s]) or
                 _AT_LEAST_BEFORE.search(t[max(0, s - 30):s]) or _AT_LEAST_AFTER.match(t, e) or _AT_A_PART.match(t, e) or
                 re.match(r"\s*g\b", t[e - 1:]) and _EMPTY_AFTER.match(t, e) or
-                re.search(r"\b(?:bigger|larger|wider|thicker|heavier)\b", t[e:stop]))
+                re.search(r"\b(?:bigger|larger|wider|thicker|heavier)\b", t[e:stop]) or
+                re.search(r"\b(?:plus|also|another|other|others|extra|more|too|as\s+well)\b", t[start:stop]))
 
 
 def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> list:
@@ -3351,6 +3437,9 @@ def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> 
     for v, s, e in _width_reads(t):
         np, lead = ([], []) if _np_after(t, e) else _np_before(t, s)
         cls = unsure(cls_of(_np_after(t, e) or np, lead, at=s, end=e), _np_after(t, e) or np)
+        if cls[0] == "obj" and not (np or _np_after(t, e)) and _mass_of(t, s, e) and \
+                _names_what(_mass_of(t, s, e), heads, words) not in ("obj", "pron"):
+            cls = "maybe", cls[1]   # "the caps, 20 mm across", "lids: 20 mm wide": a part's, never narrower
         add("w", v, s, cls)
         low_end(s, cls)
     # "the jars are 40 mm at the neck" (a phrasing never read as a width): a part as wide as the objects
@@ -3416,8 +3505,8 @@ def _mass_of(t: str, s: int, e: int) -> list:
     parts = re.split(r"[,;:?!()\-–]|\band\b|\bplus\b", t[:s])
     if len(parts) > 1 and re.fullmatch(r"\s*(?:" + _FIX_WORDS + r"\s+)?(?:(?:about|around|roughly|approximately|~|each|"
                                        r"maybe|probably|only|just)\s+)*", parts[-1]):
-        np = parts[-2].strip(" .").split()
-        return np if _looks_np(np) else []
+        np = re.sub(r"^(?:(?:and|oh|so|also|plus|what about|how about|as for)\s+)+", "", parts[-2].strip(" .")).split()
+        return np if _looks_np(np) else []   # "and the lids? about 20 mm": the lids
     return []
 
 
@@ -3515,6 +3604,11 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None, raw: str | None =
         # their shape ("they come as 40 mm cubes" still says what they are)
         o["name"], o["shape"] = cur.get("name"), cur.get("shape")
         o["stated"] = sorted(set(o.get("stated") or []) - {"shape"} | ({"shape"} & set(cur.get("stated") or [])))
+    if cur is not None and o is not cur and (o.get("key") != cur.get("key") or str(o.get("name")) != str(cur.get("name"))):
+        for k in ("diameter_mm", "mass_g"):   # "they weigh 300 g", then "they come in 40 mm cups": still 300 g or more
+            if k in (cur.get("stated") or []) and cap._num(cur.get(k)) and float(cur[k]) > float(o.get(k) or 0):
+                o[k] = float(cur[k])
+                o["stated"] = sorted(set(o.get("stated") or []) | {k})
     ref = base or o
     was = set(ref.get("stated") or []) if base else set()
     stated = set(o.get("stated") or [])
@@ -3644,6 +3738,13 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
             a2 = _archetype_for_object(v2)
             if _arch(b).key == "generic_arm" and a2:
                 set_archetype(b, a2, 0.9, "user")
+        o = b.slots.get("object")
+        if name in ("task", "layout") and o is not None and isinstance(o.value, dict) and o.value.get("rate_untimed") and \
+                cap._num(o.value.get("rate_g")):
+            # "#task=pick_place" after "sort 50 g balls in 2 kg batches": the arm may take a batch at once
+            ov = {k: v for k, v in o.value.items() if k not in ("rate_g", "rate_untimed")}
+            ov["mass_g"] = max(float(ov["mass_g"]), float(o.value["rate_g"]))
+            b.slots["object"] = Slot(ov, o.source, o.confidence, o.evidence)
         if name == "existing_hardware":   # leaving the SO-101 keeps the job's own people (_arch_without_so101)
             if v2 == "so101":
                 b.flags.pop("left_so101", None)
@@ -3675,6 +3776,9 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
         hw = p["slots"].get("existing_hardware")   # "I have an SO-101" or "use my SO-101", typed in a later message
         if hw is None and value(b, "existing_hardware") == "so101" and _asks_new_arm(nt):
             hw = "none"                            # "actually, build a new arm" after "use my SO-101"
+            # the release kept the SO-101 there, and one that can't take the object went to the nearest robot with the
+            # SO-101's own guess (a raw egg in a kitchen): that job's emergency stop is kept (build_changes)
+            b.flags["so101_guess"] = _archetype_for_object(b.get("object") or value(b, "object")) or "generic_arm"
             set_slot(b, "existing_hardware", hw, "user", 1.0, "answer")
         if hw == "so101":
             set_archetype(b, "so101", 0.9, "user")
@@ -3802,6 +3906,9 @@ def brief_to_changes(b: Brief) -> dict:
                "task.place_y_mm": lay["place"][1], "task.cycle_time_s": float(value(b, "throughput"))})
     extras = set()
     hands = value(b, "task") == "hand_over" or _arch(b).key == "so101" and ARCHETYPES[_arch_without_so101(b)].task == "hand_over"
+    guess = b.flags.get("so101_guess")   # a new arm the release didn't read, for an object its SO-101 couldn't take
+    hands = hands or bool(guess and value(b, "existing_hardware") == "none" and _gives_estop(b, guess) and
+                          (_so101_misfit(b.get("object")) or _so101_below_min(b.get("object"))))
     if value(b, "people_nearby") in ("yes", "children", "pets") or value(b, "environment") in ("lab", "kitchen", "classroom") \
             or hands or b.flags.get("person"):
         extras.add("estop")   # a hand-over's receiver, or a person the request names, is next to it whatever was said

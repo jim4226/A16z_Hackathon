@@ -291,8 +291,8 @@ def test_them_moved_somewhere_are_things(text):
 # ---- 5. a mass per hour or a batch's beside the object's own
 @pytest.mark.parametrize("text", ["move 50 g cubes at 2 kg per hour", "move 50 g cubes, about 2 kg an hour",
                                   "sort 50 g blocks in 2 kg batches", "sort 2 kg of 50 g cubes", "pick up cubes weighing 50 g, 2 kg/h",
-                                  "move 50 g cubes, 2 kg of them a day", "move 50 g cubes at 2 kg per min",
-                                  "sort the 50 g cookies we bake in 2 kg batches", "move 2 kg of 50 g bottles per shift"])
+                                  "move 50 g cubes, 2 kg of them a day", "move 50 g cubes at 500 g per min",
+                                  "sort 50 g cookies in 2 kg batches", "sort 2 kg of 50 g cubes per shift"])
 def test_a_rate_or_a_batch_is_not_the_objects_mass(text):
     b = talk(text)
     assert mass(b) == 50.0 and b.scope["status"] != "out_of_scope", (text, mass(b))
@@ -390,7 +390,7 @@ def test_a_rate_beside_a_mass_they_may_weigh_more_than_stays_as_read(turns):
 @pytest.mark.parametrize("later", ["that's the empty weight", "they hold 300 ml of water", "they're full of soup",
                                    "when full they weigh more", "they're heavier with lids", "some are heavier"])
 def test_a_rate_left_out_comes_back_when_a_later_message_says_they_weigh_more(later):
-    first = "use my SO-101 to pick up 30 mm 50 g cups at 2 kg per hour"
+    first = "use my SO-101 to pick up 30 mm cups weighing 50 g at 2 kg per hour"
     assert so101(talk(first)) and mass(talk(first)) == 50.0
     b = talk(first, later)
     assert not so101(b) and mass(b) == 500.0, later
@@ -634,3 +634,51 @@ def test_the_job_object_assumed_after_leaving_is_checked_as_the_general_one_on_r
     # the release planned the general arm's 45 mm flat-sided box there: re-joining the SO-101 with Morph's own guess for
     # the tools (a round screwdriver widened to 45 mm) kept the stock arm, which the flat-sided box never allowed
     assert not so101(steps(*turns)), turns
+
+
+# ---- the round-5 review: the SO-101 named without "my", Morph's guessed object of no known shape once the SO-101 is
+# left, a part's width after its name, a rename that keeps a stated mass, and the few messages a rate is left out in
+@pytest.mark.parametrize("turns", [
+    ("SO-101 to move jars", "the lids are 20 mm wide"),
+    ("I want the SO-101 to move 40 mm cylinders", "some of them are 20 mm wide"),
+    ("SO-101 to sort 36 mm 80 g cubes at 2 kg per hour",),
+    ("feed my cat with my SO-101", "#existing_hardware=none", "40 mm, 90 g", "keep my SO-101"),
+    ("use my SO-101 to tidy my desk", "I do not have an SO-101", "they are 40 mm wide and weigh 90 g", "use my SO-101"),
+    ("use my SO-101 to pick things up", "let's design a new one", "24 mm, 30 g", "actually, use my SO-101"),
+    ("use my SO-101 to cook breakfast", "#existing_hardware=none", "@nearest", "24 mm, 30 g", "use my SO-101")])
+def test_the_so101_is_checked_whenever_it_is_built(turns):
+    assert not so101(steps(*turns)), turns
+
+
+def test_a_new_arm_the_release_ignored_keeps_the_emergency_stop_its_so101_gave():
+    b = steps("use my SO-101 to sort screws", "actually, build a new arm", "600 g")
+    assert "estop" in (b.changes.get("electronics.extras") or "")
+    b = steps("use my SO-101 to pick things up", "let's design a new one", "24 mm, 30 g", "actually, use my SO-101")
+    assert "estop" in (b.changes.get("electronics.extras") or "")
+
+
+@pytest.mark.parametrize("later", ["the caps, 20 mm across", "lids: 20 mm wide", "and the lids? about 20 mm wide",
+                                   "plus 20 mm wide jars"])
+def test_a_parts_width_after_its_name_never_narrows_the_objects(later):
+    assert width(steps("use my SO-101 to move 40 mm jars", later)) >= 40.0, later
+
+
+def test_a_rename_keeps_the_mass_they_were_said_to_weigh():
+    assert mass(steps("use my SO-101 to move toy blocks", "they weigh 300 g", "they come in 40 mm cups")) >= 300.0
+
+
+@pytest.mark.parametrize("turns, m", [
+    (("use my SO-101 to stack 30 mm 50 g cubes on the left, then move the stack onto the shelf, about 2 kg per hour",), 150),
+    (("use my SO-101 to move 30 mm 50 g cubes at 2 kg per hour", "move the stack"), 150),
+    (("use my SO-101 to move 50 g balls onto the shelf, 2 kg per hour, one move per hour",), 150),
+    (("use my SO-101 to pick up 2 kg of 50 g balls and put them here for a day",), 150),
+    (("use my SO-101 to sort 50 g balls at one per minute and 300 g per minute",), 300),
+    (("use my SO-101 to move 50 g balls at 2 kg per minute",), 150),                  # 40 a minute: several a lift
+    (("use my SO-101 to sort 50 g balls in 2 kg batches", "#task=pick_place"), 150),
+    (("use my SO-101 to pick up 2 kg of 50 g balls every hour",), 150),
+    (("use my SO-101 to sort rods weighing 50 g per 100 mm at 2 kg per hour",), 150),
+    (("use my SO-101 to sort 50 g objects and rods at 2 kg per hour",), 150),
+    (("use my SO-101 to sort 40 mm 95 g tins at 1 kg an hour",), 150)])               # a label's 95 g: what they hold
+def test_a_rate_is_left_out_only_in_the_few_messages_that_say_nothing_more(turns, m):
+    b = steps(*turns)
+    assert mass(b) >= m and not so101(b), (turns, mass(b))

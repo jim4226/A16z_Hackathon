@@ -26,15 +26,15 @@ you build:
   the objects ("the jars are 40 mm at the neck") keeps the stock SO-101 off: their widest part isn't given.
 - Naming again an object Morph knows ("the blocks are fragile") never makes it smaller or lighter than Morph's own size
   for it: 28 mm blocks named again are planned as 40 mm ones, on a generated arm. Say "the blocks are 28 mm wide".
-- A mass per hour or a batch's is left out only beside the object's own mass given with its name ("50 g cubes",
-  "cubes weighing 50 g"), only when every other mass in the message is theirs too, and only when the whole conversation
-  is plain: what the robot should do, where things go, the objects' sizes, the rate and who is around, with every
-  number a size, a mass or a pace, and nothing that may lift a batch or a total at once: a batch or a total is left
-  out only where each object is sorted, tidied or arranged, nowhere taken. Any other word keeps the rate as the object's mass, so the arm is sized for Morph's
-  largest, 500 g: "cubes, 50 g each, at 2 kg per hour", "60 g empty bottles at 2 kg per hour", "some are heavier",
-  "jars of honey", "jars in sleeves", "2 kg of them at a time", "up to 120", even a word about something else ("out of
-  the bin", "the robot is loud"), and a later message with one brings the rate back. A total is read as one object's
-  weight ("130 g in total").
+- A mass per hour or a batch's is left out only in a few plain messages: the request naming the objects with their
+  own mass and a rate per hour, minute, day or shift ("move 30 mm 50 g cubes at 2 kg per hour", "pick up cubes weighing
+  50 g, 2 kg/h"), or a batch they are sorted in ("sort 50 g blocks in 2 kg batches", "sort 2 kg of 50 g cubes"); a
+  reply that is the rate alone ("about 2 kg an hour"); and who is around ("people nearby"). The rate must also be no
+  faster than one object every 4 s, and a container's mass on its label ("95 g tins") is never theirs. Any other
+  message keeps the rate as the object's mass, so the arm is sized for Morph's largest, 500 g: "cubes, 50 g each, at
+  2 kg per hour", "60 g empty bottles at 2 kg per hour", "some are heavier", "move the stack", "2 kg every hour", even
+  a word about something else ("the robot is loud"), and a later message like that brings the rate back. A total is
+  read as one object's weight ("130 g in total").
 - Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits. A
   size said before any object is described ("they're 60 mm" right after "use my SO-101 to load the dishwasher") isn't
   read: name the objects ("the cups are 60 mm wide").
@@ -541,10 +541,11 @@ you build:
   2 kg batches", "sort 2 kg of 50 g cubes") is not the object's mass when the conversation says nothing else about it:
   the arm is sized for 50 g, not Morph's largest. A total stays the object's ("60 g empty, 350 g in total when full" is
   350 g), and so does the rate whenever the conversation says anything more (a part's or what the objects hold, "the
-  pills weigh 1 g each", "jars of honey"; "some are heavier", "on average"; "2 kg of them at a time"), also in a later
-  message ("that's the empty weight"), and a batch or a total that isn't per hour, day or shift when the arm is said
-  to pick up, move or carry them ("pick up 2 kg of 50 g cubes": it may lift them at once); "lots of 300 g jars" and
+  pills weigh 1 g each", "jars of honey"; "some are heavier", "on average"; "2 kg of them at a time", "pick up 2 kg of
+  50 g cubes"), also in a later message ("that's the empty weight", "move the stack"); "lots of 300 g jars" and
   "pouches of 300 g every minute" are the objects' own mass.
+- New robot: an SO-101 named without "my" ("SO-101 to move jars", "can the SO-101 sort ...?") is checked against what
+  its stock jaws hold, as "use my SO-101" is: 65 mm, 300 g glass jars were planned on it.
 - Agent tools: a run's card keeps the lines of the calls it has shown when a list of runs the Studio read before those
   calls reaches the page late (on a busy computer, after Allow once): the card showed Working with none of them, or
   Done without them, until the next update.

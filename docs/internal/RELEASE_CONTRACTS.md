@@ -638,11 +638,13 @@ clamping.
   children, a kitchen's emergency stop; of the person's object's job and the request's words, the one that gives an
   emergency stop, `brief._gives_estop`, else the object's job or the general arm, so an object Morph chose, as after
   "@nearest", never drops it, and an object named after leaving brings its job's stop, as does the job leaving it gave
-  before, by any route: a chip, typed words, a new arm, the nearest robot (`brief._leave_so101`); an SO-101 doing a
-  hand-over job has the hand-over's emergency stop; the object Morph assumes for
+  before, by any route: a chip, typed words, a new arm, the nearest robot (`brief._leave_so101`), and the job of the
+  SO-101's own guess when the release ignored the new arm and its SO-101 could not take the object
+  (`flags["so101_guess"]`); an SO-101 doing a hand-over job has the hand-over's emergency stop; an SO-101 named
+  without "my" ("SO-101 to move jars") gets the same checks of what its jaws hold; the object Morph assumes for
   that job, its own or the nearest robot's stand-in, is never narrower or lighter than the general arm's 45 mm, 100 g
-  flat-sided box, and is that box's shape when widened to it, `brief._left_so101_floor`), so moving to or from the
-  SO-101 never drops one. A typed reply's sizes
+  flat-sided box and has no known shape (`shape_unknown`: the SO-101, named again, holds it only from 26 to 34 mm),
+  `brief._left_so101_floor`), so moving to or from the SO-101 never drops one. A typed reply's sizes
   (`brief._later_sizes`, `brief._size_reads`): only a phrasing the rules read before this change can replace the
   objects' size ("60 mm", "sorry, 60 mm", "the cylinders are 60 mm wide", "they weigh 60 g"), and only when it is plainly
   all of theirs; any other only widens them or weighs them more, and a smaller width it gives is kept as `least_mm`:
@@ -667,7 +669,10 @@ clamping.
   ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach, nor
   a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "sort 50 g blocks in 2 kg
   batches", "sort 2 kg of 50 g cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by
-  name, `brief._names_objects`, a batch or a total that isn't per hour, day or shift (`brief._TIMED`) only when no verb
+  name, `brief._names_objects`, every message of the conversation one of a few whole messages (`brief._rate_template`: the request
+  naming the objects with their own mass and a rate per hour, minute, day or shift, or a batch they are sorted in; a
+  reply that is the rate alone; who is around), no faster than one object every 4 s, never a container's label mass
+  ("95 g tins"), and a batch or a total that isn't per hour, day or shift (`brief._TIMED`) only when no verb
   in the conversation has the arm handle them (`brief._HANDLES`: "pick up 2 kg of 50 g cubes" may be one lift), the
   whole conversation as typed is plain, `brief._plain_talk` (every word in `brief._PLAIN_WORDS` or the objects' own
   head noun, never the other words of a preset's name such as the samples of a glass vial of samples, nor that noun
