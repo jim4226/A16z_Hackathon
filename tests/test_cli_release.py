@@ -164,7 +164,8 @@ def test_the_access_link_reaches_a_log_file_while_the_studio_runs(tmp_path):
                                  "--port", str(port)], stdout=out, stderr=subprocess.STDOUT, env=env, cwd=str(tmp_path))
     try:
         deadline = time.time() + 120
-        while time.time() < deadline and "?token=" not in log.read_text(encoding="utf-8", errors="replace"):
+        # each line goes out as it is printed: the links, then the access code after them
+        while time.time() < deadline and "Access code: " not in log.read_text(encoding="utf-8", errors="replace"):
             assert proc.poll() is None, log.read_text(encoding="utf-8", errors="replace")[-2000:]
             time.sleep(0.2)
         text = log.read_text(encoding="utf-8", errors="replace")
