@@ -10,17 +10,42 @@ The first tagged release. Generated designs, wiring and firmware are not bench-v
 
 ### Known issues
 
-New robot's built-in rules (they read every message when no Claude key is set) don't follow these in a later message.
-Check the object Morph assumed in its summary before you build, and say these in the first message instead:
-- A message that only corrects a size ("sorry, they're 60 mm") is not read: the first size stays. A size in a later
-  message can be taken as the objects' when it names something else ("the caps, 35 mm", "the lids are 35 mm across").
-  Either way the stock SO-101 can be kept for objects its jaws don't hold, and the simulation checks the size Morph
-  read, not the real one.
-- "Actually, build a new arm" after "use my SO-101" is not read; "I don't have an SO-101" is.
-- "Them" served food or drink ("a robot that delivers them coffee") is not read as people next to the robot, so no
-  emergency stop is added. Name who it serves ("brings the guests coffee"), or add "people work next to it".
-- A mass per hour or a batch's total beside the object's own mass is read as the larger ("50 g cubes at 2 kg per hour"
-  are planned as 500 g, Morph's largest): the arm is stronger than needed.
+New robot's built-in rules (they read every message when no Claude key is set) read these cautiously, so the robot can
+come out bigger or with a generated arm where your SO-101 would do. Check the object Morph assumed in its summary before
+you build:
+- A smaller size in a later message narrows the objects only as a reply that is just the size ("20 mm", "sorry,
+  20 mm") or with "wide", "across" or "in diameter" ("the cylinders are 20 mm wide"). Said any other way ("they're
+  20 mm", "the cylinders are 20 mm", "actually 20 mm", "the diameter is 20 mm", "width: 20 mm") it may be a lid's, a
+  question or a lower end, so the larger size stays and the stock SO-101 isn't kept in case they are 20 mm. The same goes for a size for some of the objects or a
+  part of them, even one the rules read as theirs before ("the small ones are 20 mm across", "the caps are 20 mm
+  across"): it never narrows them, but keeps the SO-101 off when its jaws wouldn't hold it, even if it is only a cap's.
+  After such a size, a reply that is just a size ("some of them are 20 mm", then "sorry, 40 mm") may correct that one,
+  so it only widens them too. Say "the bottles are 40 mm wide" to keep the SO-101.
+- A larger size for a part, some of the objects or something else widens them ("50 mm lids" on 40 mm jars plan 50 mm
+  jars, "the bins are 100 mm wide" plans 100 mm objects), as before. A size at a neck, an opening or a lid as wide as
+  the objects ("the jars are 40 mm at the neck") keeps the stock SO-101 off: their widest part isn't given.
+- Naming again an object Morph knows ("the blocks are fragile") never makes it smaller or lighter than Morph's own size
+  for it: 28 mm blocks named again are planned as 40 mm ones, on a generated arm. Say "the blocks are 28 mm wide".
+- A mass per hour or a batch's is left out only in a few plain messages: the request naming the objects with their
+  own mass and a rate per hour, minute, day or shift ("move 30 mm 50 g cubes at 2 kg per hour", "pick up cubes weighing
+  50 g, 2 kg/h"), or a batch they are sorted in ("sort 50 g blocks in 2 kg batches", "sort 2 kg of 50 g cubes"); a
+  reply that is the rate alone ("about 2 kg an hour"), the pace ("one every 30 s") or who is around ("people
+  nearby"). The rate must also need no more than one object a lift at the pace the arm is built at (one every 6 s
+  unless you give another; a day's, a shift's or a week's amount as if done in an hour), the objects' own mass counts
+  only for plainly solid things ("50 g cubes", "cubes weighing 50 g") or a container said to weigh it ("tins weighing
+  95 g"), never a label's mass or what a container holds ("95 g tins", "100 g bars", "each jar is 45 g", "jams
+  weighing 90 g"), and a
+  batch is left out only until a task or a layout is chosen (answering the layout question brings it back). Any other message
+  keeps the rate as the object's mass, so the arm is sized for Morph's largest, 500 g: "cubes, 50 g each, at 2 kg per
+  hour", "60 g empty bottles at 2 kg per hour", "tidy 50 g toys in 2 kg batches", "some are heavier", "move the
+  stack", "2 kg every hour", even a word about something else ("the robot is loud"), and a later message like that
+  brings the rate back. A total is read as one object's weight ("130 g in total").
+- Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits,
+  with their unit ("sorry, 60" or "double that" isn't read). A size said before any object is described ("they're 60 mm" right after "use my SO-101 to load the dishwasher") isn't
+  read: name the objects ("the cups are 60 mm wide").
+- "Them" given anything but food or drink ("delivers them parts") is not read as people next to the robot, and a new
+  arm is read only when asked for ("build a new arm", "I'd rather have a new arm"), not in a question ("can you design a
+  new arm?"). Name who it serves, and say "build a new arm".
 
 ### Features (beta)
 
@@ -494,6 +519,50 @@ Check the object Morph assumed in its summary before you build, and say these in
 
 ### Fixes
 
+- New robot's built-in rules (no Claude key) follow a later message. A larger size for the objects is read ("sorry,
+  they're 60 mm", "the cylinders are 60 mm", "actually 60 mm"), so the stock SO-101 is no longer kept for 60 mm objects
+  its jaws don't hold. A size that may be something else's never narrows or lightens the objects: a part, some of them
+  or what they hold ("the caps, 35 mm", "the lids of the jars are 35 mm across", "lids 20 mm wide", "cap diameter
+  20 mm", "the pills are 10 mm" in pill bottles, "the small ones are 20 mm", "the lids? they're 20 mm", "the lids are
+  20 g each", "the lids: 20 g", "lids 20 g"), a question
+  ("what if they're 40 mm?") or a lower end ("40 mm and up", "at least 40 mm"). The stock SO-101 is kept only when its
+  jaws hold a
+  smaller size that may be theirs too (round from 26 mm, flat-sided from 22.5 mm), even when the SO-101 is named only
+  later, and a range is checked at both ends ("cylinders between 20 and 40 mm", "40 mm and 20 mm cylinders"). Naming
+  the object again ("the eggs are fragile") keeps the sizes you gave instead of Morph's preset (150 g or 60 mm eggs
+  were planned as 60 g, 44 mm ones on the SO-101), and naming the SO-101 again after a generated arm was accepted for
+  objects below its jaws' minimum ("15 mm beads", then "keep my SO-101") no longer puts it on the 30 mm stand-in. A
+  new shape is read ("sorry, they come as 40 mm cubes"), and so is a larger size said beside their name or a width
+  word ("the cylinders 60 mm", "60 mm for the cylinders", "60 mm each", "the diameter is 60 mm", "width: 60 mm"), and
+  a width before a comma in the request ("use my SO-101 to move 60 mm, cylinders weighing 85 g" planned 45 mm cylinders
+  on the stock SO-101). A part's size never narrows them ("30 mm handles" on 50 mm cylinders) and a part's shape keeps the stock SO-101 off
+  when it may not hold their widest part ("45 mm bases, they're square"); a round shape is read from a reply that says
+  it of them ("they're round"), and a round word in any other reply ("they're round, sorry", "my SO-101 can do it", "the
+  caps are round") leaves their shape unknown, so the stock SO-101 holds them only from 26 to 34 mm (the release made
+  40 mm cubes round, on the SO-101).
+- New robot: "actually, build a new arm" after "use my SO-101" builds a Morph-generated arm. An SO-101 robot takes who
+  is next to it and where it works from its job, as a generated arm does ("use my SO-101 to tidy up the playroom" has
+  children nearby and an emergency stop), and leaving the SO-101 keeps them ("cups to the sink": people nearby), also
+  after the nearest robot was accepted ("recycles 80 mm espresso cups") and when the object is named afterwards ("I
+  don't have an SO-101", then espresso cups), whichever way the SO-101 is left (a chip, typed words, a new arm, the
+  nearest robot): a kitchen's or a lab's emergency stop too. An SO-101 handing tools over has the emergency stop a
+  generated arm for that job has. The object Morph then assumes for the job is never smaller or lighter than the
+  45 mm, 100 g one leaving the SO-101 gave before. A job's robot that kept your SO-101 (the nearest robot for "it should
+  cook dinner") keeps the job's emergency stop when a later size means the SO-101 can't hold the object; "my SO-101
+  broke", "I lent my SO-101 to a friend" and "forget the SO-101" leave the SO-101, with the emergency stop the SO-101's
+  own guess gave (not "I can't forget my SO-101" or "it broke but it's fixed now"); and the "no SO-101" answer on a job's
+  robot keeps its people ("tidy the playroom": children nearby), with the 45 mm, 100 g object it gave before.
+- New robot: "them" served food or drink ("a robot that delivers them coffee", "makes them tea") are people next to the
+  robot, so it gets an emergency stop.
+- New robot: a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "sort 50 g blocks in
+  2 kg batches", "sort 2 kg of 50 g cubes") is not the object's mass when the conversation says nothing else about it:
+  the arm is sized for 50 g, not Morph's largest. A total stays the object's ("60 g empty, 350 g in total when full" is
+  350 g), and so does the rate whenever the conversation says anything more (a part's or what the objects hold, "the
+  pills weigh 1 g each", "jars of honey"; "some are heavier", "on average"; "2 kg of them at a time", "pick up 2 kg of
+  50 g cubes"), also in a later message ("that's the empty weight", "move the stack"); "lots of 300 g jars" and
+  "pouches of 300 g every minute" are the objects' own mass.
+- New robot: an SO-101 named without "my" ("SO-101 to move jars", "can the SO-101 sort ...?") is checked against what
+  its stock jaws hold, as "use my SO-101" is: 65 mm, 300 g glass jars were planned on it.
 - Teams: a tab's own first load no longer redraws it under what you started there. On a slow link, Release clicked
   as soon as Review opened lost its box and the name being typed (the next keys went to the page, where P turns on
   Present). Review no longer offers Release from the gate of the revision you were on before. When Share's own load
