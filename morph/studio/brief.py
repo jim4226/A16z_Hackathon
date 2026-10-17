@@ -3192,12 +3192,13 @@ _BARE_S = re.compile(r"(?:about |around |roughly |~|one every )?(\d+(?:\.\d+)?)\
 # 60 mm", where "they" may be a lid, a gap, a peg or the fingers) can only widen or weigh the objects more, and a smaller
 # width it gives is kept as the least they may be (least_mm), which the stock SO-101's jaws must still hold.
 _FIX_WORDS = (r"(?:sorry|actually|oops|correction|my bad|my mistake|i meant|i mean|make (?:that|it)|more like|no|nope|wait|"
-              r"um|erm|er|oh|ah|ok|okay|right)")
+              r"um|erm|er|oh|ah|ok|okay|right|typo|(?:it\s+)?should\s+(?:say|be|read))")
 # a later message that corrects the only mass so far ("sorry, 300 g every minute"): the mass may be the objects' own
 _CORRECTS = re.compile(r"\s*(?:sorry|actually|oops|whoops|correction|my bad|my mistake|i meant|i mean|make (?:that|it)|"
                        r"more like|no|nope|wait|scratch that|rather)\b")
 # a reply that is only a width, after a word that corrects one ("actually 60 mm", "60 mm actually")
-_FIX_MM = re.compile(r"(?:" + _FIX_WORDS + r"[,!:]?\s+)?(?:about |around |roughly |~)?(\d+(?:\.\d+)?)\s*mm"
+_FIX_MM = re.compile(r"(?:" + _FIX_WORDS + r"[,!:]?\s+)?(?:about |around |roughly |~|approx\.? |approximately |circa )?"
+                     r"(\d+(?:\.\d+)?)\s*mm"
                      r"(?:\s+(?:wide|across|in diameter))?(?:\s+(?:actually|instead|then|sorry))?")
 _SIZE_END = (r"(?=\s*(?:$|[.,;:!?)]|(?:each|apiece|actually|then|instead|now|not|and|but|so|sorry|thanks|please|big|in\s+size|"
              r"or\s+so)\b))")
@@ -3403,6 +3404,8 @@ def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> 
     def cls_of(np, lead=(), new=False, at=0, end=0):
         """(class, the narrow part the size is of or None) for a size spanning t[at:end] said of `np`."""
         what = _names_what(np, heads, words) if np else None
+        if new and np and np[-1] in _DIM_WORDS:   # "the diameter is 60 mm", "the cylinders' width is 60 mm": theirs, if
+            what = "pron" if _dim_theirs(t, at, words) else "other"   # nothing else's
         part = _singular(np[-1]) if np and what == "other" and _singular(np[-1]) in _NARROW_PARTS else None
         loc = _AT_A_PART.match(t, end)
         if loc:
@@ -3496,6 +3499,28 @@ def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> 
         if np and not (_NOT_A_SIZE.search(t[max(0, m.start(1) - 24):m.end()]) or
                        _NOT_A_SIZE_JUST_BEFORE.search(t[max(0, m.start(1) - 16):m.start(1)])):
             add("w", m.group(1), m.start(1), cls_of(np, lead, new=True, at=m.start(1), end=m.end(1)))
+            spans.append((m.start(1), m.end(1)))   # said of what the words before it name: never read again below
+    # a width said beside their own noun, "each" or a width word with no word tying them, a way never read before
+    # ("the cylinders 60 mm", "60 mm for the cylinders", "60 mm (all of them)", "60 mm each", "width: 60 mm"): only
+    # wider, or the least they may be; never a distance ("move the cylinders 60 mm to the left") or another thing's
+    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*mm\b", t):
+        s0, e0 = m.start(1), m.end()
+        if base is None or any(s <= s0 < e for s, e in spans) or _NOT_A_SIZE.search(t[max(0, s0 - 24):e0]) or \
+                _NOT_A_SIZE_JUST_BEFORE.search(t[max(0, s0 - 16):s0]) or _TO_A_THING.search(t[max(0, s0 - 40):s0]) or \
+                _MOVED_BY.search(t[_clause_start(t, s0):s0]) or _DISTANCE_AFTER.match(t, e0) or \
+                re.search(r"\b(?:from|to|by|at|every|per|than|over|under|within|up|down)\s+(?:about\s+|around\s+)?$", t[:s0]):
+            continue
+        np = _np_after(t, e0)
+        beside = _part_beside(t, s0, e0, heads, words)
+        dim = re.search(r"\b(?:" + "|".join(_DIM_WORDS) + r")\s*(?:is|was|=|:|-|of)?\s*(?:about\s+|around\s+|approx\.?\s+|"
+                        r"roughly\s+|~\s*)?$", t[max(0, s0 - 30):s0])
+        mine = np and _names_what(np, heads, words) in ("obj", "pron") or not np and (
+            beside and _names_what(beside, heads, words) in ("obj", "pron") or
+            re.match(r"\s*(?:wide|across|in\s+diameter)?\s*(?:each|apiece)\b(?!\s+(?:way|side|time|step|direction|move|end|"
+                     r"axis|direction))", t[e0:]) or
+            dim and _dim_theirs(t, s0, words))
+        if mine:
+            add("w", m.group(1), s0, cls_of([], (), new=True, at=s0, end=e0))
     masses = _mass_reads(t)
     own_before = False
     if base is not None and "mass_g" in (base.get("stated") or []):
@@ -3538,6 +3563,45 @@ def _mass_of(t: str, s: int, e: int) -> list:
     return []
 
 
+_DIM_WORDS = ("diameter", "width", "size", "dia", "thickness")
+_DIM_LINKS = frozenset(("has", "have", "had", "with", "of", "is", "are", "was", "were", "got", "gets", "come", "comes",
+                        "total", "overall", "outer", "outside", "full", "max", "maximum", "actual", "real"))
+_FIX_WORD_SET = frozenset(("sorry", "actually", "oops", "correction", "typo", "update", "ok", "okay", "right", "no", "nope",
+                           "wait", "um", "erm", "er", "oh", "ah", "also", "so", "well", "hmm", "mistake", "bad", "meant", "mean"))
+# a verb that moves the objects a distance ("move the cylinders 60 mm"), and what after a length says it is one ("60 mm
+# to the left", "60 mm higher")
+_MOVED_BY = re.compile(r"\b(?:mov\w*|push\w*|slid\w*|shift\w*|lift\w*|rais\w*|lower\w*|drop\w*|carr\w*|turn\w*|rotat\w*|"
+                       r"spac\w*|offset\w*|travel\w*|reach\w*|extend\w*|go|goes|went|bring\w*|brought|take|takes|took|"
+                       r"put\w*|plac\w*|set|sets|nudg\w*|step\w*|stack\w*|hold\w*|grip\w*|open\w*|clos\w*)\b")
+_DISTANCE_AFTER = re.compile(r"\s*(?:to\b|towards?\b|left\b|right\b|forwards?\b|backwards?\b|back\b|up\b|down\b|away\b|apart\b|"
+                             r"from\b|off\b|along\b|over\b|across\s+the\b|higher\b|lower\b|further\b|farther\b|closer\b|"
+                             r"sideways\b|in\s+front\b|behind\b|above\b|below\b|high\b|tall\b|long\b|deep\b|of\s+travel\b|"
+                             r"in\s+(?:height|length|depth)\b|between\b|more\b|less\b|bigger\b|smaller\b|wider\b|narrower\b)")
+
+
+def _dim_theirs(t: str, at: int, words: set) -> bool:
+    """Whether the width word before a size at `at` ("the diameter is 60 mm", "width: 60 mm") is the objects': said
+    of nothing else ("the bin's width", "bin width", "the width of the slot" are not)."""
+    m, s0 = None, _clause_start(t, at, ";!?,")   # "width: 60 mm"
+    for m in re.finditer(r"\b(?:" + "|".join(_DIM_WORDS) + r")\b", t[s0:at]):
+        pass
+    if m is None:
+        return False
+    before = [re.sub(r"'s?$", "", w) for w in re.findall(r"[a-z][a-z'-]*", t[s0:s0 + m.start()])]
+    after = t[s0 + m.end():at]
+    if re.match(r"\s+of\s+(?!them\b|each\b|these\b|those\b|the\s+(?:" + "|".join(sorted(words) or ["-"]) + r")s?\b)", after):
+        return False   # "the width of the slot is 60 mm"
+    while before and (before[-1] in _DETS - {"their", "its"} or before[-1] in _DIM_LINKS):
+        before.pop()   # "the gripper has a width of 60 mm": the gripper's
+    owner = before[-1] if before else ""
+    return not owner or owner in ("their", "its", "they", "them") or owner in _PRONOUNS or owner in _FIX_WORD_SET or \
+        owner in _NP_STOP or _singular(owner) in words
+
+
+def _clause_start(t: str, s: int, marks: str = ";!?,:") -> int:
+    return max([m.end() for m in re.finditer(r"[" + marks + r"]|\.(?!\d)|\b(?:and|but|then|so)\b", t[:s])], default=0)
+
+
 _SIZE_WORDS = frozenset(("diameter", "dia", "width", "widths", "size", "sizes", "measurement", "measurements", "weight",
                          "weights", "mass", "wide", "across", "thick", "approx", "approximately", "about", "around",
                          "roughly", "just", "only", "exactly", "precisely", "nearly", "almost", "maybe", "probably"))
@@ -3563,6 +3627,8 @@ def _part_beside(t: str, s: int, e: int, heads: set, words: set) -> list:
     head = toks[-1]
     if _singular(head) in _PARTS | _NARROW_PARTS and _singular(head) not in heads | words:
         return [head]   # "lids 20 mm wide", "jar lids 20 mm", "cap diameter 20 mm"
+    if _singular(head) in heads and not (len(toks) > 1 and (toks[-2] in _PREPS or toks[-2] in _QUANTS)):
+        return [head]   # "cylinders 60 mm": theirs (never "some cylinders", "of the cylinders")
     if head in _NP_STOP or head in _DETS or head in _PRONOUNS or head in _TIES:
         return []
     for n in (2, 3):   # "the caps 20 mm", "the small ones 20 mm"

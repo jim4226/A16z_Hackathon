@@ -15,8 +15,8 @@ come out bigger or with a generated arm where your SO-101 would do. Check the ob
 you build:
 - A smaller size in a later message narrows the objects only as a reply that is just the size ("20 mm", "sorry,
   20 mm") or with "wide", "across" or "in diameter" ("the cylinders are 20 mm wide"). Said any other way ("they're
-  20 mm", "the cylinders are 20 mm", "actually 20 mm") it may be a lid's, a question or a lower end, so the larger size
-  stays and the stock SO-101 isn't kept in case they are 20 mm. The same goes for a size for some of the objects or a
+  20 mm", "the cylinders are 20 mm", "actually 20 mm", "the diameter is 20 mm", "width: 20 mm") it may be a lid's, a
+  question or a lower end, so the larger size stays and the stock SO-101 isn't kept in case they are 20 mm. The same goes for a size for some of the objects or a
   part of them, even one the rules read as theirs before ("the small ones are 20 mm across", "the caps are 20 mm
   across"): it never narrows them, but keeps the SO-101 off when its jaws wouldn't hold it, even if it is only a cap's.
   After such a size, a reply that is just a size ("some of them are 20 mm", then "sorry, 40 mm") may correct that one,
@@ -38,8 +38,8 @@ you build:
   hour", "60 g empty bottles at 2 kg per hour", "tidy 50 g toys in 2 kg batches", "some are heavier", "move the
   stack", "2 kg every hour", even a word about something else ("the robot is loud"), and a later message like that
   brings the rate back. A total is read as one object's weight ("130 g in total").
-- Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits. A
-  size said before any object is described ("they're 60 mm" right after "use my SO-101 to load the dishwasher") isn't
+- Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits,
+  with their unit ("sorry, 60" or "double that" isn't read). A size said before any object is described ("they're 60 mm" right after "use my SO-101 to load the dishwasher") isn't
   read: name the objects ("the cups are 60 mm wide").
 - "Them" given anything but food or drink ("delivers them parts") is not read as people next to the robot, and a new
   arm is read only when asked for ("build a new arm", "I'd rather have a new arm"), not in a question ("can you design a
@@ -530,7 +530,8 @@ you build:
   the object again ("the eggs are fragile") keeps the sizes you gave instead of Morph's preset (150 g or 60 mm eggs
   were planned as 60 g, 44 mm ones on the SO-101), and naming the SO-101 again after a generated arm was accepted for
   objects below its jaws' minimum ("15 mm beads", then "keep my SO-101") no longer puts it on the 30 mm stand-in. A
-  new shape is read ("sorry, they come as 40 mm cubes").
+  new shape is read ("sorry, they come as 40 mm cubes"), and so is a larger size said beside their name or a width
+  word ("the cylinders 60 mm", "60 mm for the cylinders", "60 mm each", "the diameter is 60 mm", "width: 60 mm").
 - New robot: "actually, build a new arm" after "use my SO-101" builds a Morph-generated arm. An SO-101 robot takes who
   is next to it and where it works from its job, as a generated arm does ("use my SO-101 to tidy up the playroom" has
   children nearby and an emergency stop), and leaving the SO-101 keeps them ("cups to the sink": people nearby), also

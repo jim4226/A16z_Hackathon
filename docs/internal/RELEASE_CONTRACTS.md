@@ -650,7 +650,11 @@ clamping.
   objects' size ("60 mm", "sorry, 60 mm", "the cylinders are 60 mm wide", "they weigh 60 g"), and only when it is plainly
   all of theirs; any other only widens them or weighs them more, and a smaller width it gives is kept as `least_mm`:
   a phrasing read for the first time ("they're 60 mm", where "they" may be a lid, a gap or a peg, and is the lid after
-  one, `brief._topic`; "the cylinders are 60 mm"; "actually 60 mm"), a part's, some of them' or what they hold (a noun
+  one, `brief._topic`; "the cylinders are 60 mm"; "actually 60 mm", "typo 60 mm", "approx 60 mm"; a width said beside
+  their own noun, "each" or a width word that is theirs, `brief._dim_theirs`: "the cylinders 60 mm", "60 mm for the
+  cylinders", "60 mm (all of them)", "60 mm each", "the diameter is 60 mm", "width: 60 mm", never a distance,
+  `brief._MOVED_BY`, `brief._DISTANCE_AFTER`, "move the cylinders 60 mm to the left", "60 mm each way", nor another
+  thing's, "bin width 60 mm", "the width of the slot is 60 mm"), a part's, some of them' or what they hold (a noun
   after a preposition or a quantifier: "the lids of the jars", "some of the balls", "half the jars"; "the small ones";
   the candles in candle jars), a question or a supposition, a lower end ("40 mm and up", "at least 40 mm") or the size at
   one part ("30 mm at the top", `brief._not_plain`), a reply with no noun of theirs after a smaller size some of them

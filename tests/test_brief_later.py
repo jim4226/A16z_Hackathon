@@ -777,3 +777,28 @@ def test_a_batch_reply_never_names_the_objects():
 def test_a_rate_is_left_out_after_with_my_so101_too():
     b = talk("with my SO-101, move 30 mm 50 g cubes at 2 kg per hour")
     assert mass(b) == 50.0 and so101(b)
+
+
+# ---- a later width said beside their own noun, "each" or a width word, ways the release never read ("the cylinders
+# 60 mm", "width: 60 mm", "the diameter is 60 mm"): read, but only ever wider; a smaller one is the least they may be
+@pytest.mark.parametrize("later", ["the cylinders 60 mm", "width 60 mm", "width: 60 mm", "60 mm for the cylinders",
+                                   "60 mm (all of them)", "typo 60 mm", "the diameter is 60 mm", "their diameter is 60 mm",
+                                   "the cylinders' diameter is 60 mm", "60 mm each", "it should say 60 mm", "approx 60 mm",
+                                   "the width is 60 mm"])
+def test_a_larger_width_said_any_of_these_ways_keeps_the_so101_off(later):
+    b = steps("use my SO-101 to move 30 mm cylinders weighing 50 g", later)
+    assert width(b) == 60.0 and not so101(b), later
+
+
+@pytest.mark.parametrize("later", ["the cylinders 20 mm", "typo 20 mm", "width 20 mm", "20 mm for the cylinders",
+                                   "20 mm (all of them)"])
+def test_a_smaller_width_said_a_new_way_never_narrows_but_keeps_the_so101_off_below_its_jaws(later):
+    b = steps("use my SO-101 to move 40 mm cylinders", later)
+    assert width(b) == 40.0 and not so101(b), later
+
+
+@pytest.mark.parametrize("later", ["60 mm each way", "the bin's width is 60 mm", "bin width 60 mm", "the width of the slot is 60 mm",
+                                   "move the cylinders 60 mm to the left", "gripper width 60 mm", "the cylinders 60 mm apart"])
+def test_a_distance_or_another_things_width_beside_them_is_not_theirs(later):
+    b = steps("use my SO-101 to move 30 mm cylinders weighing 50 g", later)
+    assert width(b) == 30.0 and so101(b), later
