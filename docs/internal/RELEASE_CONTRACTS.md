@@ -660,7 +660,8 @@ clamping.
   cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by name, `brief._names_objects`, and
   no word in the conversation says the object may weigh more than a mass given or that several are lifted at once,
   `brief._MORE_THAN_SAID`: empty, net, what it holds or a volume, a lid, some of them, a hedge or a comparison ("on
-  average", "some are heavier"), containers of them ("cartons of 50 g eggs"), "at a time"; a batch the arm handles is
+  average", "some are heavier", "not all the same weight"), what they sit in or come in ("jars in sleeves", "the tray
+  has pockets", "cartons of 50 g eggs"), "at a time"; a batch the arm handles is
   what it lifts at once, "it lifts them in 2 kg batches"; a correction of the only mass so far, "sorry, 300 g every
   minute", is no rate; the rate left out is kept as the object's `rate_g` and is its mass again when a later message
   says they may weigh more, "that's the empty weight"; a total is one object's, "130 g in total"; a mass tied to its

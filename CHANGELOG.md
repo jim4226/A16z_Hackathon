@@ -31,9 +31,10 @@ you build:
   conversation says an object may weigh more than that or that several are lifted at once. Otherwise it stays the
   object's mass, so the arm is sized for Morph's largest, 500 g: "cubes, 50 g each, at 2 kg per hour", a rate beside a
   part's, an empty, a net or "at least" weight ("60 g empty bottles at 2 kg per hour"), a hedge ("50 g on average",
-  "some are heavier", "or so"), what they hold ("jars of honey", "bottles of 500 ml"), containers of them ("cartons of
-  50 g eggs") or a batch lifted at once ("2 kg of them at a time", "it lifts them in 2 kg batches"), even when the word
-  is about something else ("out of the bin"). A total is read as one object's weight ("130 g in total").
+  "some are heavier", "or so"), what they hold ("jars of honey", "bottles of 500 ml"), what they sit in or come in
+  ("jars in sleeves", "they're stored in 30 mm cups", "cartons of 50 g eggs") or a batch lifted at once ("2 kg of them
+  at a time", "it lifts them in 2 kg batches"), even when the word is about something else ("out of the bin"). A total
+  is read as one object's weight ("130 g in total").
 - Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits.
 - "Them" given anything but food or drink ("delivers them parts") is not read as people next to the robot, and a new
   arm is read only when asked for ("build a new arm", "I'd rather have a new arm"), not in a question ("can you design a
