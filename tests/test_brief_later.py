@@ -423,7 +423,6 @@ def test_a_word_made_with_food_is_no_food_served(text):
     ("use my SO-101 to move 30 mm cylinders", "these are 15 mm"),
     ("use my SO-101 to move 30 mm cylinders", "they're exactly 15 mm"),
     ("use my SO-101 to move 30 mm cylinders", "they all measure 15 mm"),
-    ("use my SO-101 to move samples in the lab", "they're 60 mm"),                         # wider than the assumed one
     ("use my SO-101 to move 50 mm cylinders weighing 50 g", "30 mm and up")])
 def test_a_size_the_so101_may_not_hold_keeps_it_off(turns):
     b = talk(*turns)
@@ -503,7 +502,6 @@ def steps(*turns):
     ("a robot to move 30 mm cylinders", "sorry, they come as 40 mm cubes", "use my SO-101"),
     ("use my SO-101 to move 30 mm cubes", "sorry, they come as 24 mm cylinders"),        # round: under 26 mm
     ("use my SO-101 to move 40 mm cylinders", "not all of them are 30 mm, some are 20 mm"),
-    ("use my SO-101 to move samples in the lab", "these are 15 mm"),
     ("use my SO-101 to stack 30 mm bottles", "45 mm necks", "@nearest", "keep my SO-101"),
     ("use my SO-101 to pour me a beer", "they're 50 mm")])
 def test_a_later_shape_or_size_the_so101_may_not_hold_keeps_it_off(turns):
@@ -527,7 +525,8 @@ def test_leaving_the_so101_in_any_order_keeps_an_emergency_stop(turns):
 
 
 def test_a_size_before_any_object_never_makes_the_object_lighter_or_narrower():
-    # Morph's generic object (45 mm, 100 g) is the least "they're 60 mm" widens; the nearest robot's stand-in still
+    # "they're 60 mm" before any object is described is read as before (not at all): leaving the SO-101 for the
+    # dishes gives their own object, never below the general arm's 45 mm, 100 g, and the nearest robot's stand-in still
     # decides when the request is out of scope (a 330 ml bottle for a beer)
     b = steps("use my SO-101 to load the dishwasher", "they're 60 mm", "#existing_hardware=none")
     assert width(b) >= 60.0 and mass(b) >= 100.0
@@ -558,3 +557,57 @@ def test_the_object_assumed_for_a_job_left_for_the_so101_is_never_smaller_than_b
     # object (a 30 g toy block, a screwdriver) is never planned narrower or lighter than that
     b = steps(*turns)
     assert width(b) >= 45.0 and mass(b) >= 100.0 and "estop" in (b.changes.get("electronics.extras") or ""), turns
+
+
+# ---- the round-4 review: what is said after a size before any object, a holder's noun, every way of leaving the
+# SO-101, and the rate rule's remaining gaps
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101", "they're 60 mm", "they weigh 600 g"),
+    ("use my SO-101", "they're 60 mm", "sorry, 90 mm"),
+    ("use my SO-101 to stack things", "they're 30 mm", "300 g"),
+    ("use my SO-101 to move toy blocks", "they sit in 40 mm holders"),      # 40 mm flat-sided blocks: over 34 mm
+    ("use my SO-101 to move small boxes", "they come in 45 mm sleeves")])
+def test_a_size_said_later_still_keeps_the_so101_off_for_what_it_cannot_hold(turns):
+    b = steps(*turns)
+    assert not so101(b), (turns, width(b), mass(b))
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to tidy up the playroom", "#object=small_box", "@nearest", "#object=espresso_cup", "#people_nearby=no"),
+    ("use my SO-101 to cook breakfast", "@nearest", "actually, build a new arm", "#object=pliers", "#environment=workshop"),
+    ("use my SO-101 to put the toys on the shelf", "@nearest", "#existing_hardware=none", "#object=toy_block",
+     "nobody is around"),
+    ("use my SO-101 to pick up 30 mm 60 g screwdrivers at 2 kg per hour, nobody nearby",)])
+def test_every_way_of_leaving_the_so101_keeps_the_emergency_stop(turns):
+    b = steps(*turns)
+    assert "estop" in (b.changes.get("electronics.extras") or ""), (turns, b.archetype)
+
+
+@pytest.mark.parametrize("turns, m", [
+    (("use my SO-101 to pick up 1 inch 50 g cubes in 2 kg batches",), 150.0),          # a decimal point: 25.4 mm
+    (("use my SO-101 to pick up 30 mm 2 oz cubes in 2 kg batches",), 150.0),
+    (("use my SO-101 to get 30 mm 50 g cubes in 2 kg batches",), 150.0),
+    (("use my SO-101 to insert 30 mm 50 g cubes in 2 kg batches",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes", "it moves 2 kg of them"), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes and move 2 kg of them every 10 s",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes and the bins they come in at 2 kg per hour",), 150.0),
+    (("use my SO-101 to move the bin with 30 mm 50 g cubes at 2 kg per hour",), 150.0),
+    (("use my SO-101 to move 30 mm 50 g cubes with their bin at 2 kg per hour",), 150.0),
+    (("use my SO-101 to pick up batches of 50 g cubes at 2 kg per hour, 30 mm wide",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes and 34 mm cubes at 2 kg per hour",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes in 10s at 2 kg per hour",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes", "they're 300 g every minute"), 300.0),
+    (("use my SO-101 to sort 30 mm 50 g cubes in 2 kg batches", "it picks up each batch"), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes at 2 kg per hour", "it also moves the bins"), 150.0),
+    (("use my SO-101 to pick up 80 mm 50 g cubes at 2 kg per hour", "@nearest", "some are heavier"), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes at 2 kg per hour. " + "people nearby. " * 140,), 150.0)])
+def test_a_rate_stays_as_read_wherever_the_conversation_may_say_more(turns, m):
+    b = steps(*turns)
+    assert not so101(b) and mass(b) >= m, (turns[:2], mass(b))
+
+
+def test_the_rate_rule_still_leaves_plain_rates_out():
+    for turns in (("use my SO-101 to move 30 mm 50 g cubes at 2 kg per hour",),
+                  ("use my SO-101 to sort 30 mm, 40 g blocks into bins", "2 kg per hour"),
+                  ("sort 50 g blocks in 2 kg batches",), ("move 50 g cubes, about 2 kg an hour",)):
+        assert mass(talk(*turns)) <= 50.0, turns

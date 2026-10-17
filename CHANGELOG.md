@@ -29,12 +29,14 @@ you build:
 - A mass per hour or a batch's is left out only beside the object's own mass given with its name ("50 g cubes",
   "cubes weighing 50 g"), only when every other mass in the message is theirs too, and only when the whole conversation
   is plain: what the robot should do, where things go, the objects' sizes, the rate and who is around, with every
-  number a size, a mass or a time. Any other word keeps the rate as the object's mass, so the arm is sized for Morph's
+  number a size, a mass or a pace, and nothing that may lift a batch or a total at once. Any other word keeps the rate as the object's mass, so the arm is sized for Morph's
   largest, 500 g: "cubes, 50 g each, at 2 kg per hour", "60 g empty bottles at 2 kg per hour", "some are heavier",
   "jars of honey", "jars in sleeves", "2 kg of them at a time", "up to 120", even a word about something else ("out of
   the bin", "the robot is loud"), and a later message with one brings the rate back. A total is read as one object's
   weight ("130 g in total").
-- Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits.
+- Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits. A
+  size said before any object is described ("they're 60 mm" right after "use my SO-101 to load the dishwasher") isn't
+  read: name the objects ("the cups are 60 mm wide").
 - "Them" given anything but food or drink ("delivers them parts") is not read as people next to the robot, and a new
   arm is read only when asked for ("build a new arm", "I'd rather have a new arm"), not in a question ("can you design a
   new arm?"). Name who it serves, and say "build a new arm".
@@ -523,14 +525,15 @@ you build:
   the object again ("the eggs are fragile") keeps the sizes you gave instead of Morph's preset (150 g or 60 mm eggs
   were planned as 60 g, 44 mm ones on the SO-101), and naming the SO-101 again after a generated arm was accepted for
   objects below its jaws' minimum ("15 mm beads", then "keep my SO-101") no longer puts it on the 30 mm stand-in. A
-  new shape is read ("sorry, they come as 40 mm cubes"); a size said before any object is described ("they're 60 mm")
-  only widens the object Morph assumes, never below its generic 45 mm, 100 g one.
+  new shape is read ("sorry, they come as 40 mm cubes").
 - New robot: "actually, build a new arm" after "use my SO-101" builds a Morph-generated arm. An SO-101 robot takes who
   is next to it and where it works from its job, as a generated arm does ("use my SO-101 to tidy up the playroom" has
   children nearby and an emergency stop), and leaving the SO-101 keeps them ("cups to the sink": people nearby), also
   after the nearest robot was accepted ("recycles 80 mm espresso cups") and when the object is named afterwards ("I
-  don't have an SO-101", then espresso cups): a kitchen's or a lab's emergency stop too. The object Morph then assumes
-  for the job is never smaller or lighter than the 45 mm, 100 g one leaving the SO-101 gave before.
+  don't have an SO-101", then espresso cups), whichever way the SO-101 is left (a chip, typed words, a new arm, the
+  nearest robot): a kitchen's or a lab's emergency stop too. An SO-101 handing tools over has the emergency stop a
+  generated arm for that job has. The object Morph then assumes for the job is never smaller or lighter than the
+  45 mm, 100 g one leaving the SO-101 gave before.
 - New robot: "them" served food or drink ("a robot that delivers them coffee", "makes them tea") are people next to the
   robot, so it gets an emergency stop.
 - New robot: a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "sort 50 g blocks in
