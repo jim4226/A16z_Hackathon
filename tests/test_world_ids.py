@@ -1,11 +1,13 @@
 """A world is named by its id and pinned by its hash, never by a path or a file name. Hostile ids, hashes and file
 names go through every route that can carry one: the world routes, Parameters, chat, new projects, forks, Morph-export
 imports, Teams change requests and the simulation stage itself. Each is refused, or reduced to a plain id, and nothing
-is read or written outside the project. Builds are stubbed (every stage "pending"), so these take seconds; offline."""
+is read or written outside the project. Builds are stubbed (every stage "pending"), so these take seconds; offline.
+The imported export's first build is also checked against the moment Windows refuses to open a file just renamed."""
 
 import io
 import json
 import os
+import threading
 import zipfile
 from urllib.parse import quote
 
@@ -13,6 +15,7 @@ import pytest
 
 from morph.cli import EGG_ROBOT
 from morph.robot.pipeline2 import RobotProject
+from morph.services import durable
 from morph.spec import Design
 from morph.studio import api_team, server, worlds
 from morph.studio.security import DESIGN_TEXT
@@ -201,6 +204,47 @@ def test_an_imported_export_is_simulated_on_the_table(studio, wid, sha):
     d = room.p.load_design(rev)
     assert d.world.id == "" and d.world.sha == ""
     assert not os.path.exists(os.path.join(room.p.root, "world"))
+
+
+def test_an_imported_projects_first_build_shows_when_windows_held_its_results_for_a_moment(studio, monkeypatch):
+    """Windows keeps a file os.replace has just renamed busy for a moment and refuses to open it meanwhile (this
+    timed out on Windows CI). A tab, or a test, that reads the new results.json in that moment must not hide the
+    revision for good: room.latest() returns it once the file reads."""
+    st, call, _ = studio
+    held, refused, real_replace, real_open = set(), [], os.replace, open
+    target = os.path.join("egg-export", "r001", "results.json")
+
+    def replace(src, dst, *a, **k):
+        if not os.fspath(dst).endswith(target):
+            return real_replace(src, dst, *a, **k)
+        held.add(os.fspath(dst))                 # Windows keeps the file busy through the rename ...
+        try:
+            real_replace(src, dst, *a, **k)
+            reader = threading.Thread(target=durable.readable_json, args=(os.fspath(dst),))
+            reader.start()                       # ... and another thread reads the new name before it lets go
+            reader.join()
+        finally:
+            held.discard(os.fspath(dst))
+
+    def opener(path, *a, **k):
+        if os.fspath(path) in held:
+            refused.append(path)
+            raise PermissionError(13, "The process cannot access the file because it is being used by another "
+                                      "process", path)
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(os, "replace", replace)
+    monkeypatch.setattr(durable, "open", opener, raising=False)
+    design = Design().with_changes({**EGG_ROBOT, "name": "egg-export"}).to_dict()
+    sid = call("POST", "/api/import", {})[1]["id"]
+    s, out, _ = call("PUT", f"/api/import/{sid}/file?path=egg-export.zip", raw=_export_zip(design),
+                     ctype="application/octet-stream")
+    assert s == 200, out
+    assert call("POST", f"/api/import/{sid}/detect", {})[0] == 200
+    s, out, _ = call("POST", f"/api/import/{sid}/commit", {"candidate": 0})
+    assert s == 202, out
+    room = st.room(out["project"])
+    assert until(lambda: room.latest()) == "r001" and refused
 
 
 @pytest.fixture

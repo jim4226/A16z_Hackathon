@@ -7,7 +7,7 @@ what every writer uses so that a cut never costs more than the record being writ
     append_line(path, line)      one JSON line; a cut-off last line is ended first, so the new record never joins it
     write_text(path, text)       replace a file whole: a temp file beside it, fsync, os.replace, the folder synced
     write_json(path, obj)        the same for JSON
-    readable_json(path)          the file holds a JSON object (cached by size and mtime): a finished record
+    readable_json(path)          the file holds a JSON object (a parse cached by size and mtime): a finished record
     BuildLock(path)              an OS lock held while a revision builds (or a Studio runs: rooms.claim); the system
                                  frees it when the process ends, however it ends
     disk_full(exc), explain(exc) "The disk is full" instead of "[Errno 28] No space left on device"
@@ -105,8 +105,9 @@ _READABLE_LOCK = threading.Lock()
 
 def readable_json(path: str) -> bool:
     """True when `path` holds a JSON object. A record written by write_text() is whole or absent, but a power cut can
-    still leave one empty, and a hand edit can break one: such a file doesn't count. Cached by the file's mtime and
-    size, so a revision's results are parsed once per process."""
+    still leave one empty, and a hand edit can break one: such a file doesn't count. A parse is cached by the file's
+    mtime and size, so a revision's results are parsed once per process; an open the system refuses is not (Windows
+    refuses one for a moment after os.replace, a virus scanner can too), so the revision counts once it reads."""
     try:
         st = os.stat(path)
     except OSError:
@@ -119,7 +120,12 @@ def readable_json(path: str) -> bool:
     try:
         with open(path, encoding="utf-8") as fh:
             ok = isinstance(json.load(fh), dict)
-    except (OSError, ValueError):
+    except OSError:
+        # not remembered: Windows refuses an open for a moment while another handle may delete the file (os.replace
+        # keeps one on the renamed file until just after the rename; a scanner can too), and a record's mtime and
+        # size never change after that, so a cached refusal would hide a finished revision until the Studio restarts
+        return False
+    except ValueError:
         ok = False
     with _READABLE_LOCK:
         _READABLE[path] = (key, ok)
