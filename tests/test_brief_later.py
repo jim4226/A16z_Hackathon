@@ -291,7 +291,8 @@ def test_them_moved_somewhere_are_things(text):
 # ---- 5. a mass per hour or a batch's beside the object's own
 @pytest.mark.parametrize("text", ["move 50 g cubes at 2 kg per hour", "move 50 g cubes, about 2 kg an hour",
                                   "sort 50 g blocks in 2 kg batches", "move 2 kg of 50 g cubes", "pick up cubes weighing 50 g, 2 kg/h",
-                                  "move 50 g cubes, 2 kg of them a day"])
+                                  "move 50 g cubes, 2 kg of them a day", "move 50 g cubes at 2 kg per min",
+                                  "pick up the 50 g cookies we bake in 2 kg batches"])
 def test_a_rate_or_a_batch_is_not_the_objects_mass(text):
     b = talk(text)
     assert mass(b) == 50.0 and b.scope["status"] != "out_of_scope", (text, mass(b))
@@ -352,3 +353,85 @@ def test_many_of_them_is_no_batch_total(text, m):
 
 def test_a_shake_is_no_drink():
     assert not B.parse("give them a shake")["person"]
+
+
+# ---- the round-2 review: a rate beside a mass the objects may weigh more than, what the arm lifts at once, things in
+# containers, a part's mass after its name, and the people of a job left for a new arm after the nearest robot
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to pick up 30 mm, 50 g cubes at 2 kg per hour. A few are heavier.",),
+    ("use my SO-101 to pick up 30 mm, 50 g cubes at 2 kg per hour. Others weigh more.",),
+    ("use my SO-101 to pick up 30 mm 50 g cubes and up, 2 kg per hour",),
+    ("use my SO-101 to pick up 30 mm 50 g cubes on average at 2 kg per hour",),
+    ("use my SO-101 to pick up 30 mm 50 g cubes or so at 2 kg per hour",),
+    ("use my SO-101 to pick up 30 mm 50 g bottles of 500 ml at 2 kg per hour",),
+    ("use my SO-101 to pick up 30 mm 50 g jars of honey at 2 kg per hour",),
+    ("use my SO-101 to pick up 30 mm 50 g cubes (dry) at 2 kg per hour",),
+    ("use my SO-101 to move 40 mm 50 g cylinders", "we put 150 g of these beans in each"),
+    ("use my SO-101 to move 40 mm cylinders weighing 50 g", "some are heavier. about 2 kg an hour"),
+    ("use my SO-101 to pick up 30 mm 50 g cylinders", "2 kg an hour. before filling, that is"),
+    # what it lifts at once, and things in containers
+    ("use my SO-101 to pick up 30 mm 50 g cubes, 2 kg of them at a time",),
+    ("use my SO-101 to pick up 30 mm 50 g cubes, it lifts them in 2 kg batches",),
+    ("use my SO-101 to pick up 30 mm 50 g components in 2 kg batches",),
+    ("use my SO-101 to pick up bags of 30 mm balls of 50 g about five pounds an hour",),
+    ("use my SO-101 to pick up cartons of 50 g eggs at 2 kg per hour",),
+    ("use my SO-101 to pick up punnets of 20 g strawberries at 2 kg per hour",),
+    # a correction of the only mass so far, and a part's noun that parse() would have named the objects with
+    ("use my SO-101 to pick up 30 mm pouches of 50 g", "sorry, 300 g every minute"),
+    ("use my SO-101 to move 40 mm cylinders weighing 150 g", "they come in 30 mm wide tubes",
+     "the tubes are 20 g, 2 kg per hour")])
+def test_a_rate_beside_a_mass_they_may_weigh_more_than_stays_as_read(turns):
+    b = talk(*turns)
+    assert not so101(b) and mass(b) >= 150.0, (turns, mass(b))
+
+
+@pytest.mark.parametrize("later", ["that's the empty weight", "they hold 300 ml of water", "they're full of soup",
+                                   "when full they weigh more", "they're heavier with lids", "some are heavier"])
+def test_a_rate_left_out_comes_back_when_a_later_message_says_they_weigh_more(later):
+    first = "use my SO-101 to pick up 30 mm 50 g cups at 2 kg per hour"
+    assert so101(talk(first)) and mass(talk(first)) == 50.0
+    b = talk(first, later)
+    assert not so101(b) and mass(b) == 500.0, later
+
+
+@pytest.mark.parametrize("later", ["the lids: 20 g", "lids, 20 g", "20 g each for the lids", "the lids? 20 g"])
+def test_a_parts_mass_after_its_name_never_lightens_the_object(later):
+    assert mass(talk("use my SO-101 to pick up 30 mm jars weighing 150 g", later)) == 150.0
+    assert mass(talk("use my SO-101 to pick up 30 mm jars weighing 150 g", "sorry, 60 g")) == 60.0
+
+
+@pytest.mark.parametrize("leave", [{"answers": {"existing_hardware": "none"}}, {"text": "actually, build a new arm"},
+                                   {"text": "I don't have an SO-101"}])
+def test_leaving_the_so101_after_the_nearest_robot_keeps_the_jobs_people(leave):
+    b = agents.run_turn(text="a robot that recycles 80 mm espresso cups", deep=False)
+    b = agents.run_turn(b, action="nearest", deep=False)
+    b = agents.run_turn(b, text="use my SO-101", deep=False)
+    b = talk_on(agents.run_turn(b, deep=False, **leave))
+    assert B.value(b, "people_nearby") != "no" and "estop" in (b.changes.get("electronics.extras") or ""), leave
+
+
+@pytest.mark.parametrize("text", ["a robot that makes them food-safe", "a robot that makes them water-tight",
+                                  "a robot that hands them coffee filters to the machine"])
+def test_a_word_made_with_food_is_no_food_served(text):
+    assert not B.parse(text)["person"]
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to move 40 mm bottles weighing 50 g", "they're 40 mm at the neck"),   # their widest part isn't given
+    ("use my SO-101 to move 30 mm cylinders", "these are 15 mm"),
+    ("use my SO-101 to move 30 mm cylinders", "they're exactly 15 mm"),
+    ("use my SO-101 to move 30 mm cylinders", "they all measure 15 mm"),
+    ("use my SO-101 to move samples in the lab", "they're 60 mm"),                         # wider than the assumed one
+    ("use my SO-101 to move 50 mm cylinders weighing 50 g", "30 mm and up")])
+def test_a_size_the_so101_may_not_hold_keeps_it_off(turns):
+    b = talk(*turns)
+    assert not so101(b), (turns, width(b))
+
+
+def test_a_correction_after_a_size_of_some_of_them_only_widens():
+    # "sorry, 40 mm" may correct the 20 mm some of them are, not the 60 mm the rest are
+    b = agents.run_turn(text="use my SO-101 to move 60 mm cylinders weighing 50 g", deep=False)
+    for t in ("some of them are 20 mm wide", "@nearest", "sorry, 40 mm", "keep my SO-101"):
+        b = agents.run_turn(b, action=t[1:], deep=False) if t.startswith("@") else agents.run_turn(b, text=t, deep=False)
+    b = talk_on(b)
+    assert not so101(b) and width(b) == 60.0

@@ -635,7 +635,9 @@ clamping.
   a question, a refusal or a remark: "do I need a new arm?", "no need for a new arm", "my friend built a new arm") are a
   new arm. An SO-101 brief
   takes who is next to it and where it works from the request's own job (`brief._arch_without_so101`: a playroom's
-  children, a kitchen's emergency stop), so moving to or from the SO-101 never drops one. A typed reply's sizes
+  children, a kitchen's emergency stop; of the person's object's job and the request's words, the one with people, so an
+  object Morph chose, as after "@nearest", never drops them), so moving to or from the SO-101 never drops one. A typed
+  reply's sizes
   (`brief._later_sizes`, `brief._size_reads`): only a phrasing the rules read before this change can replace the
   objects' size ("60 mm", "sorry, 60 mm", "the cylinders are 60 mm wide", "they weigh 60 g"), and only when it is plainly
   all of theirs; any other only widens them or weighs them more, and a smaller width it gives is kept as `least_mm`:
@@ -643,7 +645,9 @@ clamping.
   one, `brief._topic`; "the cylinders are 60 mm"; "actually 60 mm"), a part's, some of them' or what they hold (a noun
   after a preposition or a quantifier: "the lids of the jars", "some of the balls", "half the jars"; "the small ones";
   the candles in candle jars), a question or a supposition, a lower end ("40 mm and up", "at least 40 mm") or the size at
-  one part ("30 mm at the top", `brief._not_plain`). A part's size read for the first time only widens them ("the can
+  one part ("30 mm at the top", `brief._not_plain`), a reply with no noun of theirs after a smaller size some of them
+  or a range's low end may be ("some of them are 20 mm", then "sorry, 40 mm"), a part's mass after its name ("the lids:
+  20 g", "20 g each for the lids", `brief._mass_of`). A part's size read for the first time only widens them ("the can
   lids are 60 mm"); one for something else is left unread ("the gap between the jars is 30 mm"). `least_mm` is what the
   stock SO-101's jaws must hold too (`brief._so101_least`, also when the SO-101 is named only later), as is the lower
   end of a range in any message ("between 20 and 40 mm", "40 mm and 20 mm cylinders"); below the generated gripper's own
@@ -654,8 +658,13 @@ clamping.
   ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach, nor
   a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "in 2 kg batches", "2 kg of 50 g
   cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by name, `brief._names_objects`, and
-  the words don't say the object weighs more than a mass given: empty, net, what it holds, a lid, some of them; a total
-  is one object's, "130 g in total"; a mass tied to its noun is never a rate: "pouches of 300 g every minute"). In
+  no word in the conversation says the object may weigh more than a mass given or that several are lifted at once,
+  `brief._MORE_THAN_SAID`: empty, net, what it holds or a volume, a lid, some of them, a hedge or a comparison ("on
+  average", "some are heavier"), containers of them ("cartons of 50 g eggs"), "at a time"; a batch the arm handles is
+  what it lifts at once, "it lifts them in 2 kg batches"; a correction of the only mass so far, "sorry, 300 g every
+  minute", is no rate; the rate left out is kept as the object's `rate_g` and is its mass again when a later message
+  says they may weigh more, "that's the empty weight"; a total is one object's, "130 g in total"; a mass tied to its
+  noun is never a rate: "pouches of 300 g every minute"). In
   the round-6 hunt's sweep of 18,753 SO-101 conversations, graded by its own rules, 3,169 were wrong at bd19c43 (a
   generated arm blamed on a stand-in, the SO-101 kept for a stand-in or for a size it didn't read, a typed SO-101
   ignored), 90 of them only because the sweep's SO-101 chip was never offered (the request was already out of scope);
