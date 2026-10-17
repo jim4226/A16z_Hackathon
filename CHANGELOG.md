@@ -29,7 +29,8 @@ you build:
 - A mass per hour or a batch's is left out only beside the object's own mass given with its name ("50 g cubes",
   "cubes weighing 50 g"), only when every other mass in the message is theirs too, and only when the whole conversation
   is plain: what the robot should do, where things go, the objects' sizes, the rate and who is around, with every
-  number a size, a mass or a pace, and nothing that may lift a batch or a total at once. Any other word keeps the rate as the object's mass, so the arm is sized for Morph's
+  number a size, a mass or a pace, and nothing that may lift a batch or a total at once: a batch or a total is left
+  out only where each object is sorted, tidied or arranged, nowhere taken. Any other word keeps the rate as the object's mass, so the arm is sized for Morph's
   largest, 500 g: "cubes, 50 g each, at 2 kg per hour", "60 g empty bottles at 2 kg per hour", "some are heavier",
   "jars of honey", "jars in sleeves", "2 kg of them at a time", "up to 120", even a word about something else ("out of
   the bin", "the robot is loud"), and a later message with one brings the rate back. A total is read as one object's

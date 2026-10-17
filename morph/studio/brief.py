@@ -2212,7 +2212,7 @@ _PLAIN_WORDS = frozenset("""
     places placing put puts putting transfer transfers transferring tidy tidying arrange arranges organise organize
     organises organizes pack packs packing insert inserts inserting process processes work works run runs
     bake bakes baked baking cook cooks cooked produce produces produced print prints printed cast casts mould moulds
-    moulded mold molds molded come comes arrive arrives
+    moulded mold molds molded
     into onto in on at from of off out over across left right front back behind next beside here there where one
     mm g wide across diameter weighing weigh weighs each apiece about around roughly approximately approx exactly
     per every hour hours h hr hrs minute minutes min mins day days daily hourly shift shifts week weeks weekly month
@@ -2271,6 +2271,10 @@ _LIFTS = re.compile(r"\b(?:pick\w*|mov\w*|stack\w*|plac\w*|put\w*|transfer\w*|pa
                     r"hand\w*|pass\w*|offer\w*)\b")
 
 
+# what is done to each object, never to a batch at once ("sort 50 g blocks in 2 kg batches")
+_PER_ITEM = re.compile(r"\b(?:sort|sorts|sorted|sorting|tidy|tidies|tidied|tidying|arrange\w*|organi[sz]e\w*)\b")
+
+
 def _rate_drop_holds(said, objects: tuple, untimed: bool) -> bool:
     """Whether the whole conversation (`said`, as typed) still lets a rate or a batch beside the objects' own mass be
     left out: plain (_plain_talk), one width for the objects (two may be two kinds of them: "50 g cubes and 34 mm
@@ -2284,7 +2288,10 @@ def _rate_drop_holds(said, objects: tuple, untimed: bool) -> bool:
     text = " ".join(msgs)
     if _LIFTS.search(text) and (untimed or re.search(r"\bbatch", text)):
         return False
-    return not re.search(r"\bbatch(?:es)?\s+of\s+\d+(?:\.\d+)?\s*g\s+[a-z]", text)
+    if untimed and (not _PER_ITEM.search(text) or _WHERE_THEY_GO.search(text)):
+        return False   # a batch or a total left out only where each object is sorted, tidied or arranged, nowhere taken
+    return not re.search(r"\bbatch(?:es)?\s+of\s+\d+(?:\.\d+)?\s*g\s+[a-z]|\bbatch(?:es)?\s+(?:is|are|was|were)\b|"
+                         r"\beach\s*(?:[).,;:!?]|$)", text)   # "batches of 50 g cubes", "the batch is one cube", "(each)"
 
 
 def _said(b: Brief, text: str | None = None) -> list:
@@ -2732,7 +2739,8 @@ def _left_so101_floor(b: Brief, o: dict, arch: str) -> dict:
     g = object_value(ARCHETYPES["generic_arm"].objects[0])
     d = max(float(o["diameter_mm"]), float(g["diameter_mm"]))
     return dict(o, diameter_mm=d, mass_g=max(float(o["mass_g"]), float(g["mass_g"])),
-                length_mm=max(float(o.get("length_mm") or 0), d))
+                length_mm=max(float(o.get("length_mm") or 0), d),
+                shape=o.get("shape") if float(o["diameter_mm"]) >= float(g["diameter_mm"]) else g.get("shape", o.get("shape")))
 
 
 def defaults(b: Brief) -> dict:

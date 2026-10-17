@@ -641,7 +641,8 @@ clamping.
   before, by any route: a chip, typed words, a new arm, the nearest robot (`brief._leave_so101`); an SO-101 doing a
   hand-over job has the hand-over's emergency stop; the object Morph assumes for
   that job, its own or the nearest robot's stand-in, is never narrower or lighter than the general arm's 45 mm, 100 g
-  one, `brief._left_so101_floor`), so moving to or from the SO-101 never drops one. A typed reply's sizes
+  flat-sided box, and is that box's shape when widened to it, `brief._left_so101_floor`), so moving to or from the
+  SO-101 never drops one. A typed reply's sizes
   (`brief._later_sizes`, `brief._size_reads`): only a phrasing the rules read before this change can replace the
   objects' size ("60 mm", "sorry, 60 mm", "the cylinders are 60 mm wide", "they weigh 60 g"), and only when it is plainly
   all of theirs; any other only widens them or weighs them more, and a smaller width it gives is kept as `least_mm`:
@@ -674,7 +675,9 @@ clamping.
   bins they come in"; every number a size, a mass or a pace, "one every 6 s", never "in 10s"; no other symbol; no
   message cut at 2,000 characters: a closed list of the words that do say more is never complete), one width for the
   objects (`brief._rate_drop_holds`: "50 g cubes and 34 mm cubes" may be two kinds), no batch beside a verb that
-  lifts and no batches of the objects ("it moves them in batches", "batches of 50 g cubes"), a later message with no mass of their own leaves out only a rate that is
+  lifts and no batches of the objects ("it moves them in batches", "batches of 50 g cubes"), a batch or a total left
+  out only where each object is sorted, tidied or arranged (`brief._PER_ITEM`) and nowhere taken ("2 kg per batch on
+  the table"), nothing said of the batch ("the batch is one puck") and no dangling "each" ("at 2 lb per hour (each)"), a later message with no mass of their own leaves out only a rate that is
   its clause alone (`brief._RATE_ALONE`: "about 2 kg an hour", not "should be 300 g every minute"), and no word in
   the conversation says the object may weigh more than a mass given or that several are lifted at once,
   `brief._MORE_THAN_SAID`: empty, net, what it holds or a volume, a lid, some of them, a hedge or a comparison ("on

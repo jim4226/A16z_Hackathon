@@ -611,3 +611,26 @@ def test_the_rate_rule_still_leaves_plain_rates_out():
                   ("use my SO-101 to sort 30 mm, 40 g blocks into bins", "2 kg per hour"),
                   ("sort 50 g blocks in 2 kg batches",), ("move 50 g cubes, about 2 kg an hour",)):
         assert mass(talk(*turns)) <= 50.0, turns
+
+
+# ---- round 4's corpora on the fixed rules: the objects' noun for what they come in, a dangling "each", a batch taken
+# somewhere or with no sorting, a batch said to be something, and the job's object after leaving and re-joining
+@pytest.mark.parametrize("turns, m", [
+    (("I want a robot to pick up 40 mm 90 g cylinders and the cylinders they come in at 3 kg per hour",), 150.0),
+    (("I want a robot to pick up 45 mm 50 g eggs in the bin they come in at half a kilo per hour",), 150.0),
+    (("build a robot arm to pick up 40 mm 40 g bottles at 2 lb per hour (each)",), 150.0),
+    (("Use my SO-101 to tidy 28 mm 20 g cups, 2 kg per batch on the table",), 150.0),
+    (("build a robot arm to organise 26 mm 30 g cubes into the bin, 1 kg batches",), 150.0),
+    (("build a robot arm to use 30 mm 30 g cubes in 2 kg batches",), 150.0),
+    (("build a robot arm to sort 30 mm 40 g pucks we bake in 2 kg batches", "the batch is one puck"), 150.0)])
+def test_a_batch_or_a_rate_beside_more_than_plain_words_stays_as_read(turns, m):
+    assert mass(steps(*turns)) >= m, turns
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to hand me tools", "#existing_hardware=none", "they weigh 90 g", "use my SO-101"),
+    ("use my SO-101 to hand me tools", "#existing_hardware=none", "40 mm", "use my SO-101")])
+def test_the_job_object_assumed_after_leaving_is_checked_as_the_general_one_on_rejoining(turns):
+    # the release planned the general arm's 45 mm flat-sided box there: re-joining the SO-101 with Morph's own guess for
+    # the tools (a round screwdriver widened to 45 mm) kept the stock arm, which the flat-sided box never allowed
+    assert not so101(steps(*turns)), turns
