@@ -123,8 +123,10 @@ def test_the_so101_named_after_the_sizes_still_sees_the_smaller_one():
     assert not so101(b)
     b = talk("move 30 mm cylinders weighing 50 g", "the small ones are 20 mm", "use my SO-101")
     assert not so101(b) and width(b) == 30.0
-    b = talk("move 20 mm cubes", "the cubes are 30 mm", "use my SO-101")   # the cubes themselves: the SO-101 holds them
+    b = talk("move 20 mm cubes", "the cubes are 30 mm wide", "use my SO-101")   # the cubes themselves: the SO-101 holds them
     assert so101(b) and width(b) == 30.0
+    b = talk("move 20 mm cubes", "the cubes are 30 mm", "use my SO-101")   # a phrasing never read before only widens them
+    assert not so101(b) and width(b) == 30.0
 
 
 @pytest.mark.parametrize("text", ["use my SO-101 to move cylinders between 20 and 40 mm wide weighing 50 g",
@@ -143,6 +145,78 @@ def test_the_object_named_again_keeps_what_the_person_said_about_it():
     assert not so101(b) and mass(b) == 150.0
     b = talk("use my SO-101 to pick up 60 mm eggs", "eggs, please")
     assert not so101(b) and width(b) == 60.0
+
+
+@pytest.mark.parametrize("later", ["the cans are 30 mm at the neck", "the cans have 45 mm necks", "the neck of each can is 30 mm",
+                                   "the holes in the cans are 47 mm", "the caps on the cans are 60 mm",
+                                   "the base of each can is 50 mm", "the pills in the cans are 47 mm", "each can is 20 mm"])
+def test_the_object_named_again_is_never_smaller_than_before(later):
+    # naming the cans again kept the 30 mm, 60 g the person gave, and so the stock SO-101, where Morph's 66 mm, 370 g
+    # can had kept it off: a neck, a hole or a cap as wide as the cans, or 20 mm ones, may not fit its jaws
+    b = talk("I have an SO-101. it should pick up 30 mm cans of 60 g", later)
+    assert not so101(b), (later, width(b), mass(b))
+
+
+@pytest.mark.parametrize("first, later", [
+    # the round-1 review of this change: a part, some of the objects, a question, a lower bound, a part's location or
+    # "an inch and a half" was taken as the objects' own size and kept the stock SO-101 for 60 mm things
+    ("use my SO-101 to move 60 mm jars weighing 50 g", "the lids of the jars are 30 mm"),
+    ("use my SO-101 to move 60 mm jars weighing 50 g", "the lid on each jar is 30 mm"),
+    ("use my SO-101 to move 60 mm jars weighing 50 g", "the candles in the jars are 30 mm"),
+    ("use my SO-101 to move 60 mm jars weighing 50 g", "the gap between the jars is 30 mm"),
+    ("use my SO-101 to move 60 mm, 50 g bottles", "the neck of each bottle is 40 mm"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "some of the balls are 40 mm"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "half the balls are 40 mm"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "not all the balls are 40 mm"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "what if the balls are 40 mm?"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "suppose the balls are 40 mm"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "the balls are 40 mm and up"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "the balls are at least 40 mm wide"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "the balls are 40 mm, some are 60 mm"),
+    ("use my SO-101 to pick up 60 mm balls weighing 50 g", "the balls are 40 mm but some are bigger"),
+    ("use my SO-101 to move 60 mm jars weighing 50 g", "the jars are 30 mm wide at the top"),
+    ("use my SO-101 to move 60 mm jars weighing 50 g", "the jars measure 30 mm, at the neck")])
+def test_a_size_that_may_not_be_all_the_objects_own_never_narrows_them(first, later):
+    b = talk(first, later)
+    assert not so101(b) and width(b) >= 60.0, (later, so101(b), width(b))
+
+
+def test_a_size_said_after_some_of_them_keeps_their_range():
+    b = talk("use my SO-101 to pick up 60 mm balls weighing 50 g", "the small ones are 20 mm", "the balls are 40 mm")
+    assert not so101(b) and width(b) == 60.0
+    b = talk("use my SO-101 to sort 40 mm blocks into bins", "the blocks are an inch and a half")   # 38 mm, never 25.4
+    assert not so101(b) and width(b) == 40.0
+    b = talk("use my SO-101 to pick up 60 mm balls weighing 50 g", "between 15 and 35 mm")   # the 15 mm ones too
+    assert not so101(b)
+
+
+@pytest.mark.parametrize("first, later, m", [
+    ("use my SO-101 to move 30 mm jars weighing 150 g", "the lids of the jars are 50 g", 150.0),
+    ("use my SO-101 to move 30 mm jars weighing 150 g", "some of the jars are 50 g", 150.0),
+    ("use my SO-101 to move 30 mm jars weighing 150 g", "what if they weigh 50 g?", 150.0)])
+def test_a_mass_that_may_not_be_the_objects_own_never_lightens_them(first, later, m):
+    b = talk(first, later)
+    assert not so101(b) and mass(b) >= m, (later, mass(b))
+
+
+@pytest.mark.parametrize("later", ["keep my SO-101", "I have an SO-101", "use my SO-101 after all"])
+def test_the_so101_named_after_a_generated_arm_was_accepted_never_holds_the_stand_in(later):
+    # 15 mm beads are below the SO-101's 26 mm: the nearest robot is built around a 30 mm stand-in, and naming the
+    # SO-101 again put the stock arm on that stand-in
+    b = agents.run_turn(text="use my SO-101 to pick up 15 mm beads", deep=False)
+    b = agents.run_turn(b, action="nearest", deep=False)
+    assert b.status == "ready" and not so101(b)
+    b = agents.run_turn(b, text=later, deep=False)
+    b = talk_on(b)
+    assert not so101(b), later
+
+
+def talk_on(b):
+    for _ in range(3):
+        if b.status not in ("asking", "out_of_scope"):
+            break
+        b = agents.run_turn(b, action="nearest" if b.status == "out_of_scope" else "defaults", deep=False)
+    return b
 
 
 def test_a_guard_keeps_what_the_person_stated():
@@ -195,7 +269,7 @@ def test_the_so101_keeps_the_people_and_the_place_of_the_job_it_does():
     # then dropped the emergency stop the same job had on a generated arm
     b = talk("use my SO-101 to tidy up the playroom")
     assert so101(b) and B.value(b, "people_nearby") == "children" and "estop" in b.changes["electronics.extras"]
-    b = talk("use my SO-101 to sort 24 mm, 80 g blocks into bins", "the blocks are 34 mm")
+    b = talk("use my SO-101 to sort 24 mm, 80 g blocks into bins", "the blocks are 34 mm wide")
     assert so101(b) and width(b) == 34.0 and mass(b) == 80.0 and "estop" in b.changes["electronics.extras"]
 
 
@@ -239,3 +313,40 @@ def test_a_rate_in_a_later_message_is_not_the_objects_mass():
 def test_a_total_an_empty_weight_or_a_part_keeps_the_larger_mass(text, m):
     # 500 g is the nearest robot Morph offers for a mass it can't lift
     assert mass(talk(text)) == m, text
+
+
+# ---- the round-1 review of this change: masses, people, the SO-101's job
+@pytest.mark.parametrize("turns", [
+    # a rate beside a part's, contents', some of them' or a lower bound's mass is not dropped: that mass isn't the object's
+    ("use my SO-101 to move 30 mm pill bottles at 2 kg per hour; the pills weigh 1 g each",),
+    ("use my SO-101 to move 30 mm candle jars at 2 kg per hour; the candles are 60 g",),
+    ("use my SO-101 to move 30 mm bottles at 2 kg per hour; the pumps are 20 g each",),
+    ("use my SO-101 to move 30 mm jars at 2 kg per hour, at least 20 g each",),
+    ("use my SO-101 to move 30 mm jars at 2 kg per hour, the glass is 20 g",),
+    ("use my SO-101 to move 30 mm jars at 2 kg per hour; the jars themselves are 80 g, the jam 100 g",),
+    ("use my SO-101 to move 30 mm jars at 2 kg per hour, 20 g net",),
+    ("use my SO-101 to move 30 mm jars", "2 kg per hour; more than 20 g"),
+    ("use my SO-101 to move 30 mm bottles", "about 2 kg a day; the sleeves are 5 g"),
+    ("use my SO-101 to move 30 mm seed trays", "300 g per tray, the pots are 20 g"),
+    # "lots of", "trays of" and "every minute" beside an object's own mass are no batch and no rate
+    ("use my SO-101 to sort lots of 300 g 30 mm jars and some 50 g cubes",),
+    ("use my SO-101 to move 30 mm pouches of 300 g every minute and 40 g sachets",),
+    # a first message's part mass, then the object named again
+    ("use my SO-101 to hand me pliers; the grips are 10 g", "the pliers are heavy"),
+    # "they" before any object is described: the stand-in's size is not narrowed
+    ("use my SO-101 to pour them water", "they're 40 mm"),
+    ("use my SO-101 to pour me a beer", "it's 40 mm")])
+def test_a_mass_or_size_that_may_not_be_the_objects_keeps_the_so101_off(turns):
+    b = talk(*turns)
+    assert not so101(b), (turns, width(b), mass(b))
+
+
+@pytest.mark.parametrize("text, m", [("a robot that sorts a lot of 300 g jars and 50 g tins", 300.0),
+                                     ("a robot that unloads trays of 300 g mugs and 150 g bowls", 300.0),
+                                     ("a robot that moves sacks weighing 400 g, the beans are 1 g each", 400.0)])
+def test_many_of_them_is_no_batch_total(text, m):
+    assert mass(talk(text)) == m, text
+
+
+def test_a_shake_is_no_drink():
+    assert not B.parse("give them a shake")["person"]

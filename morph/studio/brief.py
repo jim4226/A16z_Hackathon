@@ -1010,7 +1010,7 @@ _COBOT_UNSURE = r"\b(?:cobots?|collaborative (?:robot|arm)s?|human[- ]robot|hrc)
 # "ties my shoelaces", "puts the straw in her mouth"), greeting visitors, their homework collected, or "whose bin I empty"
 _POSS_WHO = r"(?:my|his|her|their|your|our|someone['’]s|(?:the\s+)?[a-z]+['’]s|(?:the\s+)?[a-z]+s['’](?!s))"
 # food and drink served to people
-_SERVED = (r"(?:coffees?|teas?|drinks?|beers?|wines?|juices?|milk|water|sodas?|colas?|lemonades?|smoothies?|(?:milk)?shakes?|"
+_SERVED = (r"(?:coffees?|teas?|drinks?|beers?|wines?|juices?|milk|water|sodas?|colas?|lemonades?|smoothies?|milkshakes?|"
            r"lattes?|cappuccinos?|espressos?|cocoa|hot chocolates?|cocktails?|snacks?|food|meals?|lunch(?:es)?|dinners?|"
            r"breakfasts?|brunch(?:es)?|sandwich(?:es)?|cakes?|cookies?|biscuits?|pizzas?|soups?|desserts?|ice[- ]?creams?|"
            r"popcorn|fruit|pastr(?:y|ies)|muffins?|donuts?|doughnuts?|bagels?|toast|cereal|crisps|sweets|cand(?:y|ies)|"
@@ -2084,11 +2084,11 @@ def _mass_reads(t: str) -> list:
 _RATE_AFTER = re.compile(r"\s*(?:of\s+(?:them|those|these|[a-z-]+)\s+)?(?:/\s*|(?:per|an?|each|every)\s+)(?:h|hrs?|hours?|mins?|"
                          r"minutes?|days?|shifts?|weeks?|months?)\b|\s*(?:of\s+(?:them|those|these|[a-z-]+)\s+)?(?:hourly|daily|"
                          r"weekly)\b")
-_BATCH_AFTER = re.compile(r"\s*-?\s*(?:batch(?:es)?|lots)\b|\s+(?:per|a|each|every|in\s+a|in\s+each)\s+(?:batch|lot|load|run|"
-                          r"tray|crate|sack|pallet|tote)\b|\s+of\s+(?:them|those|these|\d+(?:\.\d+)?\s*g\b)|\s+for\s+(?:all\s+of\s+"
-                          r"them|them\s+all|the\s+(?:lot|batch|whole\s+batch))\b")
-_BATCH_BEFORE = re.compile(r"\b(?:batch(?:es)?|lots?|loads?|trays?|crates?|sacks?|pallets?)\s+(?:of|weighing)\s+(?:about\s+|"
-                           r"around\s+|roughly\s+|up\s+to\s+)?$")
+_BATCH_AFTER = re.compile(r"\s*-?\s*batch(?:es)?\b|\s+(?:per|a|each|every|in\s+a|in\s+each)\s+batch\b|\s+of\s+(?:them|those|these|"
+                          r"\d+(?:\.\d+)?\s*g\b)|\s+for\s+(?:all\s+of\s+them|them\s+all|the\s+(?:lot|batch|whole\s+batch))\b")
+_BATCH_BEFORE = re.compile(r"\bbatch(?:es)?\s+of\s+(?:about\s+|around\s+|roughly\s+|up\s+to\s+)?$")
+# a mass tied to the noun before it ("pouches of 300 g every minute", "cubes weighing 50 g"): that thing's own
+_TIED_BEFORE = re.compile(r"\b(?:of|weighing|weighs?|weighed|is|are|was|were)\s+(?:about\s+|around\s+|roughly\s+)?$")
 # ... and words that say an object weighs more than a mass the request gives it: empty, what it holds, a lid or a cap,
 # some of them ("the small ones"). With any of them the rate stays as read: dropping it could leave a part's, some of
 # the objects' or the empty weight as the object's.
@@ -2099,31 +2099,50 @@ _MORE_THAN_SAID = re.compile(r"\b(?:empty|full|filled|fill(?:s|ed)?|holds?|holdi
 
 
 def _rate_or_batch(t: str, s: int, e: int) -> bool:
-    return bool(_RATE_AFTER.match(t, e) or _BATCH_AFTER.match(t, e) or _BATCH_BEFORE.search(t[max(0, s - 40):s]))
+    """Whether the mass spanning t[s:e] is a rate or a batch's total ("2 kg per hour", "in 2 kg batches", "2 kg of them"),
+    never one tied to the thing it weighs ("300 g pouches every minute", "pouches of 300 g every minute")."""
+    if _BATCH_AFTER.match(t, e) or _BATCH_BEFORE.search(t[max(0, s - 40):s]):
+        return True
+    after = _np_after(t, e)
+    if after and after[0] != "of" or _TIED_BEFORE.search(t[max(0, s - 30):s]) and _np_before(t, s)[0]:
+        return False
+    return bool(_RATE_AFTER.match(t, e))
 
 
-def _rates_to_drop(t: str, masses: list, own_elsewhere: bool = False, context: str = "") -> set:
+def _names_objects(t: str, s: int, e: int, heads: set, words: set) -> bool:
+    """Whether the size spanning t[s:e] is plainly the objects' own by the noun it is said of ("50 g cubes", "cubes
+    weighing 50 g", "each cube is 50 g"): never a part's, some of them', a pronoun's, an untied or a hedged one."""
+    np = _np_after(t, e)
+    lead = []
+    if not np:
+        np, lead = _np_before(t, s)
+    if not np or np[0] == "of" or lead and (lead[-1] in _PREPS or lead[-1] in _QUANTS) or _not_plain(t, s, e):
+        return False
+    return _names_what(np, heads, words) == "obj"
+
+
+def _rates_to_drop(t: str, masses: list, objects: tuple = (set(), set()), own_elsewhere: bool = False,
+                   context: str = "") -> set:
     """The masses in `masses` (_mass_reads(t)) that are a rate or a batch's total beside the object's own mass, to
-    leave out: only when another mass, or `own_elsewhere` (a mass an earlier message gave), is the object's own, and
-    nothing in `context` (the conversation) says the object weighs more than a mass given for it."""
+    leave out: only when every other mass the message gives is plainly the objects' own (_names_objects, `objects` is
+    _object_words of them) and there is one, or `own_elsewhere` (an earlier message gave it), and nothing in `context`
+    (the conversation) says the object weighs more than a mass given for it."""
     rates = {i for i, (_v, s, e) in enumerate(masses) if _rate_or_batch(t, s, e)}
     own = [i for i in range(len(masses)) if i not in rates]
     if not rates or not (own or own_elsewhere) or _MORE_THAN_SAID.search(context or t):
         return set()
-    if any(re.match(r"\s+of\s+[a-z]", t[masses[i][2]:]) for i in own):   # "90 g of water": the object holds it
-        return set()
+    if not all(_names_objects(t, masses[i][1], masses[i][2], *objects) for i in own):
+        return set()   # "the pills weigh 1 g each", "at least 20 g", "the jam 100 g": the rate stays as read
     return rates
 
 
 def _sizes(t: str) -> tuple:
     """(width mm, mass g) the request gives its object, the largest of each when it gives several ("60 mm and 30 mm
     cylinders", "30 mm, 50 g cylinders and 300 g jars"), or None; never a size that names where things go ("into
-    100 mm cups") or a distance, reach or part of the robot, nor a rate or a batch's total beside the object's own mass
-    ("50 g cubes at 2 kg per hour"). `t` is normalize_units(text)."""
+    100 mm cups") or a distance, reach or part of the robot (parse() then leaves out a rate or a batch's total beside
+    the object's own mass: "50 g cubes at 2 kg per hour"). `t` is normalize_units(text)."""
     widths = [v for v, _s, _e in _width_reads(t)]
-    reads = _mass_reads(t)
-    drop = _rates_to_drop(t, reads)
-    masses = [v for i, (v, _s, _e) in enumerate(reads) if i not in drop]
+    masses = [v for v, _s, _e in _mass_reads(t)]
     return (max(widths) if widths else None), (max(masses) if masses else None)
 
 
@@ -2203,7 +2222,9 @@ def parse(text: str) -> dict:
             if _least_width(t):
                 obj["least_mm"] = _least_width(t)
         if mass is not None:
-            obj["mass_g"] = mass
+            reads = _mass_reads(t)
+            drop = _rates_to_drop(t, reads, _object_words(obj))   # "50 g cubes at 2 kg per hour": 50 g
+            obj["mass_g"] = max(v for i, (v, _s, _e) in enumerate(reads) if i not in drop) if drop else mass
         obj["stated"] = [k for k, v in (("diameter_mm", dia), ("mass_g", mass), ("shape", shape)) if v is not None]
     if obj is not None:
         s["object"] = obj
@@ -2494,6 +2515,8 @@ def merge(b: Brief, parsed: dict, source: str = "user", evidence: str = ""):
                 v2["stated"] = list(v["stated"])
             if name == "object" and isinstance(v, dict) and cap._num(v.get("least_mm")):
                 v2["least_mm"] = float(cap._num(v["least_mm"]))   # the least the person's words say they may be
+            if name == "object" and isinstance(v, dict) and v.get("widest_unknown") is True:
+                v2["widest_unknown"] = True                         # a size given at a neck, not at their widest
             set_slot(b, name, v2, source, 1.0, f"{evidence}: {said[name]}" if name in said else evidence)
     for name, v in parsed.get("inferred", {}).items():
         v2 = coerce(name, v)
@@ -2691,6 +2714,11 @@ def _so101_least(o: dict | None) -> str | None:
     """A smaller width the person's words give that may be the objects' (least_mm: "cylinders between 20 and 40 mm",
     a later "the small ones are 20 mm" or "they're 20 mm", where "they" may be a lid) below the stock SO-101's usable
     minimum (flat-sided 22.5 mm, round 26 mm)."""
+    if (o or {}).get("widest_unknown") is True:
+        x = _plural(str(o.get("name") or "object")).lower()
+        return (f"Your messages give a size at a narrower part of the {x} (a neck, an opening or a lid), so their widest "
+                f"part may be wider than the stock SO-101's jaws hold; it needs a Morph-generated arm (say \"the {x} are "
+                f"{float(o['diameter_mm']):g} mm wide\" if that is their widest).")
     lo = cap._num((o or {}).get("least_mm"))
     if not lo:
         return None
@@ -2770,8 +2798,10 @@ def assess_scope(b: Brief) -> dict:
         if misfit:   # the nearest robot gets the same SO-101 checks as a request inside scope
             notes.append(misfit)
             slots.update(existing_hardware="none", object=obj)
-            if arch == "so101":
-                arch = _archetype_for_object(obj) or "generic_arm"
+            if arch == "so101":   # the person's object's job, else the request's own (a playroom keeps its children)
+                said = b.slots.get("object")
+                arch = (_archetype_for_object(obj) if said is not None and said.source in ("user", "video", "photo") else
+                        None) or _arch_without_so101(b)
         dims = f"{obj['diameter_mm']:g} mm, {obj['mass_g']:g} g"
         summary = (f"A desk arm that {_verb(ARCHETYPES[arch])} {_object_label(obj, short=True).lower()} ({dims}) on the table plane"
                    + (", with Dynamixel servos and 4 joints (about $1,500 in parts)" if slots.get("budget") else "") + ".")
@@ -2809,8 +2839,13 @@ def _verb(a: Archetype) -> str:
 def apply_nearest(b: Brief, nearest: dict):
     """Accept the nearest robot: its archetype and slot values, recorded as a scope assumption."""
     set_archetype(b, nearest.get("archetype", "generic_arm"), 1.0, "rules")
+    said = b.get("object") or {}
+    least = min([float(said[k]) for k in ("diameter_mm", "least_mm") if cap._num(said.get(k)) and
+                 (k == "least_mm" or k in (said.get("stated") or []))], default=None)
     for k, v in (nearest.get("slots") or {}).items():
         v2 = coerce(k, v)
+        if k == "object" and v2 is not None and least is not None and least < float(v2["diameter_mm"]):
+            v2["least_mm"] = least   # the person's 15 mm beads: a later "keep my SO-101" never holds the 30 mm stand-in
         if v2 is not None:
             b.slots[k] = Slot(v2, "inferred", 1.0, "nearest robot")
     b.flags["oos_accepted"] = [k for k, _ in b.flags.get("oos") or []]
@@ -2887,7 +2922,7 @@ _NP_STOP = frozenset((
     "load", "loads", "need", "needs", "want", "wants", "like", "measure", "measures", "measuring", "weigh", "weighs",
     "weighing", "weighed", "about", "around", "roughly", "approximately", "up", "down", "out", "off", "over", "please",
     "thanks", "ok", "okay", "yes", "oh", "well", "wait", "um", "erm", "er", "here", "there", "now", "too", "very", "do",
-    "does", "did", "can", "could", "will", "would", "should", "must", "may", "might", "every", "per", "each"))
+    "does", "did", "can", "could", "will", "would", "should", "must", "may", "might", "every", "per", "each", "mm", "g"))
 _TIES = ("are", "is", "were", "was", "measure", "measures", "measured", "measuring", "weigh", "weighs", "weighed", "weighing",
          "of", "at", "being")
 _UNIT_WORDS = ("wide", "across", "thick", "diameter", "dia", "dia.", "heavy", "in")
@@ -2930,9 +2965,10 @@ def _names_what(np: list, heads: set, words: set) -> str:
     return "other"
 
 
-def _np_before(t: str, s: int) -> list:
-    """The noun phrase a size at `s` is said of ("the lids are 35 mm", "cylinders weighing 50 g", "each cup is 40 g",
-    "they're 60 mm", "each of them is 60 mm"), as words, or [] when the words before it tie it to nothing."""
+def _np_before(t: str, s: int) -> tuple:
+    """(the noun phrase a size at `s` is said of, the words just before it): "the lids are 35 mm" (["the", "lids"], []),
+    "the lids of the jars are 30 mm" (["the", "jars"], [..., "lids", "of"]), "cylinders weighing 50 g", "each cup is
+    40 g", "they're 60 mm", "each of them is 60 mm"; ([], []) when the words before it tie it to nothing."""
     clause = re.split(r"[.,;:!?()\[\]]|\s-\s|\b(?:and|but|while|whereas|plus|then)\b", t[:s].replace("’", "'"))[-1]
     clause = re.sub(r"'s\b", " is", re.sub(r"'re\b", " are", clause))
     toks = re.findall(r"[a-z0-9~][a-z0-9'.-]*", clause)
@@ -2940,24 +2976,26 @@ def _np_before(t: str, s: int) -> list:
                                 "approximately", "~", "only", "just", "now", "all", "each"):
         toks.pop()
     if not toks or toks[-1] not in _TIES:
-        return []
+        return [], []
     toks.pop()
     if toks[-2:] in (["come", "in"], ["comes", "in"]):
         del toks[-2:]
     if len(toks) >= 3 and toks[-2] == "of" and toks[-1] in ("them", "these", "those"):
-        return toks[-3:]
+        return toks[-3:], toks[:-3][-3:]
     np = []
-    while toks and len(np) < 5 and (toks[-1] not in _NP_STOP or toks[-1] in _DETS) and not toks[-1][0].isdigit():
+    while toks and len(np) < 5 and not toks[-1][0].isdigit() and (toks[-1] not in _NP_STOP or toks[-1] in _DETS or (
+            not np and toks[-1] in ("can", "cans", "will", "may", "must", "do", "well", "place", "places", "hold", "holds",
+                                    "load", "loads", "stack", "stacks", "handle", "handles", "top", "tops"))):
         np.insert(0, toks.pop())
         if np[0] in _DETS - {"each", "every", "both", "all"}:
             break
-    return np if np and np[-1] not in _DETS else []
+    return (np, toks[-3:]) if np and np[-1] not in _DETS else ([], [])
 
 
 def _looks_np(np: list) -> bool:
     """Whether words on their own are a noun phrase ("the caps", "eggs"), not a reply word ("sorry", "people nearby")."""
     return 0 < len(np) <= 4 and not any(w[0].isdigit() for w in np) and (
-        np[0] in _DETS or (len(np) == 1 and np[0].endswith("s") and np[0] not in _NP_STOP and np[0] not in (
+        np[0] in _DETS or (len(np) <= 2 and np[-1].endswith("s") and not any(w in _NP_STOP for w in np) and np[-1] not in (
             "yes", "thanks", "this", "its", "his", "is", "was", "has", "does", "always", "plus", "less", "unless", "perhaps",
             "sometimes", "nobody's")))
 
@@ -2982,71 +3020,166 @@ def _np_after(t: str, e: int) -> list:
         toks.pop(0)
     np = []
     for w in toks[:3]:
-        if not re.fullmatch(r"[a-z][a-z'-]*", w) or w in _NP_STOP or w in _DETS or w in _PRONOUNS or w in _UNIT_WORDS:
+        if not re.fullmatch(r"[a-z][a-z'-]*", w) or w in _NP_STOP or w in _DETS or w in _PRONOUNS or w in _UNIT_WORDS or \
+                w in ("full", "empty", "total", "net", "gross", "max", "maximum", "min", "minimum", "tops", "apiece"):
             break
         np.append(w)
     return np
 
 
+_PREPS = frozenset(("of", "on", "in", "inside", "for", "between", "through", "around", "at", "from", "under", "over",
+                    "with", "without", "to", "into", "onto", "near", "by", "behind", "beside", "across", "along", "off", "per",
+                    "than", "like", "beneath", "below", "above", "within", "among"))
+_QUANTS = frozenset(("some", "one", "two", "three", "four", "five", "few", "many", "most", "half", "none", "several",
+                     "couple", "part", "majority", "minority", "rest", "any", "not", "nearly", "almost"))
+# parts a size can be of: a part's own size, read for the first time, only widens the objects ("the can lids are 60 mm")
+_PARTS = frozenset(("lid", "cap", "top", "neck", "rim", "handle", "label", "sticker", "stopper", "cork", "spout", "lip",
+                    "collar", "stem", "base", "bottom", "head", "foot", "shoulder", "knob", "tab", "seal", "wrapper"))
+# a size that is not plainly all of the objects' own: a question or a supposition ("what if the balls are 40 mm?",
+# "suppose they're 30 mm"), a lower bound ("40 mm and up", "at least 40 mm", "40 mm, some are bigger"), or the size
+# at one part of them ("30 mm at the top", "30 mm across the lid")
+_SUPPOSED = re.compile(r"^\s*(?:(?:and|but|so|oh|ok|okay|well|hmm)\s*,?\s+)?(?:can|could|would|will|does|do|did|is|are|should|"
+                       r"might|may|what|how|which|why|whether)\b|\b(?:if|suppose|supposing|assuming|assume|imagine|in\s+case|"
+                       r"unless|hypothetically|say|maybe|perhaps|possibly)\b")
+_AT_LEAST_BEFORE = re.compile(r"\b(?:at\s+least|over|more\s+than|above|from|starting\s+at|upwards\s+of|no\s+less\s+than|"
+                              r"minimum(?:\s+of)?|min\.?|bigger\s+than|larger\s+than|wider\s+than|heavier\s+than)\s+"
+                              r"(?:about\s+|around\s+|roughly\s+)?$")
+_AT_LEAST_AFTER = re.compile(r"\s*(?:wide|across|in\s+diameter|thick)?\s*,?\s*(?:and\s+(?:up|upwards?|over|above|bigger|larger|"
+                             r"wider|heavier|more)|or\s+(?:more|bigger|larger|wider|heavier|above|over)|plus\b|\+|at\s+(?:the\s+)?"
+                             r"(?:least|minimum|smallest|narrowest|thinnest|lightest)|minimum\b|min\b|upwards?\b|and\s+a\s+"
+                             r"(?:half|quarter|bit))")
+# parts narrower than the objects' widest ("40 mm at the neck", "45 mm necks", "the opening of the cans is 30 mm"): a
+# size of one as wide as the objects says their widest is not given (widest_unknown)
+_NARROW_PARTS = frozenset(("neck", "mouth", "opening", "top", "cap", "lid", "rim", "spout", "tip", "end", "lip", "collar",
+                           "handle", "hole", "stem", "stopper", "cork", "knob", "nozzle", "waist", "shoulder", "narrowest",
+                           "thinnest", "small"))
+# what a part, or what is in or on the objects, is said of: "the lids of the jars", "the caps on the jars", "the pills in
+# the cans" (not "the gap between the jars" or "the tray for the jars")
+_BELONGS = frozenset(("of", "on", "in", "inside", "around", "at", "atop", "within"))
+_EMPTY_AFTER = re.compile(r"\s*(?:each\s+)?,?\s*(?:when\s+|if\s+)?(?:empty|unfilled|dry|net|tare|without\s+(?:the\s+|its\s+|their\s+)?"
+                          r"(?:lids?|caps?|contents?|water|liquid|filling|food))\b")
+_AT_A_PART = re.compile(r"\s*(?:wide|across|in\s+diameter|thick)?\s*,?\s*(?:at|across|around|near|by|on|in|for)\s+(?:the|its|their|"
+                        r"each|every)\s+(?:very\s+)?(?:top|lid|neck|rim|base|bottom|mouth|opening|cap|handle|ends?|tips?|middle|"
+                        r"centre|center|narrowest|thinnest|label|stem|spout|head|foot|feet|edges?|lip|collar|shoulder|waist|"
+                        r"smallest|small\s+end)\b")
+
+
+def _not_plain(t: str, s: int, e: int) -> bool:
+    """Whether a size spanning t[s:e] may not be the objects' own (_SUPPOSED, _AT_LEAST_*, _AT_A_PART)."""
+    start = max(t.rfind(c, 0, s) for c in ".;!?") + 1
+    stop = min((i for i in (t.find(c, e) for c in ".;!?") if i >= 0), default=len(t))
+    return bool(stop < len(t) and t[stop] == "?" or _SUPPOSED.search(t[start:s]) or
+                _AT_LEAST_BEFORE.search(t[max(0, s - 30):s]) or _AT_LEAST_AFTER.match(t, e) or _AT_A_PART.match(t, e) or
+                re.match(r"\s*g\b", t[e - 1:]) and _EMPTY_AFTER.match(t, e) or
+                re.search(r"\b(?:bigger|larger|wider|thicker|heavier)\b", t[e:stop]))
+
+
 def _size_reads(b: Brief, t: str, base: dict | None) -> list:
-    """Each width and mass a later message gives, as {dim: "w"|"m", v, cls}: cls "obj" for the objects' own size,
-    "maybe" for a size that may be something else's (a part, some of them, "they" read for the first time), "rate" for a
-    mass per hour or a batch's beside the objects' own mass. A size for something else that was never read before
-    (only "the lids are 35 mm") is left out. `base` is the object the message is about (None: no object yet, so every
-    size is the objects')."""
+    """Each width and mass a later message gives, as {dim: "w"|"m", v, cls}. Only a phrasing the release read can
+    replace the objects' size ("obj": "20 mm", "the cylinders are 20 mm wide", "they weigh 60 g"), and then only when it
+    is plainly all of the objects' own; any other "maybe" one may be something else's, some of them' or a lower bound
+    ("they're 20 mm", "the cylinders are 20 mm", "some of the balls are 40 mm", "the lids of the jars are 30 mm wide",
+    "what if they're 40 mm?"), so it only widens them or weighs them more, and a smaller width is the least they may be.
+    "wider" is a part's size read for the first time ("the can lids are 60 mm"): it only widens them. "rate" is a mass
+    per hour or a batch's beside the objects' own. A size for something else that was never read is left out ("the
+    lids are 35 mm", "the gap between the jars is 30 mm"). `base` is the object the message is about (None: no object
+    yet, so a size the release read is the objects')."""
     heads, words = _object_words(base) if base else (set(), set())
 
-    def cls_of(np, new=False, at=0):
+    def cls_of(np, lead=(), new=False, at=0, end=0):
+        """(class, the narrow part the size is of or None) for a size spanning t[at:end] said of `np`."""
         what = _names_what(np, heads, words) if np else None
+        part = _singular(np[-1]) if np and what == "other" and _singular(np[-1]) in _NARROW_PARTS else None
+        loc = _AT_A_PART.match(t, end)
+        if loc:
+            part = part or next((w for w in re.findall(r"[a-z]+", loc.group(0)) if _singular(w) in _NARROW_PARTS), None)
         if what == "pron" and _topic(t, at):   # "the lids? they're 20 mm": the lids
             what = _names_what(_topic(t, at), heads, words)
             what = "obj" if what == "pron" else what
-        if new and what in ("some", "other") and (base is None or what == "other"):
-            return None   # "the lids are 35 mm", or "some of them are 24 mm" before any object: unread, as before
-        if base is None or what in (None, "obj") or (what == "pron" and not new):
-            return "obj"
-        return "maybe"
+        belongs = False
+        if np and lead and lead[-1] in _PREPS:   # "the lids of the jars", "the gap between the jars", "some of the balls"
+            q = lead[-2] if len(lead) > 1 else ""
+            belongs = lead[-1] in _BELONGS and what in ("obj", "pron") and q not in _QUANTS
+            if belongs and _singular(q) in _NARROW_PARTS:
+                part = _singular(q)
+            what = what if lead[-1] == "of" and q in ("each", "all", "both", "every") else \
+                "some" if lead[-1] == "of" and q in _QUANTS else "other"
+        elif np and lead and (lead[-1] in _QUANTS or lead[-1] in ("all", "every") and len(lead) > 1 and lead[-2] in _QUANTS):
+            what = "some"                         # "half the bottles", "not all the balls"
+        if what in (None, "obj", "pron") and _not_plain(t, at, end):
+            what = "some"
+        if re.search(r"(?:\bnot|n't|\bnever)\s+(?:(?:even|quite|exactly|about|around|over|more\s+than)\s+)?$", t[max(0, at - 24):at]):
+            return ("maybe" if not new and base is not None else None), None   # "they're not 60 mm": never more than before
+        if not new:
+            return ("obj" if base is None or what in (None, "obj", "pron") else "maybe"), part
+        if what == "other":   # a part's, or what is in or on them: only widens them ("the base of each block is 45 mm")
+            return ("wider" if base is not None and (belongs or np and _singular(np[-1]) in _PARTS) else None), part
+        if base is None:
+            return None, part   # nothing described yet: "they're 40 mm" may be anything's, as before
+        return "maybe", part
 
     reads, spans = [], []
 
-    def add(dim, v, at, cls):
+    def add(dim, v, at, cls_part):
+        cls, part = cls_part if isinstance(cls_part, tuple) else (cls_part, None)
         if cls is not None and not any(s <= at < e for s, e in spans):
-            reads.append({"dim": dim, "v": float(v), "cls": cls})
+            reads.append({"dim": dim, "v": float(v), "cls": cls, "part": part})
             spans.append((at, at + 1))
 
+    def low_end(at, cls_part):
+        cls = cls_part[0] if isinstance(cls_part, tuple) else cls_part   # "between 20 and 40 mm wide": the 20 mm too, as the least they may be
+        low = _RANGE_LOW.search(t[max(0, at - 24):at])
+        if low and cls not in (None, "wider") and 0 < float(low.group(1)) < float(re.match(r"[\d.]+", t[at:]).group(0)):
+            add("w", low.group(1), max(0, at - 24) + low.start(1), "maybe" if base is not None else "obj")
+
     for v, s, e in _width_reads(t):
-        cls = cls_of(_np_after(t, e) or _np_before(t, s), at=s)
+        np, lead = ([], []) if _np_after(t, e) else _np_before(t, s)
+        cls = cls_of(_np_after(t, e) or np, lead, at=s, end=e)
         add("w", v, s, cls)
-        low = _RANGE_LOW.search(t[max(0, s - 24):s])
-        if low and 0 < float(low.group(1)) < v:   # "they're 20 to 40 mm wide": the 20 mm too
-            add("w", low.group(1), max(0, s - 24) + low.start(1), cls)
+        low_end(s, cls)
+    # "the jars are 40 mm at the neck" (a phrasing never read as a width): a part as wide as the objects
+    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*mm\b", t):
+        loc = _AT_A_PART.match(t, m.end())
+        part = loc and next((w for w in re.findall(r"[a-z]+", loc.group(0)) if _singular(w) in _NARROW_PARTS), None)
+        if part and base is not None and not any(s <= m.start(1) < e for s, e in spans):
+            add("w", m.group(1), m.start(1), ("part", part))
     # a reply part that is only a width ("6 cm", "actually 60 mm"): the objects', unless the part before it names
-    # something else ("the caps, 35 mm")
+    # something else ("the caps, 35 mm", "the lids of the jars, 35 mm")
     pos, prev = 0, ""
     for part in re.split(r"([,;]|\band\b|\bplus\b)", t):
         seg = part.strip(" .!")
         m = _FIX_MM.fullmatch(seg) if seg else None
         if m:
-            np = prev.split()
-            add("w", m.group(1), t.index(seg, pos) + m.start(1), cls_of(np if _looks_np(np) else []))
+            at = t.index(seg, pos) + m.start(1)
+            np, lead = _np_before(prev + " is ", len(prev) + 4) if re.match(r"(?:the|these|those|its|their|my|our|each|all|"
+                                                                             r"some|half|one|a)\b", prev) else ([], [])
+            if not np and _looks_np(prev.split()):
+                np = prev.split()
+            cls = cls_of(np, lead, new=not _BARE_MM.fullmatch(seg), at=at, end=at + len(m.group(1)))
+            add("w", m.group(1), at, cls)
+            low_end(at, cls)
         if seg and not re.fullmatch(r"[,;]|and|plus", seg):
             prev = seg
         pos += len(part)
     for m in _IS_MM.finditer(t):
-        np = _np_before(t, m.start(1))
-        if np:
-            add("w", m.group(1), m.start(1), cls_of(np, new=True, at=m.start(1)))
+        np, lead = _np_before(t, m.start(1))
+        if np and not (_NOT_A_SIZE.search(t[max(0, m.start(1) - 24):m.end()]) or
+                       _NOT_A_SIZE_JUST_BEFORE.search(t[max(0, m.start(1) - 16):m.start(1)])):
+            add("w", m.group(1), m.start(1), cls_of(np, lead, new=True, at=m.start(1), end=m.end(1)))
     masses = _mass_reads(t)
     own_before = False
     if base is not None and "mass_g" in (base.get("stated") or []):
         x = normalize_units(conversation(b).lower())
-        own_before = any(abs(v - float(base["mass_g"])) < 1e-6 and not _rate_or_batch(x, s, e) for v, s, e in _mass_reads(x))
-    drop = _rates_to_drop(t, masses, own_elsewhere=own_before, context=normalize_units(conversation(b, t).lower()))
+        own_before = any(abs(v - float(base["mass_g"])) < 1e-6 and not _rate_or_batch(x, s, e) and
+                         _names_objects(x, s, e, heads, words) for v, s, e in _mass_reads(x))
+    drop = _rates_to_drop(t, masses, (heads, words), own_elsewhere=own_before,
+                          context=normalize_units(conversation(b, t).lower()))
     if drop and own_before and max((v for i, (v, _s, _e) in enumerate(masses) if i not in drop), default=1e9) < \
             float(base["mass_g"]):
         drop = set()   # a lighter mass beside the rate may be a part's: the rate stays as read
     for i, (v, s, e) in enumerate(masses):
-        add("m", v, s, "rate" if i in drop else cls_of(_np_after(t, e) or _np_before(t, s), at=s))
+        np, lead = ([], []) if _np_after(t, e) else _np_before(t, s)
+        add("m", v, s, "rate" if i in drop else cls_of(_np_after(t, e) or np, lead, at=s, end=e))
     return reads
 
 
@@ -3103,28 +3236,39 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None):
     gives is kept as the least they may be (least_mm, for the stock SO-101's jaws); a mass per hour or a batch's beside
     their own mass is left out. `named` is the Morph object the message itself names, if any."""
     cur = b.get("object")
-    base = object_value(named) if named and (cur is None or named != cur.get("key")) else cur
+    if named and (cur is None or named != cur.get("key")):
+        base = object_value(named)        # a Morph object the message names: its sizes, before the message's own
+    elif named:
+        # the object named again ("the eggs are fragile"): what the person stated about it, but never below Morph's
+        # preset for it, which naming it again read before (150 g eggs were planned as 60 g ones on the SO-101)
+        pre, base = object_value(named), dict(cur)
+        for k in ("diameter_mm", "mass_g"):
+            base[k] = max(float(cur[k]), float(pre[k]))
+        if float(cur["diameter_mm"]) < base["diameter_mm"]:
+            base["least_mm"] = min(float(cur["diameter_mm"]), float(cur.get("least_mm") or 1e9))
+        base["length_mm"] = max(float(cur.get("length_mm") or 0), base["diameter_mm"])
+    else:
+        base = cur
     reads = _size_reads(b, t, base)
-    w_obj, w_may = ([r["v"] for r in reads if r["dim"] == "w" and r["cls"] == c] for c in ("obj", "maybe"))
+    w_obj, w_may, w_wid = ([r["v"] for r in reads if r["dim"] == "w" and r["cls"] == c] for c in ("obj", "maybe", "wider"))
     m_obj, m_may, rates = ([r["v"] for r in reads if r["dim"] == "m" and r["cls"] == c] for c in ("obj", "maybe", "rate"))
     o = p["slots"].get("object")
     if o is None:
-        if not (w_obj or w_may):
+        if not (w_obj or w_may or w_wid):
             return
         o = p["slots"]["object"] = {k: v for k, v in dict(cur or value(b, "object")).items()}
     elif named and cur is not None and named == cur.get("key"):
-        # the object named again ("the eggs are fragile", "the jars measure 34 mm"): what the person stated about it
-        # stays, not Morph's preset for it
-        for k in ("diameter_mm", "mass_g", "length_mm", "least_mm"):
-            if k in cur and (k in (cur.get("stated") or []) or k in ("length_mm", "least_mm")):
-                o[k] = cur[k]
+        for k in ("diameter_mm", "mass_g", "length_mm", "least_mm", "widest_unknown"):
+            if k in base:
+                o[k] = base[k]
         o["stated"] = sorted(set(o.get("stated") or []) | set(cur.get("stated") or []))
     ref = base or o
     was = set(ref.get("stated") or []) if base else set()
     stated = set(o.get("stated") or [])
-    if w_obj or w_may:
+    narrow = [r["v"] for r in reads if r["dim"] == "w" and r.get("part")]   # "40 mm at the neck", "45 mm necks"
+    if w_obj or w_may or w_wid:
         bw = float(ref["diameter_mm"])
-        w = max(w_obj + w_may) if w_obj else max([bw] + w_may)
+        w = max(w_obj + w_may + w_wid) if w_obj else max([bw] + w_may + w_wid)
         lo = min(w_obj + w_may) if w_obj else min([float(ref.get("least_mm") or bw)] + w_may)
         o["diameter_mm"], o["length_mm"] = w, max(float(o.get("length_mm") or 0), w)
         if w_obj or w != bw or "diameter_mm" in was:
@@ -3134,9 +3278,17 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None):
         o.pop("least_mm", None)
         if lo < w:
             o["least_mm"] = lo
-    elif base is not None and base.get("least_mm") and o.get("key") == base.get("key") and \
+        if w_obj:
+            o.pop("widest_unknown", None)
+    elif base is not None and o.get("key") == base.get("key") and \
             float(o.get("diameter_mm") or 0) == float(base.get("diameter_mm") or 0):
-        o["least_mm"] = base["least_mm"]
+        for k in ("least_mm", "widest_unknown"):
+            if base.get(k):
+                o[k] = base[k]
+    if base is not None and base.get("widest_unknown") and not w_obj:
+        o["widest_unknown"] = True
+    if narrow and max(narrow) >= float(o["diameter_mm"]) - 0.5:
+        o["widest_unknown"] = True   # a neck or an opening as wide as the objects: their widest part is not given
     if m_obj or m_may or rates:
         bm = float(ref["mass_g"])
         o["mass_g"] = max(m_obj + m_may) if m_obj else max([bm] + m_may)
@@ -3159,6 +3311,15 @@ _NOT_NEW_ARM = re.compile(r"\b(?:no|not|don'?t|do\s+not|doesn'?t|won'?t|wouldn'?
                           r"no\s+need|needn'?t|keep|stick\s+with|can'?t|cannot|isn'?t|too\s+(?:much|expensive|costly))\b")
 
 
+# what may come before the new arm in a request ("actually, build a new arm", "let's design a new one", "I'd rather have
+# a new arm", "a new arm please"), not in a remark ("my friend built a new arm", "I'll build a new arm next year")
+_ASKS_FOR = re.compile(r"\s*(?:(?:actually|ok|okay|no|so|then|instead|please|just|right|hmm|well|sorry|wait|oh|fine|change of plan)"
+                       r"[,!:]?\s+)*(?:(?:let'?s|please|(?:i|we)(?:\s+(?:want|need|would\s+like|would\s+rather|prefer)|['’]d\s+"
+                       r"(?:like|rather|prefer))|go\s+(?:ahead\s+and\s+)?|you\s+can|"
+                       r"i\s+think\s+(?:we|you)\s+should|better)\s+)?(?:(?:build|make|design|generate|get|go\s+with|use|create|"
+                       r"try|have|do)\s+(?:it|me|us)?\s*)?(?:with\s+|from\s+)?")
+
+
 def _asks_new_arm(t: str) -> bool:
     """Whether a later message (lower case, without the SO-101 in it) asks for a Morph-generated arm instead."""
     if re.search(_SO, t):
@@ -3168,9 +3329,10 @@ def _asks_new_arm(t: str) -> bool:
         end = min((i for i in (t.find(c, m.end()) for c in ".;!?") if i >= 0), default=len(t))
         clause = t[start:end + 1]
         if clause.rstrip().endswith("?") or _NOT_NEW_ARM.search(clause) or \
-                re.match(r"\s+(?:is|was|would|will|could|might|costs?|sounds?|seems?|looks?)\b", t[m.end():]):
+                re.match(r"\s+(?:is|was|would|will|could|might|costs?|sounds?|seems?|looks?|came|arrived)\b", t[m.end():]):
             continue
-        return True
+        if _ASKS_FOR.fullmatch(t[start:m.start()]):
+            return True
     return False
 
 
@@ -3178,9 +3340,12 @@ def _arch_without_so101(b: Brief, text: str = "") -> str:
     """The archetype once the SO-101 is out: the object's, else the one the person's own words pick without the
     SO-101 (loading cups into the dishwasher is dishes, a playroom toys, with the people next to them), else general
     pick and place."""
-    key = _archetype_for_object(b.get("object"))
+    o = b.slots.get("object")
+    key = _archetype_for_object(o.value) if o is not None and o.source in ("user", "video", "photo") else None
     if not key:
         key = detect_archetype(re.sub(_SO, " ", conversation(b, text).lower()))[0]
+    if key in ("generic_arm", "so101") and o is not None:
+        key = _archetype_for_object(o.value) or key
     return key if key in ARCHETYPES and key != "so101" else "generic_arm"
 
 
@@ -3199,8 +3364,9 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
             a2 = _archetype_for_object(v2)
             if _arch(b).key == "generic_arm" and a2:
                 set_archetype(b, a2, 0.9, "user")
-        if name == "existing_hardware" and (v2 == "so101" or _arch(b).key in ("so101", "generic_arm")):
-            set_archetype(b, "so101" if v2 == "so101" else _arch_without_so101(b), 0.9, "user")
+        if name == "existing_hardware":   # leaving the SO-101 keeps the job's own people (_arch_without_so101)
+            set_archetype(b, "so101" if v2 == "so101" else _arch_without_so101(b) if _arch(b).key == "so101" else
+                          (_archetype_for_object(b.get("object")) or "generic_arm"), 0.9, "user")
     if text and text.strip():
         t = text.strip()[:2000]
         p = parse(t)

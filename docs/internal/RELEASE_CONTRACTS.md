@@ -632,25 +632,30 @@ clamping.
   30 mm cylinders weighing 50 g" keeps the SO-101 with them; "... to cook 300 g steaks" gets a generated arm for 300 g),
   and its stand-in otherwise ("fold towels": folded washcloths). An SO-101 named in a typed reply ("I have an SO-101")
   is used like one in the request; "I don't have an SO-101" and "actually, build a new arm" (`brief._asks_new_arm`, not
-  a question, a refusal or a remark: "do I need a new arm?", "no need for a new arm") are a new arm. An SO-101 brief
+  a question, a refusal or a remark: "do I need a new arm?", "no need for a new arm", "my friend built a new arm") are a
+  new arm. An SO-101 brief
   takes who is next to it and where it works from the request's own job (`brief._arch_without_so101`: a playroom's
   children, a kitchen's emergency stop), so moving to or from the SO-101 never drops one. A typed reply's sizes
-  (`brief._later_sizes`, `brief._size_reads`): the objects' own replaces theirs ("60 mm", "actually 60 mm", "the
-  cylinders are 60 mm"; the object named again keeps what was stated, not Morph's preset); any other only widens or
-  weighs them more ("they're 60 mm", read for the first time, since "they" may be a lid, a gap or a peg, and is the
-  lid after one: "the lids? they're 20 mm", `brief._topic`; a lid's or a
-  cap's; the small ones'; the candles in candle jars, the pills in pill bottles), and a smaller width it gives is kept
-  as `least_mm`, which the stock SO-101's jaws must hold too (`brief._so101_least`, also when the SO-101 is named only
-  later), as is the lower end of a range in any message ("between 20 and 40 mm", "40 mm and 20 mm cylinders"); below
-  the generated gripper's own minimum it is a note. A size naming something else that was never read stays unread
-  ("the lids are 35 mm"). The request's sizes are read in more
-  forms (`brief._sizes`, after `intent.normalize_units`): "50 mm, 30 g tubes", "50mm/30g", "(50 mm)", "tubes of 50 mm",
+  (`brief._later_sizes`, `brief._size_reads`): only a phrasing the rules read before this change can replace the
+  objects' size ("60 mm", "sorry, 60 mm", "the cylinders are 60 mm wide", "they weigh 60 g"), and only when it is plainly
+  all of theirs; any other only widens them or weighs them more, and a smaller width it gives is kept as `least_mm`:
+  a phrasing read for the first time ("they're 60 mm", where "they" may be a lid, a gap or a peg, and is the lid after
+  one, `brief._topic`; "the cylinders are 60 mm"; "actually 60 mm"), a part's, some of them' or what they hold (a noun
+  after a preposition or a quantifier: "the lids of the jars", "some of the balls", "half the jars"; "the small ones";
+  the candles in candle jars), a question or a supposition, a lower end ("40 mm and up", "at least 40 mm") or the size at
+  one part ("30 mm at the top", `brief._not_plain`). A part's size read for the first time only widens them ("the can
+  lids are 60 mm"); one for something else is left unread ("the gap between the jars is 30 mm"). `least_mm` is what the
+  stock SO-101's jaws must hold too (`brief._so101_least`, also when the SO-101 is named only later), as is the lower
+  end of a range in any message ("between 20 and 40 mm", "40 mm and 20 mm cylinders"); below the generated gripper's own
+  minimum it is a note. The object named again keeps what was stated, not Morph's preset. The request's sizes are read
+  in more forms (`brief._sizes`, after `intent.normalize_units`): "50 mm, 30 g tubes", "50mm/30g", "(50 mm)", "tubes of 50 mm",
   "measuring 50 mm", "50 mm oranges", "two-inch", "50-mm", "half a kilo", "a pound", "300 gm", "three hundred grams",
   "1,050 g", "1 000 g" and "1.000 g" (thousands; a dot only before grams and "000"), and the largest of several
   ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach, nor
   a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "in 2 kg batches", "2 kg of 50 g
-  cubes"; kept when the words say the object weighs more than a mass given: empty, what it holds, a lid, some of them;
-  a total is one object's: "130 g in total"). In
+  cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by name, `brief._names_objects`, and
+  the words don't say the object weighs more than a mass given: empty, net, what it holds, a lid, some of them; a total
+  is one object's, "130 g in total"; a mass tied to its noun is never a rate: "pouches of 300 g every minute"). In
   the round-6 hunt's sweep of 18,753 SO-101 conversations, graded by its own rules, 3,169 were wrong at bd19c43 (a
   generated arm blamed on a stand-in, the SO-101 kept for a stand-in or for a size it didn't read, a typed SO-101
   ignored), 90 of them only because the sweep's SO-101 chip was never offered (the request was already out of scope);
