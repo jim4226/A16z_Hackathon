@@ -639,7 +639,9 @@ clamping.
   emergency stop, `brief._gives_estop`, else the object's job or the general arm, so an object Morph chose, as after
   "@nearest", never drops it; a job's robot that kept the SO-101 keeps that job on the new arm a later misfit offers,
   `brief._job_kept`; the nearest robot's SO-101 check sees the object's unknown shape and what was stated, and a stock
-  SO-101 that still doesn't hold it after "@nearest" is left too; and an object named after leaving brings its job's stop, as does the job leaving it gave
+  SO-101 that still doesn't hold it after "@nearest" is left too; every typed way off the SO-101 ("my SO-101 broke",
+  "forget the SO-101", not negated or mended: "I can't forget my SO-101", "it's fixed now") keeps the SO-101's own
+  guess's job in `flags["so101_guess"]`; and an object named after leaving brings its job's stop, as does the job leaving it gave
   before, by any route: a chip, typed words, a new arm, the nearest robot (`brief._leave_so101`), and the job of the
   SO-101's own guess when the release ignored the new arm and its SO-101 could not take the object
   (`flags["so101_guess"]`); an SO-101 doing a hand-over job has the hand-over's emergency stop; an SO-101 named
@@ -667,9 +669,10 @@ clamping.
   object is described ("they're 60 mm"), stays unread, as before; a later noun renames the objects and gives their
   shape ("they come as 40 mm cubes") unless it is a part of them ("45 mm necks": the objects keep their name, shape
   and size, a part's only widening them, "30 mm handles", and a shape said of the part, "45 mm bases, they're square",
-  leaves theirs unknown, `shape_unknown`), a round shape only from a reply that says it of them
-  (`brief._says_shape_of_them`: "they're round", never "my SO-101 can do it" or "the caps are round"; a flat-sided word
-  anywhere, as before), and a width said stays stated, so
+  leaves theirs unknown, `shape_unknown`), a round shape from a reply that says it of them
+  (`brief._says_shape_of_them`: "they're round") and an unknown one, planned round and checked as both, from a round
+  word in any other ("they're round, sorry", "my SO-101 can do it", "the caps are round"; a flat-sided word anywhere
+  is flat-sided, as before), and a width said stays stated, so
   the unknown-shape and below-minimum checks still run ("they sit in 40 mm holders" after toy blocks). A part's size read for the
   first time only widens them ("the can
   lids are 60 mm"); one for something else is left unread ("the gap between the jars is 30 mm"). `least_mm` is what the

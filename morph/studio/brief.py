@@ -2024,7 +2024,7 @@ _DET = r"(?:a|an|the|my|your|our|their|its|each|every|two|three|some)"
 _TO_A_THING = re.compile(r"(?:\b(?:into|onto|inside|out of|next to|beside)\s+(?:" + _DET + r"\s+)?|\b(?:in|on|to|from|off)\s+" +
                          _DET + r"\s+)(?:[a-z-]+\s+){0,2}$")
 _NOT_A_SIZE = re.compile(r"reach|finger|hole|mount|spacing|longer|shorter|apart|away|from the base|travel|stroke|clearance|"
-                         r"\bgap\b|height|depth|length|\blift|\braise|\blower")
+                         r"\bgaps?\b|height|depth|length|\blift|\braise|\blower")
 _NOT_A_SIZE_JUST_BEFORE = re.compile(r"accura|precis|toleran|resolution|repeatab|within|error|offset")
 # a length the request gives the object: "50 mm wide", "Ø50 mm", "(50 mm)", "tubes of 50 mm", "measuring 50 mm", "50 mm,
 # 30 g tubes", "50 mm oranges", "about 50 mm"; not a distance, a reach or a part of the robot
@@ -2634,9 +2634,16 @@ def parse(text: str) -> dict:
                            r"have been)\s+(?:[a-z-]+\s+){0,1}?(?:broken|broke|bust|busted|faulty|dead|died|knackered|"
                            r"stopped working|not working|burnt out|burned out|fried)\b|"
                            r"\b(?:broken|busted|faulty|dead|knackered|fried)\s+" + so +
-                           r"|" + _SO + r"(?:['’]s)?\s+(?:\w+\s+){0,2}?(?:doesn'?t|won'?t|does not|will not)\s+work\b"
-                           r"|" + _SO + r"\s+(?:just\s+|recently\s+|has\s+)?(?:broke|died|failed|snapped|cracked|"
-                           r"stopped\s+working)\b", t)
+                           r"|" + _SO + r"(?:['’]s)?\s+(?:\w+\s+){0,2}?(?:doesn'?t|won'?t|does not|will not)\s+work\b", t)
+        # "my SO-101 broke", "I lent my SO-101 to a friend", "forget the SO-101" (not "I can't forget my SO-101", "it
+        # broke but it's fixed now")
+        back = re.search(r"\b(?:fixed|repaired|mended|works?\s+(?:again|now|fine)|working\s+(?:again|now)|got\s+it\s+back|"
+                         r"have\s+it\s+back|it'?s\s+(?:fine|ok|okay)\s+now)\b", t)
+        gone = re.search(_SO + r"\s+(?:just\s+|recently\s+|has\s+)?(?:broke|died|failed|snapped|cracked|stopped\s+working)\b|"
+                         r"\b(?:lent|loaned|lend|forget(?:\s+about)?|skip|ditch|scrap)\s+(?:[a-z-]+\s+){0,2}?" + _SO, t)
+        if gone and not back and not re.search(r"\b(?:can'?t|cannot|won'?t|will\s+not|wouldn'?t|never|not|don'?t|do\s+not)\s+"
+                                               r"(?:\w+\s+)?$", t[max(0, gone.start() - 24):gone.start()]):
+            broken = broken or gone
         new_arm = re.search(r"(?<!\bnot )(?<!\bno )(?<!n't )(?<!\bnever )(?<!\bto )(?<!\binto )(?<!\bonto )(?<!\bfrom )"
                             r"(?<!\bwith )(?<!\bby )\b(?:build (?:me )?a new|a new arm|new arm|a different arm|another arm|"
                             r"a replacement arm|design a replacement)\b", t)
@@ -2649,7 +2656,6 @@ def parse(text: str) -> dict:
                            r"neighbou?r)['’]?s|my\s+(?:friend|mate|colleague|neighbou?r|brother|sister|dad|mum|mom|cousin|"
                            r"boss|school|lab|uni)['’]s)\s+(?:[a-z-]+\s+)?" + _SO, t)
         past = re.search(r"\b(?:used to|previously|once had|no longer|sold|gave away|given away|lost|returned|replac\w+|"
-                         r"lent|loaned|lend|forget(?:\s+about)?|skip|ditch|scrap|"
                          r"upgrad\w+ from|swap\w* out|thinking of buying|want to buy|might buy|should i buy)\s+(?:[a-z-]+\s+){0,2}?" +
                          _SO, t)
         compare = re.search(r"(?<!\bi'd )(?<!\bi )(?<!\bwe'd )(?<!\bwe )(?<!\bwould )(?<!\bwould really )"
@@ -3437,7 +3443,9 @@ def _not_plain(t: str, s: int, e: int) -> bool:
                 _AT_LEAST_BEFORE.search(t[max(0, s - 30):s]) or _AT_LEAST_AFTER.match(t, e) or _AT_A_PART.match(t, e) or
                 re.match(r"\s*g\b", t[e - 1:]) and _EMPTY_AFTER.match(t, e) or
                 re.search(r"\b(?:bigger|larger|wider|thicker|heavier)\b", t[e:stop]) or
-                re.search(r"\b(?:plus|also|another|other|others|extra|more|too|as\s+well)\b", t[start:stop]))
+                re.search(r"\b(?:plus|also|another|other|others|extra|more|too|as\s+well)\b", t[start:stop]) or
+                re.search(r"\b(?:in\s+most\s+cases|mostly|usually|typically|generally|normally|on\s+average|for\s+the\s+most\s+"
+                          r"part|most\s+of\s+them|the\s+majority)\b", t[start:stop]))
 
 
 def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> list:
@@ -3455,8 +3463,9 @@ def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> 
     def cls_of(np, lead=(), new=False, at=0, end=0):
         """(class, the narrow part the size is of or None) for a size spanning t[at:end] said of `np`."""
         what = _names_what(np, heads, words) if np else None
-        if new and np and np[-1] in _DIM_WORDS:   # "the diameter is 60 mm", "the cylinders' width is 60 mm": theirs, if
-            what = "pron" if _dim_theirs(t, at, words) else "other"   # nothing else's
+        dim = bool(np) and np[-1] in _DIM_WORDS
+        if dim:   # "the diameter is 60 mm", "they come with a width of 45 mm": theirs, if nothing else's ("the gripper has a
+            what = "pron" if _dim_theirs(t, at, words) else "other"   # width of 20 mm", "a tray with a width of 45 mm")
         part = _singular(np[-1]) if np and what == "other" and _singular(np[-1]) in _NARROW_PARTS else None
         loc = _AT_A_PART.match(t, end)
         if loc:
@@ -3465,12 +3474,12 @@ def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> 
             what = _names_what(_topic(t, at), heads, words)
             what = "obj" if what == "pron" else what
         belongs = False
-        if np and lead and lead[-1] in _PREPS:   # "the lids of the jars", "the gap between the jars", "some of the balls"
+        if np and lead and lead[-1] in _PREPS and not dim:   # "the lids of the jars", "the gap between the jars"
             q = lead[-2] if len(lead) > 1 else ""
             belongs = lead[-1] in _BELONGS and what in ("obj", "pron") and q not in _QUANTS
             if belongs and _singular(q) in _NARROW_PARTS:
                 part = _singular(q)
-            what = what if lead[-1] == "of" and q in ("each", "all", "both", "every") else \
+            what = what if lead[-1] == "of" and (q in ("each", "all", "both", "every") or q in _DIM_WORDS) else \
                 "some" if lead[-1] == "of" and q in _QUANTS else "other"
         elif np and lead and (lead[-1] in _QUANTS or lead[-1] in ("all", "every") and len(lead) > 1 and lead[-2] in _QUANTS):
             what = "some"                         # "half the bottles", "not all the balls"
@@ -3569,13 +3578,15 @@ def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> 
         beside = _part_beside(t, s0, e0, heads, words)
         dim = re.search(r"\b(?:" + "|".join(_DIM_WORDS) + r")\s*(?:is|was|=|:|-|of)?\s*(?:about\s+|around\s+|approx\.?\s+|"
                         r"roughly\s+|~\s*)?$", t[max(0, s0 - 30):s0])
-        mine = np and _names_what(np, heads, words) in ("obj", "pron") or not np and (
-            beside and _names_what(beside, heads, words) in ("obj", "pron") or
-            re.match(r"\s*(?:wide|across|in\s+diameter)?\s*(?:each|apiece)\b(?!\s+(?:way|side|time|step|direction|move|end|"
-                     r"axis|direction))", t[e0:]) or
+        other = bool(beside) and _names_what(beside, heads, words) not in ("obj", "pron")   # "the jaws 120 mm each"
+        mine = np and _names_what(np, heads, words) in ("obj", "pron") or not np and not other and (
+            beside or re.match(r"\s*(?:wide|across|in\s+diameter)?\s*(?:each|apiece)\b(?!\s+(?:way|side|time|step|direction|"
+                               r"move|end|axis))", t[e0:]) or
             dim and _dim_theirs(t, s0, words))
         if mine:
-            add("w", m.group(1), s0, cls_of([], (), new=True, at=s0, end=e0))
+            cls = cls_of([], (), new=True, at=s0, end=e0)
+            add("w", m.group(1), s0, cls)
+            low_end(s0, cls)   # "between 20 and 40 mm each": the 20 mm too, as the least they may be
     masses = _mass_reads(t)
     own_before = False
     if base is not None and "mass_g" in (base.get("stated") or []):
@@ -3644,11 +3655,14 @@ def _dim_theirs(t: str, at: int, words: set) -> bool:
         return False
     before = [re.sub(r"'s?$", "", w) for w in re.findall(r"[a-z][a-z'-]*", t[s0:s0 + m.start()])]
     after = t[s0 + m.end():at]
-    if re.match(r"\s+of\s+(?!them\b|each\b|these\b|those\b|the\s+(?:" + "|".join(sorted(words) or ["-"]) + r")s?\b)", after):
-        return False   # "the width of the slot is 60 mm"
+    if re.match(r"\s+of\s+(?!them\b|each\b|these\b|those\b|the\s+(?:" + "|".join(sorted(words) or ["-"]) + r")s?\b)[a-z]",
+                after):
+        return False   # "the width of the slot is 60 mm" (not "a diameter of 28 mm")
     while before and (before[-1] in _DETS - {"their", "its"} or before[-1] in _DIM_LINKS):
         before.pop()   # "the gripper has a width of 60 mm": the gripper's
     owner = before[-1] if before else ""
+    if owner in ("them", "these", "those") and len(before) > 2 and before[-2] == "of" and before[-3] in _QUANTS:
+        return False   # "one of them has a diameter of 20 mm": some of them
     return not owner or owner in ("their", "its", "they", "them") or owner in _PRONOUNS or owner in _FIX_WORD_SET or \
         owner in _NP_STOP or _singular(owner) in words
 
@@ -3659,9 +3673,9 @@ def _clause_start(t: str, s: int, marks: str = ";!?,:") -> int:
 
 # a time or a guess is no thing a size is of ("at the end of the day 40 mm"), nor is a part of someone ("my head")
 _NOT_THINGS = frozenset(("day", "days", "time", "times", "moment", "week", "morning", "evening", "night", "way", "case",
-                         "rate", "least", "most", "whole", "lot", "rest", "mind", "guess", "estimate", "memory"))
+                         "rate", "least", "whole", "lot", "mind", "guess", "estimate", "memory"))
 # what an "of"/"for" or a bracket after a size may name that is all of them ("for the lot", "(all of them)")
-_THEIRS_TOO = frozenset(("lot", "set", "batch", "bunch", "whole", "rest", "them", "these", "those", "it"))
+_THEIRS_TOO = frozenset(("lot", "set", "batch", "bunch", "whole", "them", "these", "those", "it"))
 _SIZE_WORDS = frozenset(("diameter", "dia", "width", "widths", "size", "sizes", "measurement", "measurements", "weight",
                          "weights", "mass", "wide", "across", "thick", "approx", "approximately", "about", "around",
                          "roughly", "just", "only", "exactly", "precisely", "nearly", "almost", "maybe", "probably"))
@@ -3671,6 +3685,10 @@ def _part_beside(t: str, s: int, e: int, heads: set, words: set) -> list:
     """The part or the other thing a size spanning t[s:e] is said of with no word tying them: a part of theirs just
     before it ("lids 20 mm wide", "cap diameter 20 mm", "lids 20 g"), a noun phrase with "the" before it ("the caps
     20 mm") or one after it ("20 mm wide for the caps", "20 mm (the caps)"), or []."""
+    q = re.match(r"\s*(?:wide|across|in\s+diameter|diameter|thick|big|heavy)?\s*(?:each\s+|apiece\s+)?(?:for|on|of)\s+"
+                 r"(?:some|most|many|several|half|a\s+few|a\s+couple)\b", t[e:])
+    if q:
+        return ["some"]   # "20 mm wide for some (of them)"
     m = re.match(r"\s*(?:wide|across|in\s+diameter|diameter|thick|big|heavy)?\s*(?:each\s+|apiece\s+)?(?:for|on|of)\s+"
                  r"((?:the|their|its|these|those)\s+[a-z][a-z' -]*?)(?=\s*(?:$|[.,;:!?)]|\band\b))", t[e:])
     if not m:
@@ -3688,7 +3706,7 @@ def _part_beside(t: str, s: int, e: int, heads: set, words: set) -> list:
     if not toks:
         return []
     head = toks[-1]
-    if head in _NOT_THINGS or len(toks) > 1 and toks[-2] in ("my", "your", "our", "his", "her"):
+    if head in _NOT_THINGS or head == "head" and len(toks) > 1 and toks[-2] in ("my", "your", "our", "his", "her"):
         return []   # "at the end of the day 40 mm wide", "off the top of my head 40 mm"
     if _singular(head) in _PARTS | _NARROW_PARTS and _singular(head) not in heads | words:
         return [head]   # "lids 20 mm wide", "jar lids 20 mm", "cap diameter 20 mm"
@@ -3722,8 +3740,14 @@ def _typed_answer(b: Brief, p: dict, t: str):
     cur = b.get("object")
     if cur and cur.get("key") is None and cur.get("stated") is not None:   # a described object the person refines
         sh = _shape_said(t) if o is None and dia is None else None
-        if sh and (sh == "box" or _says_shape_of_them(t, cur)):   # "they are round"; never "my SO-101 can do it",
-            s["object"] = dict(cur, shape=sh, stated=sorted(set(cur["stated"]) | {"shape"}))   # "the caps are round"
+        if sh and (sh == "box" or _says_shape_of_them(t, cur)):   # "they are round"
+            s["object"] = dict(cur, shape=sh, stated=sorted(set(cur["stated"]) | {"shape"}))
+            return
+        if sh and not ({sh, cur.get("shape")} <= {"cylinder", "sphere"} and "shape" in cur["stated"]):
+            # a round word not plainly said of them ("they're round, sorry", "the caps are round", "my SO-101 can do
+            # it") on objects not already stated round: their shape is no longer known, so the stock SO-101 holds them
+            # only from 26 to 34 mm, and a generated gripper is planned for round ones, its narrowest band
+            s["object"] = dict(cur, shape="cylinder", shape_unknown=True, stated=sorted(set(cur["stated"]) - {"shape"}))
             return
         if o is not None and o.get("key") is None:     # "40 mm cylinders" after "40 mm containers weighing 90 g": 90 g stays
             for k in cur["stated"]:
@@ -3984,6 +4008,9 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
             set_archetype(b, "so101", 0.9, "user")
             b.flags.pop("left_so101", None)
         elif hw == "none" and was_so101:
+            # "my SO-101 broke", "forget the SO-101": the release kept the SO-101 for some of these, and one that can't
+            # take the object went to the nearest robot with the SO-101's own guess (build_changes keeps its stop)
+            b.flags.setdefault("so101_guess", _archetype_for_object(b.get("object") or value(b, "object")) or "generic_arm")
             _leave_so101(b, t)
         a2 = _archetype_for_object(b.get("object"))
         if _arch(b).key == "generic_arm" and a2:
@@ -4057,7 +4084,9 @@ def progress(b: Brief, *, defaults_now: bool = False, nearest: bool = False, dee
         sc = assess_scope(b)
         if sc["status"] == "out_of_scope" and (sc.get("nearest") or {}).get("slots") == {"existing_hardware": "none"}:
             prior += sc["notes"]   # the stock SO-101 the nearest robot kept doesn't hold the object either: a new arm
+            accepted, note = b.flags.get("oos_accepted"), b.flags.get("nearest_note")
             apply_nearest(b, sc["nearest"])
+            b.flags["oos_accepted"], b.flags["nearest_note"] = accepted, note
             sc = assess_scope(b)
         sc = {"status": "adjusted", "notes": list(dict.fromkeys(prior + sc["notes"])), "nearest": None}
         b.assumptions = [x for x in b.assumptions if x.get("kind") != "scope"]

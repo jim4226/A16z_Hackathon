@@ -534,9 +534,10 @@ you build:
   new shape is read ("sorry, they come as 40 mm cubes"), and so is a larger size said beside their name or a width
   word ("the cylinders 60 mm", "60 mm for the cylinders", "60 mm each", "the diameter is 60 mm", "width: 60 mm"). A
   part's size never narrows them ("30 mm handles" on 50 mm cylinders) and a part's shape keeps the stock SO-101 off
-  when it may not hold their widest part ("45 mm bases, they're square"); a round shape is read only from a reply that
-  says it of them ("they're round"), not from a word in it ("my SO-101 can do it", "the caps are round", "they go in
-  cups" made 40 mm cubes round, on the SO-101).
+  when it may not hold their widest part ("45 mm bases, they're square"); a round shape is read from a reply that says
+  it of them ("they're round"), and a round word in any other reply ("they're round, sorry", "my SO-101 can do it", "the
+  caps are round") leaves their shape unknown, so the stock SO-101 holds them only from 26 to 34 mm (the release made
+  40 mm cubes round, on the SO-101).
 - New robot: "actually, build a new arm" after "use my SO-101" builds a Morph-generated arm. An SO-101 robot takes who
   is next to it and where it works from its job, as a generated arm does ("use my SO-101 to tidy up the playroom" has
   children nearby and an emergency stop), and leaving the SO-101 keeps them ("cups to the sink": people nearby), also
@@ -546,7 +547,8 @@ you build:
   generated arm for that job has. The object Morph then assumes for the job is never smaller or lighter than the
   45 mm, 100 g one leaving the SO-101 gave before. A job's robot that kept your SO-101 (the nearest robot for "it should
   cook dinner") keeps the job's emergency stop when a later size means the SO-101 can't hold the object; "my SO-101
-  broke", "I lent my SO-101 to a friend" and "forget the SO-101" leave the SO-101; and the "no SO-101" answer on a job's
+  broke", "I lent my SO-101 to a friend" and "forget the SO-101" leave the SO-101, with the emergency stop the SO-101's
+  own guess gave (not "I can't forget my SO-101" or "it broke but it's fixed now"); and the "no SO-101" answer on a job's
   robot keeps its people ("tidy the playroom": children nearby), with the 45 mm, 100 g object it gave before.
 - New robot: "them" served food or drink ("a robot that delivers them coffee", "makes them tea") are people next to the
   robot, so it gets an emergency stop.

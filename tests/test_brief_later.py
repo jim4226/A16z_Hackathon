@@ -859,8 +859,9 @@ def test_a_guess_of_no_known_shape_is_planned_round_on_a_generated_arm():
 
 @pytest.mark.parametrize("later", ["my SO-101 can do it", "the caps are round", "they go in cups"])
 def test_a_round_word_in_a_later_reply_never_makes_flat_sided_objects_round(later):
+    # it leaves their shape unknown: the stock SO-101 holds them only where it holds both, 26 to 34 mm
     b = steps("use my SO-101 to move 40 mm cubes", later)
-    assert b.changes.get("object.shape") == "box" and not so101(b), later
+    assert B.value(b, "object").get("shape_unknown") and not so101(b), later
 
 
 def test_a_later_reply_that_says_their_shape_still_gives_it():
@@ -921,3 +922,75 @@ def test_the_no_so101_chip_on_a_job_without_a_stop_offers_the_releases_nearest_r
     # keeping the folding job there gave the nearest robot the job's own 50 g socks, not the 60 g folded washcloth
     b = steps("a robot that folds laundry", "each one is 50 mm", "they're fragile", "#existing_hardware=none")
     assert mass(b) >= 60.0, mass(b)
+
+
+# ---- the round-8 review: a round word said later however it is put, the leave words of round 7 with a size after
+# them, a possessive before a part, a size for some of them, another thing's "each", and an SO-101 still had
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to move 24 mm cubes", "they are round actually"),
+    ("move 24 mm cubes", "they are round actually", "use my SO-101"),
+    ("use my SO-101 to move 24 mm square pegs", "my mistake, the pegs are round"),
+    ("use my SO-101 to move 25 mm hex nuts", "sorry, they're round nuts"),
+    ("use my SO-101 to stack 24 mm flat discs", "they're round discs"),
+    ("use my SO-101 to move 24 mm cubes", "they're coin-shaped"),
+    ("use my SO-101 to move 24 mm cubes", "they're round, sorry", "keep my SO-101"),
+    ("move 24 mm bars", "round collars", "keep my SO-101")])
+def test_a_round_word_later_keeps_the_so101_off_objects_below_its_round_jaws(turns):
+    # round objects under 26 mm drop out of the stock SO-101's jaws: the release read the word, so must this
+    assert not so101(steps(*turns)), turns
+
+
+def test_a_round_word_later_plans_a_generated_gripper_for_round_ones():
+    b = steps("a robot to move 24 mm bars", "wait, they are round")
+    assert b.changes.get("object.shape") == "cylinder" and width(b) >= 26.0
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to sort screws", "forget the SO-101", "50 mm"),
+    ("use my SO-101", "my SO-101 just died", "they weigh 200 g"),
+    ("use my SO-101 to water the plants", "my SO-101 broke", "15 mm"),
+    ("use my SO-101 to pick things up", "skip the SO-101", "sorry, 60 mm")])
+def test_leaving_the_so101_in_new_words_keeps_the_stop_its_own_guess_gave(turns):
+    # the release kept the SO-101 there with its raw egg, and the nearest robot for the misfit was a kitchen's
+    assert "estop" in (steps(*turns).changes.get("electronics.extras") or ""), turns
+
+
+@pytest.mark.parametrize("later", ["my lids 20 mm wide", "my lids 20 g", "your caps 20 g"])
+def test_a_possessive_before_a_part_keeps_it_a_part(later):
+    b = steps("use my SO-101 to move 40 mm jars weighing 90 g", later)
+    assert width(b) >= 40.0 and mass(b) >= 90.0, (later, width(b), mass(b))
+
+
+@pytest.mark.parametrize("later", ["20 mm wide for the rest", "20 mm wide for some", "in most cases 20 mm wide",
+                                   "between 20 and 40 mm each"])
+def test_a_size_for_some_of_them_never_narrows_them_and_keeps_the_so101_off(later):
+    b = steps("use my SO-101 to move 40 mm cylinders", later)
+    assert width(b) >= 40.0 and not so101(b), (later, width(b))
+
+
+@pytest.mark.parametrize("later", ["the jaws 120 mm each", "the gripper has a width of 20 mm"])
+def test_another_things_size_said_with_each_or_a_width_word_is_not_theirs(later):
+    assert width(steps("use my SO-101 to move 28 mm vials", later)) == 28.0, later
+
+
+@pytest.mark.parametrize("later", ["I can't forget my SO-101", "I won't ditch my SO-101",
+                                   "my SO-101 broke once but it's fixed now", "I lent my SO-101 out but got it back"])
+def test_an_so101_the_person_still_has_is_kept(later):
+    assert so101(steps("use my SO-101 to sort screws", later)), later
+
+
+@pytest.mark.parametrize("later, w", [("they have a diameter of 28 mm", 28.0), ("with a width of 45 mm", 45.0)])
+def test_a_width_word_said_of_them_is_read_as_the_release_read_it(later, w):
+    assert width(steps("use my SO-101 to move 60 mm cylinders", later)) == w, later
+
+
+def test_a_width_word_said_of_one_of_them_never_narrows_them():
+    b = steps("use my SO-101 to move 60 mm cylinders", "one of them has a diameter of 20 mm")
+    assert width(b) == 60.0 and not so101(b)
+
+
+@pytest.mark.parametrize("first, later", [("use my SO-101 to move 40 mm cylinders", "the caps are round"),
+                                          ("use my SO-101 to move 40 mm balls", "they go in cups")])
+def test_a_round_word_on_objects_already_said_to_be_round_changes_nothing(first, later):
+    b = steps(first, later)
+    assert so101(b) and not B.value(b, "object").get("shape_unknown"), (first, later)
