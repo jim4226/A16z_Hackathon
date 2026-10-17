@@ -879,6 +879,11 @@ class Drafts:
             store.write_text(os.path.join(folder, fn), json.dumps(spec, indent=2, ensure_ascii=False) + "\n")
             catalog.pin(pid, sha256, self.home, file=fn, by=by, draft=draft_id, docs=d["docs_url"])
             cat = self.tb.catalog()
+            for _ in range(20):  # Windows refuses to open the file for a moment after the rename (a virus scanner can too)
+                if fn not in cat.unread:
+                    break
+                time.sleep(0.05)
+                cat = self.tb.catalog()
             if (cat.providers.get(pid) or {}).get("sha256") != sha256:
                 err = next((e["error"] for e in cat.errors if e.get("source") == fn), "it didn't load")
                 raise ToolboxError(f"Morph wrote the tool but couldn't load it ({err}).", 500)

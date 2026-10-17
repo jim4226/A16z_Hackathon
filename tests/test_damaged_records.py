@@ -433,3 +433,38 @@ def test_a_record_windows_refuses_to_open_for_a_moment_still_counts_once_it_read
     assert p.finished() == [] and refused        # refused this once: not finished now
     assert p.finished() == ["r001"]              # and readable the moment Windows lets go of it
     assert p.finished() == ["r001"] and len(opened) == 2   # then remembered, not read again
+
+
+def test_a_revision_windows_refuses_to_open_at_start_up_is_never_set_aside(tmp_path, monkeypatch):
+    """The start-up sweep sets aside the newest revisions that never finished or whose records are damaged. One whose
+    results.json Windows refuses to open for a moment (another Studio just renamed it into place, a virus scanner) is
+    neither: it is left as it is and counts once it reads. A damaged one still goes aside."""
+    p = robot(tmp_path / "projects", "egg", revs=("r001", "r002"))
+    results, real = os.path.join(p.rev_dir("r002"), "results.json"), open
+
+    def busy(path, *a, **k):
+        if os.fspath(path) == results:
+            raise PermissionError(errno.EACCES, "The process cannot access the file because it is being used by "
+                                                "another process", path)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(durable, "open", busy, raising=False)
+    assert p.finished() == ["r001"]                                    # not finished while it can't be read
+    assert projects.set_aside_unfinished(p) == [] and p.revs() == ["r001", "r002"]
+    monkeypatch.undo()
+    assert p.finished() == ["r001", "r002"]
+    cut(results)
+    assert projects.set_aside_unfinished(p) == ["r002"] and p.revs() == ["r001"]
+
+
+def test_a_results_json_nested_too_deep_to_parse_is_damaged_not_a_500(tmp_path, builds):
+    """A hand edit nesting an array 200000 deep makes json.load raise RecursionError, not ValueError: that revision is
+    damaged like any other (not finished, set aside at the next start), never an error out of every project's state."""
+    home = tmp_path / "projects"
+    robot(home, "egg", revs=("r001", "r002"))
+    st = server.Studio(RobotProject(str(home / "egg")), str(home))
+    (home / "egg" / "r002" / "results.json").write_text("[" * 200000 + "]" * 200000, encoding="utf-8")
+    state = st.state()
+    assert state["revs"] == ["r001"] and state["current"]["rev"] == "r001"
+    assert [p["revs"] for p in st.projects() if p["name"] == "egg"] == [1]
+    assert projects.set_aside_unfinished(RobotProject(str(home / "egg"))) == ["r002"]

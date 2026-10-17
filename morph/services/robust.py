@@ -658,8 +658,9 @@ def _append(path: str, row: dict):
     append_line(path, json.dumps(row, separators=(",", ":")))  # a row cut off by a crash never swallows the next one
 
 
-def read_rows(path: str) -> list:
-    """Rows of runs.jsonl / checks.jsonl; a line cut off by a crash is skipped, a run written twice counts once."""
+def read_rows(path: str, *, strict: bool = False) -> list:
+    """Rows of runs.jsonl / checks.jsonl; a line cut off by a crash is skipped, a run written twice counts once. A file
+    that can't be read has none; `strict` raises its OSError instead."""
     out, seen = [], set()
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -674,7 +675,8 @@ def read_rows(path: str) -> list:
                 seen.add(key)
                 out.append(r)
     except OSError:
-        pass
+        if strict:
+            raise
     return out
 
 
@@ -834,7 +836,12 @@ def _partial(doc: dict, d: str):
     key = (path, st.st_size, st.st_mtime_ns)
     got = _PARTIAL.get(key)
     if got is None:
-        rows = read_rows(path)
+        try:
+            rows = read_rows(path, strict=True)
+        except OSError:
+            # not remembered: a refusal (Windows for a moment after a rename, a virus scanner) would show a stopped
+            # study's runs as 0 until the Studio restarts, since its runs.jsonl never changes again
+            return
         s = doc.get("summary") or {}
         if (s.get("n") or 0) + len(s.get("unstable") or []) + len(s.get("errors") or []) != len(rows):
             try:

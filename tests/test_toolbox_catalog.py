@@ -2,6 +2,7 @@
 for Claude, fingerprints, which tools are on, the owner's own manifests, and a broken manifest never breaking the rest."""
 
 import copy
+import errno
 import json
 import os
 
@@ -172,3 +173,28 @@ def test_the_catalog_is_cached_until_a_manifest_changes(cat_home, tmp_path):
     assert b is not a and b.tools["fixparts_offers"].fingerprint != a.tools["fixparts_offers"].fingerprint
     (folder / "big.json").write_text(" " * (catalog.MAX_MANIFEST_BYTES + 1), encoding="utf-8")
     assert any("larger than" in e["error"] for e in catalog.load(cat_home, curated_dirs=[str(folder)]).errors)
+
+
+def test_a_manifest_windows_refuses_to_open_for_a_moment_loads_the_next_time(cat_home, tmp_path, monkeypatch):
+    """Windows refuses to open a manifest for a moment after os.replace has renamed it (a virus scanner can do the
+    same). A catalog loaded in that moment lists the refusal but is not remembered: the next load has the tools."""
+    folder = tmp_path / "cat"
+    folder.mkdir()
+    path = str(folder / "fixparts.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(DOC, fh)
+    refused, real = [], open
+
+    def busy(p, *a, **k):
+        if os.fspath(p) == path and not refused:
+            refused.append(p)
+            raise PermissionError(errno.EACCES, "The process cannot access the file because it is being used by "
+                                                "another process", p)
+        return real(p, *a, **k)
+
+    monkeypatch.setattr(catalog, "open", busy, raising=False)
+    first = catalog.load(cat_home, curated_dirs=[str(folder)])
+    assert refused and first.tools == {} and [e["source"] for e in first.errors] == ["fixparts.json"]
+    again = catalog.load(cat_home, curated_dirs=[str(folder)])
+    assert "fixparts_offers" in again.tools and again.errors == []           # read again, not remembered as missing
+    assert catalog.load(cat_home, curated_dirs=[str(folder)]) is again        # then remembered

@@ -5,6 +5,7 @@ anything starts), gripper-only projects, absurd worker counts and tolerance edit
 numbers that could mislead (a rule for a group that holds every run, successes that depend on the solver, a study where
 no run could be counted). Offline; study records and their runs are written directly, so nothing is simulated."""
 
+import errno
 import json
 import os
 import socket
@@ -29,7 +30,7 @@ PARAMS = [robust._p(n, -1, 1, 0, "assumed") for n, _, _ in robust.BASE]
 @pytest.fixture(scope="module")
 def home(tmp_path_factory):
     home = tmp_path_factory.mktemp("projects")
-    for name in ("egg-picker", "lock-test", "crashed", "replaced", "no-sim", "tolerant", "replays"):
+    for name in ("egg-picker", "lock-test", "crashed", "refused", "replaced", "no-sim", "tolerant", "replays"):
         egg_project(tmp_path_factory, home, name)       # one each: tests may run in any order on a worker
     return str(home)
 
@@ -184,6 +185,27 @@ def test_a_killed_studys_saved_runs_show_and_are_offered_to_carry_on(home, site)
     assert any(f.startswith("Stopped when the Studio stopped after 8 of 40 runs") for f in info["latest"]["card"]["flags"])
     assert [(s["id"], s["done"]) for s in info["stopped"]] == [(doc["id"], 8)]
     assert next(s for s in info["studies"] if s["id"] == doc["id"])["p"] == 0.75
+
+
+def test_a_stopped_studys_runs_windows_refuses_to_open_for_a_moment_still_count_once_they_read(home, monkeypatch):
+    """A stopped study's runs.jsonl never changes again, so its count read from the runs is remembered. Windows refusing
+    to open that file for a moment (a virus scanner) is not a count: it is read again next time, never shown as 0 runs
+    until the Studio restarts."""
+    root = os.path.join(home, "refused")
+    doc = saved_study(root, n=40, rows=8, status="interrupted", done=0)
+    runs, refused, real = os.path.join(robust.study_dir(root, doc["id"]), "runs.jsonl"), [], open
+
+    def busy(path, *a, **k):
+        if os.fspath(path) == runs and not refused:
+            refused.append(path)
+            raise PermissionError(errno.EACCES, "The process cannot access the file because it is being used by "
+                                                "another process", path)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(robust, "open", busy, raising=False)
+    assert robust.load(root, doc["id"])["done"] == 0 and refused     # refused this once: the record's own count
+    got = robust.load(root, doc["id"])
+    assert got["done"] == 8 and got["summary"]["n"] == 8               # read the moment Windows lets go of it
 
 
 # ------------------------------------------------------------------ studies that are no longer theirs
