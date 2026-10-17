@@ -547,7 +547,7 @@ you build:
   45 mm, 100 g one leaving the SO-101 gave before. A job's robot that kept your SO-101 (the nearest robot for "it should
   cook dinner") keeps the job's emergency stop when a later size means the SO-101 can't hold the object; "my SO-101
   broke", "I lent my SO-101 to a friend" and "forget the SO-101" leave the SO-101; and the "no SO-101" answer on a job's
-  robot keeps its people ("tidy the playroom": children nearby).
+  robot keeps its people ("tidy the playroom": children nearby), with the 45 mm, 100 g object it gave before.
 - New robot: "them" served food or drink ("a robot that delivers them coffee", "makes them tea") are people next to the
   robot, so it gets an emergency stop.
 - New robot: a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "sort 50 g blocks in

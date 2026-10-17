@@ -871,6 +871,8 @@ def test_a_later_reply_that_says_their_shape_still_gives_it():
 def test_the_no_so101_chip_on_a_jobs_robot_keeps_its_people():
     b = steps("a robot to tidy the playroom", "#existing_hardware=none")
     assert B.value(b, "people_nearby") == "children" and "estop" in b.changes["electronics.extras"]
+    # and the object Morph assumes is never smaller or lighter than the general arm's box the release's reset gave
+    assert width(b) >= 45.0 and mass(b) >= 100.0, (width(b), mass(b))
 
 
 @pytest.mark.parametrize("later", ["my SO-101 broke", "I lent my SO-101 to a friend", "forget the SO-101"])
