@@ -410,3 +410,26 @@ def test_other_error_texts_a_browser_sees_name_files_from_the_projects_folder(tm
     monkeypatch.setattr(urdf, "normalize", oops)
     c = s.detect()["candidates"][0]
     assert "couldn't be analysed (PermissionError" in c["error"] and public(c["error"]), c["error"]
+
+
+def test_a_record_windows_refuses_to_open_for_a_moment_still_counts_once_it_reads(tmp_path, monkeypatch):
+    """Windows refuses to open a file for a moment after os.replace has renamed it (a virus scanner can do the same).
+    That refusal is no damaged record: the revision counts as soon as its results read, and is never hidden for the rest
+    of the process. A parse is still remembered: the results are read once."""
+    p = robot(tmp_path / "projects", "egg", revs=("r001",))
+    results = os.path.join(p.rev_dir("r001"), "results.json")
+    refused, opened, real = [], [], open
+
+    def busy(path, *a, **k):
+        if os.fspath(path) == results:
+            opened.append(path)
+        if os.fspath(path) == results and not refused:
+            refused.append(path)
+            raise PermissionError(errno.EACCES, "The process cannot access the file because it is being used by "
+                                                "another process", path)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(durable, "open", busy, raising=False)
+    assert p.finished() == [] and refused        # refused this once: not finished now
+    assert p.finished() == ["r001"]              # and readable the moment Windows lets go of it
+    assert p.finished() == ["r001"] and len(opened) == 2   # then remembered, not read again

@@ -531,6 +531,10 @@ you build:
 - Agent tools: a run's card keeps the lines of the calls it has shown when a list of runs the Studio read before those
   calls reaches the page late (on a busy computer, after Allow once): the card showed Working with none of them, or
   Done without them, until the next update.
+- Studio on Windows: a revision whose results were read at the moment Windows was finishing saving them (Windows
+  refuses to open a file for that moment, and a virus scanner can do the same) is no longer hidden until the Studio
+  restarts: a new or imported project's first build could look as if it never finished (an edit was refused with
+  "delete the project and make it again"), and after a later build the next edit started from the revision before.
 - Import: a parts list saved with Windows line ends (as Excel, Notepad or a Windows checkout saves it) is read as a
   table on every Python: with Python 3.10 and 3.12 one whose quoted cells hold commas ("waist, shoulder (x2), elbow")
   was read as plain text, and the import found nothing it could use.

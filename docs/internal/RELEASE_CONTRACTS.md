@@ -158,10 +158,10 @@ written, never the ones around it (`morph/services/durable.py`, outside pipeline
   records (`robust._write_json`), Teams files (`teams/store.write_json`), tool files (`toolbox/store.write_text`) and the
   chat file's compaction.
 - A revision is finished when its results.json and design.json each parse as a JSON object (`Project.finished()`,
-  cached by mtime and size in `durable.readable_json`); `Project.latest()`, `Room.completed()`, `projects.finished()`,
-  Teams' `collab.revs()`, studies and the time card all count only those (an export lists every revision whose
-  results.json parses). `Studio.state` builds the newest one it can show (a revision that raises is skipped, never a
-  500).
+  a parse cached by mtime and size in `durable.readable_json`, an open the system refuses never cached);
+  `Project.latest()`, `Room.completed()`, `projects.finished()`, Teams' `collab.revs()`, studies and the time card all
+  count only those (an export lists every revision whose results.json parses). `Studio.state` builds the newest one it
+  can show (a revision that raises is skipped, never a 500).
 - A build (`RobotProject.run`) reads its parent before it claims a number (an unreadable parent: ValueError "rNNN's saved
   files can't be read", no folder made), claims with `Project.claim_build()`, which takes the OS lock
   `.morph/build-rNNN.lock` (`durable.BuildLock`, freed by the system when the process ends) before the folder exists and
