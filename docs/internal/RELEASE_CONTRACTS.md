@@ -631,11 +631,26 @@ clamping.
   request carries the person's own object when they gave one and it fits a generated arm ("use my SO-101 to pour out
   30 mm cylinders weighing 50 g" keeps the SO-101 with them; "... to cook 300 g steaks" gets a generated arm for 300 g),
   and its stand-in otherwise ("fold towels": folded washcloths). An SO-101 named in a typed reply ("I have an SO-101")
-  is used like one in the request, and "I don't have an SO-101" is a new arm. The request's sizes are read in more
+  is used like one in the request; "I don't have an SO-101" and "actually, build a new arm" (`brief._asks_new_arm`, not
+  a question, a refusal or a remark: "do I need a new arm?", "no need for a new arm") are a new arm. An SO-101 brief
+  takes who is next to it and where it works from the request's own job (`brief._arch_without_so101`: a playroom's
+  children, a kitchen's emergency stop), so moving to or from the SO-101 never drops one. A typed reply's sizes
+  (`brief._later_sizes`, `brief._size_reads`): the objects' own replaces theirs ("60 mm", "actually 60 mm", "the
+  cylinders are 60 mm"; the object named again keeps what was stated, not Morph's preset); any other only widens or
+  weighs them more ("they're 60 mm", read for the first time, since "they" may be a lid, a gap or a peg, and is the
+  lid after one: "the lids? they're 20 mm", `brief._topic`; a lid's or a
+  cap's; the small ones'; the candles in candle jars, the pills in pill bottles), and a smaller width it gives is kept
+  as `least_mm`, which the stock SO-101's jaws must hold too (`brief._so101_least`, also when the SO-101 is named only
+  later), as is the lower end of a range in any message ("between 20 and 40 mm", "40 mm and 20 mm cylinders"); below
+  the generated gripper's own minimum it is a note. A size naming something else that was never read stays unread
+  ("the lids are 35 mm"). The request's sizes are read in more
   forms (`brief._sizes`, after `intent.normalize_units`): "50 mm, 30 g tubes", "50mm/30g", "(50 mm)", "tubes of 50 mm",
   "measuring 50 mm", "50 mm oranges", "two-inch", "50-mm", "half a kilo", "a pound", "300 gm", "three hundred grams",
   "1,050 g", "1 000 g" and "1.000 g" (thousands; a dot only before grams and "000"), and the largest of several
-  ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach. In
+  ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach, nor
+  a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "in 2 kg batches", "2 kg of 50 g
+  cubes"; kept when the words say the object weighs more than a mass given: empty, what it holds, a lid, some of them;
+  a total is one object's: "130 g in total"). In
   the round-6 hunt's sweep of 18,753 SO-101 conversations, graded by its own rules, 3,169 were wrong at bd19c43 (a
   generated arm blamed on a stand-in, the SO-101 kept for a stand-in or for a size it didn't read, a typed SO-101
   ignored), 90 of them only because the sweep's SO-101 chip was never offered (the request was already out of scope);
@@ -2427,7 +2442,8 @@ Fixes of the release review's brief, inspector and pipeline findings. What other
   "collaborative robot", "human-robot" or "HRC" hint (`_COBOT_UNSURE`), never a person the request describes and never
   a robot whose user is at it by construction (power chair, hospital bed, bed rail, feeding, assistive, daily-living or
   mobility robots, helping hands, a cobot barista). Someone served or cared for at arm's length is a person named
-  (`_SERVES_SOMEONE`): a double-object serving verb ("pours us coffee", "makes Tom a sandwich"), a drink topped up,
+  (`_SERVES_SOMEONE`): a double-object serving verb ("pours us coffee", "makes Tom a sandwich"; "them" with food or
+  drink, `_SERVED`: "delivers them coffee", "carries them their lunch", not "delivers them to the bin"), a drink topped up,
   body care ("paints my nails", "puts in my eye drops", "ties my shoelaces", "puts the straw in her mouth"), visitors
   greeted, the guests' glasses, "whose bin I empty"; "give me a robot" and "pass the guest towels to the shelf" are not.
 - **Payload and reach say where they were measured (ENG-3).** The payload sweep's `max_payload_g` is measured top-down
