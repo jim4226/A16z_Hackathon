@@ -366,6 +366,8 @@ def test_a_shake_is_no_drink():
     ("use my SO-101 to pick up 30 mm 50 g bottles of 500 ml at 2 kg per hour",),
     ("use my SO-101 to pick up 30 mm 50 g jars of honey at 2 kg per hour",),
     ("use my SO-101 to pick up 30 mm 50 g cubes (dry) at 2 kg per hour",),
+    ("use my SO-101 to pick up 30 mm 50 g cubes at 2 kg per hour. Some are 3 times that.",),
+    ("use my SO-101 to pick up 30 mm 50 g cubes at 2 kg per hour. That's on the light side.",),
     ("use my SO-101 to move 40 mm 50 g cylinders", "we put 150 g of these beans in each"),
     ("use my SO-101 to move 40 mm cylinders weighing 50 g", "some are heavier. about 2 kg an hour"),
     ("use my SO-101 to pick up 30 mm 50 g cylinders", "2 kg an hour. before filling, that is"),
@@ -435,3 +437,43 @@ def test_a_correction_after_a_size_of_some_of_them_only_widens():
         b = agents.run_turn(b, action=t[1:], deep=False) if t.startswith("@") else agents.run_turn(b, text=t, deep=False)
     b = talk_on(b)
     assert not so101(b) and width(b) == 60.0
+
+
+# ---- the round-3 review: a rate is left out only when the whole conversation is plain, since no list of the words
+# that say an object may weigh more, or that the arm lifts more at once, is ever complete
+_FILLER = "people nearby. " * 140   # plain, and long enough to push the first message out of the last 2,000 characters
+
+
+@pytest.mark.parametrize("turns, m", [
+    (("use my SO-101 to pick up 30 mm 50 g jars 2 kg every hour, but some are quite heavy",), 150.0),
+    (("use my SO-101 to move 30 mm jars weighing 50 g at 2 kg per hour, some weigh 3x that",), 150.0),
+    (("use my SO-101 to sort 30 mm 1.8 oz pouches about five pounds an hour. Some are bigger.",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes at 2 kg per hour, or a little over",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes at 2 kg per hour, some are heavyer",), 150.0),
+    # a second number or a symbol beside the own mass
+    (("Use my SO-101 to pick up 30 mm cubes weighing 90 g, up to 120, at about 2 kg per hour.",), 150.0),
+    (("use my SO-101 to pick up 30 mm 120/90 g cubes at 2 kg per hour",), 150.0),
+    (("use my SO-101 to pick up 30 mm cubes weighing ≥50 g at 2 kg per hour",), 150.0),
+    # lifted at once, or a batch the arm handles
+    (("use my SO-101 to pick up 30 mm jars weighing 50 g; it carries 2 kg of them",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g cubes two kilos a day, 40 cubes a lift",), 150.0),
+    (("Use my SO-101 to lift 2 kg of 50 g cubes onto the scale.",), 150.0),
+    (("use my SO-101 to unload 30 mm fifty gram jars in 2 kg batches",), 150.0),
+    (("use my SO-101 to sort 30 mm 50 g cubes in 2 kg batches, then carry the batches to the shelf",), 150.0),
+    # contents and exclusions
+    (("use my SO-101 to sort 30 mm 50 g cubes 2 kg of them a day, with jam in them",), 150.0),
+    (("Use my SO-101 to pick up 30 mm 50 g cups at 2 kg per hour and pour lemonade into them.",), 150.0),
+    (("use my SO-101 to pick up 30 mm jars, each jar is 50 g, 2 kg of them, excl. jam",), 150.0),
+    # a correction of the only mass so far
+    (("use my SO-101 to pick up 30 mm fifty gram jars", "oh wait, 300 grams every minute"), 300.0),
+    (("use my SO-101 to pick up 30 mm jars, each jar is 50 g", "300 grams every minute, my bad"), 300.0),
+    # a later message that isn't plain brings the rate back
+    (("use my SO-101 to pick up 30 mm jars, each jar is 50 g", "around 2 kg/h", "they're bigger than I said"), 150.0),
+    (("use my SO-101 to pick up 30 mm balls weighing 50 g", "in 2 kg batches", "some are 3x that"), 150.0),
+    (("use my SO-101 to pick up 30 mm jars weighing 50 g", "2 kg of them", "it lifts the crate"), 150.0),
+    # an early message beyond the last 2,000 characters still counts
+    (("use my SO-101 to pick up 30 mm 50 g pouches; that's their empty weight", _FILLER,
+      "the pouches are 50 g, 2 kg an hour"), 150.0)])
+def test_a_rate_is_left_out_only_in_a_plain_conversation(turns, m):
+    b = talk(*turns)
+    assert not so101(b) and mass(b) >= m, (turns, mass(b))

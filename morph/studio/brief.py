@@ -2096,7 +2096,9 @@ _TIED_BEFORE = re.compile(r"\b(?:of|weighing|weighs?|weighed|is|are|was|were)\s+
 # some of them ("the small ones"). With any of them the rate stays as read: dropping it could leave a part's, some of
 # the objects' or the empty weight as the object's.
 _MORE_THAN_SAID = re.compile(r"\b(?:empty|full|unfilled|fill\w*|holds?|holding|contain\w*|contents?|plus|includ\w*|exclud\w*|"
-                             r"same|not\s+all|identical|uniform|range|ranging|between|"
+                             r"same|not\s+all|identical|uniform|range|ranging|between|times|thrice|x\s*\d+|\d+\s*x|"
+                             r"(?:light|heavy|small|low|bottom)(?:er)?\s+(?:side|end)|lowest|least|baseline|floor|starting|"
+                             r"starts|from\s+\d|bigger|larger|denser|thicker|taller|longer|"
                              # what they sit in or on, or come in: the arm may lift it with them ("they're stored in 30 mm
                              # cups", "jars in sleeves", "the tray has pockets", "they hang on hooks")
                              r"(?:in|on|inside|within)\s+(?:their\s+|the\s+|its\s+|his\s+|her\s+|my\s+|our\s+|some\s+)?"
@@ -2153,15 +2155,18 @@ def _names_objects(t: str, s: int, e: int, heads: set, words: set) -> bool:
 
 
 def _rates_to_drop(t: str, masses: list, objects: tuple = (set(), set()), own_elsewhere: bool = False,
-                   context: str = "") -> set:
+                   context: str = "", said=None) -> set:
     """The masses in `masses` (_mass_reads(t)) that are a rate or a batch's total beside the object's own mass, to
     leave out: only when every other mass the message gives is plainly the objects' own (_names_objects, `objects` is
-    _object_words of them) and there is one, or `own_elsewhere` (an earlier message gave it), and nothing in `context`
-    (the conversation) says the object weighs more than a mass given for it."""
+    _object_words of them) and there is one, or `own_elsewhere` (an earlier message gave it), nothing in `context`
+    (the conversation) says the object weighs more than a mass given for it, and the whole conversation (`said`, the
+    messages as typed) is plain (_plain_talk)."""
     rates = {i for i, (_v, s, e) in enumerate(masses) if _rate_or_batch(t, s, e)}
     own = [i for i in range(len(masses)) if i not in rates]
     if not rates or not (own or own_elsewhere) or _MORE_THAN_SAID.search(context or t) or not own and _CORRECTS.match(t):
         return set()
+    if not _plain_talk([t] if said is None else said, objects):
+        return set()   # "some are quite heavy", "excl. jam", "it carries 2 kg of them": the rate stays as read
     if not all(_names_objects(t, masses[i][1], masses[i][2], *objects) for i in own):
         return set()   # "the pills weigh 1 g each", "at least 20 g", "the jam 100 g": the rate stays as read
     for _v, s, e in _width_reads(t):   # "pack 30 mm tubes at 2 kg per hour; the bulbs are 25 g": two kinds of thing
@@ -2169,6 +2174,61 @@ def _rates_to_drop(t: str, masses: list, objects: tuple = (set(), set()), own_el
         if np and _names_what(np, *objects) != "obj":
             return set()
     return rates
+
+
+# Words that say nothing about how much an object weighs or how many the arm lifts at once: what the request asks for,
+# where things go, the objects' sizes, a rate and who is around. A rate or a batch is left out only when the whole
+# conversation is in these words (and the objects' own nouns), since no list of the words that do ("some are quite
+# heavy", "excl. jam", "it carries 2 kg of them", "oh wait, 300 grams every minute") is ever complete.
+_PLAIN_WORDS = frozenset("""
+    a an the my our your this that these those it its it's they they're them their i i'm i've i'd we we're we've we'd
+    you me us who which have has got want wants need needs would like please can could should will to be is are was were
+    robot robots arm build make design get for with and also then help hi hello thanks thank let let's set
+    use using pick picks picked picking up move moves moved moving sort sorts sorted sorting stack stacks stacking place
+    places placing put puts putting transfer transfers transferring tidy tidying arrange arranges organise organize
+    organises organizes pack packs packing insert inserts inserting process processes work works run runs
+    bake bakes baked baking cook cooks cooked produce produces produced print prints printed cast casts mould moulds
+    moulded mold molds molded come comes arrive arrives
+    into onto in on at from of off out over across left right bin bins table tables shelf shelves conveyor belt line
+    pile station area spot side front back behind next beside here there where one end
+    mm g wide across diameter weighing weigh weighs each apiece about around roughly approximately approx exactly
+    per every hour hours h hr hrs minute minutes min mins day days daily hourly shift shifts week weeks weekly month
+    months monthly s sec secs second seconds batch batches
+    people person nearby near kids children child staff workers colleagues family nobody gently carefully fast quickly
+""".split())
+# a number is a size, a mass or a time ("30 mm", "50 g", "6 s"), never one alone ("up to 120", "120 or 90 g")
+_PLAIN_NUMBER = re.compile(r"\d+(?:\.\d+)?(?=\s*(?:mm|g|s|secs?|seconds?)\b)")
+# characters a plain message may have: "/" only in a rate ("2 kg/h"), never "120/90 g", "50±20 g", "≥50 g" or "~"
+_PLAIN_CHARS = re.compile(r"[a-z0-9\s,.;:!?()'’\"-]|(?<![\d\s])/(?=\s*(?:h|hrs?|hours?|mins?|minutes?|days?|shifts?|weeks?)\b)")
+
+
+def _plain_talk(said, objects: tuple = (set(), set())) -> bool:
+    """Whether every message in `said` (the person's words, as typed) is plain (_PLAIN_WORDS, the objects' own nouns
+    from `objects` (_object_words), the SO-101, sizes, masses and times), so that a rate or a batch beside the objects'
+    own mass can be left out."""
+    heads, words = objects
+    for raw in said:
+        x = re.sub(_SO, " ", (raw or "").lower())
+        if _PLAIN_CHARS.sub("", x).strip():
+            return False
+        n = re.sub(_SO, " ", normalize_units(x))
+        for m in re.finditer(r"\d+(?:\.\d+)?", n):
+            if not _PLAIN_NUMBER.match(n, m.start()) or m.start() and (n[m.start() - 1].isdigit() or n[m.start() - 1] == "."):
+                return False
+        for w in re.findall(r"[a-z]+(?:['’][a-z]+)?", n):
+            w = w.replace("’", "'")
+            if w not in _PLAIN_WORDS and _singular(w) not in heads | words and w not in heads | words:
+                return False
+    return True
+
+
+def _said(b: Brief, text: str | None = None) -> list:
+    """The person's words so far as typed, the request and every typed reply (and `text`), whole (conversation() keeps the
+    last 2,000 characters)."""
+    said = [x.get("text") or "" for x in b.turns if x.get("role") == "user"]
+    if not said or said[0] != b.request:
+        said.insert(0, b.request)
+    return [w for w in said + [text or ""] if w.strip()]
 
 
 def _sizes(t: str) -> tuple:
@@ -2258,7 +2318,7 @@ def parse(text: str) -> dict:
                 obj["least_mm"] = _least_width(t)
         if mass is not None:
             reads = _mass_reads(t)
-            drop = _rates_to_drop(t, reads, _object_words(obj))   # "50 g cubes at 2 kg per hour": 50 g
+            drop = _rates_to_drop(t, reads, _object_words(obj), said=[raw])   # "50 g cubes at 2 kg per hour": 50 g
             obj["mass_g"] = max(v for i, (v, _s, _e) in enumerate(reads) if i not in drop) if drop else mass
             if drop:
                 obj["rate_g"] = max(reads[i][0] for i in drop)
@@ -3121,7 +3181,7 @@ def _not_plain(t: str, s: int, e: int) -> bool:
                 re.search(r"\b(?:bigger|larger|wider|thicker|heavier)\b", t[e:stop]))
 
 
-def _size_reads(b: Brief, t: str, base: dict | None) -> list:
+def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> list:
     """Each width and mass a later message gives, as {dim: "w"|"m", v, cls}. Only a phrasing the release read can
     replace the objects' size ("obj": "20 mm", "the cylinders are 20 mm wide", "they weigh 60 g"), and then only when it
     is plainly all of the objects' own; any other "maybe" one may be something else's, some of them' or a lower bound
@@ -3130,7 +3190,7 @@ def _size_reads(b: Brief, t: str, base: dict | None) -> list:
     "wider" is a part's size read for the first time ("the can lids are 60 mm"): it only widens them. "rate" is a mass
     per hour or a batch's beside the objects' own. A size for something else that was never read is left out ("the
     lids are 35 mm", "the gap between the jars is 30 mm"). `base` is the object the message is about (None: no object
-    yet, so a size the release read is the objects')."""
+    yet, so a size the release read is the objects'); `raw` is the message as typed."""
     heads, words = _object_words(base) if base else (set(), set())
 
     def cls_of(np, lead=(), new=False, at=0, end=0):
@@ -3228,7 +3288,7 @@ def _size_reads(b: Brief, t: str, base: dict | None) -> list:
         own_before = any(abs(v - float(base["mass_g"])) < 1e-6 and not _rate_or_batch(x, s, e) and
                          _names_objects(x, s, e, heads, words) for v, s, e in _mass_reads(x))
     drop = _rates_to_drop(t, masses, (heads, words), own_elsewhere=own_before,
-                          context=normalize_units(conversation(b, t).lower()))
+                          context=normalize_units(conversation(b, t).lower()), said=_said(b, t if raw is None else raw))
     if drop and own_before and max((v for i, (v, _s, _e) in enumerate(masses) if i not in drop), default=1e9) < \
             float(base["mass_g"]):
         drop = set()   # a lighter mass beside the rate may be a part's: the rate stays as read
@@ -3304,11 +3364,12 @@ def _typed_answer(b: Brief, p: dict, t: str):
     s["object"] = dict(base, stated=sorted(stated))
 
 
-def _later_sizes(b: Brief, p: dict, t: str, named: str | None):
+def _later_sizes(b: Brief, p: dict, t: str, named: str | None, raw: str | None = None):
     """A later message's widths and masses (_size_reads) on the object _typed_answer made of it: the objects' own size
     replaces theirs; a size that may be something else's only widens them or weighs them more, and a smaller width it
     gives is kept as the least they may be (least_mm, for the stock SO-101's jaws); a mass per hour or a batch's beside
-    their own mass is left out. `named` is the Morph object the message itself names, if any."""
+    their own mass is left out. `named` is the Morph object the message itself names, if any; `raw` is the message as
+    typed."""
     cur = b.get("object")
     if named and (cur is None or named != cur.get("key")):
         base = object_value(named)        # a Morph object the message names: its sizes, before the message's own
@@ -3323,7 +3384,7 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None):
         base["length_mm"] = max(float(cur.get("length_mm") or 0), base["diameter_mm"])
     else:
         base = cur
-    reads = _size_reads(b, t, base)
+    reads = _size_reads(b, t, base, raw)
     w_obj, w_may, w_wid = ([r["v"] for r in reads if r["dim"] == "w" and r["cls"] == c] for c in ("obj", "maybe", "wider"))
     m_obj, m_may, rates = ([r["v"] for r in reads if r["dim"] == "m" and r["cls"] == c] for c in ("obj", "maybe", "rate"))
     o = p["slots"].get("object")
@@ -3331,7 +3392,8 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None):
     # a rate left out before (rate_g) comes back when a later message says the objects may weigh more than their mass
     # ("2 kg an hour" then "that's the empty weight", "some are heavier", "they hold 300 ml of water")
     rate = float(cur.get("rate_g") or 0) if cur is not None and (base is cur or named == cur.get("key")) else 0.0
-    back = rate and (_MORE_THAN_SAID.search(t) or not m_obj and _WEIGHT_TALK.search(t))
+    back = rate and (_MORE_THAN_SAID.search(t) or not m_obj and _WEIGHT_TALK.search(t) or
+                     not _plain_talk(_said(b, t if raw is None else raw), _object_words(cur)))
     if o is None:
         if base is None and w_may and not w_obj and max(w_may) <= float(value(b, "object")["diameter_mm"]):
             return   # "they're 20 mm" before any object: nothing to widen
@@ -3483,7 +3545,7 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
         named = (p["slots"].get("object") or {}).get("key")
         nt = normalize_units(t.lower())
         _typed_answer(b, p, nt)
-        _later_sizes(b, p, nt, named)
+        _later_sizes(b, p, nt, named, t)
         keep = {"slots": {k: v for k, v in p["slots"].items() if k in ("object", "throughput", "budget", "quantity", "precision",
                                                                          "fragility", "people_nearby", "perception", "connectivity",
                                                                          "environment", "task", "existing_hardware")},
