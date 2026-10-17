@@ -3338,9 +3338,9 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None):
                 o[k] = base[k]
         o["stated"] = sorted(set(o.get("stated") or []) | set(cur.get("stated") or []))
     if cur is not None and base is cur and cur.get("key") is None and o.get("key") is None and \
-            str(o.get("name")) != str(cur.get("name")):
-        # parse() named the message's thing ("they come in 30 mm wide tubes", "the tray has 30 mm pockets"): the objects
-        # stay what they were, and keep their shape
+            str(o.get("name")) != str(cur.get("name")) and _holds_them(t, str(o.get("name"))):
+        # parse() named what holds them ("they come in 30 mm wide tubes", "the tray has 30 mm pockets"): the objects
+        # stay what they were, and keep their shape ("40 mm cylinders" still says what they are)
         o["name"], o["shape"] = cur.get("name"), cur.get("shape")
         o["stated"] = sorted(set(o.get("stated") or []) - {"shape"} | ({"shape"} & set(cur.get("stated") or [])))
     ref = base or o
@@ -3383,6 +3383,17 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None):
     elif rate or rates:
         o["rate_g"] = max([rate] + rates)
     o["stated"] = sorted(stated)
+
+
+def _holds_them(t: str, name: str) -> bool:
+    """Whether the thing a later message names (parse()'s object name) is what holds the objects or where they go ("they
+    come in 30 mm wide tubes", "the tray has 30 mm pockets", "put them in 30 mm tubes"), not the objects described again
+    ("40 mm cylinders", "they're 40 mm cylinders"); a name the words don't give is taken as such too."""
+    m = re.search(r"\b" + re.escape(name.split()[-1] if name.split() else name) + r"(?:e?s)?\b", t)
+    if not m:
+        return True
+    return bool(re.search(r"\b(?:in|into|inside|on|onto|of|with|for|from|between|under|has|have|had|holds?|fits?|sits?|"
+                          r"go|goes|come|comes|came|put|place[ds]?)\b", re.split(r"[.;!?,]", t[:m.start()])[-1]))
 
 
 # a new arm asked for in a later message ("actually, build a new arm", "design a new one instead"); not a question about
