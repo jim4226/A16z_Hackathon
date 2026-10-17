@@ -373,7 +373,8 @@ def test_flagship_servo_swap_on_a_remote_team_studio(template, pw, tmp_path):
 
         # an order file stays locked for editors until the release (Jaron turns draft downloads off)
         jaron.pg.click("[data-tm=share]")
-        jaron.pg.locator(".tm-share-dlg [data-pol=unreleased_downloads]").evaluate("x => x.click()")
+        with jaron.pg.expect_response(lambda r: "/api/team/policy" in r.url):   # a click on the switch Jaron sees
+            jaron.pg.locator(".tm-share-dlg label.tm-sw", has=jaron.pg.locator("[data-pol=unreleased_downloads]")).locator(".switch").click()
         until(lambda: studio.api("GET", "/api/team", jaron.cookie())[1]["policy"]["unreleased_downloads"] == "owner", 10, "the policy")
         jaron.pg.keyboard.press("Escape")
         order = "/files/egg-picker/r003/mfg/mfg_pilot.zip"

@@ -550,6 +550,10 @@ you build:
   "pouches of 300 g every minute" are the objects' own mass.
 - New robot: an SO-101 named without "my" ("SO-101 to move jars", "can the SO-101 sort ...?") is checked against what
   its stock jaws hold, as "use my SO-101" is: 65 mm, 300 g glass jars were planned on it.
+- Teams: a tab's own first load no longer redraws it under what you started there. On a slow link, Release clicked
+  as soon as Review opened lost its box and the name being typed (the next keys went to the page, where P turns on
+  Present). Review no longer offers Release from the gate of the revision you were on before. When Share's own load
+  answers, only the parts that changed are drawn again, so a switch is not swapped under the pointer.
 - Agent tools: a run's card keeps the lines of the calls it has shown when a list of runs the Studio read before those
   calls reaches the page late (on a busy computer, after Allow once): the card showed Working with none of them, or
   Done without them, until the next update.
