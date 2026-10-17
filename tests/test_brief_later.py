@@ -994,3 +994,37 @@ def test_a_width_word_said_of_one_of_them_never_narrows_them():
 def test_a_round_word_on_objects_already_said_to_be_round_changes_nothing(first, later):
     b = steps(first, later)
     assert so101(b) and not B.value(b, "object").get("shape_unknown"), (first, later)
+
+
+# ---- the round-8 review of masses: a width before a comma, what was stated kept through the nearest robot's fit, a
+# rate left out kept when a Morph object is named, labels at the SO-101's limit, a rate's "in a bin", the chip's object
+@pytest.mark.parametrize("text", ["use my SO-101 to move 60 mm, cylinders weighing 85 g at 2 kg per hour",
+                                  "use my SO-101 to move 60 mm, cylinders, each cylinder is 85 g, at 2 kg per hour",
+                                  "use my SO-101 to move 60 mm, cylinders weighing 85 g"])
+def test_a_width_before_a_comma_and_their_noun_is_theirs(text):
+    # neither tree read it: the SO-101 held 45 mm cylinders, and with the rate left out it would have kept them
+    b = talk(text)
+    assert width(b) == 60.0 and not so101(b), (text, width(b))
+
+
+def test_a_rate_after_the_nearest_robot_is_no_mass_of_theirs():
+    assert mass(steps("use my SO-101 to move 80 mm, 300 g cubes", "@nearest", "60 g per hour")) == 300.0
+
+
+def test_a_morph_object_named_after_a_rate_was_left_out_brings_it_back():
+    b = steps("use my SO-101 to move 30 mm, 50 g cubes at 30 kg per hour", "they're eggs", "#throughput=10")
+    assert mass(b) >= 150.0 and not so101(b), mass(b)
+
+
+@pytest.mark.parametrize("text", ["use my SO-101 to move 30 mm, 100 g bars at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm 50 g cubes at 2 kg per hour in a bin"])
+def test_a_rate_beside_a_bars_label_or_in_a_bin_stays_as_read(text):
+    b = talk(text)
+    assert mass(b) >= 150.0 and not so101(b), (text, mass(b))
+
+
+@pytest.mark.parametrize("turns", [("sort parts", "#existing_hardware=none", "#object=raw egg"),
+                                   ("sort bolts", "#existing_hardware=none", "they're toy blocks"),
+                                   ("water my plants", "#existing_hardware=none", "#object=raw egg")])
+def test_an_object_named_after_the_no_so101_chip_brings_its_jobs_stop(turns):
+    assert "estop" in (steps(*turns).changes.get("electronics.extras") or ""), turns

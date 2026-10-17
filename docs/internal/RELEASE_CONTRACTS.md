@@ -689,7 +689,9 @@ clamping.
   naming the objects with their own mass and a rate per hour, minute, day or shift, or a batch they are sorted in; a
   reply that is the rate alone, the pace or who is around), no more than one object a lift at the pace the arm is
   built at (`cycle`: the brief's throughput, its job's own or the chip's, or a slower "one every N s" reply; never
-  more than 15 a minute; a day's, a shift's or a week's amount as if done in an hour, `brief._PER_MINUTE`), the
+  more than 15 a minute; a day's, a shift's or a week's amount as if done in an hour, `brief._PER_MINUTE`), every
+  length the request gives one the rules read as a width (`brief._width_reads`; "60 mm, cylinders weighing 85 g" is
+  read, `brief._WIDTH`), the
   objects' own mass only for a plainly solid thing (`brief._SOLIDS`, `brief._solid`: "50 g cubes", "cubes weighing
   50 g", "each cube is 50 g") or a container said to weigh it (`brief._CONTAINER_NOUNS`: "tins weighing 95 g"), never a
   label's mass or what a container holds ("95 g tins", "each jar is 45 g", "jams weighing 90 g", "88 g cartridges",
@@ -715,7 +717,10 @@ clamping.
   the object's `rate_g`, also through the nearest robot, and is its mass again when a later message, a chip or the
   pace makes the conversation one it would not be left out in (`brief._recheck_rate`, at every `progress`), "that's
   the empty weight", "it picks up each batch", "#throughput=60", with any rate that message gives too ("450 g per
-  minute" after "60 g per hour"), held to Morph's largest, 500 g, on the nearest robot's stand-in; "in 2 kg batches"
+  minute" after "60 g per hour"), also when it names another Morph object ("they're eggs"), held to Morph's largest,
+  500 g, on the nearest robot's stand-in, which keeps what the person stated that its fit left as it was ("80 mm, 300 g
+  cubes": the 300 g, so a later "60 g per hour" is a rate); a destination after the rate is into, onto, to or on, never
+  "in a bin" (what they may be carried in); "in 2 kg batches"
   never names the objects (`brief._NOUN_STOP`); a total is one object's, "130 g in total"; a mass
   tied to its
   noun is never a rate: "pouches of 300 g every minute"). In

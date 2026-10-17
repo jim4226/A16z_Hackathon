@@ -33,7 +33,8 @@ you build:
   nearby"). The rate must also need no more than one object a lift at the pace the arm is built at (one every 6 s
   unless you give another; a day's, a shift's or a week's amount as if done in an hour), the objects' own mass counts
   only for plainly solid things ("50 g cubes", "cubes weighing 50 g") or a container said to weigh it ("tins weighing
-  95 g"), never a label's mass or what a container holds ("95 g tins", "each jar is 45 g", "jams weighing 90 g"), and a
+  95 g"), never a label's mass or what a container holds ("95 g tins", "100 g bars", "each jar is 45 g", "jams
+  weighing 90 g"), and a
   batch is left out only until a task or a layout is chosen (answering the layout question brings it back). Any other message
   keeps the rate as the object's mass, so the arm is sized for Morph's largest, 500 g: "cubes, 50 g each, at 2 kg per
   hour", "60 g empty bottles at 2 kg per hour", "tidy 50 g toys in 2 kg batches", "some are heavier", "move the
@@ -532,8 +533,9 @@ you build:
   were planned as 60 g, 44 mm ones on the SO-101), and naming the SO-101 again after a generated arm was accepted for
   objects below its jaws' minimum ("15 mm beads", then "keep my SO-101") no longer puts it on the 30 mm stand-in. A
   new shape is read ("sorry, they come as 40 mm cubes"), and so is a larger size said beside their name or a width
-  word ("the cylinders 60 mm", "60 mm for the cylinders", "60 mm each", "the diameter is 60 mm", "width: 60 mm"). A
-  part's size never narrows them ("30 mm handles" on 50 mm cylinders) and a part's shape keeps the stock SO-101 off
+  word ("the cylinders 60 mm", "60 mm for the cylinders", "60 mm each", "the diameter is 60 mm", "width: 60 mm"), and
+  a width before a comma in the request ("use my SO-101 to move 60 mm, cylinders weighing 85 g" planned 45 mm cylinders
+  on the stock SO-101). A part's size never narrows them ("30 mm handles" on 50 mm cylinders) and a part's shape keeps the stock SO-101 off
   when it may not hold their widest part ("45 mm bases, they're square"); a round shape is read from a reply that says
   it of them ("they're round"), and a round word in any other reply ("they're round, sorry", "my SO-101 can do it", "the
   caps are round") leaves their shape unknown, so the stock SO-101 holds them only from 26 to 34 mm (the release made

@@ -2035,6 +2035,7 @@ _WIDTH = re.compile(
     r"in diameter|diameter|dia\b|thick|ball|sphere|cube|box(?:es)?|block|brick|cylinder|tubes?|objects?|cans?|bottles?|jars?|"
     r"cups?|parts?)"
     r"|(\d+(?:\.\d+)?)\s*mm\s*(?=(?:[,/]|\s+and)?\s*\d+(?:\.\d+)?\s*g\b)"                       # "50 mm, 30 g tubes", "40 mm 300 g cans"
+    r"|(\d+(?:\.\d+)?)\s*mm\s*,\s*(?=[a-z]+(?:\s+[a-z]+)?\s*,?\s*(?:weighing|that\s+weighs?|each)\b)"   # "60 mm, cylinders weighing 85 g"
     r"|(\d+(?:\.\d+)?)\s*mm\s*(?:,|and|or|to|-|–)\s*(?=\d+(?:\.\d+)?\s*mm\b)"            # "60 mm and 30 mm cylinders"
     r"|(\d+(?:\.\d+)?)\s*mm\s+(?:on\s+)?(?:each|a|every|per)\s+side\b"                    # "boxes 40 mm on each side"
     r"|(?:\bx|\bby|×)\s*(\d+(?:\.\d+)?)\s*mm\b"                                            # "boxes that are 40 by 40 mm"
@@ -2295,7 +2296,7 @@ _T_UNIT = r"(?:hour|minute|min|day|shift|week)"
 _T_TIME = r"(?:(?:per|an?)\s+(?P<unit>" + _T_UNIT + r")\b|/\s*(?P<unit2>h|hr|hour|min|day|shift)\b)"
 _T_OWN = (r"(?:(?P<m1>" + _T_MASS + r")\s+(?P<n1>[a-z]+)|(?P<n2>[a-z]+)\s+(?:weighing|that\s+weigh|of)\s+(?P<m2>" + _T_MASS +
           r")(?:\s+each)?|(?P<n3>[a-z]+),?\s+each\s+(?P<n4>[a-z]+)\s+is\s+(?P<m3>" + _T_MASS + r"))")
-_T_DEST = r"(?:\s+(?:into|onto|to|on|in)\s+(?:the\s+|a\s+)?(?:bins?|tables?|shel(?:f|ves)|conveyor|belt))?"
+_T_DEST = r"(?:\s+(?:into|onto|to|on)\s+(?:the\s+|a\s+)?(?:bins?|tables?|shel(?:f|ves)|conveyor|belt))?"
 _T_RATE = (r"(?:,\s*|\s+)(?:at\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\s*(?:of\s+them\s+)?" + _T_TIME)
 _T_END = r"\s*[.!]?\s*$"
 _T_WHO = r"(?:,\s*|\.\s*)(?:people|kids|children|staff|nobody|no\s+one)\s+(?:nearby|around)"
@@ -2314,9 +2315,9 @@ _T_REPLY = [re.compile(r"^\s*(?:at\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\
 # things, never a container's label or what it holds ("95 g tins", "each jar is 45 g", "jams weighing 90 g"): beside
 # those the rate stays as read
 _SOLIDS = frozenset(("cube", "block", "ball", "cylinder", "disc", "disk", "rod", "puck", "brick", "tile", "pebble", "stone",
-                     "marble", "bead", "nut", "bolt", "washer", "screw", "toy", "cookie", "biscuit", "bar", "coin", "token",
+                     "marble", "bead", "nut", "bolt", "washer", "screw", "toy", "cookie", "biscuit", "coin", "token",
                      "peg", "dowel", "plug", "magnet", "egg", "widget", "gear", "bearing", "spring", "clip", "pin", "ring",
-                     "button", "sphere", "cone", "prism", "figure", "figurine", "apple", "orange", "lemon", "lime", "potato",
+                     "button", "sphere", "prism", "figure", "figurine", "apple", "orange", "lemon", "lime", "potato",
                      "onion", "tomato", "peach", "plum", "muffin", "bun", "bagel", "donut", "doughnut"))
 
 
@@ -2359,6 +2360,8 @@ def _rate_template(said, objects: tuple, cycle: float = 6.0) -> bool:
            if k in first.re.groupindex and first.group(k)]
     if not nouns or not own or max(own) <= 0 or any(_singular(n) not in heads for n in nouns):
         return False
+    if len(re.findall(r"\d+(?:\.\d+)?\s*mm\b", msgs[0])) != len(_width_reads(msgs[0])):
+        return False   # a length the rules don't read may be their width: the release's misread rate kept the SO-101 off
     weighed = re.search(r"\b(?:weighing|that\s+weigh)\s+" + _T_MASS, first.group(0))
     if not all(_solid(n) or weighed and _held_whole(n) for n in nouns):
         return False   # "95 g tins", "each jar is 45 g", "jams weighing 90 g": a label may give what they hold
@@ -3121,6 +3124,10 @@ def assess_scope(b: Brief) -> dict:
         mine = bool(o and fits(o))
         if mine:   # the person's own object, not the nearest robot's stand-in, whatever robot is offered
             slots["object"] = o
+            po = b.get("object")
+            if near_obj is not None and isinstance(po, dict) and isinstance(po.get("stated"), list):
+                # with what they stated that the fit leaves as it was ("80 mm, 300 g cubes": the 300 g, not the 80 mm)
+                slots["object"] = dict(o, stated=[k for k in po["stated"] if po.get(k) == o.get(k)])
         if near_obj and near_obj["mass_g"] > cap.payload_g("smart_bus", 4):
             slots["budget"] = 1500.0
         src = slots.get("object") or ARCHETYPES[arch].objects[0]
@@ -3199,6 +3206,8 @@ def apply_nearest(b: Brief, nearest: dict):
             v2["least_mm"] = least   # the person's 15 mm beads: a later "keep my SO-101" never holds the 30 mm stand-in
         if k == "object" and v2 is not None and said.get("widest_unknown"):
             v2["widest_unknown"] = True   # "45 mm necks": their widest part is still not given
+        if k == "object" and v2 is not None and isinstance(v, dict) and isinstance(v.get("stated"), list):
+            v2["stated"] = list(v["stated"])   # the person's own object: "80 mm, 300 g cubes", then "60 g per hour"
         if k == "object" and v2 is not None and isinstance(v, dict) and v.get("shape_unknown") is True:
             v2["shape_unknown"] = True    # Morph's guess for the job once the SO-101 is left: of no known shape
         if k == "object" and v2 is not None and cap._num(said.get("rate_g")):
@@ -3802,7 +3811,7 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None, raw: str | None =
     narrow = [r["v"] for r in reads if r["dim"] == "w" and r.get("part")]   # "40 mm at the neck", "45 mm necks"
     # a rate left out before (rate_g) comes back when a later message says the objects may weigh more than their mass
     # ("2 kg an hour" then "that's the empty weight", "some are heavier", "they hold 300 ml of water")
-    rate = float(cur.get("rate_g") or 0) if cur is not None and (base is cur or named == cur.get("key")) else 0.0
+    rate = float(cur.get("rate_g") or 0) if cur is not None else 0.0   # also when the message names another object
     untimed = bool(rate and cur.get("rate_untimed")) or any(r.get("untimed") for r in reads if r["cls"] == "rate")
     back = rate and (_MORE_THAN_SAID.search(t) or not m_obj and _WEIGHT_TALK.search(t) or
                      not _rate_drop_holds(_said(b, t if raw is None else raw), _object_words(cur), untimed))
@@ -4087,6 +4096,7 @@ def progress(b: Brief, *, defaults_now: bool = False, nearest: bool = False, dee
             accepted, note = b.flags.get("oos_accepted"), b.flags.get("nearest_note")
             apply_nearest(b, sc["nearest"])
             b.flags["oos_accepted"], b.flags["nearest_note"] = accepted, note
+            _recheck_rate(b)
             sc = assess_scope(b)
         sc = {"status": "adjusted", "notes": list(dict.fromkeys(prior + sc["notes"])), "nearest": None}
         b.assumptions = [x for x in b.assumptions if x.get("kind") != "scope"]
