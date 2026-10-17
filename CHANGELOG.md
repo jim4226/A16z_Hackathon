@@ -4,7 +4,7 @@ Morph Studio by R Cubed. Releases are git tags (`v0.2.0b1`); the launchers' `--u
 Windows, `./run_studio.sh --update` on macOS and Linux) switches a clone to the newest one. Versions follow
 [PEP 440](https://peps.python.org/pep-0440/): `b1` is a beta.
 
-## 0.2.0b1 (beta, not yet tagged)
+## 0.2.0b1 (beta, 2026-10-17)
 
 The first tagged release. Generated designs, wiring and firmware are not bench-validated.
 
