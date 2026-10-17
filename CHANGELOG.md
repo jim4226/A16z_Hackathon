@@ -8,6 +8,20 @@ Windows, `./run_studio.sh --update` on macOS and Linux) switches a clone to the 
 
 The first tagged release. Generated designs, wiring and firmware are not bench-validated.
 
+### Known issues
+
+New robot's built-in rules (they read every message when no Claude key is set) don't follow these in a later message.
+Check the object Morph assumed in its summary before you build, and say these in the first message instead:
+- A message that only corrects a size ("sorry, they're 60 mm") is not read: the first size stays. A size in a later
+  message can be taken as the objects' when it names something else ("the caps, 35 mm", "the lids are 35 mm across").
+  Either way the stock SO-101 can be kept for objects its jaws don't hold, and the simulation checks the size Morph
+  read, not the real one.
+- "Actually, build a new arm" after "use my SO-101" is not read; "I don't have an SO-101" is.
+- "Them" served food or drink ("a robot that delivers them coffee") is not read as people next to the robot, so no
+  emergency stop is added. Name who it serves ("brings the guests coffee"), or add "people work next to it".
+- A mass per hour or a batch's total beside the object's own mass is read as the larger ("50 g cubes at 2 kg per hour"
+  are planned as 500 g, Morph's largest): the arm is stronger than needed.
+
 ### Features (beta)
 
 - **New robot** from a one-line request: describe the job in one sentence; Morph asks up to three rounds of chip
