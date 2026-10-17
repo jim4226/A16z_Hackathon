@@ -2133,6 +2133,10 @@ def _rates_to_drop(t: str, masses: list, objects: tuple = (set(), set()), own_el
         return set()
     if not all(_names_objects(t, masses[i][1], masses[i][2], *objects) for i in own):
         return set()   # "the pills weigh 1 g each", "at least 20 g", "the jam 100 g": the rate stays as read
+    for _v, s, e in _width_reads(t):   # "pack 30 mm tubes at 2 kg per hour; the bulbs are 25 g": two kinds of thing
+        np = _np_after(t, e) or _np_before(t, s)[0]
+        if np and _names_what(np, *objects) != "obj":
+            return set()
     return rates
 
 

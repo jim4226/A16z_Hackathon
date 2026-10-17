@@ -331,6 +331,8 @@ def test_a_total_an_empty_weight_or_a_part_keeps_the_larger_mass(text, m):
     # "lots of", "trays of" and "every minute" beside an object's own mass are no batch and no rate
     ("use my SO-101 to sort lots of 300 g 30 mm jars and some 50 g cubes",),
     ("use my SO-101 to move 30 mm pouches of 300 g every minute and 40 g sachets",),
+    # sizes said of two kinds of thing: the 25 g may not be the objects'
+    ("I have an SO-101. it should pack 30 mm tubes at 2 kg per hour; the bulbs are 25 g",),
     # a first message's part mass, then the object named again
     ("use my SO-101 to hand me pliers; the grips are 10 g", "the pliers are heavy"),
     # "they" before any object is described: the stand-in's size is not narrowed
