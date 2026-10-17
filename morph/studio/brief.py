@@ -2095,7 +2095,13 @@ _TIED_BEFORE = re.compile(r"\b(?:of|weighing|weighs?|weighed|is|are|was|were)\s+
 # ... and words that say an object weighs more than a mass the request gives it: empty, what it holds, a lid or a cap,
 # some of them ("the small ones"). With any of them the rate stays as read: dropping it could leave a part's, some of
 # the objects' or the empty weight as the object's.
-_MORE_THAN_SAID = re.compile(r"\b(?:empty|full|unfilled|fill\w*|holds?|holding|contain\w*|contents?|plus|including|excluding|"
+_MORE_THAN_SAID = re.compile(r"\b(?:empty|full|unfilled|fill\w*|holds?|holding|contain\w*|contents?|plus|includ\w*|exclud\w*|"
+                             r"same|not\s+all|identical|uniform|range|ranging|between|"
+                             # what they sit in or on, or come in: the arm may lift it with them ("they're stored in 30 mm
+                             # cups", "jars in sleeves", "the tray has pockets", "they hang on hooks")
+                             r"(?:in|on|inside|within)\s+(?:their\s+|the\s+|its\s+|his\s+|her\s+|my\s+|our\s+|some\s+)?"
+                             r"(?:\d+(?:\.\d+)?\s*mm\s+)?(?:(?:wide|deep|tall|long|big|small|plastic|paper|cardboard)\s+)?"
+                             r"(?!batch)[a-z]+s|(?:has|have|had)\s+(?:\d+(?:\.\d+)?\s*mm\s+)?(?:wide\s+)?[a-z]+s|"
                              r"without|lids?|caps?|tops?|corks?|stoppers?|labels?|handles?|packaging|wrappers?|liquids?|water|"
                              r"coffee|tea|juice|milk|soup|sauce|ones|(?:some|most|few|several|many|half|rest|one|two|three)\s+of|"
                              r"smallest|lightest|biggest|heaviest|largest|varies|vary|varying|heavier|lighter|more|double|triple|"
