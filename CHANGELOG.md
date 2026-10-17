@@ -498,6 +498,21 @@ Check the object Morph assumed in its summary before you build, and say these in
   as soon as Review opened lost its box and the name being typed (the next keys went to the page, where P turns on
   Present). Review no longer offers Release from the gate of the revision you were on before. When Share's own load
   answers, only the parts that changed are drawn again, so a switch is not swapped under the pointer.
+- Teams: once an invite link is made, Share no longer scrolls back to the top and moves the focus to the link each time
+  it is drawn again (a role change, a teammate joining); the link is selected, ready to copy, only when it is made.
+- Teams: a script token or a sign-in link for another device shown in Share stays until the dialog closes. A
+  teammate's update wiped it, and a token is shown only once, so it had to be revoked and made again.
+- Teams: when Share is drawn again, the focus stays on the discipline chip it was on instead of jumping to the first
+  one, and text selected in Name stays selected.
+- Teams: a revision's comments show as soon as they load while you write a comment; the panel said "Loading the
+  comments" until you left the comment box.
+- Teams: a teammate's update no longer lands between pressing and releasing a button in the panel. The click was
+  lost, and the next keys went to the page (where digits switch tabs and P turns on Present).
+- Teams: Share no longer shows an older list of the team when two loads of it answer out of order (opened twice in
+  quick succession, or a teammate joining meanwhile).
+- Teams: a reply, a request for changes, or a release or branch name being written stays, with the focus, when the
+  answer to another of your own clicks (an approval, Apply, Close, Resolve, a new branch) draws the panel again. It was
+  wiped.
 - Agent tools: a run's card keeps the lines of the calls it has shown when a list of runs the Studio read before those
   calls reaches the page late (on a busy computer, after Allow once): the card showed Working with none of them, or
   Done without them, until the next update.

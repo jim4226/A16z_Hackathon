@@ -68,6 +68,9 @@ const andList = (n) => (n.length < 2 ? n.join('') : `${n.slice(0, -1).join(', ')
 // a change request being written: what it changes, its words, the form's open state, the parameter being picked, and the
 // last preview (kept here, so a live update that redraws the tab never takes any of it away)
 const blankDraft = () => ({ changes: {}, title: '', note: '', stage: '', open: false, param: '', value: null, preview: '' });
+// the panel's boxes, kept here like the draft so a redraw (a teammate's update, or the answer to your own click) never
+// takes what they say: replies by thread, requests for changes by review, and a release or branch name for a revision
+const blankBoxes = () => ({ reply: {}, ask: {}, release: null, branch: null });
 
 export function init(studio) {
   const team = new Team(studio);
@@ -85,6 +88,8 @@ export class Team {
     this.anchor = { kind: 'rev', key: '' };
     this.draft = blankDraft();
     this.compose = '';  // a comment being written
+    this.boxes = blankBoxes();
+    this.teamSeq = 0;  // GET /api/team calls made: only the latest one's answer is drawn
     this.proj = studio.project?.() || null;
     this.showResolved = false;
   }
@@ -168,7 +173,7 @@ export class Team {
     on('done', () => later());
     on('project', () => {  // this tab switched projects (or Reset demo rebuilt this one): what was being written stays with its project
       const p = this.s.project?.() || null, same = p === this.proj;
-      if (!same) { this.proj = p; this.draft = blankDraft(); this.compose = ''; }
+      if (!same) { this.proj = p; this.draft = blankDraft(); this.compose = ''; this.boxes = blankBoxes(); }
       this.anchor = { kind: 'rev', key: '' };
       this.loadTeam().then(() => this.loadTab(same));
     });
@@ -275,7 +280,11 @@ export class Team {
 
   // ---- Share dialog
   async loadTeam() {
-    try { this.data.team = await this.call('GET', '/api/team'); } catch (e) { this.toast(`Couldn't load the team (${e.message})`); }
+    const n = ++this.teamSeq;
+    let team = null;
+    try { team = await this.call('GET', '/api/team'); } catch (e) { if (n === this.teamSeq) this.toast(`Couldn't load the team (${e.message})`); }
+    if (n !== this.teamSeq) return;  // a later load is on its way (the dialog reopened, a member event): this answer is older
+    if (team) this.data.team = team;
     if (this.shareEl?.isConnected) this.renderShare();
     this.renderPresence();
   }
@@ -285,7 +294,7 @@ export class Team {
     this.shareEl.setAttribute('role', 'dialog');
     this.shareEl.setAttribute('aria-label', 'Share');
     this.renderShare();
-    if (this.s.modal?.open) this.s.modal.open(this.shareEl, { wide: true, onClose: () => { this.lastInvite = null; this.inviteDraft = null; } });
+    if (this.s.modal?.open) this.s.modal.open(this.shareEl, { wide: true, onClose: () => this.shareClosed() });
     else {
       this.ownModal = document.createElement('div');
       this.ownModal.className = 'modal on';
@@ -301,17 +310,24 @@ export class Team {
     if (this.s.modal?.close) this.s.modal.close();
     this.ownModal?.remove();
     this.ownModal = null;
+    this.shareClosed();
+  }
+  // What the dialog showed once (an invite link, a script token, a sign-in link) and the invite being written go with it
+  shareClosed() {
     this.lastInvite = null;
     this.inviteDraft = null;
+    this.youLink = null;
   }
-  // A teammate joining redraws the dialog: the invite being written lives in state (inviteDraft), and the field being
-  // typed in keeps its focus, so a live update never takes what the owner is typing.
+  // A teammate joining redraws the dialog: the invite being written and the links shown live in state, and the field
+  // being typed in keeps its focus, so a live update never takes what the owner is typing.
   renderShare() {
-    const a = document.activeElement, focus = this.shareEl?.contains(a) ? (a.name || '') : '';
-    const caret = focus && typeof a.selectionStart === 'number' ? a.selectionStart : null;
+    const a = document.activeElement, was = this.shareEl?.contains(a) ? a : null;
+    const range = was && typeof a.selectionStart === 'number' ? [a.selectionStart, a.selectionEnd, a.selectionDirection] : null;
     this.shareHtml();
-    const f = focus && this.shareEl.querySelector(`[name="${focus}"]`);
-    if (f) { f.focus(); if (caret != null && f.setSelectionRange) f.setSelectionRange(caret, caret); }
+    if (!was?.name || was.isConnected) return;  // its section read the same and was kept: focus and selection are as they were
+    // its section changed: the same field of the new one takes the focus (a discipline chip by its value, not the first)
+    const f = [...this.shareEl.querySelectorAll(`[name="${was.name}"]`)].find((x) => x.type !== 'checkbox' || x.value === was.value);
+    if (f) { f.focus({ preventScroll: true }); if (range && f.setSelectionRange) f.setSelectionRange(...range); }
   }
   shareHtml() {
     const esc = this.esc, t = this.data.team || {}, owner = this.can('admin'), me = this.me.member;
@@ -341,7 +357,7 @@ export class Team {
         <div class="tm-roleh" data-roleh>${esc(ROLE_HELP[draft.role] || '')}</div>
         <div class="tm-f"><span>Disciplines (they review changes to these stages)</span><div class="tm-chks">${chips('inv', draft.tags)}</div></div>
         <div class="tm-row"><button class="btn primary" type="button" data-a="invite">${icon('link')}Create invite link</button><span class="grow"></span></div>
-        <div class="tm-out" data-out="invite"></div></section>` : ''}
+        <div class="tm-out" data-out="invite">${this.linkHtml(this.lastInvite)}</div></section>` : ''}
       <section class="ksec"><div class="ks-h"><b>Members</b><span class="tag neutral">${(t.members || []).length}</span></div>
         <div class="tm-mems">${(t.members || []).map(member).join('')}</div>
         ${owner && invites.length ? `<div class="sec-t" style="margin-top:12px">Pending invites</div>${invites.map((i) => `<div class="tm-inv">
@@ -354,7 +370,7 @@ export class Team {
           <span><b>Watch all changes</b><small>Every change request and review lands in your inbox, without making you a required reviewer. On by default for generalists.</small></span></label>
         <div class="tm-row" style="margin-top:10px"><button class="btn" type="button" data-a="device">${icon('link')}Sign in on another device</button>
           <button class="btn" type="button" data-a="token">${icon('key')}New script token</button><span class="grow"></span></div>
-        <div class="tm-out" data-out="you"></div>
+        <div class="tm-out" data-out="you">${this.linkHtml(this.youLink)}</div>
         ${(this.me.tokens || []).length ? `<div class="tm-toks">${this.me.tokens.map((k) => `<div class="tm-inv"><span class="mono">${esc(k.label)}</span><span class="dim">created ${esc(ago(k.created_utc))}</span><span class="grow"></span><button class="btn ghost" type="button" data-tok="${esc(k.id)}">Revoke</button></div>`).join('')}</div>` : ''}</section>
       <div class="dlg-f"><span class="dim">An invite link grants its role until it's used, expires or is cancelled. Approvals help your process; they don't certify the robot as safe.</span><span class="grow"></span><button class="btn" type="button" data-a="close">Close</button></div>`;
     // Drawn at once from what the page has, then again when its own load answers or the team changes: a section that
@@ -411,12 +427,15 @@ export class Team {
         this.lastInvite = [location.origin + r.path,
           `For ${who}: ${r.invite.role}${tags.length ? `, ${tags.map((d) => this.disc(d)).join(', ')}` : ''}. Works once, until ${new Date(r.invite.expires_utc).toLocaleString()}. Send it privately: whoever opens it first joins.`
           + (local ? ` This link starts with ${location.host}, which only works on this computer: open the Studio at the address teammates use (the one \`morph studio --team --remote\` prints, or your tunnel's) and make the invite there.` : '')];
-        this.data.team = await this.call('GET', '/api/team');
         this.inviteDraft = null;
-        this.renderShare();  // the new invite shows under Pending invites; the form is ready for the next person
+        await this.loadTeam();  // the link, the new invite under Pending invites, and the form ready for the next person
+        this.pickLink('invite');
       } catch (e) { this.toast(e.message); inv.disabled = false; }
     };
-    if (this.lastInvite) this.showLink($('[data-out="invite"]'), ...this.lastInvite);
+    el.querySelectorAll('.tm-out [data-copy]').forEach((b) => (b.onclick = async () => {
+      const inp = b.closest('.tm-out').querySelector('input');
+      try { await navigator.clipboard.writeText(inp.value); this.toast('Copied'); } catch (e) { inp.select(); document.execCommand?.('copy'); this.toast('Copied'); }
+    }));
     el.querySelectorAll('.tm-mem').forEach((row) => {
       const id = row.dataset.id, m = (this.data.team?.members || []).find((x) => x.id === id);
       const sel = row.querySelector('[data-a="role"]');
@@ -460,7 +479,9 @@ export class Team {
     if (dev) dev.onclick = async () => {
       try {
         const r = await this.call('POST', '/api/me/link', {});
-        this.showLink($('[data-out="you"]'), location.origin + r.path, 'Open it on your other device within 15 minutes. It works once and signs that browser in as you.');
+        this.youLink = [location.origin + r.path, 'Open it on your other device within 15 minutes. It works once and signs that browser in as you.'];
+        this.renderShare();
+        this.pickLink('you');
       } catch (e) { this.toast(e.message); }
     };
     const tok = $('[data-a="token"]');
@@ -468,21 +489,29 @@ export class Team {
       try {
         const r = await this.call('POST', '/api/me/tokens', { label: 'script' });
         this.me.tokens = r.tokens;
-        this.showLink($('[data-out="you"]'), r.token, `${r.note} It has your role (${this.me.member.role}).`);
+        this.youLink = [r.token, `${r.note} It has your role (${this.me.member.role}).`, r.id];
+        this.renderShare();  // the token, and the new line under it to revoke it by
+        this.pickLink('you');
       } catch (e) { this.toast(e.message); }
     };
     el.querySelectorAll('[data-tok]').forEach((b) => (b.onclick = async () => {
-      try { const r = await this.call('POST', '/api/me/tokens', { action: 'revoke', id: b.dataset.tok }); this.me.tokens = r.tokens; this.renderShare(); } catch (e) { this.toast(e.message); }
+      try {
+        const r = await this.call('POST', '/api/me/tokens', { action: 'revoke', id: b.dataset.tok });
+        this.me.tokens = r.tokens;
+        if (this.youLink?.[2] === b.dataset.tok) this.youLink = null;  // the token shown no longer works
+        this.renderShare();
+      } catch (e) { this.toast(e.message); }
     }));
   }
-  showLink(box, text, note) {
-    box.innerHTML = `<div class="kin"><input readonly value="${this.esc(text)}" aria-label="Link"><button class="btn" type="button">${icon('copy')}Copy</button></div><div class="kh">${this.esc(note)}</div>`;
-    const inp = box.querySelector('input');
-    inp.focus();
-    inp.select();
-    box.querySelector('button').onclick = async () => {
-      try { await navigator.clipboard.writeText(text); this.toast('Copied'); } catch (e) { inp.select(); document.execCommand?.('copy'); this.toast('Copied'); }
-    };
+  // A link or token shown once: drawn from state (lastInvite, youLink), so a redraw keeps it, and it doesn't take the
+  // focus; pickLink selects it, ready to copy, only right after it was made.
+  linkHtml(out) {
+    if (!out) return '';
+    return `<div class="kin"><input readonly value="${this.esc(out[0])}" aria-label="Link"><button class="btn" type="button" data-copy>${icon('copy')}Copy</button></div><div class="kh">${this.esc(out[1])}</div>`;
+  }
+  pickLink(out) {
+    const inp = this.shareEl?.querySelector(`[data-out="${out}"] input`);
+    if (inp) { inp.focus(); inp.select(); }
   }
   async updateMember(id, ch) {
     let ok = true;
@@ -508,6 +537,11 @@ export class Team {
     slot.appendChild(this.ins);
     this.ins.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => this.show(b.dataset.tab)));
     this.body = this.ins.querySelector('.tm-body');
+    this.ins.addEventListener('pointerdown', () => { this.pressed = true; });
+    const up = () => { this.pressed = false; };
+    document.addEventListener('pointerup', up, true);
+    document.addEventListener('pointercancel', up, true);
+    window.addEventListener('blur', up);  // released in another window: this page never sees it
   }
   show(tab) {
     this.tab = tab;
@@ -529,20 +563,27 @@ export class Team {
     } catch (e) { /* each loader reports its own error */ }
     if (t !== this.tab) return;
     this.renderPills();
-    if (live && this.typing()) { this.renderSoon(); return; }  // a teammate's activity never interrupts what you are writing
+    if (live && this.waits()) {  // a teammate's activity never interrupts what you are writing
+      if (t === 'comments' && !this.pressed) this.fillThreads();
+      this.renderSoon();
+      return;
+    }
     this.renderBody(live);
   }
-  // The person is in a field of this panel, or has written into a box that only lives on the page (a reply, a request for
-  // changes, a release or branch name): a live update waits for them. Drafts, comments and the form are kept in state.
+  // The person is in a field of this panel, or has written into one of its boxes (a reply, a request for changes, a
+  // release or branch name): a live update waits for them. What they write is kept in state either way.
   typing() {
     const b = this.body, a = document.activeElement;
     if (!b) return false;
     if (a && b.contains(a) && a.matches('input, textarea, select')) return true;
     return [...b.querySelectorAll('.tm-ask textarea, .tm-replybox textarea, .tm-relbox input, .tm-branchbox input')].some((x) => x.value.trim());
   }
+  // It also waits while a button of this panel is pressed: a redraw between mousedown and click takes the button from
+  // under the pointer, so the click is lost and the focus falls to the page (where digits and P are shortcuts).
+  waits() { return !!this.pressed || this.typing(); }
   renderSoon() {
     clearTimeout(this.soon);
-    this.soon = setTimeout(() => { if (this.typing()) this.renderSoon(); else this.renderBody(true); }, 1000);
+    this.soon = setTimeout(() => { if (this.waits()) this.renderSoon(); else this.renderBody(true); }, 1000);
   }
   renderPills() {
     const set = (tab, v, cls = '') => { const n = this.ins.querySelector(`[data-tab="${tab}"] .tm-n`); if (n) { n.textContent = v || ''; n.className = `tm-n ${cls}`; } };
@@ -556,9 +597,15 @@ export class Team {
     clearTimeout(this.soon);
     const form = live && this.body.querySelector('.tm-new');
     if (form) this.draft.open = form.open;  // a click's toggle event comes a moment later: a live redraw keeps the form as it is
+    const a = document.activeElement, f = this.body.contains(a) ? a.dataset?.f : '';
+    const range = f && typeof a.selectionStart === 'number' ? [a.selectionStart, a.selectionEnd, a.selectionDirection] : null;
     const r = { comments: () => this.commentsHtml(), review: () => this.reviewHtml(), changes: () => this.changesHtml(), activity: () => this.activityHtml() }[this.tab];
     this.body.innerHTML = r();
     ({ comments: () => this.wireComments(), review: () => this.wireReview(), changes: () => this.wireChanges(), activity: () => this.wireActivity() }[this.tab])();
+    // A field drawn from state (data-f) is drawn again with what it said: the focus and the caret go back to it, so the
+    // answer to your own click (an approval, Apply) never sends the next keys to the page
+    const n = f && [...this.body.querySelectorAll('[data-f]')].find((x) => x.dataset.f === f);
+    if (n) { n.focus({ preventScroll: true }); if (range && n.setSelectionRange) n.setSelectionRange(...range); }
   }
 
   // ---- comments
@@ -595,6 +642,21 @@ export class Team {
   commentsHtml() {
     const esc = this.esc, rev = this.rev();
     if (!rev) return '<div class="tm-empty">No revision yet.</div>';
+    const canPost = this.can('comment');
+    const sel = this.anchor.kind === 'bom' ? `bom:${(this.s.S?.current?.bom?.rows || []).findIndex((r) => r.item === this.anchor.item)}` : `${this.anchor.kind}:${this.anchor.kind === 'rev' ? '' : this.anchor.key}`;
+    return `<div class="tm-sec">
+      ${canPost ? `<div class="tm-compose"><span class="sel"><select data-a="anchor" data-f="anchor" aria-label="What the comment is about">${this.anchors()}</select></span>
+        <textarea data-f="compose" rows="2" maxlength="4000" placeholder="Comment on ${esc(rev)}. @name to notify someone">${esc(this.compose)}</textarea>
+        <div class="tm-mention"></div>
+        <div class="tm-row"><span class="dim tm-hint">Stage, BOM and parameter comments follow later revisions.</span><span class="grow"></span><button class="btn primary" type="button" data-a="post">Comment</button></div></div>`
+        : '<div class="tm-empty">Viewers can\'t comment on this team (owner policy).</div>'}
+      ${sel ? `<input type="hidden" data-sel="${esc(sel)}">` : ''}
+      ${this.threadsHtml()}</div>`;
+  }
+  // The threads, apart from the composer: drawn before the tab's own load answered, they are a placeholder (data-loading)
+  // that fillThreads replaces while the person writes a comment.
+  threadsHtml() {
+    const esc = this.esc, rev = this.rev();
     const fresh = this.data.commentsRev === rev;  // a new revision's comments are on their way: not the last one's, mislabelled
     const all = fresh ? this.data.comments : [], roots = all.filter((c) => !c.parent && (this.showResolved || !c.resolved));
     const resolvedN = all.filter((c) => !c.parent && c.resolved).length;
@@ -611,21 +673,27 @@ export class Team {
         ${[c, ...replies].map((x) => this.msgHtml(x)).join('')}
         <div class="tm-acts">${canPost ? `<button class="btn ghost" type="button" data-reply="${esc(c.id)}">${icon('reply')}Reply</button>` : ''}
           ${mayResolve ? `<button class="btn ghost" type="button" data-resolve="${esc(c.id)}" data-v="${c.resolved ? '0' : '1'}">${c.resolved ? 'Reopen' : `${icon('check')}Resolve`}</button>` : ''}</div>
-        <div class="tm-replybox"></div></div>`;
+        <div class="tm-replybox">${canPost && c.id in this.boxes.reply ? this.replyHtml(c.id) : ''}</div></div>`;
     };
-    const sel = this.anchor.kind === 'bom' ? `bom:${(this.s.S?.current?.bom?.rows || []).findIndex((r) => r.item === this.anchor.item)}` : `${this.anchor.kind}:${this.anchor.kind === 'rev' ? '' : this.anchor.key}`;
-    return `<div class="tm-sec">
-      ${canPost ? `<div class="tm-compose"><span class="sel"><select data-a="anchor" aria-label="What the comment is about">${this.anchors()}</select></span>
-        <textarea rows="2" maxlength="4000" placeholder="Comment on ${esc(rev)}. @name to notify someone">${esc(this.compose)}</textarea>
-        <div class="tm-mention"></div>
-        <div class="tm-row"><span class="dim tm-hint">Stage, BOM and parameter comments follow later revisions.</span><span class="grow"></span><button class="btn primary" type="button" data-a="post">Comment</button></div></div>`
-        : '<div class="tm-empty">Viewers can\'t comment on this team (owner policy).</div>'}
+    return `<div class="tm-threads"${fresh ? '' : ` data-loading="${esc(rev)}"`}>
       ${this.can('admin') && (this.data.team?.members || []).length === 1 ? `<div class="tm-hintbox">${icon('users')}<span>You're the only one on the team so far.
         <b>Share</b> (top right) makes invite links: teammates sign in from their own browsers, see this robot live, comment and review.</span></div>` : ''}
       <div class="tm-row tm-filter"><b>${fresh ? `${roots.length} thread${roots.length === 1 ? '' : 's'} on ${esc(rev)}` : `Comments on ${esc(rev)}`}</b><span class="grow"></span>
         ${resolvedN ? `<button class="btn ghost" type="button" data-a="resolved">${this.showResolved ? 'Hide' : 'Show'} ${resolvedN} resolved</button>` : ''}</div>
-      ${roots.length ? roots.map(thread).join('') : `<div class="tm-empty">${fresh ? 'No open comments here yet.' : `Loading the comments on ${esc(rev)}…`}</div>`}
-      ${sel ? `<input type="hidden" data-sel="${esc(sel)}">` : ''}</div>`;
+      ${roots.length ? roots.map(thread).join('') : `<div class="tm-empty">${fresh ? 'No open comments here yet.' : `Loading the comments on ${esc(rev)}…`}</div>`}</div>`;
+  }
+  replyHtml(id) {
+    return `<textarea data-f="reply:${this.esc(id)}" rows="2" maxlength="4000" placeholder="Reply">${this.esc(this.boxes.reply[id] || '')}</textarea><div class="tm-mention"></div>
+      <div class="tm-row"><span class="grow"></span><button class="btn primary" type="button">Reply</button></div>`;
+  }
+  // The tab's own load answered while the person writes in the composer: the placeholder it was drawn with becomes the
+  // threads (nothing in it is theirs), and the composer is left as it is until they leave it
+  fillThreads() {
+    const list = this.body.querySelector('.tm-threads[data-loading]'), rev = this.rev();
+    if (!list || list.dataset.loading !== rev || this.data.commentsRev !== rev) return;
+    list.insertAdjacentHTML('afterend', this.threadsHtml());
+    list.remove();
+    this.wireThreads();
   }
   msgHtml(c) {
     const esc = this.esc, a = c.author || this.member(c.by) || { name: '?' };
@@ -658,6 +726,10 @@ export class Team {
         this.renderPills();
       } catch (e) { this.toast(e.message); post.disabled = false; }
     };
+    this.wireThreads();
+  }
+  wireThreads() {
+    const b = this.body;
     const res = b.querySelector('[data-a="resolved"]');
     if (res) res.onclick = () => { this.showResolved = !this.showResolved; this.renderBody(); };
     b.querySelectorAll('[data-resolve]').forEach((x) => (x.onclick = async () => {
@@ -666,20 +738,28 @@ export class Team {
       this.renderBody();
       this.renderPills();
     }));
-    b.querySelectorAll('[data-reply]').forEach((x) => (x.onclick = () => {
-      const box = x.closest('.tm-th').querySelector('.tm-replybox');
-      if (box.innerHTML) { box.innerHTML = ''; return; }
-      box.innerHTML = `<textarea rows="2" maxlength="4000" placeholder="Reply"></textarea><div class="tm-mention"></div><div class="tm-row"><span class="grow"></span><button class="btn primary" type="button">Reply</button></div>`;
-      const t = box.querySelector('textarea');
+    const wireReply = (box) => {
+      const id = box.closest('.tm-th').dataset.id, t = box.querySelector('textarea');
+      if (!t) return;
+      t.addEventListener('input', () => { this.boxes.reply[id] = t.value; });
       this.mentions(t, box.querySelector('.tm-mention'));
-      t.focus();
-      box.querySelector('button').onclick = async () => {
+      box.querySelector('.tm-row button').onclick = async () => {
         if (!t.value.trim()) return;
-        try { await this.call('POST', '/api/comments', { body: t.value.trim(), parent: x.dataset.reply }); } catch (e) { this.toast(e.message); return; }
+        try { await this.call('POST', '/api/comments', { body: t.value.trim(), parent: id }); } catch (e) { this.toast(e.message); return; }
+        delete this.boxes.reply[id];
         await this.loadComments();
         this.renderBody();
       };
+    };
+    b.querySelectorAll('[data-reply]').forEach((x) => (x.onclick = () => {
+      const id = x.dataset.reply, box = x.closest('.tm-th').querySelector('.tm-replybox');
+      if (id in this.boxes.reply) { delete this.boxes.reply[id]; box.innerHTML = ''; return; }
+      this.boxes.reply[id] = '';
+      box.innerHTML = this.replyHtml(id);
+      wireReply(box);
+      box.querySelector('textarea').focus();
     }));
+    b.querySelectorAll('.tm-replybox').forEach(wireReply);
   }
   mentions(ta, box) {
     const names = () => (this.data.team?.members || []).filter((m) => m.id !== this.me.member.id).map((m) => m.name);
@@ -694,6 +774,7 @@ export class Team {
         box.innerHTML = '';
         ta.focus();
         ta.selectionStart = ta.selectionEnd = before.length;
+        ta.dispatchEvent(new Event('input'));  // the name goes into the state the field is drawn from, as typing it would
       }));
     });
   }
@@ -788,9 +869,10 @@ export class Team {
           ${!open && this.can('request_review') && !g.ok ? `<button class="btn primary" type="button" data-a="request" title="Asks the owners of the disciplines that aren't approved yet">Request review</button>` : ''}
           <span class="grow"></span>
           ${this.can('release') ? `<button class="btn${g.ok && !released.length ? ' primary' : ''}" type="button" data-a="release" ${g.ok ? '' : 'disabled'} title="${esc(g.ok ? 'Tag this revision and unlock its order files' : g.text)}">${icon('tag')}${released.length ? 'Release again' : 'Release'}</button>` : ''}</div>
+        ${open && mine.length ? this.askHtml(open.id) : ''}
         ${open ? this.whyNot(open) : ''}
         ${!g.ok && this.can('release') ? `<div class="tm-why">${icon('alert')}Release locked: ${esc(g.text)}.</div>` : ''}
-        <div class="tm-relbox"></div>
+        <div class="tm-relbox">${g.ok && this.can('release') && this.boxes.release?.rev === rev ? this.releaseHtml() : ''}</div>
         ${released.length ? `<div class="tm-rels">${released.map((r) => `<span class="tag acc">${icon('tag')}${esc(r.tag)}</span>`).join('')}<span class="dim">released by ${esc(this.member(released[0].by)?.name || '?')}: its order files are unlocked for everyone</span></div>` : ''}</div>
       ${open ? `<div class="sec-t" style="margin-top:14px">Review requested by ${esc(this.member(open.by)?.name || '?')} <span class="r">${esc(ago(open.ts))}</span></div>
         <div class="tm-routes">${(open.requested_from || []).map((r) => {
@@ -800,7 +882,21 @@ export class Team {
         ${(open.decisions || []).slice(-6).reverse().map((d) => `<div class="tm-dec"><b>${esc(this.member(d.by)?.name || '?')}</b> ${d.decision === 'approve' ? 'approved' : 'requested changes'} as ${esc(andList(d.disciplines.map((x) => this.disc(x))))}${d.note ? `: ${esc(d.note)}` : ''} <span class="dim">${esc(ago(d.ts))}</span></div>`).join('')}` : ''}
       <div class="sec-t" style="margin-top:16px">${icon('branch')}Branches<span class="r">${esc((this.data.branches[0] || {}).head_rev || '')} on main</span></div>
       <div class="tm-row">${branchSel}${this.can('branch') ? `<button class="btn" type="button" data-a="newbranch">${icon('plus')}Branch from ${esc(rev)}</button>` : ''}<span class="grow"></span></div>
-      <div class="tm-branchbox"></div></div>`;
+      <div class="tm-branchbox">${this.can('branch') && this.boxes.branch?.rev === rev ? this.branchHtml() : ''}</div></div>`;
+  }
+  releaseHtml() {
+    const esc = this.esc, rev = this.boxes.release.rev;
+    return `<div class="kin"><input data-f="release" maxlength="40" placeholder="Release name, e.g. ${esc(LEVEL[this.data.gate?.level] || '')} v1" aria-label="Release name" value="${esc(this.boxes.release.tag)}"><button class="btn primary" type="button">Release ${esc(rev)}</button></div>`;
+  }
+  branchHtml() {
+    return `<div class="kin"><input data-f="branch" maxlength="40" placeholder="branch-name (lowercase, hyphens)" aria-label="Branch name" value="${this.esc(this.boxes.branch.name)}"><button class="btn primary" type="button">Create</button></div>
+      <div class="kh">A variant line: try a different servo or build without touching main, then merge it back as a change request.</div>`;
+  }
+  // a request for changes being written, under the decide buttons of its review
+  askHtml(id) {
+    if (!(id in this.boxes.ask)) return '';
+    return `<div class="tm-ask" data-review="${this.esc(id)}"><textarea data-f="ask:${this.esc(id)}" rows="2" maxlength="4000" placeholder="What needs to change? The author sees this.">${this.esc(this.boxes.ask[id])}</textarea>
+      <div class="tm-row"><span class="grow"></span><button class="btn ghost" type="button" data-x>Cancel</button><button class="btn primary" type="button" data-go>Request changes</button></div></div>`;
   }
   wireReview() {
     const b = this.body, rev = this.rev();
@@ -810,33 +906,55 @@ export class Team {
       try { const r = await this.call('POST', '/api/reviews', { rev }); this.toast(`Asked ${r.review.disciplines.length} discipline${r.review.disciplines.length === 1 ? '' : 's'} to review ${rev}`); } catch (e) { this.toast(e.message); }
       this.loadTab();
     };
-    const rel = b.querySelector('[data-a="release"]');
-    if (rel) rel.onclick = () => {
-      const box = b.querySelector('.tm-relbox');
-      box.innerHTML = `<div class="kin"><input maxlength="40" placeholder="Release name, e.g. ${this.esc(LEVEL[this.data.gate.level])} v1" aria-label="Release name"><button class="btn primary" type="button">Release ${this.esc(rev)}</button></div>`;
-      const inp = box.querySelector('input');
-      inp.focus();
-      box.querySelector('button').onclick = async () => {
+    const relbox = b.querySelector('.tm-relbox');
+    const wireRelease = () => {
+      const inp = relbox?.querySelector('input');  // none in the placeholder drawn before the gate is in
+      if (!inp) return;
+      inp.oninput = () => { if (this.boxes.release) this.boxes.release.tag = inp.value; };
+      relbox.querySelector('button').onclick = async () => {
         try {
           const r = await this.call('POST', '/api/releases', { tag: inp.value.trim(), rev });
+          this.boxes.release = null;
           this.toast(`Released ${rev} as ${r.release.tag}`);
         } catch (e) { if (e.data?.gate) this.data.gate = e.data.gate; this.toast(e.message); }
         this.loadTab();
       };
     };
-    const nb = b.querySelector('[data-a="newbranch"]');
-    if (nb) nb.onclick = () => {
-      const box = b.querySelector('.tm-branchbox');
-      box.innerHTML = `<div class="kin"><input maxlength="40" placeholder="branch-name (lowercase, hyphens)" aria-label="Branch name"><button class="btn primary" type="button">Create</button></div>
-        <div class="kh">A variant line: try a different servo or build without touching main, then merge it back as a change request.</div>`;
-      box.querySelector('button').onclick = async () => {
-        try { await this.call('POST', '/api/branches', { action: 'create', name: box.querySelector('input').value.trim(), base_rev: rev }); this.toast('Branch created'); } catch (e) { this.toast(e.message); return; }
+    const rel = b.querySelector('[data-a="release"]');
+    if (rel) rel.onclick = () => {
+      if (!relbox.querySelector('input')) {
+        if (this.boxes.release?.rev !== rev) this.boxes.release = { rev, tag: '' };
+        relbox.innerHTML = this.releaseHtml();
+        wireRelease();
+      }
+      relbox.querySelector('input').focus();
+    };
+    wireRelease();
+    const bbox = b.querySelector('.tm-branchbox');
+    const wireBranch = () => {
+      const inp = bbox?.querySelector('[data-f="branch"]');
+      if (!inp) return;
+      inp.oninput = () => { if (this.boxes.branch) this.boxes.branch.name = inp.value; };
+      bbox.querySelector('.kin button').onclick = async () => {
+        try { await this.call('POST', '/api/branches', { action: 'create', name: inp.value.trim(), base_rev: rev }); this.toast('Branch created'); } catch (e) { this.toast(e.message); return; }
+        this.boxes.branch = null;
         this.loadTab();
       };
     };
+    const nb = b.querySelector('[data-a="newbranch"]');
+    if (nb) nb.onclick = () => {
+      if (!bbox.querySelector('[data-f="branch"]')) {
+        if (this.boxes.branch?.rev !== rev) this.boxes.branch = { rev, name: '' };
+        bbox.innerHTML = this.branchHtml();
+        wireBranch();
+      }
+      bbox.querySelector('[data-f="branch"]').focus();
+    };
+    wireBranch();
     const bs = b.querySelector('[data-a="branch"]');
     if (bs) bs.onchange = async () => {
-      const box = b.querySelector('.tm-branchbox'), name = bs.value;
+      const box = bbox, name = bs.value;
+      this.boxes.branch = null;  // the box shows how the branch differs from main instead
       if (name === 'main') { box.innerHTML = ''; return; }
       try {
         const r = await this.call('GET', '/api/branches', { compare: `main...${name}` });
@@ -856,25 +974,28 @@ export class Team {
       try {
         const r = await this.call('POST', '/api/reviews/decide', { review, decision, note });
         if (r.gate) this.data.gate = r.gate;
+        if (decision === 'request_changes') delete this.boxes.ask[review];
         this.toast(decision === 'approve' ? 'Approved' : 'Changes requested: the author was notified');
       } catch (e) { this.toast(e.message); }
       this.loadTab();
     };
+    const wireAsk = (box) => {
+      const id = box.dataset.review, ta = box.querySelector('textarea');
+      ta.addEventListener('input', () => { this.boxes.ask[id] = ta.value; });
+      box.querySelector('[data-x]').onclick = () => { delete this.boxes.ask[id]; box.remove(); };
+      box.querySelector('[data-go]').onclick = () => { if (ta.value.trim()) send(id, 'request_changes', ta.value.trim()); else ta.focus(); };
+      return box;
+    };
     root.querySelectorAll('[data-decide]').forEach((x) => (x.onclick = () => {
-      if (x.dataset.decide === 'approve') { send(x.dataset.review, 'approve', ''); return; }
-      const row = x.closest('.tm-row');
-      let box = row.nextElementSibling;
-      if (box?.classList.contains('tm-ask')) { box.remove(); return; }
-      box = document.createElement('div');
-      box.className = 'tm-ask';
-      box.innerHTML = `<textarea rows="2" maxlength="4000" placeholder="What needs to change? The author sees this."></textarea>
-        <div class="tm-row"><span class="grow"></span><button class="btn ghost" type="button" data-x>Cancel</button><button class="btn primary" type="button" data-go>Request changes</button></div>`;
-      row.after(box);
-      const ta = box.querySelector('textarea');
-      ta.focus();
-      box.querySelector('[data-x]').onclick = () => box.remove();
-      box.querySelector('[data-go]').onclick = () => { if (ta.value.trim()) send(x.dataset.review, 'request_changes', ta.value.trim()); else ta.focus(); };
+      const id = x.dataset.review;
+      if (x.dataset.decide === 'approve') { send(id, 'approve', ''); return; }
+      const row = x.closest('.tm-row'), box = row.nextElementSibling;
+      if (box?.classList.contains('tm-ask')) { delete this.boxes.ask[id]; box.remove(); return; }
+      this.boxes.ask[id] = '';
+      row.insertAdjacentHTML('afterend', this.askHtml(id));
+      wireAsk(row.nextElementSibling).querySelector('textarea').focus();
     }));
+    root.querySelectorAll('.tm-ask').forEach(wireAsk);
   }
 
   // ---- change requests
@@ -941,17 +1062,18 @@ export class Team {
           ${mine.length && rv ? this.decideButtons(rv, mine) : ''}
           <span class="grow"></span>
           ${this.can('apply') && Object.keys(p.changes || {}).length ? `<button class="btn" type="button" data-apply="${esc(p.id)}" title="Queue the edit: built by you, credited to ${esc(p.author?.name || 'the author')}">Apply</button>` : ''}
-          ${p.by === this.me.member.id || this.can('edit') ? `<button class="btn ghost" type="button" data-close="${esc(p.id)}">Close</button>` : ''}</div>` : ''}</div>`;
+          ${p.by === this.me.member.id || this.can('edit') ? `<button class="btn ghost" type="button" data-close="${esc(p.id)}">Close</button>` : ''}</div>
+          ${mine.length && rv ? this.askHtml(rv.id) : ''}` : ''}</div>`;
     };
     return `<div class="tm-sec">
       ${this.can('propose') ? `<details class="tm-new"${ready || this.draft.open ? ' open' : ''}><summary>${icon('plus')}Propose a change</summary>
-        <div class="tm-form"><span class="sel grow"><select data-a="param" aria-label="Parameter">${params.map((p) => `<option value="${esc(p.key)}"${p.key === this.draft.param ? ' selected' : ''}>${esc(p.group)} · ${esc(p.label)}</option>`).join('')}</select></span><span class="tm-val"></span>
+        <div class="tm-form"><span class="sel grow"><select data-a="param" data-f="param" aria-label="Parameter">${params.map((p) => `<option value="${esc(p.key)}"${p.key === this.draft.param ? ' selected' : ''}>${esc(p.group)} · ${esc(p.label)}</option>`).join('')}</select></span><span class="tm-val"></span>
           <button class="btn" type="button" data-a="add">${icon('plus')}Add</button></div>
         <div class="tm-draft">${draft.map(([k, v]) => `<span class="tm-chip" title="${esc(k)}">${esc(this.paramLabel(k))}: <b>${esc(this.showValue(k, v))}</b><button type="button" data-del="${esc(k)}" title="Remove">${icon('x')}</button></span>`).join('')}</div>
         <label class="tm-f"><span>Or a change that isn't a parameter, about a stage (the manual's wording, a drawing)</span>
-          <span class="sel"><select data-a="stage"><option value="">No stage</option>${nodes.map(([k, l]) => `<option value="${esc(k)}"${this.draft.stage === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></span></label>
-        <input class="tm-in" data-a="title" maxlength="120" placeholder="Title (optional)" value="${esc(this.draft.title)}">
-        <textarea rows="2" maxlength="4000" data-a="note" placeholder="Why? @name to notify someone">${esc(this.draft.note)}</textarea>
+          <span class="sel"><select data-a="stage" data-f="stage"><option value="">No stage</option>${nodes.map(([k, l]) => `<option value="${esc(k)}"${this.draft.stage === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></span></label>
+        <input class="tm-in" data-a="title" data-f="title" maxlength="120" placeholder="Title (optional)" value="${esc(this.draft.title)}">
+        <textarea rows="2" maxlength="4000" data-a="note" data-f="note" placeholder="Why? @name to notify someone">${esc(this.draft.note)}</textarea>
         <div class="tm-mention"></div>
         <div class="tm-preview">${this.draft.preview || ''}</div>
         <div class="tm-row"><span class="dim">${this.can('edit') ? 'Reviewers are asked by discipline; anyone with edit rights applies it.' : 'An editor applies it once reviewers agree.'}</span><span class="grow"></span>
@@ -967,8 +1089,8 @@ export class Team {
       if (!p) { val.innerHTML = ''; return; }
       const cur = this.draft.param === p.key && this.draft.value != null ? this.draft.value : p.value;
       val.innerHTML = p.type === 'select'
-        ? `<span class="sel"><select data-v aria-label="New value">${(p.options || []).map((o) => `<option value="${this.esc(o)}"${String(o) === String(cur) ? ' selected' : ''}>${this.esc(this.showValue(p.key, o))}</option>`).join('')}</select></span>`
-        : `<div class="field"><input data-v type="number" value="${this.esc(cur)}" step="${this.esc(p.step || 'any')}"><span class="u">${this.esc(p.unit || '')}</span></div>`;
+        ? `<span class="sel"><select data-v data-f="value" aria-label="New value">${(p.options || []).map((o) => `<option value="${this.esc(o)}"${String(o) === String(cur) ? ' selected' : ''}>${this.esc(this.showValue(p.key, o))}</option>`).join('')}</select></span>`
+        : `<div class="field"><input data-v data-f="value" type="number" value="${this.esc(cur)}" step="${this.esc(p.step || 'any')}"><span class="u">${this.esc(p.unit || '')}</span></div>`;
       const v = val.querySelector('[data-v]');
       v.oninput = v.onchange = () => { this.draft.param = p.key; this.draft.value = v.value; };
     };

@@ -385,14 +385,14 @@ def test_live_updates_never_take_what_you_are_writing(demo):
     ctx.close()
 
 
-def _held(page, path):
-    """Holds this page's GETs of `path` (the server sees nothing yet) until release() lets them through; wait() returns
-    once one is held (the request reaches the test a moment after the click that sent it)."""
+def _held(page, path, method="GET"):
+    """Holds this page's GETs (or `method`s) of `path` (the server sees nothing yet) until release() lets them through;
+    wait() returns once one is held (the request reaches the test a moment after the click that sent it)."""
     from urllib.parse import urlparse
     held = []
 
     def handle(route):
-        if route.request.method == "GET" and urlparse(route.request.url).path == path:
+        if route.request.method == method and urlparse(route.request.url).path == path:
             held.append(route)
         else:
             route.continue_()
@@ -412,8 +412,39 @@ def _held(page, path):
             if held:
                 return
             page.wait_for_timeout(25)
-        raise AssertionError(f"no GET of {path} was held")
+        raise AssertionError(f"no {method} of {path} was held")
     return held, release, wait
+
+
+def _late(page, path):
+    """The page's next GET of `path` is answered by the server at once, but the answer reaches the page only when
+    deliver() is called: an older answer that lands after a newer one. wait() returns once it is answered."""
+    from urllib.parse import urlparse
+    late = []
+
+    def handle(route):
+        if route.request.method == "GET" and not late:
+            late.append((route, route.fetch()))
+        else:
+            route.continue_()
+
+    def match(u):
+        return urlparse(u).path == path
+
+    page.route(match, handle)
+
+    def deliver():
+        route, answer = late[0]
+        route.fulfill(response=answer)
+        page.unroute(match, handle)
+
+    def wait():
+        for _ in range(400):
+            if late:
+                return
+            page.wait_for_timeout(25)
+        raise AssertionError(f"no GET of {path} was answered")
+    return deliver, wait
 
 
 def test_the_review_tabs_own_load_never_takes_a_release_name_being_typed(demo):
@@ -528,5 +559,234 @@ def test_a_share_switch_shows_what_the_studio_saved(demo):
                   ".then((r) => r.json())")                         # another owner turns it back
     page.evaluate("window.team.loadTeam()")                           # the dialog is drawn again from the Studio
     page.wait_for_function(f"document.querySelector('{box}').checked === true", timeout=5000)
+    assert errors == [], errors
+    ctx.close()
+
+
+def _share(page):
+    """Opens Share and waits for its own load (the next draws read the same as the dialog on screen)."""
+    with page.expect_response(lambda r: r.url.split("?")[0].endswith("/api/team")):
+        page.click("[data-tm=share]")
+    page.wait_for_selector(".tm-share-dlg .tm-mem")
+    page.evaluate("window.team.loadTeam()")
+
+
+def test_an_invite_link_never_takes_the_focus_or_the_scroll_when_share_is_drawn_again(demo):
+    """The link Create invite link made is selected, ready to copy. A redraw after that (a role change, a member event,
+    the dialog's own late load) keeps it as it is: it doesn't take the focus, or scroll the dialog back to the top."""
+    ctx, page, errors = _signed_in(demo, "Jim", h=640)
+    _share(page)
+    dlg, link = ".tm-share-dlg", ".tm-share-dlg [data-out=invite] input"
+    page.fill(f"{dlg} input[name=hint]", "Priya")
+    page.click("[data-a=invite]")
+    page.wait_for_selector(link)
+    assert page.evaluate(f"document.activeElement === document.querySelector('{link}')")   # made: ready to copy
+    url = page.input_value(link)
+    assert url.startswith(demo["base"] + "/?invite=mi_")
+    page.evaluate(f"document.activeElement.blur(); document.querySelector('{dlg}').scrollTop = 10000")
+    top = page.evaluate(f"document.querySelector('{dlg}').scrollTop")
+    assert top > 100, top                                             # scrolled down to the policy and You
+    shown = page.query_selector(link)
+    page.evaluate("window.team.loadTeam()")                           # drawn again, as a teammate's update draws it
+    assert page.evaluate(f"document.querySelector('{dlg}').scrollTop") == top, "the dialog scrolled back to the link"
+    assert page.evaluate("document.activeElement === document.body"), "the link took the focus"
+    assert shown.evaluate("x => x.isConnected") and page.input_value(link) == url   # kept, still shown
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_a_token_or_sign_in_link_shown_in_share_stays_until_the_dialog_closes(demo):
+    """A script token is shown once (Morph keeps only its hash): a redraw of Share keeps it on screen, and so a sign-in
+    link for another device. Revoking the token shown takes it away; closing the dialog takes the link away."""
+    ctx, page, errors = _signed_in(demo, "Ana")
+    _share(page)
+    out = ".tm-share-dlg [data-out=you] input"
+    page.click(".tm-share-dlg [data-a=token]")
+    page.wait_for_selector(out)
+    token = page.input_value(out)
+    assert token and page.evaluate(f"document.activeElement === document.querySelector('{out}')")
+    page.evaluate("window.team.loadTeam()")                           # a teammate's update draws the dialog again
+    assert page.locator(out).count() == 1 and page.input_value(out) == token, "the token was wiped"
+    page.click(".tm-share-dlg [data-tok]")                            # revoked: it no longer works, so it goes
+    page.wait_for_function(f"!document.querySelector('{out}')")
+    page.click(".tm-share-dlg [data-a=device]")
+    page.wait_for_selector(out)
+    link = page.input_value(out)
+    assert link.startswith(demo["base"] + "/?link=ml_"), link
+    page.evaluate("window.team.loadTeam()")
+    assert page.locator(out).count() == 1 and page.input_value(out) == link, "the sign-in link was wiped"
+    page.click(".tm-share-dlg .dlg-f [data-a=close]")
+    _share(page)
+    assert page.locator(out).count() == 0                             # shown once: not again after closing
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_shares_redraw_leaves_the_focus_and_the_selection_where_they_are(demo):
+    """A redraw keeps the focus on the discipline chip it was on (not the first chip of the row) and a selection in
+    Name as it was, whether that section was kept or drawn again."""
+    ctx, page, errors = _signed_in(demo, "Jim")
+    _share(page)
+    chips, hint = ".tm-share-dlg input[name=inv]", ".tm-share-dlg input[name=hint]"
+    third = page.evaluate(f"(() => {{ const c = document.querySelectorAll('{chips}')[2]; c.focus(); return c.value; }})()")
+    focus = "(() => { const a = document.activeElement; return [a.name, a.value, a.checked]; })()"
+    page.evaluate("window.team.loadTeam()")                           # nothing changed: every section is kept
+    assert page.evaluate(focus) == ["inv", third, False]
+    page.keyboard.press("Space")                                      # ticked: the invite form reads differently...
+    page.evaluate("window.team.loadTeam()")                           # ...so it is drawn again
+    assert page.evaluate(focus) == ["inv", third, True]
+    page.fill(hint, "Priya Natarajan")
+    page.evaluate(f"document.querySelector('{hint}').setSelectionRange(0, 5)")
+    sel = "(() => { const a = document.activeElement; return [a.name, a.selectionStart, a.selectionEnd]; })()"
+    page.evaluate("window.team.loadTeam()")                           # drawn again with the name typed
+    assert page.evaluate(sel) == ["hint", 0, 5]
+    page.evaluate("window.team.loadTeam()")                           # kept
+    assert page.evaluate(sel) == ["hint", 0, 5]
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_comments_on_another_revision_show_while_you_write_one(demo):
+    """The page moved to another revision: Comments is drawn at once with a placeholder while that revision's comments
+    load. Someone who starts writing meanwhile sees them when they land, and keeps their words and the focus."""
+    ctx, page, errors = _signed_in(demo, "Ana")
+    page.click(".tm-tabs [data-tab=activity]")
+    page.wait_for_selector(".tm-feed")
+    page.evaluate("window.studio.S.current = {...window.studio.S.current, rev: 'r002'}")
+    _, release, wait = _held(page, "/api/comments")
+    page.click(".tm-tabs [data-tab=comments]")
+    wait()
+    assert "Loading the comments on r002" in page.inner_text(".tm-body")
+    page.click(".tm-compose textarea")
+    page.keyboard.type("While they load")
+    composer = page.query_selector(".tm-compose textarea")
+    with page.expect_response(lambda r: "/api/comments" in r.url):
+        release()
+    page.wait_for_function("!document.querySelector('.tm-body').innerText.includes('Loading the comments')", timeout=5000)
+    assert page.inner_text(".tm-filter b") == "1 thread on r002" and "lead time on these" in page.inner_text(".tm-threads")
+    assert composer.evaluate("x => x.isConnected && x === document.activeElement"), "the composer was redrawn"
+    assert page.input_value(".tm-compose textarea") == "While they load"
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_a_teammates_update_waits_for_a_click_on_the_panel(demo):
+    """A teammate's update waits while you write a comment, and is drawn once you leave the field. Pressing a button
+    of the panel leaves it: the update waits for the click too, so the button clicked is the one that answers."""
+    ctx, page, errors = _signed_in(demo, "Ana")
+    room, root, ids, ms = demo["room"], demo["root"], demo["ids"], members(demo["home"])
+    page.click(".tm-compose textarea")
+    page.keyboard.type("Half a comment")
+    collab.add_comment(root, ids["Raj"], "Raj checked the jaw", {"rev": "r003"}, members=ms)
+    with page.expect_response(lambda r: "/api/comments" in r.url):
+        room.hub.send({"type": "comment", "action": "add", "project": "egg-picker"})
+    page.wait_for_timeout(100)
+    assert "Raj checked the jaw" not in page.inner_text(".tm-body")  # waits for the composer
+    box = page.locator(".tm-th [data-reply]").first.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()                                                 # the composer has lost the focus...
+    page.wait_for_timeout(1500)                                       # ...and the panel checks again every second
+    page.mouse.up()
+    page.wait_for_selector(".tm-replybox textarea", timeout=3000)
+    assert page.evaluate("document.activeElement === document.querySelector('.tm-replybox textarea')")
+    assert page.input_value(".tm-compose textarea") == "Half a comment"
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_an_older_answer_about_the_team_never_draws_over_a_newer_one(demo):
+    """Two loads of the team in flight (Share opened, closed and opened again; a member event) can answer out of
+    order: the dialog shows the newer answer, not whichever came last."""
+    ctx, page, errors = _signed_in(demo, "Jim")
+    _share(page)
+    deliver, wait = _late(page, "/api/team")
+    page.evaluate("() => { window.older = window.team.loadTeam(); }")  # answered now, before Priya joins...
+    wait()
+    inv = auth.create_invite(demo["ids"]["Jim"], "editor", ["electronics"], "Priya", home=demo["home"])
+    auth.redeem_invite(inv["code"], "Priya", home=demo["home"])
+    page.evaluate("window.team.loadTeam()")                            # ...this one after: Priya is a member
+    priya = page.locator(".tm-share-dlg .tm-mem:has-text('Priya')")
+    assert priya.count() == 1
+    deliver()
+    page.evaluate("window.older")                                      # the older answer lands last
+    assert priya.count() == 1, "an older answer drew the team without Priya"
+    assert "Priya" in page.evaluate("window.team.data.team.members.map((m) => m.name)")
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_your_own_actions_answer_never_takes_a_release_or_branch_name_being_typed(demo):
+    """Review is drawn again when your approval (or a branch you created) is answered. A branch or release name typed
+    while it was on its way stays, with the focus, and creates the branch or the release."""
+    from urllib.parse import urlparse
+    ctx, page, errors = _signed_in(demo, "Jim")
+    page.click(".tm-tabs [data-tab=review]")
+    page.wait_for_selector("[data-decide=approve]")
+    _, release, wait = _held(page, "/api/reviews/decide", method="POST")
+    page.click("[data-decide=approve]")
+    wait()
+    page.click("[data-a=newbranch]")
+    page.keyboard.type("servo-trial")
+    release()
+    page.wait_for_selector(".tm-gate.ok", timeout=10000)              # the approval's answer drew the tab again
+    assert page.locator(".tm-branchbox input").count() == 1, "the branch box was redrawn away"
+    assert page.input_value(".tm-branchbox input") == "servo-trial"
+    assert page.evaluate("document.activeElement === document.querySelector('.tm-branchbox input')")
+    page.click("[data-a=release]")
+    page.keyboard.type("Pilot v2")
+    with page.expect_response(lambda r: urlparse(r.url).path == "/api/branches" and r.request.method == "GET"):
+        page.click(".tm-branchbox button")                            # Create: its answer draws the tab again
+    page.wait_for_selector("[data-a=branch] option[value=servo-trial]", state="attached")
+    assert page.locator(".tm-relbox input").count() == 1, "the release box was redrawn away"
+    assert page.input_value(".tm-relbox input") == "Pilot v2"
+    page.click(".tm-relbox button")
+    page.wait_for_selector(".tm-rels")
+    assert "Pilot v2" in page.inner_text(".tm-rels") and page.locator(".tm-relbox input").count() == 0
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_your_own_actions_answer_never_takes_a_request_for_changes_or_a_reply_being_written(demo):
+    """Closing a change request, or resolving a thread, draws the tab again when the Studio answers: a request for
+    changes or a reply written meanwhile stays, with the focus and the @name picked, and is sent."""
+    ctx, page, errors = _signed_in(demo, "Jim")
+    page.click(".tm-tabs [data-tab=changes]")
+    page.wait_for_selector(".tm-pr [data-decide=request_changes]")
+    ask = page.locator(".tm-pr", has=page.locator("[data-decide=request_changes]")).first
+    title = ask.locator(".tm-prh b").inner_text()
+    other = page.locator(".tm-pr", has=page.locator("[data-close]")).filter(has_not_text=title).first
+    gone = other.locator(".tm-prh b").inner_text()
+    _, release, wait = _held(page, "/api/proposals/close", method="POST")
+    other.locator("[data-close]").click()
+    wait()
+    ask.locator("[data-decide=request_changes]").click()
+    page.keyboard.type("Needs the PCBA lead time first")
+    release()
+    page.wait_for_function(f"[...document.querySelectorAll('.tm-pr.closed b')].some((b) => b.textContent === {json.dumps(gone)})")
+    assert page.locator(".tm-ask textarea").count() == 1, "the request for changes was redrawn away"
+    assert page.input_value(".tm-ask textarea") == "Needs the PCBA lead time first"
+    assert page.evaluate("document.activeElement === document.querySelector('.tm-ask textarea')")
+    page.click(".tm-ask [data-go]")
+    page.wait_for_function(f"[...document.querySelectorAll('.tm-pr')].some((c) => c.textContent.includes({json.dumps(title)}) "
+                           "&& c.textContent.includes('You requested changes'))")
+    assert page.locator(".tm-ask").count() == 0
+    page.click(".tm-tabs [data-tab=comments]")
+    page.wait_for_selector(".tm-th")
+    n = page.locator(".tm-th").count()
+    _, release, wait = _held(page, "/api/comments/resolve", method="POST")
+    page.locator(".tm-th").nth(0).locator("[data-resolve]").click()
+    wait()
+    page.locator(".tm-th").nth(1).locator("[data-reply]").click()
+    page.keyboard.type("@Su")
+    page.click(".tm-replybox .tm-mention button")
+    release()
+    page.wait_for_function(f"document.querySelectorAll('.tm-th').length === {n - 1}")   # resolved: hidden
+    assert page.locator(".tm-replybox textarea").count() == 1, "the reply was redrawn away"
+    assert page.input_value(".tm-replybox textarea") == "@Sue "
+    assert page.evaluate("document.activeElement === document.querySelector('.tm-replybox textarea')")
+    page.keyboard.type("can Robotis ship them by Friday?")
+    page.click(".tm-replybox .tm-row button")
+    page.wait_for_function("document.querySelector('.tm-body').innerText.includes('ship them by Friday?')")
+    assert page.locator(".tm-replybox textarea").count() == 0
     assert errors == [], errors
     ctx.close()
