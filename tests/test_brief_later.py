@@ -719,6 +719,7 @@ def test_a_mass_before_a_noun_is_left_beside_a_rate_only_for_plainly_solid_thing
 @pytest.mark.parametrize("text", ["use my SO-101 to move 30 mm 50 g cubes at 2 kg per hour",
                                   "use my SO-101 to sort 30 mm 50 g cookies in 2 kg batches",
                                   "use my SO-101 to move 30 mm cubes, each cube is 50 g, at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm cubes weighing 50 g at 2 kg per hour",
                                   "use my SO-101 to move 30 mm tins weighing 50 g at 2 kg per hour"])
 def test_a_rate_beside_a_plainly_whole_own_mass_is_still_left_out(text):
     b = talk(text)
@@ -805,3 +806,110 @@ def test_a_smaller_width_said_a_new_way_never_narrows_but_keeps_the_so101_off_be
 def test_a_distance_or_another_things_width_beside_them_is_not_theirs(later):
     b = steps("use my SO-101 to move 30 mm cylinders weighing 50 g", later)
     assert width(b) == 30.0 and so101(b), later
+
+
+# ---- the round-7 review: a part's shape or size in a later message, a job's robot that kept the SO-101, Morph's guess
+# through the nearest robot, round-sounding words, and the ways of no longer having the SO-101
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to move 28 mm cylinders", "45 mm bases, they're square"),
+    ("use my SO-101 to move 30 mm cylinders", "they have 40 mm bases, rectangular"),
+    ("use my SO-101 to move 30 mm candles", "they stand on 44 mm bases, square ones"),
+    ("use my SO-101 to move 30 mm tubes", "with 40 mm tops, square"),
+    ("use my SO-101 to move 30 mm cylinders", "40 mm handles, square"),
+    ("move 30 mm cylinders", "40 mm handles (they're flat)", "use my SO-101"),
+    ("use my SO-101 to move 30 mm balls", "35 mm bottoms, flat"),
+    ("use my SO-101 to move 30 mm cylinders", "square heads of 44 mm")])
+def test_a_flat_sided_part_wider_than_the_so101s_flat_band_keeps_it_off(turns):
+    # the objects stay round cylinders, but their widest part is a flat-sided base wider than the jaws' 34 mm
+    assert not so101(steps(*turns)), turns
+
+
+def test_a_parts_size_named_after_it_never_narrows_the_objects():
+    b = steps("use my SO-101 to move 50 mm cylinders", "30 mm handles")
+    assert width(b) == 50.0 and not so101(b)
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to move 30 mm cylinders", "it should cook dinner", "@nearest", "lids 20 mm wide"),
+    ("use my SO-101 to move 30 mm cups", "it should drive around the house", "@nearest", "caps 20 mm across"),
+    ("use my SO-101 to move 32 mm bottles weighing 80 g", "it should cook dinner", "@nearest", "cap diameter 20 mm"),
+    ("use my SO-101 to move 32 mm bottles weighing 80 g", "it should cook dinner", "@nearest", "necks 40 mm wide"),
+    ("use my SO-101 to move 30 mm cylinders", "it should drive around the house", "@nearest", "some are 20 mm"),
+    ("use my SO-101 to move 30 mm cups", "it should cook dinner", "@nearest", "they're 20 mm", "they're fragile"),
+    ("use my SO-101 to move 32 mm balls", "it should cook dinner", "@nearest", "40 mm at the top"),
+    ("use my SO-101 to move eggs", "it should cook dinner", "@nearest", "24 mm", "they're 30 mm balls")])
+def test_a_jobs_robot_that_kept_the_so101_keeps_its_emergency_stop_on_a_new_arm(turns):
+    assert "estop" in (steps(*turns).changes.get("electronics.extras") or ""), turns
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to hand me tools", "I don't have an SO-101", "40 mm", "it should drive around the house", "keep my SO-101"),
+    ("use my SO-101 in the lab", "I don't have an SO-101", "40 mm", "use a suction cup", "keep my SO-101"),
+    ("use my SO-101 to load the dishwasher", "I don't have an SO-101", "35 mm, 40 g", "keep my SO-101"),
+    ("use my SO-101 to move test tubes", "my SO-101 is broken", "they weigh 80 g", "use a suction cup", "keep my SO-101"),
+    ("use my SO-101 to stack 40 mm widgets",)])
+def test_the_so101_a_nearest_robot_keeps_is_checked_for_an_object_of_no_known_shape(turns):
+    assert not so101(steps(*turns)), turns
+
+
+def test_a_guess_of_no_known_shape_is_planned_round_on_a_generated_arm():
+    b = steps("use my SO-101 to recycle bottles", "let's design a new one", "they're 25 mm wide")
+    assert b.changes.get("object.shape") == "cylinder" and width(b) >= 26.0
+
+
+@pytest.mark.parametrize("later", ["my SO-101 can do it", "the caps are round", "they go in cups"])
+def test_a_round_word_in_a_later_reply_never_makes_flat_sided_objects_round(later):
+    b = steps("use my SO-101 to move 40 mm cubes", later)
+    assert b.changes.get("object.shape") == "box" and not so101(b), later
+
+
+def test_a_later_reply_that_says_their_shape_still_gives_it():
+    b = steps("use my SO-101 to move 40 mm cubes", "they're round")
+    assert b.changes.get("object.shape") == "cylinder" and so101(b)
+
+
+def test_the_no_so101_chip_on_a_jobs_robot_keeps_its_people():
+    b = steps("a robot to tidy the playroom", "#existing_hardware=none")
+    assert B.value(b, "people_nearby") == "children" and "estop" in b.changes["electronics.extras"]
+
+
+@pytest.mark.parametrize("later", ["my SO-101 broke", "I lent my SO-101 to a friend", "forget the SO-101"])
+def test_an_so101_the_person_can_no_longer_use_is_left(later):
+    assert not so101(steps("use my SO-101 to sort screws", later)), later
+
+
+@pytest.mark.parametrize("later, w", [("sorry, 40 mm wide for the cylinders themselves", 40.0),
+                                      ("sorry, 30 mm wide (my mistake)", 30.0), ("30 mm wide for the lot", 30.0),
+                                      ("off the top of my head 40 mm wide", 40.0), ("at the end of the day 40 mm wide", 40.0)])
+def test_a_correction_beside_words_that_name_no_part_is_still_read(later, w):
+    assert width(steps("use my SO-101 to move 60 mm cylinders", later)) == w, later
+
+
+# ---- the round-7 review of masses: a rate a later reply gives after one was left out, every own mass beside a rate
+# only for solid things, a day's amount maybe done in an hour, and a mass brought back on the nearest robot's stand-in
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to move 30 mm, 50 g cubes at 60 g per hour", "#throughput=60", "450 g per minute"),
+    ("use my SO-101 to move 30 mm, 50 g cubes at 60 g per hour", "450 g per minute", "#throughput=60"),
+    ("use my SO-101 to sort 30 mm, 50 g cubes at 60 g per hour", "#task=pick_place", "in 2 kg batches"),
+    ("use my SO-101 to sort 30 mm, 50 g cubes at 90 g per hour", "in 2 kg batches", "it picks up a whole batch at once"),
+    ("use my SO-101 to move 30 mm, 50 g cubes at 60 g per hour", "2 kg per hour", "that's the empty weight")])
+def test_a_rate_a_later_reply_gives_after_one_was_left_out_is_never_lost(turns):
+    b = steps(*turns)
+    assert mass(b) >= 450.0 and not so101(b), (turns, mass(b))
+
+
+@pytest.mark.parametrize("text", ["use my SO-101 to move 45 mm jars, each jar is 45 g, at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm jams weighing 90 g at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm pastes weighing 90 g at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm, 50 g cubes at 100 kg a day"])
+def test_a_rate_beside_a_containers_mass_or_a_days_large_amount_stays_as_read(text):
+    b = talk(text)
+    assert mass(b) >= 150.0 and not so101(b), (text, mass(b))
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to move 80 mm, 50 g cubes at 6 kg per hour", "@nearest", "#throughput=60"),
+    ("use my SO-101 to sort 80 mm, 50 g cubes in 2 kg batches", "@nearest", "#task=pick_place")])
+def test_a_rate_brought_back_on_the_nearest_robots_object_is_held_to_morphs_largest(turns):
+    b = steps(*turns)
+    assert mass(b) == 500.0 and float(B.value(b, "object")["mass_g"]) <= 500.0, turns

@@ -2310,18 +2310,36 @@ _T_REPLY = [re.compile(r"^\s*(?:at\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\
             re.compile(r"^\s*(?:in\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\s*-?\s*batches" + _T_END),
             re.compile(r"^\s*(?:people|kids|children|staff|nobody|no\s+one)\s+(?:nearby|around|next\s+to\s+it)" + _T_END),
             re.compile(r"^\s*one\s+every\s+\d+(?:\.\d+)?\s*s(?:ec(?:ond)?s?)?" + _T_END)]
-# what a mass written before it ("50 g cubes"), or as what each one is, is plainly the whole weight of: solid things,
-# never a container whose label gives what it holds ("95 g tins", "each tin is 95 g"); anything else takes "weighing"
+# what a mass said of ("50 g cubes", "cubes weighing 50 g", "each cube is 50 g") is plainly the whole weight of: solid
+# things, never a container's label or what it holds ("95 g tins", "each jar is 45 g", "jams weighing 90 g"): beside
+# those the rate stays as read
 _SOLIDS = frozenset(("cube", "block", "ball", "cylinder", "disc", "disk", "rod", "puck", "brick", "tile", "pebble", "stone",
-                     "marble", "bead", "nut", "bolt", "washer", "screw", "part", "piece", "toy", "cookie", "biscuit", "bar",
-                     "coin", "token", "weight", "peg", "dowel", "plug", "magnet", "egg"))
+                     "marble", "bead", "nut", "bolt", "washer", "screw", "toy", "cookie", "biscuit", "bar", "coin", "token",
+                     "peg", "dowel", "plug", "magnet", "egg", "widget", "gear", "bearing", "spring", "clip", "pin", "ring",
+                     "button", "sphere", "cone", "prism", "figure", "figurine", "apple", "orange", "lemon", "lime", "potato",
+                     "onion", "tomato", "peach", "plum", "muffin", "bun", "bagel", "donut", "doughnut"))
+
+
+# what is weighed whole as it is handled: a container said to weigh a mass ("tins weighing 95 g") weighs that, with
+# what it holds; never what it holds named alone ("jams weighing 90 g" may be the jam's)
+_CONTAINER_NOUNS = frozenset(("box", "jar", "tin", "can", "bottle", "cup", "mug", "glass", "tub", "pot", "vial", "tube",
+                              "pouch", "bag", "carton", "case", "tray", "crate", "basket", "bucket", "bowl", "flask",
+                              "sachet", "packet", "pack", "container", "canister", "cartridge", "capsule", "pod", "spool",
+                              "reel", "jug", "carafe", "beaker", "tumbler", "pail", "keg", "drum", "syringe", "sleeve",
+                              "punnet"))
 
 
 def _solid(noun: str) -> bool:
-    return bool({noun, _singular(noun), noun[:-1]} & _SOLIDS)   # "cookies": cookie
+    return bool({noun, _singular(noun)} & _SOLIDS or noun.endswith("ies") and noun[:-1] in _SOLIDS)   # "cookies": cookie
 
 
-_PER_MINUTE = {"hour": 60.0, "h": 60.0, "hr": 60.0, "minute": 1.0, "min": 1.0, "day": 480.0, "shift": 480.0, "week": 2400.0}
+def _held_whole(noun: str) -> bool:
+    return bool({noun, _singular(noun)} & _CONTAINER_NOUNS)
+
+
+# minutes the amount a rate gives is done in: an hour's in an hour, and a day's, a shift's or a week's maybe in one too
+# (the arm may run only part of the day), so never more than one object a lift then either
+_PER_MINUTE = {"hour": 60.0, "h": 60.0, "hr": 60.0, "minute": 1.0, "min": 1.0, "day": 60.0, "shift": 60.0, "week": 60.0}
 
 
 def _rate_template(said, objects: tuple, cycle: float = 6.0) -> bool:
@@ -2341,13 +2359,9 @@ def _rate_template(said, objects: tuple, cycle: float = 6.0) -> bool:
            if k in first.re.groupindex and first.group(k)]
     if not nouns or not own or max(own) <= 0 or any(_singular(n) not in heads for n in nouns):
         return False
-    label = first.group("n1") if "n1" in first.re.groupindex else None
-    if not label and "n2" in first.re.groupindex and first.group("n2") and re.search(r"\bof\s+" + _T_MASS, first.group(0)):
-        label = first.group("n2")   # "tins of 95 g"
-    if not label and "n4" in first.re.groupindex and first.group("n4"):
-        label = first.group("n4")   # "tins, each tin is 95 g"
-    if label and not _solid(label):
-        return False   # "95 g tins", "88 g cartridges", "jars of 200 g", "each tin is 95 g": a label may give what they hold
+    weighed = re.search(r"\b(?:weighing|that\s+weigh)\s+" + _T_MASS, first.group(0))
+    if not all(_solid(n) or weighed and _held_whole(n) for n in nouns):
+        return False   # "95 g tins", "each jar is 45 g", "jams weighing 90 g": a label may give what they hold
     sorting = bool(re.search(r"\b" + _T_SORT, msgs[0]))
     rates = [first]
     for m in msgs[1:]:
@@ -2421,6 +2435,24 @@ def _shape_said(t: str) -> str | None:
         if any(not _TO_A_THING.search(t[max(0, m.start() - 40):m.start()]) for m in re.finditer(r"\b(?:" + words + r")\b", t)):
             return shape
     return None
+
+
+# a reply that says the objects' shape and nothing else ("they're round", "the cubes are cylinders", "round ones")
+_SHAPE_REPLY = re.compile(r"^\s*(?:(?:sorry|actually|oops|oh|ok|okay|and|also|so|no|well)[,!:]?\s+)*(?:(?:they|these|those|"
+                          r"all\s+of\s+them|each\s+(?:one|of\s+them))\s*(?:'re|’re|\s+are|\s+is)|it\s*(?:'s|’s|\s+is)|"
+                          r"the\s+(?P<noun>[a-z]+)\s+(?:are|is))?\s*(?:all\s+|actually\s+|really\s+|basically\s+|"
+                          r"(?:more\s+)?like\s+|shaped\s+like\s+)?(?:a\s+|an\s+)?(?P<shape>[a-z]+)(?:\s+(?:ones?|shaped|"
+                          r"shape))?\s*[.!]?\s*$")
+
+
+def _says_shape_of_them(t: str, o: dict) -> bool:
+    """Whether a later reply (`t`, lower case) says the shape of the objects (`o`) and nothing else: a round shape
+    lets the stock SO-101 hold them up to 46 mm, so a shape word anywhere ("my SO-101 can do it", "the caps are round",
+    "they go in cups") never gives it."""
+    m = _SHAPE_REPLY.match(t)
+    if not m or not _shape_said(m.group("shape")):
+        return False
+    return not m.group("noun") or _singular(m.group("noun")) in _object_words(o)[1]
 
 
 def parse(text: str) -> dict:
@@ -2602,7 +2634,9 @@ def parse(text: str) -> dict:
                            r"have been)\s+(?:[a-z-]+\s+){0,1}?(?:broken|broke|bust|busted|faulty|dead|died|knackered|"
                            r"stopped working|not working|burnt out|burned out|fried)\b|"
                            r"\b(?:broken|busted|faulty|dead|knackered|fried)\s+" + so +
-                           r"|" + _SO + r"(?:['’]s)?\s+(?:\w+\s+){0,2}?(?:doesn'?t|won'?t|does not|will not)\s+work\b", t)
+                           r"|" + _SO + r"(?:['’]s)?\s+(?:\w+\s+){0,2}?(?:doesn'?t|won'?t|does not|will not)\s+work\b"
+                           r"|" + _SO + r"\s+(?:just\s+|recently\s+|has\s+)?(?:broke|died|failed|snapped|cracked|"
+                           r"stopped\s+working)\b", t)
         new_arm = re.search(r"(?<!\bnot )(?<!\bno )(?<!n't )(?<!\bnever )(?<!\bto )(?<!\binto )(?<!\bonto )(?<!\bfrom )"
                             r"(?<!\bwith )(?<!\bby )\b(?:build (?:me )?a new|a new arm|new arm|a different arm|another arm|"
                             r"a replacement arm|design a replacement)\b", t)
@@ -2615,6 +2649,7 @@ def parse(text: str) -> dict:
                            r"neighbou?r)['’]?s|my\s+(?:friend|mate|colleague|neighbou?r|brother|sister|dad|mum|mom|cousin|"
                            r"boss|school|lab|uni)['’]s)\s+(?:[a-z-]+\s+)?" + _SO, t)
         past = re.search(r"\b(?:used to|previously|once had|no longer|sold|gave away|given away|lost|returned|replac\w+|"
+                         r"lent|loaned|lend|forget(?:\s+about)?|skip|ditch|scrap|"
                          r"upgrad\w+ from|swap\w* out|thinking of buying|want to buy|might buy|should i buy)\s+(?:[a-z-]+\s+){0,2}?" +
                          _SO, t)
         compare = re.search(r"(?<!\bi'd )(?<!\bi )(?<!\bwe'd )(?<!\bwe )(?<!\bwould )(?<!\bwould really )"
@@ -2833,9 +2868,10 @@ def _left_so101_floor(b: Brief, o: dict, arch: str) -> dict:
     g = object_value(ARCHETYPES["generic_arm"].objects[0])
     d = max(float(o["diameter_mm"]), float(g["diameter_mm"]))
     # Morph's guess for the job (its key keeps the job), not the person's object: of no known shape, so the stock
-    # SO-101, if it is named again, holds it only where it holds both round and flat-sided objects
+    # SO-101, if it is named again, holds it only where it holds both round and flat-sided objects, and a generated
+    # gripper is planned for round ones, the narrowest band it closes on
     return dict(o, diameter_mm=d, mass_g=max(float(o["mass_g"]), float(g["mass_g"])),
-                length_mm=max(float(o.get("length_mm") or 0), d), stated=[], shape_unknown=True)
+                length_mm=max(float(o.get("length_mm") or 0), d), shape="cylinder", stated=[], shape_unknown=True)
 
 
 def defaults(b: Brief) -> dict:
@@ -3081,7 +3117,10 @@ def assess_scope(b: Brief) -> dict:
             slots["object"] = o
         if near_obj and near_obj["mass_g"] > cap.payload_g("smart_bus", 4):
             slots["budget"] = 1500.0
-        obj = sanitize_object(slots.get("object") or ARCHETYPES[arch].objects[0])
+        src = slots.get("object") or ARCHETYPES[arch].objects[0]
+        obj = sanitize_object(src)
+        if isinstance(src, dict) and obj is not None:   # what the copy drops, for the SO-101's checks below
+            obj.update({k: src[k] for k in ("shape_unknown", "widest_unknown", "least_mm", "stated") if src.get(k) is not None})
         if not mine and b.flags.get("left_so101") and arch != "so101":
             obj = slots["object"] = _left_so101_floor(b, obj, arch)
         so101_here = b.get("existing_hardware") == "so101" or arch == "so101"
@@ -3103,8 +3142,8 @@ def assess_scope(b: Brief) -> dict:
     misfit = _so101_misfit(ov) if value(b, "existing_hardware") == "so101" else None   # "SO-101 to move jars" too
     if misfit:
         return {"status": "out_of_scope", "notes": [misfit],   # the SO-101's job keeps its emergency stop on a new arm
-                "nearest": {"archetype": _arch_without_so101(b) if a.key == "so101" else
-                            (_archetype_for_object(ov) or "generic_arm"), "slots": {"existing_hardware": "none"},
+                "nearest": {"archetype": _arch_without_so101(b) if a.key == "so101" else _job_kept(b, a.key, ov),
+                            "slots": {"existing_hardware": "none"},
                             "summary": f"A new Morph-generated desk arm for the {ov.get('name', 'object')}."}}
     why = {k: w for k, _p, w in ADJUSTED}
     notes = [why[k] for k, _ in b.flags.get("adjusted") or [] if k in why]
@@ -3124,6 +3163,16 @@ def assess_scope(b: Brief) -> dict:
                      f"${budget.value:,.0f}.")
     notes += list(b.flags.get("notes") or [])
     return {"status": "adjusted" if notes else "ok", "notes": list(dict.fromkeys(notes)), "nearest": None}
+
+
+def _job_kept(b: Brief, key: str, o: dict | None) -> str:
+    """The job a new arm keeps when the SO-101 a job's robot kept (the nearest robot's: cooking, driving around) no
+    longer holds the object: that job, or the object's when only it gives an emergency stop (_gives_estop)."""
+    own = _archetype_for_object(o)
+    for k in (key, own):
+        if k and k != "generic_arm" and _gives_estop(b, k):
+            return k
+    return key if key != "generic_arm" else (own or "generic_arm")
 
 
 def _verb(a: Archetype) -> str:
@@ -3466,6 +3515,10 @@ def _size_reads(b: Brief, t: str, base: dict | None, raw: str | None = None) -> 
             cls = "maybe", cls[1]   # "the caps, 20 mm across", "lids: 20 mm wide": a part's, never narrower
         beside = _part_beside(t, s, e, heads, words) if cls[0] == "obj" and base is not None and not (np or _np_after(t, e)) \
             else []
+        nxt = re.match(r"\s*(?:(?:wide|across|round|square|flat|plastic|metal|wooden|glass|steel)\s+)*([a-z]+)", t[e:])
+        if not beside and cls[0] == "obj" and base is not None and nxt and \
+                _singular(nxt.group(1)) in (_PARTS | _NARROW_PARTS) - (heads | words):
+            beside = [nxt.group(1)]   # "30 mm handles", "40 mm tops": a part's ("handles" is a verb too, so no noun after)
         if beside and _names_what(beside, heads, words) not in ("obj", "pron"):
             cls = "maybe", cls[1] or (_singular(beside[-1]) if _singular(beside[-1]) in _NARROW_PARTS else None)
             # "lids 20 mm wide", "cap diameter 20 mm", "20 mm wide for the caps": a part's, never narrower
@@ -3604,6 +3657,11 @@ def _clause_start(t: str, s: int, marks: str = ";!?,:") -> int:
     return max([m.end() for m in re.finditer(r"[" + marks + r"]|\.(?!\d)|\b(?:and|but|then|so)\b", t[:s])], default=0)
 
 
+# a time or a guess is no thing a size is of ("at the end of the day 40 mm"), nor is a part of someone ("my head")
+_NOT_THINGS = frozenset(("day", "days", "time", "times", "moment", "week", "morning", "evening", "night", "way", "case",
+                         "rate", "least", "most", "whole", "lot", "rest", "mind", "guess", "estimate", "memory"))
+# what an "of"/"for" or a bracket after a size may name that is all of them ("for the lot", "(all of them)")
+_THEIRS_TOO = frozenset(("lot", "set", "batch", "bunch", "whole", "rest", "them", "these", "those", "it"))
 _SIZE_WORDS = frozenset(("diameter", "dia", "width", "widths", "size", "sizes", "measurement", "measurements", "weight",
                          "weights", "mass", "wide", "across", "thick", "approx", "approximately", "about", "around",
                          "roughly", "just", "only", "exactly", "precisely", "nearly", "almost", "maybe", "probably"))
@@ -3619,7 +3677,10 @@ def _part_beside(t: str, s: int, e: int, heads: set, words: set) -> list:
         m = re.match(r"\s*(?:wide|across|in\s+diameter|diameter|thick|big|heavy)?\s*\(\s*((?:(?:the|their|its)\s+)?"
                      r"[a-z][a-z' -]*?)\s*\)", t[e:])
     if m:
-        return m.group(1).split()
+        np = [w for w in m.group(1).split() if w not in ("themselves", "itself")]
+        if not np or np[-1] in ("mistake", "bad", "typo", "error", "fault"):
+            return []           # "sorry, 30 mm wide (my mistake)"
+        return ["them"] if np[-1] in _THEIRS_TOO else np   # "for the lot", "(all of them)": theirs
     clause = re.split(r"[.,;:!?()\[\]]|\s-\s|\b(?:and|but|while|whereas|plus|then)\b", t[:s].replace("’", "'"))[-1]
     toks = [re.sub(r"'s$", "", w) for w in re.findall(r"[a-z][a-z'-]*", clause)]
     while toks and toks[-1] in _SIZE_WORDS:
@@ -3627,6 +3688,8 @@ def _part_beside(t: str, s: int, e: int, heads: set, words: set) -> list:
     if not toks:
         return []
     head = toks[-1]
+    if head in _NOT_THINGS or len(toks) > 1 and toks[-2] in ("my", "your", "our", "his", "her"):
+        return []   # "at the end of the day 40 mm wide", "off the top of my head 40 mm"
     if _singular(head) in _PARTS | _NARROW_PARTS and _singular(head) not in heads | words:
         return [head]   # "lids 20 mm wide", "jar lids 20 mm", "cap diameter 20 mm"
     if _singular(head) in heads and not (len(toks) > 1 and (toks[-2] in _PREPS or toks[-2] in _QUANTS)):
@@ -3658,8 +3721,9 @@ def _typed_answer(b: Brief, p: dict, t: str):
             s["throughput"] = float(m.group(1))
     cur = b.get("object")
     if cur and cur.get("key") is None and cur.get("stated") is not None:   # a described object the person refines
-        if o is None and dia is None and _shape_said(t):                   # "they are round"
-            s["object"] = dict(cur, shape=_shape_said(t), stated=sorted(set(cur["stated"]) | {"shape"}))
+        sh = _shape_said(t) if o is None and dia is None else None
+        if sh and (sh == "box" or _says_shape_of_them(t, cur)):   # "they are round"; never "my SO-101 can do it",
+            s["object"] = dict(cur, shape=sh, stated=sorted(set(cur["stated"]) | {"shape"}))   # "the caps are round"
             return
         if o is not None and o.get("key") is None:     # "40 mm cylinders" after "40 mm containers weighing 90 g": 90 g stays
             for k in cur["stated"]:
@@ -3731,9 +3795,18 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None, raw: str | None =
             str(o.get("name")) != str(cur.get("name")) and str(o.get("name")).split() and \
             _singular(str(o.get("name")).split()[-1]) in _PARTS | _NARROW_PARTS:
         # parse() named a part of them ("45 mm necks", "the lids are 35 mm"): the objects stay what they were, and keep
-        # their shape ("they come as 40 mm cubes" still says what they are)
+        # their shape ("they come as 40 mm cubes" still says what they are) and their size: a part's only widens them
+        # ("30 mm handles" on 50 mm cylinders); a shape said of the part ("45 mm bases, they're square") may be their
+        # widest part's, so theirs is no longer known
+        part_shape = "shape" in (o.get("stated") or []) and o.get("shape") != cur.get("shape")
+        for k in ("diameter_mm", "length_mm"):
+            if cap._num(cur.get(k)) and float(cur[k]) > float(o.get(k) or 0):
+                o[k] = float(cur[k])
         o["name"], o["shape"] = cur.get("name"), cur.get("shape")
         o["stated"] = sorted(set(o.get("stated") or []) - {"shape"} | ({"shape"} & set(cur.get("stated") or [])))
+        if part_shape:
+            o["shape_unknown"] = True
+            o["stated"] = sorted(set(o["stated"]) - {"shape"})
     if cur is not None and o is not cur and (o.get("key") != cur.get("key") or str(o.get("name")) != str(cur.get("name"))):
         for k in ("diameter_mm", "mass_g"):   # "they weigh 300 g", then "they come in 40 mm cups": still 300 g or more
             if k in (cur.get("stated") or []) and cap._num(cur.get(k)) and float(cur[k]) > float(o.get(k) or 0):
@@ -3770,8 +3843,8 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None, raw: str | None =
             stated.add("mass_g")
     o.pop("rate_g", None)
     o.pop("rate_untimed", None)
-    if back:
-        o["mass_g"] = max(float(o["mass_g"]), rate)
+    if back:   # the earlier rate, and any this message gives ("450 g per minute" after "60 g per hour"), as their mass
+        o["mass_g"] = max([float(o["mass_g"]), rate] + rates)
         stated.add("mass_g")
     elif rate or rates:
         o["rate_g"] = max([rate] + rates)
@@ -3874,7 +3947,7 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
                 set_archetype(b, "so101", 0.9, "user")
             elif was_so101:
                 _leave_so101(b)
-            else:
+            elif _arch(b).key == "generic_arm":   # a job's robot keeps its job ("tidy the playroom": children nearby)
                 set_archetype(b, _archetype_for_object(b.get("object")) or "generic_arm", 0.9, "user")
     if text and text.strip():
         t = text.strip()[:2000]
@@ -3954,6 +4027,8 @@ def _recheck_rate(b: Brief):
         return
     nv = {k: v for k, v in ov.items() if k not in ("rate_g", "rate_untimed")}
     nv["mass_g"] = max(float(nv["mass_g"]), float(ov["rate_g"]))
+    if o.source not in ("user", "video", "photo"):   # the nearest robot's stand-in, never checked again: Morph's largest
+        nv["mass_g"] = min(nv["mass_g"], max(float(ov["mass_g"]), float(cap.MAX_MASS_G)))
     nv["stated"] = sorted(set(nv.get("stated") or []) | {"mass_g"})
     b.slots["object"] = Slot(nv, o.source, o.confidence, o.evidence)
 
@@ -3976,6 +4051,10 @@ def progress(b: Brief, *, defaults_now: bool = False, nearest: bool = False, dee
         apply_nearest(b, sc["nearest"])
         _recheck_rate(b)
         sc = assess_scope(b)
+        if sc["status"] == "out_of_scope" and (sc.get("nearest") or {}).get("slots") == {"existing_hardware": "none"}:
+            prior += sc["notes"]   # the stock SO-101 the nearest robot kept doesn't hold the object either: a new arm
+            apply_nearest(b, sc["nearest"])
+            sc = assess_scope(b)
         sc = {"status": "adjusted", "notes": list(dict.fromkeys(prior + sc["notes"])), "nearest": None}
         b.assumptions = [x for x in b.assumptions if x.get("kind") != "scope"]
     b.scope = sc
