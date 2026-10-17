@@ -708,7 +708,8 @@ def test_a_round_sounding_word_never_gives_the_guess_a_shape_the_so101_holds(lat
                                   "use my SO-101 to move 30 mm 60 g capsules at 2 kg per hour",
                                   "use my SO-101 to sort 30 mm 80 g refills in 2 kg batches",
                                   "use my SO-101 to move 30 mm 90 g candles at 2 kg per hour",
-                                  "use my SO-101 to move 30 mm 90 g spools at 2 kg per hour"])
+                                  "use my SO-101 to move 30 mm 90 g spools at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm tins, each tin is 95 g, at 2 kg per hour"])
 def test_a_mass_before_a_noun_is_left_beside_a_rate_only_for_plainly_solid_things(text):
     # a label's mass may be what they hold (a jar candle's wax, a spool's filament): the rate stays as read
     b = talk(text)
@@ -716,8 +717,10 @@ def test_a_mass_before_a_noun_is_left_beside_a_rate_only_for_plainly_solid_thing
 
 
 @pytest.mark.parametrize("text", ["use my SO-101 to move 30 mm 50 g cubes at 2 kg per hour",
-                                  "use my SO-101 to sort 30 mm 50 g cookies in 2 kg batches"])
-def test_a_rate_beside_solid_things_own_mass_is_still_left_out(text):
+                                  "use my SO-101 to sort 30 mm 50 g cookies in 2 kg batches",
+                                  "use my SO-101 to move 30 mm cubes, each cube is 50 g, at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm tins weighing 50 g at 2 kg per hour"])
+def test_a_rate_beside_a_plainly_whole_own_mass_is_still_left_out(text):
     b = talk(text)
     assert mass(b) == 50.0 and so101(b), (text, mass(b))
 

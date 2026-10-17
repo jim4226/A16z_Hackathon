@@ -2310,8 +2310,8 @@ _T_REPLY = [re.compile(r"^\s*(?:at\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\
             re.compile(r"^\s*(?:in\s+)?" + _T_ABOUT + r"(?P<r>" + _T_MASS + r")\s*-?\s*batches" + _T_END),
             re.compile(r"^\s*(?:people|kids|children|staff|nobody|no\s+one)\s+(?:nearby|around|next\s+to\s+it)" + _T_END),
             re.compile(r"^\s*one\s+every\s+\d+(?:\.\d+)?\s*s(?:ec(?:ond)?s?)?" + _T_END)]
-# what a mass written before it ("50 g cubes") is plainly the whole weight of: solid things, never a container whose
-# label gives what it holds ("95 g tins", "88 g cartridges"); for anything else it takes "weighing" or "each ... is"
+# what a mass written before it ("50 g cubes"), or as what each one is, is plainly the whole weight of: solid things,
+# never a container whose label gives what it holds ("95 g tins", "each tin is 95 g"); anything else takes "weighing"
 _SOLIDS = frozenset(("cube", "block", "ball", "cylinder", "disc", "disk", "rod", "puck", "brick", "tile", "pebble", "stone",
                      "marble", "bead", "nut", "bolt", "washer", "screw", "part", "piece", "toy", "cookie", "biscuit", "bar",
                      "coin", "token", "weight", "peg", "dowel", "plug", "magnet", "egg"))
@@ -2344,8 +2344,10 @@ def _rate_template(said, objects: tuple, cycle: float = 6.0) -> bool:
     label = first.group("n1") if "n1" in first.re.groupindex else None
     if not label and "n2" in first.re.groupindex and first.group("n2") and re.search(r"\bof\s+" + _T_MASS, first.group(0)):
         label = first.group("n2")   # "tins of 95 g"
+    if not label and "n4" in first.re.groupindex and first.group("n4"):
+        label = first.group("n4")   # "tins, each tin is 95 g"
     if label and not _solid(label):
-        return False   # "95 g tins", "88 g cartridges", "jars of 200 g": a label may give what they hold
+        return False   # "95 g tins", "88 g cartridges", "jars of 200 g", "each tin is 95 g": a label may give what they hold
     sorting = bool(re.search(r"\b" + _T_SORT, msgs[0]))
     rates = [first]
     for m in msgs[1:]:

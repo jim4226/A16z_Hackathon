@@ -680,8 +680,9 @@ clamping.
   naming the objects with their own mass and a rate per hour, minute, day or shift, or a batch they are sorted in; a
   reply that is the rate alone, the pace or who is around), no more than one object a lift at the pace the arm is
   built at (`cycle`: the brief's throughput, its job's own or the chip's, or a slower "one every N s" reply; never
-  more than 15 a minute), a mass before the noun only for a plainly solid thing (`brief._SOLIDS`: "50 g cubes", never
-  "95 g tins", "88 g cartridges" or "450 g candles", whose label may give what they hold), no own mass of 0 g, and a
+  more than 15 a minute), a mass before the noun or as what each one is only for a plainly solid thing (`brief._SOLIDS`:
+  "50 g cubes", "each cube is 50 g", never "95 g tins", "each tin is 95 g", "88 g cartridges" or "450 g candles", whose
+  label may give what they hold; "tins weighing 95 g" is theirs), no own mass of 0 g, and a
   batch or a total that isn't per hour, day or shift (`brief._TIMED`) only when no verb
   in the conversation has the arm handle them (`brief._HANDLES`: "pick up 2 kg of 50 g cubes" may be one lift), the
   whole conversation as typed is plain, `brief._plain_talk` (every word in `brief._PLAIN_WORDS` or the objects' own
