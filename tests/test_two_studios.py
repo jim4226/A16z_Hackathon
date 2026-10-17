@@ -1,0 +1,421 @@
+"""Two Studios on one projects folder (a second port, a second terminal): neither removes what the other works on, nor
+serves a project the other replaced under the same name. The other Studio is a real second process holding its OS
+locks (test_restart_recovery.hold)."""
+
+import json
+import os
+import re
+import threading
+import time
+
+import pytest
+
+from morph.robot.pipeline2 import RobotProject, pipeline_version
+from morph.spec import Design
+from morph.studio import projects, rooms, server
+from test_restart_recovery import hold, texts
+from test_studio_rooms import FakeBuilds, finish, make_project
+
+OTHER = "feedfacecafebeef"
+
+
+@pytest.fixture
+def builds(monkeypatch):
+    fake = FakeBuilds()
+    monkeypatch.setattr(RobotProject, "run", lambda self, *a, **k: fake(self, *a, **k))
+    return fake
+
+
+def _rev(root, rev, parent, design=None):
+    (root / rev).mkdir(parents=True)
+    (root / rev / "results.json").write_text(json.dumps({"parent": parent, "pipeline_version": pipeline_version()}))
+    (root / rev / "design.json").write_text(json.dumps(Design().with_changes(design or {}).to_dict()))
+
+
+def _demo(home):
+    for r, parent, d in (("r001", None, None), ("r002", "r001", {"arm.dof": 6}), ("r003", "r002", {"arm.dof": 5})):
+        _rev(home / "egg-picker", r, parent, d)
+    (home / "egg-picker" / "meta.json").write_text(json.dumps({"kind": "robot", "demo": True}))
+    make_project(home, "my-arm")
+
+
+@pytest.mark.parametrize("what", ["queue journal", "build lock", "study"])
+def test_reset_demo_leaves_a_demo_project_another_process_works_on(tmp_path, builds, what):
+    """Studio B's Reset demo removed the revision Studio A was building (A's chat: "No such file or directory ...
+    design.json", then a false "saved files that can't be read" at the next start). It is refused now while another
+    Studio has egg-picker queued or building, a `morph robot` build holds a revision's lock, or another process runs a
+    robustness study on it; nothing is removed."""
+    home = tmp_path / "projects"
+    _demo(home)
+    egg = RobotProject(str(home / "egg-picker"))
+    if what == "queue journal":
+        journal = home / "egg-picker" / ".morph" / f"queue-{OTHER}.jsonl"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text(json.dumps({"op": "queued", "id": "a1b2c3d4e5f6", "kind": "params", "label": "edit",
+                                       "studio": OTHER}) + "\n", encoding="utf-8")
+        locks = [home / ".studios" / f"{OTHER}.lock"]
+    elif what == "build lock":
+        locks = [egg.build_lock("r003")]
+    else:
+        study = home / "egg-picker" / "r003" / "studies"
+        locks = []
+    other = hold(*locks) if locks else None
+    try:
+        if what == "study":  # a study another process runs: its record names that process
+            from morph.services import robust
+            path = robust._active_path(str(home / "egg-picker"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"id": "s1", "pid": os.getppid(), "host": "another-computer", "started_utc": "now"}, fh)
+            assert study and robust.active(str(home / "egg-picker"))
+        st = server.Studio(RobotProject(str(home / "my-arm")), str(home))
+        said = ("A robustness study of egg-picker is running in another Morph Studio or a `morph study` command "
+                f"(process {os.getppid()} on another-computer)" if what == "study" else
+                "is building egg-picker, has changes of it waiting or runs a study")
+        with pytest.raises(server.Refused, match=re.escape(said)):
+            st.reset()
+        assert egg.revs() == ["r001", "r002", "r003"]
+    finally:
+        if other is not None:
+            other.stdin.close()
+            other.wait(10)
+    if what == "study":
+        os.remove(robust._active_path(str(home / "egg-picker")))
+    assert st.reset() is True and egg.revs() == ["r001"]                  # once it is done
+
+
+def test_the_reset_route_says_why_it_was_refused(tmp_path, builds):
+    from test_studio_features import caller, start
+    home = tmp_path / "projects"
+    _demo(home)
+    other = hold(RobotProject(str(home / "egg-picker")).build_lock("r002"))
+    try:
+        st = server.Studio(RobotProject(str(home / "my-arm")), str(home))
+        httpd = start(st, allowed=None)
+        status, out, _ = caller(httpd)("POST", "/api/reset", {})
+        httpd.shutdown()
+        httpd.server_close()
+    finally:
+        other.stdin.close()
+        other.wait(10)
+    assert status == 409 and out["ok"] is False and "is building egg-picker" in out["error"]
+
+
+def test_a_studio_never_deletes_another_running_studios_start_project(tmp_path, builds):
+    """Studio B deleted egg-picker, the project Studio A started on, while A was idle: A then answered every message
+    with "Morph kept no design ... delete the project" and refused that delete itself, and its chat writes made a ghost
+    egg-picker/.morph folder that kept the name taken."""
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "so101")
+    record = home / ".studios" / f"{OTHER}.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({"start": "egg-picker"}), encoding="utf-8")
+    other = hold(home / ".studios" / f"{OTHER}.lock")
+    try:
+        b = server.Studio(RobotProject(str(home / "so101")), str(home))
+        assert json.loads((home / ".studios" / f"{rooms.OWNER}.json").read_text(encoding="utf-8"))["start"] == "so101"
+        with pytest.raises(server.Refused, match="egg-picker is the project another Morph Studio on this projects "
+                                                 "folder started on"):
+            b.delete_project("egg-picker")
+        assert (home / "egg-picker" / "r001").exists()
+    finally:
+        other.stdin.close()
+        other.wait(10)
+    b.delete_project("egg-picker")                                          # that Studio stopped: allowed again
+    assert not (home / "egg-picker").exists()
+
+
+def test_a_deleted_projects_room_writes_nothing_and_a_new_project_of_its_name_gets_a_fresh_room(tmp_path, builds):
+    """Studio A kept a cached room for kb after Studio B deleted kb and made a new kb: A showed the deleted project's
+    chat for the new one, wrote into it, and built the deleted project's kept first design as the new kb's r001."""
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    a = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    room, job = a.create_project("kb", design=Design().with_changes({"arm.dof": 6}))
+    finish(job)
+    finish(a.queue_chat(room, "make the gripper 10 percent stronger please"))
+    room.first_build = {"design": Design().with_changes({"arm.dof": 6}).to_dict(), "label": "first design", "cut": 0}
+    old_history = list(room.hub.history)
+    projects.delete(str(home), "kb")                                        # Studio B deletes it ...
+    room.hub.send({"type": "assistant", "text": "late reply"})              # ... A's late write makes no ghost folder
+    assert not (home / "kb").exists()
+    time.sleep(0.01)
+    projects.create(str(home), "kb", design=Design().with_changes({"arm.dof": 5}))   # ... and makes a new kb, its
+    fresh = a.room("kb")                                                    # first build not yet started
+    assert fresh is not room and fresh.hub.history == [] and fresh.first_build is None and old_history
+    finish(a.queue_chat(fresh, "build it again"))
+    finish(*(fresh.jobs.get(j["id"]) for j in fresh.jobs.snapshot()))
+    assert fresh.completed() == [] and [b[0] for b in builds.built] == ["kb"]  # never the deleted kb's design
+    assert "make the gripper" not in json.dumps(texts(fresh))
+
+
+def test_a_room_with_work_is_kept_whatever_its_folder_id_reads(tmp_path, builds, monkeypatch):
+    """A network folder may number a folder anew between two looks: a room whose queue has work is never swapped for
+    a fresh one (its build, its queue and the tabs watching it stay together); an idle one is, as for a replaced
+    project."""
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "kb")
+    a = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    room = a.room("kb")
+    builds.gate = threading.Event()
+    job = a.queue_params(room, {"build.quantity": 9})
+    assert builds.started.wait(5)
+    monkeypatch.setattr(server, "folder_id", lambda root: ("elsewhere", 1))
+    assert a.room("kb") is room                                             # building: kept
+    builds.gate.set()
+    finish(job)
+    assert a.room("kb") is not room                                         # idle, another folder: a fresh room
+
+
+def test_a_studio_that_never_finished_starting_leaves_neither_of_its_files(tmp_path, builds, monkeypatch):
+    """A second Ctrl+C inside Studio() (in projects.tidy or _start_tools) dropped the half-made Studio: its Claim's
+    finalizer removed .studios/<id>.lock but not the start record beside it, and cli._leave found no Claim left to
+    release, so .studios/<id>.json stayed until another start's sweep. The finalizer removes both."""
+    import gc
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+
+    def stopped(*a, **k):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(server, "_start_tools", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    gc.collect()
+    assert not os.path.exists(rooms.owner_lock(str(home), rooms.OWNER))
+    assert not os.path.exists(rooms.start_record(str(home), rooms.OWNER))
+
+
+def test_a_study_started_while_delete_project_runs_never_runs_in_the_trash(tmp_path, builds, monkeypatch):
+    """Delete checked for a study run elsewhere, then stopped this Studio's own study and moved the folder: a `morph
+    study` started in between ran on in a folder moving to the trash. Delete now holds the study lock itself from that
+    check to the move, so such a study is refused ("being deleted or reset"), and a study that took the lock first
+    makes Delete refuse; nothing is moved then."""
+    import subprocess
+    import sys
+    from morph.services import robust
+    from morph.studio import jobs
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "kb")
+    st = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    kb = str(home / "kb")
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    real_stop, path = jobs.stop, robust._active_path(kb)
+    try:
+        def study_starts(studio, name, *a, **k):   # `morph study kb` starts right after the check
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"id": "s1", "pid": sleeper.pid, "host": rooms.HOST, "started_utc": "now"}, fh)
+            return real_stop(studio, name, *a, **k)
+        monkeypatch.setattr(jobs, "stop", study_starts)
+        with pytest.raises(server.Refused) as refused:
+            st.delete_project("kb")
+        assert "A robustness study of kb is running in a `morph study` command" in str(refused.value), refused.value
+        assert (home / "kb" / "r001").exists() and robust.active(kb)["id"] == "s1"   # its lock is untouched
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    os.remove(path)
+    monkeypatch.setattr(jobs, "stop", real_stop)
+    seen = []
+
+    def delete(home_, name):                          # a study that starts during the move itself is refused
+        with pytest.raises(robust.StudyBusy, match="being deleted or reset"):
+            robust._lock(kb, "s2")
+        seen.append(name)
+        return real_delete(home_, name)
+    real_delete = projects.delete
+    monkeypatch.setattr(projects, "delete", delete)
+    st.delete_project("kb")
+    assert seen == ["kb"] and not (home / "kb").exists()
+    trash = home / ".trash" / os.listdir(home / ".trash")[0]
+    assert not os.path.exists(robust._active_path(str(trash)))           # the lock went with the folder, then went
+
+
+def test_a_study_started_while_reset_demo_runs_stops_the_reset_before_it_removes_anything(tmp_path, builds,
+                                                                                              monkeypatch):
+    """Reset demo has the same moment between its check for a study run elsewhere and its work: a `morph study` started
+    then is refused while the reset holds the study lock, and one that took the lock first makes the reset refuse
+    before anything is removed."""
+    import subprocess
+    import sys
+    from morph.services import robust
+    from morph.studio import jobs
+    home = tmp_path / "projects"
+    _demo(home)
+    st = server.Studio(RobotProject(str(home / "my-arm")), str(home))
+    egg = str(home / "egg-picker")
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    real_stop, path = jobs.stop, robust._active_path(egg)
+    try:
+        def study_starts(studio, name, *a, **k):   # `morph study egg-picker` starts right after the check
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"id": "s1", "pid": sleeper.pid, "host": rooms.HOST, "started_utc": "now"}, fh)
+            return real_stop(studio, name, *a, **k)
+        monkeypatch.setattr(jobs, "stop", study_starts)
+        with pytest.raises(server.Refused, match="A robustness study of egg-picker is running in a `morph study`"):
+            st.reset()
+        assert {"r001", "r002", "r003"} <= set(os.listdir(egg)) and robust.active(egg)["id"] == "s1"
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    os.remove(path)
+    monkeypatch.setattr(jobs, "stop", real_stop)
+    seen = []
+    real_remove = server._remove_rev
+
+    def remove(p, rev):                               # a study that starts while revisions go is refused
+        with pytest.raises(robust.StudyBusy, match="being deleted or reset"):
+            robust._lock(egg, "s2")
+        seen.append(rev)
+        return real_remove(p, rev)
+    monkeypatch.setattr(server, "_remove_rev", remove)
+    assert st.reset() is True
+    assert seen == ["r003", "r002"] and robust.active(egg) is None and not os.path.exists(path)
+
+
+
+def _no_room_for_the_hold(monkeypatch):
+    """The disk fills up as Delete project or Reset demo writes its study lock: the write fails with ENOSPC after
+    part of it (the file itself was made), as on a full disk."""
+    from morph.services import robust
+    real = robust.json.dump
+
+    def dump(obj, fh, *a, **k):
+        if isinstance(obj, dict) and str(obj.get("id") or "").startswith(robust.HOLD):
+            fh.write('{"id": "hold-')
+            fh.flush()
+            raise OSError(28, "No space left on device")
+        return real(obj, fh, *a, **k)
+    monkeypatch.setattr(robust.json, "dump", dump)
+
+
+def _left(home):
+    return sorted(os.path.relpath(os.path.join(d, n), home) for d, dirs, files in os.walk(home)
+                  for n in dirs + files if n == ".studies" or ".studies" in d)
+
+
+def test_delete_project_on_a_full_disk_goes_on_without_the_study_hold(tmp_path, builds, monkeypatch, capsys):
+    """On a full disk Delete project failed (409 "Couldn't move kb to the trash (No space left on device); close any
+    file of it that is open"), and left an empty kb/.studies/active.json: the study lock it now takes couldn't be
+    written. A lock the disk has no room for no longer stops it: what was written goes, and it moves the project to
+    the trash without the hold (no study can take that lock either while the disk is full; study_elsewhere has run)."""
+    from morph.services import robust
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "kb")
+    st = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    _no_room_for_the_hold(monkeypatch)
+    trash = st.delete_project("kb")
+    assert not (home / "kb").exists() and os.path.isdir(trash)
+    assert _left(home) == [] and robust.active(trash) is None
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_reset_demo_on_a_full_disk_goes_on_without_the_study_hold(tmp_path, builds, monkeypatch, capsys):
+    """On a full disk Reset demo answered 507 with a traceback in the terminal (OSError 28 from the study lock it
+    takes), and left an empty egg-picker/.studies/active.json; Reset demo is one way to free space. It now goes on
+    without the hold, as Delete project does."""
+    home = tmp_path / "projects"
+    _demo(home)
+    st = server.Studio(RobotProject(str(home / "my-arm")), str(home))
+    _no_room_for_the_hold(monkeypatch)
+    assert st.reset() is True
+    assert RobotProject(str(home / "egg-picker")).revs() == ["r001"]
+    assert _left(home) == []
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_delete_project_on_a_full_disk_never_says_close_a_file(tmp_path, builds, monkeypatch):
+    """A full disk when Delete project makes the .trash folder answered 409 "... close any file of it that is open":
+    it is the disk-full answer (507) now; an open file (Windows) still gets the 409."""
+    from morph.studio.server import HTTPError, _api_projects_delete
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "kb")
+    st = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+
+    class Req:
+        studio = st
+
+        @staticmethod
+        def arg(k):
+            return "kb"
+    for err, status, text in ((OSError(28, "No space left on device"), 507, "The disk is full"),
+                              (PermissionError(13, "Permission denied"), 409, "close any file of it that is open")):
+        def delete(home_, name, err=err):
+            raise err
+        monkeypatch.setattr(projects, "delete", delete)
+        with pytest.raises(HTTPError) as answer:
+            _api_projects_delete(Req)
+        assert answer.value.status == status and text in answer.value.message, (answer.value.status, answer.value.message)
+        assert "close any file" not in answer.value.message or status == 409
+    assert (home / "kb" / "r001").exists()
+
+def test_a_full_disk_at_the_start_costs_the_start_record_one_line(tmp_path, builds, monkeypatch, capsys):
+    """The start record is written when the Studio starts; on a full disk the Studio still starts, and the terminal
+    says what that costs in one line (it printed a traceback)."""
+    from morph.services import durable
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    real = durable.write_json
+
+    def write_json(path, value, *a, **k):
+        if str(path).endswith(f"{rooms.OWNER}.json"):
+            raise OSError(28, "No space left on device", str(path))
+        return real(path, value, *a, **k)
+
+    monkeypatch.setattr(durable, "write_json", write_json)
+    server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+    out = capsys.readouterr()
+    assert "could delete egg-picker while this one runs. The disk is full" in out.out
+    assert "Traceback" not in out.out + out.err
+
+
+@pytest.mark.parametrize("where", ["another Studio", "morph study", "another computer"])
+def test_delete_project_is_refused_while_another_process_runs_a_study_of_it(tmp_path, builds, where):
+    """Delete project stopped only this Studio's own robustness study: one that another Studio on the projects folder,
+    or `morph study` in a terminal, ran on the project went on in a folder moved to the trash (Reset demo refused that
+    already). It is refused now, saying where the study runs; nothing is moved."""
+    import subprocess
+    import sys
+    from morph.services import robust
+    home = tmp_path / "projects"
+    make_project(home, "egg-picker")
+    make_project(home, "kb")
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    other = None
+    try:
+        host = "lab-pc" if where == "another computer" else rooms.HOST
+        if where == "another Studio":  # that Studio's start record names its process, and it holds its lock
+            record = home / ".studios" / f"{OTHER}.json"
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text(json.dumps({"start": "egg-picker", "pid": sleeper.pid, "host": host}), encoding="utf-8")
+            other = hold(home / ".studios" / f"{OTHER}.lock")
+        path = robust._active_path(str(home / "kb"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"id": "s1", "pid": sleeper.pid, "host": host, "started_utc": "now"}, fh)
+        assert robust.active(str(home / "kb"))
+        st = server.Studio(RobotProject(str(home / "egg-picker")), str(home))
+        said = {"another Studio": f"in another Morph Studio on this projects folder (process {sleeper.pid} on this "
+                                  "computer)",
+                "morph study": f"in a `morph study` command (process {sleeper.pid} on this computer)",
+                "another computer": f"(process {sleeper.pid} on lab-pc)"}[where]
+        with pytest.raises(server.Refused) as refused:
+            st.delete_project("kb")
+        assert str(refused.value).startswith("A robustness study of kb is running ") and said in str(refused.value), \
+            str(refused.value)
+        assert (home / "kb" / "r001").exists()
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+        if other is not None:
+            other.stdin.close()
+            other.wait(10)
+    os.remove(path)
+    st.delete_project("kb")                                                 # once it is done
+    assert not (home / "kb").exists()

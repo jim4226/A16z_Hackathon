@@ -1,7 +1,7 @@
 # BoardRepo and Morph
 
 [BoardRepo](https://boardrepo.com/) hosts 8,263 public KiCad and Altium boards (count as of Oct 11 2026). Each
-board has schematic, PCB, 3D and BOM views. It is run by Flintt, Inc. and is not a hackathon sponsor.
+board has schematic, PCB, 3D and BOM views. It is run by Flintt, Inc.
 
 Morph uses it two ways. Neither needs an account or a key.
 
@@ -17,8 +17,9 @@ next to the Gerbers, in `<rev>/electronics/board/kicad/`. The project contains:
   don't.
 - **Schematic:** one box symbol per part. Each connected pin has a net label and each unused pin has a
   no-connect flag, so KiCad's PCB-vs-schematic check passes.
-- **Project file, README and LICENSE** (Apache-2.0, like the repo). Without a licence file, BoardRepo shows a
-  board as all rights reserved.
+- **Project file and README.** The board is the user's design, so no licence is added unless they pick one:
+  `morph kicad raw-egg r004 --license apache-2.0` (or `--license` and the path of their own licence file) puts a
+  LICENSE in the project and the zip. Without a licence file, BoardRepo shows a board as all rights reserved.
 
 The writer is pure Python, so the demo laptop needs no KiCad. When `kicad-cli` is installed, `kicad.check()`
 runs DRC (with schematic parity) and ERC.
@@ -37,7 +38,9 @@ query, so Darwin's cache still hits.
 
 ## 2. Publishing a revision
 
-```bash
+In a terminal set up as in [Commands in a terminal](../README.md#commands-in-a-terminal):
+
+```shell
 morph kicad raw-egg r004
 ```
 
@@ -84,8 +87,8 @@ BoardRepo's MCP server (`https://boardrepo.com/mcp`) can search, read nets and B
 your own boards. Every call needs a browser OAuth token, public boards included, and the only advertised
 scope is `read:public`. Morph therefore reads the public `.md` pages instead.
 
-For interactive use from Claude Code:
+For interactive use from Claude Code, add it, then sign in with `/mcp` inside Claude Code:
 
-```bash
-claude mcp add --scope user --transport http boardrepo https://boardrepo.com/mcp   # then /mcp to sign in
+```shell
+claude mcp add --scope user --transport http boardrepo https://boardrepo.com/mcp
 ```

@@ -357,6 +357,27 @@ def test_sheet_dfm_catches_short_flange_and_missing_relief():
     assert "flange" in msgs and "relief" in msgs and "radius" in msgs and "distort" in msgs
 
 
+def test_sheet_dfm_never_rounds_a_short_flange_or_hole_up_to_its_minimum():
+    """A flange 7.96 mm long (the minimum is 8.0) and a hole 5.96 mm from the bend (the minimum is 6.0): the messages
+    round the measured length down, so they never read "8.0 mm, below the 8.0 mm minimum" (W3 R5)."""
+    import re
+    poly = box(0, 0, 40, 40).difference(Point(20, 7.96 + 5.96 + 1.7).buffer(1.7, quad_segs=64))
+    sheet = {"thickness": 2.0, "k_factor": 0.4, "material": "Al5052",
+             "bends": [{"line": [[0, 7.96], [40, 7.96]], "angle_deg": 90, "radius": 2.0}]}
+    p = Part("short_bracket", "base", components.trimesh_from_profile(poly, 2.0), profile=poly, profile_frame=np.eye(4),
+             thickness=2.0, process="sheet_metal", meta={"sheet": sheet})
+    msgs = manufacturing._sheet_dfm(manufacturing.Geo(p))
+    flange = [m for m in msgs if "press-brake minimum" in m]
+    hole = [m for m in msgs if "from the bend" in m]
+    assert flange and hole, msgs
+    for m in flange:
+        got, need = map(float, re.search(r"is ([0-9.]+) mm, below the ([0-9.]+) mm", m).groups())
+        assert got < need, m
+    for m in hole:
+        got, need = map(float, re.search(r"sits ([0-9.]+) mm from the bend \(min ([0-9.]+)\)", m).groups())
+        assert got < need, m
+
+
 def test_fastener_parsing():
     f = manufacturing.parse_fastener("M3x8_shcs")
     assert (f["size"], f["length"], f["kind"], f["torque_nm"]) == ("M3", 8.0, "shcs", catalog.FASTENER_TORQUE_NM["M3"])
@@ -433,6 +454,16 @@ def test_manual_without_efinal_or_mfg(tmp_path):
     assert (tmp_path / "manual.html").is_file() and len(man["steps"]) >= 8
 
 
+def test_the_first_test_uses_the_projects_object(tmp_path):
+    # every project's first pick-and-place test used a hard-boiled egg, then a raw one
+    d = Design().with_changes({**EGG, "object.name": "strawberry", "object.diameter_mm": 30.0})
+    man = manual.build(d, make_asm(d), None, None, str(tmp_path))
+    first = next(s for s in man["steps"] if s["kind"] == "test")
+    assert "egg" not in first["instructions"].lower(), first["instructions"]
+    assert "a stand-in for the strawberry (or a 30 mm ball)" in first["instructions"]
+    assert first["instructions"].rstrip().endswith("then repeat with a real strawberry.")
+
+
 def test_real_generator_if_available(tmp_path):
     from morph.robot import arm
 
@@ -448,6 +479,53 @@ def test_real_generator_if_available(tmp_path):
     b = manufacturing.bom(d, asm, mfg, mock_efinal())
     man = manual.build(d, asm, mfg, mock_efinal(), str(tmp_path / "manual"))
     assert mfg["parts"] and b["totals"]["total"] > 0 and man["steps"]
+    # every print file stands inside the printer's build volume as oriented (the 244 mm base shell stood 244 mm tall
+    # on a 220 mm-tall bed, and the DFM check, comparing sorted extents, never said so)
+    bed = manufacturing.FDM_BED
+    printed = [e for e in mfg["parts"] if e["process"] == "fdm_print"]
+    assert any(e["group"] == "base_shell" for e in printed)
+    for e in printed:
+        stl = trimesh.load(tmp_path / "mfg" / e["group"] / f"{e['group']}.stl")
+        x, y, z = stl.extents
+        assert z <= bed[2] and x <= bed[0] and y <= bed[1], (e["group"], e["print"]["orientation"], stl.extents)
+        assert e["print"]["height_mm"] <= bed[2] and not any("build volume" in m for m in e.get("dfm", []))
+    with zipfile.ZipFile(tmp_path / "mfg" / "base_shell" / "base_shell.3mf") as z:
+        model = z.read("3D/3dmodel.model").decode()
+    v = np.array([[float(a) for a in m] for m in re.findall(r'<vertex x="([-\d.]+)" y="([-\d.]+)" z="([-\d.]+)"', model)])
+    assert np.ptp(v, axis=0)[2] <= bed[2]
+    # the manual, the make files and the BOM agree: every part a step says to make has its files (the upper arm's
+    # logo inlay, decoration with no print file, was in step 5's table), and every bought fastener or standoff is in
+    # some step
+    made = {e["group"]: e for e in mfg["parts"]}
+    bought = ("purchased", "hardware", "supplied with the servo")
+    for s in man["steps"]:
+        for t in s["parts_table"]:
+            if t["source"] not in bought:
+                assert t["group"] in made and made[t["group"]]["files"], (s["title"], t)
+    assert not any("logo" in t["item"].lower() for s in man["steps"] for t in s["parts_table"])
+    assert any(p.kind == "visual" and "logo" in p.name for p in asm.parts)      # still in the CAD
+    in_steps = {f["spec"] for s in man["steps"] for f in s["fasteners"]} | \
+        {t["item"] for s in man["steps"] for t in s["parts_table"]}
+    for r in b["rows"]:
+        if r["category"] == "fastener" and r.get("source") != "electronics":
+            assert r.get("spec") in in_steps or r["item"] in in_steps, r["item"]
+
+
+def test_a_part_too_big_for_the_bed_in_every_orientation_says_split_it():
+    from morph.robot.assembly import Part
+
+    # the parts that fit some way up are placed that way: the base shell's 244 mm stood on end (taller than 220 mm), a
+    # 240 mm-deep plate turns 90 degrees to lie along the 250 mm axis; 245 x 215 x 215 fits no way up
+    cases = (((300.0, 30.0, 20.0), True), ((245.0, 215.0, 215.0), True), ((230.0, 230.0, 30.0), True),
+             ((244.0, 144.0, 38.0), False), ((200.0, 240.0, 60.0), False))
+    for size, big in cases:
+        part = Part(name="slab", link="base", mesh=trimesh.creation.box(extents=size), process="fdm_print", group="slab")
+        g = manufacturing.Geo(part)
+        dfm = manufacturing.dfm_checks({"process": "fdm_print", "class": "shell", "material": "PETG"}, g)
+        e = g.print_pose["mesh"].extents
+        assert any("split the part" in m for m in dfm) is big, (size, dfm)
+        if not big:                                   # placed to fit: height and footprint inside 250 x 210 x 220 mm
+            assert e[2] <= 220 and e[0] <= 250 and e[1] <= 210, e
 
 
 # ------------------------------------------------------------------ generator conventions

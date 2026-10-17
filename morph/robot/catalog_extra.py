@@ -10,14 +10,14 @@ from .catalog import V
 
 catalog.ACTUATORS.setdefault("sts3215_7v4", dict(
     name="Feetech STS3215-C001 serial bus servo (7.4 V, 1/345, ~19.5 kg·cm)", family="smart_bus",
-    interface="ttl_half_duplex", voltage=(4.8, 7.4), nominal_v=7.4, torque_nm=1.91, rated_nm=0.6, speed_rad_s=4.8,
-    stall_a=2.4, idle_a=0.06, mass_g=55.0, feedback="12-bit magnetic encoder, load, voltage, temperature",
+    interface="ttl_half_duplex", protocol="feetech_scs", voltage=(4.8, 7.4), nominal_v=7.4, torque_nm=1.91, torque_v=((6.0, 1.62), (7.4, 1.91)), rated_nm=0.6,
+    speed_rad_s=4.8, stall_a=2.4, idle_a=0.06, mass_g=55.0, feedback="12-bit magnetic encoder, load, voltage, temperature",
     dims=dict(l=45.2, w=24.7, h=35.0, shaft_off=12.0, ear_l=0.0, ear_w=0.0, ear_t=0.0, ear_z=0.0, horn_d=22.0, spline_h=3.0),
     range_deg=360, verify=True, note="SO-101 follower servo; the leader arm uses mixed gear ratios",
     vendors=[V("aliexpress", "Feetech STS3215 C001 7.4V", 13.89, lead_days=14), V("seeed", "STS3215 servo 7.4V", 16.0)]))
 catalog.ACTUATORS.setdefault("xl330_m288", dict(
-    name="ROBOTIS DYNAMIXEL XL330-M288-T", family="dynamixel", interface="ttl_half_duplex", voltage=(3.7, 6.0),
-    nominal_v=5.0, torque_nm=0.52, rated_nm=0.17, speed_rad_s=10.0, stall_a=1.47, idle_a=0.03, mass_g=18.0,
+    name="ROBOTIS DYNAMIXEL XL330-M288-T", family="dynamixel", interface="ttl_half_duplex", protocol="dynamixel_2",
+    voltage=(3.7, 6.0), nominal_v=5.0, torque_nm=0.52, rated_nm=0.17, speed_rad_s=10.0, stall_a=1.47, idle_a=0.03, mass_g=18.0,
     feedback="12-bit absolute encoder, current", dims=dict(l=34.0, w=20.0, h=26.0, shaft_off=8.0, ear_l=0.0, ear_w=0.0,
     ear_t=0.0, ear_z=0.0, horn_d=16.0, spline_h=2.0), range_deg=360, verify=True,
     vendors=[V("robotis", "XL330-M288-T", 23.9, "https://www.robotis.us/dynamixel-xl330-m288-t/")]))

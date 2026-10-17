@@ -1,0 +1,67 @@
+{
+  "schema": "morph.tool_manifest/1",
+  "id": "fixparts",
+  "service": "FixParts (test fixture)",
+  "summary": "A made-up parts distributor that Morph's tests use in place of a real one.",
+  "homepage": "https://www.fixparts-morph.com",
+  "privacy": "Manufacturer part numbers and quantities from this project's parts list go to FixParts.",
+  "hosts": ["api.fixparts-morph.com"],
+  "credentials": [
+    {
+      "id": "fixparts",
+      "env": "MORPH_TOOL_FIXPARTS_KEY",
+      "label": "FixParts API key",
+      "what": "Live price and stock for the purchased parts in a robot's parts list.",
+      "where": "FixParts dashboard, Developers, API keys",
+      "url": "https://www.fixparts-morph.com/developers/keys",
+      "hosts": ["api.fixparts-morph.com"],
+      "pattern": "^fxp_[A-Za-z0-9]{24,64}$",
+      "prefix": "fxp_",
+      "cost": "Free: 1,000 lookups a month"
+    }
+  ],
+  "tools": [
+    {
+      "name": "fixparts_offers",
+      "title": "FixParts price and stock",
+      "description": "Live distributor price breaks and stock for one manufacturer part number. Call it for each purchased line of a parts list that needs a current price.",
+      "side_effect": "read",
+      "sends": "the manufacturer part number",
+      "request": {"method": "GET", "url": "https://api.fixparts-morph.com/v1/parts/{mpn}/offers",
+                  "query": {"currency": "{currency}", "limit": "5"}, "headers": {"Accept": "application/json"}},
+      "auth": {"credential": "fixparts", "in": "header", "name": "Authorization", "prefix": "Bearer "},
+      "input_schema": {"type": "object", "additionalProperties": false, "required": ["mpn"],
+                       "properties": {"mpn": {"type": "string", "pattern": "^[A-Za-z0-9._/+-]{2,64}$", "description": "Manufacturer part number, e.g. STS3215"},
+                                      "currency": {"type": "string", "enum": ["USD", "EUR"], "description": "Currency of the prices"}}},
+      "response": {"type": "json", "extract": {"offers": "/data/offers", "total": "/meta/total"}, "max_items": 10},
+      "limits": {"timeout_s": 10, "max_response_bytes": 1000000},
+      "cost": {"usd_per_call": 0, "note": "Counts toward the free 1,000 lookups a month"}
+    },
+    {
+      "name": "fixparts_categories",
+      "title": "FixParts categories",
+      "description": "Searches the distributor's public part categories by keyword, such as servo or bearing. No key needed.",
+      "side_effect": "read",
+      "sends": "the search words",
+      "request": {"method": "GET", "url": "https://api.fixparts-morph.com/v1/categories", "query": {"q": "{query}"}},
+      "input_schema": {"type": "object", "additionalProperties": false, "required": ["query"],
+                       "properties": {"query": {"type": "string", "maxLength": 100, "description": "Keywords"}}},
+      "response": {"type": "json", "extract": {"categories": "/categories"}},
+      "cost": {"usd_per_call": 0}
+    },
+    {
+      "name": "fixparts_quote_request",
+      "title": "FixParts quote request",
+      "description": "Asks the distributor for a written quote for a quantity of one part. It creates a quote request in the person's FixParts account.",
+      "side_effect": "write",
+      "sends": "the part number and quantity, under the person's FixParts account",
+      "request": {"method": "POST", "url": "https://api.fixparts-morph.com/v1/quotes", "body": {"json": {"part": "{mpn}", "qty": "{quantity}"}}},
+      "auth": {"credential": "fixparts", "in": "header", "name": "Authorization", "prefix": "Bearer "},
+      "input_schema": {"type": "object", "additionalProperties": false, "required": ["mpn", "quantity"],
+                       "properties": {"mpn": {"type": "string", "pattern": "^[A-Za-z0-9._/+-]{2,64}$"},
+                                      "quantity": {"type": "integer", "minimum": 1, "maximum": 10000}}},
+      "response": {"type": "json", "extract": {"quote": "/quote"}},
+      "cost": {"usd_per_call": 0}
+    }
+  ]
+}

@@ -19,14 +19,16 @@ real hardware, with measured numbers.
 **Pick a person:** a robotics engineer (or grad student in a manipulation lab) who needs their gripper to handle one fragile object.
 **Frustrating task:** design, simulate and fabricate custom fingers for it, and add force sensing and firmware. Today that takes a day or more across CAD, a simulator, a slicer and the Arduino IDE.
 **Show the difference:** the time card. Before = baseline estimates per step (`morph/timestudy.py`), **replace at least one with a real timed manual run today**: have a teammate model the contour finger in Fusion/Onshape with a stopwatch, put the minutes in `projects/<name>/baseline.json` as `{"cad_first": <min>}`.
-After = Morph wall-clock (auto-logged) + machine time + every human minute logged:
+After = Morph wall-clock (auto-logged) + machine time + every human minute logged: typing the need, reading the report
+and picking a design, bolting on + 10 lifts, corrections (e.g. one reprint after measuring hole spacing), then the
+before/after table:
 
-```bash
-morph clock egg spec 2          # typing the need
-morph clock egg review 6        # reading the report, picking a design
-morph clock egg test 10         # bolting on + 10 lifts
-morph clock egg corrections 18  # e.g. one reprint after measuring hole spacing
-morph time egg r004             # prints the before/after table
+```shell
+morph clock egg spec 2
+morph clock egg review 6
+morph clock egg test 10
+morph clock egg corrections 18
+morph time egg r004
 ```
 
 ## The one use case: pick up a raw egg without cracking it

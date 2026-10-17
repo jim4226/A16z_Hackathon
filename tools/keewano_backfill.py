@@ -1,9 +1,10 @@
-"""Backfill Keewano with two weeks of synthetic gripper builds so the calibration query has data.
+"""Backfill Keewano with two weeks of synthetic gripper builds, for dashboards and demos.
 
 Every backfilled project is named `synthetic-*`, so it can be told apart from real builds in any
-query (WHERE "Project" NOT LIKE 'synthetic-%'). The made-up part is the measured/predicted
-holding-force ratio per pad + material (TRUE_RATIO below, plus noise); everything else follows
-the shape of a real Morph ledger.
+query (WHERE "Project" NOT LIKE 'synthetic-%'), and the grip-force calibration (keewano.hold_ratio)
+never uses them. The made-up part is the measured/predicted holding-force ratio per pad + material
+(TRUE_RATIO below, plus noise); everything else follows the shape of a real Morph ledger. Running
+with --send is the opt-in to Keewano events for this run (MORPH_TELEMETRY_ENABLED=1).
 
   python tools/keewano_backfill.py            # dry run: print what would be sent
   python tools/keewano_backfill.py --send     # needs KEEWANO_API_KEY
@@ -12,6 +13,7 @@ the shape of a real Morph ledger.
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
 import time
@@ -77,5 +79,6 @@ if __name__ == "__main__":
         for name, t, ev in hist[:3]:
             print(name, time.strftime("%Y-%m-%d %H:%M", time.localtime(t)), ev)
         sys.exit(0)
+    os.environ["MORPH_TELEMETRY_ENABLED"] = "1"  # --send is this run's explicit opt-in
     sent = sum(keewano.send(name, ev, ts=t) for name, t, ev in hist)
     print(f"sent {sent}/{len(hist)} batches; give Keewano ~5 minutes before querying")

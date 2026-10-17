@@ -5,6 +5,7 @@
 import { I, esc, fmt, sleep } from './panels.js';
 
 const $ = (s, r = document) => r.querySelector(s);
+const ZOOM_OUT = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? 'Cmd and -' : 'Ctrl and -';
 
 // Steps mirror docs/DEMO_SCRIPT.md. `say` may be a function of the app state (for live numbers).
 const STEPS = [
@@ -53,8 +54,8 @@ const STEPS = [
     say: (a) => {
       const cal = a.state.current?.gripper?.force?.hold_calibration;
       return cal
-        ? `Keewano logs every revision, chat edit and bench measurement. Its build history for these pads (seeded for this demo) says they need ×${fmt(cal.ratio, '', 2)} the simulated holding force over ${cal.n} builds, so the grip target is raised before the firmware ships.`
-        : 'With Keewano connected, every revision, chat edit and bench measurement is logged, and measured builds calibrate the simulated grip force before the firmware ships.';
+        ? `With event sending on, Keewano logs each revision, chat edit and bench measurement. Its build history for these pads (seeded for this demo, not measured) puts them at ×${fmt(cal.ratio, '', 2)} the simulated holding force over ${cal.n} builds, so with calibration on the grip target is raised before the firmware ships.`
+        : 'With event sending on (Keys), Keewano logs each revision, chat edit and bench measurement. With calibration on, logged builds of the same pad and material adjust the simulated grip force before the firmware ships; here the target is the simulation value.';
     },
     run: async (a) => { a.tab('sim'); a.spotlight('.fw'); },
   },
@@ -70,7 +71,7 @@ const STEPS = [
   },
   {
     title: 'Edit someone else’s robot', project: 'so101', chat: 'Swap to Dynamixel servos',
-    say: '“Swap to Dynamixel servos.” The new servos go in, the electronics and firmware follow, and the printed holders that no longer fit are flagged in orange for redesign.',
+    say: '“Swap to Dynamixel servos.” Six XL430s go in, all on one 12 V supply, so the supply, controller, wiring and firmware change with them and every torque margin is re-checked. Their bodies are wider than the stock servos, so the six printed holders are flagged in orange: the build stays not feasible until they are redesigned.',
     after: async (a) => { a.tab('robot'); },
   },
   {
@@ -107,7 +108,7 @@ export class Presenter {
     document.addEventListener('keydown', this.onKey, true);
     this.i = -1;
     this.render();
-    if (this.narrow()) this.a.toast('The window is too narrow for the right panel: press Ctrl and - (minus) once');
+    if (this.narrow()) this.a.toast(`The window is too narrow for the right panel: zoom out once (${ZOOM_OUT})`);
   }
   narrow() { const el = document.querySelector('#inspector'); return !!el && getComputedStyle(el).display === 'none'; }
   close() {
@@ -177,13 +178,13 @@ export class Presenter {
     const i = this.i, n = STEPS.length, a = this.a;
     const dots = STEPS.map((_, k) => `<b class="${k < i ? 'done' : k === i ? 'cur' : ''}" data-k="${k}"></b>`).join('');
     if (i < 0) {
-      const dirty = (a.state.projects || []).filter((p) => p.at_start === false).map((p) => p.name);
+      const dirty = (a.state.projects || []).filter((p) => p.demo && p.at_start === false).map((p) => p.name);  // Reset demo touches only these
       const narrow = this.narrow();
       this.el.innerHTML = `<div class="pr-top"><span class="pr-n">${I('play', 'sm')}Present</span><span class="pr-t">The Morph demo, ${n} steps</span><span class="grow"></span>
-        <button class="btn${dirty.length ? ' primary' : ''}" data-a="reset" title="Delete the chat edits from earlier takes and go back to each robot's original design">${I('replay', 'sm')}Reset demo</button>
+        <button class="btn${dirty.length ? ' primary' : ''}" data-a="reset" title="Delete the chat edits from earlier takes and go back to each demo robot's original design (egg-picker and so101; your other projects are never touched)">${I('replay', 'sm')}Reset demo</button>
         <button class="btn${dirty.length ? '' : ' primary'}" data-a="next">Start ${I('arrow', 'sm')}</button>
 <button class="btn icon ghost" data-a="close" title="Exit (Esc)">${I('x', 'sm')}</button></div>
-        ${narrow ? `<div class="pr-warn">${I('alert', 'sm')}<span>The window is too narrow to show the right panel (time card, grip force). Press <b>Ctrl</b> and <b>-</b> (minus) once, then open Present again.</span></div>` : ''}
+        ${narrow ? `<div class="pr-warn">${I('alert', 'sm')}<span>The window is too narrow to show the right panel (time card, grip force). Zoom out once (${ZOOM_OUT}), then open Present again.</span></div>` : ''}
         ${dirty.length ? `<div class="pr-warn">${I('alert', 'sm')}<span>${dirty.map(esc).join(' and ')} ${dirty.length === 1 ? 'has' : 'have'} edits from an earlier take. Click <b>Reset demo</b> first so every step changes something.</span></div>` : ''}
         <div class="pr-say">Press <kbd>→</kbd>, <kbd>Space</kbd> or a presentation clicker for each step; <kbd>←</kbd> goes back, <kbd>C</kbd> hides the caption, <kbd>Esc</kbd> exits. Steps that change the robot wait for the pipeline before you can move on.</div>
         <div class="pr-dots">${dots}</div>`;
@@ -206,9 +207,9 @@ export class Presenter {
       btn('reset').disabled = true;
       btn('reset').innerHTML = '<span class="spin"></span>Resetting (up to a minute)…';
       this.resetting = true;
-      const ok = await a.reset().finally(() => { this.resetting = false; });
+      const res = await a.reset().finally(() => { this.resetting = false; });
       this.ran.clear();
-      a.toast(ok ? 'Demo reset: both robots are back at their full builds' : 'Still regenerating; reset when the pipeline is idle');
+      a.toast(res === true ? 'Demo reset: both robots are back at their full builds' : res || 'Still regenerating; reset when the pipeline is idle');
       this.render();
     };
     this.el.querySelectorAll('.pr-dots b').forEach((b) => (b.onclick = () => this.go(+b.dataset.k)));

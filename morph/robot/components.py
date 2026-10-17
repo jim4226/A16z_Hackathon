@@ -47,7 +47,7 @@ import manifold3d as m3d
 import numpy as np
 import trimesh
 from shapely import affinity
-from shapely.geometry import LineString, MultiPolygon, Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 

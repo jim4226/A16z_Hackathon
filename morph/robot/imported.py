@@ -10,29 +10,43 @@ PCB, onboard computer + battery), the wrist-camera variant, and cabling.
 from __future__ import annotations
 
 import json
-import math
 import os
 
 import numpy as np
 
+from .. import resources
+from ..importers.robots import robot_dir  # arm.source -> its bundle folder (light: pipeline2 reads it too)
+from ..studio.security import contained_path
 from . import catalog, catalog_extra  # noqa: F401  (registers extra catalog keys)
 from . import components
 from .assembly import Cable, Part, trans
 from .urdf_import import load_urdf
 
-ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "robots")
+ROOT = resources.path("robots")  # the repo's robots/ folder, or its copy inside an installed wheel
 G = np.array([0.0, 0.0, -9.81])
 # Feetech STS3215 STL frame -> Morph actuator frame (shaft axis at the horn face, body towards -z)
 STS_STL_TO_COMPONENT = trans((12.5, 0.0, 20.2))
 
-FAMILY_SWAPS = {  # stock smart-bus robot -> other families, by joint position (base -> gripper)
-    "dynamixel": ["xl430_w250", "xl430_w250", "xl430_w250", "xl330_m288", "xl330_m288", "xl330_m288"],
-    "hobby_pwm": ["mg996r", "ds3218", "ds3218", "mg996r", "mg996r", "mg996r"],
-}
+def roots() -> list:
+    """Where an arm.source name is looked up, in order: the robots shipped with Morph, then robots the user
+    imported (MORPH_HOME/.robots, the Studio's projects folder when it set one). Nowhere else: a design names a robot,
+    never a folder."""
+    from ..importers.robots import robots_dir
+
+    user = robots_dir()
+    return [ROOT] + ([user] if os.path.isdir(user) else [])
+
+
+def bundle_file(d: str, rel) -> str:
+    """A file the profile names (its URDF), inside the robot's own folder."""
+    path = contained_path(d, rel, decode=False) if isinstance(rel, str) else None
+    if not path or not os.path.isfile(path):
+        raise ValueError(f"{rel!r} is not a file inside the robot folder {os.path.basename(d)}")
+    return path
 
 
 def load_profile(source: str) -> tuple[dict, str]:
-    d = os.path.join(ROOT, source)
+    d = robot_dir(source)  # shipped robots/ first, then MORPH_HOME/.robots/ (user imports)
     with open(os.path.join(d, "morph_profile.json"), encoding="utf-8") as fh:
         return json.load(fh), d
 
@@ -41,15 +55,26 @@ def _extras(design) -> set:
     return {e.strip() for e in design.electronics.extras.split(",") if e.strip()}
 
 
-def actuator_plan(design, prof) -> dict:
-    """joint -> catalog key after the requested family/voltage edits."""
+def _urdf(design, prof) -> str:
+    """The robot's URDF, or its wrist-camera variant: sizing and the build read the same one, so the camera and its
+    mount (they ride on the gripper) load every joint."""
+    return prof["urdf_camera"] if "wrist_camera" in _extras(design) and prof.get("urdf_camera") else prof["urdf"]
+
+
+def actuator_plan(design, prof, need: dict | None = None) -> dict:
+    """joint -> catalog key after the requested family/voltage edits. Swapping to another family (not the robot's own:
+    an OMX keeps its XM430s) picks, for each joint, the weakest actuator that gives `need[joint]` (N·m, margin
+    included) from one voltage class of that family (catalog.pick_in_groups): six XL430s on 12 V for the SO-101, never
+    XL430s and XL330s on one rail."""
     stock = dict(prof["actuators"])
     joints = list(stock)
     fam = design.arm.actuator_family
     overrides = dict(kv.split("=") for kv in design.arm.actuator_overrides.split(",") if "=" in kv)
-    if fam in FAMILY_SWAPS:
-        keys = FAMILY_SWAPS[fam]
-        out = {j: keys[min(i, len(keys) - 1)] for i, j in enumerate(joints)}
+    stock_families = {catalog.ACTUATORS.get(k, {}).get("family") for k in stock.values()}
+    if fam in catalog.FAMILY_GROUPS and fam not in stock_families:   # a swap, not the robot's own family
+        if need is None:
+            raise TypeError("actuator_plan needs each joint's torque (need) to swap the actuator family")
+        out = catalog.pick_in_groups({j: need[j] for j in joints}, fam)
     else:
         out = dict(stock)
     if "all" in overrides:
@@ -69,55 +94,208 @@ def _subtree(asm, link) -> list:
     return out
 
 
-def size(design) -> dict:
-    prof, d = load_profile(design.arm.source)
-    asm = load_urdf(os.path.join(d, prof["urdf"]), prof)
-    acts = actuator_plan(design, prof)
-    q0 = {j: 0.0 for j in prof["arm_joints"]}           # zero pose = arm stretched out (worst case for SO-101)
-    T = asm.world_transforms(q0)
-    payload = design.object.mass_g / 1000.0
-    tcp = T[asm.meta["tcp_link"]][:3, 3] if asm.meta.get("tcp_link") else None
-    joints, issues, reqs = [], [], {}
-    for name in prof["arm_joints"] + [prof["gripper_joint"]]:
-        j = asm.joint(name)
-        Tc = T[j.child]
-        axis_w, p = Tc[:3, :3] @ np.asarray(j.axis, float), Tc[:3, 3]
-        tau = 0.0
-        for link in _subtree(asm, j.child):
-            m, com = asm.link_mass(link)
-            c = (T[link] @ np.r_[com, 1.0])[:3]
-            tau += float(np.cross((c - p) / 1000.0, m * G) @ axis_w)
-        if tcp is not None and name != prof["gripper_joint"]:
-            tau += float(np.cross((tcp - p) / 1000.0, payload * G) @ axis_w)
-        if name == prof["gripper_joint"]:
-            tau = max(abs(tau), 0.15)                     # squeezing torque floor for the jaw
-        reqs[name] = abs(tau)
+def _pose_grid(asm, arm_joints) -> list:
+    """Poses over the range of the joints that tilt the arm (axis not vertical at q = 0; rolls skipped)."""
+    import itertools
+
+    T = asm.world_transforms({})
+    tilt = []
+    for n in arm_joints:
+        j = asm.joint(n)
+        ax = T[j.child][:3, :3] @ np.asarray(j.axis, float)
+        if "roll" not in n and abs(ax[2]) < 0.9 * np.linalg.norm(ax):
+            tilt.append(j)
+    tilt = tilt[:4]
+    k = {1: 13, 2: 13, 3: 9}.get(len(tilt), 5)
+    axes = [np.linspace(j.lower, j.upper, k) for j in tilt]
+    return [dict(zip([j.name for j in tilt], vals)) for vals in itertools.product(*axes)] if tilt else []
+
+
+def worst_case_torques(asm, arm_joints, gripper_joint, payload_kg, grid=True) -> tuple[dict, float | None]:
+    """|gravity torque| (N·m) per joint, worst case over q = 0 and (grid=True) a pose grid; and the reach: the
+    farthest tool position (mm, horizontal) over the same poses, above the table."""
+    return _worst(_gravity(asm, arm_joints, gripper_joint, payload_kg, [{}] + (_pose_grid(asm, arm_joints) if grid else [])),
+                  grid)
+
+
+def _gravity(asm, arm_joints, gripper_joint, payload_kg, poses) -> list:
+    """[(|gravity torque| per joint, tool position or None)] for each pose."""
+    tcp = asm.meta.get("tcp_link")
+    names = [n for n in list(arm_joints) + [gripper_joint] if n]
+    subs = {n: _subtree(asm, asm.joint(n).child) for n in names}
+    mass = {link: asm.link_mass(link) for link in asm.links}
+    out = []
+    for q in poses:
+        T = asm.world_transforms(q)
+        tp = T[tcp][:3, 3] if tcp else None
+        taus = {}
+        for name in names:
+            j = asm.joint(name)
+            Tc = T[j.child]
+            axis_w, p = Tc[:3, :3] @ np.asarray(j.axis, float), Tc[:3, 3]
+            tau = 0.0
+            for link in subs[name]:
+                m, com = mass[link]
+                c = (T[link] @ np.r_[com, 1.0])[:3]
+                tau += float(np.cross((c - p) / 1000.0, m * G) @ axis_w)
+            if tp is not None and name != gripper_joint:
+                tau += float(np.cross((tp - p) / 1000.0, payload_kg * G) @ axis_w)
+            taus[name] = abs(tau)
+        out.append((taus, tp))
+    return out
+
+
+def _worst(rows, grid=True) -> tuple[dict, float | None]:
+    out, reach = {n: 0.0 for n in (rows[0][0] if rows else {})}, None
+    for taus, tp in rows:
+        if tp is not None and (not grid or tp[2] >= 0.0):
+            reach = max(reach or 0.0, float(np.linalg.norm(tp[:2])))
+        for n, t in taus.items():
+            out[n] = max(out[n], t)
+    return out, reach
+
+
+def _required(reqs: dict, prof) -> dict:
+    """Torque each joint is sized for: its gravity torque, a squeezing floor of 0.15 N·m for the jaw, and a fifth of the
+    heaviest load for the yaw and roll axes (no gravity load: acceleration and friction instead)."""
+    reqs = dict(reqs)
+    reqs[prof["gripper_joint"]] = max(reqs[prof["gripper_joint"]], 0.15)
     pitch_max = max(reqs.values())
-    for name in prof["arm_joints"] + [prof["gripper_joint"]]:
-        # yaw/roll axes carry no gravity load: size them for acceleration + friction instead
-        req = max(reqs[name], 0.2 * pitch_max)
+    return {n: max(reqs[n], 0.2 * pitch_max) for n in prof["arm_joints"] + [prof["gripper_joint"]]}
+
+
+def size(design) -> dict:
+    from .electronics2 import servo_rail
+
+    prof, d = load_profile(design.arm.source)
+    asm = load_urdf(bundle_file(d, _urdf(design, prof)), prof, bundle=d)
+    payload = design.object.mass_g / 1000.0
+    margin_f = design.arm.payload_margin
+    # hand-written profiles size at q = 0 (SO-101: the pose its makers quote), and say so; auto-imported arms have no
+    # such convention, so they size for the worst case over a pose grid of their tilting joints
+    grid = bool((prof.get("imported") or {}).get("auto")) or prof.get("sizing") == "grid"
+    rows = _gravity(asm, prof["arm_joints"], prof["gripper_joint"], payload, [{}] + _pose_grid(asm, prof["arm_joints"]))
+    reqs, reach = _worst(rows if grid else rows[:1], grid)
+    req = _required(reqs, prof)
+    names = prof["arm_joints"] + [prof["gripper_joint"]]
+    acts = actuator_plan(design, prof, {n: req[n] * margin_f for n in names})
+    rail = servo_rail([{"key": acts[n], "joint": n, "torque_with_margin_nm": req[n] * margin_f} for n in names],
+                      float(design.electronics.servo_v or 0.0))
+    rv = rail["v"]
+    joints, issues, warnings = [], [], []
+    for name in names:
         key = acts[name]
-        avail = catalog.ACTUATORS[key]["torque_nm"]
-        if avail < req * design.arm.payload_margin:
-            issues.append(f"{name}: needs {req * design.arm.payload_margin:.2f} N·m with margin, {key} gives {avail:.2f} N·m")
-        joints.append({"name": name, "actuator": key, "torque_req_nm": round(req, 3),
-                       "torque_with_margin_nm": round(req * design.arm.payload_margin, 3), "torque_avail_nm": avail,
-                       "margin": round(avail / max(req, 1e-6), 2), "servo_id": prof.get("servo_ids", {}).get(name)})
-    reach = float(np.linalg.norm(tcp[:2])) if tcp is not None else None
-    arm_joints = [j for j in joints if j["name"] != prof["gripper_joint"]]
-    return {"source": design.arm.source, "title": prof.get("title"), "links_mm": {}, "reach_mm": round(reach or 0, 1),
-            "payload_g": design.object.mass_g, "joints": arm_joints, "gripper_actuator": acts[prof["gripper_joint"]],
-            "gripper": next(j for j in joints if j["name"] == prof["gripper_joint"]), "issues": issues,
-            "stock_actuators": prof["actuators"]}
+        avail = round(catalog.torque_at(key, rv), 3)
+        if avail < req[name] * margin_f:
+            issues.append(f"{name}: needs {req[name] * margin_f:.2f} N·m with margin, {key} gives {avail:.2f} N·m at {rv:g} V")
+        joints.append({"name": name, "actuator": key, "torque_req_nm": round(req[name], 3),
+                       "torque_with_margin_nm": round(req[name] * margin_f, 3), "torque_avail_nm": avail,
+                       "margin": round(avail / max(req[name], 1e-6), 2), "servo_id": prof.get("servo_ids", {}).get(name)})
+    out = {"source": design.arm.source, "title": prof.get("title"), "links_mm": {}, "reach_mm": round(reach or 0, 1),
+           "payload_g": design.object.mass_g, "joints": [j for j in joints if j["name"] != prof["gripper_joint"]],
+           "gripper_actuator": acts[prof["gripper_joint"]],
+           "gripper": next(j for j in joints if j["name"] == prof["gripper_joint"]), "servo_rail": rail,
+           "issues": issues, "warnings": warnings, "stock_actuators": prof["actuators"]}
+    if not grid:
+        out["basis"] = "q = 0"
+        worst = _required(_worst(rows)[0], prof)
+        low = [(j, worst[j["name"]]) for j in joints if worst[j["name"]] > req[j["name"]] * 1.05]
+        for j, w in low:
+            m = j["torque_avail_nm"] / max(w, 1e-6)
+            if m < margin_f:
+                warnings.append(f"{j['name']}: the torque margins are at q = 0, the pose this robot's profile is sized in; "
+                                f"over its whole joint range it needs up to {w:.2f} N·m, a {m:.2f}x margin at {rv:g} V "
+                                f"(below {margin_f:g}x)")
+    return out
 
 
-def gripper_summary(design, sizing) -> dict:
-    g = sizing["gripper"]
-    jaw_mm = 70.0
-    force = catalog.ACTUATORS[g["actuator"]]["torque_nm"] / (jaw_mm / 1000.0)
-    return {"actuator": g["actuator"], "type": "revolute_jaw", "jaw_length_mm": jaw_mm,
-            "force": {"servo_stall_force_n": round(force, 1), "target_force_n": round(min(force * 0.25, 8.0), 2),
-                      "window_n": [None, None], "issues": [], "warnings": []}}
+JAW_LEVER_MM = 70.0   # a stock jaw's lever when the grasp can't be worked out (mid-jaw on the SO-101)
+NEAR_MM = 2.0         # a lever worked out for an object this close in size stands in for it in a quick estimate
+_LEVERS: dict = {}
+
+
+def _lever_key(design, sizing) -> tuple:
+    from .pipeline2 import _bundle_hash
+
+    o, src = design.object, design.arm.source
+    acts = tuple(sorted((j["name"], j["actuator"]) for j in sizing["joints"])) + (("gripper", sizing["gripper_actuator"]),)
+    return (src, _bundle_hash(src), acts, o.shape, float(o.diameter_mm), float(o.length_mm))
+
+
+def grasp_lever(design, sizing, quick: bool = False) -> float:
+    """The stock jaw's lever for this object (mm, from the jaw's pivot to the object's centre) where the simulation
+    grasps it (simulate.grasp_lever: against the fixed jaw, inside the fingers, reachable straight down): the egg sits
+    62 mm from the SO-101's pivot, a strawberry 70 mm. The firmware's torque limit is set for the target at this lever,
+    so the simulated squeeze is the target. Worked out on the robot's own jaws with the servos sizing chose (a swapped
+    gripper servo changes the hand) and the object's shape and size, on the camera-free URDF (a wrist camera rides
+    behind the jaws); memoized, as it takes 2 s for an egg and 20 s for a soda can.
+    quick (New robot's preflight, Teams' preview: inside a request) never searches: the lever worked out for this object,
+    or for one of its shape within NEAR_MM of its size, when this process has it; else the jaw's mid-jaw lever (the
+    profile's jaw_lever_mm, 70 mm on the SO-101), within 15 % of the search's 62-80 mm for objects 20-66 mm across."""
+    from ..spec import Design
+    from . import simulate
+
+    key = _lever_key(design, sizing)
+    if key in _LEVERS:
+        return _LEVERS[key]
+    if quick:
+        near = [(abs(k[4] - key[4]) + abs(k[5] - key[5]), v) for k, v in _LEVERS.items()
+                if k[:4] == key[:4] and abs(k[4] - key[4]) <= NEAR_MM and abs(k[5] - key[5]) <= NEAR_MM]
+        return min(near)[1] if near else float(load_profile(design.arm.source)[0].get("jaw_lever_mm") or JAW_LEVER_MM)
+    if len(_LEVERS) > 64:
+        _LEVERS.clear()
+    o = design.object
+    d = Design().with_changes({"name": "grasp", "arm.source": design.arm.source, "object.shape": o.shape,
+                               "object.diameter_mm": float(o.diameter_mm), "object.length_mm": float(o.length_mm)})
+    _LEVERS[key] = round(simulate.grasp_lever(build(d, sizing), d), 2)
+    return _LEVERS[key]
+
+
+def gripper_summary(design, sizing, quick: bool = False) -> dict:
+    """The gripper stage of an imported robot: its stock jaw's force plan, the grip's one source of truth (the electronics
+    plan, the firmware, the simulation and the manual all use these numbers). The window comes from the object, with the
+    same closed form the simulation uses for flat stock jaws: it slips below 1.5 x m g / (2 mu) and is damaged above its
+    damage force / 1.5. The target is the Grip force target when one is set, else the window's own (at least 0.5 N), and
+    never more than 80 % of what the gripper servo squeezes at the jaw on its servo rail; the firmware's F command stops
+    at limit_n.
+    Stock jaws carry no force sensors (Morph makes no pads or mounts for them): the firmware squeezes with the gripper
+    servo's torque limit, set for the target at lever_mm from the jaw's pivot (grasp_lever: where the simulation grasps
+    the object), and a hobby servo, which has none, is an issue for an object it can damage. quick: grasp_lever's quick
+    estimate (New robot's preflight and Teams' preview), with lever_estimated True when it is one; the build's gripper
+    stage always works the lever out."""
+    from .. import electronics as grip_electronics
+
+    key = sizing["gripper"]["actuator"]
+    prof = load_profile(design.arm.source)[0]
+    issues, warnings, estimated = [], [], False
+    try:
+        lever = grasp_lever(design, sizing, quick=quick)
+        estimated = quick and _lever_key(design, sizing) not in _LEVERS
+    except Exception as exc:  # noqa: BLE001  the grip still gets planned; the lever is the profile's estimate
+        lever = float(prof.get("jaw_lever_mm") or JAW_LEVER_MM)
+        warnings.append(f"the grasp on the stock jaws couldn't be worked out ({exc.__class__.__name__}); the torque limit "
+                        f"is set for the object {lever:g} mm from the jaw's pivot")
+    o = design.object
+    rail_v = (sizing.get("servo_rail") or {}).get("v")
+    stall = grip_electronics.jaw_force(catalog.torque_at(key, rail_v) if rail_v else catalog.ACTUATORS[key]["torque_nm"],
+                                       lever, "revolute")
+    hold = grip_electronics.static_hold(o)   # flat stock jaws: no wedge gain
+    lo, hi, target = grip_electronics.force_window(o, hold, None, design.electronics.target_force_n, floor=0.5)
+    target = min(target, 0.8 * stall, max(design.gripper.force_n, 0.5))
+    limit = min(o.max_force_n / 1.2 if o.max_force_n > 0 else stall, stall)
+    if design.finger.sensor != "none":
+        warnings.append("This robot keeps its stock jaws, which have no place for force sensors, so none are fitted "
+                        "(finger.sensor is ignored): the gripper squeezes with its servo's torque limit")
+    if catalog.protocol(key) == "pwm" and 0 < o.max_force_n < stall:
+        issues.append(f"gripper: the {key} can squeeze the {o.name or 'object'} with up to {stall:.0f} N, above the "
+                      f"{o.max_force_n:g} N that damages it, and a hobby PWM servo has no torque limit to stop it (the stock "
+                      "jaws carry no force sensor): use a smart-bus or Dynamixel gripper servo")
+    return {"actuator": key, "type": "revolute_jaw", "jaw_length_mm": lever,
+            "force": {"servo_stall_force_n": round(stall, 1), "hold_force_n": round(hold, 3),
+                      "window_n": [round(lo, 2), round(hi, 2) if hi != float("inf") else None],
+                      "target_force_n": round(target, 2), "limit_n": round(limit, 2), "object_limit_n": o.max_force_n or None,
+                      "sensor": "none", "jaw": "revolute", "lever_mm": lever, "issues": issues, "warnings": warnings,
+                      **({"lever_estimated": True} if estimated else {})}}
 
 
 def _place(asm, comp, prefix, link, T, step, kind=None, explode=(0, 0, 25)):
@@ -132,15 +310,15 @@ def _place(asm, comp, prefix, link, T, step, kind=None, explode=(0, 0, 25)):
 def build(design, sizing, eplan=None):
     prof, d = load_profile(design.arm.source)
     extras = _extras(design)
-    urdf = prof["urdf_camera"] if "wrist_camera" in extras and prof.get("urdf_camera") else prof["urdf"]
-    asm = load_urdf(os.path.join(d, urdf), prof)
+    asm = load_urdf(bundle_file(d, _urdf(design, prof)), prof, bundle=d)
     issues = []
     acts = {j["name"]: j["actuator"] for j in sizing["joints"]}
     acts[prof["gripper_joint"]] = sizing["gripper_actuator"]
+    rail_v = (sizing.get("servo_rail") or {}).get("v")
     for j in asm.joints:
         if j.name in acts:
             j.actuator = acts[j.name]
-            j.effort = catalog.ACTUATORS[acts[j.name]]["torque_nm"]
+            j.effort = catalog.torque_at(acts[j.name], rail_v) if rail_v else catalog.ACTUATORS[acts[j.name]]["torque_nm"]
 
     # actuator swaps: re-skin the servo body that drives each joint, flag holders that no longer fit
     stock_dims = None
@@ -224,7 +402,10 @@ def build(design, sizing, eplan=None):
             asm.cables.append(Cable("camera_usb", [(cam.link, tuple(cam.mesh.bounds.mean(axis=0))), (link, tuple(origin))],
                                     diameter=3.5, color="#3a3f47", src="camera", dst="host USB", conductors=4))
 
+    from .arm import grip_meta
+
     asm.meta.update({"source": design.arm.source, "title": prof.get("title"), "license": prof.get("license"),
                      "source_url": prof.get("source_url"), "gripper_type": prof.get("gripper_type"),
-                     "sizing": sizing, "issues": issues, "stock_electronics": prof.get("electronics_stock")})
+                     "sizing": sizing, "issues": issues, "stock_electronics": prof.get("electronics_stock"),
+                     **grip_meta(eplan)})
     return asm

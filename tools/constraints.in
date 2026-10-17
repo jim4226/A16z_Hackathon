@@ -1,0 +1,9 @@
+# Inputs for constraints.txt besides requirements.txt: the optional extras and the tools CI installs.
+imageio-ffmpeg
+cascadio
+xacro
+PyYAML
+build
+pytest-xdist
+pytest-timeout
+ruff

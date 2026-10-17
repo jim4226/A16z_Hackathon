@@ -22,30 +22,60 @@ from .. import electronics as grip_electronics
 from .. import sim as grip_sim
 from ..design import build_profile
 from ..pipeline import Project
+from ..services.durable import explain, write_text
 from ..spec import Design, diff
+from . import catalog_extra  # noqa: F401  (imported robots' parts, needed even when their sizing is reused)
 
 # node: (parameter patterns it reads, upstream nodes, output directory)
 GRAPH = {
     # arm.size() reads the build config (link materials set the masses), the task (reach) and the hand
-    # (gripper/finger set the payload), so a pilot build re-sizes the joints instead of reusing prototype torques
-    "sizing": (["arm.*", "object.*", "electronics.servo", "build.*", "task.pick_*", "task.place_*", "finger.*", "gripper.*"],
-               [], None),
+    # (gripper/finger set the payload, a wrist camera or IMU in electronics.extras rides on it), so a pilot build
+    # re-sizes the joints instead of reusing prototype torques; and the servo rail every torque is worked out at
+    "sizing": (["arm.*", "object.*", "electronics.servo", "electronics.servo_v", "electronics.extras", "build.*",
+                "task.pick_*", "task.place_*", "finger.*", "gripper.*", "electronics.pinion_radius_mm"], [], None),
+    # the gripper stage analyses the fingers the build config makes (gripper_design), and leaves the controller and
+    # the supply to the electronics plan: a controller or process change never reruns it (nor asks Mechanical again).
+    # It reads sizing's servo rail (its stall forces are worked out on it) and, for an imported robot, the servos
+    # sizing chose; it reads nothing else of sizing (gripper_inputs), so a sizing rerun that leaves those alone reuses it
     "gripper": (["finger.*", "object.*", "gripper.*", "safety_factor", "electronics.target_force_n",
-                 "electronics.servo", "electronics.supply_v", "electronics.pinion_radius_mm", "arm.actuator_family",
-                 "arm.source", "arm.actuator_overrides"],
-                [], "gripper"),
+                 "electronics.servo", "electronics.pinion_radius_mm", "arm.actuator_family", "arm.source",
+                 "arm.actuator_overrides", "build.config"],
+                ["sizing"], "gripper"),
     "electronics": (["electronics.*"], ["sizing", "gripper"], None),
     "cad": (["finger.*", "object.shape", "object.diameter_mm", "object.length_mm", "build.*", "name", "arm.source"],
             ["sizing", "electronics"], "cad"),
     # sim reads the arm geometry, but electronics placed in the fixed base do not change its dynamics,
-    # so it keys off the geometry-defining parameters instead of the cad node
-    "sim": (["task.*", "object.*", "arm.*", "finger.*", "build.*"], ["sizing", "gripper"], "sim"),
+    # so it keys off the geometry-defining parameters instead of the cad node (plus the extras that ride on the hand,
+    # and the room it is simulated in: a world-only edit reruns the simulation and nothing else)
+    "sim": (["task.*", "object.*", "arm.*", "finger.*", "build.*", "electronics.extras", "world.*"], ["sizing", "gripper"],
+            "sim"),
     "wiring": ([], ["electronics", "cad"], "electronics"),
     "manufacturing": (["build.*", "fab.*"], ["cad", "wiring"], "mfg"),
     "bom": ([], ["manufacturing", "wiring"], None),
-    "manual": ([], ["cad", "manufacturing", "wiring"], "manual"),
+    "manual": (["task.*"], ["cad", "manufacturing", "wiring"], "manual"),   # it prints the cycle time and the task
 }
 ORDER = ["sizing", "gripper", "electronics", "cad", "sim", "wiring", "manufacturing", "bom", "manual"]
+
+
+def gripper_inputs(design: Design, sizing: dict | None) -> dict:
+    """The part of sizing's result the gripper stage reads, in sizing's own shape: the servo rail's voltage (the gripper
+    servo's stall force is worked out on it) and, for an imported robot, the servos sizing chose (its stock jaw's grasp
+    is worked out on the robot with them). gripper_stage computes from this alone, so a sizing rerun that leaves it as
+    the parent had it (a wrist camera, a longer reach) reuses the gripper stage instead of rerunning its grasp
+    simulation (PARTIAL)."""
+    sizing = sizing or {}
+    out = {"servo_rail": {"v": (sizing.get("servo_rail") or {}).get("v")}}
+    if design.arm.source:
+        g = sizing.get("gripper") if isinstance(sizing.get("gripper"), dict) else {}
+        out.update(gripper={"actuator": g.get("actuator")}, gripper_actuator=sizing.get("gripper_actuator"),
+                   joints=[{"name": j.get("name"), "actuator": j.get("actuator")} for j in sizing.get("joints") or []])
+    return out
+
+
+# What a stage reads of an upstream stage's result when it reads only part of it: {stage: {upstream: f(design, result)}}.
+# A rerun of that upstream that leaves f(...) as the parent revision had it reuses the stage (an early cutoff), as long
+# as no design key the stage itself reads changed. The stage must compute from f(...) alone (test_robot_stage_reads).
+PARTIAL = {"gripper": {"sizing": gripper_inputs}}
 LABELS = [("sizing", "Sizing"), ("gripper", "Gripper + grasp"), ("electronics", "Electronics plan"),
           ("cad", "Robot CAD"), ("sim", "Simulation"), ("wiring", "Schematic · PCB · FW"),
           ("manufacturing", "Manufacturing"), ("bom", "BOM + sourcing"), ("manual", "Assembly manual")]
@@ -100,28 +130,129 @@ def dirty_nodes(changed_keys) -> list:
     return [n for n in ORDER if n in dirty]
 
 
-HOBBY = ("sg90", "mg90s", "mg996r", "ds3218")
-
-
 def gripper_actuator(design: Design) -> str:
-    """The gripper uses the arm's actuator family (one bus, one spare-parts list)."""
-    fam, servo = design.arm.actuator_family, design.electronics.servo
-    if fam == "hobby_pwm":
-        return servo if servo in HOBBY else "mg996r"
-    return "sts3215" if fam == "smart_bus" else "xl430_w250"
+    """The gripper actuator of a Morph-generated arm: the one sizing picks and the CAD hand is built around (the arm's
+    family, or a gripper= override in arm.actuator_overrides), so the force plan and the grasp simulation use it too."""
+    from .arm import gripper_actuator as sized
+
+    return sized(design)
 
 
-def pipeline_version() -> str:
-    """Hash of the platform code: results built by older code are rebuilt when the Studio starts."""
+def gripper_design(design: Design) -> tuple:
+    """(the design the gripper stage analyses, the gripper actuator) for a generated arm: the gripper actuator (its stall
+    force is worked out on the servo rail, gripper_drive), and the fingers the robot's CAD makes for its build config
+    (arm.LOOK: printed PETG for a prototype, machined aluminium for a pilot, molded polycarbonate for production), not
+    the standalone gripper's finger.material and fab.process, which the robot doesn't build with. A robot's controller
+    and supply are the electronics plan's (electronics2), so none is chosen here."""
+    from .arm import LOOK, _config
+    from .catalog import ACTUATORS
+
+    ga = gripper_actuator(design)
+    material, _, process, _ = LOOK[_config(design)]["finger"]
+    return design.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"],
+                                "electronics.mcu": "auto", "finger.material": material, "fab.process": process}), ga
+
+
+def gripper_stall_nm(ga: str, sizing: dict | None) -> float | None:
+    """The gripper servo's stall torque (N·m) on sizing's servo rail, from the actuator catalog every other stage uses
+    (catalog.torque_at); its rated torque when no rail is known. None for a servo the catalog lacks."""
+    from .catalog import ACTUATORS, torque_at
+
+    if ga not in ACTUATORS:
+        return None
+    rail_v = ((sizing or {}).get("servo_rail") or {}).get("v")
+    return torque_at(ga, rail_v or ACTUATORS[ga]["nominal_v"])
+
+
+def gripper_drive(design: Design, ga: str, sizing: dict | None) -> dict:
+    """How a generated arm's gripper servo is driven, for its force plan (morph.electronics.plan's keywords): its stall
+    torque on sizing's rail (gripper_stall_nm) and whether the firmware sets its torque limit (electronics2), which
+    then sets a sensorless squeeze."""
+    from .electronics2 import has_torque_limit
+
+    return {"stall_nm": gripper_stall_nm(ga, sizing), "torque_limited": has_torque_limit(ga, design.arm.actuator_family)}
+
+
+def gripper_stage(design: Design, sizing: dict | None = None, n_trials: int = 4, simulate: bool = True) -> dict:
+    """The gripper stage's result (results.json "gripper"). Its "force" plan is the grip's one source of truth: the
+    electronics plan, the firmware, the simulation and the manual take its window, target and limit. An imported robot
+    keeps its stock jaw (imported.gripper_summary, from `sizing` when given); a generated arm's gripper is analysed, its
+    grasp simulated (simulate=False: the closed-form holding force instead, as the force plan's own fallback) and its force
+    planned on gripper_design(design), with the gripper servo's stall torque on sizing's servo rail (catalog.torque_at;
+    its rated torque without a sizing). Of sizing it reads only gripper_inputs(design, sizing)."""
+    if design.arm.source:
+        from . import imported
+        sz = sizing if (sizing or {}).get("gripper") else imported.size(design)
+        return imported.gripper_summary(design, gripper_inputs(design, sz))
+    gd, ga = gripper_design(design)
+    geom = build_profile(gd)
+    a = grip_analysis.analyze(gd, geom)
+    s = grip_sim.simulate(gd, geom, n_trials) if simulate else None
+    force = grip_electronics.plan(gd, a, s, **gripper_drive(design, ga, gripper_inputs(design, sizing)))
+    for k in ("mcu", "wiring", "parts", "sensing"):   # the standalone gripper's controller, pins and parts list
+        force.pop(k, None)
+    out = {"actuator": ga, "analysis": a, "force": force}
+    if s is not None:
+        out["sim"] = {k: v for k, v in s.items() if k != "trials"}
+    return out
+
+
+# The morph/*.py modules the robot pipeline computes with (its import graph, without keewano.py and settings.py:
+# Keewano's calibration is opt-in data, and features append event ids there). Every morph/robot/*.py is hashed too.
+PIPELINE_MODULES = ("spec", "design", "analysis", "electronics", "sim", "mechanism", "fab", "materials", "pipeline")
+_BUNDLES: dict = {}
+
+
+def _code_files() -> list:
+    here = os.path.dirname(os.path.abspath(__file__))
+    top = os.path.dirname(here)
+    robot = [os.path.join(here, fn) for fn in sorted(os.listdir(here)) if fn.endswith(".py")]
+    return robot + [os.path.join(top, m + ".py") for m in PIPELINE_MODULES]
+
+
+def _bundle_hash(source: str) -> str:
+    """The files of an imported robot's bundle (URDF, meshes, profile), hashed again only when one changes."""
+    import hashlib
+
+    try:
+        from ..importers.robots import robot_dir  # never robot.imported here: it loads trimesh (BUILD_MODULES)
+        root = robot_dir(source)
+    except (ValueError, OSError, ImportError):
+        return "missing"
+    try:
+        files = []
+        for directory, dirs, names in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+            for fn in sorted(names):
+                path = os.path.join(directory, fn)
+                if fn.startswith(".") or os.path.islink(path):
+                    continue
+                st = os.stat(path)
+                files.append((os.path.relpath(path, root).replace(os.sep, "/"), st.st_size, st.st_mtime_ns))
+        key = (root, tuple(files))
+        if key not in _BUNDLES:
+            h = hashlib.sha1()
+            for rel, _, _ in files:
+                with open(os.path.join(root, rel), "rb") as fh:
+                    h.update(rel.encode() + b"\0" + fh.read())
+            _BUNDLES[key] = h.hexdigest()
+        return _BUNDLES[key]
+    except OSError:
+        return "unreadable"
+
+
+def pipeline_version(source: str | None = None) -> str:
+    """Hash of the code that computes a revision (morph/robot/*.py plus PIPELINE_MODULES) and, for an imported robot
+    (`source` = arm.source), of its bundle: results built by older code or from an edited bundle are rebuilt when the
+    Studio starts. Studio, CLI and service modules are not hashed, so editing them never rebuilds the demo robots."""
     import hashlib
 
     h = hashlib.sha1()
-    here = os.path.dirname(os.path.abspath(__file__))
-    for root in (here, os.path.dirname(here)):
-        for fn in sorted(os.listdir(root)):
-            if fn.endswith(".py"):
-                with open(os.path.join(root, fn), "rb") as fh:
-                    h.update(fn.encode() + fh.read())
+    for path in _code_files():
+        with open(path, "rb") as fh:
+            h.update(os.path.basename(path).encode() + fh.read())
+    if source:
+        h.update(b"bundle:" + _bundle_hash(source).encode())
     return h.hexdigest()[:12]
 
 
@@ -132,27 +263,133 @@ def _mod(name):
         return None
 
 
+# What a build imports the first time one runs in a process (about a second): morph.robot.arm and the robots imported
+# from a bundle (trimesh, manifold3d, shapely, cascadio), the stage modules, MuJoCo (and OpenGL with it) and Pillow.
+# trimesh catches BaseException around its own optional imports, so a Ctrl+C landing there was swallowed, or left
+# trimesh half-made (a TypeError later, or a segmentation fault in cascadio's start-up): a program that builds from its
+# main thread loads these first with its stop signals held (cli._load_build).
+BUILD_MODULES = ("morph.robot.arm", "morph.robot.imported", "morph.robot.electronics2", "morph.robot.simulate",
+                 "morph.robot.manufacturing", "morph.robot.manual", "morph.robot.schematic", "mujoco", "PIL.Image")
+
+
+def load_build_modules():
+    """Import BUILD_MODULES now. One that can't be imported is left for the build to meet and report, as it does
+    without this: never raises an Exception."""
+    for name in BUILD_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+OUTPUT_KEYS = {"sizing": "sizing", "gripper": "gripper", "electronics": "eplan", "cad": "cad", "sim": "sims",
+               "wiring": "electronics", "manufacturing": "manufacturing", "bom": "bom", "manual": "manual"}
+INVALID = {"pending": "not computed: its module is not available", "error": "failed", "blocked": "not built",
+           "preview": "preview only"}
+
+
+def _preview(results: dict) -> bool:
+    return bool(results.get("preview_only") or (results.get("cad") or {}).get("preview_only"))
+
+
+def stage_problem(results: dict, node: str) -> str | None:
+    """Why this stage's result can't be used (an error, a missing output, a preview-only stand-in), or None.
+    Reads the outputs themselves, so it also judges revisions saved before stage_status existed."""
+    error = (results.get("errors") or {}).get(node)
+    if error:
+        return error
+    status = (results.get("stage_status") or {}).get(node) or (results.get("provenance") or {}).get(node)
+    if status in INVALID:
+        return INVALID[status]
+    if not results.get(OUTPUT_KEYS[node]):
+        return "missing required output"
+    if node == "cad" and _preview(results):
+        return "the basic model is a preview only; manufacturing needs the detailed robot CAD"
+    return None
+
+
+def artifact_problem(results: dict, node: str, revision_dir: str) -> str | None:
+    """A saved result can't stand in for files that are gone: every file the stage reports must exist
+    inside the revision folder."""
+    value = results.get(OUTPUT_KEYS[node]) or {}
+    paths = []
+    if node == "cad":
+        paths = ["cad/robot.glb", "cad/robot.json", value.get("urdf")]
+    elif node == "sim":
+        scenarios = value.get("scenarios") or {}
+        if not scenarios or any(not s.get("file") or (s.get("metrics") or {}).get("error") for s in scenarios.values()):
+            return "a simulation scenario failed or wrote no output"
+        paths = ["sim/" + str(value.get("mjcf") or "")] + ["sim/" + s["file"] for s in scenarios.values()]
+    elif node == "wiring":
+        paths = ["electronics/" + str(value.get(k) or "") for k in ("schematic_svg", "schematic_json", "harness_csv", "firmware")]
+    elif node == "manufacturing":
+        paths = ["mfg/manufacturing.json", "mfg/" + str(value.get("package") or "")]
+        paths += ["mfg/" + f for part in value.get("parts", []) for f in part.get("files", [])]
+    elif node == "manual":
+        paths = ["manual/" + str(value.get(k) or "") for k in ("json", "html")]
+    base = os.path.realpath(revision_dir)
+    for path in paths:
+        if not path or path.endswith("/"):
+            return f"missing required artifact reference for {node}"
+        target = os.path.realpath(os.path.join(base, path))
+        try:
+            ok = os.path.commonpath([base, target]) == base and os.path.isfile(target)
+        except ValueError:
+            ok = False
+        if not ok:
+            return f"missing required artifact for {node}: {path}"
+    return None
+
+
 class RobotProject(Project):
     def run(self, design: Design, parent: str | None = None, label: str = "", n_trials: int = 4,
-            verbose: bool = True, on_event=None, fast_sim: bool = False) -> str:
-        from . import arm
-
+            verbose: bool = True, on_event=None, fast_sim: bool = False, by: str | None = None,
+            proposed_by: str | None = None) -> str:
+        """Build a revision of `design` (reusing what `parent` already has) and return its name. `by` is the team
+        member who asked for it (Teams), `proposed_by` the author of the change request it applies; both are recorded
+        in results.json and the ledger."""
         emit = on_event or (lambda e: None)
-        rev = f"r{len(self.revs()) + 1:03d}"
-        out = self.rev_dir(rev)
-        os.makedirs(out)
-        with open(os.path.join(out, "design.json"), "w", encoding="utf-8") as fh:
-            fh.write(design.dumps())
-        if parent:
-            changes = diff(self.load_design(parent), design)
+        if parent:  # read before a revision is claimed: an unreadable parent never leaves a half-made revision
+            try:
+                base, prev = self.load_design(parent), self.load_results(parent)
+                if not isinstance(prev, dict):
+                    raise ValueError("it isn't a results file")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise ValueError(f"{parent}'s saved files can't be read ({exc.__class__.__name__}: {exc}); Morph won't "
+                                 "build on it.") from None
+            changes = diff(base, design)
             todo = dirty_nodes(changes.keys())
-            prev = self.load_results(parent)
         else:
             changes, todo, prev = {}, list(ORDER), {}
+        rev, lock = self.claim_build()
+        try:
+            return self._build(rev, design, parent, label, n_trials, verbose, emit, fast_sim, by, proposed_by, changes,
+                               todo, prev)
+        except BaseException:
+            # it never finished (an error, a full disk, Ctrl+C): its folder holds only files that can be made again, and
+            # left behind it would keep the disk full and be read as a cut-off build
+            if not os.path.isfile(os.path.join(self.rev_dir(rev), "results.json")):
+                self.discard(rev)
+            raise
+        finally:
+            lock.release()
+
+    def _build(self, rev, design, parent, label, n_trials, verbose, emit, fast_sim, by, proposed_by, changes, todo, prev):
+        from . import arm
+
+        out = self.rev_dir(rev)
+        write_text(os.path.join(out, "design.json"), design.dumps())
         res = {"rev": rev, "parent": parent, "label": label, "kind": "robot",
-               "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "timings_s": {}}
+               "changes": {k: list(v) for k, v in changes.items()}, "provenance": {}, "stage_status": {}, "timings_s": {}}
+        if by:
+            res["by"] = by
+        if proposed_by:
+            res["proposed_by"] = proposed_by
+        # "dirty": the stages this edit may rerun (dirty_nodes). An early cutoff (_cut_off) can still reuse one of them,
+        # which its "node" event says ("reused"); the ledger records the stages that ran
         emit({"type": "start", "rev": rev, "parent": parent, "changes": res["changes"], "dirty": todo})
         cache = {}
+        ran = []
 
         def asm():
             if "asm" not in cache:
@@ -162,26 +399,49 @@ class RobotProject(Project):
                 else:
                     try:
                         cache["asm"] = arm.build(design, res["sizing"], res.get("eplan"))
-                    except Exception as exc:  # never leave the user without a robot: fall back to the stub generator
+                    except Exception as exc:  # show a basic model to look at, but never manufacture the stand-in
                         traceback.print_exc()
                         from . import arm_stub
-                        res.setdefault("warnings", []).append(f"detailed arm generator failed ({exc}); showing the basic model")
+                        why = self._why(exc)
+                        res.setdefault("warnings", []).append(f"detailed arm generator failed ({why}); showing the basic "
+                                                              "model as a preview only, not for manufacturing")
+                        res["preview_only"] = True
                         cache["asm"] = arm_stub.build(design, res["sizing"], res.get("eplan"))
             return cache["asm"]
 
         for node in ORDER:
             sub = GRAPH[node][2]
-            if node not in todo:
+            if node not in todo or (parent and self._cut_off(node, design, changes, res, prev, self.rev_dir(parent))):
                 for key in self._keys(node):
                     res[key] = prev.get(key)
-                res["provenance"][node] = f"reused from {parent}"
+                # a failed, incomplete or preview-only stage stays that way: an unrelated edit never launders it
+                problem = stage_problem(prev, node) or artifact_problem(prev, node, self.rev_dir(parent))
+                preview = node == "cad" and _preview(prev)
+                if preview:
+                    res["preview_only"] = True
+                elif problem:
+                    res.setdefault("errors", {})[node] = f"{problem} (carried over from {parent})"
+                status = "preview" if preview else "error" if problem else "reused"
+                res["provenance"][node] = f"reused from {parent}" if status == "reused" else status
+                res["stage_status"][node] = status
                 if sub and os.path.isdir(os.path.join(self.rev_dir(parent), sub)):
                     shutil.copytree(os.path.join(self.rev_dir(parent), sub), os.path.join(out, sub))
-                emit({"type": "node", "node": node, "status": "reused"})
+                emit({"type": "node", "node": node, "status": status})
                 if verbose:
-                    print(f"  {node:<14} reused")
+                    print(f"  {node:<14} {status if status == 'reused' else status + ' (carried over)'}")
+                continue
+            blocked = [up for up in GRAPH[node][1] if stage_problem(res, up)]
+            if blocked:  # never build on an invalid input
+                why = ("needs the detailed robot CAD, not the basic preview" if "cad" in blocked and _preview(res)
+                       else "needs " + ", ".join(blocked) + ", which did not complete")
+                res.setdefault("errors", {})[node] = f"not built: {why}"
+                res["provenance"][node] = res["stage_status"][node] = "blocked"
+                emit({"type": "node", "node": node, "status": "blocked"})
+                if verbose:
+                    print(f"  {node:<14} blocked ({', '.join(blocked)})")
                 continue
             emit({"type": "node", "node": node, "status": "computing"})
+            ran.append(node)
             t0 = time.time()
             nd = os.path.join(out, sub) if sub else out
             os.makedirs(nd, exist_ok=True)
@@ -189,29 +449,93 @@ class RobotProject(Project):
             try:
                 if self._compute(node, design, res, nd, asm, n_trials, fast_sim) is False:
                     status = "pending"          # module not available yet: say so, never fake "computed"
+                elif node == "cad" and _preview(res):
+                    status = "preview"          # the basic model: shown, never manufactured
+                else:
+                    problem = stage_problem(res, node) or artifact_problem(res, node, out)
+                    if problem:
+                        res.setdefault("errors", {})[node] = problem
+                        status = "error"
             except Exception as exc:  # keep the rest of the pipeline alive; surface the error
                 traceback.print_exc()
-                res.setdefault("errors", {})[node] = f"{exc.__class__.__name__}: {exc}"
+                res.setdefault("errors", {})[node] = f"{exc.__class__.__name__}: {self._why(exc)}"
                 status = "error"
             res["provenance"][node] = status
+            res["stage_status"][node] = status
             res["timings_s"][node] = round(time.time() - t0, 2)
             emit({"type": "node", "node": node, "status": status, "seconds": res["timings_s"][node]})
             if verbose:
                 print(f"  {node:<14} {status} ({res['timings_s'][node]:.2f}s)")
 
         res["summary"] = summarize(res)
-        res["pipeline_version"] = pipeline_version()
-        with open(os.path.join(out, "results.json"), "w", encoding="utf-8") as fh:
-            json.dump(res, fh, indent=1, default=_jsonable)
+        res["pipeline_version"] = pipeline_version(design.arm.source)
+        # results.json marks a finished revision: it appears whole, and is on the disk before the ledger says so
+        write_text(os.path.join(out, "results.json"), json.dumps(res, indent=1, default=_jsonable))
+        # what ran, not what the edit made a candidate: a stage the early cutoff reused is no StageRecomputed (Keewano)
+        # and no rebuilt stage in Teams' activity
         self.log({"type": "revision", "rev": rev, "parent": parent, "label": label, "changes": res["changes"],
-                  "recomputed": todo, "design": design.to_dict(), "predicted": res["summary"]})
+                  "recomputed": ran, "reused": [n for n in ORDER if res["stage_status"].get(n) == "reused"],
+                  "design": design.to_dict(), "predicted": res["summary"], **({"by": by} if by else {}),
+                  **({"proposed_by": proposed_by} if proposed_by else {})})
         return rev
+
+    @staticmethod
+    def _cut_off(node, design, changes, res, prev, parent_dir) -> bool:
+        """Early cutoff: a stage that is only dirty because an upstream stage reran is reused when that upstream left the
+        part of its result the stage reads (PARTIAL) as the parent had it, and every other upstream was reused. A key
+        the stage reads itself, an upstream it reads whole or one that failed now, or the parent's own result for the
+        stage being unusable, reruns it."""
+        part = PARTIAL.get(node)
+        if not part or any(fnmatch.fnmatch(k, p) for k in changes for p in GRAPH[node][0]):
+            return False
+        if stage_problem(prev, node) or artifact_problem(prev, node, parent_dir):
+            return False
+        for up in GRAPH[node][1]:
+            if res["stage_status"].get(up) == "reused":
+                continue
+            if up not in part or stage_problem(res, up) or stage_problem(prev, up):
+                return False
+            if part[up](design, res.get(OUTPUT_KEYS[up])) != part[up](design, prev.get(OUTPUT_KEYS[up])):
+                return False
+        return True
 
     @staticmethod
     def _keys(node):
         return {"sizing": ["sizing"], "gripper": ["gripper"], "electronics": ["eplan"], "cad": ["cad"],
                 "sim": ["sims"], "wiring": ["electronics"], "manufacturing": ["manufacturing"], "bom": ["bom"],
                 "manual": ["manual"]}[node]
+
+    def _sim_world(self, design, nd):
+        """World mode: the room design.world names, in robot base millimetres: the world saved under design.world.sha
+        (world/saved/<sha>.json; the room may have been edited again since), else world/world.json; also kept as
+        sim/world.json so the revision shows what it was simulated against. A named world that is missing or broken
+        fails the stage rather than silently simulating the plain table."""
+        if not design.world.id:
+            return None
+        from ..studio import worlds
+        from ..studio.security import contained_path
+
+        if not isinstance(design.world.id, str) or not worlds.SLUG.fullmatch(design.world.id):
+            raise RuntimeError("world mode: world.id must be a world's id (lower-case letters, digits and -), never a path")
+        kept = worlds.saved_path(self.root, design.world.sha)
+        for path in (worlds.world_path(self.root), kept):
+            rel = os.path.relpath(path, self.root).replace(os.sep, "/") if path else None
+            if rel and os.path.lexists(path) and not contained_path(self.root, rel, decode=False):
+                raise RuntimeError(f"world mode: {rel} must be a file inside the project folder")
+        w = worlds.load_pinned(self.root, design.world.id, design.world.sha)
+        if w is None:
+            raise RuntimeError(f"world mode: {design.world.id} isn't this project's world (world/world.json); "
+                               "save the world again or turn world mode off")
+        sw = worlds.sim_world(w)
+        sw["design_sha"] = design.world.sha
+        with open(os.path.join(nd, "world.json"), "w", encoding="utf-8") as fh:
+            json.dump(sw, fh, indent=1)
+        return sw
+
+    def _why(self, exc) -> str:
+        """A stage's error for results.json, which the page shows: files named from the projects folder (the folder
+        holding this project), never the server's own path (durable.explain); the terminal gets the traceback."""
+        return explain(exc, os.path.dirname(os.path.abspath(self.root)))
 
     def _compute(self, node, design, res, nd, asm, n_trials, fast_sim):
         from . import arm
@@ -223,27 +547,17 @@ class RobotProject(Project):
             else:
                 try:
                     res["sizing"] = arm.size(design)
-                except Exception:
+                except Exception as exc:  # basic numbers to show, but nothing downstream may build on them
                     from . import arm_stub
                     res["sizing"] = arm_stub.size(design)
-        elif node == "gripper" and design.arm.source:
-            from . import imported
-            res["gripper"] = imported.gripper_summary(design, imported.size(design))
+                    why = f"{exc.__class__.__name__}: {self._why(exc)}"
+                    res.setdefault("errors", {})["sizing"] = f"detailed sizing failed ({why}); " \
+                                                             "the basic estimate is a preview only"
         elif node == "gripper":
-            from .catalog import ACTUATORS
-
-            ga = gripper_actuator(design)
-            gd = design.with_changes({"electronics.servo": ga, "electronics.supply_v": ACTUATORS[ga]["nominal_v"]})
-            geom = build_profile(gd)
-            a = grip_analysis.analyze(gd, geom)
-            s = grip_sim.simulate(gd, geom, n_trials)
-            res["gripper"] = {"actuator": ga, "analysis": a, "sim": {k: v for k, v in s.items() if k != "trials"},
-                              "force": grip_electronics.plan(gd, a, s)}
+            res["gripper"] = gripper_stage(design, res.get("sizing"), n_trials)
         elif node == "electronics":
             e2 = _mod("electronics2")
-            grip_t = ((res.get("gripper") or {}).get("force") or {}).get("target_force_n")
-            sz = {**res["sizing"], **({"grip_target_n": grip_t} if grip_t else {})}
-            res["eplan"] = e2.plan(design, sz) if e2 else None
+            res["eplan"] = e2.plan(design, res["sizing"], grip=(res.get("gripper") or {}).get("force")) if e2 else None
             return e2 is not None
         elif node == "cad":
             a = asm()
@@ -256,12 +570,15 @@ class RobotProject(Project):
                           "validate": errs, "urdf": os.path.relpath(urdf, os.path.dirname(nd)),
                           "groups": len({p.group or p.name for p in a.parts}),
                           "source": a.meta.get("source") or "generated", "title": a.meta.get("title"),
+                          "preview_only": bool(res.get("preview_only")),
                           "license": a.meta.get("license"), "source_url": a.meta.get("source_url"),
                           "issues": a.meta.get("issues", []),
                           "redesign": [p.meta["needs_redesign"] for p in a.parts if p.meta.get("needs_redesign")]}
         elif node == "sim":
             simulate = _mod("simulate")
-            res["sims"] = simulate.run_all(asm(), design, nd, fast=fast_sim) if simulate else None
+            world = self._sim_world(design, nd) if simulate else None
+            res["sims"] = (simulate.run_all(asm(), design, nd, fast=fast_sim, **({"world": world} if world else {}))
+                           if simulate else None)
             return simulate is not None
         elif node == "wiring":
             e2 = _mod("electronics2")
@@ -294,6 +611,44 @@ def _jsonable(o):
     return str(o)
 
 
+SIM_CHECKS = {"pick_place": "pick-and-place", "shake": "shake test", "payload_sweep": "payload test",
+              "workspace": "workspace check"}
+
+
+def sim_issue(name: str, scenario: dict) -> str | None:
+    """The summary's issue for a simulated scenario that failed (None when it passed), saying why in plain words:
+    every scenario the robot is simulated in counts, not only the pick and place."""
+    m = (scenario or {}).get("metrics") or {}
+    if m.get("success") is not False:
+        return None
+    what = SIM_CHECKS.get(name, str((scenario or {}).get("title") or name).lower())
+    slip = m.get("slip_mm", m.get("max_slip_mm"))
+    why = []
+    if m.get("error"):
+        why.append(f"it could not run: {m['error']}")
+    if m.get("failure"):
+        why.append(str(m["failure"]))
+    if m.get("intact") is False and m.get("damage_force_n"):
+        why.append(f"squeezed {m.get('grip_n_max', 0):g} N per finger, above the {m['damage_force_n']:g} N that damages it")
+    if m.get("dropped"):
+        why.append("object dropped" + (f" ({slip:g} mm slip)" if slip is not None else ""))
+    elif name == "shake" and slip is not None and slip >= 5.0:
+        why.append(f"object slipped {slip:g} mm in the jaws (5 mm allowed)")
+    if name == "pick_place" and not m.get("dropped") and (m.get("place_error_mm") or 0) > 15.0:
+        why.append(f"placed {m['place_error_mm']:g} mm from the target")
+    if name == "payload_sweep" and m.get("max_payload_g") is not None:
+        why.append(f"holds {m['max_payload_g']:g} g, less than the object's {m.get('rated_payload_g', 0):g} g")
+    if name == "workspace":
+        far = [p for p, k in (("pick", "pick_reachable"), ("place", "place_reachable")) if m.get(k) is False]
+        why.append(f"the {' and '.join(far)} point{'s are' if len(far) > 1 else ' is'} out of reach" if far else
+                   "no reachable workspace")
+    if m.get("note") and "reach" in str(m["note"]):
+        why.append(str(m["note"]))
+    if m.get("world_contacts") and not m.get("failure"):
+        why.append("the arm hits the room")
+    return f"{what} failed in simulation ({'; '.join(dict.fromkeys(why)) or 'object not delivered'})"
+
+
 def summarize(r: dict) -> dict:
     sz = r.get("sizing") or {}
     g = r.get("gripper") or {}
@@ -307,25 +662,41 @@ def summarize(r: dict) -> dict:
     bom = (r.get("bom") or {}).get("totals", {})
     man = r.get("manual") or {}
     joints = sz.get("joints", [])
+    stretch = pay.get("stretch_payload_g")
     issues = list(sz.get("issues", [])) + list(cad.get("issues", []) or []) + list((g.get("analysis") or {}).get("issues", [])) + \
         list((g.get("force") or {}).get("issues", [])) + list(cad.get("validate", []) or []) + \
-        list(el.get("issues", []) or []) + list(mfg.get("issues", []) or [])
+        list((r.get("eplan") or {}).get("issues", []) or []) + list(el.get("issues", []) or []) + list(mfg.get("issues", []) or [])
+    issues = list(dict.fromkeys(issues))   # the wiring stage repeats the plan's issues
     for node, err in (r.get("errors") or {}).items():
         issues.append(f"{node} stage error: {err}")
-    if pp.get("success") is False:
-        issues.append(f"pick-and-place failed in simulation ({pp.get('failure') or pp.get('reason') or 'object not delivered'})")
-    pending = [n for n, v in (r.get("provenance") or {}).items() if v in ("pending", "error")]
+    sim_failed = []
+    for name, sc in sims.items():          # every simulated scenario counts: a dropped can in the shake test is an issue
+        why = sim_issue(name, sc)
+        if why:
+            issues.append(why)
+            sim_failed.append(name)
+    pending = [n for n in ORDER if stage_problem(r, n)]
     if pending:
         issues.append("not computed: " + ", ".join(pending))
+    if _preview(r):
+        issues.append("preview only: the basic model stands in for the detailed robot CAD and is not valid for manufacturing")
     return {
         "dof": len(joints), "reach_mm": sz.get("reach_mm"), "payload_g": sz.get("payload_g"),
         "actuators": ", ".join(sorted({j["actuator"] for j in joints})),
         "min_torque_margin": min((j["margin"] for j in joints), default=None),
+        "torque_margin_basis": sz.get("basis"), "servo_rail_v": (sz.get("servo_rail") or {}).get("v"),
         "parts": cad.get("parts"), "robot_mass_kg": cad.get("mass_kg"),
         "grasp_hold_force_n": (g.get("sim") or {}).get("min_hold_force_n"),
         "grip_target_n": (g.get("force") or {}).get("target_force_n"),
         "pick_place_success": pp.get("success"), "cycle_time_s": pp.get("cycle_time_s"),
-        "max_payload_g": pay.get("max_payload_g"), "workspace_reach_mm": ws.get("reach_mm"),
+        # the payload sweep's measured maximum is top-down at payload_test_reach_mm from the base, not at full reach;
+        # stretch_payload_g is the static capacity stretched straight out (both with a servo at stall). Below zero the
+        # arm can't hold even its own weight out there: no payload (0 g), stretch_holds_itself False and the joint
+        "max_payload_g": pay.get("max_payload_g"), "payload_test_reach_mm": pay.get("test_reach_mm"),
+        "stretch_payload_g": None if stretch is None else max(stretch, 0.0), "stretch_reach_mm": pay.get("stretch_reach_mm"),
+        "stretch_holds_itself": None if stretch is None else stretch >= 0, "stretch_limited_by": pay.get("stretch_limited_by"),
+        "workspace_reach_mm": ws.get("reach_mm"),
+        "top_down_reach_mm": (ws.get("top_down_reach_mm") or [None, None])[1],
         "max_torque_pct": max((pp.get("max_torque_pct") or {}).values(), default=None),
         "electronics_config": el.get("config"), "bus": el.get("bus"),
         "pcb": bool(el.get("board")), "harness_wires": len(el.get("harness", []) or []),
@@ -333,5 +704,7 @@ def summarize(r: dict) -> dict:
         "unit_cost": bom.get("total"), "fab_lead_days": (mfg.get("totals") or {}).get("lead_days"),
         "tooling_cost": (mfg.get("totals") or {}).get("tooling_cost"),
         "assembly_steps": len(man.get("steps", []) or []), "assembly_time_min": man.get("time_min_total"),
-        "feasible": not issues, "issues": issues,
+        "feasible": not issues, "issues": issues, "sim_failed": sim_failed,
+        # what sizing changed from the request to make the arm buildable ("reach raised from 320 to 475 mm: ...")
+        "notes": list(sz.get("notes") or []),
     }

@@ -85,6 +85,18 @@ def test_size_overrides_and_dual_shoulder():
     assert s["issues"] == []
 
 
+def test_moving_accessories_count_in_the_hand_mass():
+    """A wrist camera and an IMU ride on the gripper: sizing carries what the build mounts there."""
+    _, s0, a0, _ = _built()
+    _, s1, a1, _ = _built(extras="wrist_camera,estop,imu")
+    hand = lambda a: 1000 * sum(a.link_mass(n)[0] for n in ("gripper_base", "jaw_left", "jaw_right", "pinion", "tcp"))  # noqa: E731
+    grew = s1["hand_mass_g"] - s0["hand_mass_g"]
+    assert grew > 15 and abs(grew - (hand(a1) - hand(a0))) < 2.0, (grew, hand(a1) - hand(a0))
+    sh = lambda s: next(j for j in s["joints"] if j["name"] == "j2_shoulder")["torque_req_nm"]  # noqa: E731
+    assert sh(s1) > sh(s0)
+    assert arm.size(_design(electronics__extras="estop"))["hand_mass_g"] == s0["hand_mass_g"]   # the e-stop is in the base
+
+
 # ------------------------------------------------------------------ build: structure + contract
 @pytest.mark.parametrize("cfg", CONFIGS)
 @pytest.mark.parametrize("fam", FAMILIES)
@@ -283,6 +295,26 @@ def test_electronics_bay_and_panel():
     assert pcb and all(p.process == "pcb_assembly" for p in pcb)
     assert not any(p.meta.get("ref") == "U2" for p in c.parts)
     assert names
+
+
+@pytest.mark.parametrize("fam", FAMILIES)
+@pytest.mark.parametrize("ecfg", ("modules", "custom_pcb"))
+def test_the_printed_base_fits_the_printer(fam, ecfg):
+    """With the real electronics plan in its bay, a prototype base shell prints in one piece on the FDM bed the
+    manufacturing plan checks against (a custom PCB's base used to be 253 mm long)."""
+    from morph.robot import electronics2
+    from morph.robot.manufacturing import FDM_BED
+
+    d = _design(arm__actuator_family=fam, electronics__config=ecfg, electronics__extras="estop")
+    s = arm.size(d)
+    a = arm.build(d, s, electronics2.plan(d, s))
+    ext = sorted(next(p for p in a.parts if p.name == "base_shell").mesh.extents, reverse=True)
+    assert all(e <= b for e, b in zip(ext, sorted(FDM_BED, reverse=True))), ext
+    if ecfg == "custom_pcb":
+        assert ext[0] <= FDM_BED[0] - 10.0, ext             # with room to spare, not by a hair
+        jacks = [p for p in a.parts if p.name.startswith("panel_")]
+        board = next(p for p in a.parts if p.name.endswith("_board") and p.kind == "pcb")
+        assert jacks and all(j.mesh.bounds[0][2] > board.mesh.bounds[1][2] for j in jacks if j.name.endswith("_cable"))
 
 
 def test_electronics_plan_integration():

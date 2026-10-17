@@ -1,0 +1,230 @@
+{
+ "about": "Add box here, tried (worlds.try_boxes): a speck (0.1 mm) or a 6 mm cube of scan on the hunters' bench egg-picker (fast=False, as the Studio simulates), where 0033630 offered a box. 'next' is the simulation with that box added, as the hunters measured it before this change: where it failed, no box may be offered and the check says how it fails; where it succeeded, the box is offered and the trial says the clearance that simulation measured.",
+ "cases": [
+  {
+   "name": "speck [213.9418, -49.73, 261.9428]",
+   "kind": "speck",
+   "center": [
+    213.9418,
+    -49.73,
+    261.9428
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_carry_ends_s11 / touch_all_s12",
+   "next": {
+    "success": false,
+    "failure": "the wrist hits Scan near miss 1 during the approach at 1.7 s"
+   }
+  },
+  {
+   "name": "speck [215.3035, -45.4143, 266.476]",
+   "kind": "speck",
+   "center": [
+    215.3035,
+    -45.4143,
+    266.476
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_carry_ends_s11 / touch_all_s12",
+   "next": {
+    "success": false,
+    "failure": "the wrist hits Scan near miss 1 during the carry at 4.8 s"
+   }
+  },
+  {
+   "name": "speck [254.7288, -17.3476, 161.3478]",
+   "kind": "speck",
+   "center": [
+    254.7288,
+    -17.3476,
+    161.3478
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_carry_ends_s11 / touch_all_s12",
+   "next": {
+    "success": false,
+    "failure": "the gripper base hits Scan near miss 1 during the carry at 4.9 s"
+   }
+  },
+  {
+   "name": "speck [255.5067, -21.9011, 164.5879]",
+   "kind": "speck",
+   "center": [
+    255.5067,
+    -21.9011,
+    164.5879
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_carry_ends_s11 / touch_all_s12",
+   "next": {
+    "success": false,
+    "failure": "the gripper base hits Scan near miss 1 during the carry at 5.7 s"
+   }
+  },
+  {
+   "name": "speck [141.9297, 114.2491, 124.9154]",
+   "kind": "speck",
+   "center": [
+    141.9297,
+    114.2491,
+    124.9154
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_carry_ends_s11 / touch_all_s12",
+   "next": {
+    "success": false,
+    "failure": "the jaw left hits Scan near miss 1 during the carry at 4.3 s"
+   }
+  },
+  {
+   "name": "speck [145.5411, 97.263, 71.1388]",
+   "kind": "speck",
+   "center": [
+    145.5411,
+    97.263,
+    71.1388
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_carry_ends_s11 / touch_all_s12",
+   "next": {
+    "success": false,
+    "failure": "the jaw right hits Scan near miss 1 during the carry at 4.2 s"
+   }
+  },
+  {
+   "name": "cube [193.872, -115.453, 227.025]",
+   "kind": "cube",
+   "center": [
+    193.872,
+    -115.453,
+    227.025
+   ],
+   "half": 3.0,
+   "source": "hunt1 near_fixed_s31 (repro_trimmed_box_fails)",
+   "next": {
+    "success": false,
+    "failure": "the wrist hits Scan near miss 1 during the approach at 1.2 s"
+   }
+  },
+  {
+   "name": "cube [176.054, -79.46, 88.219]",
+   "kind": "cube",
+   "center": [
+    176.054,
+    -79.46,
+    88.219
+   ],
+   "half": 3.0,
+   "source": "hunt1 near_fixed_s31 (repro_trimmed_box_fails)",
+   "next": {
+    "success": false,
+    "failure": "the jaw right hits Scan near miss 1 during the approach at 1.2 s"
+   }
+  },
+  {
+   "name": "speck [206.5455, 135.5446, 161.5001]",
+   "kind": "speck",
+   "center": [
+    206.5455,
+    135.5446,
+    161.5001
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_all_s12",
+   "next": {
+    "success": true,
+    "min_clearance_mm": 10.3
+   }
+  },
+  {
+   "name": "speck [147.7729, 73.2335, 121.6668]",
+   "kind": "speck",
+   "center": [
+    147.7729,
+    73.2335,
+    121.6668
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_all_s12",
+   "next": {
+    "success": true,
+    "min_clearance_mm": 0.3
+   }
+  },
+  {
+   "name": "speck [151.0519, 11.8304, 74.7489]",
+   "kind": "speck",
+   "center": [
+    151.0519,
+    11.8304,
+    74.7489
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_all_s12",
+   "next": {
+    "success": true,
+    "min_clearance_mm": 0.7
+   }
+  },
+  {
+   "name": "speck [224.8978, 115.6723, 120.8045]",
+   "kind": "speck",
+   "center": [
+    224.8978,
+    115.6723,
+    120.8045
+   ],
+   "half": 0.05,
+   "source": "hunt1 touch_all_s12",
+   "next": {
+    "success": true,
+    "min_clearance_mm": 17.5
+   }
+  },
+  {
+   "name": "cube [25.173, -49.45, 94.68]",
+   "kind": "cube",
+   "center": [
+    25.173,
+    -49.45,
+    94.68
+   ],
+   "half": 3.0,
+   "source": "hunt1 near_all_s22 / near_fixed_s31",
+   "next": {
+    "success": true,
+    "min_clearance_mm": 2.9
+   }
+  },
+  {
+   "name": "cube [178.558, -81.526, 69.441]",
+   "kind": "cube",
+   "center": [
+    178.558,
+    -81.526,
+    69.441
+   ],
+   "half": 3.0,
+   "source": "hunt1 near_all_s22 / near_fixed_s31",
+   "next": {
+    "success": true,
+    "min_clearance_mm": 0.9
+   }
+  },
+  {
+   "name": "cube [272.437, -88.052, 151.157]",
+   "kind": "cube",
+   "center": [
+    272.437,
+    -88.052,
+    151.157
+   ],
+   "half": 3.0,
+   "source": "hunt1 near_all_s22 / near_fixed_s31",
+   "next": {
+    "success": true,
+    "min_clearance_mm": 0.1
+   }
+  }
+ ]
+}

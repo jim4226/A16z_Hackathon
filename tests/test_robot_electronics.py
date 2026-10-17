@@ -259,3 +259,20 @@ def test_schematic_renders_every_component():
     assert layout["sheet"] in ("A4", "A3", "A2")
     for net in ("V_SERVO", "BUS_DATA", "USB_DP", "FSR_L", "ESTOP_LOOP"):
         assert net in svg
+
+
+def test_the_gripper_stage_plans_its_force_with_every_controller_on_offer():
+    """The gripper stage plans the grip force with the robot's controller, so each Controller option in the Parameters
+    panel must be one the force planner knows (the ESP32-S3 DevKit used to stop the stage with a KeyError)."""
+    from morph import analysis
+    from morph import electronics as grip
+    from morph.design import build_profile
+    from morph.robot.pipeline2 import PARAMS, gripper_actuator
+
+    options = next(extra["options"] for key, _, _, _, extra in PARAMS if key == "electronics.mcu")
+    for mcu in options:
+        d = Design().with_changes({**EGG_ROBOT, "electronics.mcu": mcu})
+        ga = gripper_actuator(d)
+        gd = d.with_changes({"electronics.servo": ga, "electronics.supply_v": catalog.ACTUATORS[ga]["nominal_v"]})
+        plan = grip.plan(gd, analysis.analyze(gd, build_profile(gd)), None)
+        assert plan["target_force_n"] > 0 and plan["mcu"] == (mcu if mcu != "auto" else "arduino_nano"), mcu

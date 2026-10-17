@@ -23,8 +23,9 @@ import json
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from urllib.request import Request, urlopen
+
+from . import settings
 
 BASE = "https://boardrepo.com"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "morph", "boardrepo")
@@ -92,6 +93,8 @@ def fetch(board: str, timeout: float = 15) -> dict:
         return {"board": board, "url": None, "ok": False, "error": "not a BoardRepo board (expected owner/slug)"}
     board, out = bid, {"board": bid, "url": page(bid)}
     try:
+        if not settings.network_allowed():
+            raise RuntimeError("network lookups are off in the settings: showing saved board details only")
         req = Request(f"{page(board)}.md", headers={"Accept": "text/markdown", "User-Agent": "morph"})
         with urlopen(req, timeout=timeout) as resp:
             info = {**out, **parse_md(resp.read(1 << 20).decode("utf-8", "replace")), "ok": True}
@@ -133,7 +136,8 @@ def related(keys, live: bool = False) -> list:
     """References relevant to `keys`, in REFERENCES order; with live=True, each with fetch() details."""
     refs = [dict(r) for r in REFERENCES if set(r["for"]) & set(keys)]
     if live and refs:
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        from .services.background import DaemonPool
+        with DaemonPool(4) as pool:  # a fetch that hangs never keeps a stopping Studio alive
             for r, info in zip(refs, pool.map(lambda r: fetch(r["board"]), refs)):
                 r["live"] = info
     return refs

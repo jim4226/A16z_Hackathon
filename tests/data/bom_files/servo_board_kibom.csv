@@ -1,0 +1,5 @@
+Component,Description,Part,References,Value,Footprint,Quantity Per PCB,Datasheet,MPN
+1,Unpolarized capacitor,C,C1 C2,100nF,Capacitor_SMD:C_0603_1608Metric,2,~,CL10B104KB8NNNC
+2,Servo motor,Motor_Servo,M1 M2,SG90,Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical,2,~,
+3,USB serial,CH340C,U1,CH340C,Package_SO:SOIC-16_3.9x9.9mm_P1.27mm,1,~,CH340C
+4,Servo bus connector,Conn_01x03,J2 J3 J4,STS3215 bus,Connector_JST:JST_PH_B3B-PH-K,3,~,B3B-PH-K-S

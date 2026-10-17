@@ -1,0 +1,236 @@
+# Installing Morph Studio
+
+Morph Studio runs on your own computer and opens in your browser. It works on:
+
+- **Windows 10 or 11**, 64-bit, with the 64-bit (x64) Python from python.org. MuJoCo, the physics engine, has no
+  build for an ARM64 or 32-bit Python, or for 32-bit Windows. **Windows on ARM is untested:** Morph hasn't been run
+  on any Windows on ARM computer yet. There the launcher uses the x64 Python, which Windows 11 runs in its x64
+  emulation (slower than natively). MuJoCo's x64 build uses AVX instructions, which that emulation runs only on
+  Windows 11 version 24H2 or later, so on Windows on ARM every start first checks that MuJoCo loads and steps a
+  one-sphere model, and says to update Windows or use another computer when it doesn't.
+- **macOS 12 or newer on Apple silicon** (M1 or later), with a Python that runs natively (python.org's, or
+  Homebrew's in `/opt/homebrew`). Intel Macs aren't supported: MuJoCo no longer publishes builds for them, nor for a
+  Python running in Intel mode (Rosetta).
+- On a computer or Python Morph can't use, the launcher says so, and what to install instead, before it installs
+  anything.
+- **Linux x64** with glibc 2.28 or newer: Ubuntu 22.04, Debian 12, Fedora 36 and later come with a new enough
+  Python; older ones work once a newer Python is installed.
+
+You need **Python 3.10, 3.11, 3.12, 3.13 or 3.14** (3.13 recommended; 3.15 is too new for now), about 600 MB of
+disk to start (the packages and the two demo robots; each new revision adds 20 to 60 MB), about 1.5 GB of free
+memory (the Studio takes up to about 1.1 GB while it builds a robot and about 300 to 400 MB when it waits, after
+starting and between builds; a robustness study adds about 150 MB per worker process), and a browser. The app window uses Chrome or Edge when it finds
+them; any browser works at http://127.0.0.1:8765. No GPU is needed. API keys are optional.
+
+## 1. Install Python
+
+- **Windows:** the Python 3.13 installer from [python.org](https://www.python.org/downloads/windows/). Keep the
+  default options (they include the `py` launcher, which `run_studio.bat` uses) and tick *Add python.exe to PATH*.
+- **macOS:** the Python 3.13 installer from [python.org](https://www.python.org/downloads/macos/), or
+  `brew install python@3.13`. The `python3` that comes with Apple's command line tools is 3.9, too old for Morph.
+- **Linux:** your distribution's Python if it is 3.10 to 3.14, with its venv module. On Debian and Ubuntu:
+  `sudo apt install python3 python3-venv`.
+
+## 2. Get Morph
+
+**With Git** (updates are one command), in a terminal (Command Prompt or PowerShell on Windows):
+
+```shell
+git clone https://github.com/jim4226/morph-studio
+cd morph-studio
+```
+
+**Without Git:** download *Source code (zip)* of the latest release from the
+[releases page](https://github.com/jim4226/morph-studio/releases) and unzip it into a normal folder, such as
+Documents (not inside the zip viewer, and not a read-only or cloud-synced folder).
+
+## 3. Start it
+
+- **Windows:** double-click `run_studio.bat`. In a git clone you can run it from Command Prompt or PowerShell
+  instead, to switch to the latest release first:
+
+  ```bat
+  .\run_studio.bat --update
+  ```
+
+- **macOS and Linux:**
+
+  ```sh
+  ./run_studio.sh --update
+  ```
+
+  or `./run_studio.sh` without `--update`. If you get *permission denied*, run `bash run_studio.sh`.
+
+Paste commands from these docs as they are. If one comes with a comment (`#` and words after it, as older versions of
+this guide had), the launchers stop reading options at the `#` and say so: Command Prompt, and zsh on a Mac, would
+otherwise hand the comment's words to Morph as options. (zsh refuses a comment with parentheses in it before any
+launcher runs: leave the comment out.)
+
+The first launch:
+
+1. finds a supported Python (Windows tries `py -3.13`, `-3.12`, `-3.11`, `-3.10`, `-3.14`, then `python`; macOS and
+   Linux try `python3.13` down to `python3.10`, then `python3.14` and `python3`) and says what to install if there
+   is none;
+2. creates `.venv` in the Morph folder and installs the packages and Morph itself (which gives `.venv` the `morph`
+   command), showing pip's progress (a few minutes, depending on the connection);
+3. builds the two demo robots (the generated egg-picker arm and the imported SO-101), printing each stage, which takes
+   about a minute;
+4. opens the Studio.
+
+Later launches start in seconds and use neither git nor the network. Keep the terminal window open while you work:
+closing it stops Morph. Other options are passed on to the Studio, for example `--remote` (see
+[Bring your own compute](../README.md#bring-your-own-compute)) or `--port 8766`.
+
+The `morph` commands in these docs (`morph doctor`, `morph team init` and the rest) run in a terminal opened in the
+Morph folder, after one command that makes `.venv`'s commands the ones it runs:
+[Commands in a terminal](../README.md#commands-in-a-terminal).
+
+## 4. Add keys (optional)
+
+Everything runs without keys. Click **Keys** in the Studio to add your own; they are saved in `.env` in the Morph
+folder and take effect at once. What each key adds, and what it sends where: [README](../README.md#run-it) and
+[PRIVACY.md](PRIVACY.md).
+
+## Updating
+
+- **Git clone:** `.\run_studio.bat --update` (Windows) or `./run_studio.sh --update` fetches the release tags from
+  GitHub, switches to the newest release (a `v` tag such as `v0.2.0b1`) and starts it. It won't switch if you changed
+  files that belong to Morph (`git status` lists them), and it leaves a clone that already has commits made after that
+  release (a branch, or `main` once it moves on) as it is. Your `projects` folder, `.env` and `.venv` stay as they are.
+  The launcher reinstalls packages only if the release changed them, and both demo robots are rebuilt once if the
+  pipeline changed.
+- **Zip download:** download the new release into a new folder, copy your `projects` folder and `.env` across, and
+  start it there.
+- **On a branch, or before the first release:** until there is a `v` tag, `--update` says there is no release yet and
+  starts the version you have. To get the newest code of the branch your clone is on (a teammate's branch, or `main`
+  after `git checkout main`), close Morph, run `git pull`, then start the launcher as usual; it reinstalls packages
+  only if `requirements.txt`, `constraints.txt` or `pyproject.toml` changed.
+- **Close the Studio before `git pull` on Windows.** A Studio window started by a launcher older than this one reads
+  the rest of `run_studio.bat` when the Studio stops; if `git pull` replaced the file meanwhile, Windows reads the new
+  file from the middle of a line and prints errors such as "... is not recognized". Start the launcher again and it
+  runs normally.
+- Morph never updates itself when it starts.
+
+### A clone made before v0.2
+
+Launchers before v0.2 ran `git pull` every time they started. Once this version is on the branch your clone follows
+(`main`, after this release is merged), your next start pulls it one last time:
+
+- **Windows:** the pull replaces `run_studio.bat` while it runs, and the new launcher takes over where the old one
+  stopped, with the options you gave it (`--update` included). It installs the tested packages and the `morph`
+  command (a few minutes, once) and starts the Studio. If that pull fails (no network, or files you changed, which
+  `git status` lists), the old launcher starts the version you had, which doesn't know `--update`: start it without
+  `--update` until the pull works.
+- **macOS and Linux:** the old launcher finishes that start itself (bash keeps running the file it opened). It installs
+  the packages quietly, with no progress and without the tested versions, which can take a few minutes, then starts
+  the new version of Morph; if you gave it `--update`, Morph says it ignores it and starts. The next start uses the new
+  launcher, which installs the tested versions and the `morph` command once.
+
+From then on the launcher never pulls: use `--update` to switch to each new release, or `git pull` on a branch, as
+above.
+
+**A clone of a pre-release branch on Windows** (a launcher from the weeks before v0.2.0b1 that already never pulls):
+close Morph and run `git pull` once before your first `--update`. That launcher's `--update` switches to the release
+and then stops with "... is not recognized" instead of starting it; if that happened, start the launcher again: the
+release's launcher opens it.
+
+## Uninstalling
+
+1. Delete the Morph folder. Your projects, `.env` and `.venv` are inside it, so copy out any project you want to keep.
+2. Delete the cache of saved answers: `~/.cache/morph` (on Windows, `%USERPROFILE%\.cache\morph`).
+3. If you no longer use your API keys, revoke them with each provider: Anthropic, Keewano and SubQ, and for agent
+   tools Mouser, element14 (Farnell) and the service of any tool you drafted (the `MORPH_TOOL_*` keys in `.env`).
+
+If you installed Morph as a package with pip instead, run `pip uninstall morph` and delete its folders: settings and
+`.env` in `%LOCALAPPDATA%\Morph`, `~/Library/Application Support/Morph` or `~/.config/morph`, and projects in
+`%LOCALAPPDATA%\Morph\projects`, `~/Library/Application Support/Morph/projects` or `~/.local/share/morph/projects`
+(`morph doctor` prints the folder).
+
+## When something goes wrong
+
+- **"Morph needs Python 3.10, 3.11, 3.12, 3.13 or 3.14":** install Python 3.13 (step 1) and run the launcher again.
+- **"Python couldn't create .venv"** (Debian, Ubuntu): install the venv package the message names, such as
+  `sudo apt install python3.12-venv`, then run the launcher again.
+- **Installing the packages failed:** check the internet connection (behind a proxy, set `HTTPS_PROXY`), then run
+  the launcher again. To start from scratch, delete the `.venv` folder.
+- **"Morph needs a Mac with Apple silicon"** or **"Morph needs 64-bit Windows"**: MuJoCo has no build for Intel Macs
+  or 32-bit Windows, so the launcher stops before making `.venv`. **"The Python found ... is an ARM64 build"** or
+  **"isn't a 64-bit (x64) Python"** (Windows): install Python 3.13 from python.org with its "Windows installer
+  (64-bit)" and run the launcher again; on Windows 11 on ARM it runs in x64 emulation. **"MuJoCo, Morph's physics
+  engine, is installed but doesn't load or run on this Windows on ARM computer"**: update Windows 11 to version 24H2
+  or later (Settings, Windows Update) and run the launcher again, or use another computer; the command the message
+  ends with (`.venv\Scripts\python.exe -c` and the check) shows the error itself. **"This Terminal runs in Intel
+  mode (Rosetta)"** on an Apple silicon Mac: start it with `arch -arm64 ./run_studio.sh`, or turn off *Open using
+  Rosetta* in Terminal's Get Info window. **"... is an Intel (x86_64) Python"**: install Python 3.13 from python.org,
+  which runs natively on Apple silicon.
+- **"Morph Studio is already running":** close the other terminal window, or start this one with `--port 8766`.
+- **The `--remote` link doesn't open on the other computer:** the Studio computer's firewall is the usual reason. On
+  Windows, allow Python through Windows Defender Firewall for the network you are on (Windows Security, Firewall &
+  network protection, Allow an app through firewall), or make that network Private (Settings, Network & internet).
+  On a Mac, allow incoming connections for Python when macOS asks (System Settings, Network, Firewall). Both
+  computers must be on the same network or VPN.
+- **Anything else:** run `.venv\Scripts\python -m morph.cli doctor` (Windows) or `.venv/bin/python -m morph.cli
+  doctor`. It checks Python, the packages, keys, the network and whether every stage built, and says what to fix.
+
+## Installed as a package (pip)
+
+A wheel (`python -m pip install` of a `.whl` built with `python -m build`) has no Morph folder, so it keeps its files in
+your user's own folders: `.env` in `%LOCALAPPDATA%\Morph` (Windows), `~/Library/Application Support/Morph` (macOS) or
+`~/.config/morph` (Linux), and projects in `%LOCALAPPDATA%\Morph\projects`, `~/Library/Application Support/Morph/projects`
+or `~/.local/share/morph/projects` (`$XDG_DATA_HOME/morph/projects` when that is set). It never uses a `projects`
+folder that happens to be where you start it, so your own files there stay yours. Two exceptions: `MORPH_HOME` names
+another folder, and a `projects` folder in the current folder that already holds Morph projects (an install from before
+0.2 made them there) is kept, and Morph says so. `morph doctor` and `morph studio` print the projects folder's full
+path. Start the Studio with `morph studio --open`. (A Morph folder from git or a release zip keeps its projects in its
+own `projects` folder, even when its `.venv` `morph` command runs from another folder.)
+
+## For developers
+
+Start the launcher once (it makes `.venv`), then in a terminal set up as in
+[Commands in a terminal](../README.md#commands-in-a-terminal):
+
+```shell
+python -m pip install -e ".[dev]" -c constraints.txt
+python -m pytest -q
+```
+
+Tests run offline and without keys. `constraints.txt` pins the tested version of every package for each supported
+Python; `python tools/check_constraints.py --extras` checks that all of them install from wheels on Windows, macOS
+and Linux. `python -m build` makes a wheel that carries the robots, the Darwin cache and the licences;
+`python -I tools/package_smoke.py`, run with the Python the wheel is installed into, checks it. CI runs all of this:
+[.github/workflows/ci.yml](../.github/workflows/ci.yml).
+
+The end-to-end browser tests in `tests/e2e/` are skipped unless you ask for them. They start a real Studio (offline,
+no keys, full simulations) and drive Chromium through New robot, Import, Show Morph the job, a three-person Teams change
+request, World mode, a robustness study, Live prices and drafting a tool (the last two with a local stand-in for
+Claude), so they take about 20 minutes on 4 cores and need Playwright and, for the video test, ffmpeg:
+
+```shell
+python -m pip install playwright
+python -m playwright install chromium
+```
+
+Then run them with `MORPH_E2E=1` set. On macOS and Linux:
+
+```sh
+MORPH_E2E=1 python -m pytest tests/e2e -v
+```
+
+In PowerShell:
+
+```powershell
+$env:MORPH_E2E = "1"
+python -m pytest tests/e2e -v
+```
+
+In Command Prompt:
+
+```cmd
+set MORPH_E2E=1
+python -m pytest tests/e2e -v
+```
+
+`MORPH_E2E_SHOTS=<folder>` keeps screenshots of every step, and `MORPH_E2E_DEMO=<folder>` (New robot, Import and video)
+and `MORPH_E2E_WORLD_HOME=<folder>` (World mode) keep the demo robots they build between runs.
+`MORPH_E2E_PORTS=8790-8799` keeps every Studio they start on those ports; with `-n 4` each test process takes every
+fourth one, so give each at least two.

@@ -1,0 +1,122 @@
+{
+ "about": "The failing cases of the round-5 restart / two-Studios / Teams hunt (hunt1 cases.tsv, run against real Studios), each with the regression tests that reproduce it. Passing cases C01-C07 and the two measurements (C13, C19) are left out.",
+ "cases": [
+  {
+   "id": "C08",
+   "setup": "Studio A builds an edit of egg-picker (a demo project); Studio B: POST /api/reset",
+   "expected": "409 with why; A's revision untouched",
+   "tests": [
+    "test_two_studios::test_reset_demo_leaves_a_demo_project_another_process_works_on",
+    "test_two_studios::test_the_reset_route_says_why_it_was_refused"
+   ]
+  },
+  {
+   "id": "C09",
+   "setup": "kb's first build killed; the disk is full at the next start; space freed; restart",
+   "expected": "kb rebuilt (its design never lost)",
+   "tests": [
+    "test_restart_recovery::test_a_full_disk_at_a_restart_never_loses_a_cut_off_first_build"
+   ]
+  },
+  {
+   "id": "C10",
+   "setup": "kb's first build killed; the next start killed after it took over the stopped Studio's journal; restart",
+   "expected": "kb rebuilt once, not parked",
+   "tests": [
+    "test_restart_recovery::test_a_stop_between_taking_over_a_journal_and_removing_it_loses_nothing",
+    "test_restart_recovery::test_build_it_again_finds_a_set_aside_first_design_nothing_else_kept"
+   ]
+  },
+  {
+   "id": "C11",
+   "setup": "kb's first build killed (one try); Ctrl+C during the start-up while it rebuilds, before serving (many projects); restart",
+   "expected": "Ctrl+C is no try: rebuilt",
+   "tests": [
+    "test_restart_recovery::test_a_stop_asked_for_during_the_start_up_is_a_clean_one"
+   ]
+  },
+  {
+   "id": "C12",
+   "setup": "the same with a default projects folder",
+   "expected": "rebuilt",
+   "tests": [
+    "test_restart_recovery::test_a_stop_asked_for_during_the_start_up_is_a_clean_one"
+   ]
+  },
+  {
+   "id": "C14",
+   "setup": "kb's first build Ctrl+C'd; two starts that can't listen (a mistyped --host); a normal start",
+   "expected": "starts that never served count no try",
+   "tests": [
+    "test_restart_recovery::test_a_start_that_cant_listen_changes_no_journal"
+   ]
+  },
+  {
+   "id": "C15",
+   "setup": "the terminal window closed (SIGHUP) twice during kb's first build; SIGTERM the same",
+   "expected": "like Ctrl+C: rebuilt, never parked",
+   "tests": [
+    "test_restart_recovery::test_a_studio_process_stopped_twice_by_a_signal_mid_first_build_builds_it_again",
+    "test_restart_recovery::test_a_stop_asked_for_during_the_start_up_is_a_clean_one"
+   ]
+  },
+  {
+   "id": "C16",
+   "setup": "boom-kb's first build fails (design kept); `morph studio boom-kb`",
+   "expected": "its design kept; told how to go on",
+   "tests": [
+    "test_cli_release::test_studio_on_a_project_with_no_finished_revision_never_replaces_its_design"
+   ]
+  },
+  {
+   "id": "C17",
+   "setup": "team Studios A and B; a request applied in A; A killed mid-build; B lists, applies, closes",
+   "expected": "B opens it again and can apply it",
+   "tests": [
+    "test_restart_recovery::test_a_change_request_a_stopped_studio_applied_opens_again_in_one_that_runs"
+   ]
+  },
+  {
+   "id": "C18",
+   "setup": "a team Studio stopped as the request's revision is written; restart; apply again",
+   "expected": "the request is applied with that revision",
+   "tests": [
+    "test_restart_recovery::test_a_change_request_built_just_before_a_stop_is_recorded_built",
+    "test_restart_recovery::test_applying_a_change_the_design_already_has_marks_it_applied"
+   ]
+  },
+  {
+   "id": "C20",
+   "setup": "A started on egg-picker, B on so101; B deletes egg-picker",
+   "expected": "refused while A runs",
+   "tests": [
+    "test_two_studios::test_a_studio_never_deletes_another_running_studios_start_project"
+   ]
+  },
+  {
+   "id": "C21",
+   "setup": "kb built and chatted in A; B deletes kb and makes a new kb",
+   "expected": "A shows the new kb's own chat",
+   "tests": [
+    "test_two_studios::test_a_deleted_projects_room_writes_nothing_and_a_new_project_of_its_name_gets_a_fresh_room",
+    "test_two_studios::test_a_room_with_work_is_kept_whatever_its_folder_id_reads"
+   ]
+  },
+  {
+   "id": "C22",
+   "setup": "A keeps a failed boom-kb's design; B deletes boom-kb and makes a new one; A: build it again",
+   "expected": "never the deleted project's design",
+   "tests": [
+    "test_two_studios::test_a_deleted_projects_room_writes_nothing_and_a_new_project_of_its_name_gets_a_fresh_room"
+   ]
+  },
+  {
+   "id": "C23",
+   "setup": "two Studios start together after a reboot cut kb's first build off",
+   "expected": "kb's first design built once",
+   "tests": [
+    "test_restart_recovery::test_a_start_that_set_a_first_build_aside_recovers_it_under_the_lock"
+   ]
+  }
+ ]
+}

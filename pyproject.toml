@@ -1,26 +1,72 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "morph"
-version = "0.1.0"
-description = "Morph Studio: generate and edit a whole robot (CAD, simulation, electronics, manufacturing, sourcing, assembly)"
-requires-python = ">=3.10"
+dynamic = ["version"]
+description = "R Cubed Morph Studio: generate and edit a whole robot (CAD, simulation, electronics, manufacturing, sourcing, assembly)"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "robots/so101/LICENSE", "robots/so101/NOTICE",
+                 "morph/studio/static/vendor/THREE_LICENSE", "morph/studio/static/vendor/fonts/OFL-*.txt"]
+authors = [{ name = "R Cubed" }]
+requires-python = ">=3.10,<3.15"  # manifold3d has no wheels for 3.15 yet
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Web Environment",
+  "Intended Audience :: Manufacturing",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+]
+# Tested pins for every supported Python and OS: constraints.txt (the launchers install with it)
 dependencies = [
-  "numpy", "scipy", "shapely>=2", "manifold3d", "trimesh", "mujoco>=3", "pydantic>=2", "anthropic>=1.13", "pillow",
+  "numpy", "scipy", "shapely>=2", "manifold3d", "trimesh", "mujoco>=3.1.6", "pydantic>=2", "anthropic>=1.13", "pillow",
 ]
 
 [project.optional-dependencies]
+video = ["imageio-ffmpeg"]
+cad = ["cascadio"]
+xacro = ["xacro", "PyYAML"]
 machines = ["pyserial", "requests"]
 dev = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/jim4226/morph-studio"
+Source = "https://github.com/jim4226/morph-studio"
+Issues = "https://github.com/jim4226/morph-studio/issues"
+Changelog = "https://github.com/jim4226/morph-studio/blob/main/CHANGELOG.md"
 
 [project.scripts]
 morph = "morph.cli:main"
 
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+[tool.setuptools]
+# The package-data below lists every file the wheel carries. Left on, include-package-data would also take what
+# MANIFEST.in puts in the source archive and warn about each static/ folder that isn't a package.
+include-package-data = false
+
+[tool.setuptools.dynamic]
+version = { attr = "morph.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["morph*"]
+namespaces = false  # static/ and its subfolders are package data of morph.studio, not packages
 
+# robots/, data/darwin-cache/, env.example and the licence files are copied into morph/_assets by setup.py
 [tool.setuptools.package-data]
-"morph.studio" = ["static/*", "static/vendor/*", "static/fixtures/**/*"]
+"morph.studio" = ["static/**/*"]
 "morph.robot" = ["*.json"]
+"morph.studio.toolbox" = ["catalog/*.json"]  # the distributor tools Morph ships (toolbox/catalog.py)
+
+[tool.setuptools.exclude-package-data]
+"morph.studio" = ["static/viewer_test.html"]

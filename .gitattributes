@@ -1,0 +1,7 @@
+# Line endings the launchers need, whatever the git settings of the computer that checks them out
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+# the launcher before v0.2, kept as it was committed (LF) for tests/test_launchers.py and CI
+tests/fixtures/launchers/*.bat text eol=lf

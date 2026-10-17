@@ -6,7 +6,7 @@
 //   v.playMotionDemo();  v.setExplode(0.7);  v.showStep(3);  v.setXray(true);  v.setLabels(true);
 //   v.playTrajectory(simJson, { loop: true });  v.showWorkspace(points);  v.setGhost(prevJsonUrl);
 //
-// Data contract: docs/PLATFORM_CONTRACTS.md (robot.json from Assembly.to_robot_json, GLB from
+// Data contract: docs/internal/PLATFORM_CONTRACTS.md (robot.json from Assembly.to_robot_json, GLB from
 // Assembly.export_glb: nodes link__<name> carry the joint origin, parts are mesh children part__<name>,
 // every part mesh is in its link frame, z-up, mm). The robot base frame is mapped into the y-up scene by
 // one rotation, so everything robot-related (overlays, trajectories, workspace points) is expressed in

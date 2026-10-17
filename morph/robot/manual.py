@@ -64,6 +64,13 @@ def _camera(az_deg, el_deg):
     return d, r, u
 
 
+def _mat(a, m):
+    """a @ m without BLAS. render() runs on several threads at once, and on Windows the OpenBLAS in older numpy wheels
+    (numpy 2.2, the last for Python 3.10) crashed the whole process when those threads multiplied large arrays."""
+    a = np.asarray(a, float)
+    return np.einsum("...j,jk->...k", a, m) if np.ndim(m) == 2 else np.einsum("...j,j->...", a, m)
+
+
 def _cluster(mesh, cell):
     """Vertex-clustering decimation (drops thread / knurl detail far below a pixel)."""
     if cell <= 0 or len(mesh.faces) < 400:
@@ -104,8 +111,8 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     d, r, u = _camera(*view)
     P = np.stack([r, u, d], axis=1)               # world -> (x_screen, y_screen, depth)
     allv = np.vstack([m.vertices for m, _, _ in items if len(m.vertices)]) if items else np.zeros((1, 3))
-    sv = allv @ P
-    frame = np.asarray(focus_frame, float) @ P if focus_frame is not None and len(focus_frame) else sv
+    sv = _mat(allv, P)
+    frame = _mat(focus_frame, P) if focus_frame is not None and len(focus_frame) else sv
     lo, hi = frame[:, :2].min(0), frame[:, :2].max(0)
     span = np.maximum(hi - lo, 1e-6)
     scale = float(min(W * (1 - 2 * pad) / span[0], H * (1 - 2 * pad) / span[1]))
@@ -133,7 +140,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
         ln = np.linalg.norm(n, axis=1)
         ok = ln > 1e-12
         t, n = t[ok], n[ok] / ln[ok, None]
-        front = n @ d > -0.02
+        front = _mat(n, d) > -0.02
         t, n = t[front], n[front]
         tris.append(t)
         normals.append(n)
@@ -148,7 +155,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     C = np.concatenate(cols)
     S = np.concatenate(styles)
     PI = np.concatenate(pids)
-    st = T @ P                                    # (F, 3, 3) screen coords + depth
+    st = _mat(T, P)                               # (F, 3, 3) screen coords + depth
     xs = (st[:, :, 0] - cx) * scale + W / 2
     ys = H / 2 - (st[:, :, 1] - cy) * scale
     depth = st[:, :, 2].mean(1)
@@ -173,9 +180,9 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     L2 /= np.linalg.norm(L2)
     Hh = L1 + d
     Hh /= np.linalg.norm(Hh)
-    k1 = np.clip(N @ L1, 0, 1)[:, None]
-    k2 = np.clip(N @ L2, 0, 1)[:, None]
-    spec = np.clip(N @ Hh, 0, 1)[:, None] ** 28
+    k1 = np.clip(_mat(N, L1), 0, 1)[:, None]
+    k2 = np.clip(_mat(N, L2), 0, 1)[:, None]
+    spec = np.clip(_mat(N, Hh), 0, 1)[:, None] ** 28
     FC = np.clip(C * (0.46 + 0.46 * k1 + 0.16 * k2) + 0.10 * spec, 0, 1)
     gh = S == 0
     FC[gh] = (0.80 + 0.13 * np.clip(0.4 + 0.6 * k1[gh], 0, 1)) * np.array([0.985, 0.99, 1.0])
@@ -234,7 +241,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
             c0 = base_pts[:, :2].mean(0)
             rad = float(np.percentile(np.linalg.norm(base_pts[:, :2] - c0, axis=1), 95)) * 1.25
             ang = np.linspace(0, 2 * math.pi, 64)
-            ring = np.stack([c0[0] + rad * np.cos(ang), c0[1] + rad * np.sin(ang), np.full(64, allv[:, 2].min())], 1) @ P
+            ring = _mat(np.stack([c0[0] + rad * np.cos(ang), c0[1] + rad * np.sin(ang), np.full(64, allv[:, 2].min())], 1), P)
             sh = Image.new("L", (W, H), 0)
             ImageDraw.Draw(sh).polygon([((x - cx) * scale + W / 2, H / 2 - (y - cy) * scale) for x, y, _ in ring], fill=70)
             sh = sh.filter(ImageFilter.GaussianBlur(radius=float(max(6.0, 0.06 * rad * scale))))
@@ -244,7 +251,7 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
             o[free] *= (1 - 0.35 * sa[free])[:, None]
             res = Image.fromarray(o.astype(np.uint8), "RGB")
     def scr(p):
-        a_ = np.asarray(p, float) @ P
+        a_ = _mat(p, P)
         return (a_[0] - cx) * scale + W / 2, H / 2 - (a_[1] - cy) * scale
 
     if lines or dots:
@@ -267,8 +274,8 @@ def render(items, view=(38.0, 24.0), size=(900, 620), ss=2, focus_frame=None, bg
     if arrows:
         dr2 = ImageDraw.Draw(res)
         for p0, p1 in arrows:
-            a0 = np.asarray(p0) @ P
-            a1 = np.asarray(p1) @ P
+            a0 = _mat(p0, P)
+            a1 = _mat(p1, P)
             x0, y0 = (a0[0] - cx) * scale + W / 2, H / 2 - (a0[1] - cy) * scale
             x1, y1 = (a1[0] - cx) * scale + W / 2, H / 2 - (a1[1] - cy) * scale
             L = math.hypot(x1 - x0, y1 - y0)
@@ -371,6 +378,15 @@ class _Facts:
         return None
 
     @property
+    def grip(self) -> dict:
+        """The grip the firmware ships (the wiring stage's copy of the electronics plan's grip)."""
+        return self.efinal.get("grip") or (self.efinal.get("plan") or {}).get("grip") or {}
+
+    @property
+    def sensor(self) -> bool:
+        return self.grip.get("sensor", "fsr402" if self.design.finger.sensor == "fsr402" else "none") == "fsr402"
+
+    @property
     def supply(self):
         for r in (self.efinal.get("power_budget") or {}).get("rails", []):
             src = str(r.get("source") or "")
@@ -448,7 +464,7 @@ def _mech_steps(F: _Facts):
                 continue
         table, sent, warn = OrderedDict(), [], []
         inst = [(k, e) for k, e in F.inst.items() if any(n in names for n in e["parts"])]
-        fab = [p for p in parts if p.process in mf.FAB_PROCESSES and p.kind not in ("fastener", "cable")]
+        fab = [p for p in parts if mf.fabricated(p)]    # the parts manufacturing makes files for, nothing else
         # parts table
         for k, e in inst:
             nm, src = _sku_name(e["sku"])
@@ -570,7 +586,8 @@ def _elec_steps(F: _Facts, start: int):
     if not F.folded["wiring"]:
         sent += ["Route each run along the link's cable channel and leave a 30 mm service loop at every joint so the cable "
                  "never pulls tight at the end of travel.",
-                 "Connect the force-sensor leads (if fitted) to their inputs, then fix the harness with cable ties every 60–80 mm."]
+                 ("Connect the two force-sensor leads to their inputs, then fix" if F.sensor else "Fix") +
+                 " the harness with cable ties every 60–80 mm."]
     sent.append("Plug the power lead into the inlet last; keep the supply unplugged.")
     n_ties = max(6, 2 * len(rows))
     w_parts = (W["parts"] if W else []) + [c.name for c in F.asm.cables]
@@ -628,8 +645,10 @@ def _elec_steps(F: _Facts, start: int):
                     "table, power-cycle, repeat. Two servos with the same ID corrupt the bus.")
     else:
         sent.append("Check each servo is on the PWM channel listed in the table.")
-    sent.append("Open the serial monitor at 115200 baud and power the servo supply: the boot log must list every servo "
-                "and both force-sensor channels.")
+    sent.append("Open the serial monitor at 115200 baud and power the servo supply: the firmware prints “# Morph arm ready”"
+                + (" and names any servo id that doesn't answer" if F.family == "dynamixel" else "") +
+                ". Send Q for a status line: state, gripper mode, every joint angle, the gripper, the "
+                + ("fingertip force" if F.sensor else "force reading (0 without force sensors)") + " and the servo rail voltage.")
     ids = [{"joint": jn, "label": _joint_label(jn) + (f" ({k + 1})" if sum(1 for a, _ in F.id_rows if a == jn) > 1 else ""),
             "id": sid, "actuator": next((j.actuator for j in F.asm.joints if j.name == jn), "")}
            for jn, sid, k in ((jn, sid, [x for x, _ in F.id_rows[:i]].count(jn)) for i, (jn, sid) in enumerate(F.id_rows))]
@@ -641,39 +660,141 @@ def _elec_steps(F: _Facts, start: int):
     idx += 1
     # ---------------------------------------------------------------- calibration
     obj = d.object
-    target = d.electronics.target_force_n or (obj.max_force_n / max(d.safety_factor, 1.0) if obj.max_force_n else 0.0)
+    grip = F.grip
+    target = grip.get("target_n")
+    revolute = (grip.get("motion") or {}).get("kind") == "revolute"
     sent = ["Joint zero: drive each joint to its alignment marks (arm straight up, wrist level), then store the encoder "
             "offsets as the zero pose.",
+            "Gripper zero: close the jaw until its faces just touch and store that as gripper = 0 rad."
+            if revolute and not (grip.get("open_loop") or {}).get("squeeze_mm") else
+            f"Gripper zero: close the jaw on a {obj.diameter_mm:g} mm gauge (the {obj.name}'s diameter) held against the "
+            "fixed jaw; store this as gripper = 0 rad (contact): its hobby servo has no torque limit, so G closes only a "
+            "set distance past this contact." if revolute else
             f"Gripper zero: close the jaws on a {obj.diameter_mm:g} mm gauge (the {obj.name}'s diameter); store this as "
-            "gripper = 0 mm (contact).",
-            "Force sensors: rest 50 g, 100 g, 200 g and 500 g on each pad (pad facing up) and record the raw reading; the "
-            "firmware fits the curve from the table.",
-            (f"Set the grip force limit to {target:.1f} N per finger ({obj.name}: damage above {obj.max_force_n:g} N)."
-             if target else "Set the grip force limit for the object.")]
+            "gripper = 0 mm (contact)."]
+    if F.sensor:
+        sent.append("Force sensors: rest 200 g on the left pad (pad facing up) and send Z 200; the firmware scales its "
+                    "force reading from it. Check with 50 g and 500 g: Q should read about 0.5 N and 4.9 N.")
+    if target:
+        sent.append(_grip_sentence(grip, obj.name))
     for fo in F.folded["calibration"]:
         if any("zero" in x.lower() for x in fo["sentences"]):
             sent = [x for x in sent if not x.startswith("Joint zero")]
         sent = fo["sentences"] + sent
-    steps.append({"index": idx, "title": "Calibrate joints, gripper and force sensors", "kind": "calibration", "parts": [],
-                  "parts_table": [], "fasteners": [],
-                  "tools": _add_tools(["kitchen scale or calibration weights (50–500 g)", f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"],
+    gauge = [] if revolute and not (grip.get("open_loop") or {}).get("squeeze_mm") else \
+        [f"{obj.diameter_mm:g} mm gauge (printed or a dowel)"]
+    steps.append({"index": idx, "title": "Calibrate joints, gripper and force sensors" if F.sensor else "Calibrate joints and gripper",
+                  "kind": "calibration", "parts": [], "parts_table": [], "fasteners": [],
+                  "tools": _add_tools((["calibration weights or a kitchen scale (50–500 g)"] if F.sensor else []) + gauge,
                                       [t for fo in F.folded["calibration"] for t in fo["tools"]]),
-                  "instructions": " ".join(sent), "substeps": sent, "cal_weights_g": [50, 100, 200, 500],
-                  "grip_target_n": round(target, 2),
-                  "warnings": ["Re-run the force-sensor calibration after a 10 minute warm-up: FSR readings drift with temperature."],
-                  "time_min": 25})
+                  "instructions": " ".join(sent), "substeps": sent, "cal_weights_g": [50, 200, 500] if F.sensor else [],
+                  "grip_target_n": target, "grip_window_n": grip.get("window_n"), "grip_limit_n": grip.get("limit_n"),
+                  "warnings": ["Re-run the force-sensor calibration after a 10 minute warm-up: FSR readings drift with temperature."]
+                  if F.sensor else [],
+                  "time_min": 25 if F.sensor else 15})
     idx += 1
     # ---------------------------------------------------------------- first pick
     t = d.task
-    sent = [f"Place a hard-boiled egg (or a {obj.diameter_mm:g} mm ball) at the pick point x = {t.pick_x_mm:g} mm, "
+    egg = "egg" in (obj.name or "").lower()
+    stand_in = "a hard-boiled egg" if egg else f"a stand-in for the {obj.name or 'object'}"
+    sent = [f"Place {stand_in} (or a {obj.diameter_mm:g} mm ball) at the pick point x = {t.pick_x_mm:g} mm, "
             f"y = {t.pick_y_mm:g} mm from the base axis; mark the place point x = {t.place_x_mm:g}, y = {t.place_y_mm:g} mm.",
-            "Run the pick-and-place demo at 25 % speed; watch the grip-force readout stay below the limit.",
-            f"Raise the speed step by step to 100 % (target cycle {t.cycle_time_s:g} s), then repeat with a raw egg."]
+            "Run the pick-and-place demo at 25 % speed; " + ("watch the grip-force readout stay below the limit." if F.sensor else
+                                                            "watch that the object neither slips in the jaws nor dents."),
+            f"Raise the speed step by step to 100 % (target cycle {t.cycle_time_s:g} s), then repeat with "
+            + ("a raw egg." if egg else f"a real {obj.name or 'object'}.")]
     steps.append({"index": idx, "title": "First pick-and-place test", "kind": "test", "parts": [], "parts_table": [],
                   "fasteners": [], "tools": [], "instructions": " ".join(sent), "substeps": sent,
                   "warnings": ["Stand clear of the arm's reach while it runs; the e-stop / supply switch stays within reach."],
                   "time_min": 10})
     return steps
+
+
+def _grip_sentence(grip: dict, name: str) -> str:
+    """What the firmware does with the grip force, in its own commands and numbers (the electronics plan's grip)."""
+    lo, hi = grip.get("window_n") or [None, None]
+    t, lim = grip["target_n"], grip.get("limit_n")
+    window = f"{lo:g}–{hi:g} N" if lo is not None and hi is not None else f"at least {lo:g} N" if lo is not None else None
+    within = (f", within {window} for the {name}." if hi is not None else f" ({window} for the {name})." if window else ".")
+    ol = grip.get("open_loop") or {}
+    if grip.get("sensor") == "fsr402":
+        out = f"The firmware grips the {name} at {t:g} N per finger" + (f" and backs off above {lim:g} N" if lim else "")
+        out += "; to change the target send F followed by newtons" + within
+        if ol.get("rated_n") is not None and lim is not None and lim > ol["rated_n"] + 0.005:
+            out += (f" F goes up to {lim:g} N, but above {ol['rated_n']:g} N, what its hobby servo holds continuously, it "
+                    f"runs warm on long carries.")
+        if ol.get("probe_mm"):
+            out += (f" Its hobby servo has no torque limit, so a close that has read no force by {ol['probe_mm']:.2f} mm "
+                    f"past the calibration gauge stops there and opens with !GRIP: a {name} up to that much narrower per "
+                    f"jaw than the gauge is still gripped"
+                    + (" (the small end of its size)" if ol.get("covers") else ", a narrower one isn't")
+                    + f"; with a dead sensor a gauge-sized {name} gets about {ol['probe_n']:g} N per finger there before "
+                    f"the jaw opens"
+                    + (f", above the {grip['object_limit_n']:g} N that damages it"
+                       if grip.get("object_limit_n") and ol["probe_n"] > grip["object_limit_n"] else "")
+                    + (f", and one at the large end of its size, {ol['spread_mm']:.2f} mm per jaw wider, "
+                       + ("its whole stall force" if grip.get("stall_force_n") and
+                          ol["large_n"] >= grip["stall_force_n"] - 0.005 else f"about {ol['large_n']:g} N")
+                       + (f", above the {grip['object_limit_n']:g} N that damages it"
+                          if grip.get("object_limit_n") and ol["large_n"] > grip["object_limit_n"] else "")
+                       if ol.get("large_n") is not None and ol.get("spread_mm") is not None else "") + ".")
+        return out
+    motion = grip.get("motion") or {}
+    revolute = motion.get("kind") == "revolute"
+    stop = (f" (gripper = {motion['lo']:.2f} {motion.get('unit', '')}, its max-squeeze stop)" if motion.get("lo") is not None
+            else " (its max-squeeze stop)")
+    tl = grip.get("torque_limit")
+    if not tl:
+        stall, sq = grip.get("stall_force_n"), grip.get("squeeze_n") or t
+        if not ol.get("squeeze_mm"):
+            return (f"This gripper has no force sensors and its servo no torque limit: nothing sets the squeeze. Morph's "
+                    f"grip target for the {name} is {t:g} N per finger" + (f" (window: {window})." if window else "."))
+        at = (f" (gripper = {motion['closed'] - motion['squeeze']:.2f} {motion.get('unit', '')})"
+              if motion.get("squeeze") is not None and motion.get("closed") is not None else "")
+        rated = ol.get("rated_n")
+        from ..electronics import PROBE_STALL_SHARE
+
+        under = (f"under {PROBE_STALL_SHARE * 100:.0f} % of the stall"
+                 + (" and its damage force" if grip.get("object_limit_n") else ""))
+        cap = ("its rated torque, what it holds continuously" if rated is not None and lim is not None and lim >= rated - 0.005
+               else f"what keeps a {name} at the large end of its size {under}"
+               if ol.get("covers") and ol.get("band_n") is not None and lim is not None and lim >= ol["band_n"] - 0.005
+               else f"the {name}'s limit")
+        floored = sq > t + 0.005          # two position commands, the least it can close past it, squeeze more
+        below = (f" (more than Morph's {t:g} N target: two position commands are the least it can close past it)"
+                 if floored else
+                 f" (less than Morph's {t:g} N target: the most that keeps a {name} at the large end of its size {under})"
+                 if ol.get("band_capped") else
+                 f" (less than Morph's {t:g} N target: the most it holds continuously)" if ol.get("capped") else "")
+        large = ""
+        if ol.get("spread_mm") is not None and ol.get("large_n") is not None:
+            from .electronics2 import size_off
+
+            share = ol["large_n"] / stall if stall else 0.0
+            dmg = grip.get("object_limit_n")
+            why = ("its whole stall force" if share >= 0.995 else f"{share * 100:.0f} % of its stall force")
+            large = (f" The jaws are set on a gauge of the {name}'s nominal size; one at the large end of its size, "
+                     f"{size_off(ol)}, is held that much further past its contact and gets about "
+                     f"{ol['large_n']:g} N per finger" + ("." if ol.get("covers") else
+                                                          f", {why}" + (f", above the {dmg:g} N that damages it"
+                                                                        if dmg and ol["large_n"] > dmg else "")
+                                                          + ": the plan lists this as an issue."))
+        return (f"This gripper has no force sensors and its hobby servo no torque limit, so G closes it only "
+                f"{ol['squeeze_mm']:.2f} mm past a gauge-sized {name}{at}, where the servo's own position loop squeezes "
+                f"about {sq:g} N per finger{below}; it would reach its {stall:g} N stall about {ol['servo_band_mm']:g} mm "
+                f"past contact and, held there, overheat (hobby servos have no overload protection).{large} Check the "
+                f"squeeze once with a kitchen scale between the jaws. "
+                + (f"F can't lower it: two position commands, the least G can close past the {name}, already squeeze "
+                   f"about {sq:g} N, above the {lim:g} N F is capped at ({cap}); the plan lists this as an issue"
+                   if lim is not None and sq > lim + 0.005 else
+                   f"To change it send F followed by newtons: F sets how far G closes from Morph's model of the servo, up "
+                   f"to {lim:g} N ({cap}). A servo softer than the model squeezes less than F says, and F can't ask for "
+                   f"more than {lim:g} N; lower it if the servo hums or warms while it holds") + within)
+    where = (f"with the object {grip.get('lever_mm', 0):g} mm from the jaw's pivot (more nearer the pivot, less towards the tip)"
+             if revolute else f"through its {grip.get('lever_mm', 0):g} mm pinion")
+    return (f"This gripper has no force sensors: G closes it past the {name}{stop}, and the gripper servo's torque limit, "
+            f"{tl['fraction'] * 100:.0f} % of its stall torque, sets the squeeze: {t:g} N per finger {where}. Check it once with "
+            f"a kitchen scale between the jaws; to change it send F followed by newtons" + within)
 
 
 # ================================================================== illustrations
@@ -1010,7 +1131,9 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
     reach = sz.get("reach_mm") or d.arm.reach_mm
     mass = sum(asm.link_mass(l)[0] for l in asm.links)
     obj = d.object
-    grip = "Rack-and-pinion parallel jaws" + (", FSR 402 force sensing" if d.finger.sensor == "fsr402" else "")
+    revolute = (F.grip.get("motion") or {}).get("kind") == "revolute" or asm.meta.get("gripper_type") == "revolute_jaw"
+    grip = ("The robot's own servo-driven jaw" if revolute else "Rack-and-pinion parallel jaws") + \
+        (", FSR 402 force sensing" if F.sensor else "")
     cfg = mfg.get("config") or d.build.config
     cfgd = (mfg.get("configs") or {}).get(cfg, {})
     unit = (mfg.get("totals") or {}).get("unit_cost") or cfgd.get("unit_cost")
@@ -1025,7 +1148,7 @@ def _html(F: _Facts, steps, tools, total_min, imgs, cover_png, thumbs, fthumbs, 
     n_fab = sum(e.get("qty", 0) for e in mfg.get("parts", []) if e.get("process") in mf.FAB_PROCESSES)
     n_fast = sum(f["qty"] for s in steps for f in s["fasteners"])
     tiles = [(len(steps), "steps"), (_fmt_min(total_min), "build time"),
-             (n_fab or len({p.group or p.name for p in asm.parts if p.process in mf.FAB_PROCESSES}), "made parts"),
+             (n_fab or len({p.group or p.name for p in asm.parts if mf.fabricated(p)}), "made parts"),
              (n_fast, "fasteners")]
     if unit:
         tiles[3] = (f"${unit:,.0f}", "unit cost (est.)")
@@ -1244,7 +1367,7 @@ def build(design, asm, mfg, efinal, outdir, images: bool = True) -> dict:
             jobs = _image_jobs(F, steps)
             tsz = dict(view=(35.0, 28.0), size=(180, 130), pad=0.1, shadow=False)
             groups = list(F.mfg_by_group) or list(OrderedDict.fromkeys(
-                p.group or p.name for p in asm.parts if p.process in mf.FAB_PROCESSES))
+                p.group or p.name for p in asm.parts if mf.fabricated(p)))
             for g in groups:
                 p = next((p for p in asm.parts if (p.group or p.name) == g), None)
                 if p is not None:            # render frames the bounds itself: no copy needed

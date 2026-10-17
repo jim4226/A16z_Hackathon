@@ -6,8 +6,6 @@
 <title>Morph Studio</title>
 <meta name="description" content="Generate and edit a whole robot: CAD, simulation, electronics, manufacturing, sourcing and assembly in one place.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Cdefs%3E%3ClinearGradient id=%22g%22 x1=%220%22 y1=%220%22 x2=%221%22 y2=%221%22%3E%3Cstop offset=%220%22 stop-color=%22%237091ff%22/%3E%3Cstop offset=%221%22 stop-color=%22%23a78bfa%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22url(%23g)%22/%3E%3Cpath d=%22M8 22V10l8 7 8-7v12%22 fill=%22none%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
 <style>html,body{background:#08090c;margin:0;height:100%}body{opacity:0}</style>
 <script>
   // The Studio server serves this page at / with assets under /static/; plain static hosting
@@ -38,12 +36,14 @@
     </div>
     <div class="crumb"><span class="sep">/</span>
       <div class="projwrap"><button class="proj" id="projBtn" type="button" title="Project"><i></i><span id="project">loading…</span><svg class="i sm chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
-        <div class="menu glass" id="projMenu"></div></div></div>
+        <div class="menu glass" id="projMenu"><div class="mh">Projects</div><div id="projList"></div><div class="feat-slot" id="projActions"></div></div></div></div>
     <div id="revs" class="revs"></div>
     <div class="grow"></div>
     <div id="tourPill" class="tourpill"></div>
     <div id="badges" class="badges"></div>
-    <button class="btn keysbtn" id="keysBtn" type="button" title="API keys for Claude and Keewano (optional)"><svg class="i sm" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M16 7l3 3M13.5 9.5l2 2"/></svg>Keys<i class="kdot"></i></button>
+    <div class="feat-slot" id="featHeader"></div>
+    <button class="btn icon inspbtn" id="inspBtn" type="button" title="Show the right panel: time saved, metrics and issues (and, on a team Studio, comments and reviews)" aria-pressed="false"><svg class="i sm" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+    <button class="btn keysbtn" id="keysBtn" type="button" title="API keys for Claude, Keewano and SubQ (optional)"><svg class="i sm" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4"/><path d="M10.5 12.5L20 3M16 7l3 3M13.5 9.5l2 2"/></svg>Keys<i class="kdot"></i></button>
     <button class="btn presbtn" id="presentBtn" type="button" title="Press-through demo: each → runs the next step (P)"><svg class="i sm" viewBox="0 0 24 24"><path d="M3 4h18v12H3z"/><path d="M8 20h8M12 16v4"/><path d="M10 7.5v5l4-2.5z"/></svg>Present</button>
     <label class="tourctl" title="After each change, walk through the views that were regenerated">
       <span class="switch"><input type="checkbox" id="tour" checked><i></i></span>Auto-tour
@@ -58,6 +58,7 @@
         <div id="messages"></div>
         <div id="suggest"></div>
         <form id="form" autocomplete="off">
+          <div class="feat-slot" id="chatTools"></div>
           <textarea id="input" rows="1" placeholder="Ask for a change…"></textarea>
           <button id="send" type="submit" title="Send (Enter)"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
         </form>
@@ -96,10 +97,11 @@
         <div class="view" data-view="mfg"></div>
         <div class="view" data-view="asm"></div>
         <div class="view" data-view="bom"></div>
+        <div class="empty views-empty" id="viewsEmpty"><p>No finished revision yet.</p></div>
       </div>
     </section>
 
-    <aside id="inspector"><div class="in" id="insp"></div></aside>
+    <aside id="inspector"><div class="feat-slot" id="inspTabs"></div><div class="in" id="insp"></div></aside>
   </main>
 </div>
 <div id="viewerHost"></div>

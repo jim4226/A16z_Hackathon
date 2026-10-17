@@ -1,0 +1,1259 @@
+"""The robot's swept path against an uploaded room scan (worlds.scan_clearance), the inspect check that only warns, and
+"Add box here" (H3). The scan near the arm is covered by its own surface points in a k-d tree and refined with exact
+point-triangle distances: on scans made of the very boxes a world holds, the distances agree with MuJoCo's
+mj_geomDistance pose by pose. Hostile scans (too many triangles, gigantic or degenerate ones, NaN and infinite corners,
+faces naming missing corners, nothing near) answer with a reason or a number, never a crash. Offline, fast simulations;
+MORPH_SLOW=1 adds the generated room of a million triangles (under 20 s)."""
+
+import json
+import math
+import os
+import sys
+import time
+import types
+
+import numpy as np
+import pytest
+
+pytest.importorskip("mujoco")
+trimesh = pytest.importorskip("trimesh")
+
+from morph.robot import arm, electronics2, simulate as S  # noqa: E402
+from morph.studio import worlds  # noqa: E402
+from morph.studio.projects import template  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(__file__))
+from test_world_checks import ROBOT, design, results  # noqa: E402
+from test_world_path import bin_beside_the_arc, box, carton_wall  # noqa: E402
+
+SLOW = os.environ.get("MORPH_SLOW") == "1"
+SURFACE = {"label": "Bench top", "center": [100.0, 0.0, -12.5], "half": [550.0, 600.0, 12.5], "yaw_deg": 0.0}
+ROOM = {"mount": {"position": [0.0, 0.0, 0.0], "yaw_deg": 0.0}, "surface": SURFACE, "units": "m", "up": "y", "scale": 1.0}
+SLAB = {"center": [100.0, 0.0, -12.5], "half": [550.0, 600.0, 12.5], "yaw_deg": 0.0}          # the scanned bench top
+POST = {"id": "post", "label": "Post", "center": [231.4, 95.0, 34.8], "half": [20.7, 20.7, 34.8], "yaw_deg": 0.0}
+EGG = template("egg-picker")
+
+
+def box_mesh(b):
+    m = trimesh.creation.box(extents=2 * np.asarray(b["half"], float))
+    a = math.radians(b.get("yaw_deg", 0.0))
+    T = np.eye(4)
+    T[:2, :2] = [[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]]
+    T[:3, 3] = b["center"]
+    m.apply_transform(T)
+    return m
+
+
+def glb(path, V, F):
+    """A scan as a phone exports it: one .glb, y up, metres (V in the world frame: mm, z up)."""
+    V = np.asarray(V, float) / 1000.0
+    m = trimesh.Trimesh(np.c_[V[:, 0], V[:, 2], -V[:, 1]], np.asarray(F), process=False)
+    with open(path, "wb") as fh:
+        fh.write(m.export(file_type="glb"))
+    return str(path)
+
+
+def boxes_glb(path, boxes):
+    m = trimesh.util.concatenate([box_mesh(b) for b in boxes])
+    return glb(path, m.vertices, m.faces)
+
+
+def measure(*a, **k):
+    """scan_clearance with time to spare: these tests are about the answer (the 20 s budget is the acceptance test's)."""
+    k.setdefault("time_limit_s", 300.0)
+    return worlds.scan_clearance(*a, **k)
+
+
+_SIMS = {}
+
+
+def simulated(obstacles=(), fast=True):
+    """(robot, sim_pick_place document, metrics): the egg-picker on the bench with these grey boxes."""
+    key = (json.dumps(obstacles, sort_keys=True), fast)
+    if key not in _SIMS:
+        sz = arm.size(EGG)
+        asm = arm.build(EGG, sz, electronics2.plan(EGG, {**sz, "grip_target_n": 2.34}))
+        w = {"id": "bench", "sha": f"t{len(_SIMS)}", "surface": SURFACE, "floor_z": -900.0, "obstacles": list(obstacles),
+             "zones": []}
+        rob = S._make_robot(asm, EGG, fast, {"world": w})
+        plan, at = S._plan_pick_place(rob, EGG, fast)
+        run, met = S._run_pick_place(rob, EGG, plan, at)
+        _SIMS[key] = (rob, S._scenario_doc(rob, EGG, "pick_place", plan, run, met), met)
+    return _SIMS[key]
+
+
+BENCH = worlds.validate({"id": "bench", **ROOM, "asset": "room.glb"})
+_ASM = {}
+
+
+def bench_trial(fast=True):
+    """worlds.try_boxes' trial on the bench egg-picker (simulate.world_trials, as api_world runs it on a revision's
+    robot), in the rooms simulated() builds (its surface and floor)."""
+    if "asm" not in _ASM:
+        sz = arm.size(EGG)
+        _ASM["asm"] = arm.build(EGG, sz, electronics2.plan(EGG, {**sz, "grip_target_n": 2.34}))
+    st = {"d": None}
+
+    def trial(rooms, deadline):
+        rooms = [{**r, "surface": SURFACE, "floor_z": -900.0} for r in rooms]
+        out, st["d"] = S.world_trials(_ASM["asm"], EGG, rooms, fast=fast, deadline=deadline, described=st["d"])
+        return out
+    return trial
+
+
+def mujoco_clearance(rob, doc):
+    """MuJoCo's clearance to the grey boxes (mj_geomDistance) at the poses scan_clearance checks."""
+    dd = rob._mj.MjData(rob.model)
+    out = []
+    for _, q, o, ph in worlds._frame_poses(doc):
+        dd.qpos[:] = 0
+        dd.qpos[rob.qadr] = q[:rob.n]
+        rob.set_grip(dd, q[-1])
+        dd.qpos[rob.obj_q:rob.obj_q + 3] = o[:3] * S.MM
+        dd.qpos[rob.obj_q + 3:rob.obj_q + 7] = S._q_body(o[3:7])
+        rob._mj.mj_kinematics(rob.model, dd)
+        out.append(rob.clearance(dd, with_object=ph in S.CARRIED)[0])
+    return np.array(out)
+
+
+# ------------------------------------------------------------------ the geometry
+def test_closest_points_on_triangles():
+    rng = np.random.default_rng(5)
+    A, B, C = rng.normal(0, 30, (3, 400, 3))
+    P = rng.normal(0, 60, (400, 3))
+    Q = worlds.closest_on_triangles(P, A, B, C)
+    ref = trimesh.triangles.closest_point(np.stack([A, B, C], 1), P)
+    assert np.abs(np.linalg.norm(Q - P, axis=1) - np.linalg.norm(ref - P, axis=1)).max() < 1e-6
+    # degenerate: two corners together (a segment), three in a row (a segment), all three together (a point)
+    A2 = np.array([[0, 0, 0], [0, 0, 0], [5, 5, 5]], float)
+    B2 = np.array([[10, 0, 0], [10, 0, 0], [5, 5, 5]], float)
+    C2 = np.array([[10, 0, 0], [4, 0, 0], [5, 5, 5]], float)
+    P2 = np.array([[5, 3, 0], [-4, 3, 0], [5, 5, 9]], float)
+    assert np.allclose(worlds.closest_on_triangles(P2, A2, B2, C2), [[5, 0, 0], [0, 0, 0], [5, 5, 5]])
+
+
+@pytest.mark.parametrize("h", [1.0, 2.0])
+def test_the_scan_points_cover_every_triangle(h):
+    """Every point of every triangle (slivers, segments and points too) is within rho of one of its own scan points:
+    the bound both ways that the search relies on."""
+    from scipy.spatial import cKDTree
+
+    rng = np.random.default_rng(7)
+    n = 160
+    A = rng.normal(0, 20, (n, 3))
+    B, C = A + rng.normal(0, 20, (n, 3)), A + rng.normal(0, 20, (n, 3))
+    B[:30] = A[:30] + (B[:30] - A[:30]) * 10
+    C[:30] = A[:30] + (B[:30] - A[:30]) * rng.uniform(0, 1, (30, 1)) + rng.normal(0, 0.05, (30, 3))
+    C[30:36] = A[30:36]
+    B[36:40] = C[36:40] = A[36:40]
+    P, own, rho = worlds._scan_samples(A, B, C, h)
+    assert worlds._scan_samples(A, B, C, h, count=True) == len(P) and 0 < rho <= h / math.sqrt(2) + 1e-9
+    for i in range(n):
+        X = np.vstack([rng.dirichlet([1, 1, 1], 400) @ np.stack([A[i], B[i], C[i]]), A[i], B[i], C[i]])
+        assert cKDTree(P[own == i]).query(X)[0].max() <= rho + 1e-9, i
+
+
+@pytest.mark.parametrize("which", ["bin", "carton-and-post"])
+def test_within_2_mm_of_mujoco_on_box_fixtures(tmp_path, which):
+    """Acceptance: a scan made of the world's own boxes, measured pose by pose (every 10 ms around the closest
+    approach) against MuJoCo's mj_geomDistance to those boxes: within 2 mm everywhere (in practice a few tenths; R6, the
+    robot's own shapes measured exactly: within 0.01 mm, and the check's closest, the motion between poses counted,
+    never above MuJoCo's closest pose)."""
+    boxes = ([bin_beside_the_arc(EGG, 20.0)] if which == "bin" else
+             [carton_wall(EGG, 48.0), box("Post", (203.6, 83.6, 34.8), (20.7, 20.7, 34.8), 17.0)])
+    rob, doc, met = simulated(tuple(boxes))
+    t0 = met["min_clearance_at"]["t"]
+    doc = {**doc, "frames": [f for f in doc["frames"] if abs(f["t"] - t0) < 0.6]}
+    res = measure(boxes_glb(tmp_path / "room.glb", boxes), ROOM, doc, rob.xml, per_pose=True,
+                                floor_cut_mm=0.0)
+    mj = mujoco_clearance(rob, doc)
+    sv = np.array([np.nan if v is None else v for _, v in res["poses"]])
+    near = mj < 45.0
+    assert near.sum() >= 40 and not np.isnan(sv[near]).any(), (near.sum(), res["stats"])
+    diff = sv[near] - mj[near]
+    print(f"\n{which}: {near.sum()} poses, scan - MuJoCo {diff.min():+.3f} to {diff.max():+.3f} mm, min {res['min_clearance_mm']} "
+          f"vs {mj.min():.2f}, {res['stats']['seconds']} s")
+    assert np.abs(diff).max() <= 0.01
+    assert mj.min() - 0.3 <= res["min_clearance_mm"] <= mj.min() and res["at"]["t"] == pytest.approx(t0, abs=0.6)
+    assert not res["stats"]["truncated"] and res["note"] == worlds.SCAN_NOTE
+
+
+# ------------------------------------------------------------------ the check, regions and Add box here
+def test_add_box_here_turns_a_near_miss_into_a_box_the_simulation_keeps_clear_of(tmp_path):
+    """The simulation sees no box, the scan has a post beside the carry path: the check warns of the near miss and
+    proposes a box over it, on the bench; added to the world, the simulation goes round it and the near miss is gone."""
+    room = boxes_glb(tmp_path / "room.glb", [SLAB, POST])
+    rob, doc, met = simulated()
+    assert met["success"] and met.get("min_clearance_mm") is None          # nothing for the simulation to see
+    res = measure(room, ROOM, doc, rob.xml)
+    assert res["min_clearance_mm"] < worlds.SCAN_NEAR_MM and len(res["regions"]) == 1, res
+    g = res["regions"][0]
+    assert g["id"] == "scan-1" and g["label"] == "Scan near miss 1" and g["min_clearance_mm"] == res["min_clearance_mm"]
+    lo = np.subtract(g["box"]["center"], g["box"]["half"])
+    hi = np.add(g["box"]["center"], g["box"]["half"])
+    assert np.all(lo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= hi + 0.2)      # over the near point
+    assert abs(lo[2]) < 0.2 and hi[2] >= 69.0                               # standing on the bench, the post's height
+    assert np.all(lo[:2] >= np.subtract(POST["center"], POST["half"])[:2] - 21)      # not much more than the post
+    c = worlds.scan_check(res)
+    assert c["status"] == "warn" and "Add box here" in c["text"] and c["text"].endswith(worlds.SCAN_NOTE)
+    # Add box here: the region's box as a grey box, as the page adds it (validated like any saved world)
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                         "obstacles": [{"id": g["id"], "label": g["label"], **g["box"], "source": "auto"}]})
+    ob = worlds.sim_world(w)["obstacles"]
+    rob2, doc2, met2 = simulated(tuple(ob))
+    assert met2["success"] and not met2["world_contacts"], met2.get("failure")
+    assert met2["min_clearance_at"]["obstacle"] == "Scan near miss 1" and met2["min_clearance_mm"] >= S.CLEAR_MM
+    assert met2["arc"]["usual"] is False                                    # the carry path pulled in to keep clear
+    res2 = measure(room, ROOM, doc2, rob2.xml)
+    assert res2["min_clearance_mm"] >= worlds.SCAN_NEAR_MM and not res2["regions"], res2
+    assert worlds.scan_check(res2)["status"] == "pass"
+
+
+def vase_mesh(c, r=22.0, h=70.0):
+    v = trimesh.creation.cylinder(radius=r, height=h, sections=48)
+    v.apply_translation([c[0], c[1], h / 2.0])
+    return v
+
+
+def test_add_box_here_never_comes_closer_to_the_path_than_the_scan_and_is_not_offered_again(tmp_path):
+    """A round thing in the scan (a 44 mm vase) beside the carry path: a box drawn round it sticks out at its corners,
+    towards the arm (the review's 9.0 mm near miss became 1.3 mm to the box). The box offered is trimmed on the sides
+    facing the path until it is no closer to that path than the scan; once it is in the world, the same near miss is
+    the box's and isn't offered again."""
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(POST["center"][:2])])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    rob, doc, met = simulated()
+    res = measure(room, ROOM, doc, rob.xml)
+    assert res["min_clearance_mm"] < worlds.SCAN_NEAR_MM and len(res["regions"]) == 1, res
+    g = res["regions"][0]
+    obstacle = {"id": g["id"], "label": g["label"], **g["box"], "source": "auto"}
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb", "obstacles": [obstacle]})
+    rob_b, doc_b, met_b = simulated(tuple(worlds.sim_world(w)["obstacles"]))
+    same_path = float(np.nanmin(mujoco_clearance(rob_b, doc)))             # MuJoCo: the box against the scanned path
+    assert same_path >= g["min_clearance_mm"] - 1.0, (same_path, g)        # (MuJoCo's hulls and our samples: about 1 mm)
+    assert g["trimmed"] and g["box_clearance_mm"] >= g["min_clearance_mm"] - 1e-9, g
+    lo, hi = np.subtract(g["box"]["center"], g["box"]["half"]), np.add(g["box"]["center"], g["box"]["half"])
+    assert abs(lo[2]) < 0.2 and hi[2] >= 60.0 and np.all(hi[:2] - lo[:2] >= 20.0), g["box"]       # still most of the vase
+    assert met_b["success"] and not met_b["world_contacts"]
+    assert met_b["min_clearance_mm"] >= g["min_clearance_mm"] - 1.0, met_b["min_clearance_mm"]     # simulated with it
+    # the same path, now with the box in the world: the near miss is still measured, but it is the box's
+    res2 = measure(room, {**ROOM, "obstacles": [obstacle]}, doc, rob.xml)
+    assert res2["min_clearance_mm"] == res["min_clearance_mm"] and not res2["regions"] and res2["stats"]["covered"] == 1
+    c = worlds.scan_check(res2)
+    assert c["status"] == "warn" and "Add box here" not in c["text"], c
+    assert "1 place closer than 10 mm has a grey box already, so it is not offered again." in c["text"], c
+
+
+TALL_VASE = ((POST["center"][0] + 40.0, POST["center"][1] - 20.0), 22.0, 170.0)   # its rim just under the carry path
+
+
+def corners(b):
+    return np.subtract(b["center"], b["half"]), np.add(b["center"], b["half"])
+
+
+def test_a_box_trimmed_off_a_vases_top_still_covers_the_near_miss_it_was_made_for(tmp_path):
+    """The review's case: the arm passes just over the rim of a tall vase. The box offered is trimmed off the top, so
+    it ends up further from the near miss at the rim than SCAN_COVER_MM. It keeps the place it was made for: saved
+    with it, that place is not offered again. The box alone (or the box moved elsewhere) does not cover it."""
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    rob, doc, met = simulated()
+    res = measure(room, ROOM, doc, rob.xml)
+    (g,) = res["regions"]
+    lo, hi = corners(g["box"])
+    assert g["trimmed"] and hi[2] < g["point"][2] - worlds.SCAN_COVER_MM, g          # trimmed away from the near miss
+    assert abs(lo[2]) < 0.2 and g["box_clearance_mm"] >= g["min_clearance_mm"] - 1e-9, g
+    clo, chi = corners(g["covers"])
+    assert np.all(clo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= chi + 0.2), g      # over the near miss
+    assert chi[2] >= TALL_VASE[2] - 0.2 and np.all(clo <= lo + 0.05) and np.all(hi <= chi + 0.05), g
+    obstacle = {"id": g["id"], "label": g["label"], **g["box"], "covers": g["covers"], "source": "auto"}
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                         "obstacles": [obstacle]})
+    assert g["covers"]["clearance_mm"] == g["min_clearance_mm"]                  # the distance the box was fitted to
+    assert w["obstacles"][0]["covers"] == g["covers"] and worlds.sim_world(w)["obstacles"][0].keys() == {
+        "id", "label", "center", "half", "yaw_deg"}                              # the simulation sees the box only
+    res2 = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc, rob.xml)
+    assert res2["min_clearance_mm"] == res["min_clearance_mm"] and not res2["regions"] and res2["stats"]["covered"] == 1
+    c = worlds.scan_check(res2)
+    assert c["status"] == "warn" and "Add box here" not in c["text"], c
+    assert "1 place closer than 10 mm has a grey box already, so it is not offered again." in c["text"], c
+    # without its place, the box is too far from the near miss to own it, but the box fitted there again is the same
+    # box: the world holds it already, so it isn't offered (an API client that saves boxes without "covers")
+    bare = {k: v for k, v in obstacle.items() if k != "covers"}
+    again = measure(room, {**ROOM, "obstacles": [bare]}, doc, rob.xml)
+    assert not again["regions"] and again["stats"]["covered"] == 1, again
+    # a box moved elsewhere doesn't cover the old place
+    moved = {**obstacle, "center": [obstacle["center"][0] + 200.0, *obstacle["center"][1:]]}
+    again = measure(room, {**ROOM, "obstacles": [moved]}, doc, rob.xml)
+    assert [r["box"] for r in again["regions"]] == [g["box"]] and not again["stats"]["covered"], again
+    # a box fitted for a path that stayed further away (its target 0.5 mm more than this near miss) covers its place
+    # only for near misses no closer than that: this one is offered again (a box 1 mm narrower, so not the same box)
+    narrower = {**obstacle, "half": [obstacle["half"][0] - 1.0, *obstacle["half"][1:]]}
+    for target, offered in ((g["min_clearance_mm"], False), (g["min_clearance_mm"] + 0.5, True)):
+        ob = {**narrower, "covers": {**g["covers"], "clearance_mm": target}}
+        again = measure(room, {**ROOM, "obstacles": [ob]}, doc, rob.xml)
+        assert bool(again["regions"]) == offered and bool(again["stats"]["covered"]) != offered, (target, again)
+
+
+def test_a_place_is_the_boxs_only_while_it_is_that_box_fitted_there():
+    """A box's place ("covers") counts only with the distance it was fitted to, while the box lies inside it, and
+    when it reaches at most SCAN_COVERS_MAX_MM past the box (a world from an API client can't hide near misses with a
+    huge one); worlds.validate keeps the distance and the revision, and refuses nonsense in them."""
+    box = {"id": "scan-1", "label": "Scan near miss 1", "center": [0.0, 0.0, 50.0], "half": [20.0, 20.0, 50.0],
+           "yaw_deg": 0.0, "source": "auto"}
+    place = {"center": [0.0, 0.0, 65.0], "half": [20.0, 20.0, 65.0], "yaw_deg": 0.0, "clearance_mm": 9.0, "rev": "r002"}
+    assert worlds._covers({**box, "covers": place}) == place
+    assert worlds._covers({**box, "covers": {k: v for k, v in place.items() if k != "clearance_mm"}}) is None
+    assert worlds._covers({**box, "center": [30.0, 0.0, 50.0], "covers": place}) is None          # moved out of it
+    assert worlds._covers({**box, "half": [25.0, 20.0, 50.0], "covers": place}) is None           # made bigger
+    huge = {**place, "center": [0.0, 0.0, 500.0], "half": [600.0, 600.0, 500.0]}
+    assert worlds._covers({**box, "covers": huge}) is None
+    # R5: past the box only by as much as the box's own size on that axis (the 40 mm box: 40 mm), and sharing the
+    # faces the fit left alone; a place with no distance to it (clearance_mm 0) is no place
+    edge = {**place, "half": [20.0 + 40.0, 20.0, 65.0]}
+    assert worlds._covers({**box, "covers": edge}) == edge
+    for bad in ({"half": [20.0 + 40.5, 20.0, 65.0]},                     # past its own size
+                {"half": [20.0 + worlds.SCAN_COVERS_MAX_MM, 20.0, 65.0]},   # 50 mm: within the old limit, not this box's
+                {"center": [0.0, 0.0, 50.0], "half": [30.0, 30.0, 60.0]},   # past every face: shares none with the box
+                {"yaw_deg": 30.0},                                          # not along the box's own sides
+                {"clearance_mm": 0.0}, {"clearance_mm": True}):
+        assert worlds._covers({**box, "covers": {**place, **bad}}) is None, bad
+    # near misses at the place: the box's only while no closer than it was fitted to (to 0.1 mm, as it is shown)
+    w = {"mount": {"position": [0.0, 0.0, 0.0], "yaw_deg": 0.0}, "obstacles": [{**box, "covers": place}]}
+    rim = np.array([[0.0, 0.0, 128.0]] * 3)                    # 28 mm over the box, inside its place
+    got = worlds._near_grey_box(rim, np.array([9.0, 8.95, 2.1]), worlds._grey_boxes(w))
+    assert got.tolist() == [True, True, False]
+    plain = {"mount": w["mount"], "obstacles": [box]}            # a box with no place owns only what is next to it
+    assert worlds._near_grey_box(rim, np.array([9.0, 9.0, 9.0]), worlds._grey_boxes(plain)).tolist() == [False] * 3
+    side = np.array([[25.0, 0.0, 50.0]])
+    assert worlds._near_grey_box(side, np.array([0.5]), worlds._grey_boxes(plain)).tolist() == [True]
+    # saved with the world: the distance and the revision are kept, nonsense refused
+    base = {"id": "bench", "mount": ROOM["mount"], "surface": SURFACE}
+    kept = worlds.validate({**base, "obstacles": [{**box, "covers": place}]})["obstacles"][0]["covers"]
+    assert kept == place
+    for bad in ({"clearance_mm": -1.0}, {"clearance_mm": 40.0}, {"clearance_mm": "far"}, {"rev": "../r1"}, {"rev": 3}):
+        with pytest.raises(worlds.WorldError):
+            worlds.validate({**base, "obstacles": [{**box, "covers": {**place, **bad}}]})
+
+
+def test_a_tiny_box_with_a_made_up_place_hides_no_near_miss(tmp_path, nominal):
+    """The review's attack through POST /api/world: a 10 mm cube about 56 mm from a near miss, saved with a place
+    ("covers") 50 mm past it on every side and clearance_mm 0, hid that near miss (it read "has a grey box already").
+    A place counts only as far past its box as the box's own size, sharing the faces the fit left alone, and only with
+    a distance to it: each made-up place here is ignored and the near miss is offered."""
+    rob, doc = nominal
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    res = measure(room, ROOM, doc, rob.xml)
+    (g,) = res["regions"]
+    px, py, pz = g["point"]
+    c = [px - 30.0, py + 25.0, pz - 40.0]
+    for past, cl in ((50.0, 0.0), (49.0, 0.0), (49.0, 8.0), (10.0, 5.0), (60.0, 0.0)):
+        tiny = {"id": "tiny", "label": "Tiny", "center": c, "half": [5.0] * 3, "yaw_deg": 0.0, "source": "user",
+                "covers": {"center": c, "half": [5.0 + past] * 3, "yaw_deg": 0.0, "clearance_mm": cl, "rev": "r001"}}
+        w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                             "obstacles": [tiny]})                          # what POST /api/world saves
+        assert w["obstacles"][0]["covers"]["clearance_mm"] == cl and worlds._covers(w["obstacles"][0]) is None
+        again = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc, rob.xml)
+        assert [r["min_clearance_mm"] for r in again["regions"]] == [g["min_clearance_mm"]], (past, cl, again)
+        assert not again["stats"].get("covered"), (past, cl, again["stats"])
+        text = worlds.scan_check(again)["text"]
+        assert "Add box here" in text and "grey box already" not in text, text
+
+
+DESK_VASE = (-309.49747468305833, -50.50252531694167)     # the review's desk scan: a 44 mm vase beside the egg-picker's path
+
+
+def desk_scan(path):
+    """The review's desk scan (2,872 triangles near the arm): the desk starter's boxes and a 44 mm vase 160 mm tall,
+    as a phone exports it, and the world that places it."""
+    d = worlds.starter("desk")
+    parts = []
+    for b in d["scene"] + d["obstacles"]:
+        parts.append(box_mesh(b))
+    top = d["surface"]["center"][2] + d["surface"]["half"][2]
+    v = trimesh.creation.cylinder(radius=22.0, height=160.0, sections=48)
+    v.apply_translation([*DESK_VASE, top + 80.0])
+    m = trimesh.util.concatenate(parts + [v])
+    glb(path, m.vertices, m.faces)
+    return worlds.validate({**d, "asset": "room.glb", "units": "m", "up": "y", "scale": 1.0, "id": "scan",
+                            "name": "Scanned desk", "source": {"kind": "glb", "starter": "", "name": "desk_scan.glb"}})
+
+
+def desk_simulated(w):
+    sz = arm.size(EGG)
+    asm = arm.build(EGG, sz, electronics2.plan(EGG, {**sz, "grip_target_n": 2.34}))
+    rob = S._make_robot(asm, EGG, True, {"world": worlds.sim_world(w)})
+    plan, at = S._plan_pick_place(rob, EGG, True)
+    run, met = S._run_pick_place(rob, EGG, plan, at)
+    return rob, S._scenario_doc(rob, EGG, "pick_place", plan, run, met), met
+
+
+def test_a_box_added_for_a_near_miss_is_offered_again_when_the_robot_moves_closer(tmp_path):
+    """The review's desk: the wrist passes 9.0 mm over the rim of a scanned vase, and the box offered is trimmed off
+    the top, so it keeps its place ("covers", fitted to 9.0 mm). With that box in the room, the mount moved 15 mm
+    brings the wrist within about 2 mm of the rim, above the trimmed box: the place is the box's no more, and a box
+    fitted to the new path is offered (before, the place was "a grey box already" and nothing was offered)."""
+    room = str(tmp_path / "room.glb")
+    w = desk_scan(room)
+    rob, doc, met = desk_simulated(w)
+    res = measure(room, w, doc, rob.xml)
+    (g,) = res["regions"]
+    assert abs(g["min_clearance_mm"] - 9.0) < 0.3 and g["trimmed"] and g["covers"]["clearance_mm"] == g["min_clearance_mm"]
+    obstacle = {"id": g["id"], "label": g["label"], **g["box"], "covers": g["covers"], "source": "auto"}
+    mount = {**w["mount"], "position": [w["mount"]["position"][0] - 15.0, *w["mount"]["position"][1:]]}
+    moved = worlds.validate({**w, "mount": mount, "obstacles": w["obstacles"] + [obstacle]})
+    rob2, doc2, met2 = desk_simulated(moved)
+    assert met2["success"]                                       # the simulation only sees the trimmed box
+    res2 = measure(room, moved, doc2, rob2.xml)
+    assert res2["min_clearance_mm"] < 4.0 and res2["at"]["link"] == "wrist", res2
+    (g2,) = res2["regions"]
+    assert not res2["stats"]["covered"] and g2["min_clearance_mm"] < g["min_clearance_mm"] - 1.0, res2
+    assert g2["box"] is not None and not worlds._same_box(g2["box"], obstacle), g2       # refitted for the new path
+    assert g2["box_clearance_mm"] is None or g2["box_clearance_mm"] >= g2["min_clearance_mm"] - 1e-9, g2
+    c = worlds.scan_check(res2)
+    assert "Add box here" in c["text"] and "grey box already" not in c["text"], c
+
+
+def test_a_box_not_fitted_in_time_is_not_offered(tmp_path, nominal, monkeypatch):
+    """The boxes are fitted inside the check's time limit (the measuring passes leave them a share of it): a box that
+    isn't fitted in time could come closer to the path than the scan, so none is offered, and the row says why."""
+    rob, doc = nominal
+    room = boxes_glb(tmp_path / "room.glb", [SLAB, POST])
+    fit = worlds._fit_boxes
+    monkeypatch.setattr(worlds, "_fit_boxes", lambda *a, **k: fit(*a[:11], time.monotonic() - 1.0, a[12], **k))
+    res = measure(room, ROOM, doc, rob.xml)
+    (g,) = res["regions"]
+    assert g["box"] is None and "ran out of time" in g["no_box"] and res["stats"]["fit_timeout"], g
+    assert not {k for k in g if k.startswith("_")}
+    assert "there wasn't time to fit a box that keeps clear of the path" in worlds.scan_check(res)["text"]
+    assert "less busy" in g["no_box"]
+
+
+def test_the_scan_check_warns_and_never_fails():
+    at = {"t": 4.25, "link": "jaw_left", "point": [1.0, 2.0, 3.0]}
+    region = {"id": "scan-1", "label": "Scan near miss 1", "min_clearance_mm": 4.2, "box": {}}
+    cases = [({"min_clearance_mm": 0.2, "at": at, "regions": [region]}, "warn", "The jaw left touches or passes through the scanned surface at 4.2 s."),
+             ({"min_clearance_mm": 4.2, "at": at, "regions": [region]}, "warn", "The jaw left comes within 4.2 mm of the scanned surface at 4.2 s."),
+             ({"min_clearance_mm": 4.2, "at": {**at, "link": "object"}, "regions": [region]}, "warn", "The object comes within"),
+             ({"min_clearance_mm": 23.4, "at": at, "regions": []}, "pass", "At least 23 mm between the arm and the scanned surface (closest: the jaw left at 4.2 s)."),
+             ({"min_clearance_mm": None, "at": None, "regions": []}, "pass", "The arm stays more than 50 mm from the scanned surface."),
+             # cut short: the closest distance measured is the most room the arm has, never "at least" or "more than"
+             ({"min_clearance_mm": 23.4, "at": at, "regions": [], "stats": {"truncated": True, "limit_s": 20.0}}, "warn",
+              "The jaw left comes within at most 23.4 mm of the scanned surface at 4.2 s. Only part of the path was "
+              "measured in the 20 s a check has (a large scan or a busy computer): checking again when the computer is "
+              "less busy may measure all of it."),
+             ({"min_clearance_mm": 8.0, "at": at, "regions": [], "stats": {"truncated": True, "lower_mm": 3.0}}, "warn",
+              "The jaw left comes within at most 8.0 mm of the scanned surface at 4.2 s (no closer than 3.0 mm). There "
+              "wasn't time to measure that place closely enough to offer a box for it."),
+             ({"min_clearance_mm": 0.3, "at": at, "regions": [], "stats": {"truncated": True}}, "warn",
+              "The jaw left touches or passes through the scanned surface at 4.2 s."),
+             ({"min_clearance_mm": 4.6, "at": at, "regions": [], "stats": {"truncated": True, "limit_s": 20.0, "need_s": 52.0}},
+              "warn", "Only part of the path was measured in the 20 s a check has (a large scan or a busy computer): at "
+              "this pace, measuring all of it would take more than twice that, so checking again helps only on a much "
+              "less busy computer."),
+             ({"min_clearance_mm": None, "at": None, "regions": [], "stats": {"truncated": True, "part_clear": True,
+                                                                             "poses_checked": 150, "unique_poses": 600}},
+              "warn", "In the part of the path checked (25% of it), the arm stays more than 50 mm from the scanned surface."),
+             ({"min_clearance_mm": None, "at": None, "regions": [], "stats": {"truncated": True}}, "warn",
+              "There wasn't time to measure how close the arm comes to the scanned surface. Only part of the path"),
+             ({"min_clearance_mm": None, "at": None, "regions": [], "stats": {"truncated": True, "part_clear": True,
+                                                                             "poses_checked": 2, "unique_poses": 600}},
+              "warn", "In the part of the path checked (less than 1% of it), the arm stays more than 50 mm"),
+             # the closest is measured, but time ran out before every other near miss was listed
+             ({"min_clearance_mm": 8.0, "at": at, "regions": [region], "stats": {"unlisted_mm": 8.3}}, "warn",
+              "Time ran out before every place closer than 10 mm was listed; any other is at least 8.3 mm from the arm: "
+              "checking again when the computer is less busy may list them all."),
+             ({"min_clearance_mm": 0.2, "at": at, "regions": [region], "stats": {"unlisted_mm": 0.0}}, "warn",
+              "Time ran out before every place closer than 10 mm was listed: checking again when the computer is less "
+              "busy may list them all."),
+             ({"min_clearance_mm": 8.0, "at": at, "regions": [{**region, "box": None}], "stats": {"fit_timeout": True}},
+              "warn", "1 place closer than 10 mm: there wasn't time to fit a box that keeps clear of the path."),
+             ({"skipped": "The room scan has no triangles."}, "skip", "The room scan has no triangles.")]
+    for scan, status, text in cases:
+        c = worlds.scan_check(scan)
+        assert c["id"] == "scan" and c["status"] == status and text in c["text"], (c, text)
+        assert c["text"].endswith(" " + worlds.SCAN_NOTE) and c["note"] == worlds.SCAN_NOTE
+    assert "1 place closer than 10 mm: Add box here turns it into a grey box" in worlds.scan_check(cases[1][0])["text"]
+    for scan, _, _ in cases:                            # cut short, it never says the arm keeps more room than measured
+        if (scan.get("stats") or {}).get("truncated") and not (scan.get("stats") or {}).get("part_clear"):
+            text = worlds.scan_check(scan)["text"]
+            assert "more than 50 mm" not in text and "At least" not in text and "Check placement again" not in text, text
+    # inside the world check: a touching scan never changes the verdict, and the measured review advises on it
+    w = worlds.starter("desk")
+    out = worlds.checks(w, results(w), robot=ROBOT, design=design(), scan=cases[0][0])
+    st = {c["id"]: c["status"] for c in out["checks"]}
+    assert out["verdict"] == "ready" and st["scan"] == "warn" and "fail" not in st.values()
+    assert out["checks"][[c["id"] for c in out["checks"]].index("clearance") + 1]["id"] == "scan"
+    rv = worlds.rules_review(out["facts"], world=w)
+    f = [x for x in rv["findings"] if "scanned surface" in x["evidence"]]
+    assert f and f[0]["category"] == "clearance" and f[0]["recommendation"] == worlds._ADVICE["scan"]
+    assert "scan" not in {c["id"] for c in worlds.checks(w, results(w), robot=ROBOT, design=design())["checks"]}
+
+
+# ------------------------------------------------------------------ hostile scans
+@pytest.fixture(scope="module")
+def nominal():
+    rob, doc, _ = simulated()
+    return rob, doc
+
+
+def post_mesh():
+    return box_mesh(POST)
+
+
+def test_hostile_files_are_reasons(tmp_path, nominal):
+    rob, doc = nominal
+    junk = tmp_path / "junk.glb"
+    junk.write_bytes(os.urandom(2000))
+    many = boxes_glb(tmp_path / "many.glb", [POST] * 10)                  # 120 triangles
+    pts = trimesh.Scene()
+    pts.add_geometry(trimesh.PointCloud(np.random.default_rng(1).normal(size=(50, 3))))
+    (tmp_path / "points.glb").write_bytes(pts.export(file_type="glb"))
+    for path, kw, why in ((junk, {}, "This isn't a .glb file"), (many, {"max_faces": 100}, "triangles"),
+                          (tmp_path / "points.glb", {}, "no triangles"), (tmp_path / "missing.glb", {}, "couldn't be read")):
+        res = measure(str(path), ROOM, doc, rob.xml, **kw)
+        assert why in res["skipped"] and res["note"] == worlds.SCAN_NOTE, (path, res)
+        assert worlds.scan_check(res)["status"] == "skip"
+    ok = boxes_glb(tmp_path / "ok.glb", [POST])
+    assert "collision model" in measure(ok, ROOM, doc, "<mujoco><bad")["skipped"]
+    assert "no frames" in measure(ok, ROOM, {**doc, "frames": []}, rob.xml)["skipped"]
+    assert "don't match" in measure(ok, ROOM, {**doc, "joints": ["no_such_joint"]}, rob.xml)["skipped"]
+
+
+def test_nan_infinite_and_degenerate_corners_and_missing_ones(tmp_path, nominal, monkeypatch):
+    """A post with NaN and infinite corners in some faces, faces naming corners that aren't there, slivers, segments
+    and points: the bad faces are left out, the rest measured as the clean post is."""
+    rob, doc = nominal
+    clean = measure(boxes_glb(tmp_path / "clean.glb", [POST]), ROOM, doc, rob.xml)
+    m = post_mesh()
+    V, F = np.asarray(m.vertices, float), np.asarray(m.faces)
+    n = len(V)
+    V = np.vstack([V, [[np.nan, 0, 0], [np.inf, 1, 1], [-np.inf, 5, 5], [1e30, 0, 0]]])
+    bad = [[n, 0, 1], [n + 1, 2, 3], [n + 2, n + 1, 4], [n + 3, 0, 1], [0, 0, 0], [1, 1, 2], [0, 1, 0]]
+    path = glb(tmp_path / "hostile.glb", V, np.vstack([F, bad]))
+    res = measure(path, ROOM, doc, rob.xml)
+    assert res["min_clearance_mm"] == clean["min_clearance_mm"] and res["at"] == clean["at"], (res, clean)
+    # faces that name corners the file doesn't have (a broken exporter): left out too
+    real = trimesh.load(path, file_type="glb", force="mesh", skip_materials=True)
+    broken = type("Mesh", (), {"vertices": np.asarray(real.vertices),
+                               "faces": np.vstack([real.faces, [[0, 1, 10 ** 9], [-5, 0, 1]]])})()
+    monkeypatch.setattr(trimesh, "load", lambda *a, **k: broken)
+    assert measure(path, ROOM, doc, rob.xml)["min_clearance_mm"] == clean["min_clearance_mm"]
+
+
+def test_gigantic_triangles_and_scans_far_away(tmp_path, nominal):
+    """One triangle a kilometre across, standing across the arm's path, measures as a 2 m wall in the same place
+    does (only the part near the arm is looked at); a scan 10 m away is nowhere near."""
+    rob, doc = nominal
+    doc = {**doc, "frames": [f for f in doc["frames"] if f.get("phase") == "approach"]}    # it passes closest then
+    x = 280.0                                                   # a vertical plane x = 280 mm, in front of the robot
+
+    def wall(size):
+        return [[x, -size, -size / 2], [x, size, -size / 2], [x, 0.0, size]], [[0, 1, 2]]
+    big = measure(glb(tmp_path / "big.glb", *wall(1e6)), ROOM, doc, rob.xml)
+    small = measure(glb(tmp_path / "small.glb", *wall(2000.0)), ROOM, doc, rob.xml)
+    assert big["min_clearance_mm"] is not None and abs(big["min_clearance_mm"] - small["min_clearance_mm"]) <= 0.1, (big, small)
+    assert big["stats"]["triangles"] < 5000 and not big["stats"]["truncated"]
+    far = measure(boxes_glb(tmp_path / "far.glb", [{**POST, "center": [10000.0, 0.0, 34.8]}]), ROOM, doc, rob.xml)
+    assert far["min_clearance_mm"] is None and far["regions"] == [] and far["stats"]["triangles"] == 0
+    assert worlds.scan_check(far)["status"] == "pass"
+
+
+def test_the_first_pass_looks_along_the_whole_path_first():
+    """Pass 1 visits the poses spread out (every 16th, then halfway between, ...), so a check cut short on a busy
+    computer has looked along the whole path, not only its first seconds (the review's vase is passed at 3.2 s of 6.7)."""
+    for n in (0, 1, 5, 16, 17, 100, 667):
+        order = worlds._spread(n)
+        assert sorted(order) == list(range(n)), n
+    order = worlds._spread(667)
+    assert order[:42] == list(range(0, 667, 16)) and max(order[:42]) >= 656     # the whole path in the first 42
+    assert order[42:84] == list(range(8, 667, 16))
+
+
+def test_out_of_time_says_so(tmp_path, nominal):
+    rob, doc = nominal
+    res = measure(boxes_glb(tmp_path / "room.glb", [SLAB, POST]), ROOM, doc, rob.xml, time_limit_s=0.0)
+    assert res["stats"]["truncated"]
+    c = worlds.scan_check(res)
+    assert c["status"] in ("warn", "skip") and ("Only part of the path" in c["text"] or "too large" in c["text"])
+
+
+class Clock:
+    """A clock that moves one second each time it is read: a check cut short at the same place on every computer."""
+
+    def __init__(self):
+        self.t = 1000.0
+
+    def monotonic(self):
+        self.t += 1.0
+        return self.t
+
+
+TOUCHING_VASE = ((264.2, 72.0), 22.0, 170.0)     # TALL_VASE 7.8 mm nearer the path: the gripper touches it (0.2 mm)
+
+
+@pytest.mark.parametrize("vase, limits, past", [
+    (TOUCHING_VASE, (8, 20, 60, 200, 1300), ()),                  # the review's rD: the wrist touched, cut short
+    (TALL_VASE, (300,), range(4, 72, 2))])                        # 8.0 mm: and every 2 s past one a pose (R6: the
+                                                                  # motion between poses is measured too: more reads)
+def test_a_check_cut_short_never_claims_more_room_than_it_measured(tmp_path, nominal, monkeypatch, vase, limits, past):
+    """Cut short anywhere (the first pass, the second, or after the closest place was measured), the check reports the
+    closest distance it measured, a real distance from a point of the robot to the scan, as "at most", and a lower
+    bound only from poses it bounded: never "more than 50 mm" or "at least" where the arm comes closer. Uncut, the
+    answer is the whole path's. (A clock that moves one second a reading cuts the check at the same place every run.)"""
+    rob, doc = nominal
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*vase)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    full = measure(room, ROOM, doc, rob.xml)
+    true = full["min_clearance_mm"]
+    assert not full["stats"]["truncated"] and true < worlds.SCAN_NEAR_MM, full
+    seen = set()
+    for limit in [*limits, *(full["stats"]["unique_poses"] + s for s in past)]:     # past: into the second pass
+        with monkeypatch.context() as mp:
+            mp.setattr(worlds, "time", types.SimpleNamespace(monotonic=Clock().monotonic))
+            res = worlds.scan_clearance(room, ROOM, doc, rob.xml, time_limit_s=float(limit))
+        st, c, mc = res["stats"], worlds.scan_check(res), res["min_clearance_mm"]
+        assert c["status"] == "warn", (limit, c)
+        if not st["truncated"]:                         # the closest approach is the whole path's
+            assert mc == true and res["at"] == full["at"], (limit, res)
+            seen.add("listed in part" if st.get("unlisted_mm") is not None else "whole")
+            # the row is the closest approach there, unless the second pass stopped at a touch (then it "touches")
+            assert [r["exact"] for r in res["regions"]] == [true >= worlds.SCAN_TOUCH_MM], res["regions"]
+            assert res["regions"][0]["min_clearance_mm"] == true
+            continue
+        for r in res["regions"]:                        # a row of a check cut short: the arm comes at most this close
+            assert not r["exact"] and r["min_clearance_mm"] >= true - 0.1, (limit, r)
+            assert (r.get("covers") or {}).get("clearance_mm", r["min_clearance_mm"]) == r["min_clearance_mm"], r
+        seen.add("pass 1" if st["poses_checked"] < st["unique_poses"] else "pass 2")
+        assert ("Only part of the path was measured" in c["text"] or    # R6: or the motion between the poses
+                "The motion between the poses wasn't all measured closely enough" in c["text"]), c
+        assert "Check placement again" not in c["text"], c
+        assert "more than 50 mm" not in c["text"] and "At least" not in c["text"], (limit, c["text"])
+        assert mc is not None and true <= mc + 0.05, (limit, true, res)    # it comes at least as close as it says
+        assert ("touches" in c["text"]) if mc < worlds.SCAN_TOUCH_MM else (f"within at most {mc:.1f} mm" in c["text"])
+        if st.get("lower_mm") is not None:
+            assert st["lower_mm"] <= true + 0.05 and f"no closer than {st['lower_mm']:.1f} mm" in c["text"], (limit, st)
+    # R6: after the second pass the motion between poses is measured, so a second pass cut short after the closest
+    # place was found is "listed in part" only when that third pass still finishes; at a second a clock reading it doesn't
+    assert seen >= {"pass 1", "whole"} and (seen >= {"pass 2"} if vase is TALL_VASE else True), seen
+
+
+@pytest.mark.parametrize("dy, truth, near", [
+    (4.40, 9.96, True),             # a near miss: before, "At least 10 mm" and a 10.0 row
+    (0.37, 8.17, True),             # before, 8.2
+    (21.06, 16.76, False)])         # before, "At least 17 mm"
+def test_no_distance_is_rounded_up(tmp_path, nominal, dy, truth, near):
+    """The tall vase moved `dy` mm along y, so the closest approach at the 10 ms poses (`truth`, pose by pose to
+    0.01 mm) has a fraction that rounds up: every distance the check keeps or shows is rounded down instead (to 0.1 mm,
+    "At least" to the millimetre), so it never claims more room than was measured, and a near miss of 9.96 mm is never
+    10. R6: the motion between the poses counts too (the first vase comes within 9.83 mm between two of them), so what
+    the check keeps is never more than the poses' closest, rounded down, and not much less."""
+    rob, doc = nominal
+    (cx, cy), r, h = TALL_VASE
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh((cx, cy + dy), r, h)])
+    res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml, per_pose=True)
+    pp = min(v for _, v in res["poses"] if v is not None)
+    assert pp == pytest.approx(truth, abs=0.015), pp
+    mc = res["min_clearance_mm"]
+    assert mc <= math.floor(pp * 10 + 1e-6) / 10 and mc >= pp - 0.3 and mc == math.floor(mc * 10 + 1e-6) / 10, (mc, pp)
+    assert (mc < worlds.SCAN_NEAR_MM) == near and bool(res["regions"]) == near, (mc, res["regions"])
+    for g in res["regions"]:
+        assert g["min_clearance_mm"] <= pp and (g.get("covers") or {}).get("clearance_mm", 0.0) <= pp, g
+        assert g["box_clearance_mm"] is None or g["box_clearance_mm"] <= g["min_clearance_mm"] + 0.2, g
+    c = worlds.scan_check(res)
+    text = f"comes within {mc:.1f} mm of the scanned surface" if near else \
+        f"At least {math.floor(mc):.0f} mm between the arm and the scanned surface"
+    assert c["status"] == ("warn" if near else "pass") and text in c["text"] and c["value"] <= pp, c
+    assert ("At least" in c["text"]) != near and "10.0" not in c["text"], c
+
+
+@pytest.mark.parametrize("mc, status, text", [
+    (30.68, "pass", "At least 30 mm between the arm and the scanned surface"),
+    (47.64, "pass", "At least 47 mm"), (10.0, "pass", "At least 10 mm"),
+    (9.97, "warn", "comes within 9.9 mm"), (9.5, "warn", "comes within 9.5 mm"), (0.49, "warn", "touches")])
+def test_the_scan_check_rounds_its_numbers_down(mc, status, text):
+    """However the distance comes (a scan measured before, a hand-made answer), the text rounds it down: 30.68 mm is
+    "At least 30 mm", not 31, and 9.97 mm "comes within 9.9 mm", never 10.0 next to "closer than 10 mm"."""
+    at = {"t": 3.2, "link": "wrist", "point": [0.0, 0.0, 0.0]}
+    c = worlds.scan_check({"min_clearance_mm": mc, "at": at, "regions": []})
+    assert c["status"] == status and text in c["text"], c
+    cut = worlds.scan_check({"min_clearance_mm": 9.97, "at": at, "regions": [], "stats": {"truncated": True, "lower_mm": 3.06}})
+    assert "within at most 9.9 mm" in cut["text"] and "no closer than 3.0 mm" in cut["text"], cut
+    part = worlds.scan_check({"min_clearance_mm": 8.0, "at": at, "regions": [], "stats": {"unlisted_mm": 8.39}})
+    assert "any other is at least 8.3 mm" in part["text"], part
+
+
+def test_only_the_closest_places_row_is_exact_the_others_are_measured_and_at_most(tmp_path, nominal):
+    """Two near misses: a bin 50 mm beside the carry arc (7.0 mm) and the tall vase (8.0 mm, measured alone). Only the
+    region holding the whole check's closest point has its exact closest approach ("exact"); the other region's
+    distance is measured exactly at its own closest points (not the up to rho more of a scan point), so it is a real
+    distance the arm comes within there: at least the vase's own closest approach, and what its box is fitted to."""
+    rob, doc = nominal
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
+    alone = measure(glb(tmp_path / "vase.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE), box_mesh(bin_beside_the_arc(EGG, 50.0))])
+    res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
+    first, vase = res["regions"]
+    assert first["exact"] and first["min_clearance_mm"] == res["min_clearance_mm"], first
+    assert not vase["exact"] and vase["min_clearance_mm"] >= alone["min_clearance_mm"], (vase, alone["min_clearance_mm"])
+    assert vase["min_clearance_mm"] <= alone["min_clearance_mm"] + 0.2, (vase, alone["min_clearance_mm"])
+    assert vase["covers"]["clearance_mm"] == vase["min_clearance_mm"] and [g["id"] for g in res["regions"]] == ["scan-1", "scan-2"]
+
+
+def test_the_boxes_time_is_set_aside_only_once_the_second_pass_lists_a_near_miss(tmp_path, nominal, monkeypatch):
+    """The first pass's bounds show the tall vase's near miss early, but a box is fitted only to what the second pass
+    lists. Set aside from the first pass on, the boxes' share (2.4 s for these poses) cut the first pass short at a
+    limit just past where it ends and went unused; now the first pass runs to the limit and measures every pose. (A
+    clock that moves one second a reading.)"""
+    rob, doc = nominal
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh(*TALL_VASE)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+
+    def at(limit):
+        with monkeypatch.context() as mp:
+            mp.setattr(worlds, "time", types.SimpleNamespace(monotonic=Clock().monotonic))
+            return worlds.scan_clearance(room, ROOM, doc, rob.xml, time_limit_s=float(limit))
+    full = at(1e9)["stats"]
+    end1 = math.ceil(full["prepare_s"] + full["pass1_s"])          # clock readings to the end of the first pass
+    assert full["regions_s"] is not None and worlds.SCAN_FIT_S_PER_POSE * full["unique_poses"] >= 2.0, full
+    st = at(end1)["stats"]                                         # before: 542 of 544 poses at this limit
+    assert st["poses_checked"] == st["unique_poses"] and st["truncated"], st      # cut in the second pass, not the first
+
+
+def test_the_checks_closest_distance_is_never_more_than_one_of_its_rows(tmp_path, nominal):
+    """The arm passes through the vase (the touching vase moved 10 mm into the path): the second pass stops at its
+    first point closer than 0.5 mm (it touches: 0.3 mm), but the near miss's row, measured exactly at its own closest
+    points, comes to 0.0 mm. The check's closest distance is the closest anything measured (before: 0.3 mm, so the
+    scan event said "Closest to the scan: 0.3 mm" beside a 0.0 mm row), and its place is that row's."""
+    rob, doc = nominal
+    (cx, cy), r, h = TOUCHING_VASE
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh((cx, cy - 10.0), r, h)])
+    res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
+    closest = min(res["regions"], key=lambda g: g["min_clearance_mm"])
+    assert res["min_clearance_mm"] <= closest["min_clearance_mm"] < worlds.SCAN_TOUCH_MM, (res["min_clearance_mm"], closest)
+    assert res["at"]["point"] == closest["point"] and res["at"]["t"] == closest["t"], (res["at"], closest)
+    assert "touches or passes through" in worlds.scan_check(res)["text"]
+
+
+def test_a_thing_the_arm_passes_through_gets_a_box_over_it_when_a_plan_can_go_round_it(tmp_path, nominal):
+    """Where the arm passes through the scan (the touching vase 10 mm into the path, on the carry), no box can keep clear
+    of the path, so the box offered is the scanned surface there, untrimmed, because none of it is where the arm must
+    go: added, the next simulation goes round it. R6 trimmed it against MuJoCo's own (negative) distances until nothing
+    was left ("too close to the path for a box"), so the Studio's e2e post the jaw passes 7 mm into on its way back got
+    no box (R5 offered it). The text promises no more than a try: the planner's detours may not clear every box."""
+    rob, doc = nominal
+    (cx, cy), r, h = TOUCHING_VASE
+    m = trimesh.util.concatenate([box_mesh(SLAB), vase_mesh((cx, cy - 10.0), r, h)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    res = measure(room, ROOM, doc, rob.xml)
+    (g,) = res["regions"]
+    assert g["min_clearance_mm"] < worlds.SCAN_TOUCH_MM and g["box"] is not None and g["touches"], g
+    assert not g["trimmed"] and g["box_clearance_mm"] == 0.0 and "covers" not in g and "must_reach" not in g, g
+    lo, hi = corners(g["box"])
+    assert np.all(lo - 0.2 <= g["point"]) and np.all(np.array(g["point"]) <= hi + 0.2), g      # over the touch
+    c = worlds.scan_check(res)
+    assert "touches or passes through" in c["text"] and "a grey box over the scanned surface there (at least 20 mm " \
+        "each way, so it can be larger than what was scanned); the next simulation tries to plan round it, and may " \
+        "take another way, closer to it, or fail." in c["text"], c["text"]            # not tried: no promise
+    assert "thing as scanned" not in c["text"] and "plans round it" not in c["text"], c["text"]
+    box = dict(g["box"])
+    worlds.try_boxes(res, BENCH, bench_trial(fast=True), time.monotonic() + 300.0, baseline_ok=True)
+    assert g["box"] == box and g["trial"]["ok"] and g["trial"]["fails"] is None, g    # tried: the simulation goes round
+    c = worlds.scan_check(res)
+    assert "; a simulation with it, tried here, keeps clear of it (the row says how close it comes)." in c["text"], c
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                         "obstacles": [{"id": g["id"], "label": g["label"], **g["box"], "source": "auto"}]})
+    rob2, doc2, met2 = simulated(tuple(worlds.sim_world(w)["obstacles"]))
+    assert met2["success"] and not met2["world_contacts"] and not met2.get("blocked"), met2.get("failure")
+    assert met2["min_clearance_mm"] == g["trial"]["min_clearance_mm"], (met2["min_clearance_mm"], g["trial"])
+    res2 = measure(room, {**ROOM, "obstacles": w["obstacles"]}, doc2, rob2.xml)
+    assert res2["min_clearance_mm"] is None or res2["min_clearance_mm"] >= worlds.SCAN_TOUCH_MM, res2
+
+
+def finger_tip_at_the_grasp(rob, doc):
+    """The lowest point of the fingers while the gripper closes on the egg (robot base frame, mm)."""
+    m, dd = rob.model, rob._mj.MjData(rob.model)
+    low = None
+    for _, q, o, ph in worlds._frame_poses(doc):
+        if ph != "grasp":
+            continue
+        dd.qpos[:] = 0
+        dd.qpos[rob.qadr] = q[:rob.n]
+        rob.set_grip(dd, q[-1])
+        rob._mj.mj_kinematics(m, dd)
+        for g in rob.robot_geoms:
+            if m.geom_type[g] != 7 or "finger" not in m.geom(g).name:
+                continue
+            mid = m.geom_dataid[g]
+            V = np.asarray(m.mesh_vert[m.mesh_vertadr[mid]:m.mesh_vertadr[mid] + m.mesh_vertnum[mid]], float)
+            X = (V @ dd.geom_xmat[g].reshape(3, 3).T + dd.geom_xpos[g]) * 1000.0
+            i = int(X[:, 2].argmin())
+            if low is None or X[i, 2] < low[2]:
+                low = X[i].copy()
+    return low
+
+
+def egg_scan(at):
+    egg = trimesh.creation.capsule(height=30.0, radius=21.0, count=[24, 24])
+    egg.apply_translation([at[0], at[1], 21.0 + 15.0 + 0.5])
+    return egg
+
+
+@pytest.mark.parametrize("case", ["the egg scanned where it is picked up", "a nub under a finger at the grasp",
+                                  "something scanned where the egg is set down"])
+def test_where_the_arm_must_go_no_box_is_offered(tmp_path, nominal, case):
+    """The final skeptic's cases (R6): where the arm touches the scan at a place it must go, ef9f65c offered "Add box
+    here" and promised that "the next simulation plans round it", but the box made it fail ("the object touches Scan
+    near miss 1 in the arm's starting pose": the egg itself scanned at the pick spot, and a 4 mm nub 0.2 mm under a
+    finger at the grasp, whose 19.8 x 19.8 x 10.4 mm box reached the egg). The planner can't move the descent, the
+    grasp, the lift, the set-down or the release, the arm's starting pose or the object where it starts and ends: a box
+    that meets one of those isn't offered, and the row and the check say the arm must reach there (for the egg itself,
+    that the scan holds it)."""
+    rob, doc = nominal
+    pick, place = (EGG.task.pick_x_mm, EGG.task.pick_y_mm), (EGG.task.place_x_mm, EGG.task.place_y_mm)
+    if case.startswith("the egg"):
+        thing, want = egg_scan(pick), {"object"}
+    elif case.startswith("a nub"):
+        p = finger_tip_at_the_grasp(rob, doc)
+        thing = trimesh.creation.box(extents=[4.0, 4.0, 4.0],
+                                     transform=trimesh.transformations.translation_matrix([p[0], p[1], p[2] - 2.2]))
+        want = {"object_box", "pick"}
+    else:
+        thing, want = egg_scan(place), {"object_end", "object_end_box", "place"}
+    m = trimesh.util.concatenate([box_mesh(SLAB), thing])
+    res = measure(glb(tmp_path / "room.glb", m.vertices, m.faces), ROOM, doc, rob.xml)
+    assert res["min_clearance_mm"] is not None and res["min_clearance_mm"] < worlds.SCAN_TOUCH_MM, res["min_clearance_mm"]
+    (g,) = res["regions"]
+    assert g["box"] is None and g["touches"] and g["must_reach"] in want, g
+    assert g["no_box"] == worlds.MUST_REACH[g["must_reach"]] and "no box is offered" in g["no_box"] or \
+        "none is offered" in g["no_box"], g
+    c = worlds.scan_check(res)
+    assert "Add box here" not in c["text"] and "plans round it" not in c["text"], c["text"]
+    assert "the arm must reach there to pick or place the object, or stands there in its starting pose, so no box is " \
+        "offered" in c["text"], c["text"]
+    assert ("the scan holds the object itself where it starts, or something within 2 mm of it" in c["text"]) == \
+        (g["must_reach"] == "object"), c["text"]           # a block 0.3 mm beside the egg is "within 2 mm of it" too
+
+
+@pytest.fixture(scope="module")
+def speck_touch(nominal, tmp_path_factory):
+    """A speck 0.35 mm from the hand on the way to the egg (found by a fuzz of specks in the moves a plan can change):
+    the scan check's answer."""
+    rob, doc = nominal
+    speck = trimesh.creation.box(extents=[0.1] * 3, transform=trimesh.transformations.translation_matrix(
+        [167.1827, 1.1879, 155.2046]))
+    sm = trimesh.util.concatenate([box_mesh(SLAB), speck])
+    return measure(glb(tmp_path_factory.mktemp("speck") / "room.glb", sm.vertices, sm.faces), ROOM, doc, rob.xml)
+
+
+def test_a_touch_box_row_never_claims_room_the_box_does_not_leave(nominal, speck_touch):
+    """The speck's box is offered (the approach is a move the planner can change); as Add box here saves it, it is 20 mm
+    a side and reaches about 8 mm into the path, but its row said "0.1 mm from the path": the box was measured only
+    until the first pose closer than the speck (0.1 mm), and that pose's distance was kept as if it bounded the path.
+    Now a box measured short of the whole path reads 0.0 (touches)."""
+    rob, doc = nominal
+    res = speck_touch
+    (r,) = res["regions"]
+    assert r["touches"] and r["box"] is not None, r
+    w = worlds.validate({"id": "bench", "mount": ROOM["mount"], "surface": SURFACE, "asset": "room.glb",
+                         "obstacles": [{"id": r["id"], "label": r["label"], **r["box"], "source": "auto"}]})
+    sz = arm.size(EGG)
+    asm = arm.build(EGG, sz, electronics2.plan(EGG, {**sz, "grip_target_n": 2.34}))
+    boxed = S._make_robot(asm, EGG, True, {"world": {"id": "bench", "sha": "touch-row", "surface": SURFACE,
+                                                     "floor_z": -900.0, "zones": [],
+                                                     "obstacles": worlds.sim_world(w)["obstacles"]}})
+    truth = float(mujoco_clearance(boxed, doc).min())            # the box as saved against the path, pose by pose
+    assert truth < 0.0, truth                                     # it reaches into the path
+    assert r["box_clearance_mm"] == 0.0, (r["box_clearance_mm"], truth)       # before: 0.1
+
+
+def test_a_touch_is_kept_as_nothing_to_spare_and_the_event_says_so(speck_touch):
+    """Under 0.5 mm the check stops looking closer (the arm touches the scan), so the distance it had there is one
+    pose's, not a bound of the path: it was kept as 0.2 mm (and the final skeptic's 0.197 mm speck on the review's desk
+    likewise), and the scan event read "Closest to the scan: 0.2 mm". Now the check keeps 0.0 there, its rows too, and
+    the event says the arm touches the scan."""
+    res = speck_touch
+    assert res["min_clearance_mm"] == 0.0 and all(r["min_clearance_mm"] == 0.0 for r in res["regions"]), res
+    assert worlds.scan_event_text(res) == "The arm touches or passes through the scan, 1 near miss"
+    assert "touches or passes through" in worlds.scan_check(res)["text"]
+
+
+@pytest.mark.parametrize("beyond, says", [(None, "50"), (49.96, "49"), (12.34, "12")])
+def test_the_scan_event_never_says_more_room_than_the_check(beyond, says):
+    """Nothing measured within 50 mm, but the motion between two poses bounded only to just under it: the check says
+    "more than 49 mm" (stats beyond_mm) and the event said "Nothing within 50 mm of the scan". Both now say the bound."""
+    res = {"min_clearance_mm": None, "regions": [], "stats": {"truncated": False, **({"beyond_mm": beyond} if beyond else {})}}
+    assert worlds.scan_event_text(res) == f"Nothing within {says} mm of the scan"
+    assert f"The arm stays more than {says} mm from the scanned surface." in worlds.scan_check(res)["text"]
+    assert worlds.scan_event_text({"min_clearance_mm": 3.47, "regions": [{}], "stats": {}}) == \
+        "Closest to the scan: 3.4 mm, 1 near miss"
+    assert worlds.scan_event_text({"min_clearance_mm": 3.47, "regions": [], "stats": {"truncated": True}}) == \
+        "Closest to the scan: at most 3.4 mm (cut short)"
+    assert worlds.scan_event_text({"skipped": "The room scan has no triangles."}) == "The room scan has no triangles."
+
+
+def test_a_check_with_no_time_for_any_pose_says_so(tmp_path, nominal, monkeypatch):
+    """Cut short before the first pose is measured (the clock runs out while the scan is prepared), the check has
+    measured nothing: it says there wasn't time, never that the part of the path checked is clear."""
+    rob, doc = nominal
+    room = boxes_glb(tmp_path / "room.glb", [SLAB, POST])
+    nothing = 0
+    for limit in range(1, 10):                          # the first seconds of the clock go to preparing the scan
+        with monkeypatch.context() as mp:
+            mp.setattr(worlds, "time", types.SimpleNamespace(monotonic=Clock().monotonic))
+            res = worlds.scan_clearance(room, ROOM, doc, rob.xml, time_limit_s=float(limit))
+        st = res["stats"]
+        if res.get("skipped") or st.get("poses_checked") != 0:
+            continue
+        nothing += 1
+        assert st["truncated"] and not st["part_clear"] and res["min_clearance_mm"] is None, st
+        text = worlds.scan_check(res)["text"]
+        assert text.startswith("There wasn't time to measure how close the arm comes") and "more than 50" not in text
+    assert nothing, "no limit left the check without a pose measured"
+
+
+# ------------------------------------------------------------------ a room of a million triangles
+def million_room(path, target=1_000_000):
+    """A generated room scan of about `target` triangles (y up, metres): a 4 x 4 m floor and four walls, finely
+    gridded, a table whose top the robot stands on (z = 750 mm), and near the arm's path a mug, a box and a lamp tessellated
+    as CAD exports do (long slivers), all with 1 mm of scan noise. The world placing the robot on the table."""
+    def grid(nx, ny, sx, sy, T):
+        x, y = np.meshgrid(np.linspace(-sx / 2, sx / 2, nx + 1), np.linspace(-sy / 2, sy / 2, ny + 1), indexing="ij")
+        i = (np.arange(nx)[:, None] * (ny + 1) + np.arange(ny)[None, :]).ravel()
+        m = trimesh.Trimesh(np.c_[x.ravel(), y.ravel(), np.zeros(x.size)],
+                            np.r_[np.c_[i, i + ny + 1, i + 1], np.c_[i + 1, i + ny + 1, i + ny + 2]], process=False)
+        m.apply_transform(T)
+        return m
+
+    def at(m, x, y, z, k=0):
+        for _ in range(k):
+            m = m.subdivide()
+        m.apply_translation((x, y, z))
+        return m
+
+    tf = trimesh.transformations
+    things = [at(trimesh.creation.box((1200, 700, 40)), 0, 0, 730, 6)]
+    things += [at(trimesh.creation.box((40, 40, 710)), x, y, 355, 4) for x in (-560, 560) for y in (-310, 310)]
+    things.append(at(trimesh.creation.cylinder(radius=40, height=95, sections=96), 205, 62, 797.5, 4))
+    things.append(at(trimesh.creation.box((60, 60, 90)), 290, 160, 795, 5))
+    things.append(at(trimesh.creation.cylinder(radius=10, height=400, sections=64), -250, 220, 950, 4))
+    nf = int(math.sqrt((target - sum(len(t.faces) for t in things)) / 4.58))   # the floor 2 nf^2, the walls 4.8 nw^2
+    nw = int(0.733 * nf)
+    parts = things + [grid(nf, nf, 4000, 4000, np.eye(4))]
+    for T in (tf.translation_matrix((0, 2000, 1250)) @ tf.rotation_matrix(math.pi / 2, (1, 0, 0)),
+              tf.translation_matrix((0, -2000, 1250)) @ tf.rotation_matrix(math.pi / 2, (1, 0, 0)),
+              tf.translation_matrix((2000, 0, 1250)) @ tf.rotation_matrix(math.pi / 2, (0, 1, 0)) @ tf.rotation_matrix(math.pi / 2, (1, 0, 0)),
+              tf.translation_matrix((-2000, 0, 1250)) @ tf.rotation_matrix(math.pi / 2, (0, 1, 0)) @ tf.rotation_matrix(math.pi / 2, (1, 0, 0))):
+        parts.append(grid(nw, int(nw * 0.6), 4000, 2500, T))
+    m = trimesh.util.concatenate(parts)
+    V = m.vertices + np.random.default_rng(0).normal(0, 1.0, m.vertices.shape)
+    glb(path, V, m.faces)
+    world = {"mount": {"position": [0.0, 0.0, 750.0], "yaw_deg": 0.0}, "units": "m", "up": "y", "scale": 1.0,
+             "surface": {"label": "Table top", "center": [0.0, 0.0, 730.0], "half": [600.0, 350.0, 20.0], "yaw_deg": 0.0}}
+    return len(m.faces), world
+
+
+@pytest.mark.skipif(not SLOW, reason="MORPH_SLOW=1: a generated room of a million triangles (about a minute)")
+def test_acceptance_a_million_triangle_room_in_under_20_s(tmp_path):
+    faces, world = million_room(str(tmp_path / "room.glb"))
+    assert faces >= 990_000
+    rob, doc, met = simulated(fast=False)                     # the full simulation, as the Studio runs it
+    t0 = time.time()
+    res = worlds.scan_clearance(str(tmp_path / "room.glb"), world, doc, rob.xml)
+    took = time.time() - t0
+    st = res["stats"]
+    print(f"\n{st['faces']} triangles, {st['kept_faces']} near the arm, {st['samples']} scan points (rho {st['rho_mm']} mm), "
+          f"{st['poses']} poses: {took:.2f} s (load {st['load_s']}, crop {st['crop_s']}, tree {st['tree_s']}, pass 1 "
+          f"{st['pass1_s']}, pass 2 {st['pass2_s']}, regions {st.get('regions_s')}, boxes {st.get('fit_s')}); closest "
+          f"{res['min_clearance_mm']} mm at {res['at']}, "
+          f"{len(res['regions'])} near-miss regions")
+    assert st["faces"] == faces and not st["truncated"] and res.get("skipped") is None
+    assert took <= 20.0 and res["min_clearance_mm"] is not None and res["regions"]
+
+
+with open(os.path.join(os.path.dirname(__file__), "data", "scan_box_trials.json"), encoding="utf-8") as _fh:
+    TRIALS = json.load(_fh)["cases"]        # the hunters' specks and cubes, with the next simulation they measured
+QUICK = {0, 6, 9, 13}                       # a touch and a near miss each way; MORPH_SLOW=1 tries every case
+
+
+@pytest.mark.parametrize("case", [c for i, c in enumerate(TRIALS) if SLOW or i in QUICK], ids=lambda c: c["name"])
+def test_add_box_here_is_offered_only_where_the_simulation_with_the_box_was_tried_and_went_round_it(tmp_path, case):
+    """0033630 offered every one of these boxes: the touch boxes because no move a plan can't change met them, the
+    trimmed ones because the box kept clear of the path as it was. Added, 8 of the 15 made the next simulation fail: its
+    planner took another approach, carry or way back, and those meet the box too (or its run strays 1-3 mm from its
+    plan, into a box trimmed to 0.6 mm). Now each box is tried first, by the next simulation itself, run here with
+    the box: a box it fails with is no longer offered and the row says how it fails; one it goes round is offered,
+    with the clearance that simulation measured, the same the simulation after Add box here reports."""
+    rob, doc, met = simulated(fast=False)
+    thing = {"center": case["center"], "half": [case["half"]] * 3, "yaw_deg": 0.0}
+    m = trimesh.util.concatenate([box_mesh(SLAB), box_mesh(thing)])
+    room = glb(tmp_path / "room.glb", m.vertices, m.faces)
+    res = measure(room, BENCH, doc, rob.xml)
+    (g,) = res["regions"]
+    assert g["box"] is not None and not g.get("must_reach"), g                     # offered before it was tried
+    box = dict(g["box"])
+    w = worlds.validate({**BENCH, "obstacles": [{"id": g["id"], "label": g["label"], **box, "source": "auto"}]})
+    _, _, met2 = simulated(tuple(worlds.sim_world(w)["obstacles"]), fast=False)   # Add box here, Save and simulate
+    worlds.try_boxes(res, BENCH, bench_trial(fast=False), time.monotonic() + 300.0, baseline_ok=met["success"])
+    text = worlds.scan_check(res)["text"]
+    if not case["next"]["success"]:
+        assert not met2["success"] and met2["failure"] == case["next"]["failure"], met2.get("failure")
+        assert g["box"] is None and "covers" not in g and g["trial"] == {"ok": False, "failure": met2["failure"]}, g
+        assert g["no_box"] == (f"A simulation with a grey box here fails ({met2['failure']}), so none is offered: "
+                               "move the robot or the thing instead."), g
+        assert ": a simulation with a grey box there, tried here, fails (the row says how), so none is offered; move " \
+            "the robot or the thing." in text and "Add box here" not in text, text
+    else:
+        assert met2["success"] and abs(met2["min_clearance_mm"] - case["next"]["min_clearance_mm"]) <= 0.2, met2
+        assert g["box"] == box and g["trial"] == {"ok": True, "min_clearance_mm": met2["min_clearance_mm"],
+                                                  "at_box": True, "fails": None}, g
+        assert "Add box here turns it into" in text and "a simulation with it, tried here, keeps clear of it" in text
+
+
+def test_the_check_names_a_box_add_box_here_made_when_the_simulation_fails_on_it():
+    """After a box Add box here made, the simulation failed on it ("the wrist hits Scan near miss 1 during the approach
+    at 1.7 s") and the next check said only that the place "has a grey box already". It now says which box to
+    remove; a box drawn by hand, or a simulation that succeeds or fails elsewhere, isn't named."""
+    w = {"obstacles": [{"id": "scan-1", "label": "Scan near miss 1", "source": "auto"},
+                       {"id": "shelf", "label": "Shelf", "source": "manual"}]}
+    fail = "the wrist hits Scan near miss 1 during the approach at 1.7 s"
+    doc = {"metrics": {"success": False, "failure": fail, "world_contacts": [{"obstacle": "Scan near miss 1"}]}}
+    fo = worlds.failed_on_box(w, doc)
+    assert fo == {"label": "Scan near miss 1", "failure": fail}
+    blocked = {"metrics": {"success": False, "failure": "x", "world_contacts": [],
+                           "blocked": {"at": {"obstacle": "Scan near miss 1"}}}}
+    assert worlds.failed_on_box(w, blocked)["label"] == "Scan near miss 1"
+    assert worlds.failed_on_box(w, {"metrics": {"success": False, "world_contacts": [{"obstacle": "Shelf"}]}}) is None
+    assert worlds.failed_on_box(w, {"metrics": {"success": True, "world_contacts": []}}) is None
+    text = worlds.scan_check({"min_clearance_mm": None, "at": None, "regions": [],
+                              "stats": {"covered": 1, "fails_on": fo}})["text"]
+    assert (f"The simulation fails on Scan near miss 1, a box Add box here made ({fail}): remove that box, and move the "
+            "robot or the thing instead." in text), text
+
+
+def _two_boxes():
+    def reg(i, c):
+        return {"id": f"scan-{i}", "label": f"Scan near miss {i}", "min_clearance_mm": 3.0, "exact": True, "t": 1.0,
+                "link": "wrist", "point": c, "box": {"center": c, "half": [10.0, 10.0, 10.0], "yaw_deg": 0.0},
+                "box_clearance_mm": 3.0}
+    return {"min_clearance_mm": 3.0, "at": {"t": 1.0, "link": "wrist", "point": [0, 0, 0]},
+            "regions": [reg(1, [100.0, 300.0, 200.0]), reg(2, [-100.0, 300.0, 200.0])], "stats": {"places": 2}}
+
+
+def _cached(stats):
+    """Whether api_world._scan keeps this answer (it measures again only when one of these says it is incomplete)."""
+    return not (stats.get("fit_timeout") or stats.get("truncated") or stats.get("unlisted_mm") is not None
+                or stats.get("trial_timeout") or stats.get("untried"))
+
+
+def test_boxes_not_tried_together_in_time_are_never_said_to_fail_together():
+    """Both boxes went round on their own; the deadline passed before the simulation with both (the final skeptic's
+    together_late: 17.6 s each alone at load 8 against the 30 s of SCAN_TRIAL_S, and with both the real next
+    simulation succeeds at 3.1 mm). 1f6b690 said "Added together, those boxes make the simulation fail (Morph ran out of
+    time to try a simulation with a box here ...)" and kept that answer. Now it says there wasn't time to try them
+    together, and Check placement tries again."""
+    calls = []
+
+    def trial(rooms, deadline):
+        calls.append(len(rooms))
+        if len(calls) == 1:                    # each box on its own: both go round it
+            return [{"success": True, "failure": None, "min_clearance_mm": 2.5, "at_box": True, "contact": False,
+                     "blocked": False} for _ in rooms]
+        return [None]                          # together: out of time before it started
+    res = _two_boxes()
+    worlds.try_boxes(res, BENCH, trial, time.monotonic() + 30, baseline_ok=True)
+    assert calls == [2, 1] and all(r["box"] and r["trial"]["ok"] for r in res["regions"]), res
+    text = worlds.scan_check(res)["text"]
+    assert "fail" not in text.split("tried here on its own")[1], text
+    assert "make the simulation fail" not in text and "ran out of time" not in text, text
+    assert ("There wasn't time to try a simulation with those boxes added together: checking again when the computer "
+            "is less busy may try it.") in text, text
+    assert not _cached(res["stats"]), res["stats"]
+    # tried together and failing: said, and kept (the answer is complete)
+    res = _two_boxes()
+    calls.clear()
+
+    def fails_together(rooms, deadline):
+        calls.append(len(rooms))
+        if len(calls) == 1:
+            return [{"success": True, "failure": None, "min_clearance_mm": 2.5, "at_box": True, "contact": False,
+                     "blocked": False} for _ in rooms]
+        return [{"success": False, "failure": "the wrist hits Scan near miss 2 during the carry at 4.9 s",
+                 "min_clearance_mm": -1.0, "at_box": False, "contact": True, "blocked": False}]
+    worlds.try_boxes(res, BENCH, fails_together, time.monotonic() + 30, baseline_ok=True)
+    text = worlds.scan_check(res)["text"]
+    assert ("Added together, those boxes make the simulation fail (the wrist hits Scan near miss 2 during the carry at "
+            "4.9 s): add one, Save and simulate, then check again.") in text, text
+    assert _cached(res["stats"]), res["stats"]
+
+
+FAR_BOX = {"center": [-350.0, -450.0, 15.0], "half": [10.0, 10.0, 15.0], "yaw_deg": 0.0}   # on the bench, out of reach
+
+
+def test_a_near_miss_is_numbered_past_the_boxes_add_box_here_made_already(tmp_path, nominal):
+    """A world holding "Scan near miss 1" (added after an earlier check) lists its next near miss as "Scan near miss 2".
+    1f6b690 numbered every check from 1, so Add box here made a second "Scan near miss 1" (ids scan-1 and scan-1-2) and
+    the status said "closest 3.1 mm, to Scan near miss 1" of either."""
+    rob, doc = nominal
+    room = boxes_glb(tmp_path / "room.glb", [SLAB, POST])
+    old = {"id": "scan-1", "label": "Scan near miss 1", **FAR_BOX, "source": "auto"}
+    res = measure(room, worlds.validate({**BENCH, "obstacles": [old]}), doc, rob.xml)
+    (g,) = res["regions"]
+    assert (g["id"], g["label"]) == ("scan-2", "Scan near miss 2"), g
+    res = measure(room, worlds.validate({**BENCH, "obstacles": [{**old, "id": "scan-4-2", "label": "Shelf"}]}), doc, rob.xml)
+    assert (res["regions"][0]["id"], res["regions"][0]["label"]) == ("scan-5", "Scan near miss 5"), res["regions"][0]
+
+
+def test_a_box_tried_is_told_apart_from_another_with_its_label(nominal):
+    """try_boxes' trial (the next simulation, run here) names boxes by label, and two can share one (1f6b690's Add box
+    here made a second "Scan near miss 1"). The trial now tells the box tried apart by its id: a run that touches the
+    other box doesn't refuse this one for it, and a clearance measured to the other box is "at least" for this one (the
+    real Studio's row said "tried: the simulation keeps 3.1 mm from it": box 1's distance, not box 2's)."""
+    def region():
+        return {"id": "scan-1", "label": "Scan near miss 1", "min_clearance_mm": 6.0, "t": 1.0, "link": "wrist",
+                "point": FAR_BOX["center"], "box": dict(FAR_BOX), "box_clearance_mm": 6.0}
+    tip = finger_tip_at_the_grasp(*nominal)           # the other box: over the egg, where the jaws must go down
+    touched = {"id": "scan-1", "label": "Scan near miss 1", "center": [float(tip[0]), float(tip[1]), float(tip[2]) + 20.0],
+               "half": [6.0, 6.0, 6.0], "yaw_deg": 0.0, "source": "auto"}
+    w = worlds.validate({**BENCH, "obstacles": [touched]})
+    _, _, base = simulated(tuple(worlds.sim_world(w)["obstacles"]))
+    assert not base["success"] and base["world_contacts"][0]["obstacle"] == "Scan near miss 1", base.get("failure")
+    res = {"min_clearance_mm": 6.0, "regions": [region()], "stats": {}}
+    worlds.try_boxes(res, w, bench_trial(fast=True), time.monotonic() + 300.0, baseline_ok=False)
+    (g,) = res["regions"]
+    assert g["box"] == FAR_BOX and g["trial"]["ok"] and g["trial"]["at_box"] is False, g
+    assert g["trial"]["fails"] and "Scan near miss 1" in g["trial"]["fails"], g      # it fails on the other box
+    near = {**POST, "id": "scan-1", "label": "Scan near miss 1", "source": "auto"}  # the other box: beside the carry
+    w = worlds.validate({**BENCH, "obstacles": [near]})
+    _, _, base = simulated(tuple(worlds.sim_world(w)["obstacles"]))
+    assert base["success"] and base["min_clearance_at"]["obstacle"] == "Scan near miss 1", base.get("failure")
+    res = {"min_clearance_mm": 6.0, "regions": [region()], "stats": {}}
+    worlds.try_boxes(res, w, bench_trial(fast=True), time.monotonic() + 300.0, baseline_ok=True)
+    (g,) = res["regions"]
+    assert g["trial"]["ok"] and g["trial"]["at_box"] is False and g["trial"]["fails"] is None, g
+    assert g["trial"]["min_clearance_mm"] == base["min_clearance_mm"], (g["trial"], base["min_clearance_mm"])
+
+
+def test_the_scan_event_counts_every_place_not_only_the_listed_ones():
+    """The check says 12 places (8 listed); the Studio's progress line said 8 near misses."""
+    res = {"min_clearance_mm": 2.4, "regions": [{}] * 8, "stats": {"places": 12}}
+    assert worlds.scan_event_text(res) == "Closest to the scan: 2.4 mm, 12 near misses"
+    assert "12 places closer than 10 mm (the 8 closest are listed)" in worlds.scan_check(
+        {**res, "at": {"t": 1.0, "link": "wrist", "point": [0, 0, 0]}, "regions": [
+            {"id": f"scan-{i}", "label": f"Scan near miss {i}", "box": None, "no_box": "x"} for i in range(8)]})["text"]
+
+
+# ------------------------------------------------------------------ the Studio route
+def scan_project(tmp_path, boxes):
+    """r001 of an egg-picker project, simulated (fast) in a world whose room scan holds these boxes and whose grey
+    boxes are none: the simulation can't see them."""
+    from morph.robot.pipeline2 import RobotProject
+    from morph.studio import projects
+
+    root = projects.create(str(tmp_path / "home"), "egg-picker", origin="default", demo=False, unique=False)["root"]
+    os.makedirs(worlds.world_dir(root), exist_ok=True)
+    path = boxes_glb(worlds.asset_path(root), boxes)
+    w, w_sha = worlds.save(root, {"id": "bench", "name": "Bench scan", "asset": "room.glb", "asset_sha": worlds.glb_sha(path),
+                                  "units": "m", "up": "y", "scale": 1.0, "mount": ROOM["mount"], "surface": SURFACE})
+    d = EGG.with_changes({"world.id": w["id"], "world.sha": w_sha})
+    rev = os.path.join(root, "r001")
+    os.makedirs(os.path.join(rev, "sim"))
+    with open(os.path.join(rev, "design.json"), "w", encoding="utf-8") as fh:
+        fh.write(d.dumps())
+    sw = RobotProject(root)._sim_world(d, os.path.join(rev, "sim"))
+    sz = arm.size(d)
+    ep = electronics2.plan(d, {**sz, "grip_target_n": 2.34})
+    doc = S.run(arm.build(d, sz, ep), d, "pick_place", os.path.join(rev, "sim"), fast=True, world=sw)
+    res = {"rev": "r001", "kind": "robot", "sizing": sz, "eplan": ep, "sims": {"mjcf": "robot.xml", "scenarios": {
+        "pick_place": {"file": "sim_pick_place.json", "metrics": doc["metrics"]}}}}
+    with open(os.path.join(rev, "results.json"), "w", encoding="utf-8") as fh:
+        json.dump(res, fh)
+    return root, w
+
+
+def test_the_world_check_measures_the_path_against_the_scan(tmp_path):
+    from morph.studio import api_world
+    from test_world_api import Req, Room
+
+    root, w = scan_project(tmp_path, [SLAB, POST])
+    room = Room(root)
+    api_world._SCANS.clear()
+    st, body = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+    assert st == 200, body
+    c = {x["id"]: x for x in body["checks"]}
+    assert c["scan"]["status"] == "warn" and c["scan"]["regions"][0]["label"] == "Scan near miss 1", c["scan"]
+    assert c["scan"]["text"].endswith(worlds.SCAN_NOTE) and c["scan"]["value"] < worlds.SCAN_NEAR_MM
+    assert c["clearance"]["status"] == "warn" and "no grey boxes" in c["clearance"]["text"]     # the simulation saw none
+    out = worlds.checks(w, json.load(open(os.path.join(root, "r001", "results.json"), encoding="utf-8")),
+                        sims=api_world._inputs(room, "r001")[1], design=room.p.load_design("r001"))
+    assert body["verdict"] == out["verdict"]                                # the scan never changes the verdict
+    scan_ev = [e for e in room.events if e["type"] == "world" and e["stage"] == "scan"]
+    g = c["scan"]["regions"][0]                         # Add box here, tried on the revision's robot rebuilt
+    assert (g.get("trial") or {}).get("ok") is not None, g
+    assert [e["status"] for e in scan_ev] == ["start", "start", "done"] and "near miss" in scan_ev[2]["text"]
+    assert scan_ev[1]["text"] == "Trying a simulation with each box Add box here would make"
+    assert any(e["type"] == "agent" and e["role"] == "feasibility" and e["text"] == scan_ev[2]["text"] for e in room.events)
+    # checked again: the same answer, from memory
+    room.events.clear()
+    st, body2 = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+    assert {x["id"]: x for x in body2["checks"]}["scan"] == c["scan"]
+    assert not [e for e in room.events if e["type"] == "world" and e["stage"] == "scan"]
+    # a check cut short (a busy computer), a box not fitted in time or a list of near misses not finished (R5: the
+    # places not listed may touch) isn't kept: checking again measures again
+    for stats in ({"truncated": True}, {"fit_timeout": True}, {"unlisted_mm": 0.0}, {"unlisted_mm": 8.3},
+                  {"trial_timeout": True}):
+        api_world._SCANS.clear()
+        calls = []
+        real = worlds.scan_clearance
+        worlds.scan_clearance = lambda *a, **k: calls.append(1) or {"min_clearance_mm": None, "at": None, "regions": [],
+                                                                      "stats": stats, "note": worlds.SCAN_NOTE}
+        try:
+            for _ in range(2):
+                api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+        finally:
+            worlds.scan_clearance = real
+        assert len(calls) == 2, stats
+    # a revision whose robot can't be simulated again (a preview, its results missing) or whose trial raised: no box is
+    # offered untried, the check says why (not that the computer was busy), and the answer isn't kept
+    real = api_world._box_trial
+    for broken, why in ((lambda room, rev: None, "this revision is a preview, or its results are missing"),
+                        (lambda room, rev: 1 / 0, "ZeroDivisionError")):
+        api_world._SCANS.clear()
+        api_world._box_trial = broken
+        try:
+            st, body_u = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+        finally:
+            api_world._box_trial = real
+        s_u = {x["id"]: x for x in body_u["checks"]}["scan"]
+        g_u = s_u["regions"][0]
+        assert g_u["box"] is None and not g_u.get("covers") and not g_u.get("trial"), g_u
+        assert g_u["no_box"] == f"A simulation with a box here couldn't be tried ({why}), so none is offered.", g_u
+        assert f"a simulation with a box there couldn't be tried ({why}), so none is offered." in s_u["text"], s_u
+        assert "less busy" not in s_u["text"] and not api_world._SCANS, s_u
+    # Reset demo reuses revision names: another simulation under the same name is measured again, never served from
+    # memory (here the arm stays where it starts, well away from the post)
+    sim = os.path.join(root, "r001", "sim", "sim_pick_place.json")
+    with open(sim, encoding="utf-8") as fh:
+        original = fh.read()
+    moved = json.loads(original)
+    f0 = moved["frames"][0]
+    moved["frames"] = [{**f, "q": f0["q"], "obj": f0["obj"]} for f in moved["frames"]]
+    with open(sim, "w", encoding="utf-8") as fh:
+        json.dump(moved, fh)
+    room.events.clear()
+    st, body_r = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+    assert [e["status"] for e in room.events if e["type"] == "world" and e["stage"] == "scan"] == ["start", "done"]
+    s_r = {x["id"]: x for x in body_r["checks"]}["scan"]
+    assert s_r["status"] == "pass" and "more than 50 mm" in s_r["text"] and not s_r["regions"]
+    with open(sim, "w", encoding="utf-8") as fh:
+        fh.write(original)
+    # the robot moved in the room since the simulation: the old path isn't measured against the room
+    worlds.save(root, {**w, "mount": {"position": [20.0, 0.0, 0.0], "yaw_deg": 0.0}})
+    st, body3 = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+    s3 = {x["id"]: x for x in body3["checks"]}["scan"]
+    assert s3["status"] == "skip" and "Save and simulate" in s3["text"]
+    # a world without a room scan has no scan check
+    worlds.save(root, {**w, "asset": "", "asset_sha": ""})
+    st, body4 = api_world.inspect_world(Req(room, body={"views": [], "ai": False}))
+    assert "scan" not in {x["id"] for x in body4["checks"]}

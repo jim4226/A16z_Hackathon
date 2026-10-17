@@ -43,7 +43,8 @@ class GripperSpec:
 class ElectronicsSpec:
     mcu: str = "auto"                # auto | arduino_nano | esp32_devkit | rp2040_pico
     servo: str = "auto"              # auto | sg90 | mg90s | mg996r | ds3218
-    supply_v: float = 6.0
+    supply_v: float = 6.0            # the standalone gripper's servo supply (morph demo)
+    servo_v: float = 0.0             # a robot arm's servo rail, V: 0 = the servos' rated voltage (electronics2.servo_rail)
     pinion_radius_mm: float = 10.5   # pitch radius of the printed pinion (module 1.5, 14 teeth)
     target_force_n: float = 0.0      # 0 = derive from simulation + object fragility
     config: str = "modules"          # modules (off-the-shelf boards) | custom_pcb (one controller PCBA)
@@ -77,6 +78,12 @@ class BuildSpec:
 
 
 @dataclass
+class WorldSpec:
+    id: str = ""                     # world mode: the room in <project>/world/world.json ("" = the plain table)
+    sha: str = ""                    # hash of that world.json: editing the room reruns the simulation only
+
+
+@dataclass
 class FabSpec:
     process: str = "auto"            # auto | fdm_print | laser_cut | cnc_router
     tool_d_mm: float = 3.175
@@ -95,6 +102,7 @@ class Design:
     task: TaskSpec = field(default_factory=TaskSpec)
     build: BuildSpec = field(default_factory=BuildSpec)
     safety_factor: float = 2.0
+    world: WorldSpec = field(default_factory=WorldSpec)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -126,6 +134,7 @@ class Design:
             task=TaskSpec(**d.get("task", {})),
             build=BuildSpec(**d.get("build", {})),
             safety_factor=d.get("safety_factor", 2.0),
+            world=WorldSpec(**d.get("world", {})),
         )
 
     def with_changes(self, changes: dict) -> "Design":

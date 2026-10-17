@@ -71,6 +71,9 @@ export function kmoney(v) {
   if (v == null || isNaN(v)) return '–';
   return Math.abs(v) >= 1000 ? `$${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : money(v, false);
 }
+// a build config's cost per unit at the build quantity with mold tooling left out (manufacturing.configs[k]: parts +
+// purchased; its unit_cost adds tooling / quantity, which at quantity 1 is the whole mold)
+const unitCost = (c) => (c && c.parts_cost != null && c.purchased_cost != null ? Math.round((c.parts_cost + c.purchased_cost) * 100) / 100 : null);
 export function money(v, cents) {
   if (v == null || isNaN(v)) return '–';
   const big = Math.abs(v) >= 1000;
@@ -491,10 +494,10 @@ export class RobotPanel {
     this.ctx = ctx;
     root.innerHTML = `<div class="robot-v vp"></div>
       <div class="ov tl tlstack"><div class="glass toolbar">
-        <button class="btn" data-a="motion">${I('motion')}Motion demo</button><span class="sep"></span>
-        <label class="slider">${I('layers', 'sm')}Explode<input type="range" min="0" max="100" value="0" data-a="explode"><span class="v">0%</span></label><span class="sep"></span>
-        <button class="btn" data-a="xray">${I('eye')}X-ray</button>
-        <button class="btn" data-a="labels">${I('tag')}Labels</button>
+        <button class="btn" data-a="motion" title="Motion demo: the arm runs its pick and place">${I('motion')}Motion demo</button><span class="sep"></span>
+        <label class="slider" title="Explode the assembly">${I('layers', 'sm')}Explode<input type="range" min="0" max="100" value="0" data-a="explode"><span class="v">0%</span></label><span class="sep"></span>
+        <button class="btn" data-a="xray" title="X-ray: see through the covers">${I('eye')}X-ray</button>
+        <button class="btn" data-a="labels" title="Label the parts">${I('tag')}Labels</button>
         <button class="btn" data-a="ghost" title="Overlay the previous revision">${I('ghost')}Ghost<span class="mono dim" data-prev></span></button><span class="sep"></span>
         <button class="btn icon" data-a="home" title="Home view">${I('home')}</button>
       </div><div class="vstat"></div></div>
@@ -586,18 +589,18 @@ export class SimPanel {
   constructor(root, ctx) {
     this.ctx = ctx;
     root.innerHTML = `<div class="sim">
-      <div class="bar"><div class="pills" data-scen></div><span class="grow"></span>
-        <span class="phase"><i></i><span>–</span></span>
+      <div class="bar"><div class="pills" data-scen></div>
+        <div class="player"><span class="phase"><i></i><span>–</span></span>
         <span class="tread num">0.0 <span class="dim">/ 0.0 s</span></span>
         <div class="pills" data-speed><button data-s="0.5">0.5×</button><button data-s="1" class="on">1×</button><button data-s="2">2×</button></div>
-        <button class="playbtn" title="Play / pause (space)">${I('play')}</button></div>
+        <button class="playbtn" title="Play / pause (Space)" aria-label="Play or pause">${I('pause')}</button></div></div>
       <div class="vp"></div>
       <div class="tl"><div class="tlh"><span class="sec-t" style="margin:0;white-space:nowrap">Torque · N·m</span><div class="legend"></div></div><canvas></canvas></div>
       <div class="side"></div></div>`;
     this.root = root;
     this.slot = root.querySelector('.vp');
     this.cv = root.querySelector('canvas');
-    this.t = 0; this.playing = true; this.speed = 1;
+    this.t = 0; this.playing = true; this.speed = 1;   // it plays from the start: the button shows Pause
     root.querySelector('.playbtn').onclick = () => this.toggle();
     root.querySelectorAll('[data-speed] button').forEach((b) => (b.onclick = () => {
       this.speed = +b.dataset.s;
@@ -614,7 +617,17 @@ export class SimPanel {
     this.cv.addEventListener('pointerdown', (e) => { this.cv.setPointerCapture(e.pointerId); this.wasPlaying = this.playing; this.setPlaying(false); scrub(e); this.drag = true; });
     this.cv.addEventListener('pointermove', (e) => this.drag && scrub(e));
     this.cv.addEventListener('pointerup', () => { this.drag = false; if (this.wasPlaying) this.setPlaying(true); });
-    document.addEventListener('keydown', (e) => { if (e.code === 'Space' && ctx.isActive('sim') && !e.target.closest('input,textarea,select,button')) { e.preventDefault(); this.toggle(); } });
+    // Space plays and pauses while this tab is on: also with the focus on the tab strip (the tab just clicked) or on
+    // this panel's own buttons; never while typing, in a dialog, or on another button (Space presses that one)
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space' || e.repeat || !ctx.isActive('sim') || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target instanceof Element ? e.target : document.body;
+      if (t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]') || document.querySelector('.modal.on')) return;
+      const b = t.closest('button, a[href], [role="button"]');
+      if (b && !b.closest('#tabs') && !root.contains(b)) return;
+      e.preventDefault();
+      this.toggle();
+    });
     new ResizeObserver(() => { this.static = null; this.draw(); }).observe(this.cv);
     this.pad = { l: 34, r: 10, t: 16, b: 16 };
   }
@@ -1059,7 +1072,8 @@ export class ElecPanel {
       if (this.fwUrl !== url) return;
       const rows = b != null ? diffLines(b.split('\n'), a.split('\n')) : a.split('\n').map((t) => ({ t, k: '' }));
       let n = 0, no = 0;
-      code.innerHTML = rows.map((r) => {
+      // generated, never compiled for the board or run on the arm (electronics.firmware_validation): say so above the code
+      code.innerHTML = `<div class="fw-note">${I('alert', 'sm')}<span>Generated firmware, not bench-tested: it hasn't been compiled for this board or run on the arm. Review it, and power the servos the first time with the arm clear of anything it could hit.</span></div>` + rows.map((r) => {
         if (r.k === 'add') n++;
         if (r.k !== 'del') no++;
         return `<div class="ln ${r.k}"><span class="no">${r.k === 'del' ? '' : no}</span><span class="g">${r.k === 'add' ? '+' : r.k === 'del' ? '−' : ''}</span><span>${hl(r.t)}</span></div>`;
@@ -1267,13 +1281,16 @@ export class MfgPanel {
     nodata(this.root.querySelector('.tablewrap'), !m, emptyHTML('factory', 'No manufacturing plan yet', 'Per-part processes, vendors, costs, DFM checks and machine files appear here once the manufacturing stage runs.'));
     if (!m) { this.root.querySelector('.cfgs').innerHTML = ''; this.root.querySelector('.tscroll').innerHTML = ''; this.root.querySelector('.totbar').innerHTML = ''; return; }
     const cfgs = m.configs || {}, pc = prev?.manufacturing?.configs || {};
+    const qty = m.quantity ?? d['build.quantity'] ?? 1;
     const regen = changedNode(cur, 'manufacturing');
     this.root.querySelector('.cfgs').innerHTML = ['prototype', 'pilot', 'production'].filter((k) => cfgs[k]).map((k) => {
       const c = cfgs[k], on = m.config === k;
-      const dl = pc[k] && pc[k].unit_cost !== c.unit_cost ? c.unit_cost - pc[k].unit_cost : null;
+      const u = unitCost(c) ?? c.unit_cost, pu = pc[k] ? unitCost(pc[k]) ?? pc[k].unit_cost : null;
+      const dl = pu != null && pu !== u ? u - pu : null;
       return `<div class="ccard${on ? ' on' : ''}${on && regen ? ' fade-in' : ''}" data-v="${k}"><div class="t">${I(k === 'prototype' ? 'box' : k === 'pilot' ? 'wrench' : 'factory', 'sm')}${esc(pretty(k))}${on ? '<span class="tag acc">current</span>' : ''}</div>
-        <div class="big">${money(c.unit_cost)}<small>/ unit</small>${dl ? `<span class="delta ${dl < 0 ? 'up' : 'down'}" style="font-size:11px;vertical-align:middle">${dl < 0 ? '▼' : '▲'} ${money(Math.abs(dl))}</span>` : ''}</div>
-        <div class="row"><span>tooling <b>${money(c.tooling_cost, false)}</b></span><span>lead <b>${c.lead_days ?? '–'} d</b></span></div><div class="d">${esc(c.summary || '')}</div></div>`;
+        <div class="big">${money(u)}<small>/ unit</small>${dl ? `<span class="delta ${dl < 0 ? 'up' : 'down'}" style="font-size:11px;vertical-align:middle">${dl < 0 ? '▼' : '▲'} ${money(Math.abs(dl))}</span>` : ''}</div>
+        <div class="row"><span>${c.tooling_cost ? `+ tooling <b>${money(c.tooling_cost, false)}</b> once` : `tooling <b>${money(0, false)}</b>`}</span><span>lead <b>${c.lead_days ?? '–'} d</b></span></div>
+        ${c.tooling_cost ? `<div class="row allin"><span>${money(c.unit_cost, false)} each at qty ${qty.toLocaleString('en-US')} with tooling</span></div>` : ''}<div class="d">${esc(c.summary || '')}</div></div>`;
     }).join('');
     this.root.querySelectorAll('.ccard').forEach((c) => (c.onclick = () => { if (!c.classList.contains('on')) { this.ctx.postParams({ 'build.config': c.dataset.v }); } }));
     const parts = m.parts || [];
@@ -1475,19 +1492,23 @@ export class BomPanel {
     const buy = t.buy ?? rows.filter((r) => r.make_or_buy === 'buy').reduce((a, r) => a + r.ext_price, 0);
     const make = t.make ?? rows.filter((r) => r.make_or_buy === 'make').reduce((a, r) => a + r.ext_price, 0);
     const pcs = rows.reduce((a, r) => a + (r.qty || 0), 0);
-    const per = t.per_config || {};
+    // per unit at the build quantity with mold tooling apart (it is paid once: $72,971 over one unit is not a unit cost)
+    const cfgs = cur.manufacturing?.configs || {};
+    const per = Object.fromEntries(Object.entries(t.per_config || {}).map(([k, v]) => [k, unitCost(cfgs[k]) ?? v]));
+    const tool = (k) => (cfgs[k] ? cfgs[k].tooling_cost || 0 : 0);
     const curCfg = cur.manufacturing?.config || cur.design?.['build.config'];
     const pmax = Math.max(...Object.values(per), 1);
+    const nq = t.quantity ?? cur.design?.['build.quantity'] ?? 1;
     const dTot = pt.total != null && pt.total !== total ? total - pt.total : null;
     const vendors = new Set(rows.flatMap((r) => (r.vendors || []).map((v) => v.vendor)));
     this.root.querySelector('.stats').innerHTML = `
-      <div class="stat"><div class="l">${I('cart', 'sm')}Unit cost · ${esc(pretty(curCfg || ''))}</div><div class="v">${money(total)}</div><div class="s">${dTot ? `<span class="delta ${dTot < 0 ? 'up' : 'down'}" style="margin:0">${dTot < 0 ? '▼' : '▲'} ${money(Math.abs(dTot))}</span> vs ${esc(prev.rev)}` : `${rows.length} line items · ${pcs} pieces${nMat ? ` · ${nMat} bulk materials` : ''}`}</div></div>
+      <div class="stat"><div class="l">${I('cart', 'sm')}Unit cost · ${esc(pretty(curCfg || ''))}</div><div class="v">${money(total)}</div><div class="s">${dTot ? `<span class="delta ${dTot < 0 ? 'up' : 'down'}" style="margin:0">${dTot < 0 ? '▼' : '▲'} ${money(Math.abs(dTot))}</span> vs ${esc(prev.rev)}` : t.tooling ? `incl. ${money(t.tooling, false)} tooling over ${nq.toLocaleString('en-US')} unit${nq === 1 ? '' : 's'}` : `${rows.length} line items · ${pcs} pieces${nMat ? ` · ${nMat} bulk materials` : ''}`}</div></div>
       <div class="stat"><div class="l"><span class="mob buy">buy</span>Purchased</div><div class="v">${money(buy)}</div><div class="s">${rows.filter((r) => r.make_or_buy === 'buy').length} items · ${vendors.size} vendors</div></div>
       <div class="stat"><div class="l"><span class="mob make">make</span>Built in-house</div><div class="v">${money(make)}</div><div class="s">${rows.filter((r) => r.make_or_buy === 'make').length} items · printed / fabricated</div></div>
       <div class="stat"><div class="l">${I('target', 'sm')}Buy vs build</div><div class="v">${total ? Math.round(buy / total * 100) : 0}<small style="font-size:13px;color:var(--muted)">% bought</small></div>
         <div class="stack"><b style="width:${total ? buy / total * 100 : 0}%;background:var(--accent)"></b><b style="width:${total ? make / total * 100 : 0}%;background:var(--cyan)"></b></div></div>
-      <div class="stat pcfg"><div class="l" style="margin-bottom:4px">${I('factory', 'sm')}Per build config</div>
-        ${['prototype', 'pilot', 'production'].filter((k) => per[k] != null).map((k) => `<div class="row"><span class="n${k === curCfg ? ' on' : ''}">${esc(pretty(k))}</span><span class="meter"><b class="${k === curCfg ? 'acc' : ''}" style="width:${per[k] / pmax * 100}%;${k === curCfg ? '' : 'background:var(--bg5);filter:brightness(1.6)'}"></b></span><span class="p">${money(per[k], false)}</span></div>`).join('')}</div>`;
+      <div class="stat pcfg"><div class="l" style="margin-bottom:4px">${I('factory', 'sm')}Per unit at qty ${nq.toLocaleString('en-US')}</div>
+        ${['prototype', 'pilot', 'production'].filter((k) => per[k] != null).map((k) => `<div class="row"><span class="n${k === curCfg ? ' on' : ''}">${esc(pretty(k))}</span><span class="meter"><b class="${k === curCfg ? 'acc' : ''}" style="width:${per[k] / pmax * 100}%;${k === curCfg ? '' : 'background:var(--bg5);filter:brightness(1.6)'}"></b></span><span class="p">${money(per[k], false)}</span></div>${tool(k) ? `<div class="tl">+ ${money(tool(k), false)} tooling, once</div>` : ''}`).join('')}</div>`;
     this.renderFilters();
     if (this.view === 'darwin') this.renderDarwin(); else this.renderTable(changedNode(cur, 'bom'));
   }

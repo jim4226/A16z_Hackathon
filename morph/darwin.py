@@ -23,16 +23,18 @@ import json
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.error import HTTPError, URLError
+from concurrent.futures import as_completed
 from urllib.request import Request, urlopen
+
+from . import resources, settings
+from .services.background import DaemonPool
 
 API = "https://api.darwin.so/api/v3/search"
 AGENT_PAGE = "https://index.darwin.so/agent/{agent}?capability={cap}"
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "morph", "darwin")
 # Answers from live searches, shipped with the repo: the last fallback when Darwin is down
 # and this machine has never searched that query (a fresh demo laptop).
-SHIPPED = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "darwin-cache")
+SHIPPED = resources.path("data", "darwin-cache")
 
 # The agents we route each kind of work to, by Darwin agent id (names are not unique).
 # Picked from live searches on 2026-10-11; Search still runs, these just go first and are
@@ -80,15 +82,20 @@ def _normalize(query: str, raw: dict) -> dict:
             "capability_id": a.get("capabilityId"),
             "url": AGENT_PAGE.format(agent=a.get("agentId"), cap=a.get("capabilityId")),
         })
+    question = resp.get("question")
     return {"query": query, "ok": True, "search_id": raw.get("searchId"), "agents": agents,
+            "status": raw.get("status") if isinstance(raw.get("status"), str) else None,  # completed | needs_input | no_match
+            "question": question[:500] if isinstance(question, str) else None,  # what Darwin asks the person (an email ...)
             "no_match_reason": resp.get("noMatchReason")}
 
 
 def search(query: str, max_results: int = 5, retries: int = 1, timeout: float = 45) -> dict:
     """Darwin Search -> {"query", "ok", "agents": [...], "cached"?, "error"?}. Never raises."""
     body = json.dumps({"query": query, "maxResults": max_results}).encode()
-    err = None
-    for attempt in range(retries + 1):
+    err, online = None, settings.sourcing_enabled()
+    if not online:  # network lookups or Darwin sourcing are off in the settings: saved answers only
+        err = "Darwin lookups are off in Keys, Privacy and network: showing saved answers only"
+    for attempt in range(retries + 1 if online else 0):
         try:
             req = Request(API, data=body, headers={"Content-Type": "application/json"})
             with urlopen(req, timeout=timeout) as resp:
@@ -126,6 +133,75 @@ def _remember(query: str, out: dict):
             json.dump({**out, "fetched": time.strftime("%Y-%m-%dT%H:%M:%S")}, fh)
     except OSError:
         pass
+
+
+CAPABILITY = "https://api.darwin.so/api/v2/search/capabilities/{cap}"
+CAPABILITY_TTL_S = 7 * 86400
+# Darwin's structured price is often missing (pricing UNSPECIFIED, payment NOT_REQUIRED) while the provider's own
+# description says it charges per call: either counts as paid
+PAID = re.compile(r"x402|USDC|\$\s?\d|per call|paid", re.I)
+
+
+def _website(url) -> str | None:
+    """An owner's website as Darwin lists it, only when it is a plain https:// link to a named host."""
+    m = re.fullmatch(r"https://([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::443)?(/[^\s\"'<>\\]*)?", url.strip().lower() if isinstance(url, str) else "")
+    return url.strip() if m and len(url) <= 200 and not re.fullmatch(r"[\d.]+", m.group(1)) else None
+
+
+def capability(cap_id: str, timeout: float = 10) -> dict | None:
+    """Darwin's public record of one capability (no account needed): its owner, the owner's website and what it needs
+    (a sign-in, a payment). Cached on disk for 7 days; None when Darwin lookups are off or it can't be reached."""
+    if not isinstance(cap_id, str) or not re.fullmatch(r"[a-z0-9]{10,40}", cap_id):
+        return None
+    path = os.path.join(CACHE, f"cap-{cap_id}.json")
+    try:
+        if time.time() - os.path.getmtime(path) < CAPABILITY_TTL_S:
+            with open(path, encoding="utf-8") as fh:
+                return json.load(fh)
+    except (OSError, ValueError):
+        pass
+    if not settings.sourcing_enabled():
+        return None
+    try:
+        with urlopen(Request(CAPABILITY.format(cap=cap_id), headers={"Accept": "application/json"}), timeout=timeout) as resp:
+            c = (json.load(resp) or {}).get("capability") or {}
+    except Exception:  # HTTP/URL errors, timeouts, bad JSON: no details, the suggestion stays without them
+        return None
+    owner = c.get("owningAi") if isinstance(c.get("owningAi"), dict) else {}
+    needs = c.get("executionRequirements") if isinstance(c.get("executionRequirements"), dict) else {}
+    price = (c.get("pricing") or {}).get("mode") if isinstance(c.get("pricing"), dict) else None
+    out = {"title": str(c.get("title") or "")[:120], "owner": str(owner.get("name") or "")[:80] or None,
+           "website": _website(owner.get("websiteUrl")), "verified": owner.get("verified") is True,
+           "summary": str(owner.get("summary") or "")[:240], "can_start": c.get("canStartThread") is True,
+           "sign_in": (needs.get("providerAuthentication") or {}).get("state") == "REQUIRED" or bool(c.get("accountRequirement")),
+           "paid": (needs.get("payment") or {}).get("state") == "REQUIRED" or bool(c.get("paymentRequirement"))
+           or price not in (None, "UNSPECIFIED", "FREE") or bool(PAID.search(str(c.get("description") or "")))}
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(out, fh)
+    except OSError:
+        pass
+    return out
+
+
+def suggest(need: str, limit: int = 4) -> dict:
+    """Services Darwin's public search knows that might cover a need no tool in Morph covers: suggestions with their
+    websites, never a connection, a sign-in or a payment. {need, status, question, suggestions: [{name, owner, website,
+    darwin_url, ready, sign_in, paid, summary}], cached, error?}."""
+    res = search(need, max_results=6, retries=0, timeout=15)
+    agents = [a for a in res.get("agents") or [] if a.get("name")][:limit]
+    with DaemonPool(max(1, len(agents))) as pool:  # never keeps a stopping Studio alive
+        caps = list(pool.map(lambda a: capability(a.get("capability_id")), agents))
+    out = []
+    for a, c in zip(agents, caps):
+        c, desc = c or {}, str(a.get("description") or "")
+        out.append({"name": str(a["name"])[:80], "owner": c.get("owner"), "website": c.get("website"), "darwin_url": a.get("url"),
+                    "ready": bool(a.get("can_start")), "sign_in": bool(c.get("sign_in")),
+                    "paid": bool(c.get("paid")) or bool(PAID.search(desc)),
+                    "summary": desc[:200]})
+    return {"need": need, "status": res.get("status"), "question": res.get("question"), "suggestions": out,
+            "cached": bool(res.get("cached")), **({"error": str(res["error"])[:200]} if res.get("error") else {})}
 
 
 def part_query(item: str) -> str:
@@ -251,7 +327,7 @@ def source(project, rev: str, max_results: int = 3, workers: int = 4, on_progres
     tasks = tasks_for(results, rev_dir)
 
     found = [None] * len(tasks)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    with DaemonPool(workers) as pool:  # a hung lookup never keeps a stopping Studio alive (services/background.py)
         kw = {k: v for k, v in (("timeout", timeout), ("retries", retries)) if v is not None}  # None: search()'s defaults
         futs = {pool.submit(search, t[2], max_results, **kw): i for i, t in enumerate(tasks)}
         for n, fut in enumerate(as_completed(futs), 1):

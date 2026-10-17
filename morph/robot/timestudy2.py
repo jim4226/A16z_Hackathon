@@ -89,10 +89,10 @@ def project(p, base: dict | None = None) -> dict:
         if e.get("type") == "human_time":
             human[e.get("rev") or "_"] = human.get(e.get("rev") or "_", 0.0) + e["minutes"]
     revs, tb, ta, designed = [], 0.0, 0.0, False
-    for r in p.revs():
+    for r in p.finished():  # a revision being built, cut off or damaged has no results to count
         try:
             res = p.load_results(r)
-        except FileNotFoundError:
+        except (OSError, ValueError):
             continue
         if not res.get("parent"):
             # a parentless revision after the first is the same design rebuilt by newer Morph code,

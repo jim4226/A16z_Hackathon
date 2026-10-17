@@ -40,37 +40,39 @@ def V(vendor: str, q: str, price: float, url: str | None = None, lead_days: int 
 # ---------------------------------------------------------------- actuators
 # dims (mm): body l x w x h; shaft_off = shaft axis distance from body centre along l;
 # ear_l / ear_w = mounting-hole spacing; horn_d = round horn diameter.
-# torque_nm = stall torque at nominal voltage; rated_nm ~ continuous (about 1/3 of stall).
+# torque_nm = stall torque at nominal voltage; rated_nm ~ continuous (about 1/3 of stall). torque_v = the maker's stall
+# torque at other supply voltages, (V, N·m), where the datasheet gives them; torque_at() reads them.
 ACTUATORS = {
-    "sg90": dict(name="TowerPro SG90 micro servo", family="hobby_pwm", interface="pwm", voltage=(4.8, 6.0), nominal_v=5.0,
+    "sg90": dict(name="TowerPro SG90 micro servo", family="hobby_pwm", interface="pwm", protocol="pwm", voltage=(4.8, 6.0), nominal_v=5.0,
                  torque_nm=0.18, rated_nm=0.06, speed_rad_s=10.5, stall_a=0.65, idle_a=0.01, mass_g=9.0, feedback="none",
                  dims=dict(l=22.5, w=12.2, h=22.7, shaft_off=5.9, ear_l=27.8, ear_w=0.0, ear_t=2.5, ear_z=15.9, horn_d=20.0, spline_h=4.0),
                  range_deg=180, verify=True,
                  vendors=[V("amazon", "SG90 micro servo", 3.0), V("adafruit", "micro servo SG90", 5.95, "https://www.adafruit.com/product/169")]),
-    "mg996r": dict(name="TowerPro MG996R metal-gear servo", family="hobby_pwm", interface="pwm", voltage=(4.8, 7.2), nominal_v=6.0,
-                   torque_nm=1.08, rated_nm=0.35, speed_rad_s=6.3, stall_a=2.5, idle_a=0.01, mass_g=55.0, feedback="none",
+    "mg996r": dict(name="TowerPro MG996R metal-gear servo", family="hobby_pwm", interface="pwm", protocol="pwm", voltage=(4.8, 7.2), nominal_v=6.0,
+                   torque_nm=1.08, torque_v=((4.8, 0.92), (6.0, 1.08)), rated_nm=0.35, speed_rad_s=6.3, stall_a=2.5, idle_a=0.01, mass_g=55.0, feedback="none",
                    dims=dict(l=40.7, w=19.7, h=42.9, shaft_off=10.2, ear_l=49.5, ear_w=10.0, ear_t=2.5, ear_z=28.0, horn_d=24.0, spline_h=4.0),
                    range_deg=180, verify=True,
                    vendors=[V("amazon", "MG996R servo", 9.0), V("aliexpress", "MG996R servo", 4.5, lead_days=14)]),
-    "ds3218": dict(name="DSSERVO DS3218 20 kg digital servo", family="hobby_pwm", interface="pwm", voltage=(4.8, 6.8), nominal_v=6.8,
+    "ds3218": dict(name="DSSERVO DS3218 20 kg digital servo", family="hobby_pwm", interface="pwm", protocol="pwm", voltage=(4.8, 6.8), nominal_v=6.8,
                    torque_nm=2.1, rated_nm=0.7, speed_rad_s=6.5, stall_a=2.8, idle_a=0.01, mass_g=60.0, feedback="none",
                    dims=dict(l=40.0, w=20.0, h=40.5, shaft_off=10.0, ear_l=49.5, ear_w=10.0, ear_t=2.5, ear_z=27.0, horn_d=24.0, spline_h=4.0),
                    range_deg=270, verify=True,
                    vendors=[V("amazon", "DS3218 servo", 16.0)]),
     "sts3215": dict(name="Feetech STS3215 serial bus servo (12 V, 30 kg·cm)", family="smart_bus", interface="ttl_half_duplex",
+                    protocol="feetech_scs",
                     voltage=(6.0, 12.6), nominal_v=12.0, torque_nm=2.9, rated_nm=0.95, speed_rad_s=4.8, stall_a=2.7, idle_a=0.06,
                     mass_g=55.0, feedback="12-bit magnetic encoder, load, voltage, temperature",
                     dims=dict(l=45.2, w=24.7, h=35.0, shaft_off=12.0, ear_l=0.0, ear_w=0.0, ear_t=0.0, ear_z=0.0, horn_d=22.0, spline_h=3.0),
                     range_deg=360, verify=True, note="the SO-100/SO-101 arm actuator; 7.4 V variant gives ~19.5 kg·cm",
                     vendors=[V("seeed", "STS3215 servo", 17.0), V("aliexpress", "Feetech STS3215 12V", 14.0, lead_days=14)]),
-    "xl430_w250": dict(name="ROBOTIS DYNAMIXEL XL430-W250-T", family="dynamixel", interface="ttl_half_duplex",
-                       voltage=(6.5, 12.0), nominal_v=12.0, torque_nm=1.5, rated_nm=0.5, speed_rad_s=6.1, stall_a=1.4, idle_a=0.05,
+    "xl430_w250": dict(name="ROBOTIS DYNAMIXEL XL430-W250-T", family="dynamixel", interface="ttl_half_duplex", protocol="dynamixel_2",
+                       voltage=(6.5, 12.0), nominal_v=12.0, torque_nm=1.5, torque_v=((9.0, 1.0), (11.1, 1.4), (12.0, 1.5)), rated_nm=0.5, speed_rad_s=6.1, stall_a=1.4, idle_a=0.05,
                        mass_g=57.2, feedback="12-bit absolute encoder, current, temperature, voltage",
                        dims=dict(l=46.5, w=28.5, h=34.0, shaft_off=11.25, ear_l=0.0, ear_w=0.0, ear_t=0.0, ear_z=0.0, horn_d=20.0, spline_h=2.0),
                        range_deg=360, verify=True,
                        vendors=[V("robotis", "XL430-W250-T", 49.9, "https://www.robotis.us/dynamixel-xl430-w250-t/")]),
-    "xm430_w350": dict(name="ROBOTIS DYNAMIXEL XM430-W350-T", family="dynamixel", interface="ttl_half_duplex",
-                       voltage=(10.0, 14.8), nominal_v=12.0, torque_nm=4.1, rated_nm=1.4, speed_rad_s=4.8, stall_a=2.3, idle_a=0.05,
+    "xm430_w350": dict(name="ROBOTIS DYNAMIXEL XM430-W350-T", family="dynamixel", interface="ttl_half_duplex", protocol="dynamixel_2",
+                       voltage=(10.0, 14.8), nominal_v=12.0, torque_nm=4.1, torque_v=((11.1, 3.8), (12.0, 4.1)), rated_nm=1.4, speed_rad_s=4.8, stall_a=2.3, idle_a=0.05,
                        mass_g=82.0, feedback="12-bit absolute encoder, current, temperature, voltage",
                        dims=dict(l=46.5, w=28.5, h=34.0, shaft_off=11.25, ear_l=0.0, ear_w=0.0, ear_t=0.0, ear_z=0.0, horn_d=20.0, spline_h=2.0),
                        range_deg=360, verify=True,
@@ -82,6 +84,63 @@ FAMILY_ACTUATORS = {  # weakest -> strongest; sizing picks the first that meets 
     "smart_bus": ["sts3215"],
     "dynamixel": ["xl430_w250", "xm430_w350"],
 }
+
+# One servo rail per arm: each family's actuators in the groups that share a supply voltage at their rated torque (a 12 V
+# STS3215 on the 7.4 V servos' rail gives far less than its 2.9 N·m; an XL330 can't share an XL430's 10-12 V). Imported
+# robots swapped to another family, and auto-imported ones given a family, pick within one group (pick_in_groups).
+FAMILY_GROUPS = {"hobby_pwm": [["sg90", "mg996r", "ds3218"]], "smart_bus": [["sts3215_7v4"], ["sts3215"]],
+                 "dynamixel": [["xl330_m288"], ["xl430_w250", "xm430_w350"]]}
+
+
+def pick_in_groups(need: dict, family: str) -> dict:
+    """{joint: actuator}: the weakest actuator that gives `need[joint]` (N·m, margin included) on its group's servo rail,
+    all from the family's first voltage group where every joint has one (else the strongest group, its strongest
+    actuator where none holds). KeyError for a family with no groups."""
+    from .electronics2 import servo_rail
+
+    groups = FAMILY_GROUPS[family]
+
+    def picks(group):
+        keys = [k for k in group if k in ACTUATORS]
+        v = servo_rail([{"key": k, "joint": k} for k in keys])["v"]
+        return {n: next((k for k in keys if torque_at(k, v) >= req), None) for n, req in need.items()}, keys
+
+    for group in groups:
+        got, _ = picks(group)
+        if all(got.values()):
+            return got
+    got, keys = picks(groups[-1])
+    return {n: k or keys[-1] for n, k in got.items()}
+
+
+# The command protocol an actuator speaks. Feetech and DYNAMIXEL servos share the half-duplex TTL wiring but not the
+# commands, so one bus (and its firmware) drives one protocol.
+PROTOCOLS = {"pwm": "hobby PWM", "feetech_scs": "Feetech SCS/STS", "dynamixel_2": "DYNAMIXEL Protocol 2.0"}
+FAMILY_PROTOCOL = {"hobby_pwm": "pwm", "smart_bus": "feetech_scs", "smart_bus_7v4": "feetech_scs", "dynamixel": "dynamixel_2"}
+
+
+def protocol(key: str) -> str | None:
+    """The protocol an actuator speaks: its own entry's, else its family's (entries registered at runtime), else None."""
+    a = ACTUATORS.get(key)
+    if a is None:
+        return None
+    return a.get("protocol") or FAMILY_PROTOCOL.get(a.get("family", "")) or ("pwm" if a.get("interface") == "pwm" else None)
+
+def torque_at(key: str, volts: float) -> float:
+    """Stall torque (N·m) of actuator `key` on a `volts` supply: between the datasheet's points (torque_v, or just the
+    nominal one) by straight lines, in proportion to the voltage below the lowest (a DC servo's stall current, and so its
+    torque, follows the voltage), and never more than the highest point above it (no credit past its rating)."""
+    a = ACTUATORS[key]
+    pts = sorted(a.get("torque_v") or ((a["nominal_v"], a["torque_nm"]),))
+    if volts >= pts[-1][0]:
+        return float(pts[-1][1])
+    if volts <= pts[0][0]:
+        return float(pts[0][1]) * max(float(volts), 0.0) / pts[0][0]
+    for (v0, t0), (v1, t1) in zip(pts, pts[1:]):
+        if v0 <= volts <= v1:
+            return float(t0 + (t1 - t0) * (volts - v0) / (v1 - v0))
+    return float(pts[-1][1])
+
 
 # ---------------------------------------------------------------- electronics modules
 # dims (mm): board l x w x component height h. pins: logical pin names used by schematic/harness.

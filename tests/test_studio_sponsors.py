@@ -103,7 +103,7 @@ def _rev(root, rev, parent, label="", design=None, version=None):
     from morph.spec import Design
 
     (root / rev).mkdir(parents=True)
-    (root / "meta.json").write_text(json.dumps({"kind": "robot"}))
+    (root / "meta.json").write_text(json.dumps({"kind": "robot", "demo": True}))  # the launcher's demo robots
     (root / rev / "results.json").write_text(json.dumps({"parent": parent, "label": label, "provenance": {}, "timings_s": {},
                                                          "pipeline_version": version or pipeline_version()}))
     (root / rev / "design.json").write_text(json.dumps(Design().with_changes(design or {}).to_dict()))
@@ -123,11 +123,12 @@ def test_demo_reset_returns_to_the_original_design(tmp_path):
         _rev(arm, r, parent)
     assert baseline(RobotProject(str(egg))) == "r001"
     st = Studio(RobotProject(str(egg)), str(home))
-    st.p = RobotProject(str(arm))  # the presenter had switched to so101
+    sent = []
+    st.room("so101").hub.send = sent.append       # a tab presenting so101
     assert st.reset()
     assert RobotProject(str(egg)).revs() == ["r001"]
     assert RobotProject(str(arm)).revs() == ["r001"]
-    assert os.path.basename(st.p.root) == "egg-picker"
+    assert sent == [{"type": "project", "project": "so101", "reset": True}]  # that tab reloads
 
 
 def test_demo_reset_rebuilds_a_stale_baseline(tmp_path, monkeypatch):
@@ -276,6 +277,7 @@ def test_keewano_emit_never_waits_on_the_network(monkeypatch):
     import time
 
     monkeypatch.setenv("KEEWANO_API_KEY", "k")
+    monkeypatch.setenv("MORPH_TELEMETRY_ENABLED", "1")  # events are opt-in
     calls = []
     monkeypatch.setattr(keewano, "send", lambda name, evs, ts=None, key=None: (time.sleep(2), calls.append(name)))
     t0 = time.time()

@@ -1,0 +1,7 @@
+Joint,Motor,Qty,Price
+Base,MG996R,1,4.50
+Shoulder,MG996R,1,4.50
+Elbow,MG996R,1,4.50
+Wrist pitch,SG90,1,1.80
+Wrist roll,SG90,1,1.80
+Gripper,SG90,1,1.80

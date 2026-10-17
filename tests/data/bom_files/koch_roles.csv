@@ -1,0 +1,14 @@
+Part,Qty,Unit Price,Notes
+Follower shoulder pan: Dynamixel XL430-W250-T,1,49.90,
+Follower shoulder lift: Dynamixel XL430-W250-T,1,49.90,
+Follower elbow flex: Dynamixel XL330-M288-T,1,23.90,
+Follower wrist flex: Dynamixel XL330-M288-T,1,23.90,
+Follower wrist roll: Dynamixel XL330-M288-T,1,23.90,
+Follower gripper: Dynamixel XL330-M288-T,1,23.90,
+Leader joints 1-5: Dynamixel XL330-M077-T,5,23.90,
+Leader gripper: Dynamixel XL330-M288-T,1,23.90,trigger
+U2D2,2,32.10,
+U2D2 Power Hub Board,1,19.00,
+12V 5A power supply (follower),1,12.00,
+5V 4A power supply (leader),1,8.00,
+Robot Cable-X3P 180mm,8,1.50,

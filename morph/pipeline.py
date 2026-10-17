@@ -9,13 +9,16 @@ design -> predictions -> fabrication -> measured outcome.
 
 from __future__ import annotations
 
+import calendar
 import fnmatch
 import json
 import os
+import re
 import shutil
 import time
 
 from . import analysis, board, design as cad, electronics, fab, keewano, mechanism, sim
+from .services.durable import BuildLock, append_line, readable_json
 from .spec import Design, diff
 
 # node: (parameter patterns it reads, upstream nodes)
@@ -49,6 +52,27 @@ def dirty_nodes(changed_keys) -> list:
     return [n for n in ORDER if n in dirty]
 
 
+REV = re.compile(r"r[0-9]{1,9}")
+
+
+def utc_now() -> str:
+    """A ledger timestamp: UTC with a Z, e.g. 2026-10-12T19:05:00Z."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def ledger_time(ts) -> float | None:
+    """Seconds since the epoch for a ledger `ts`, or None. Entries are UTC ("...Z"); ones written before 0.2 have no
+    zone and are this computer's local time."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        if ts.endswith("Z"):
+            return float(calendar.timegm(time.strptime(ts[:-1], "%Y-%m-%dT%H:%M:%S")))
+        return time.mktime(time.strptime(ts, "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, OverflowError):
+        return None
+
+
 class Project:
     def __init__(self, root: str):
         self.root = root
@@ -57,14 +81,80 @@ class Project:
 
     # -- storage helpers
     def revs(self) -> list:
-        return sorted(d for d in os.listdir(self.root) if d.startswith("r") and d[1:].isdigit())
+        """Revision folders in numeric order (r999 before r1000)."""
+        try:
+            names = os.listdir(self.root)
+        except FileNotFoundError:  # the project was deleted (moved to .trash) while something still held it
+            return []
+        return sorted((d for d in names if REV.fullmatch(d) and os.path.isdir(os.path.join(self.root, d))),
+                      key=lambda d: int(d[1:]))
+
+    def finished(self) -> list:
+        """Revisions with readable results: results.json and design.json each hold a JSON object. A revision being built,
+        cut off by a stop, or damaged (a power cut, a hand edit) doesn't count, so nothing reads it as finished."""
+        return [r for r in self.revs() if readable_json(os.path.join(self.rev_dir(r), "results.json"))
+                and readable_json(os.path.join(self.rev_dir(r), "design.json"))]
 
     def latest(self):
-        revs = self.revs()
-        return revs[-1] if revs else None
+        """The newest finished revision, or None."""
+        done = self.finished()
+        return done[-1] if done else None
+
+    def build_lock(self, rev: str) -> str:
+        """The lock file a build of `rev` holds while it runs (BuildLock): .morph/build-<rev>.lock."""
+        return os.path.join(self.root, ".morph", f"build-{rev}.lock")
+
+    def claim_build(self):
+        """claim_rev() for a build: (rev, its BuildLock, held until the build ends). The lock is taken before the folder
+        exists, so another process's start-up sweep never sees the new revision without it and sets it aside mid-build;
+        a number whose lock another process holds is skipped."""
+        for _ in range(100):
+            revs = self.revs()
+            first = int(revs[-1][1:]) + 1 if revs else 1
+            for n in range(first, first + 20):
+                rev, lock = f"r{n:03d}", BuildLock(self.build_lock(f"r{n:03d}"))
+                if not lock.acquire():
+                    continue
+                try:
+                    os.mkdir(self.rev_dir(rev))
+                    return rev, lock
+                except FileExistsError:
+                    lock.release(remove=False)
+                    break
+                except BaseException:
+                    lock.release()
+                    raise
+        raise RuntimeError(f"couldn't claim a new revision folder in {self.root}")
+
+    def claim_rev(self) -> str:
+        """Create the next revision folder and return its name. Numbers follow the highest one (never a count, so a
+        deleted or set-aside revision is never reused by accident), and the folder is created exclusively: if another
+        process (the CLI beside the Studio) takes the number first, this one takes the next. A build uses claim_build()."""
+        for _ in range(100):
+            revs = self.revs()
+            rev = f"r{int(revs[-1][1:]) + 1 if revs else 1:03d}"
+            try:
+                os.mkdir(self.rev_dir(rev))
+                return rev
+            except FileExistsError:
+                continue
+        raise RuntimeError(f"couldn't claim a new revision folder in {self.root}")
 
     def rev_dir(self, rev: str) -> str:
         return os.path.join(self.root, rev)
+
+    def discard(self, rev: str) -> bool:
+        """Delete a revision folder, all or nothing: renamed out of the project first (Windows refuses while a file in it
+        is open, and then nothing has been touched), then deleted. revs() only lists names like r012, so a leftover
+        "r012.deleted-..." is invisible (the Studio's start-up sweep removes it). False when the rename failed."""
+        d = self.rev_dir(rev)
+        gone = f"{d}.deleted-{time.time_ns()}"
+        try:
+            os.rename(d, gone)
+        except OSError:
+            return False
+        shutil.rmtree(gone, ignore_errors=True)
+        return True
 
     def load_design(self, rev: str) -> Design:
         with open(os.path.join(self.rev_dir(rev), "design.json"), encoding="utf-8") as fh:
@@ -75,9 +165,8 @@ class Project:
             return json.load(fh)
 
     def log(self, entry: dict):
-        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **entry}
-        with open(self.ledger_path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry) + "\n")
+        entry = {"ts": utc_now(), **entry}
+        append_line(self.ledger_path, json.dumps(entry))  # a line cut off by a crash or a full disk never swallows this one
         design = None
         if entry.get("type") == "measurement":
             try:
@@ -88,19 +177,29 @@ class Project:
         keewano.emit(os.path.basename(os.path.normpath(self.root)), entry, design)
 
     def entries(self) -> list:
+        """The ledger's entries, oldest first. A line that doesn't parse (cut off by a crash or a full disk) is skipped:
+        one bad line never hides the rest."""
         if not os.path.exists(self.ledger_path):
             return []
-        with open(self.ledger_path, encoding="utf-8") as fh:
-            return [json.loads(line) for line in fh if line.strip()]
+        out = []
+        with open(self.ledger_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(e, dict):
+                    out.append(e)
+        return out
 
     # -- the pipeline
     def run(self, design: Design, parent: str | None = None, label: str = "", n_trials: int = 8,
             verbose: bool = True, on_event=None) -> str:
         emit = on_event or (lambda e: None)
-        revs = self.revs()
-        rev = f"r{len(revs) + 1:03d}"
+        rev = self.claim_rev()
         out = self.rev_dir(rev)
-        os.makedirs(out)
         with open(os.path.join(out, "design.json"), "w", encoding="utf-8") as fh:
             fh.write(design.dumps())
 

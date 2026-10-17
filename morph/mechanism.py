@@ -15,12 +15,11 @@ from __future__ import annotations
 import math
 import os
 
-import numpy as np
 from shapely import affinity
 from shapely.geometry import Point, Polygon, box
 from shapely.ops import unary_union
 
-from .design import FSR, mount_dims, to_mesh
+from .design import mount_dims, to_mesh
 from .spec import Design
 
 MODULE = 1.5

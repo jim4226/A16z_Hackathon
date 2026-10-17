@@ -211,7 +211,7 @@ def generate(ep: dict) -> dict:
     pad_xy = {(c["ref"], p["name"]): (p["x"], p["y"]) for c in comps for p in c["pads"]}
     cell = lambda xy: (round(xy[0] / G), round(xy[1] / G))  # noqa: E731
 
-    traces, unrouted, steps = [], [], []
+    traces, unrouted = [], []
     order = sorted(nets, key=lambda n: (n == "GND", len(nets[n])))
     for net in order:
         width = W_PWR if net in ("V_SERVO", "GND") else W_SIG

@@ -107,6 +107,7 @@ FDM_MATS = ("PLA", "PETG", "ABS", "ASA", "Nylon-CF", "TPU")
 FDM_BED = (250.0, 210.0, 220.0)        # Prusa MK4-class build volume
 MJF_BED = (380.0, 284.0, 380.0)
 SLA_BED = (200.0, 125.0, 210.0)
+BEDS = {"fdm_print": FDM_BED, "sla_print": SLA_BED, "mjf_print": MJF_BED}
 SHEET_GAUGES = (0.81, 1.02, 1.27, 1.6, 2.03, 2.29, 2.54, 3.18, 4.06, 4.83, 6.35)   # SendCutSend 5052 stock, mm
 PLATE_STOCK = (3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0, 25.0)
 
@@ -260,8 +261,14 @@ _GENERIC = {   # purchased bits generators use that are not catalog entries
 }
 
 
+def fabricated(p) -> bool:
+    """A part Morph writes make files for (printed, cut, machined, molded). Decoration ("visual": the upper arm's logo
+    inlay), fasteners and cables are not, so they have no print file, BOM line or place in the manual's parts tables."""
+    return p.process in FAB_PROCESSES and p.kind not in ("fastener", "cable", "visual")
+
+
 def _fab_parts(asm):
-    return [p for p in asm.parts if p.process in FAB_PROCESSES and p.kind not in ("fastener", "cable", "visual")]
+    return [p for p in asm.parts if fabricated(p)]
 
 
 def step_fasteners(asm) -> dict:
@@ -620,9 +627,13 @@ class Geo:
     # ---------------------------------------------------- printing pose + overhang analysis
     @property
     def print_pose(self):
-        return self._memo("pose", self._print_pose)
+        return self.pose_for("fdm_print")
 
-    def _print_pose(self):
+    def pose_for(self, proc: str):
+        """The print orientation for a process: the best-scoring pose that fits its build volume."""
+        return self._memo(("pose", proc), lambda: self._print_pose(BEDS.get(proc, FDM_BED)))
+
+    def _print_pose(self, bed=FDM_BED):
         m = self.mesh
         n = m.face_normals
         a = m.area_faces
@@ -639,8 +650,8 @@ class Geo:
                 cands.insert(0, ("profile flat on the bed", flat))
             except np.linalg.LinAlgError:
                 flat = None
-        best = None
-        prof = None
+        bx, by = sorted(bed[:2], reverse=True)
+        poses = []
         for label, R in cands:
             Rm = R[:3, :3]
             nz = n @ Rm[2]
@@ -654,17 +665,23 @@ class Geo:
             score = sup + 1.5 * h - 0.05 * contact - (25.0 if label.startswith("profile") else 0.0)
             # mean height of overhang above the bed ~ support column height
             sup_h = float(np.average(z[over] - z0, weights=a[over])) if over.any() else 0.0
-            cand = {"label": label, "R": R, "support_mm2": sup, "support_h": sup_h, "height": h,
-                    "contact_mm2": contact, "score": score}
-            if label.startswith("profile"):
-                prof = cand
-            if best is None or score < best["score"]:
-                best = cand
+            fx, fy = sorted((float(np.ptp(m.vertices @ Rm[0])), float(np.ptp(m.vertices @ Rm[1]))), reverse=True)
+            poses.append({"label": label, "R": R, "support_mm2": sup, "support_h": sup_h, "height": h,
+                          "contact_mm2": contact, "score": score, "fits": h <= bed[2] and fx <= bx and fy <= by})
+        # only poses inside the build volume (the footprint may turn 90° on the bed); none fits: the part needs splitting
+        fit = [c for c in poses if c["fits"]] or poses
+        best = min(fit, key=lambda c: c["score"])
+        prof = next((c for c in fit if c["label"].startswith("profile")), None)
         if prof is not None and prof["support_mm2"] <= max(25.0, best["support_mm2"] + 25.0):
             best = prof            # 2.5D parts print flat (profile on the bed) unless that needs real supports
         T = best["R"].copy()
         pm = m.copy()
         pm.apply_transform(T)
+        ext = pm.extents
+        if ext[0] > bed[0] or ext[1] > bed[1]:   # it fits turned 90° on the bed: turn it
+            T = trimesh.transformations.rotation_matrix(math.pi / 2, [0, 0, 1]) @ T
+            pm = m.copy()
+            pm.apply_transform(T)
         b = pm.bounds
         shift = trimesh.transformations.translation_matrix([-(b[0][0] + b[1][0]) / 2, -(b[0][1] + b[1][1]) / 2, -b[0][2]])
         best["T"] = shift @ T
@@ -1515,13 +1532,13 @@ def _xml(s):
 def dfm_checks(entry: dict, g: Geo) -> list:
     proc = entry["process"]
     out = []
-    ext = g.extents
     if proc in PRINT_PROCESSES:
-        pose = g.print_pose
-        bed = {"fdm_print": FDM_BED, "sla_print": SLA_BED, "mjf_print": MJF_BED}[proc]
-        e = np.sort(pose["mesh"].extents)[::-1]
-        if any(a > b for a, b in zip(e, sorted(bed, reverse=True))):
-            out.append(f"{e[0]:.0f}×{e[1]:.0f}×{e[2]:.0f} mm exceeds the {bed[0]:.0f}×{bed[1]:.0f}×{bed[2]:.0f} mm build volume: split the part")
+        pose = g.pose_for(proc)
+        bed = BEDS[proc]
+        e = pose["mesh"].extents          # as it stands on the bed: footprint either way round, height against the bed's
+        if e[2] > bed[2] or max(e[:2]) > max(bed[:2]) or min(e[:2]) > min(bed[:2]):
+            out.append(f"{e[0]:.0f}×{e[1]:.0f}×{e[2]:.0f} mm (its best way up) exceeds the {bed[0]:.0f}×{bed[1]:.0f}×"
+                       f"{bed[2]:.0f} mm build volume: split the part")
         w = g.walls
         lim = {"fdm_print": 1.2, "sla_print": 0.6, "mjf_print": 0.8}[proc]
         if w and w["min"] < lim:
@@ -1581,6 +1598,11 @@ def dfm_checks(entry: dict, g: Geo) -> list:
     return out
 
 
+def _down1(v: float) -> float:
+    """A measured length (mm) shown to 0.1 mm rounded down, so one short of a minimum never reads as the minimum."""
+    return math.floor(float(v) * 10.0 + 1e-6) / 10.0
+
+
 def _sheet_dfm(g: Geo) -> list:
     p = g.p
     sheet = p.meta.get("sheet") or {}
@@ -1611,7 +1633,8 @@ def _sheet_dfm(g: Geo) -> list:
         for sgn, nm in ((1, "a"), (-1, "b")):
             reach = float(max(side * sgn))
             if reach < min_fl:
-                out.append(f"B{i + 1}: flange {nm} is {reach:.1f} mm, below the {min_fl:.1f} mm press-brake minimum (4×T)")
+                out.append(f"B{i + 1}: flange {nm} is {_down1(reach):.1f} mm, below the {min_fl:.1f} mm press-brake minimum "
+                           "(4×T)")
         # bend relief at the ends where the bend meets the outline
         for (x, y) in ((u0, v0), (u1, v1)):
             disk = Point(x, y).buffer(max(t, 1.0), quad_segs=16)
@@ -1622,7 +1645,8 @@ def _sheet_dfm(g: Geo) -> list:
         for h in g.holes:
             dist = ln.distance(Point(h["c"])) - h["d"] / 2
             if dist < 2.0 * t + R:
-                where = "crosses the bend line" if dist < 0 else f"sits {dist:.1f} mm from the bend (min {2 * t + R:.1f})"
+                where = ("crosses the bend line" if dist < 0 else
+                         f"sits {_down1(dist):.1f} mm from the bend (min {2 * t + R:.1f})")
                 out.append(f"B{i + 1}: hole Ø{h['d']:.1f} {where}: it will distort")
                 break
     return out
@@ -1668,7 +1692,7 @@ def write_files(entry: dict, g: Group, outdir: str, design, efinal=None) -> list
         return os.path.join(d, fn)
 
     if proc in PRINT_PROCESSES:
-        pose = geo.print_pose
+        pose = geo.pose_for(proc)
         pm = pose["mesh"]
         pm.export(rel(f"{key}.stl"))
         settings = {"fdm_print": {"layer_height_mm": 0.2 if g.cls != "gear" else 0.12, "perimeters": 4, "top_bottom_layers": 5,
@@ -1680,7 +1704,7 @@ def write_files(entry: dict, g: Group, outdir: str, design, efinal=None) -> list
         write_3mf(rel(f"{key}.3mf"), pm, qty=g.qty, title=entry["name"],
                   meta={"Designer": "Morph", "Description": f"{entry['material']} {PROC_LABEL[proc]} · orientation: {pose['label']}",
                         **{f"morph:{k}": v for k, v in settings.items()}},
-                  bed=FDM_BED if proc == "fdm_print" else MJF_BED)
+                  bed=BEDS[proc])
         entry["print"] = {"orientation": pose["label"], "height_mm": _r(pose["height"], 1),
                           "support_cm2": _r(pose["support_mm2"] / 100, 2), **settings}
         if proc == "fdm_print":
@@ -1786,7 +1810,6 @@ def _harness_svg(harness, title):
     s = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" font-family="Helvetica, Arial, sans-serif">',
          f'<rect width="{W}" height="{H}" fill="#fbfbfc"/>',
          f'<text x="20" y="32" font-size="18" font-weight="600" fill="#1d2430">{_xml(title)} — formboard (1 row per wire)</text>']
-    pal = {2: "#c0392b", 3: "#2c3e50", 4: "#16a085"}
     for i, h in enumerate(harness):
         y = 64 + i * rowh
         L = float(h.get("length_mm", 100) or 100)
@@ -1893,7 +1916,9 @@ def plan(design, asm, outdir, efinal=None) -> dict:
             else:
                 e["files"] = _write_elec_files(e, outdir, efinal)
         except Exception as exc:  # one bad mesh must not sink the whole plan
-            warnings.append(f"{e['group']}: machine files failed ({exc.__class__.__name__}: {exc})")
+            from ..services.durable import explain  # the page shows it: the projects folder by name (<rev>/mfg here)
+            why = explain(exc, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(outdir)))))
+            warnings.append(f"{e['group']}: machine files failed ({exc.__class__.__name__}: {why})")
         e["how"] = _how(e, design)
     # ---------------------------------------------------------- warnings / insights
     if nq < 5 and any(e["process"] == "pcb_assembly" for e in es):
@@ -1940,7 +1965,7 @@ def _how(e, design) -> str:
         lh = pr.get("layer_height_mm", 0.2)
         return (f"print on any FDM printer ({e['material']}, {lh:g} mm, 4 walls, 25 % gyroid"
                 + (", tree supports" if pr.get("supports", "none") != "none" else "") + f") from {f('.3mf') or 'the 3MF'}"
-                + (f" or order from JLC3DP" if e["vendor"].startswith("In-house") else f"; order from {e['vendor']}"))
+                + (" or order from JLC3DP" if e["vendor"].startswith("In-house") else f"; order from {e['vendor']}"))
     if proc == "sla_print":
         return f"upload {f('.stl') or 'the STL'} to {e['vendor']} (tough resin) or print on a Formlabs-class SLA"
     if proc == "mjf_print":

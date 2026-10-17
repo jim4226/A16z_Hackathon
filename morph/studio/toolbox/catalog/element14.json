@@ -1,0 +1,159 @@
+{
+  "schema": "morph.tool_manifest/1",
+  "id": "element14",
+  "service": "Farnell (element14, Newark)",
+  "summary": "Price breaks and stock from the element14 Product Search API, which serves the Farnell, Newark and element14 stores (read-only).",
+  "homepage": "https://partner.element14.com",
+  "privacy": "The keyword the price check searches for (from your parts list) and the store go to Farnell (element14, Newark) with your key. Like every tool's answers, Farnell's go to Claude and stay in the run's file on this computer for up to 7 days.",
+  "off_by_default": "Morph ships this tool off until Farnell's API terms have had a legal review: they limit storing Farnell's data and passing it on. Turned on, its answers go to Claude and stay in the run's file for up to 7 days, as every tool's do. Turn it on only if your agreement with Farnell allows that.",
+  "attribution": "Farnell/element14",
+  "hosts": [
+    "api.element14.com"
+  ],
+  "verified": {
+    "docs": "https://partner.element14.com/docs/Product_Search_API_REST__Description",
+    "checked": "2026-10-13",
+    "live": null,
+    "notes": "Query parameters and the keywordSearchReturn answer come from the Product Search API (REST) description page, read on 2026-10-13; the tests' answer follows its medium response group with made-up values. Only keyword searches (term any:) are used."
+  },
+  "credentials": [
+    {
+      "id": "search",
+      "env": "MORPH_TOOL_ELEMENT14_KEY",
+      "label": "element14 Product Search API key",
+      "what": "Lets the price check look up Farnell, Newark and element14 price breaks and stock for the parts in your parts list.",
+      "where": "element14 Partner Portal: register, then request a Product Search API key",
+      "url": "https://partner.element14.com/member/register",
+      "hosts": [
+        "api.element14.com"
+      ],
+      "pattern": "^[A-Za-z0-9]{20,40}$",
+      "cost": "Morph adds no fee; Farnell sets a query limit for each key (Partner Portal terms)."
+    }
+  ],
+  "tools": [
+    {
+      "name": "element14_search_keyword",
+      "title": "Farnell keyword search",
+      "description": "Search the Farnell, Newark and element14 catalog, one store at a time, with a keyword or a manufacturer part number. Returns up to 5 products with the store's order code (sku), name, brand, manufacturer part number, minimum order quantity, price breaks (from, to, cost) and stock by warehouse. Prices are in the store's own currency, which the answer does not name. Farnell serves Europe, the Middle East, Africa and Japan, Newark the Americas (www.newark.com) and element14 Asia Pacific: pick the store for the person's region.",
+      "side_effect": "read",
+      "sends": "the keyword (a part number or a short description) and the store",
+      "request": {
+        "method": "GET",
+        "url": "https://api.element14.com/catalog/products",
+        "query": {
+          "term": "{term}",
+          "storeInfo.id": "{store}",
+          "resultsSettings.offset": "0",
+          "resultsSettings.numberOfResults": "5",
+          "resultsSettings.responseGroup": "medium",
+          "callInfo.responseDataFormat": "JSON"
+        }
+      },
+      "auth": {
+        "credential": "search",
+        "in": "query",
+        "name": "callInfo.apiKey"
+      },
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "term",
+          "store"
+        ],
+        "properties": {
+          "term": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^any:[A-Za-z0-9][A-Za-z0-9 ._/#+,-]{1,58}$",
+            "description": "any: followed by a keyword or manufacturer part number, for example any:STS3215"
+          },
+          "store": {
+            "type": "string",
+            "enum": [
+              "at.farnell.com",
+              "au.element14.com",
+              "be.farnell.com",
+              "bg.farnell.com",
+              "canada.newark.com",
+              "ch.farnell.com",
+              "cpc.farnell.com",
+              "cpcireland.farnell.com",
+              "cz.farnell.com",
+              "de.farnell.com",
+              "dk.farnell.com",
+              "ee.farnell.com",
+              "es.farnell.com",
+              "export.farnell.com",
+              "fi.farnell.com",
+              "fr.farnell.com",
+              "hk.element14.com",
+              "hu.farnell.com",
+              "ie.farnell.com",
+              "il.farnell.com",
+              "in.element14.com",
+              "it.farnell.com",
+              "kr.element14.com",
+              "lt.farnell.com",
+              "lv.farnell.com",
+              "mexico.newark.com",
+              "my.element14.com",
+              "nl.farnell.com",
+              "no.farnell.com",
+              "nz.element14.com",
+              "onecall.farnell.com",
+              "ph.element14.com",
+              "pl.farnell.com",
+              "pt.farnell.com",
+              "ro.farnell.com",
+              "ru.farnell.com",
+              "se.farnell.com",
+              "sg.element14.com",
+              "si.farnell.com",
+              "sk.farnell.com",
+              "th.element14.com",
+              "tr.farnell.com",
+              "tw.element14.com",
+              "uk.farnell.com",
+              "vn.element14.com",
+              "www.newark.com"
+            ],
+            "description": "The store to search, for example www.newark.com or uk.farnell.com"
+          }
+        }
+      },
+      "response": {
+        "type": "json",
+        "extract": {
+          "total": "/keywordSearchReturn/numberOfResults",
+          "products": "/keywordSearchReturn/products"
+        },
+        "keep": {
+          "products": [
+            "sku",
+            "displayName",
+            "brandName",
+            "translatedManufacturerPartNumber",
+            "translatedMinimumOrderQuality",
+            "packSize",
+            "unitOfMeasure",
+            "productStatus",
+            "rohsStatusCode",
+            "prices",
+            "stock"
+          ]
+        },
+        "max_items": 5
+      },
+      "limits": {
+        "timeout_s": 20,
+        "max_response_bytes": 1048576
+      },
+      "cost": {
+        "usd_per_call": 0,
+        "note": "Farnell sets a query limit for each key."
+      }
+    }
+  ]
+}
