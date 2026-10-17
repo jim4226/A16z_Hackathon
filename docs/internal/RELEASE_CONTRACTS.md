@@ -637,8 +637,9 @@ clamping.
   takes who is next to it and where it works from the request's own job (`brief._arch_without_so101`: a playroom's
   children, a kitchen's emergency stop; of the person's object's job and the request's words, the one that gives an
   emergency stop, `brief._gives_estop`, else the object's job or the general arm, so an object Morph chose, as after
-  "@nearest", never drops it, and an object named after leaving brings its job's stop), so moving to or from the
-  SO-101 never drops one. A typed reply's sizes
+  "@nearest", never drops it, and an object named after leaving brings its job's stop; the object Morph assumes for
+  that job, its own or the nearest robot's stand-in, is never narrower or lighter than the general arm's 45 mm, 100 g
+  one, `brief._left_so101_floor`), so moving to or from the SO-101 never drops one. A typed reply's sizes
   (`brief._later_sizes`, `brief._size_reads`): only a phrasing the rules read before this change can replace the
   objects' size ("60 mm", "sorry, 60 mm", "the cylinders are 60 mm wide", "they weigh 60 g"), and only when it is plainly
   all of theirs; any other only widens them or weighs them more, and a smaller width it gives is kept as `least_mm`:
@@ -666,9 +667,11 @@ clamping.
   name, `brief._names_objects`, a batch or a total that isn't per hour, day or shift (`brief._TIMED`) only when no verb
   in the conversation has the arm handle them (`brief._HANDLES`: "pick up 2 kg of 50 g cubes" may be one lift), the
   whole conversation as typed is plain, `brief._plain_talk` (every word in `brief._PLAIN_WORDS` or the objects' own
-  nouns, every number a size, a mass or a time, no other symbol: a closed list of the words that do say more is never
-  complete), and no word in the conversation says the object may weigh more than a mass given or that several are
-  lifted at once,
+  head noun, never the other words of a preset's name such as the samples of a glass vial of samples, nor that noun
+  as what holds them, "in their box"; every number a size, a mass or a time; no other symbol: a closed list of the
+  words that do say more is never complete), a later message with no mass of their own leaves out only a rate that is
+  its clause alone (`brief._RATE_ALONE`: "about 2 kg an hour", not "should be 300 g every minute"), and no word in
+  the conversation says the object may weigh more than a mass given or that several are lifted at once,
   `brief._MORE_THAN_SAID`: empty, net, what it holds or a volume, a lid, some of them, a hedge or a comparison ("on
   average", "some are heavier", "not all the same weight"), what they sit in or come in ("jars in sleeves", "the tray
   has pockets", "cartons of 50 g eggs"), "at a time"; a batch the arm handles is

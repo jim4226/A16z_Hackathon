@@ -529,7 +529,8 @@ you build:
   is next to it and where it works from its job, as a generated arm does ("use my SO-101 to tidy up the playroom" has
   children nearby and an emergency stop), and leaving the SO-101 keeps them ("cups to the sink": people nearby), also
   after the nearest robot was accepted ("recycles 80 mm espresso cups") and when the object is named afterwards ("I
-  don't have an SO-101", then espresso cups): a kitchen's or a lab's emergency stop too.
+  don't have an SO-101", then espresso cups): a kitchen's or a lab's emergency stop too. The object Morph then assumes
+  for the job is never smaller or lighter than the 45 mm, 100 g one leaving the SO-101 gave before.
 - New robot: "them" served food or drink ("a robot that delivers them coffee", "makes them tea") are people next to the
   robot, so it gets an emergency stop.
 - New robot: a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "sort 50 g blocks in

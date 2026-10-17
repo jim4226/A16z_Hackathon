@@ -2116,6 +2116,23 @@ _MORE_THAN_SAID = re.compile(r"\b(?:empty|full|unfilled|fill\w*|holds?|holding|c
                              r"together|simultaneous\w*|scoop\w*|handfuls?|armfuls?|go(?:es)?\s+in|put\s+in|"
                              r"with\s+the\s+[a-z]+\s+in|of\s+(?!them\b|those\b|these\b|\d)[a-z]+|"
                              r"(?!g\s|batch(?:es)?\s)[a-z]+\s+of\s+(?:about\s+|around\s+|roughly\s+|approx\w*\s+)?\d+)\b|\+")
+# a later message's clause that is a rate alone ("about 2 kg an hour", "in 2 kg batches", "2 kg of them a day")
+_RATE_ALONE = re.compile(r"\s*(?:(?:about|around|roughly|approximately|approx|at|and|also|plus|~)\s*)*(?:in\s+)?"
+                         r"(?:(?:a\s+)?batch(?:es)?\s+of\s+)?\d+(?:\.\d+)?\s*g\s*(?:-?\s*batch(?:es)?|(?:of\s+(?:them|these|"
+                         r"those)\s*)?(?:/\s*(?:h|hrs?|hours?|mins?|minutes?|days?|shifts?|weeks?)|(?:per|an?|each|every)\s+"
+                         r"(?:h|hrs?|hours?|mins?|minutes?|days?|shifts?|weeks?|months?)|hourly|daily|weekly|monthly)|of\s+(?:them|"
+                         r"these|those))?\s*(?:approx\.?|approximately|roughly|or\s+so)?\s*[.!]*\s*")
+
+
+def _clause(t: str, at: int) -> str:
+    """The clause of `t` around position `at`: between commas, semicolons, sentence ends and line breaks (never a
+    decimal point)."""
+    ends = list(re.finditer(r"[,;!?\n]|\.(?!\d)", t))
+    start = max([m.end() for m in ends if m.start() < at], default=0)
+    end = min([m.start() for m in ends if m.start() >= at], default=len(t))
+    return t[start:end]
+
+
 # a mass per hour, minute, day or shift, not a batch or a total ("2 kg of 50 g cubes per shift", "2 kg of them a day")
 _TIMED = re.compile(r"[^.;!?,]{0,40}?(?:\b(?:per|an?|each|every)\s+(?:h|hrs?|hours?|mins?|minutes?|days?|shifts?|weeks?|"
                     r"months?)\b|/\s*(?:h|hrs?|hours?|mins?|minutes?|days?|shifts?|weeks?)\b|\b(?:hourly|daily|weekly|monthly)\b)")
@@ -2170,6 +2187,8 @@ def _rates_to_drop(t: str, masses: list, objects: tuple = (set(), set()), own_el
         return set()
     if not _plain_talk([t] if said is None else said, objects):
         return set()   # "some are quite heavy", "excl. jam", "it carries 2 kg of them": the rate stays as read
+    if not own and not all(_RATE_ALONE.fullmatch(_clause(t, masses[i][1])) for i in rates):
+        return set()   # "should be 300 g every minute", "it's 300 g every minute": it may correct their mass
     if any(not _TIMED.match(t, masses[i][2]) for i in rates) and \
             any(m.group("h") for m in _HANDLES.finditer(" ".join([t] if said is None else said).lower())):
         return set()   # a batch or a total the arm may lift at once ("pick up 2 kg of 50 g cubes"): it stays as read
@@ -2188,7 +2207,7 @@ def _rates_to_drop(t: str, masses: list, objects: tuple = (set(), set()), own_el
 # heavy", "excl. jam", "it carries 2 kg of them", "oh wait, 300 grams every minute") is ever complete.
 _PLAIN_WORDS = frozenset("""
     a an the my our your this that these those it its it's they they're them their i i'm i've i'd we we're we've we'd
-    you me us who which have has got want wants need needs would like please can could should will to be is are was were
+    you me us who which have has got want wants need needs would like please can could should will to is are was were
     robot robots arm build make design get for with and also then help hi hello thanks thank let let's set
     use using pick picks picked picking up move moves moved moving sort sorts sorted sorting stack stacks stacking place
     places placing put puts putting transfer transfers transferring tidy tidying arrange arranges organise organize
@@ -2209,10 +2228,11 @@ _PLAIN_CHARS = re.compile(r"[a-z0-9\s,.;:!?()'’\"-]|(?<![\d\s])/(?=\s*(?:h|hrs
 
 
 def _plain_talk(said, objects: tuple = (set(), set())) -> bool:
-    """Whether every message in `said` (the person's words, as typed) is plain (_PLAIN_WORDS, the objects' own nouns
-    from `objects` (_object_words), the SO-101, sizes, masses and times), so that a rate or a batch beside the objects'
-    own mass can be left out."""
-    heads, words = objects
+    """Whether every message in `said` (the person's words, as typed) is plain (_PLAIN_WORDS, the objects' own head
+    nouns from `objects` (_object_words; not the other words of a preset's name, such as the samples of "glass vial of
+    samples"), the SO-101, sizes, masses and times), so that a rate or a batch beside the objects' own mass can be left
+    out. The objects' own noun as what holds them ("50 g boxes, in their box") is not plain."""
+    heads, _words = objects
     for raw in said:
         x = re.sub(_SO, " ", (raw or "").lower())
         if _PLAIN_CHARS.sub("", x).strip():
@@ -2223,7 +2243,10 @@ def _plain_talk(said, objects: tuple = (set(), set())) -> bool:
                 return False
         for w in re.findall(r"[a-z]+(?:['’][a-z]+)?", n):
             w = w.replace("’", "'")
-            if w not in _PLAIN_WORDS and _singular(w) not in heads | words and w not in heads | words:
+            if w not in _PLAIN_WORDS and _singular(w) not in heads and w not in heads:
+                return False
+        for m in re.finditer(r"\b(?:in|inside|within|on)\s+(?:a|an|the|their|its|one|each|my|our)\s+([a-z]+)\b", n):
+            if _singular(m.group(1)) in heads:
                 return False
     return True
 
@@ -2658,10 +2681,20 @@ def _arch(b: Brief) -> Archetype:
 
 def _default_object(b: Brief) -> dict:
     a = _arch(b)
-    for imp in b.flags.get("implicit") or []:
-        if imp.get("alt") in a.objects + a.more:
-            return object_value(imp["alt"])
-    return object_value(a.objects[0])
+    o = next((object_value(imp["alt"]) for imp in b.flags.get("implicit") or [] if imp.get("alt") in a.objects + a.more),
+             None) or object_value(a.objects[0])
+    return _left_so101_floor(b, o, a.key)
+
+
+def _left_so101_floor(b: Brief, o: dict, arch: str) -> dict:
+    """The job's own object Morph assumes once the SO-101 is left for that job ("I don't have an SO-101" on a playroom
+    request), never narrower or lighter than the general arm's, which leaving the SO-101 gave before."""
+    if not b.flags.get("left_so101") or arch in ("generic_arm", "so101"):
+        return o
+    g = object_value(ARCHETYPES["generic_arm"].objects[0])
+    d = max(float(o["diameter_mm"]), float(g["diameter_mm"]))
+    return dict(o, diameter_mm=d, mass_g=max(float(o["mass_g"]), float(g["mass_g"])),
+                length_mm=max(float(o.get("length_mm") or 0), d))
 
 
 def defaults(b: Brief) -> dict:
@@ -2893,11 +2926,14 @@ def assess_scope(b: Brief) -> dict:
                 arch = a.key  # a real desk task asked in an unsupported way: keep it, on the table plane
             slots = dict(over) if arch != a.key else {"object": a.objects[0]}
         o = near_obj or b.get("object")
-        if o and fits(o) and not o.get("assumed"):   # the person's own object, not the stand-in, whatever robot is offered
+        mine = bool(o and fits(o) and not o.get("assumed"))
+        if mine:   # the person's own object, not the nearest robot's stand-in, whatever robot is offered
             slots["object"] = o
         if near_obj and near_obj["mass_g"] > cap.payload_g("smart_bus", 4):
             slots["budget"] = 1500.0
         obj = sanitize_object(slots.get("object") or ARCHETYPES[arch].objects[0])
+        if not mine and b.flags.get("left_so101") and arch not in ("generic_arm", "so101"):
+            obj = slots["object"] = _left_so101_floor(b, obj, arch)
         so101_here = b.get("existing_hardware") == "so101" or arch == "so101"
         # a stated object below the SO-101's own minimum gets a generated arm, not the stock arm on a bigger stand-in
         below = _so101_below_min(b.get("object")) if so101_here else None

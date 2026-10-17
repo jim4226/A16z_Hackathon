@@ -533,3 +533,28 @@ def test_a_size_before_any_object_never_makes_the_object_lighter_or_narrower():
     assert width(b) >= 60.0 and mass(b) >= 100.0
     b = steps("use my SO-101 to pour me a beer", "it's 40 mm")
     assert width(b) >= 60.0 and mass(b) >= 360.0 and not so101(b)
+
+
+# ---- the full comparison after the third review: a preset's other words, corrections built from plain words, the
+# objects' own noun as what holds them, and Morph's assumed object once the SO-101 is left for a job
+@pytest.mark.parametrize("turns, m", [
+    (("use my SO-101 to pick up 30 mm 50 g vials at 2 kg per hour with samples",), 150.0),
+    (("use my SO-101 to pick up 30 mm 50 g pill bottles at 2 kg per hour",), 150.0),
+    (("use my SO-101 to pick up 30 mm boxes, each box is 50 g, 2 kg of them a day, in their box",), 150.0),
+    (("use my SO-101 to pick up 30 mm fifty gram jars", "should be 300 g every minute"), 300.0),
+    (("use my SO-101 to pick up 30 mm fifty gram jars", "it's 300 g every minute"), 300.0)])
+def test_a_rate_beside_plain_looking_words_that_say_more_stays_as_read(turns, m):
+    b = talk(*turns)
+    assert not so101(b) and mass(b) >= m, (turns, mass(b))
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to tidy up the playroom", "#existing_hardware=none"),
+    ("use my SO-101 to tidy up the playroom", "actually, build a new arm"),
+    ("use my SO-101 to put the kids' toys on the top shelf", "I don't have an SO-101"),
+    ("use my SO-101 to pass me tools from the top shelf", "my SO-101 is broken")])
+def test_the_object_assumed_for_a_job_left_for_the_so101_is_never_smaller_than_before(turns):
+    # leaving the SO-101 gave the general arm's 45 mm, 100 g object; the job now decides who is around, but its own
+    # object (a 30 g toy block, a screwdriver) is never planned narrower or lighter than that
+    b = steps(*turns)
+    assert width(b) >= 45.0 and mass(b) >= 100.0 and "estop" in (b.changes.get("electronics.extras") or ""), turns
