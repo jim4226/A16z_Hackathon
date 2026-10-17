@@ -2,10 +2,12 @@
 is listed, opens, can be deleted, and the Studio writes a new meta.json from its revisions when it starts, keeping the
 damaged one beside it. A folder that isn't a Studio robot project (the earlier CLI prototype's) is never taken for one."""
 
+import errno
 import json
 import os
 
 from morph.robot.pipeline2 import RobotProject
+from morph.services import durable
 from morph.spec import Design
 from morph.studio import projects, server
 
@@ -69,8 +71,33 @@ def test_a_folder_that_isnt_a_studio_robot_project_is_never_taken_for_one(tmp_pa
 
 
 def test_meta_json_is_synced_before_it_replaces_the_old_one(tmp_path, monkeypatch):
-    from morph.services import durable
     seen = []
     monkeypatch.setattr(durable, "write_text", lambda path, text, **kw: seen.append(os.path.basename(path)))
     projects.write_meta(str(tmp_path), {"kind": "robot"})
     assert seen == ["meta.json"]
+
+
+def test_a_meta_json_windows_refuses_to_open_for_a_moment_is_never_taken_for_damaged(tmp_path, monkeypatch):
+    """Another Studio on the same projects folder has just replaced a demo's meta.json, and Windows refuses to open it for
+    a moment (a virus scanner can do the same). That is no damaged meta.json: the start-up tidy and the demo backfill
+    leave it as it is (never kept aside and rebuilt without its need, origin and brief), and the project stays one."""
+    home = tmp_path / "projects"
+    root = robot(home, "egg-picker", demo=True)
+    meta, before = str(root / "meta.json"), (root / "meta.json").read_bytes()
+    real = open
+
+    def busy(path, *a, **k):
+        if os.fspath(path) == meta:
+            raise PermissionError(errno.EACCES, "The process cannot access the file because it is being used by "
+                                                "another process", path)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(durable, "open", busy, raising=False)
+    monkeypatch.setattr(projects, "open", busy, raising=False)
+    assert not projects.damaged_meta(str(root)) and not projects.repair_meta(str(root))
+    assert projects.project_root(str(home), "egg-picker") == str(root)       # still a project meanwhile
+    projects.tidy(str(home))
+    assert projects.backfill_demo(str(home)) == []
+    monkeypatch.undo()
+    assert (root / "meta.json").read_bytes() == before and not [n for n in os.listdir(root) if "damaged" in n]
+    assert projects.read_meta(str(root))["need"] == "egg-picker need"

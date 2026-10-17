@@ -59,7 +59,13 @@ def write_meta(root: str, meta: dict):
 
 
 def damaged_meta(root: str) -> bool:
-    """meta.json is there but doesn't hold an object (a power cut while it was saved, a hand edit)."""
+    """meta.json was read and doesn't hold an object (a power cut while it was saved, a hand edit). One the system
+    refuses to open for now (Windows just after another Studio replaced it, a virus scanner) is not damaged."""
+    return durable.damaged_json(os.path.join(root, "meta.json"))
+
+
+def _unread_meta(root: str) -> bool:
+    """meta.json is there but doesn't read as an object now: damaged, or refused for the moment."""
     path = os.path.join(root, "meta.json")
     return os.path.isfile(path) and not durable.readable_json(path)
 
@@ -95,7 +101,7 @@ def project_root(home: str, name) -> str | None:
     root = contained_path(home, name, decode=False)
     if not root or not os.path.isdir(root):
         return None
-    if read_meta(root).get("kind") != "robot" and not (damaged_meta(root) and _robot_folder(root)):
+    if read_meta(root).get("kind") != "robot" and not (_unread_meta(root) and _robot_folder(root)):
         return None
     return root
 
@@ -104,7 +110,8 @@ def repair_meta(root: str, say=None) -> bool:
     """A robot project's meta.json that can't be read is kept as meta.json.damaged-<time> and replaced by one made from
     what the project shows: kind robot, the robot source of its newest design, and demo for the launcher's egg-picker
     and so101 (so Reset demo still finds them). Its need, origin and brief or fork links are lost; the damaged copy
-    keeps whatever can still be read. True when it repaired one."""
+    keeps whatever can still be read. One the system refuses to open for now is left as it is. True when it repaired
+    one."""
     if not damaged_meta(root) or not _robot_folder(root):
         return False
     name = os.path.basename(os.path.normpath(root))
@@ -145,7 +152,8 @@ def set_aside_unfinished(p: RobotProject, say=None) -> list:
     """The newest revisions that never finished (a stop mid-build left only some of their files) or whose results.json
     or design.json can't be read (a power cut, a hand edit) are renamed rNNN.incomplete-<time>: nothing reads them as
     finished and the next build takes their number. A revision another process is still building (its BuildLock is
-    held) is left alone. `say(text)` is told about each. Returns the revisions set aside."""
+    held), or one whose files the system refused to open for now (Windows just after a rename, a virus scanner), is left
+    alone. `say(text)` is told about each. Returns the revisions set aside."""
     done, out = set(p.finished()), []
     for rev in reversed(p.revs()):
         if rev in done:
@@ -154,8 +162,13 @@ def set_aside_unfinished(p: RobotProject, say=None) -> list:
         if durable.BuildLock.held(lock):
             break  # still building, in another Studio or the CLI
         d = p.rev_dir(rev)
-        why = ("was cut off mid-build" if not os.path.isfile(os.path.join(d, "results.json")) else
-               "has saved files that can't be read (a power cut or a crash while they were written, or a hand edit)")
+        results, design = os.path.join(d, "results.json"), os.path.join(d, "design.json")
+        if not os.path.isfile(results):
+            why = "was cut off mid-build"
+        elif not os.path.isfile(design) or durable.damaged_json(results) or durable.damaged_json(design):
+            why = "has saved files that can't be read (a power cut or a crash while they were written, or a hand edit)"
+        else:
+            break  # whole, but refused when finished() read it: next start
         aside = f"{d}.incomplete-{time.time_ns()}"  # ns: the same revision set aside twice in a second never collides
         try:
             os.rename(d, aside)
@@ -535,7 +548,7 @@ def backfill_demo(home: str, names=DEMOS) -> list:
             continue
         repair_meta(root, print)  # never written over unread: the damaged one is kept, and the new one has demo set
         m = read_meta(root)
-        if "demo" in m:
+        if "demo" in m or m.get("kind") != "robot":  # not read (refused for now): never written over
             continue
         m.setdefault("origin", "default")
         m["demo"] = True

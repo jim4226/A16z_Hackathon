@@ -6,6 +6,7 @@ the owner's approval: installed bound to the spec's sha256, the next run offers 
 and a later change turns it off until a new draft is approved. Claude is the real anthropic SDK over a mock transport;
 the documentation page comes back as a web_fetch result (tests/fake_claude.py); nothing leaves the test."""
 
+import errno
 import json
 import os
 import socket
@@ -367,6 +368,34 @@ def test_a_change_after_approval_turns_the_tool_off_until_a_new_draft_is_approve
     assert json.load(open(path, encoding="utf-8")) == again["spec"] and catalog.read_pins(str(home))["gearbase"]["sha256"] == again["sha256"]
     assert {"gearbase_search_parts", "gearbase_part_offers"} <= tb.enabled(tb.catalog())
     assert tb.drafts.get(again["id"])["installed"]["replaced"] is True
+
+
+def test_a_catalog_loaded_while_approve_renames_the_manifest_never_hides_the_tool(home, monkeypatch):
+    """Another thread loads the catalog just as approve renames the manifest into place, and Windows refuses that open
+    for a moment (os.replace keeps the renamed file busy; a virus scanner can too). That catalog isn't remembered, and
+    approve waits out a refusal of its own read: the tool is installed, never "Morph wrote the tool but couldn't load it"."""
+    tb, _ = make(home, F.drafting())
+    d = drafted(tb)
+    path = os.path.join(catalog.user_dir(str(home)), "gearbase.json")
+    refused, real_open, real_write = [], open, store.write_text
+
+    def busy(p, *a, **k):
+        if os.fspath(p) == path and len(refused) < 2:
+            refused.append(p)
+            raise PermissionError(errno.EACCES, "The process cannot access the file because it is being used by "
+                                                "another process", p)
+        return real_open(p, *a, **k)
+
+    def write_then_load(p, text, **kw):  # the other thread's load lands in the moment after the rename
+        real_write(p, text, **kw)
+        if p == path:
+            tb.catalog()
+
+    monkeypatch.setattr(catalog, "open", busy, raising=False)
+    monkeypatch.setattr(store, "write_text", write_then_load)
+    view = tb.drafts.approve(d["id"], d["sha256"], by="jim")
+    assert len(refused) == 2 and view["status"] == "installed"
+    assert {"gearbase_search_parts", "gearbase_part_offers"} <= tb.enabled(tb.catalog())
 
 
 def test_a_hand_written_manifest_or_a_clash_that_appears_later_is_never_replaced(home):

@@ -173,6 +173,7 @@ class Catalog:
     credentials: dict = field(default_factory=dict)    # env -> Credential
     providers: dict = field(default_factory=dict)      # id -> {id, service, summary, homepage, privacy, hosts, curated, ...}
     errors: list = field(default_factory=list)         # [{"source", "error"}] manifests that were not loaded
+    unread: list = field(default_factory=list)         # sources of those the system refused to open or read: not cached
 
     def tool(self, name: str) -> Tool | None:
         return self.tools.get(name)
@@ -375,6 +376,8 @@ def _build(files, policy) -> Catalog:
         except (OSError, UnicodeError, ValueError, RecursionError) as exc:  # the Keys dialog lists it
             projects = os.path.dirname(os.path.dirname(os.path.dirname(p)))  # <projects>/.tools/catalog/<file>
             cat.errors.append({"source": source, "curated": curated, "error": durable.explain(exc, projects)[:300]})
+            if isinstance(exc, OSError):
+                cat.unread.append(source)
             continue
         info["warnings"] = sorted({w for t in tools for w in t.warnings})
         cat.providers[info["id"]] = info
@@ -385,7 +388,9 @@ def _build(files, policy) -> Catalog:
 
 def load(home: str | None = None, *, curated_dirs=None, policy=DEFAULT_POLICY) -> Catalog:
     """Every manifest Morph ships plus the owner's own, validated; cached until a file changes. Never raises: a
-    manifest that fails validation is left out and listed in `errors`."""
+    manifest that fails validation is left out and listed in `errors`. A catalog with a manifest the system refused to
+    open is not cached (Windows refuses one for a moment after os.replace, a virus scanner can too): the next load reads
+    it again, so a tool written a moment ago never stays missing until another manifest changes."""
     files = _files(home, list(CURATED_DIRS if curated_dirs is None else curated_dirs))
     key = (files, policy)
     with _CACHE_LOCK:
@@ -393,6 +398,8 @@ def load(home: str | None = None, *, curated_dirs=None, policy=DEFAULT_POLICY) -
             _CACHE.move_to_end(key)
             return _CACHE[key]
     cat = _build(files, policy)
+    if cat.unread:
+        return cat
     with _CACHE_LOCK:
         _CACHE[key] = cat
         while len(_CACHE) > 16:

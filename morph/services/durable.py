@@ -8,6 +8,7 @@ what every writer uses so that a cut never costs more than the record being writ
     write_text(path, text)       replace a file whole: a temp file beside it, fsync, os.replace, the folder synced
     write_json(path, obj)        the same for JSON
     readable_json(path)          the file holds a JSON object (a parse cached by size and mtime): a finished record
+    damaged_json(path)           it was read and doesn't: what may be set aside (never a file the system refused)
     BuildLock(path)              an OS lock held while a revision builds (or a Studio runs: rooms.claim); the system
                                  frees it when the process ends, however it ends
     disk_full(exc), explain(exc) "The disk is full" instead of "[Errno 28] No space left on device"
@@ -103,15 +104,14 @@ _READABLE: dict = {}
 _READABLE_LOCK = threading.Lock()
 
 
-def readable_json(path: str) -> bool:
-    """True when `path` holds a JSON object. A record written by write_text() is whole or absent, but a power cut can
-    still leave one empty, and a hand edit can break one: such a file doesn't count. A parse is cached by the file's
-    mtime and size, so a revision's results are parsed once per process; an open the system refuses is not (Windows
-    refuses one for a moment after os.replace, a virus scanner can too), so the revision counts once it reads."""
+def _json_object(path: str):
+    """True when `path` holds a JSON object, False when it was read and doesn't, None when that can't be told now (it
+    isn't there, or the system refused to open or read it). A parse is cached by the file's mtime and size; a refusal
+    is not."""
     try:
         st = os.stat(path)
     except OSError:
-        return False
+        return None
     key = (st.st_mtime_ns, st.st_size)
     with _READABLE_LOCK:
         hit = _READABLE.get(path)
@@ -124,14 +124,30 @@ def readable_json(path: str) -> bool:
         # not remembered: Windows refuses an open for a moment while another handle may delete the file (os.replace
         # keeps one on the renamed file until just after the rename; a scanner can too), and a record's mtime and
         # size never change after that, so a cached refusal would hide a finished revision until the Studio restarts
-        return False
-    except ValueError:
+        return None
+    except (ValueError, RecursionError):  # RecursionError: a hand edit nesting arrays thousands deep
         ok = False
     with _READABLE_LOCK:
         _READABLE[path] = (key, ok)
         while len(_READABLE) > 8192:
             _READABLE.pop(next(iter(_READABLE)))
     return ok
+
+
+def readable_json(path: str) -> bool:
+    """True when `path` holds a JSON object. A record written by write_text() is whole or absent, but a power cut can
+    still leave one empty, and a hand edit can break one: such a file doesn't count. A parse is cached by the file's
+    mtime and size, so a revision's results are parsed once per process; an open the system refuses is not (Windows
+    refuses one for a moment after os.replace, a virus scanner can too), so the revision counts once it reads."""
+    return _json_object(path) is True
+
+
+def damaged_json(path: str) -> bool:
+    """True only when `path` was read and doesn't hold a JSON object: empty after a power cut, cut short, broken by a
+    hand edit. A file that isn't there, or that the system refuses to open for now (Windows for a moment after
+    os.replace, a virus scanner, another Studio rewriting it), is not damaged: what renames or rebuilds a damaged record
+    leaves it alone."""
+    return _json_object(path) is False
 
 
 def disk_full(exc) -> bool:

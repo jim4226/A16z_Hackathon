@@ -505,6 +505,17 @@ Check the object Morph assumed in its summary before you build, and say these in
   refuses to open a file for that moment, and a virus scanner can do the same) is no longer hidden until the Studio
   restarts: a new or imported project's first build could look as if it never finished (an edit was refused with
   "delete the project and make it again"), and after a later build the next edit started from the revision before.
+- Agent tools on Windows: approving a tool Morph wrote no longer fails with "Morph wrote the tool but couldn't load it"
+  when Windows or a virus scanner held the new file for a moment, and the tool no longer stays missing until the
+  Studio restarts.
+- Robustness studies on Windows: a stopped study whose saved runs were read while Windows or a virus scanner held the
+  file for a moment no longer shows 0 runs done until the Studio restarts.
+- Studio on Windows: a project's meta.json or newest revision that Windows or a virus scanner held for a moment (for
+  example while another Studio on the same projects folder saved it) is no longer taken for damaged when a Studio
+  starts: the project keeps its need, origin and brief or fork links instead of being rebuilt from its revisions, and
+  the revision is no longer set aside.
+- A results.json edited by hand to nest thousands of levels deep counts as damaged, like any record that can't be read,
+  instead of stopping the Studio from showing any project.
 - Import: a parts list saved with Windows line ends (as Excel, Notepad or a Windows checkout saves it) is read as a
   table on every Python: with Python 3.10 and 3.12 one whose quoted cells hold commas ("waist, shoulder (x2), elbow")
   was read as plain text, and the import found nothing it could use.
