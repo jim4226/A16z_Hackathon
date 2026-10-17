@@ -29,6 +29,17 @@ const ENDED = ['done', 'failed', 'refused', 'cancelled'];
 // an ended run never runs again, so a view that says otherwise left the server before it ended (a slow Allow, a list
 // in flight when its last event came): it must not take the card back to Working
 const stale = (cur, next) => ENDED.includes(cur?.status) && !ENDED.includes(next?.status);
+const MAX_STEPS = 40;  // the lines the Studio keeps with a run (toolbox/runs.py)
+
+// Take a view of the run from the Studio. One read before events the page already shows (a list in flight while the
+// run made its calls) keeps the lines those events added; an ended run's view is the whole story
+function take(r, next) {
+  if (stale(r.view, next)) return false;
+  const lines = (v) => v?.steps?.length || 0;
+  if (!ENDED.includes(next.status) && lines(next) < Math.min(lines(r.view), MAX_STEPS)) next = { ...next, steps: r.view.steps, calls: r.view.calls };
+  r.view = next;
+  return true;
+}
 const STOPPED = {  // why an interrupted run waits (its card's heading); the note under it says what to do
   restart: 'The Studio restarted while this ran', claude_key: 'Claude refused the Anthropic key', claude_unavailable: 'Claude was unavailable',
   offline: 'Network lookups were turned off', tools_off: 'Agent tools were turned off',
@@ -95,7 +106,7 @@ async function refresh() {  // one at a time; a call during one runs once more a
         const now = Date.now();
         for (const v of [...(out.runs || [])].reverse()) {  // oldest first, so the newest card ends up lowest
           const r = runs.get(v.id);
-          if (r) { if (!stale(r.view, v)) r.view = v; continue; }
+          if (r) { take(r, v); continue; }
           if (ENDED.includes(v.status) && now - Date.parse(v.updated || 0) > RECENT_MS) continue;
           runs.set(v.id, { view: v, el: null, keyAdded: false, answer: null });
         }
@@ -146,7 +157,7 @@ async function act(r, what, arg) {
     if (what === 'stop') { out = await studio.api.post('/api/runs/cancel', { run: id }); r.stopping = !!out?.run?.cancelling; }
     else if (what === 'continue') out = await studio.api.post('/api/runs/resume', { run: id });
     else out = await studio.api.post('/api/runs/decide', { run: id, decisions: Object.fromEntries(String(arg || '').split(',').filter(Boolean).map((tu) => [tu, what])) });
-    if (out?.run && !stale(r.view, out.run)) { r.view = out.run; paint(r); }
+    if (out?.run && take(r, out.run)) paint(r);
     refresh();
   } catch (e) {
     studio.toast(e.body?.error || e.message || "Couldn't reach the Studio");
@@ -169,7 +180,7 @@ export async function startPrices() {
   try {
     const out = await studio.api.post('/api/runs/start', { agent: 'price_check', rev });
     const r = runs.get(out.run.id) || { view: out.run, el: null, keyAdded: false, answer: null };
-    if (!stale(r.view, out.run)) r.view = out.run;
+    take(r, out.run);
     runs.set(out.run.id, r);
     paint(r);  // a new card keeps the chat at its end
     studio.toast(out.already ? `Live prices for ${rev} are already running: see the chat` : `Live prices started for ${rev}`);

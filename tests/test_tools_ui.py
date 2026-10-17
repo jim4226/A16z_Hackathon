@@ -173,6 +173,40 @@ def test_a_key_the_service_refuses_can_be_replaced_from_the_card(browser, make_w
     assert not page.errors, page.errors
 
 
+def test_a_late_list_of_runs_keeps_the_lines_the_run_already_showed(browser, make_world):
+    """The list of runs the page fetches after Allow once is the run as it was when the Studio read it. On a busy machine
+    it can reach the page after the run's own events: the lines those events added stay on the card, and the finished
+    card has them."""
+    gate, slow = threading.Event(), threading.Event()
+    w = make_world(search_and_call(("fixparts_categories", "toolu_c", {"query": "servo"}), ("fixparts_categories", "toolu_d", {"query": "board"})),
+                   held(final("Listed two categories."), gate))
+    tb, runs, transport = w.studio.toolbox, w.studio.toolbox.runs, w.vendor.transport
+
+    def late_runs(*a, **k):
+        views = runs(*a, **k)                # read now, before the calls...
+        if slow.is_set():
+            time.sleep(1.5)                  # ...and reaching the page after their events
+        return views
+
+    def slow_call(*a, **k):
+        time.sleep(0.4)
+        return transport(*a, **k)
+    tb.runs, tb.http_transport = late_runs, slow_call
+    page = Page(browser, w).open()
+    w.call("POST", "/api/runs/start?project=egg-picker", {"agent": "test_prices"})
+    until(lambda: "Allow FixParts categories?" in page.card(), what="the Tool request card")
+    slow.set()
+    page.pg.click('.tl-run [data-act="allow_once"]')
+    until(lambda: len(w.vendor.calls) >= 2, what="both calls")
+    time.sleep(2.0)                          # the late list has come in
+    assert page.card().count("FixParts categories · api.fixparts-morph.com") == 2, page.card()
+    slow.clear()
+    gate.set()
+    until(lambda: "Done" in page.card(), what="the finished run")
+    assert page.card().count("FixParts categories · api.fixparts-morph.com") == 2, page.card()
+    assert not page.errors, page.errors
+
+
 def test_parallel_calls_share_one_card_and_one_answer(browser, make_world):
     """Claude often looks several parts up at once: one Key needed card for the key, one Tool request card for the
     tool, and one answer covers every call."""
