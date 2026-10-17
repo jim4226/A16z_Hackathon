@@ -682,3 +682,98 @@ def test_a_rename_keeps_the_mass_they_were_said_to_weigh():
 def test_a_rate_is_left_out_only_in_the_few_messages_that_say_nothing_more(turns, m):
     b = steps(*turns)
     assert mass(b) >= m and not so101(b), (turns, mass(b))
+
+
+# ---- the round-6 review: Morph's guess for the job, once the SO-101 is left, keeps the job's preset (its people) and
+# its unknown shape through the nearest robot and any later reply; a mass before a noun is the whole weight only of
+# plainly solid things
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101", "I don't have an SO-101", "it needs wheels", "@nearest", "keep my SO-101"),
+    ("use my SO-101", "I don't have an SO-101", "it needs wheels", "@nearest", "use my SO-101"),
+    ("use my SO-101", "#existing_hardware=none", "it should drive around the house", "@nearest", "#existing_hardware=none")])
+def test_the_guess_for_a_job_left_for_the_so101_keeps_the_jobs_people_through_the_nearest_robot(turns):
+    b = steps(*turns)
+    assert not so101(b) and B.value(b, "people_nearby") == "children" and "estop" in b.changes["electronics.extras"], turns
+
+
+@pytest.mark.parametrize("later", ["my SO-101 can do it", "my SO-101 can handle it", "my SO-101 can pick up cups"])
+def test_a_round_sounding_word_never_gives_the_guess_a_shape_the_so101_holds(later):
+    # "can", "cups": no shape of the 45 mm object Morph guessed once the person said they had no SO-101
+    assert not so101(steps("use my SO-101", "I don't have an SO-101", "45 mm", later)), later
+
+
+@pytest.mark.parametrize("text", ["use my SO-101 to move 30 mm 88 g cartridges at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm 60 g pods at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm 90 g canisters at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm 60 g capsules at 2 kg per hour",
+                                  "use my SO-101 to sort 30 mm 80 g refills in 2 kg batches",
+                                  "use my SO-101 to move 30 mm 90 g candles at 2 kg per hour",
+                                  "use my SO-101 to move 30 mm 90 g spools at 2 kg per hour"])
+def test_a_mass_before_a_noun_is_left_beside_a_rate_only_for_plainly_solid_things(text):
+    # a label's mass may be what they hold (a jar candle's wax, a spool's filament): the rate stays as read
+    b = talk(text)
+    assert mass(b) > 100.0 and not so101(b), (text, mass(b))
+
+
+@pytest.mark.parametrize("text", ["use my SO-101 to move 30 mm 50 g cubes at 2 kg per hour",
+                                  "use my SO-101 to sort 30 mm 50 g cookies in 2 kg batches"])
+def test_a_rate_beside_solid_things_own_mass_is_still_left_out(text):
+    b = talk(text)
+    assert mass(b) == 50.0 and so101(b), (text, mass(b))
+
+
+@pytest.mark.parametrize("later", ["lids 20 mm wide", "caps 20 mm across", "lid 20 mm wide", "20 mm wide for the caps",
+                                   "cap diameter 20 mm", "the caps 20 mm wide"])
+def test_a_parts_width_right_beside_its_name_never_narrows_the_objects(later):
+    # the release read these as the jars' own width: the SO-101 brief planned 20 mm jars
+    assert width(steps("use my SO-101 to move 40 mm jars", later)) >= 40.0, later
+
+
+@pytest.mark.parametrize("later", ["lids 20 g", "lid 20 g", "cap weight 20 g", "the lids 20 g"])
+def test_a_parts_mass_right_beside_its_name_never_lightens_the_object(later):
+    b = steps("use my SO-101 to move 40 mm jars weighing 300 g", later)
+    assert mass(b) >= 300.0 and not so101(b), (later, mass(b))
+
+
+@pytest.mark.parametrize("later", ["cylinders 20 mm wide", "sorry 20 mm wide", "diameter 20 mm"])
+def test_a_width_beside_their_own_name_or_a_correction_is_still_theirs(later):
+    assert width(steps("use my SO-101 to move 40 mm cylinders", later)) < 40.0, later
+
+
+# ---- the round-6 review of masses: a rate left out only at the pace the arm is built at, a batch kept beside a job
+# chosen before or after it and beside a tidy, no error for a 0 g mass, and "in 2 kg batches" never names the objects
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to move 30 mm, 50 g cubes at 600 g a minute", "one every 30 s"),
+    ("use my SO-101 to move 30 mm, 50 g cubes at 12 kg per hour", "one every 60 s"),
+    ("use my SO-101 to move 30 mm, 50 g cubes", "#throughput=60", "12 kg per hour"),
+    ("use my SO-101 to move 30 mm, 50 g cubes at 45 kg per hour", "#throughput=10"),
+    ("use my SO-101 to pick up 40 mm balls weighing 100 g, 90 kg per hour",)])           # 15 a minute: built one every 6 s
+def test_a_rate_faster_than_the_arm_moves_them_one_at_a_time_stays_as_read(turns):
+    b = steps(*turns)
+    assert mass(b) >= 150.0 and not so101(b), (turns, mass(b))
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to sort 30 mm, 50 g cubes", "#layout=tray_to_bin", "in 2 kg batches"),
+    ("sort 30 mm, 50 g cubes", "#task=pick_place", "in 2 kg batches"),
+    ("sort 30 mm, 50 g cubes", "#task=pick_place", "in 2 kg batches", "#existing_hardware=so101"),
+    ("use my SO-101 to tidy 30 mm, 50 g toys in 2 kg batches",)])
+def test_a_batch_beside_a_job_chosen_before_it_or_a_tidy_stays_as_read(turns):
+    b = steps(*turns)
+    assert mass(b) >= 150.0 and not so101(b), (turns, mass(b))
+
+
+@pytest.mark.parametrize("text", ["move 0 g cubes at 2 kg per hour", "move 30 mm cubes weighing 0.00001 kg at 2 kg per hour",
+                                  "sort 2 kg of 0 g cubes per hour"])
+def test_a_zero_mass_beside_a_rate_still_gives_a_robot(text):
+    assert talk(text).changes.get("object.mass_g"), text
+
+
+def test_a_batch_reply_never_names_the_objects():
+    b = steps("use my SO-101 to sort 30 mm 50 g cubes", "in 2 kg batches")
+    assert B.value(b, "object")["name"] == "cube" and mass(b) == 50.0 and so101(b)
+
+
+def test_a_rate_is_left_out_after_with_my_so101_too():
+    b = talk("with my SO-101, move 30 mm 50 g cubes at 2 kg per hour")
+    assert mass(b) == 50.0 and so101(b)

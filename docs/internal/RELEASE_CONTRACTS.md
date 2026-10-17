@@ -643,8 +643,9 @@ clamping.
   (`flags["so101_guess"]`); an SO-101 doing a hand-over job has the hand-over's emergency stop; an SO-101 named
   without "my" ("SO-101 to move jars") gets the same checks of what its jaws hold; the object Morph assumes for
   that job, its own or the nearest robot's stand-in, is never narrower or lighter than the general arm's 45 mm, 100 g
-  flat-sided box and has no known shape (`shape_unknown`: the SO-101, named again, holds it only from 26 to 34 mm),
-  `brief._left_so101_floor`), so moving to or from the SO-101 never drops one. A typed reply's sizes
+  flat-sided box, keeps the job's preset (its key, so its job's people) and has no known shape (`shape_unknown`, also
+  through the nearest robot, and never a shape from a later reply's word, "my SO-101 can do it": the SO-101, named
+  again, holds it only from 26 to 34 mm), `brief._left_so101_floor`), so moving to or from the SO-101 never drops one. A typed reply's sizes
   (`brief._later_sizes`, `brief._size_reads`): only a phrasing the rules read before this change can replace the
   objects' size ("60 mm", "sorry, 60 mm", "the cylinders are 60 mm wide", "they weigh 60 g"), and only when it is plainly
   all of theirs; any other only widens them or weighs them more, and a smaller width it gives is kept as `least_mm`:
@@ -654,7 +655,9 @@ clamping.
   the candles in candle jars), a question or a supposition, a lower end ("40 mm and up", "at least 40 mm") or the size at
   one part ("30 mm at the top", `brief._not_plain`), a reply with no noun of theirs after a smaller size some of them
   or a range's low end may be ("some of them are 20 mm", then "sorry, 40 mm"), a part's mass after its name ("the lids:
-  20 g", "20 g each for the lids", `brief._mass_of`). A size in a phrasing never read before, said before any
+  20 g", "20 g each for the lids", `brief._mass_of`), a part's size right beside its name with no word tying them
+  ("lids 20 mm wide", "cap diameter 20 mm", "20 mm wide for the caps", "the caps 20 mm", "lids 20 g",
+  `brief._part_beside`). A size in a phrasing never read before, said before any
   object is described ("they're 60 mm"), stays unread, as before; a later noun renames the objects and gives their
   shape ("they come as 40 mm cubes") unless it is a part of them ("45 mm necks"), and a width said stays stated, so
   the unknown-shape and below-minimum checks still run ("they sit in 40 mm holders" after toy blocks). A part's size read for the
@@ -671,8 +674,11 @@ clamping.
   batches", "sort 2 kg of 50 g cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by
   name, `brief._names_objects`, every message of the conversation one of a few whole messages (`brief._rate_template`: the request
   naming the objects with their own mass and a rate per hour, minute, day or shift, or a batch they are sorted in; a
-  reply that is the rate alone; who is around), no faster than one object every 4 s, never a container's label mass
-  ("95 g tins"), and a batch or a total that isn't per hour, day or shift (`brief._TIMED`) only when no verb
+  reply that is the rate alone, the pace or who is around), no more than one object a lift at the pace the arm is
+  built at (`cycle`: the brief's throughput, its job's own or the chip's, or a slower "one every N s" reply; never
+  more than 15 a minute), a mass before the noun only for a plainly solid thing (`brief._SOLIDS`: "50 g cubes", never
+  "95 g tins", "88 g cartridges" or "450 g candles", whose label may give what they hold), no own mass of 0 g, and a
+  batch or a total that isn't per hour, day or shift (`brief._TIMED`) only when no verb
   in the conversation has the arm handle them (`brief._HANDLES`: "pick up 2 kg of 50 g cubes" may be one lift), the
   whole conversation as typed is plain, `brief._plain_talk` (every word in `brief._PLAIN_WORDS` or the objects' own
   head noun, never the other words of a preset's name such as the samples of a glass vial of samples, nor that noun
@@ -681,8 +687,8 @@ clamping.
   message cut at 2,000 characters: a closed list of the words that do say more is never complete), one width for the
   objects (`brief._rate_drop_holds`: "50 g cubes and 34 mm cubes" may be two kinds), no batch beside a verb that
   lifts and no batches of the objects ("it moves them in batches", "batches of 50 g cubes"), a batch or a total left
-  out only where each object is sorted, tidied or arranged (`brief._PER_ITEM`) and nowhere taken ("2 kg per batch on
-  the table"), nothing said of the batch ("the batch is one puck") and no dangling "each" ("at 2 lb per hour (each)"), a later message with no mass of their own leaves out only a rate that is
+  out only where each object is sorted (`brief._PER_ITEM`; tidying or arranging may move a batch), nowhere taken ("2 kg
+  per batch on the table") and while no task or layout chip was answered, before or after it, nothing said of the batch ("the batch is one puck") and no dangling "each" ("at 2 lb per hour (each)"), a later message with no mass of their own leaves out only a rate that is
   its clause alone (`brief._RATE_ALONE`: "about 2 kg an hour", not "should be 300 g every minute"), and no word in
   the conversation says the object may weigh more than a mass given or that several are lifted at once,
   `brief._MORE_THAN_SAID`: empty, net, what it holds or a volume, a lid, some of them, a hedge or a comparison ("on
@@ -690,8 +696,10 @@ clamping.
   has pockets", "cartons of 50 g eggs"), "at a time"; a batch the arm handles is
   what it lifts at once, "it lifts them in 2 kg batches"; a correction of the only mass so far, "sorry, 300 g every
   minute", is no rate, nor "they're 300 g every minute" (said of them, as "they are"); the rate left out is kept as
-  the object's `rate_g`, also through the nearest robot, and is its mass again when a later message makes the
-  conversation one it would not be left out in, "that's the empty weight", "it picks up each batch"; a total is one object's, "130 g in total"; a mass
+  the object's `rate_g`, also through the nearest robot, and is its mass again when a later message, a chip or the
+  pace makes the conversation one it would not be left out in (`brief._recheck_rate`, at every `progress`), "that's
+  the empty weight", "it picks up each batch", "#throughput=60"; "in 2 kg batches" never names the objects
+  (`brief._NOUN_STOP`); a total is one object's, "130 g in total"; a mass
   tied to its
   noun is never a rate: "pouches of 300 g every minute"). In
   the round-6 hunt's sweep of 18,753 SO-101 conversations, graded by its own rules, 3,169 were wrong at bd19c43 (a

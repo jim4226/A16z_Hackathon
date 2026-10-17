@@ -29,12 +29,15 @@ you build:
 - A mass per hour or a batch's is left out only in a few plain messages: the request naming the objects with their
   own mass and a rate per hour, minute, day or shift ("move 30 mm 50 g cubes at 2 kg per hour", "pick up cubes weighing
   50 g, 2 kg/h"), or a batch they are sorted in ("sort 50 g blocks in 2 kg batches", "sort 2 kg of 50 g cubes"); a
-  reply that is the rate alone ("about 2 kg an hour"); and who is around ("people nearby"). The rate must also be no
-  faster than one object every 4 s, and a container's mass on its label ("95 g tins") is never theirs. Any other
-  message keeps the rate as the object's mass, so the arm is sized for Morph's largest, 500 g: "cubes, 50 g each, at
-  2 kg per hour", "60 g empty bottles at 2 kg per hour", "some are heavier", "move the stack", "2 kg every hour", even
-  a word about something else ("the robot is loud"), and a later message like that brings the rate back. A total is
-  read as one object's weight ("130 g in total").
+  reply that is the rate alone ("about 2 kg an hour"), the pace ("one every 30 s") or who is around ("people
+  nearby"). The rate must also need no more than one object a lift at the pace the arm is built at (one every 6 s
+  unless you give another), a mass written before the noun counts only for plainly solid things ("50 g cubes", not
+  "95 g tins" or "88 g cartridges", whose label may give what they hold: say "tins weighing 95 g"), and a batch is
+  left out only until a task or a layout is chosen (answering the layout question brings it back). Any other message
+  keeps the rate as the object's mass, so the arm is sized for Morph's largest, 500 g: "cubes, 50 g each, at 2 kg per
+  hour", "60 g empty bottles at 2 kg per hour", "tidy 50 g toys in 2 kg batches", "some are heavier", "move the
+  stack", "2 kg every hour", even a word about something else ("the robot is loud"), and a later message like that
+  brings the rate back. A total is read as one object's weight ("130 g in total").
 - Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits. A
   size said before any object is described ("they're 60 mm" right after "use my SO-101 to load the dishwasher") isn't
   read: name the objects ("the cups are 60 mm wide").
@@ -517,8 +520,9 @@ you build:
 - New robot's built-in rules (no Claude key) follow a later message. A larger size for the objects is read ("sorry,
   they're 60 mm", "the cylinders are 60 mm", "actually 60 mm"), so the stock SO-101 is no longer kept for 60 mm objects
   its jaws don't hold. A size that may be something else's never narrows or lightens the objects: a part, some of them
-  or what they hold ("the caps, 35 mm", "the lids of the jars are 35 mm across", "the pills are 10 mm" in pill bottles,
-  "the small ones are 20 mm", "the lids? they're 20 mm", "the lids are 20 g each", "the lids: 20 g"), a question
+  or what they hold ("the caps, 35 mm", "the lids of the jars are 35 mm across", "lids 20 mm wide", "cap diameter
+  20 mm", "the pills are 10 mm" in pill bottles, "the small ones are 20 mm", "the lids? they're 20 mm", "the lids are
+  20 g each", "the lids: 20 g", "lids 20 g"), a question
   ("what if they're 40 mm?") or a lower end ("40 mm and up", "at least 40 mm"). The stock SO-101 is kept only when its
   jaws hold a
   smaller size that may be theirs too (round from 26 mm, flat-sided from 22.5 mm), even when the SO-101 is named only
