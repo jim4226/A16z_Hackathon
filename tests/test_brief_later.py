@@ -913,3 +913,9 @@ def test_a_rate_beside_a_containers_mass_or_a_days_large_amount_stays_as_read(te
 def test_a_rate_brought_back_on_the_nearest_robots_object_is_held_to_morphs_largest(turns):
     b = steps(*turns)
     assert mass(b) == 500.0 and float(B.value(b, "object")["mass_g"]) <= 500.0, turns
+
+
+def test_the_no_so101_chip_on_a_job_without_a_stop_offers_the_releases_nearest_robot():
+    # keeping the folding job there gave the nearest robot the job's own 50 g socks, not the 60 g folded washcloth
+    b = steps("a robot that folds laundry", "each one is 50 mm", "they're fragile", "#existing_hardware=none")
+    assert mass(b) >= 60.0, mass(b)

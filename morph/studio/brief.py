@@ -3947,8 +3947,10 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
                 set_archetype(b, "so101", 0.9, "user")
             elif was_so101:
                 _leave_so101(b)
-            elif _arch(b).key == "generic_arm":   # a job's robot keeps its job ("tidy the playroom": children nearby)
-                set_archetype(b, _archetype_for_object(b.get("object")) or "generic_arm", 0.9, "user")
+            else:   # a job's robot keeps a job whose emergency stop the object's would drop ("tidy the playroom")
+                k = _archetype_for_object(b.get("object")) or "generic_arm"
+                if not (_gives_estop(b, _arch(b).key) and not _gives_estop(b, k)):
+                    set_archetype(b, k, 0.9, "user")
     if text and text.strip():
         t = text.strip()[:2000]
         p = parse(t)
