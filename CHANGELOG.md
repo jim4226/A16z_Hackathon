@@ -522,11 +522,14 @@ you build:
   later, and a range is checked at both ends ("cylinders between 20 and 40 mm", "40 mm and 20 mm cylinders"). Naming
   the object again ("the eggs are fragile") keeps the sizes you gave instead of Morph's preset (150 g or 60 mm eggs
   were planned as 60 g, 44 mm ones on the SO-101), and naming the SO-101 again after a generated arm was accepted for
-  objects below its jaws' minimum ("15 mm beads", then "keep my SO-101") no longer puts it on the 30 mm stand-in.
+  objects below its jaws' minimum ("15 mm beads", then "keep my SO-101") no longer puts it on the 30 mm stand-in. A
+  new shape is read ("sorry, they come as 40 mm cubes"); a size said before any object is described ("they're 60 mm")
+  only widens the object Morph assumes, never below its generic 45 mm, 100 g one.
 - New robot: "actually, build a new arm" after "use my SO-101" builds a Morph-generated arm. An SO-101 robot takes who
   is next to it and where it works from its job, as a generated arm does ("use my SO-101 to tidy up the playroom" has
   children nearby and an emergency stop), and leaving the SO-101 keeps them ("cups to the sink": people nearby), also
-  after the nearest robot was accepted ("recycles 80 mm espresso cups").
+  after the nearest robot was accepted ("recycles 80 mm espresso cups") and when the object is named afterwards ("I
+  don't have an SO-101", then espresso cups): a kitchen's or a lab's emergency stop too.
 - New robot: "them" served food or drink ("a robot that delivers them coffee", "makes them tea") are people next to the
   robot, so it gets an emergency stop.
 - New robot: a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "in 2 kg batches",

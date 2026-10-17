@@ -635,9 +635,10 @@ clamping.
   a question, a refusal or a remark: "do I need a new arm?", "no need for a new arm", "my friend built a new arm") are a
   new arm. An SO-101 brief
   takes who is next to it and where it works from the request's own job (`brief._arch_without_so101`: a playroom's
-  children, a kitchen's emergency stop; of the person's object's job and the request's words, the one with people, so an
-  object Morph chose, as after "@nearest", never drops them), so moving to or from the SO-101 never drops one. A typed
-  reply's sizes
+  children, a kitchen's emergency stop; of the person's object's job and the request's words, the one that gives an
+  emergency stop, `brief._gives_estop`, else the object's job or the general arm, so an object Morph chose, as after
+  "@nearest", never drops it, and an object named after leaving brings its job's stop), so moving to or from the
+  SO-101 never drops one. A typed reply's sizes
   (`brief._later_sizes`, `brief._size_reads`): only a phrasing the rules read before this change can replace the
   objects' size ("60 mm", "sorry, 60 mm", "the cylinders are 60 mm wide", "they weigh 60 g"), and only when it is plainly
   all of theirs; any other only widens them or weighs them more, and a smaller width it gives is kept as `least_mm`:
@@ -647,7 +648,11 @@ clamping.
   the candles in candle jars), a question or a supposition, a lower end ("40 mm and up", "at least 40 mm") or the size at
   one part ("30 mm at the top", `brief._not_plain`), a reply with no noun of theirs after a smaller size some of them
   or a range's low end may be ("some of them are 20 mm", then "sorry, 40 mm"), a part's mass after its name ("the lids:
-  20 g", "20 g each for the lids", `brief._mass_of`). A part's size read for the first time only widens them ("the can
+  20 g", "20 g each for the lids", `brief._mass_of`). A size before any object is described ("they're 60 mm",
+  "these are 15 mm") widens Morph's assumed object, never below its generic 45 mm, 100 g one (`assumed`: the nearest
+  robot's stand-in still decides), and keeps a smaller one as `least_mm`; a later noun renames the objects and gives
+  their shape ("they come as 40 mm cubes") unless it is a part of them ("45 mm necks"). A part's size read for the
+  first time only widens them ("the can
   lids are 60 mm"); one for something else is left unread ("the gap between the jars is 30 mm"). `least_mm` is what the
   stock SO-101's jaws must hold too (`brief._so101_least`, also when the SO-101 is named only later), as is the lower
   end of a range in any message ("between 20 and 40 mm", "40 mm and 20 mm cylinders"); below the generated gripper's own
