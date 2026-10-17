@@ -27,14 +27,13 @@ you build:
 - Naming again an object Morph knows ("the blocks are fragile") never makes it smaller or lighter than Morph's own size
   for it: 28 mm blocks named again are planned as 40 mm ones, on a generated arm. Say "the blocks are 28 mm wide".
 - A mass per hour or a batch's is left out only beside the object's own mass given with its name ("50 g cubes",
-  "cubes weighing 50 g"), only when every other mass in the message is theirs too, and only when no word in the
-  conversation says an object may weigh more than that or that several are lifted at once. Otherwise it stays the
-  object's mass, so the arm is sized for Morph's largest, 500 g: "cubes, 50 g each, at 2 kg per hour", a rate beside a
-  part's, an empty, a net or "at least" weight ("60 g empty bottles at 2 kg per hour"), a hedge ("50 g on average",
-  "some are heavier", "or so"), what they hold ("jars of honey", "bottles of 500 ml"), what they sit in or come in
-  ("jars in sleeves", "they're stored in 30 mm cups", "cartons of 50 g eggs") or a batch lifted at once ("2 kg of them
-  at a time", "it lifts them in 2 kg batches"), even when the word is about something else ("out of the bin"). A total
-  is read as one object's weight ("130 g in total").
+  "cubes weighing 50 g"), only when every other mass in the message is theirs too, and only when the whole conversation
+  is plain: what the robot should do, where things go, the objects' sizes, the rate and who is around, with every
+  number a size, a mass or a time. Any other word keeps the rate as the object's mass, so the arm is sized for Morph's
+  largest, 500 g: "cubes, 50 g each, at 2 kg per hour", "60 g empty bottles at 2 kg per hour", "some are heavier",
+  "jars of honey", "jars in sleeves", "2 kg of them at a time", "up to 120", even a word about something else ("out of
+  the bin", "the robot is loud"), and a later message with one brings the rate back. A total is read as one object's
+  weight ("130 g in total").
 - Number words joined by "and" are added up ("between twenty and forty mm" reads as 60 mm): give sizes in digits.
 - "Them" given anything but food or drink ("delivers them parts") is not read as people next to the robot, and a new
   arm is read only when asked for ("build a new arm", "I'd rather have a new arm"), not in a question ("can you design a
@@ -531,12 +530,11 @@ you build:
 - New robot: "them" served food or drink ("a robot that delivers them coffee", "makes them tea") are people next to the
   robot, so it gets an emergency stop.
 - New robot: a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "in 2 kg batches",
-  "2 kg of 50 g cubes") is not the object's mass: the arm is sized for 50 g, not Morph's largest. A total stays the
-  object's ("60 g empty, 350 g in total when full" is 350 g), and so does the rate when the words say an object may
-  weigh more than the mass given (a part's or what the objects hold, "the pills weigh 1 g each", "jars of honey"; "some
-  are heavier", "on average") or that several are lifted at once ("2 kg of them at a time"), also when a later message
-  says so ("that's the empty weight"); "lots of 300 g jars" and "pouches of 300 g every minute" are the objects' own
-  mass.
+  "2 kg of 50 g cubes") is not the object's mass when the conversation says nothing else about it: the arm is sized for
+  50 g, not Morph's largest. A total stays the object's ("60 g empty, 350 g in total when full" is 350 g), and so does
+  the rate whenever the conversation says anything more (a part's or what the objects hold, "the pills weigh 1 g each",
+  "jars of honey"; "some are heavier", "on average"; "2 kg of them at a time"), also in a later message ("that's the
+  empty weight"); "lots of 300 g jars" and "pouches of 300 g every minute" are the objects' own mass.
 - Agent tools: a run's card keeps the lines of the calls it has shown when a list of runs the Studio read before those
   calls reaches the page late (on a busy computer, after Allow once): the card showed Working with none of them, or
   Done without them, until the next update.

@@ -477,3 +477,57 @@ _FILLER = "people nearby. " * 140   # plain, and long enough to push the first m
 def test_a_rate_is_left_out_only_in_a_plain_conversation(turns, m):
     b = talk(*turns)
     assert not so101(b) and mass(b) >= m, (turns, mass(b))
+
+
+# ---- the round-3 review: a new shape in a later message, an emergency stop kept when leaving the SO-101 in any order,
+# and sizes said before any object is described
+def steps(*turns):
+    """talk() with the dialog's buttons ("@nearest", "@defaults") and chip answers ("#slot=value;slot=value")."""
+    b = None
+    for t in turns:
+        if t.startswith("@"):
+            b = agents.run_turn(b, action=t[1:], deep=False)
+        elif t.startswith("#"):
+            b = agents.run_turn(b, answers=dict(kv.split("=", 1) for kv in t[1:].split(";")), deep=False)
+        else:
+            b = agents.run_turn(b, text=t, deep=False) if b else agents.run_turn(text=t, deep=False)
+    return talk_on(b)
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to move 30 mm cylinders", "sorry, they come as 40 mm cubes"),        # flat-sided: over 34 mm
+    ("use my SO-101 to move 30 mm cylinders", "we'll go with 40 mm cubes instead"),
+    ("use my SO-101 to move 30 mm cylinders weighing 50 g", "sorry, I'm working with 40 mm cubes"),
+    ("a robot to move 30 mm cylinders", "sorry, they come as 40 mm cubes", "use my SO-101"),
+    ("use my SO-101 to move 30 mm cubes", "sorry, they come as 24 mm cylinders"),        # round: under 26 mm
+    ("use my SO-101 to move 40 mm cylinders", "not all of them are 30 mm, some are 20 mm"),
+    ("use my SO-101 to move samples in the lab", "these are 15 mm"),
+    ("use my SO-101 to stack 30 mm bottles", "45 mm necks", "@nearest", "keep my SO-101"),
+    ("use my SO-101 to pour me a beer", "they're 50 mm")])
+def test_a_later_shape_or_size_the_so101_may_not_hold_keeps_it_off(turns):
+    b = steps(*turns)
+    assert not so101(b), (turns, width(b), b.changes.get("object.shape"))
+
+
+@pytest.mark.parametrize("turns", [
+    ("use my SO-101 to sort screws", "I don't have an SO-101", "#object=espresso_cup"),
+    ("use my SO-101 to sort screws", "I don't have an SO-101", "toy blocks"),
+    ("use my SO-101 to sort screws onto a shelf", "#existing_hardware=none", "#object=screwdriver"),
+    ("use my SO-101 to stack jars on a shelf", "actually, build a new arm", "#object=espresso_cup"),
+    ("I have an SO-101. it should sort screws onto a shelf", "@nearest", "#existing_hardware=none"),   # a kitchen's stop
+    ("use my SO-101 to sort things onto the shelf", "#object=strawberry", "@nearest", "#existing_hardware=none"),
+    ("use my SO-101 to tidy up the playroom shelves", "#object=glass_vial", "@nearest", "#people_nearby=no",
+     "#existing_hardware=none"),                                                                        # a lab's stop
+    ("use my SO-101 to load the dishwasher", "they're 60 mm", "#existing_hardware=none")])
+def test_leaving_the_so101_in_any_order_keeps_an_emergency_stop(turns):
+    b = steps(*turns)
+    assert "estop" in (b.changes.get("electronics.extras") or "") and not so101(b), (turns, b.archetype)
+
+
+def test_a_size_before_any_object_never_makes_the_object_lighter_or_narrower():
+    # Morph's generic object (45 mm, 100 g) is the least "they're 60 mm" widens; the nearest robot's stand-in still
+    # decides when the request is out of scope (a 330 ml bottle for a beer)
+    b = steps("use my SO-101 to load the dishwasher", "they're 60 mm", "#existing_hardware=none")
+    assert width(b) >= 60.0 and mass(b) >= 100.0
+    b = steps("use my SO-101 to pour me a beer", "it's 40 mm")
+    assert width(b) >= 60.0 and mass(b) >= 360.0 and not so101(b)

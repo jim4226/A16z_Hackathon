@@ -657,14 +657,18 @@ clamping.
   "1,050 g", "1 000 g" and "1.000 g" (thousands; a dot only before grams and "000"), and the largest of several
   ("60 mm and 30 mm cylinders"), never one that names where things go ("into 100 mm cups") or a distance or reach, nor
   a mass per hour or a batch's beside the object's own ("50 g cubes at 2 kg per hour", "in 2 kg batches", "2 kg of 50 g
-  cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by name, `brief._names_objects`, and
-  no word in the conversation says the object may weigh more than a mass given or that several are lifted at once,
+  cubes"; `brief._rates_to_drop`: only when every other mass is said of the objects by name, `brief._names_objects`,
+  the whole conversation as typed is plain, `brief._plain_talk` (every word in `brief._PLAIN_WORDS` or the objects' own
+  nouns, every number a size, a mass or a time, no other symbol: a closed list of the words that do say more is never
+  complete), and no word in the conversation says the object may weigh more than a mass given or that several are
+  lifted at once,
   `brief._MORE_THAN_SAID`: empty, net, what it holds or a volume, a lid, some of them, a hedge or a comparison ("on
   average", "some are heavier", "not all the same weight"), what they sit in or come in ("jars in sleeves", "the tray
   has pockets", "cartons of 50 g eggs"), "at a time"; a batch the arm handles is
   what it lifts at once, "it lifts them in 2 kg batches"; a correction of the only mass so far, "sorry, 300 g every
   minute", is no rate; the rate left out is kept as the object's `rate_g` and is its mass again when a later message
-  says they may weigh more, "that's the empty weight"; a total is one object's, "130 g in total"; a mass tied to its
+  isn't plain or says they may weigh more, "that's the empty weight"; a total is one object's, "130 g in total"; a mass
+  tied to its
   noun is never a rate: "pouches of 300 g every minute"). In
   the round-6 hunt's sweep of 18,753 SO-101 conversations, graded by its own rules, 3,169 were wrong at bd19c43 (a
   generated arm blamed on a stand-in, the SO-101 kept for a stand-in or for a size it didn't read, a typed SO-101

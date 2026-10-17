@@ -2616,6 +2616,8 @@ def merge(b: Brief, parsed: dict, source: str = "user", evidence: str = ""):
                 v2["widest_unknown"] = True                         # a size given at a neck, not at their widest
             if name == "object" and isinstance(v, dict) and cap._num(v.get("rate_g")):
                 v2["rate_g"] = float(cap._num(v["rate_g"]))         # a rate left out of their mass ("at 2 kg per hour")
+            if name == "object" and isinstance(v, dict) and v.get("assumed") is True:
+                v2["assumed"] = True                                # Morph's object, widened by "they're 60 mm"
             set_slot(b, name, v2, source, 1.0, f"{evidence}: {said[name]}" if name in said else evidence)
     for name, v in parsed.get("inferred", {}).items():
         v2 = coerce(name, v)
@@ -2885,7 +2887,7 @@ def assess_scope(b: Brief) -> dict:
                 arch = a.key  # a real desk task asked in an unsupported way: keep it, on the table plane
             slots = dict(over) if arch != a.key else {"object": a.objects[0]}
         o = near_obj or b.get("object")
-        if o and fits(o):   # the person's own object, not the nearest robot's stand-in, whatever robot is offered
+        if o and fits(o) and not o.get("assumed"):   # the person's own object, not the stand-in, whatever robot is offered
             slots["object"] = o
         if near_obj and near_obj["mass_g"] > cap.payload_g("smart_bus", 4):
             slots["budget"] = 1500.0
@@ -2908,8 +2910,9 @@ def assess_scope(b: Brief) -> dict:
     ov = b.get("object")
     misfit = _so101_misfit(ov) if b.get("existing_hardware") == "so101" else None
     if misfit:
-        return {"status": "out_of_scope", "notes": [misfit],
-                "nearest": {"archetype": _archetype_for_object(ov) or "generic_arm", "slots": {"existing_hardware": "none"},
+        return {"status": "out_of_scope", "notes": [misfit],   # the SO-101's job keeps its emergency stop on a new arm
+                "nearest": {"archetype": _arch_without_so101(b) if a.key == "so101" else
+                            (_archetype_for_object(ov) or "generic_arm"), "slots": {"existing_hardware": "none"},
                             "summary": f"A new Morph-generated desk arm for the {ov.get('name', 'object')}."}}
     why = {k: w for k, _p, w in ADJUSTED}
     notes = [why[k] for k, _ in b.flags.get("adjusted") or [] if k in why]
@@ -2945,6 +2948,8 @@ def apply_nearest(b: Brief, nearest: dict):
         v2 = coerce(k, v)
         if k == "object" and v2 is not None and least is not None and least < float(v2["diameter_mm"]):
             v2["least_mm"] = least   # the person's 15 mm beads: a later "keep my SO-101" never holds the 30 mm stand-in
+        if k == "object" and v2 is not None and said.get("widest_unknown"):
+            v2["widest_unknown"] = True   # "45 mm necks": their widest part is still not given
         if v2 is not None:
             b.slots[k] = Slot(v2, "inferred", 1.0, "nearest robot")
     b.flags["oos_accepted"] = [k for k, _ in b.flags.get("oos") or []]
@@ -3060,7 +3065,8 @@ def _names_what(np: list, heads: set, words: set) -> str:
     head, mods = np[-1], [w for w in np[:-1] if w not in _DETS]
     if head in _PRONOUNS and not mods:
         return "pron"
-    if head in ("ones", "one", "rest", "others") or any(w in _SOME_WORDS and _singular(w) not in words for w in mods):
+    if head in ("ones", "one", "rest", "others") or head in _QUANTS and not mods or \
+            any(w in _SOME_WORDS and _singular(w) not in words for w in mods):
         return "some"
     if _singular(head) in heads or head in _GENERIC_THINGS:
         return "obj" if all(_singular(w) in words for w in mods) else "some"
@@ -3395,20 +3401,30 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None, raw: str | None =
     back = rate and (_MORE_THAN_SAID.search(t) or not m_obj and _WEIGHT_TALK.search(t) or
                      not _plain_talk(_said(b, t if raw is None else raw), _object_words(cur)))
     if o is None:
-        if base is None and w_may and not w_obj and max(w_may) <= float(value(b, "object")["diameter_mm"]):
-            return   # "they're 20 mm" before any object: nothing to widen
         if not (w_obj or w_may or w_wid or narrow and cur is not None or back):
             return
-        o = p["slots"]["object"] = {k: v for k, v in dict(cur or value(b, "object")).items()}
+        if cur is None and not w_obj:
+            # nothing described yet ("they're 60 mm", "these are 15 mm"): the object Morph assumed, never narrower or
+            # lighter than its generic one (45 mm, 100 g), widened and with a smaller size kept as the least they may be
+            d = dict(value(b, "object"))
+            dia = max(float(d.get("diameter_mm") or 45.0), 45.0)
+            o = p["slots"]["object"] = {"key": None, "name": "object", "shape": d.get("shape") or "cylinder",
+                                        "diameter_mm": dia, "length_mm": max(float(d.get("length_mm") or 60.0), dia),
+                                        "mass_g": max(float(d.get("mass_g") or 100.0), 100.0),
+                                        "friction": d.get("friction", 0.5), "max_force_n": d.get("max_force_n", 0.0),
+                                        "stated": [], "assumed": True}
+        else:
+            o = p["slots"]["object"] = {k: v for k, v in dict(cur or value(b, "object")).items()}
     elif named and cur is not None and named == cur.get("key"):
         for k in ("diameter_mm", "mass_g", "length_mm", "least_mm", "widest_unknown"):
             if k in base:
                 o[k] = base[k]
         o["stated"] = sorted(set(o.get("stated") or []) | set(cur.get("stated") or []))
     if cur is not None and base is cur and cur.get("key") is None and o.get("key") is None and \
-            str(o.get("name")) != str(cur.get("name")) and _holds_them(t, str(o.get("name"))):
-        # parse() named what holds them ("they come in 30 mm wide tubes", "the tray has 30 mm pockets"): the objects
-        # stay what they were, and keep their shape ("40 mm cylinders" still says what they are)
+            str(o.get("name")) != str(cur.get("name")) and str(o.get("name")).split() and \
+            _singular(str(o.get("name")).split()[-1]) in _PARTS | _NARROW_PARTS:
+        # parse() named a part of them ("45 mm necks", "the lids are 35 mm"): the objects stay what they were, and keep
+        # their shape ("they come as 40 mm cubes" still says what they are)
         o["name"], o["shape"] = cur.get("name"), cur.get("shape")
         o["stated"] = sorted(set(o.get("stated") or []) - {"shape"} | ({"shape"} & set(cur.get("stated") or [])))
     ref = base or o
@@ -3417,7 +3433,12 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None, raw: str | None =
     if w_obj or w_may or w_wid:
         bw = float(ref["diameter_mm"])
         w = max(w_obj + w_may + w_wid) if w_obj else max([bw] + w_may + w_wid)
-        lo = min(w_obj + w_may) if w_obj else min([float(ref.get("least_mm") or bw)] + w_may)
+        if w_obj:
+            lo = min(w_obj + w_may)
+        elif base is None:   # the least the person's own words give, never Morph's assumed width
+            lo = min(w_may) if w_may else w
+        else:
+            lo = min([float(ref.get("least_mm") or bw)] + w_may)
         o["diameter_mm"], o["length_mm"] = w, max(float(o.get("length_mm") or 0), w)
         if w_obj or w != bw or "diameter_mm" in was:
             stated.add("diameter_mm")
@@ -3451,17 +3472,6 @@ def _later_sizes(b: Brief, p: dict, t: str, named: str | None, raw: str | None =
     elif rate or rates:
         o["rate_g"] = max([rate] + rates)
     o["stated"] = sorted(stated)
-
-
-def _holds_them(t: str, name: str) -> bool:
-    """Whether the thing a later message names (parse()'s object name) is what holds the objects or where they go ("they
-    come in 30 mm wide tubes", "the tray has 30 mm pockets", "put them in 30 mm tubes"), not the objects described again
-    ("40 mm cylinders", "they're 40 mm cylinders"); a name the words don't give is taken as such too."""
-    m = re.search(r"\b" + re.escape(name.split()[-1] if name.split() else name) + r"(?:e?s)?\b", t)
-    if not m:
-        return True
-    return bool(re.search(r"\b(?:in|into|inside|on|onto|of|with|for|from|between|under|has|have|had|holds?|fits?|sits?|"
-                          r"go|goes|come|comes|came|put|place[ds]?)\b", re.split(r"[.;!?,]", t[:m.start()])[-1]))
 
 
 # a new arm asked for in a later message ("actually, build a new arm", "design a new one instead"); not a question about
@@ -3510,9 +3520,20 @@ def _arch_without_so101(b: Brief, text: str = "") -> str:
     said = mine if mine and o.source in ("user", "video", "photo") else None
     words = detect_archetype(re.sub(_SO, " ", conversation(b, text).lower()))[0]
     keys = [k for k in (said, words, mine) if k in ARCHETYPES and k not in ("generic_arm", "so101")]
-    # the first with people next to it, if any has them: an object Morph assumed or chose ("@nearest", a chip) and the
-    # request's words may pick different jobs, and either one's people stay (recycling espresso cups is dishes too)
-    return next((k for k in keys if ARCHETYPES[k].people != "no"), keys[0] if keys else "generic_arm")
+    # the first with an emergency stop (people next to it, a kitchen, a lab or a classroom, a hand-over): an object Morph
+    # assumed or chose ("@nearest", a chip) and the request's words may pick different jobs, and either one's emergency
+    # stop stays (recycling espresso cups is dishes too); else the object's own job or the general arm, as before
+    return next((k for k in keys if _gives_estop(b, k)), mine or "generic_arm")
+
+
+def _gives_estop(b: Brief, key: str) -> bool:
+    """Whether the brief would have an emergency stop with archetype `key`, by what the person said or else its
+    defaults: people, children or pets next to it, a kitchen, a lab or a classroom, or a hand-over (build_changes)."""
+    a = ARCHETYPES.get(key)
+    if a is None:
+        return False
+    people, env, task = b.get("people_nearby") or a.people, b.get("environment") or a.environment, b.get("task") or a.task
+    return people in ("yes", "children", "pets") or env in ("lab", "kitchen", "classroom") or task == "hand_over"
 
 
 def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
@@ -3531,6 +3552,10 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
             if _arch(b).key == "generic_arm" and a2:
                 set_archetype(b, a2, 0.9, "user")
         if name == "existing_hardware":   # leaving the SO-101 keeps the job's own people (_arch_without_so101)
+            if v2 == "none" and _arch(b).key == "so101":
+                b.flags["left_so101"] = True
+            elif v2 == "so101":
+                b.flags.pop("left_so101", None)
             set_archetype(b, "so101" if v2 == "so101" else _arch_without_so101(b) if _arch(b).key == "so101" else
                           (_archetype_for_object(b.get("object")) or "generic_arm"), 0.9, "user")
     if text and text.strip():
@@ -3558,11 +3583,19 @@ def answer(b: Brief, answers: dict | None, text: str | None = None) -> list:
             set_slot(b, "existing_hardware", hw, "user", 1.0, "answer")
         if hw == "so101":
             set_archetype(b, "so101", 0.9, "user")
+            b.flags.pop("left_so101", None)
         elif hw == "none" and _arch(b).key == "so101":
             set_archetype(b, _arch_without_so101(b, t), 0.9, "user")
+            b.flags["left_so101"] = True
         a2 = _archetype_for_object(b.get("object"))
         if _arch(b).key == "generic_arm" and a2:
             set_archetype(b, a2, 0.9, "user")
+    if b.flags.get("left_so101") and _arch(b).key != "so101":
+        # an object named after leaving the SO-101 ("I don't have an SO-101", then "espresso cups") brings its job's
+        # emergency stop, as it did when leaving it set the general arm
+        k = _arch_without_so101(b, text or "")
+        if k != _arch(b).key and _gives_estop(b, k) and not _gives_estop(b, _arch(b).key):
+            set_archetype(b, k, 0.9, "user")
     b.turns.append({"role": "user", "answers": dict(answers or {}), "text": (text or "")[:2000], "ts": _now_iso()})
     return notes
 
