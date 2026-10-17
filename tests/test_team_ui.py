@@ -383,3 +383,150 @@ def test_live_updates_never_take_what_you_are_writing(demo):
     assert " ".join(page.inner_text(".tm-draft").split()) == "Manufacturing · Quantity: 25 units"
     assert errors == []
     ctx.close()
+
+
+def _held(page, path):
+    """Holds this page's GETs of `path` (the server sees nothing yet) until release() lets them through; wait() returns
+    once one is held (the request reaches the test a moment after the click that sent it)."""
+    from urllib.parse import urlparse
+    held = []
+
+    def handle(route):
+        if route.request.method == "GET" and urlparse(route.request.url).path == path:
+            held.append(route)
+        else:
+            route.continue_()
+
+    def match(u):
+        return urlparse(u).path == path
+
+    page.route(match, handle)
+
+    def release():
+        while held:
+            held.pop(0).continue_()
+        page.unroute(match, handle)
+
+    def wait():
+        for _ in range(400):
+            if held:
+                return
+            page.wait_for_timeout(25)
+        raise AssertionError(f"no GET of {path} was held")
+    return held, release, wait
+
+
+def test_the_review_tabs_own_load_never_takes_a_release_name_being_typed(demo):
+    """Review is drawn at once from the gate the page already has, then again when the tab's own load lands. On a slow
+    link someone can click Release and type the name in between: the box, the name and the focus stay, and it releases."""
+    ctx, page, errors = _signed_in(demo, "Jim")
+    page.click(".tm-tabs [data-tab=review]")
+    page.click("[data-decide=approve]")
+    page.wait_for_function("document.querySelector('.tm-gate')?.classList.contains('ok')", timeout=10000)
+    page.click(".tm-tabs [data-tab=comments]")
+    page.wait_for_selector(".tm-compose")
+    page.wait_for_timeout(800)                                        # the approval's own redraws are done
+    held, release, wait = _held(page, "/api/reviews")
+    page.click(".tm-tabs [data-tab=review]")                          # the cached gate: Release is enabled at once
+    page.click("[data-a=release]")
+    page.fill(".tm-relbox input", "Pilot v2")
+    wait()
+    assert len(held) == 1, held                                       # the tab's own load is still on its way
+    with page.expect_response(lambda r: "/api/releases" in r.url):   # it lands (reviews, then releases)
+        release()
+    page.wait_for_timeout(400)
+    assert page.locator(".tm-relbox input").count() == 1, "the release box was redrawn away"
+    assert page.input_value(".tm-relbox input") == "Pilot v2"
+    assert page.evaluate("document.activeElement === document.querySelector('.tm-relbox input')")
+    page.click(".tm-relbox button")
+    page.wait_for_selector(".tm-rels")
+    assert "Pilot v2" in page.inner_text(".tm-rels")
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_shares_own_load_never_swaps_a_switch_under_the_owner(demo):
+    """Share opens at once with the team the page has, then is drawn again when its own load answers (someone joined
+    since). Only what changed is replaced: the policy switch the owner reaches for stays the one on screen, and works."""
+    ctx, page, errors = _signed_in(demo, "Jim")
+    page.click("[data-tm=share]")
+    page.wait_for_selector(".tm-share-dlg .tm-mem")
+    page.click(".tm-share-dlg .dlg-f [data-a=close]")
+    inv = auth.create_invite(demo["ids"]["Jim"], "editor", ["electronics"], "Priya", home=demo["home"])
+    auth.redeem_invite(inv["code"], "Priya", home=demo["home"])      # joins while Jim's page sits there
+    held, release, wait = _held(page, "/api/team")
+    page.click("[data-tm=share]")
+    wait()
+    assert len(held) == 1, held                                       # the dialog's own load is still on its way
+    first = page.query_selector(".tm-share-dlg [data-pol=unreleased_downloads]")   # what the owner could click now
+    assert first is not None and page.locator(".tm-share-dlg .tm-mem:has-text('Priya')").count() == 0
+    release()
+    page.wait_for_selector(".tm-share-dlg .tm-mem:has-text('Priya')")            # drawn again, with Priya a member
+    page.wait_for_timeout(300)
+    assert first.evaluate("x => x.isConnected"), "the policy switch was redrawn under the owner"
+    with page.expect_response(lambda r: "/api/team/policy" in r.url):
+        page.locator(".tm-share-dlg label.tm-sw", has=page.locator("[data-pol=unreleased_downloads]")).locator(".switch").click()
+    pol = page.evaluate("fetch('/api/team?project=egg-picker', {headers: {'X-Morph-Client': 'studio'}})"
+                        ".then((r) => r.json()).then((d) => d.policy.unreleased_downloads)")
+    assert pol == "owner" and not page.is_checked(".tm-share-dlg [data-pol=unreleased_downloads]")
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_review_never_offers_release_from_another_revisions_gate(demo):
+    """The page moved to another revision (an older one opened, a build landed) while the panel showed another tab:
+    Review is not drawn from the gate it has for the revision before, which said 'ready to release'."""
+    ctx, page, errors = _signed_in(demo, "Jim")
+    page.click(".tm-tabs [data-tab=review]")
+    page.click("[data-decide=approve]")
+    page.wait_for_function("document.querySelector('.tm-gate')?.classList.contains('ok')", timeout=10000)
+    page.click(".tm-tabs [data-tab=comments]")
+    page.wait_for_selector(".tm-compose")
+    page.wait_for_timeout(800)                                        # the approval's own redraws are done
+    page.evaluate("window.studio.S.current = {...window.studio.S.current, rev: 'r001'}")
+    held, release, wait = _held(page, "/api/reviews")
+    page.click(".tm-tabs [data-tab=review]")
+    wait()
+    assert len(held) == 1, held                                       # r001's gate is still on its way
+    assert page.locator(".tm-gate").count() == 0 and page.locator("[data-a=release]").count() == 0
+    with page.expect_response(lambda r: "/api/releases" in r.url):
+        release()
+    page.wait_for_selector(".tm-gate")
+    assert "r001" in page.inner_text(".tm-gate .tm-gh") and page.locator(".tm-gate.ok").count() == 0
+    assert page.is_disabled("[data-a=release]")
+    assert errors == [], errors
+    ctx.close()
+
+
+def test_a_share_switch_shows_what_the_studio_saved(demo):
+    """A policy change the Studio refuses is put back at once, and one another owner saved shows when the dialog is
+    drawn again: a section kept across a redraw never shows a value the Studio doesn't have."""
+    from urllib.parse import urlparse
+    ctx, page, errors = _signed_in(demo, "Jim")
+    page.click("[data-tm=share]")
+    sw = page.locator(".tm-share-dlg label.tm-sw", has=page.locator("[data-pol=unreleased_downloads]")).locator(".switch")
+    box = ".tm-share-dlg [data-pol=unreleased_downloads]"
+    page.wait_for_selector(box, state="attached")                     # the switch's own box is drawn under its knob
+    assert page.is_checked(box)                                       # editors may download drafts (warn)
+
+    def refuse(route):
+        route.fulfill(status=500, content_type="application/json", body='{"error": "The Studio could not save it"}')
+
+    def is_policy(u):
+        return urlparse(u).path == "/api/team/policy"
+
+    page.route(is_policy, refuse)
+    with page.expect_response(lambda r: is_policy(r.url)):
+        sw.click()
+    page.wait_for_function(f"document.querySelector('{box}').checked === true", timeout=5000)   # put back at once
+    page.unroute(is_policy, refuse)
+    with page.expect_response(lambda r: is_policy(r.url)):           # saved this time
+        sw.click()
+    assert not page.is_checked(box)
+    page.evaluate("fetch('/api/team/policy?project=egg-picker', {method: 'POST', headers: {'X-Morph-Client': 'studio', "
+                  "'Content-Type': 'application/json'}, body: JSON.stringify({values: {unreleased_downloads: 'warn'}})})"
+                  ".then((r) => r.json())")                         # another owner turns it back
+    page.evaluate("window.team.loadTeam()")                           # the dialog is drawn again from the Studio
+    page.wait_for_function(f"document.querySelector('{box}').checked === true", timeout=5000)
+    assert errors == [], errors
+    ctx.close()

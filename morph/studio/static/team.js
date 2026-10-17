@@ -328,7 +328,7 @@ export class Team {
           : `<span class="tag neutral">${esc(m.role)}</span>`}
         <div class="tm-edit"></div></div>`;
     const invites = (t.invites || []).filter((i) => i.state === 'pending');
-    this.shareEl.innerHTML = `
+    const html = `
       <div class="dlg-h"><div class="kicon">${icon('users', '')}</div><div class="grow"><div class="t">${owner ? 'Share' : 'Team'} ${esc(t.team?.name || this.me.team_name || '')}</div>
         <div class="s">Morph Teams is a preview that runs on the team owner's computer: designs, comments and approvals stay there.
         Use a VPN or a tunnel between computers; without HTTPS the links travel as plain HTTP.</div></div>
@@ -357,6 +357,13 @@ export class Team {
         <div class="tm-out" data-out="you"></div>
         ${(this.me.tokens || []).length ? `<div class="tm-toks">${this.me.tokens.map((k) => `<div class="tm-inv"><span class="mono">${esc(k.label)}</span><span class="dim">created ${esc(ago(k.created_utc))}</span><span class="grow"></span><button class="btn ghost" type="button" data-tok="${esc(k.id)}">Revoke</button></div>`).join('')}</div>` : ''}</section>
       <div class="dlg-f"><span class="dim">An invite link grants its role until it's used, expires or is cancelled. Approvals help your process; they don't certify the robot as safe.</span><span class="grow"></span><button class="btn" type="button" data-a="close">Close</button></div>`;
+    // Drawn at once from what the page has, then again when its own load answers or the team changes: a section that
+    // reads the same keeps its elements, so a switch the owner is reaching for stays the one on screen.
+    const next = document.createElement('div');
+    next.innerHTML = html;
+    const old = [...this.shareEl.children], fresh = [...next.children];
+    if (old.length === fresh.length) fresh.forEach((n, i) => { if (!old[i].isEqualNode(n)) old[i].replaceWith(n); });
+    else this.shareEl.replaceChildren(...fresh);
     this.wireShare();
   }
   policyHtml(p) {
@@ -374,6 +381,15 @@ export class Team {
   }
   wireShare() {
     const el = this.shareEl, $ = (s) => el.querySelector(s);
+    // A control's markup says what the Studio has saved: a redraw then keeps a section only when the Studio still says
+    // so, and a change the Studio refused is put back at once.
+    const kept = (x, ok) => {
+      if (x.type === 'checkbox') {
+        if (ok) x.defaultChecked = x.checked; else x.checked = x.defaultChecked;
+      } else if (x.options) {
+        [...x.options].forEach((o) => { if (ok) o.defaultSelected = o.selected; else o.selected = o.defaultSelected; });
+      }
+    };
     el.querySelectorAll('[data-a="close"]').forEach((b) => (b.onclick = () => this.closeShare()));
     const role = el.querySelector('select[name="role"]'), draft = this.inviteDraft;
     if (role) role.onchange = () => { draft.role = role.value; $('[data-roleh]').textContent = ROLE_HELP[role.value]; };
@@ -404,7 +420,7 @@ export class Team {
     el.querySelectorAll('.tm-mem').forEach((row) => {
       const id = row.dataset.id, m = (this.data.team?.members || []).find((x) => x.id === id);
       const sel = row.querySelector('[data-a="role"]');
-      if (sel) sel.onchange = () => this.updateMember(id, { role: sel.value });
+      if (sel) sel.onchange = async () => kept(sel, await this.updateMember(id, { role: sel.value }));
       const tb = row.querySelector('[data-a="tags"]');
       if (tb) tb.onclick = () => {
         const box = row.querySelector('.tm-edit');
@@ -424,18 +440,21 @@ export class Team {
       try { await this.call('POST', '/api/team/revoke', { invite: b.dataset.cancel }); } catch (e) { this.toast(e.message); }
       this.loadTeam();
     }));
-    el.querySelectorAll('[data-pol]').forEach((x) => (x.onchange = () => {
+    el.querySelectorAll('[data-pol]').forEach((x) => (x.onchange = async () => {
       const k = x.dataset.pol;
-      this.setPolicy({ [k]: k === 'unreleased_downloads' ? (x.checked ? 'warn' : 'owner') : x.checked });
+      kept(x, await this.setPolicy({ [k]: k === 'unreleased_downloads' ? (x.checked ? 'warn' : 'owner') : x.checked }));
     }));
-    el.querySelectorAll('[data-spec]').forEach((x) => (x.onchange = () => {
-      const req = { pilot: [], production: [] };
-      el.querySelectorAll('[data-spec]:checked').forEach((c) => req[c.dataset.spec].push(c.value));
-      this.setPolicy({ specialist_required: req });
+    el.querySelectorAll('[data-spec]').forEach((x) => (x.onchange = async () => {
+      const req = { pilot: [], production: [] }, boxes = [...el.querySelectorAll('[data-spec]')];
+      boxes.filter((c) => c.checked).forEach((c) => req[c.dataset.spec].push(c.value));
+      const ok = await this.setPolicy({ specialist_required: req });
+      boxes.forEach((c) => kept(c, ok));
     }));
     const w = $('[data-a="watch"]');
     if (w) w.onchange = async () => {
-      try { const r = await this.call('POST', '/api/me', { watch: w.checked }); this.me.member = r.member; } catch (e) { this.toast(e.message); }
+      let ok = true;
+      try { const r = await this.call('POST', '/api/me', { watch: w.checked }); this.me.member = r.member; } catch (e) { ok = false; this.toast(e.message); }
+      kept(w, ok);
     };
     const dev = $('[data-a="device"]');
     if (dev) dev.onclick = async () => {
@@ -466,11 +485,13 @@ export class Team {
     };
   }
   async updateMember(id, ch) {
-    try { await this.call('POST', '/api/team/members', { id, ...ch }); this.toast('Saved'); } catch (e) { this.toast(e.message); }
+    let ok = true;
+    try { await this.call('POST', '/api/team/members', { id, ...ch }); this.toast('Saved'); } catch (e) { ok = false; this.toast(e.message); }
     this.loadTeam();
+    return ok;
   }
   async setPolicy(values) {
-    try { const r = await this.call('POST', '/api/team/policy', { values }); this.me.policy = r.policy; if (this.data.team) this.data.team.policy = r.policy; this.toast('Policy saved'); } catch (e) { this.toast(e.message); }
+    try { const r = await this.call('POST', '/api/team/policy', { values }); this.me.policy = r.policy; if (this.data.team) this.data.team.policy = r.policy; this.toast('Policy saved'); return true; } catch (e) { this.toast(e.message); return false; }
   }
 
   // ---- inspector: Comments | Review | Changes | Activity
@@ -496,7 +517,7 @@ export class Team {
     }
     this.ins.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
     this.renderBody();
-    this.loadTab();
+    this.loadTab(true);  // drawn at once from what the page has; the tab's own load then waits, like a teammate's update, for what you started typing
   }
   async loadTab(live = false) {
     const t = this.tab;
@@ -738,7 +759,7 @@ export class Team {
   reviewHtml() {
     const esc = this.esc, g = this.data.gate, rev = this.rev();
     if (!rev) return '<div class="tm-empty">No revision yet.</div>';
-    if (!g) return '<div class="tm-sec"><div class="skel" style="height:140px"></div></div>';
+    if (!g || g.rev !== rev) return '<div class="tm-sec"><div class="skel" style="height:140px"></div></div>';  // not this revision's
     const open = (this.data.reviews || []).find((r) => r.state !== 'withdrawn' && r.target?.rev === rev);
     const mine = this.myCover(open, g.level);
     const st = { approved: ['good', 'check'], missing: ['neutral', 'dot'], changes_requested: ['bad', 'x'] };
